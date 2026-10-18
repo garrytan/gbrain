@@ -47,8 +47,10 @@ jobs:
           node-version: 24.18.0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.4.2
-      - run: bun install --frozen-lockfile --ignore-scripts
+          bun-version: 1.4.3
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       - run: npm install --prefix "${{ runner.temp }}/openclaw-host" --ignore-scripts --omit=optional --no-audit --no-fund openclaw@2026.9.4
       - name: Exercise real plugin load and fresh conversations with a loopback-only provider
         env:
@@ -64,7 +66,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bun: ['1.4.0', '1.4.2']
+        bun: ['1.4.0', '1.4.3']
         target: [linux-x64-glibc, linux-arm64-glibc, darwin-arm64, darwin-x64, win32-x64, win32-arm64]
         # Pull requests: primary Bun on every target (native paths changed) or
         # the Linux x64 glibc smoke cell. Runners map from the target above.
@@ -75,7 +77,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       # The pinned Zig archive, cached per runner OS/arch (setup-toolchain.ts re-verifies its sha256).
       - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
@@ -83,7 +87,12 @@ jobs:
             ${{ runner.temp }}/gbrain-zig/zig-*.zip
             ${{ runner.temp }}/gbrain-zig/zig-*.tar.xz
           key: zig-archive-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/native/toolchain.json') }}
-      - run: bun scripts/native/setup-toolchain.ts --dir "${{ runner.temp }}/gbrain-zig" --github-path
+      # Bounded inside: a 300 s download budget across every source with a
+      # minimum-rate rule, 90 s to extract, 60 s for `zig version` (.223's
+      # darwin-x64 cell sat here until the 15-minute job timeout).
+      - name: Set up the pinned Zig compiler (bounded)
+        timeout-minutes: 9
+        run: bun scripts/native/setup-toolchain.ts --dir "${{ runner.temp }}/gbrain-zig" --github-path
       - run: bun scripts/native/build.ts --target ${{ matrix.target }} --output "${{ runner.temp }}/native-rebuilt"
       - run: bun scripts/native/verify.ts --rebuilt "${{ runner.temp }}/native-rebuilt"
       - name: Verify Darwin ABI against the native SDK
@@ -110,7 +119,7 @@ jobs:
         timeout-minutes: 8
         run: |
           bun build --compile --no-compile-autoload-bunfig --outfile bin/gbrain-native-validation src/cli.ts
-          if [ "${{ runner.os }}" = "macOS" ] && [ "${{ matrix.bun }}" = "1.4.2" ]; then
+          if [ "${{ runner.os }}" = "macOS" ] && [ "${{ matrix.bun }}" = "1.4.3" ]; then
             codesign --verify --strict --verbose=2 bin/gbrain-native-validation
           fi
           bun scripts/native/compiled-smoke.ts --binary bin/gbrain-native-validation
@@ -126,7 +135,7 @@ jobs:
       fail-fast: false
       matrix:
         runner: [windows-2022, windows-11-arm]
-        bun: ['1.4.0', '1.4.2']
+        bun: ['1.4.0', '1.4.3']
         # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity).
         exclude: ${{ fromJSON(inputs.scope == 'full' && '[]' || '[{"bun":"1.4.0"}]') }}
     steps:
@@ -134,7 +143,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       - run: bun scripts/native/verify.ts
       - name: Compare native hidden-window launch behavior
         shell: bash
@@ -155,7 +166,7 @@ jobs:
       fail-fast: false
       matrix:
         runner: [windows-2022, windows-11-arm]
-        bun: ['1.4.0', '1.4.2']
+        bun: ['1.4.0', '1.4.3']
         # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity).
         exclude: ${{ fromJSON(inputs.scope == 'full' && '[]' || '[{"bun":"1.4.0"}]') }}
     steps:
@@ -163,7 +174,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       - run: bun scripts/native/verify.ts
       - name: Compare cmdlet and direct dotnet ACL programs
         shell: bash
@@ -184,7 +197,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bun: ['1.4.0', '1.4.2']
+        bun: ['1.4.0', '1.4.3']
         target: [linux-x64-musl, linux-arm64-musl]
         # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity).
         exclude: ${{ fromJSON(inputs.scope == 'full' && '[]' || '[{"bun":"1.4.0"}]') }}
@@ -200,7 +213,12 @@ jobs:
             ${{ runner.temp }}/gbrain-zig/zig-*.zip
             ${{ runner.temp }}/gbrain-zig/zig-*.tar.xz
           key: zig-archive-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/native/toolchain.json') }}
-      - run: bun scripts/native/setup-toolchain.ts --dir "${{ runner.temp }}/gbrain-zig" --github-path
+      # Bounded inside: a 300 s download budget across every source with a
+      # minimum-rate rule, 90 s to extract, 60 s for `zig version` (.223's
+      # darwin-x64 cell sat here until the 15-minute job timeout).
+      - name: Set up the pinned Zig compiler (bounded)
+        timeout-minutes: 9
+        run: bun scripts/native/setup-toolchain.ts --dir "${{ runner.temp }}/gbrain-zig" --github-path
       - run: bun scripts/native/build.ts --target ${{ matrix.target }} --output "${{ runner.temp }}/native-rebuilt"
       - run: bun scripts/native/verify.ts --rebuilt "${{ runner.temp }}/native-rebuilt"
       - name: Execute prebuild in native musl userspace
@@ -208,7 +226,7 @@ jobs:
           BUN_VERSION: ${{ matrix.bun }}
         run: |
           docker run --rm -v "$PWD:/work" -w /work "oven/bun:${BUN_VERSION}-alpine" sh -eu -c '
-            bun install --frozen-lockfile --ignore-scripts
+            bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
             bun scripts/native/verify.ts
             bun test --timeout=60000 test/native-lock.test.ts test/pglite-lock.test.ts test/local-ipc-path.test.ts
             bun --no-env-file test --timeout=180000 test/native-export-publication.test.ts

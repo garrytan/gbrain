@@ -31,14 +31,14 @@ beforeAll(async () => {
   const pageB = await engine.putPage('people/b-ex', { title: 'B', type: 'person', compiled_truth: '## Takes\n' }, { sourceId: 'tenant-b' });
 
   await engine.addTakesBatch([
-    { page_id: pageA.id, row_num: 1, claim: 'Acme founder will raise a Series A', kind: 'bet', holder: 'garry', weight: 0.7 },
+    { page_id: pageA.id, row_num: 1, claim: 'Acme founder will raise a Series A', kind: 'bet', holder: 'dana', weight: 0.7 },
     { page_id: pageA.id, row_num: 2, claim: 'Acme founder went public', kind: 'bet', holder: 'world', weight: 0.6 },
-    { page_id: pageB.id, row_num: 1, claim: 'Beta founder will exit big', kind: 'bet', holder: 'garry', weight: 0.8 },
+    { page_id: pageB.id, row_num: 1, claim: 'Beta founder will exit big', kind: 'bet', holder: 'dana', weight: 0.8 },
   ]);
   // Resolve so the scorecard/curve aggregates have correct/incorrect rows.
-  await engine.resolveTake(pageA.id, 1, { quality: 'correct', resolvedBy: 'garry' });
+  await engine.resolveTake(pageA.id, 1, { quality: 'correct', resolvedBy: 'dana' });
   await engine.resolveTake(pageA.id, 2, { quality: 'incorrect', resolvedBy: 'world' });
-  await engine.resolveTake(pageB.id, 1, { quality: 'correct', resolvedBy: 'garry' });
+  await engine.resolveTake(pageB.id, 1, { quality: 'correct', resolvedBy: 'dana' });
 });
 
 afterAll(async () => {
@@ -85,7 +85,7 @@ describe('getScorecard / getCalibrationCurve — EXISTS pages.source_id scope', 
   });
 
   test('getScorecard source scope AND holder allow-list compose', async () => {
-    // tenant-a bets: garry(correct) + world(incorrect); allow-list world → 1 bet
+    // tenant-a bets: dana(correct) + world(incorrect); allow-list world → 1 bet
     expect((await engine.getScorecard({ sourceIds: ['tenant-a'] }, ['world'])).total_bets).toBe(1);
   });
 

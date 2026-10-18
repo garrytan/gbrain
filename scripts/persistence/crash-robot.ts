@@ -15,7 +15,8 @@ import type { GBrainConfig } from '../../src/core/config.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { disposePersistenceConsumer, startPersistenceConsumer } from '../../src/core/persistence/service.ts';
-import { installFaultHook, type FaultPoint } from '../../src/core/persistence/fault-points.ts';
+import { installFaultHook, type FaultDetail, type FaultPoint } from '../../src/core/persistence/fault-points.ts';
+import { bigintToStringReplacer } from '../../src/core/utils.ts';
 import { assertSafeE2eDatabaseUrl } from '../../test/helpers/db-guard.ts';
 import postgres from '#postgres';
 import { prepareTopology } from './history-fixture.ts';
@@ -102,6 +103,24 @@ export async function finish(world: World, model: ReferenceModel, label: string,
     { slug: `notes/probe-${randomUUID().slice(0, 8)}`, content: pageBody('notes/probe', 'mk-probe0') });
   const seen = await executeOp(world, probe);
   if (seen.status !== 'committed') model.violate({ class: 'wedge', detail: `${label}: a fresh write after the schedule ended ${seen.status}/${seen.code}` });
+  await awaitClaimPass(world);
+}
+
+/**
+ * #6957: wait for a consumer claim pass after the probe was prepared. The consumer makes one after every write it
+ * finishes, but a worker that returned at once stopped it first, unless timing let the pass in: a CI count role saw
+ * that pass as claim epoch 5 of caller_bound_replay, every replay of the run exited before making it, and its fault
+ * at consumer:claiming#5 went unreached. Waiting makes the last claim epoch part of every counted and run schedule.
+ * Only a worker whose fault hook counts claim passes (`world.claimPasses`) waits.
+ */
+async function awaitClaimPass(world: World): Promise<void> {
+  if (world.claimPasses === undefined) return;
+  const before = world.claimPasses;
+  const deadline = Date.now() + 30_000;
+  while (world.claimPasses === before && Date.now() < deadline) {
+    startPersistenceConsumer(world.engine, world.config).wake();
+    await Bun.sleep(50);
+  }
 }
 
 export async function runSchedule(world: World, schedule: Schedule): Promise<ScheduleResult> {
@@ -158,10 +177,71 @@ async function openRobotEngine(config: RobotConfig, initialize: boolean): Promis
 
 /** Freeze the whole process at a seam until the driver's SIGKILL arrives; nothing after this point runs. */
 function freeze(event: Record<string, unknown>): never {
-  const bytes = Buffer.from(`${JSON.stringify(event)}\n`);
+  const bytes = Buffer.from(`${JSON.stringify(event, bigintToStringReplacer)}\n`);
   for (let offset = 0; offset < bytes.length;) offset += writeSync(1, bytes, offset, bytes.length - offset);
   const blocked = new Int32Array(new SharedArrayBuffer(4));
   for (;;) Atomics.wait(blocked, 0, 0);
+}
+
+/**
+ * Seams one request can reach more than once by design: a preparation runs
+ * again after a revision conflict or a group cut, as often as timing
+ * dictates (7 to 10 preparations for the same 8-op schedule), and a prepared
+ * request whose publication is requeued (`writer_lock_unavailable`) is
+ * prepared again (caller_bound_replay counted 4 or 5 `consumer:prepared`).
+ * Counting every pass made the count run and the run role disagree on nth,
+ * so a fault could go unreached. These seams count each write request row
+ * once (its first pass), keyed on `writeId`: a caller-bound replay's rows
+ * share one `requestId`.
+ */
+const PER_REQUEST_SEAMS: ReadonlySet<FaultPoint> = new Set<FaultPoint>(['consumer:preparing', 'consumer:prepared']);
+/**
+ * #6896: `consumer:claiming` fires before every claim attempt, the consumer's idle ticks and the passes that find
+ * the root busy included, so how many passes a run makes follows wall-clock time, not the schedule (a count role
+ * saw 19, the run made fewer and its fault at #19 went unreached). It counts in claim epochs instead: the number of
+ * distinct write request rows that have reached `consumer:preparing`. The first pass at epoch e or later advances
+ * the count to e + 1, so slot n is the first claim attempt after n - 1 requests were prepared; requests of one root
+ * are claimed one after another, and `finish` waits for a claim pass after its probe, the last request (#6957), so
+ * every slot the count role saw comes again in the run.
+ */
+/** How far this pass advances the seam's count: 1, 0 for a repeat of the same request at a per-request seam, the epochs passed at the claim seam. */
+export function seamCounter(): (point: FaultPoint, detail: FaultDetail) => number {
+  const seen = new Set<string>(), prepared = new Set<string>();
+  let claimSlots = 0;
+  return (point, detail) => {
+    const request = detail.writeId ?? detail.requestId;
+    if (point === 'consumer:preparing' && request) prepared.add(request);
+    if (point === 'consumer:claiming') {
+      const advanced = Math.max(0, prepared.size + 1 - claimSlots);
+      claimSlots += advanced;
+      return advanced;
+    }
+    if (!PER_REQUEST_SEAMS.has(point) || !request) return 1;
+    const key = `${point}\u0000${request}`;
+    if (seen.has(key)) return 0;
+    seen.add(key);
+    return 1;
+  };
+}
+
+/**
+ * The `run` role's hook: freeze at the nth matching seam. A hook that throws
+ * would unwind into the code under test, which then keeps running as if no
+ * crash were requested (#6584), so the error is reported as a
+ * `fault_hook_error` event and the process freezes anyway; the driver counts
+ * such a run as a gate failure.
+ */
+export function robotFaultHook(fault: NonNullable<RobotConfig['fault']>): (point: FaultPoint, detail: FaultDetail) => void {
+  let seen = 0;
+  const counts = seamCounter();
+  return (point, detail) => {
+    const advanced = counts(point, detail);
+    if (point !== fault.point || (fault.operation && detail.operation !== fault.operation) || !advanced) return;
+    seen += advanced;
+    if (seen < fault.nth) return;
+    try { freeze({ event: 'fault', point, nth: seen, detail }); }
+    catch (error) { freeze({ event: 'fault_hook_error', point, nth: seen, message: error instanceof Error ? error.message : String(error) }); }
+  };
 }
 
 function finalize(config: RobotConfig, model: ReferenceModel, extra: Partial<RobotOutcome>): RobotOutcome {
@@ -328,13 +408,12 @@ export async function robotWorker(role: 'count' | 'run' | 'recover', config: Rob
     world.descriptors = new Map(config.schedule.ops.map(d => [d.id, d]));
     installLockOrderTrace();
     const counts: Record<string, number> = {};
-    if (role === 'count') installFaultHook(point => { counts[point] = (counts[point] ?? 0) + 1; });
-    if (role === 'run' && config.fault) {
-      let seen = 0; const fault = config.fault;
-      installFaultHook((point, detail) => {
-        if (point !== fault.point || (fault.operation && detail.operation !== fault.operation) || ++seen !== fault.nth) return;
-        freeze({ event: 'fault', point, nth: seen, detail });
-      });
+    const counted = seamCounter();
+    const hook = role === 'count' ? (point: FaultPoint, detail: FaultDetail) => { const advanced = counted(point, detail); if (advanced) counts[point] = (counts[point] ?? 0) + advanced; }
+      : role === 'run' && config.fault ? robotFaultHook(config.fault) : undefined;
+    if (hook) {
+      world.claimPasses = 0;
+      installFaultHook((point, detail) => { if (point === 'consumer:claiming') world.claimPasses!++; hook(point, detail); });
     }
     if (role === 'run') {
       let next = 0; let inFlight: string[] = [];

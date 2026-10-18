@@ -125,6 +125,36 @@ describe('bootstrap harness lifecycle E2E (PGLite + real serve --http)', () => {
     GBRAIN_DATABASE_URL: undefined,
   });
 
+  // #6661: started once in beforeAll and again by the pre-mint sequence test (which stops it first).
+  async function startServe(env: Record<string, string | undefined>): Promise<void> {
+    serverReady = false;
+    server = spawn('bun', [
+      'run', 'src/cli.ts', 'serve', '--http',
+      '--bind', '127.0.0.1', '--port', String(PORT),
+      '--public-url', BASE,
+    ], { cwd: process.cwd(), env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let serr = '';
+    server.stderr?.on('data', (d: Buffer) => { serr += d.toString(); });
+    for (let i = 0; i < 60; i++) {
+      try {
+        const res = await fetch(`${BASE}/health`);
+        if (res.ok) { serverReady = true; break; }
+      } catch { /* not up yet */ }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    if (!serverReady) throw new Error(`serve --http did not become ready:\n${serr}`);
+  }
+
+  async function stopServe(): Promise<void> {
+    const proc = server;
+    server = null;
+    serverReady = false;
+    if (!proc || proc.exitCode !== null) return;
+    const exited = new Promise<void>((r) => proc.once('exit', () => r()));
+    proc.kill('SIGTERM');
+    await exited;
+  }
+
   beforeAll(async () => {
     parent = mkdtempSync(join(tmpdir(), 'gb-harness-e2e-'));
     sandboxHome = mkdtempSync(join(tmpdir(), 'gb-harness-home-'));
@@ -154,21 +184,7 @@ describe('bootstrap harness lifecycle E2E (PGLite + real serve --http)', () => {
     if (!token) throw new Error(`auth create did not yield a token:\n${authOut}`);
     expect(authOut).toContain('scopes=["read","write"]');
 
-    server = spawn('bun', [
-      'run', 'src/cli.ts', 'serve', '--http',
-      '--bind', '127.0.0.1', '--port', String(PORT),
-      '--public-url', BASE,
-    ], { cwd: process.cwd(), env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let serr = '';
-    server.stderr?.on('data', (d: Buffer) => { serr += d.toString(); });
-    for (let i = 0; i < 60; i++) {
-      try {
-        const res = await fetch(`${BASE}/health`);
-        if (res.ok) { serverReady = true; break; }
-      } catch { /* not up yet */ }
-      await new Promise((r) => setTimeout(r, 500));
-    }
-    if (!serverReady) throw new Error(`serve --http did not become ready:\n${serr}`);
+    await startServe(env);
   }, 90_000);
 
   afterAll(() => {
@@ -190,6 +206,48 @@ describe('bootstrap harness lifecycle E2E (PGLite + real serve --http)', () => {
     expect(err).toMatch(/pre-mint|--token/);
     expect(err).toMatch(/stop the serve/);
   }, 60_000);
+
+  // #6661 (D25): the refusal's printed sequence, run for real: stop the serve, pre-mint with the harness grant, restart.
+  test('the refusal\'s stop/mint/rescope/start sequence yields a token with the harness grant', async () => {
+    expect(serverReady).toBe(true);
+    const { runner } = makeClaudeRunner();
+    const { result, err } = await withEnv(envFor(), () =>
+      capture(() => runBootstrap(['harness', '--yes', '--port', String(PORT), '--harness', 'codex', '--token-name', 'harness-e2e'], { runner, harnessDetect: HARNESS_DETECT })),
+    );
+    expect(result).toBe(1);
+    const steps = [...err.matchAll(/^\s+\d\. (.*)$/gm)].map((m) => m[1]!);
+    expect(steps).toHaveLength(5);
+    expect(steps[0]).toMatch(/stop the serve/);
+    expect(steps[1]).toBe('gbrain auth create harness-e2e --scopes read,write,skills_member_self');
+    expect(steps[2]).toMatch(/^gbrain auth rescope --token harness-e2e --operations \S*join_brain\S*$/);
+    expect(steps[3]).toMatch(/gbrain serve --http/);
+    expect(steps[4]).toMatch(/--token/);
+
+    const env: Record<string, string | undefined> = { ...process.env, GBRAIN_HOME: parent };
+    delete env.DATABASE_URL;
+    delete env.GBRAIN_DATABASE_URL;
+    const gbrain = (argv: string[]) => execFileSync('bun', ['run', 'src/cli.ts', ...argv], { cwd: process.cwd(), env, encoding: 'utf8' });
+    await stopServe();
+    const created = gbrain(steps[1]!.split(' ').slice(1));
+    const premint = (created.match(/gbrain_[a-f0-9]{64}/) ?? [''])[0];
+    expect(premint).not.toBe('');
+    gbrain(steps[2]!.split(' ').slice(1));
+    const grants = gbrain(['auth', 'rescope', '--token', 'harness-e2e']);
+    const stored = (grants.match(/^\s+Operations: (.*)$/m) ?? ['', ''])[1]!.split(', ');
+    expect(stored).toEqual(steps[2]!.split(' ')[6]!.split(','));
+    await startServe(env);
+    const joinBrain = async (bearer: string) => (await fetch(`${BASE}/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${bearer}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'join_brain', arguments: {} } }),
+    })).text();
+    // The printed grant reaches join_brain (refused only for its missing argument); the bare read,write pre-mint the
+    // old refusal suggested is refused for scope, which is what the reporter hit.
+    const viaPremint = await joinBrain(premint);
+    expect(viaPremint).toContain('Missing required parameter: adapter');
+    expect(viaPremint).not.toContain('insufficient_scope');
+    expect(await joinBrain(token)).toContain('insufficient_scope');
+  }, 120_000);
 
   test('apply with --token: real health + real bearer smoke; both harnesses wired; receipt + install log', async () => {
     expect(serverReady).toBe(true);
@@ -301,4 +359,37 @@ describe('bootstrap harness lifecycle E2E (PGLite + real serve --http)', () => {
     const text = await res.text();
     expect(text).toMatch(/insufficient_scope|requires .*admin|not permitted|scope/i);
   }, 30_000);
+
+  // #6661 option B, run for real: with the serve stopped a --token run wires and ends pending_verify (exit 13);
+  // --status stays partial until the fix's re-run, which runs while the live serve holds the PGLite brain.
+  test('--token with the serve stopped ends pending_verify; the printed re-run completes it under the live serve', async () => {
+    const env: Record<string, string | undefined> = { ...process.env, GBRAIN_HOME: parent };
+    delete env.DATABASE_URL;
+    delete env.GBRAIN_DATABASE_URL;
+    await stopServe();
+    const { runner } = makeClaudeRunner();
+    const run = (argv: string[]) => withEnv(envFor(), () => capture(() => runBootstrap(argv, { runner, harnessDetect: HARNESS_DETECT })));
+    const pending = await run(['harness', '--yes', '--port', String(PORT), '--harness', 'codex', '--skills', 'memory-only', '--token', token, '--json']);
+    expect(pending.result).toBe(13);
+    const doc = JSON.parse(pending.out) as { status: string; fix: { argv: string[] } };
+    expect(doc.status).toBe('pending_verify');
+    expect(pending.out).not.toContain(token);
+    expect(readFileSync(codexConfig(), 'utf8')).toContain(`http_headers = { Authorization = "Bearer ${token}" }`);
+    expect((await run(['harness', '--status', '--json'])).result).toBe(1);
+
+    await startServe(env);
+    const partial = await run(['harness', '--status', '--json']);
+    expect(partial.result).toBe(1);
+    expect(JSON.parse(partial.out)).toMatchObject({ status: 'partial', serve_ok: true, engine: 'pglite' });
+
+    const completed = await run(doc.fix.argv.slice(2).map(a => (a === '<TOKEN>' ? token : a)));
+    expect(completed.result).toBe(0);
+    // The re-run could not open the brain (the live serve holds it) and verified over HTTP instead.
+    expect(completed.err).toMatch(/could not verify --source 'default' against the brain/);
+    expect(completed.out).toMatch(/smoke test:/);
+    const done = await run(['harness', '--status', '--json']);
+    expect(done.result).toBe(0);
+    expect(JSON.parse(done.out).verify_pending).toBeUndefined();
+    expect((await run(['harness', '--remove', '--yes'])).result).toBe(0);
+  }, 120_000);
 });

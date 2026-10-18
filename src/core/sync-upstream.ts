@@ -8,11 +8,12 @@
  * three `sources.upstream_*` columns, so a remote doctor needs no subprocess.
  * A missing or older-than-24 h observation is "upstream unknown", never fresh.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from './spawn.ts';
 import { statSync } from 'node:fs';
 import type { BrainEngine } from './engine.ts';
 import { ERROR_CATALOGUE } from './error-catalogue.ts';
 import { parseSourceConfig, sourceConfigHasRemoteUrl } from './sources-load.ts';
+import { gitChildEnv } from './git-env.ts';
 
 export const UPSTREAM_OBSERVATION_MAX_AGE_HOURS = 24;
 
@@ -23,7 +24,7 @@ export interface UpstreamObservation { checkedAt: Date; commit: string; behind: 
 
 function git(root: string, args: string[]): string | null {
   try {
-    return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+    return execFileSync('git', ['-C', root, ...args], { env: gitChildEnv(), encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
   } catch {
     return null;
   }

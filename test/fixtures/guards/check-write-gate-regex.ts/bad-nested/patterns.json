@@ -1,0 +1,9 @@
+[
+  {
+    "name": "nested",
+    "source": "\\b(?:send[a-z ]{1,10}){1,20}to",
+    "anchors": [
+      "send"
+    ]
+  }
+]

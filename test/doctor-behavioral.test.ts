@@ -29,6 +29,7 @@ import {
   type Check,
 } from '../src/commands/doctor.ts';
 import { buildEmbedSkipMarker } from '../src/core/embed-skip.ts';
+import { PAGE_MAX_BYTES } from '../src/core/page-size-policy.ts';
 
 let engine: PGLiteEngine;
 
@@ -214,7 +215,7 @@ describe('buildChecks — orchestrator against PGLite', () => {
     // the postgres.js singleton, which is never connected on the default
     // PGLite engine — so every run reported
     // "Skipped (No database connection: connect() has not been called)".
-    const big = 'oversized page body prose for the block threshold probe. '.repeat(11_000); // ~630KB > 500KB default
+    const big = 'oversized page body prose for the block threshold probe. '.repeat(Math.ceil((PAGE_MAX_BYTES + 1) / 57)); // over the 24 MiB default block
     await engine.putPage('wiki/oversized-probe-1871', {
       type: 'note',
       title: 'Oversized Probe 1871',
@@ -253,7 +254,7 @@ describe('buildChecks — orchestrator against PGLite', () => {
     // (an object from buildEmbedSkipMarker, not a bare boolean) — the
     // canonical writer (src/core/content-sanity.ts) never writes a boolean,
     // and the exclusion must match what actually lands in frontmatter.
-    const big = 'oversized page body prose for the embed_skip exclusion probe. '.repeat(11_000);
+    const big = 'oversized page body prose for the embed_skip exclusion probe. '.repeat(Math.ceil((PAGE_MAX_BYTES + 1) / 62));
     await engine.putPage('wiki/oversized-embed-skip-probe', {
       type: 'note',
       title: 'Oversized Embed-Skip Probe',
@@ -285,7 +286,7 @@ describe('buildChecks — orchestrator against PGLite', () => {
     // embed-skip consumer in the codebase (embed.ts, postgres-engine.ts,
     // pglite-engine.ts). This check must stay consistent with that shared
     // contract rather than inventing its own true/false semantics.
-    const big = 'oversized page body prose for the embed_skip-absent probe. '.repeat(11_000);
+    const big = 'oversized page body prose for the embed_skip-absent probe. '.repeat(Math.ceil((PAGE_MAX_BYTES + 1) / 59));
     await engine.putPage('wiki/oversized-embed-skip-absent-probe', {
       type: 'note',
       title: 'Oversized Embed-Skip-Absent Probe',
@@ -298,6 +299,34 @@ describe('buildChecks — orchestrator against PGLite', () => {
     expect(oversized).toBeDefined();
     expect(oversized!.status).toBe('warn');
     expect(oversized!.message).toContain('oversized-embed-skip-absent-probe');
+  });
+
+  test('#6526: oversized_pages honors a DB-plane content_sanity.bytes_block override', async () => {
+    // The check read bytes_block from the file and env planes only (loadConfig), so a
+    // `gbrain config set content_sanity.bytes_block N` that the write gate honors never
+    // reached it. It now uses the gate's resolution (import-screen.ts effectiveBytesBlock).
+    // The page sits between the operator's 500_000 and the 24 MiB default, with no
+    // embed_skip marker, so the DB-plane value alone decides the warn.
+    const lowered = 500_000;
+    await engine.setConfig('content_sanity.bytes_block', String(lowered));
+    try {
+      const big = 'oversized page body prose for the db-plane override probe. '.repeat(11_000); // ~650KB
+      await engine.putPage('wiki/oversized-db-plane-probe', {
+        type: 'note',
+        title: 'Oversized DB-Plane Probe',
+        compiled_truth: big,
+        timeline: '',
+      });
+
+      const checks = await buildChecks(engine, []);
+      const oversized = checks.find(c => c.name === 'oversized_pages');
+      expect(oversized).toBeDefined();
+      expect(oversized!.status).toBe('warn');
+      expect(oversized!.message).toContain('oversized-db-plane-probe');
+      expect(oversized!.message).toContain(`${lowered}`);
+    } finally {
+      await engine.unsetConfig('content_sanity.bytes_block');
+    }
   });
 
   test('mixed-outcome render path: synthesized checks aggregate as expected', () => {

@@ -31,6 +31,7 @@ import {
   resolveActiveEmbeddingColumnFromEngine,
   quoteIdentifier,
 } from './search/embedding-column.ts';
+import { pageBudgetLimitedFilter } from './page-size-policy.ts';
 
 export function splitEmbeddingSignature(signature: string): { model: string; dims: number | null } {
   const separator = signature.lastIndexOf(':');
@@ -90,6 +91,7 @@ export function falseStampPageWhere(colId: string, signatureParam = 1, modelPara
         p.embedding_signature = $${signatureParam}
         AND p.deleted_at IS NULL
         AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
+        AND NOT ${pageBudgetLimitedFilter('p')}
         AND EXISTS (
           SELECT 1 FROM content_chunks c
            WHERE c.page_id = p.id AND c.${colId} IS NOT NULL
@@ -173,6 +175,7 @@ export async function countRestampOnlyChunks(
     `SELECT count(*)::int AS count FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
       WHERE p.deleted_at IS NULL AND ${sigClause}
         AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
+        AND NOT ${pageBudgetLimitedFilter('p')}
         AND ($4::text IS NULL OR p.source_id = $4)
         AND ${currentSpaceChunkPredicate(colId, 2, 3)}`,
     [opts.signature, model, dims, opts.sourceId ?? null],
@@ -206,6 +209,7 @@ export async function invalidateStaleSignatureEmbeddingsGuarded(
           AND cc.${colId} IS NOT NULL
           AND NOT ${currentChunk}
           AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
+        AND NOT ${pageBudgetLimitedFilter('p')}
           AND p.deleted_at IS NULL
           AND p.text_projection_revision = p.knowledge_revision
           AND ${sigClause}${srcClause}
@@ -219,6 +223,7 @@ export async function invalidateStaleSignatureEmbeddingsGuarded(
           AND p.deleted_at IS NULL
           AND p.text_projection_revision = p.knowledge_revision
           AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
+        AND NOT ${pageBudgetLimitedFilter('p')}
           AND EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)
           AND NOT EXISTS (
             SELECT 1 FROM content_chunks cc

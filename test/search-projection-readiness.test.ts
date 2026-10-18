@@ -50,6 +50,20 @@ describe('search operations disclose visible projection gaps', () => {
     expect(retrieval.projection_readiness).toMatchObject({ status: 'projection_pending', ready: false });
   });
 
+  test('an unsealed protected-OCR image alone is disclosed as by design, not pending', async () => {
+    await sealed();
+    await engine.putPage('images/protected-example.png', {
+      type: 'image', page_kind: 'image', title: 'protected-example.png',
+      compiled_truth: '<!--- gbrain:takes:begin -->\nSYNTHETIC_PROTECTED\n<!--- gbrain:takes:end -->',
+    }, { sourceId });
+    const rows = await operationsByName.search.handler(context(true), { query: 'readinessmarker', source_id: sourceId });
+    expect(rows).toHaveLength(1);
+    expect(retrieval.projection_readiness).toMatchObject({ status: 'by_design', ready: true });
+    expect(retrieval.degraded).toContainEqual({ stage: 'projection_by_design' });
+    expect(retrieval.degraded).not.toContainEqual({ stage: 'projection_pending' });
+    expect(JSON.stringify(retrieval)).not.toContain('SYNTHETIC_PROTECTED');
+  });
+
   test('pending pages outside the requested source do not affect readiness', async () => {
     await sealed();
     await engine.putPage('notes/foreign-pending', { type: 'note', title: 'Foreign example', compiled_truth: 'readinessmarker' }, { sourceId: foreign });

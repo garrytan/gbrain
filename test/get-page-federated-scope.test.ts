@@ -450,9 +450,9 @@ describe('#2200 residual by-slug reads honor the federated grant', () => {
   });
 
   test('get_versions returns only in-grant snapshots', async () => {
-    const hit = await get_versions.handler(remoteCtx(['alpha', 'beta']), { slug: 'secret/beta-doc' }) as any[];
+    const hit = await get_versions.handler(remoteCtx(['alpha', 'beta']), { slug: 'secret/beta-doc', include_body: true }) as any[];
     expect(hit.map(v => v.compiled_truth)).toEqual(['beta-only content']);
-    expect(await get_versions.handler(remoteCtx(['alpha']), { slug: 'secret/beta-doc' })).toEqual([]);
+    expect(await get_versions.handler(remoteCtx(['alpha']), { slug: 'secret/beta-doc', include_body: true })).toEqual([]);
   });
 });
 

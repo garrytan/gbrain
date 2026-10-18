@@ -58,6 +58,34 @@
           }
         }
       }
+    },
+    "trust": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items"],
+      "description": "Memory-trust suites: scored expectations (TrustGoldItem in src/eval/brainbench/types.ts).",
+      "properties": {
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["item_id", "check", "step"],
+            "properties": {
+              "item_id": { "type": "string" },
+              "check": { "enum": ["tier", "max_tier", "refused", "current", "stale", "history", "guarded", "poison", "benign", "purged"] },
+              "step": { "type": "string" },
+              "claim": { "type": "string" },
+              "tier": { "enum": ["user_confirmed", "operator_curated", "tool_observed", "agent_written", "unknown", "external_untrusted"] },
+              "arm": { "enum": ["external", "agent_relayed"] },
+              "canary": { "type": "string", "minLength": 8 },
+              "preference": { "type": "boolean" },
+              "probe": { "type": "string" }
+            }
+          }
+        }
+      }
     }
   }
 }

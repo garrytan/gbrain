@@ -29,6 +29,7 @@ import { isValidSourceId } from '../source-id.ts';
 import { executeRawJsonb, type SqlQuery } from '../sql-query.ts';
 import { TOKEN_ID_RE } from '../token-mint.ts';
 import { isUndefinedColumnError } from '../utils.ts';
+import { requiresExplicitApproval } from '../ops/execution-prerequisites.ts';
 import {
   GrantError, LEGACY_GRANT_AXES, grantFromTokenRow, permissionsMirror, tokenGrantColumnValues, tokenGrantFromColumns,
   tokenGrantFromPermissions, validatePrincipalGrant, TOKEN_GRANT_COLUMNS, type LegacyGrantAxis, type PrincipalGrant,
@@ -74,7 +75,11 @@ export interface RescopeTokenResult {
   revision: { before: number; after: number };
   /** Axes that were drifted (deny-all) before this call. */
   drift: LegacyGrantAxis[];
-  refresh?: { available: string[]; added: string[]; unregistered: string[] };
+  /**
+   * `materialized`: the token had no operation snapshot (#6663). Adding writes one: every operation its scopes
+   * allow today plus the added ones, so operations later upgrades add need their own refresh.
+   */
+  refresh?: { available: string[]; added: string[]; unregistered: string[]; materialized?: true };
 }
 
 const csvOrNone = (value: string): string[] =>
@@ -257,16 +262,21 @@ async function rescopeInTransaction(tx: BrainEngine, args: RescopeTokenArgs): Pr
   }
   let refresh: RescopeTokenResult['refresh'];
   if (args.refreshOperations) {
-    const granted = base.allowedOperations;
-    if (granted === null) {
-      throw new GrantError('invalid_grant', `Token ${label} has no operation snapshot, so it already reaches every operation its scopes allow; nothing to refresh`);
+    // #6663 (D17): a token with no snapshot reaches every operation its scopes allow except the membership
+    // operations, which need explicit approval. Refreshing it materializes exactly that reachable set and
+    // adds only the operations --add names, so nothing narrows today and no other membership op is approved.
+    const materialized = base.allowedOperations === null;
+    const granted = base.allowedOperations ?? grantable.filter(op => !requiresExplicitApproval(op));
+    if (materialized && args.allNew) {
+      throw new GrantError('invalid_grant', `Token ${label} has no operation snapshot; --all-new would approve every membership operation at once. `
+        + `Preview with gbrain auth rescope ${'id' in args.target ? `--id ${args.target.id}` : `--token ${args.target.name}`} --refresh-operations, then name each one with --add`);
     }
     const available = grantable.filter(op => !granted.includes(op));
     const added = args.allNew ? available : args.add ?? [];
     const notAvailable = added.filter(op => !available.includes(op));
     if (notAvailable.length) throw new GrantError('invalid_grant', `Not a new operation for this token: ${notAvailable.join(', ')} (run --refresh-operations alone to preview)`);
     if (added.length) next.allowedOperations = [...granted, ...added];
-    refresh = { available, added, unregistered: granted.filter(op => !all.has(op)) };
+    refresh = { available, added, unregistered: granted.filter(op => !all.has(op)), ...(materialized ? { materialized: true } : {}) };
   }
   const opsEdited = args.operations !== undefined || Boolean(refresh?.added.length);
   validatePrincipalGrant({

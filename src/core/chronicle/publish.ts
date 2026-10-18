@@ -41,6 +41,10 @@ import { preparePageMutation } from '../persistence/page-prepare.ts';
 import { effectiveVisibility, type Visibility } from '../search/private-visibility.ts';
 import type { ChronicleEventProposal } from './extract-events.ts';
 import { resolveChronicleEventSlugs } from './event-identity.ts';
+import { declareDerivation, declaredWriteTrust, deriveTrust, derivedMaintenanceTransaction, readDerivationDeclaration } from '../trust/taint.ts';
+import { derivedGateConfig, derivedGateInput, timelineRowAllowed } from '../trust/derived-gate.ts';
+import { assessTimelineForGate, type WriteGateAssessment } from '../write-gate.ts';
+import { recordWriteGateReceipt } from '../write-gate-store.ts';
 
 export const CHRONICLE_RETIRED_BY = 'life-chronicle';
 export const CHRONICLE_EVENT_INTENT = 'managed_maintenance_chronicle_event';
@@ -175,6 +179,9 @@ export async function publishChronicleGeneration(engine: BrainEngine, opts: {
   const broken = await depthPinBroken(engine, sourceId, pin, opts.decisionRequestId);
   if (broken) return { ...result, superseded: broken };
   const events = await resolveChronicleEventSlugs(engine, sourceId, opts.events);
+  // #5575 I2: the judge read only the depth page, so its events carry that page's tier (capped at agent_written).
+  const derivation = await deriveTrust(engine, [{ table: 'pages', id: pin.pageId }], { channel: 'derive:chronicle' });
+  const gateCfg = await derivedGateConfig(engine);
 
   for (const ev of events) {
     abort();
@@ -182,23 +189,29 @@ export async function publishChronicleGeneration(engine: BrainEngine, opts: {
     const verdict = judgeTarget(existing, owned);
     if (!verdict.write) { result.protected.push({ slug: ev.slug, reason: verdict.reason }); continue; }
     const content = serializeMarkdown(ev.frontmatter, ev.compiledTruth, '', { type: 'event', title: ev.title, tags: [] });
-    const projection = { depth_slug: pin.slug, date: ev.day, summary: ev.summary };
+    // #5575 B3: the event's summary lands on the depth page's timeline; a quarantined or rejected one projects nothing.
+    const projectionGate = assessTimelineForGate({ summary: ev.summary, source: `life-chronicle:event:${ev.slug}` }, derivedGateInput(derivation.trust), gateCfg);
+    const projection = timelineRowAllowed(projectionGate) ? { depth_slug: pin.slug, date: ev.day, summary: ev.summary } : undefined;
     try {
       if (maintenance) {
         const intent = { kind: CHRONICLE_EVENT_INTENT, content, expected_revision: verdict.expectedRevision,
           restore_retired: verdict.restore, depth: pin, decision_request_id: opts.decisionRequestId,
-          owned_hashes: [...owned], event_projection: projection };
+          owned_hashes: [...owned], ...(projection ? { event_projection: projection } : {}), derivation: declareDerivation(derivation.trust, derivation.inputs) };
         await submitDatabaseMaintenanceIntent(engine, maintenance, ev.slug, intent,
           requestIdFor({ writer: maintenance.writer.principal, slug: ev.slug, intent }));
       } else {
-        await maintenanceTransaction(engine, async (tx) => {
+        await derivedMaintenanceTransaction(engine, derivation, async (tx) => {
           const reason = await depthPinBroken(tx, sourceId, pin, null);
           if (reason) throw supersededError(reason);
           const again = judgeTarget(await tx.readPageSnapshot(ev.slug, { sourceId, includeDeleted: true }), owned);
           if (!again.write) throw supersededError(again.reason);
-          await tx.putPage(ev.slug, { type: 'event', title: ev.title, compiled_truth: ev.compiledTruth,
+          const page = await tx.putPage(ev.slug, { type: 'event', title: ev.title, compiled_truth: ev.compiledTruth,
             frontmatter: { type: 'event', ...ev.frontmatter }, effective_date: safeDate(ev.when) }, { sourceId });
-          await tx.upsertEventProjection({ depthSlug: pin.slug, eventSlug: ev.slug, date: ev.day, summary: ev.summary, sourceId });
+          if (projection) {
+            await tx.upsertEventProjection({ depthSlug: pin.slug, eventSlug: ev.slug, date: ev.day, summary: ev.summary, sourceId });
+            await recordProjectionFlag(tx, projectionGate, page.id, ev.day, sourceId);
+          }
+          return { result: undefined, rows: [{ table: 'pages', id: page.id, sourceId }] };
         });
       }
     } catch (error) {
@@ -302,6 +315,20 @@ export async function prepareChronicleMutation(engine: BrainEngine, row: WriteRe
       if (!projection) return outcome;
       const { projected } = await tx.upsertEventProjection({ depthSlug: projection.depth_slug, eventSlug: row.slug,
         date: projection.date, summary: projection.summary, sourceId: row.source_id });
+      const declaration = readDerivationDeclaration(p.derivation);
+      if (projected && declaration) {
+        const assessment = assessTimelineForGate({ summary: projection.summary, source: `life-chronicle:event:${row.slug}` },
+          derivedGateInput(declaredWriteTrust(declaration), row.id), await derivedGateConfig(tx));
+        const [event] = await tx.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [row.source_id, row.slug]);
+        if (event) await recordProjectionFlag(tx, assessment, Number(event.id), projection.date, row.source_id, row.id);
+      }
       return { ...outcome, event_projected: projected };
     } };
+}
+
+/** A flagged event projection's receipt on its timeline row (found by its event page and date). */
+async function recordProjectionFlag(tx: BrainEngine, assessment: WriteGateAssessment, eventPageId: number, date: string, sourceId: string, requestId?: string): Promise<void> {
+  if (assessment.verdict !== 'flag') return;
+  const [entry] = await tx.executeRaw<{ id: number }>('SELECT id FROM timeline_entries WHERE event_page_id=$1 AND date=$2::date', [eventPageId, date]);
+  if (entry) await recordWriteGateReceipt(tx, { targetTable: 'timeline_entries', targetId: Number(entry.id), sourceId, assessment, requestId });
 }

@@ -20,10 +20,19 @@
  * files, that's 5K ILIKE scans. A user-triggered batch pass on an
  * already-synced brain is one walk, fully indexed via the existing
  * slug lookup in addLink.
+ *
+ * A segmented page (Wave B) is read block by block (`bodyLines`): a code ref
+ * never spans a line, so it gets the refs the same text held as one string
+ * gets. A page a block read refuses is listed in `skipped` and the walk goes on.
  */
 
 import type { BrainEngine } from '../core/engine.ts';
-import { extractCodeRefs } from '../core/link-extraction.ts';
+import { PageMissingError } from '../core/engine-errors.ts';
+import type { Page } from '../core/types.ts';
+import { extractCodeRefs, type CodeRef } from '../core/link-extraction.ts';
+import { OperationError } from '../core/ops/contract.ts';
+import { isSegmentedPage } from '../core/page-body/page-shape.ts';
+import { bodyLines } from '../core/page-body/segment-lines.ts';
 import { slugifyCodePath } from '../core/sync.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -34,6 +43,29 @@ export interface ReconcileLinksResult {
   codeRefsFound: number;
   edgesAttempted: number;
   edgesTargetsMissing: number;
+  /** Pages a per-page refusal kept out of the scan (present only when there are any). */
+  skipped?: Array<{ slug: string; reason: string; message: string }>;
+}
+
+/**
+ * Code refs of a page's `${compiled_truth}\n${timeline}`, first occurrence of each path, in text order. A segmented
+ * page is read a block of lines at a time; `index` stays an offset into the joined text.
+ */
+async function pageCodeRefs(engine: BrainEngine, page: Page): Promise<CodeRef[]> {
+  if (!isSegmentedPage(page)) return extractCodeRefs((page.compiled_truth || '') + '\n' + (page.timeline || ''));
+  const seen = new Set<string>();
+  const refs: CodeRef[] = [];
+  let at = 0;
+  for await (const lines of bodyLines(engine, page)) {
+    const text = lines.join('\n');
+    for (const ref of extractCodeRefs(text)) {
+      if (seen.has(ref.path)) continue;
+      seen.add(ref.path);
+      refs.push({ path: Buffer.from(ref.path, 'utf8').toString('utf8'), line: ref.line, index: ref.index + at });
+    }
+    at += text.length + 1;
+  }
+  return refs;
 }
 
 export interface ReconcileLinksOpts {
@@ -85,6 +117,7 @@ export async function runReconcileLinks(
   let codeRefsFound = 0;
   let edgesAttempted = 0;
   let edgesTargetsMissing = 0;
+  const skipped: NonNullable<ReconcileLinksResult['skipped']> = [];
 
   // Fetch pages one at a time via getPage (no bulk read helper exists yet).
   // On a 47K-page brain this is the slow path; a v0.20.x follow-up can add
@@ -103,8 +136,15 @@ export async function runReconcileLinks(
       progress.tick(1, mdSlug);
       continue;
     }
-    const haystack = (page.compiled_truth || '') + '\n' + (page.timeline || '');
-    const refs = extractCodeRefs(haystack);
+    let refs: CodeRef[];
+    try {
+      refs = await pageCodeRefs(engine, page);
+    } catch (e: unknown) {
+      if (!(e instanceof OperationError && e.code === 'page_body_segmented')) throw e;
+      skipped.push({ slug: mdSlug, reason: e.code, message: e.message });
+      progress.tick(1, `${mdSlug} (skipped)`);
+      continue;
+    }
     if (refs.length === 0) {
       progress.tick(1, mdSlug);
       continue;
@@ -129,12 +169,11 @@ export async function runReconcileLinks(
         await engine.addLink(codeSlug, mdSlug, ref.path, 'documented_by', 'markdown', mdSlug, 'compiled_truth', linkOpts); // gbrain-allow-direct-insert: gbrain reconcile-links command — reverse documented_by edge
       } catch (e: unknown) {
         // Per-link errors don't abort the batch. Track them for the summary.
-        const msg = e instanceof Error ? e.message : String(e);
-        if (/not found|does not exist/i.test(msg)) {
+        if (e instanceof PageMissingError) {
           edgesTargetsMissing++;
         } else {
           // Real error — log but keep going. Agents can inspect progress events.
-          console.warn(`[reconcile-links] ${mdSlug} → ${codeSlug}: ${msg}`);
+          console.warn(`[reconcile-links] ${mdSlug} → ${codeSlug}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
     }
@@ -149,6 +188,7 @@ export async function runReconcileLinks(
     codeRefsFound,
     edgesAttempted,
     edgesTargetsMissing,
+    ...(skipped.length ? { skipped } : {}),
   };
 }
 
@@ -184,4 +224,5 @@ export async function runReconcileLinksCli(engine: BrainEngine, args: string[]):
       ? ` (${result.edgesTargetsMissing} targets missing code page)`
       : ''),
   );
+  for (const page of result.skipped ?? []) console.log(`[reconcile-links] skipped ${page.slug} (${page.reason}): ${page.message}`);
 }

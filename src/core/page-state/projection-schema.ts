@@ -1,10 +1,20 @@
+/**
+ * The page search-vector trigger fires on the columns its function reads:
+ * title, timeline and, once migration v248 added it, the segmented page's
+ * timeline_lead (a purge or flip that rewrites only the lead re-indexes it).
+ */
+export const PAGE_SEARCH_VECTOR_TRIGGER_SQL = `DO $trg$ BEGIN
+    EXECUTE format('CREATE TRIGGER trg_pages_search_vector BEFORE INSERT OR UPDATE OF %s ON pages FOR EACH ROW EXECUTE FUNCTION update_page_search_vector()',
+      CASE WHEN EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'pages'::regclass AND attname = 'timeline_lead' AND NOT attisdropped)
+        THEN 'title,timeline,timeline_lead' ELSE 'title,timeline' END);
+  END $trg$`;
+
 /** Durable DB-only text rebuild work; source deletion cancels its old incarnation. */
 export const PAGE_PROJECTION_SCHEMA_STATEMENTS = [
   // Metadata/embedding updates must preserve the explicitly sanitized vector.
   // Canonical body updates remain unsearchable until projection completion.
   `DROP TRIGGER IF EXISTS trg_pages_search_vector ON pages`,
-  `CREATE TRIGGER trg_pages_search_vector BEFORE INSERT OR UPDATE OF title,timeline ON pages
-    FOR EACH ROW EXECUTE FUNCTION update_page_search_vector()`,
+  PAGE_SEARCH_VECTOR_TRIGGER_SQL,
   `CREATE TABLE IF NOT EXISTS page_projection_jobs (
     source_incarnation UUID NOT NULL REFERENCES sources(incarnation) ON DELETE CASCADE,
     slug TEXT NOT NULL,

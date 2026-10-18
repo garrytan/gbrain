@@ -14,6 +14,29 @@ import {
   runReferenceApply,
 } from '../../core/skillpack/reference.ts';
 import { findGbrainOrDie, resolveWorkspace } from './shared.ts';
+import { strictArgsRefusal } from '../../cli/strict-args.ts';
+import { exitCliError } from '../../cli/cli-error.ts';
+
+const REFERENCE_HELP =
+  'gbrain skillpack reference <name> [--workspace PATH] [--apply-clean-hunks [--dry-run]] [--json]\n' +
+  'gbrain skillpack reference --all [--workspace PATH] [--since <version>] [--json]\n\n' +
+  '  <name>              Read-only diff of gbrain\'s bundle against your local copy.\n' +
+  '  --apply-clean-hunks Two-way merge: align non-conflicting hunks of ONE skill to\n' +
+  '                      gbrain. Local edits in those hunks are overwritten; pass the\n' +
+  '                      exact --dry-run flag to preview without writing.\n' +
+  '  --all               Sweep over every bundled skill (read-only; never applies).\n' +
+  '  --since <version>   With --all, restrict the sweep to skills whose source\n' +
+  '                      changed in gbrain between <version> and HEAD. Useful\n' +
+  '                      after `gbrain upgrade` to see only what moved.\n\n' +
+  'Any other token, or a flag in a form this command does not read (`--dry-run=true`),\n' +
+  'refuses with invalid_params before anything is touched.';
+
+const ALL_APPLY_REFUSAL =
+  'Error: --apply-clean-hunks is intentionally NOT supported with --all (a two-way merge over every\n' +
+  'skill at once has no safe preview). Update path, one skill at a time:\n' +
+  '  1. gbrain skillpack reference --all                  (which skills drifted)\n' +
+  '  2. gbrain skillpack reference <name>                 (read the diff; keep intentional edits)\n' +
+  '  3. gbrain skillpack reference <name> --apply-clean-hunks   (add --dry-run to preview first)';
 
 export async function cmdReference(args: string[]): Promise<void> {
   // Harness lane (cathedral-7): diff a harness install (stub-aware,
@@ -24,14 +47,14 @@ export async function cmdReference(args: string[]): Promise<void> {
     return;
   }
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(
-      'gbrain skillpack reference <name> | --all [--workspace PATH] [--apply-clean-hunks] [--since <version>] [--dry-run] [--json]\n\n' +
-        '  --since <version>   With --all, restrict the sweep to skills whose source\n' +
-        '                      changed in gbrain between <version> and HEAD. Useful\n' +
-        '                      after `gbrain upgrade` to see only what moved.',
-    );
+    console.log(REFERENCE_HELP);
     process.exit(0);
   }
+  // #5491: a token the command would ignore (`--dry-run=true`, a typo) must
+  // not reach the apply. cli.ts refuses before dispatch; this re-check keeps
+  // an in-process caller on the same contract.
+  const refusal = strictArgsRefusal('skillpack', ['reference', ...args]);
+  if (refusal) exitCliError(refusal, 'skillpack');
   const json = args.includes('--json');
   const apply = args.includes('--apply-clean-hunks');
   const dryRun = args.includes('--dry-run');
@@ -66,9 +89,7 @@ export async function cmdReference(args: string[]): Promise<void> {
   try {
     if (apply) {
       if (all) {
-        console.error(
-          'Error: --apply-clean-hunks is intentionally NOT supported with --all. Apply one skill at a time.',
-        );
+        console.error(ALL_APPLY_REFUSAL);
         process.exit(2);
       }
       // Two-way merge warning fires BEFORE the apply. Goes to stderr so

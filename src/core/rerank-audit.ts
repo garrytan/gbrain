@@ -32,6 +32,7 @@ export type RerankFailureReason =
   | 'no_key'
   | 'rate_limit'
   | 'network'
+  | 'unreachable'
   | 'timeout'
   | 'budget'
   | 'payload_too_large'

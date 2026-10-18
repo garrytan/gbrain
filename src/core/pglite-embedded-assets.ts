@@ -24,32 +24,26 @@
  *   - `pgliteWasmModule`  — pglite.wasm bytes → WebAssembly.compile
  *   - `initdbWasmModule`  — initdb.wasm bytes → WebAssembly.compile
  *   - `fsBundle`          — pglite.data bytes → Blob
- *   - custom `vector` / `pg_trgm` extensions whose `setup()` returns a
- *     `bundlePath` URL pointing at the embedded tarball, replacing the stock
- *     extensions' `new URL("../vector.tar.gz", import.meta.url)` (which breaks
- *     under compile).
+ *   - custom `vector` / `pg_trgm` extensions that write the embedded tarballs'
+ *     files into PGLite's filesystem once the backend is up (see
+ *     lazyExtension), replacing the stock extensions'
+ *     `new URL("../vector.tar.gz", import.meta.url)` (which breaks under
+ *     compile).
  *
- * All of these are read with `readFileSync`, which works on `/$bunfs` paths.
- *
- * One wrinkle: PGLite loads an extension tarball via `fs.createReadStream`
- * (gunzip pipeline), and `createReadStream` — unlike `readFileSync`/`existsSync`
- * — does NOT work on `/$bunfs` paths. So the two tarballs are materialized to a
- * real temp file first (content-addressed + atomic write + size-verified reuse)
- * and the `bundlePath` points there. This runs unconditionally in both modes
- * (in source mode it's a one-time copy of a ~15-46KB file), so there is no
- * fragile compiled-vs-source branch. The WASM modules and fsBundle need no
- * materialization because PGLite consumes them as bytes we already hold.
+ * All of these are read with `readFileSync`, which works on `/$bunfs` paths;
+ * the tarballs are gunzipped and untarred in memory, so nothing is copied to a
+ * temp file (PGLite's own loader streams a bundle with `fs.createReadStream`,
+ * which does not work on `/$bunfs` paths).
  *
  * Guarded by scripts/check-pglite-embedded.sh (compiles a binary and asserts a
  * real PGLite query round-trips), mirroring scripts/check-wasm-embedded.sh.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, statSync } from 'node:fs';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { readFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { createHash } from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
 import type { Extension } from '@electric-sql/pglite';
 
 /** The five on-disk asset paths PGLite's runtime needs, however they were found. */
@@ -159,31 +153,86 @@ export interface EmbeddedPgliteOptions {
   initdbWasmModule: WebAssembly.Module;
   fsBundle: Blob;
   extensions: { vector: Extension; pg_trgm: Extension };
+  startParams: string[];
 }
+
+/**
+ * Backend start parameters, appended to PGLite's defaults by `build()`
+ * (`[...PGlite.defaultStartParams, ...PGLITE_START_PARAM_OVERRIDES]`, defaults
+ * first so the overrides win). PGLite is one
+ * backend with no worker processes, yet a CREATE INDEX still plans parallel
+ * workers from max_parallel_maintenance_workers, and pgvector's HNSW build
+ * then reserves maintenance_work_mem as a shared area up front inside the
+ * 2 GiB WASM heap that no worker ever uses. And WAL a single statement writes
+ * past the automatic checkpoint trigger (max_wal_size / 1.9) wedges PGLite
+ * (see pglite-engine/checkpoint-guard.ts, which checkpoints between
+ * statements): an HNSW build WAL-logs its whole index in one statement, about
+ * 2 GB at 250k 1024-dim chunks, past the 1 GB default's 539 MB trigger. 8 GB
+ * puts the trigger at 4.3 GB, above the largest index the heap can build
+ * (vector-index.ts PGLITE_HNSW_GRAPH_BUDGET_BYTES); the guard still
+ * checkpoints at 256 MB between statements.
+ */
+export const PGLITE_START_PARAM_OVERRIDES = [
+  '-c', 'max_parallel_maintenance_workers=0',
+  '-c', 'max_wal_size=8GB',
+];
 
 let cached: Promise<EmbeddedPgliteOptions> | null = null;
 
+/** One regular file of an extension tarball, path relative to PGLite's install prefix. */
+export interface ExtensionFile { path: string; data: Uint8Array }
+
 /**
- * Read an embedded tarball and copy it to a stable, content-addressed temp file
- * that `fs.createReadStream` can open (see module doc for why the raw bunfs path
- * can't be streamed). Content-addressing (sha256 of bytes) means a version bump
- * writes a fresh file; the size check re-writes over a truncated remnant from a
- * crashed writer; the tmp-then-rename keeps concurrent writers from tearing.
+ * Gunzip and untar an extension bundle in memory. PGLite's bundles are plain
+ * ustar archives of regular files and directories; any other entry type
+ * (links, pax headers) means the bundle format changed, so it fails loudly
+ * instead of silently dropping files postgres would later need.
  */
-function materializeTarball(embeddedPath: string, baseName: string): URL {
-  const bytes = readFileSync(embeddedPath);
-  const hash = createHash('sha256').update(bytes).digest('hex').slice(0, 16);
-  const dir = join(tmpdir(), 'gbrain-pglite-assets');
-  mkdirSync(dir, { recursive: true });
-  // 'vector.tar.gz' -> 'vector-<hash>.tar.gz' (keep the .tar.gz suffix intact).
-  const dot = baseName.indexOf('.');
-  const dest = join(dir, `${baseName.slice(0, dot)}-${hash}${baseName.slice(dot)}`);
-  if (!(existsSync(dest) && statSync(dest).size === bytes.byteLength)) {
-    const tmp = `${dest}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync(tmp, bytes);
-    renameSync(tmp, dest);
+export function readExtensionFiles(tarballPath: string): ExtensionFile[] {
+  const tar = gunzipSync(readFileSync(tarballPath));
+  const text = (start: number, length: number) => tar.toString('latin1', start, start + length).replace(/\0.*$/s, '');
+  const files: ExtensionFile[] = [];
+  for (let offset = 0; offset + 512 <= tar.length && tar[offset] !== 0;) {
+    const name = text(offset + 345, 155) ? `${text(offset + 345, 155)}/${text(offset, 100)}` : text(offset, 100);
+    const size = parseInt(text(offset + 124, 12).trim() || '0', 8);
+    const type = text(offset + 156, 1);
+    const dataStart = offset + 512;
+    if (type === '0' || type === '') files.push({ path: name.replace(/^\.\//, ''), data: tar.subarray(dataStart, dataStart + size) });
+    else if (type !== '5') throw new Error(`Unsupported entry type '${type}' for ${name} in PGLite extension bundle ${tarballPath}`);
+    offset = dataStart + Math.ceil(size / 512) * 512;
   }
-  return pathToFileURL(dest);
+  return files;
+}
+
+/**
+ * An extension whose files are written into PGLite's filesystem after the
+ * backend starts, without PGLite's eager preload. The stock path streams the
+ * bundle through gunzip and compiles and links every `.so` before the backend
+ * starts, about 30 ms per open even when the command never touches a vector or
+ * trigram. Postgres loads `$libdir/<name>.so` on its first call into the
+ * library (a vector value, an HNSW or trigram index, CREATE EXTENSION), and
+ * emscripten's dlopen then loads the file synchronously from the filesystem.
+ * Nothing postgres runs before `init` (startup, WAL replay, PGLite's array-type
+ * query) calls into either library.
+ */
+function lazyExtension(name: string, files: ExtensionFile[]): Extension {
+  return {
+    name,
+    setup: async (_pg, emscriptenOpts) => {
+      let mod: { FS: { mkdirTree(path: string): void; writeFile(path: string, data: Uint8Array): void }; WASM_PREFIX: string } | null = null;
+      return {
+        emscriptenOpts: { ...emscriptenOpts, preRun: [...(emscriptenOpts.preRun ?? []), (m: NonNullable<typeof mod>) => { mod = m; }] },
+        init: async () => {
+          if (!mod) throw new Error(`PGLite never ran the ${name} extension's preRun hook`);
+          for (const file of files) {
+            const target = `${mod.WASM_PREFIX}/${file.path}`;
+            mod.FS.mkdirTree(target.slice(0, target.lastIndexOf('/')));
+            mod.FS.writeFile(target, file.data);
+          }
+        },
+      };
+    },
+  };
 }
 
 async function build(): Promise<EmbeddedPgliteOptions> {
@@ -194,31 +243,33 @@ async function build(): Promise<EmbeddedPgliteOptions> {
   ]);
   const fsBundle = new Blob([readFileSync(paths.fsBundle)]);
 
-  const vectorBundle = materializeTarball(paths.vectorTarball, 'vector.tar.gz');
-  const pgTrgmBundle = materializeTarball(paths.pgTrgmTarball, 'pg_trgm.tar.gz');
+  // Same extension names as the stock `{ vector, pg_trgm }` so the schema's
+  // CREATE EXTENSION statements resolve unchanged; see lazyExtension().
+  const vector = lazyExtension('pgvector', readExtensionFiles(paths.vectorTarball));
+  const pg_trgm = lazyExtension('pg_trgm', readExtensionFiles(paths.pgTrgmTarball));
 
-  // Custom extensions mirror the stock ones (dist/vector/index.js,
-  // dist/contrib/pg_trgm.js) but hand back the embedded tarball's file URL
-  // instead of `new URL("../vector.tar.gz", import.meta.url)`. vector passes the
-  // emscripten opts through exactly as the stock extension does.
-  const vector: Extension = {
-    name: 'pgvector',
-    setup: async (_pg, emscriptenOpts) => ({ emscriptenOpts, bundlePath: vectorBundle }),
+  // The package import stays lazy and after resolvePgliteAssetPaths(): a top-level runtime import fails at module
+  // load with the raw "Cannot find module" when the package is missing, before the tier-3 reinstall sentence above
+  // can run (#6512; the module's contract since #4116 is "never fail at load"). The literal specifier keeps the
+  // bundler embedding intact (scripts/check-pglite-embedded.sh).
+  const { PGlite } = await import('@electric-sql/pglite'); // engine-dynamic-import-ok (module must load without the package, #6512)
+  return {
+    pgliteWasmModule, initdbWasmModule, fsBundle, extensions: { vector, pg_trgm },
+    startParams: [...PGlite.defaultStartParams, ...PGLITE_START_PARAM_OVERRIDES],
   };
-  const pg_trgm: Extension = {
-    name: 'pg_trgm',
-    setup: async () => ({ bundlePath: pgTrgmBundle }),
-  };
-
-  return { pgliteWasmModule, initdbWasmModule, fsBundle, extensions: { vector, pg_trgm } };
 }
 
 /**
  * Resolve the embedded PGLite runtime options. Cached: the WASM modules compile
  * once per process and are reusable across every PGlite instance; the tarballs
- * materialize once. Spread the result into `PGlite.create({ ... })`.
+ * are read once. Spread the result into `PGlite.create({ ... })`.
  */
 export function getEmbeddedPgliteOptions(): Promise<EmbeddedPgliteOptions> {
   if (!cached) cached = build();
   return cached;
+}
+
+/** The options with `shared_buffers` overridden for one open; `size` unset returns them unchanged. */
+export function withSharedBuffers(options: EmbeddedPgliteOptions, size: string | undefined): EmbeddedPgliteOptions {
+  return size ? { ...options, startParams: [...options.startParams, '-c', `shared_buffers=${size}`] } : options;
 }

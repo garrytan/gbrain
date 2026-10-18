@@ -25,6 +25,7 @@ import { flushDecideWrites, __resetDecideStoreForTests, insertCalibration } from
 import { resetDecideSearchCache } from '../../src/core/search/decide-stage.ts';
 import { gradeRetrievalConfidence } from '../../src/core/search/crag.ts';
 import { packShape } from '../../src/core/ai/decide/pack.ts';
+import { __setDecideClockForTests } from '../../src/core/ai/decide/index.ts';
 import type { HybridSearchMeta, SearchResult } from '../../src/core/types.ts';
 
 let engine: PGLiteEngine;
@@ -191,7 +192,24 @@ describe('S3 evidence gate', () => {
       const baseline = await search();
       await setConfig({ ...S3_ON, 'decide.timeout_ms': '100' });
       setup();
-      const { results, meta } = await search();
+      // Timeout: only the transport's abort may end the stage. The clock is held, so a slow runner spending the
+      // 100 ms before the request is sent (here a stalled egress page check) cannot turn it into `late`.
+      const restoreClock = name === 'timeout' ? __setDecideClockForTests(() => 1_000_000) : () => {};
+      const executeRaw = engine.executeRaw.bind(engine);
+      if (name === 'timeout') {
+        engine.executeRaw = (async (sql: string, params?: unknown[]) => {
+          if (sql.includes('AS want(source_id, slug)')) await new Promise((r) => setTimeout(r, 150));
+          return executeRaw(sql, params as never);
+        }) as typeof engine.executeRaw;
+      }
+      let out: Awaited<ReturnType<typeof search>>;
+      try {
+        out = await search();
+      } finally {
+        engine.executeRaw = executeRaw;
+        restoreClock();
+      }
+      const { results, meta } = out;
       expect(results.map((r) => r.slug)).toEqual(baseline.results.map((r) => r.slug));
       expect(meta?.decide?.evidence).toMatchObject({ effective: 'off', skipped: reason });
       const rows = await receipts();

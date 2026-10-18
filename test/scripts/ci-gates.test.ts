@@ -18,7 +18,9 @@ function aggregate(workflow: Workflow, name: string, event: string, results: Rec
   const render = (value: string) => value
     .replace(/\$\{\{ needs\.([\w-]+)\.result \}\}/g, (_, job) => results[job] ?? 'success')
     .replaceAll('${{ ' + fullProfile + ' }}', String(event === 'schedule' || (event === 'workflow_dispatch' && fullCorpus)))
-    .replace(/\$\{\{ github.event_name \}\}/g, event);
+    .replace(/\$\{\{ github.event_name \}\}/g, event)
+    // The paid-lane switch is unset here; test/paid-lanes-switch-5903.test.ts covers its values.
+    .replaceAll('${{ vars.GBRAIN_PAID_LANES }}', '');
   const script = render(step.run!);
   const env = Object.fromEntries(Object.entries(step.env ?? {}).map(([key, value]) => [key, render(value)]));
   expect(script).not.toContain('${{');
@@ -40,7 +42,8 @@ describe('CI execution evidence', () => {
       expect(unit.jobs[name].if).toBe("${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}");
     }
     expect(e2e.jobs.tier2.needs).toBe('jsonb-parity');
-    expect(e2e.jobs.tier2.if).toBeUndefined();
+    // No event gating: the only condition is the repository-wide paid-lane switch (#5903).
+    expect(e2e.jobs.tier2.if).toBe("format('{0}', vars.GBRAIN_PAID_LANES) != '0'");
   });
 
   test('the verify job runs `bun run verify`, which dispatches through run-verify-parallel.sh', () => {
@@ -97,6 +100,18 @@ describe('CI execution evidence', () => {
     expect(excluded.length).toBeGreaterThan(0);
     const slow = e2e.jobs['coverage-full-slow'].steps.map(step => step.run ?? '').join('\n');
     for (const file of excluded) expect(slow).toContain(`bun test test/${file}`);
+  });
+
+  test('unit shard count agrees across the matrix, the shard step and the coverage manifest', () => {
+    const job = unit.jobs.test as Job & { strategy: { matrix: { shard: number[] } } };
+    const shards = job.strategy.matrix.shard;
+    expect(shards).toEqual(Array.from({ length: shards.length }, (_, i) => i + 1));
+    const run = job.steps.find(step => step.run?.includes('scripts/test-shard.sh'))!;
+    expect(run.name).toBe(`Run test shard \${{ matrix.shard }}/${shards.length}`);
+    expect(run.run).toContain(`scripts/test-shard.sh \${{ matrix.shard }} ${shards.length}`);
+    const merge = unit.jobs['coverage-report'].steps.find(step => step.name === 'Merge lanes')!.run!;
+    const expected = /--manifest-expect (\S+)/.exec(merge)![1].split(',').filter(lane => lane.startsWith('shard-'));
+    expect(expected).toEqual(shards.map(shard => `shard-${shard}`));
   });
 });
 

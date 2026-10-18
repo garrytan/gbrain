@@ -36,8 +36,8 @@ import type { BrainEngine } from '../engine.ts';
 import type { CapabilityReport } from '../capability.ts';
 import { acquireCorpusClaim, CORPUS_CLAIM_SUFFIX, CORPUS_INGESTED_SUFFIX } from '../sweep.ts';
 import { appendCheckpointManifest } from './session-state.ts';
-import { corpusFileSessionId, corpusTextForExtraction, readSegmentLedger, selfCaptureSidecarJson, HARVEST_RECEIPT_SUFFIX } from './corpus-segments.ts';
-import { corpusFileStat, readCorpusProgress, runCorpusWindows } from './corpus-windows.ts';
+import { corpusFileSessionId, corpusTextForExtraction, parseSegmentFileName, readSegmentLedger, selfCaptureSidecarJson, HARVEST_RECEIPT_SUFFIX } from './corpus-segments.ts';
+import { corpusFileStat, readCorpusProgress, runCorpusTurn, runCorpusWindows } from './corpus-windows.ts';
 import { isClaudeCliSelfSessionId } from '../ai/providers/claude-cli-scratch.ts';
 import { writeHeartbeat } from './hook-heartbeat.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -60,7 +60,10 @@ export { HARVEST_RECEIPT_SUFFIX };
 
 export interface HarvestJob {
   engine: BrainEngine;
+  /** #6268: the file's resolved source (its stamp or its session's frozen record), never a serve default. */
   sourceId: string;
+  /** #6268: `sources.incarnation` the source resolved to; binds the receipt and window progress. */
+  sourceIncarnation?: string;
   /** Harness session id — manifest lane + fact provenance. */
   sessionId: string;
   /** Absolute corpus dir (resolved by the CALLER the serve way). */
@@ -89,6 +92,9 @@ interface HarvestReceipt {
   seg: string;
   links: string[];
   ts: string;
+  /** #6268: the source + incarnation the links were extracted into; a replay under another is refused. */
+  source_id?: string;
+  source_incarnation?: string;
 }
 
 const queue: HarvestJob[] = [];
@@ -337,10 +343,9 @@ function logFirstHarvestError(job: HarvestJob, reason: string, e: unknown): void
     + '(logged once per serve run; later failures with this reason are counted in the hooks heartbeat only)');
 }
 
-/** `<sessionId>.seg-<hash12>.txt` → hash12 ('' when the name has no hash part). */
+/** A segment basename's content hash ('' when the name is not a segment). */
 function segHashFromName(file: string): string {
-  const m = /\.seg-([0-9a-f]+)\.txt$/.exec(file);
-  return m ? m[1] : '';
+  return parseSegmentFileName(file)?.hash ?? '';
 }
 
 async function runOne(job: HarvestJob): Promise<{
@@ -380,6 +385,10 @@ async function runOne(job: HarvestJob): Promise<{
     // Receipt retry path (codex round 2): extraction already happened; the
     // manifest publish failed transiently. Re-publish WITHOUT re-extracting.
     let receipt = await readReceipt(receiptPath);
+    if (receipt?.source_id !== undefined && (receipt.source_id !== job.sourceId
+      || (job.sourceIncarnation !== undefined && receipt.source_incarnation !== job.sourceIncarnation))) {
+      return { outcome: 'degraded', reason: 'receipt_source_mismatch' };
+    }
     let counts: { inserted: number; duplicate: number } | null = null;
     // #5887: the harvest extracts window 1 only; when more remains, `.progress`
     // stands in for `.ingested` and the sweep finishes the tail.
@@ -400,6 +409,7 @@ async function runOne(job: HarvestJob): Promise<{
       if (!(await isFactsExtractionEnabled(job.engine))) {
         return { outcome: 'degraded', reason: 'extraction_disabled' };
       }
+      if (await writerRefused(job)) return { outcome: 'degraded', reason: 'writer_coordinator_required' };
 
       const fileStat = corpusFileStat(await stat(full));
       const raw = await readFile(full, 'utf-8');
@@ -421,6 +431,8 @@ async function runOne(job: HarvestJob): Promise<{
         // Paste stripping happens per turn inside the window planner (#5812).
         run = await runCorpusWindows({
           full, raw, fileStat, maxWindows: 1, overBudget: () => false, signal: abort.signal,
+          failures: { fingerprint: await harvestFingerprint(job) },
+          ...(job.sourceIncarnation ? { source: { id: job.sourceId, incarnation: job.sourceIncarnation } } : {}),
           extract: (text) => runFactsPipeline(text, {
             engine: job.engine,
             sourceId: job.sourceId,
@@ -441,6 +453,10 @@ async function runOne(job: HarvestJob): Promise<{
       // no .ingested, no progress) and releases the claim — fully retryable.
       if (abort.signal.aborted || run.status === 'aborted') return { outcome: 'degraded', reason: 'aborted' };
       if (run.status === 'contended') return { outcome: 'degraded', reason: 'claimed_elsewhere' };
+      if (run.status === 'source_changed') return { outcome: 'degraded', reason: 'corpus_source_changed' };
+      // #6786/#6785: nothing was recorded for window 1; the sweep retries it under the same gates.
+      if (run.status === 'unavailable') return { outcome: 'degraded', reason: 'extract_skipped_chat_unavailable' };
+      if (run.status === 'backoff' || run.status === 'dead_lettered') return { outcome: 'degraded', reason: `corpus_window_${run.status}` };
       windowsPending = run.status !== 'complete';
       const r = run.result;
 
@@ -450,6 +466,8 @@ async function runOne(job: HarvestJob): Promise<{
         seg: segHashFromName(job.file),
         links: r.entity_slugs,
         ts: new Date().toISOString(),
+        source_id: job.sourceId,
+        ...(job.sourceIncarnation ? { source_incarnation: job.sourceIncarnation } : {}),
       };
       await writeFile(receiptPath, JSON.stringify(receipt) + '\n', { mode: 0o600 });
     }
@@ -569,31 +587,40 @@ async function runWritebackTurn(job: HarvestJob, full: string, ingestedPath: str
   if (!(await isFactsExtractionEnabled(job.engine))) {
     return { outcome: 'degraded', reason: 'extraction_disabled' };
   }
+  if (await writerRefused(job)) return { outcome: 'degraded', reason: 'writer_coordinator_required' };
 
   const raw = await readFile(full, 'utf-8');
   const { runFactsPipeline } = await import('../facts/backstop.ts');
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), job.timeoutMs ?? HARVEST_JOB_TIMEOUT_MS);
   currentAbort = abort;
-  let r: Awaited<ReturnType<typeof runFactsPipeline>>;
+  let turn: Awaited<ReturnType<typeof runCorpusTurn>>;
   try {
-    r = await runFactsPipeline(corpusTextForExtraction(job.file, raw), {
-      engine: job.engine,
-      sourceId: job.sourceId,
-      sessionId: job.sessionId,
-      source: 'hook:writeback',
-      mode: 'inline',
-      remote: false,
-      abortSignal: abort.signal,
-      notabilityFilter: gate.mode === 'salient' ? 'medium-and-up' : 'all',
-      // visibility deliberately unset → resolveDefaultVisibility [ENG-8] —
-      // the backstop inherits extract_facts' contract, never widened (req 6).
+    // #6785: the same failure cap as the sweep's turn files (one record per file).
+    turn = await runCorpusTurn({
+      full, signal: abort.signal, incarnation: job.sourceIncarnation ?? null,
+      failures: { fingerprint: await harvestFingerprint(job) },
+      extract: () => runFactsPipeline(corpusTextForExtraction(job.file, raw), {
+        engine: job.engine,
+        sourceId: job.sourceId,
+        sessionId: job.sessionId,
+        source: 'hook:writeback',
+        mode: 'inline',
+        remote: false,
+        abortSignal: abort.signal,
+        notabilityFilter: gate.mode === 'salient' ? 'medium-and-up' : 'all',
+        // visibility deliberately unset → resolveDefaultVisibility [ENG-8] —
+        // the backstop inherits extract_facts' contract, never widened (req 6).
+      }),
     });
   } finally {
     clearTimeout(timer);
     currentAbort = null;
   }
   if (abort.signal.aborted) return { outcome: 'degraded', reason: 'aborted' };
+  if (turn.status === 'unavailable') return { outcome: 'degraded', reason: 'extract_skipped_chat_unavailable' };
+  if (turn.status !== 'complete') return { outcome: 'degraded', reason: `corpus_window_${turn.status}` };
+  const r = turn.result;
   if (r.skipped_reason) {
     // Non-transport extraction skip (refusal / content_filter /
     // malformed_output / non_terminal_stop / chat_unavailable): NOT terminal
@@ -617,6 +644,31 @@ async function runWritebackTurn(job: HarvestJob, full: string, ingestedPath: str
     }) + '\n',
   );
   return { outcome: 'ok', inserted: r.inserted, duplicate: r.duplicate, superseded: r.superseded };
+}
+
+/**
+ * #6785: the facts-absorb owner-readiness preflight (#5362) before any model
+ * call. A claimed but not activated canonical worktree refuses the fence
+ * write after extraction; the turn stays banked (no sidecar) for the sweep,
+ * which holds it under the same check until `gbrain sources writer activate`.
+ */
+/** #6785: the extraction-config fingerprint a capped window re-arms on (null: never re-arms). */
+async function harvestFingerprint(job: HarvestJob): Promise<string | null> {
+  const { extractionConfigFingerprint } = await import('../facts/extraction-availability.ts');
+  return extractionConfigFingerprint(job.engine).catch(() => null);
+}
+
+async function writerRefused(job: HarvestJob): Promise<boolean> {
+  const { assertSourceLegacyWriter } = await import('../persistence/filesystem-guard.ts');
+  try {
+    await assertSourceLegacyWriter(job.engine, job.sourceId);
+    return false;
+  } catch (e) {
+    if ((e as { code?: unknown }).code !== 'writer_coordinator_required') throw e;
+    logFirstHarvestError(job, 'writer_coordinator_required', new Error(
+      `${e instanceof Error ? e.message : String(e)} Check the writer: gbrain sources writer status ${job.sourceId}`));
+    return true;
+  }
 }
 
 async function readReceipt(path: string): Promise<HarvestReceipt | null> {

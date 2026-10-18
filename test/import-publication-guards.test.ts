@@ -66,23 +66,23 @@ for (const legacy of [false, true]) {
     for (const engine of engines) {
       const slug = `merge-import/path-${legacy}`;
       const body = content('Unchanged content.');
-      await importFromContent(engine, slug, body, { noEmbed: true, sourceId, sourcePath: 'old.md' });
+      await importFromContent(engine, slug, body, { noEmbed: true, sourceId, sourcePath: `old-${legacy}.md` });
       if (legacy) {
         const page = (await engine.getPage(slug, { sourceId }))!;
         await engine.executeRaw('UPDATE pages SET content_hash=$1 WHERE id=$2', [contentHashLegacy(page), page.id]);
       }
       const before = await state(engine, slug);
       await expect(importFromContent(engine, slug, body, {
-        noEmbed: true, sourceId, sourcePath: 'current.md',
+        noEmbed: true, sourceId, sourcePath: `current-${legacy}.md`,
         beforeCommit: async tx => {
-          expect((await tx.getPage(slug, { sourceId }))!.source_path).toBe('current.md');
+          expect((await tx.getPage(slug, { sourceId }))!.source_path).toBe(`current-${legacy}.md`);
           throw new Error('fixture path publication rejected');
         },
       })).rejects.toThrow('fixture path publication rejected');
       expect(await state(engine, slug)).toEqual(before);
-      expect((await importFromContent(engine, slug, body, { noEmbed: true, sourceId, sourcePath: 'current.md' })).status).toBe('skipped');
+      expect((await importFromContent(engine, slug, body, { noEmbed: true, sourceId, sourcePath: `current-${legacy}.md` })).status).toBe('skipped');
       const after = await state(engine, slug);
-      expect(after.snapshot!.page.source_path).toBe('current.md');
+      expect(after.snapshot!.page.source_path).toBe(`current-${legacy}.md`);
       expect(after.snapshot!.revision).toBe(before.snapshot!.revision);
       expect(after.chunks).toEqual(before.chunks);
       expect(after.versions).toEqual(before.versions);
@@ -166,7 +166,11 @@ for (const intervening of ['none', 'page', 'chunks', 'indexing-context'] as cons
         expect(after.snapshot!.page.compiled_truth).toBe(expected.snapshot!.page.compiled_truth);
         expect(after.chunks.map(chunk => [chunk.id, chunk.chunk_index, chunk.chunk_text])).toEqual(
           expected.chunks.map(chunk => [chunk.id, chunk.chunk_index, chunk.chunk_text]));
-        expect(after.chunks.every(chunk => chunk.embedding_is_null)).toBe(intervening !== 'none');
+        // A4: a chunk the page still holds with the same text and embedding input keeps the
+        // vector built for it; the late fragment, a changed body or a changed context gets none.
+        const kept = intervening === 'none' ? after.chunks : intervening === 'chunks' ? before.chunks : [];
+        expect(after.chunks.filter(chunk => !chunk.embedding_is_null).map(chunk => chunk.chunk_text))
+          .toEqual(kept.map(chunk => chunk.chunk_text));
       } finally {
         if (previousMode === null) await engine.executeRaw("DELETE FROM config WHERE key='contextual_retrieval.mode'");
         else await engine.setConfig('contextual_retrieval.mode', previousMode);

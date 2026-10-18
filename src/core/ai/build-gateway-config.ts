@@ -4,8 +4,9 @@ import type { AIGatewayConfig } from './types.ts';
 import { mergedProviderEnv } from './provider-env.ts';
 
 /**
- * #3350: fold FILE-plane `provider_base_urls.{anthropic,openai}` into the
- * gateway env as `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL`, same shape as the
+ * #3350: fold FILE-plane `provider_base_urls.{anthropic,openai,google}` into the
+ * gateway env as `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` /
+ * `GOOGLE_GENERATIVE_AI_BASE_URL`, same shape as the
  * credential folds (env wins for keys carrying a real value). Native
  * providers read their base URL exclusively from env via
  * `resolveNativeBaseUrl` (which also normalizes the `/v1` suffix), so before
@@ -31,6 +32,7 @@ export function foldNativeBaseUrlsFromFilePlane(
   for (const [provider, envKey] of [
     ['anthropic', 'ANTHROPIC_BASE_URL'],
     ['openai', 'OPENAI_BASE_URL'],
+    ['google', 'GOOGLE_GENERATIVE_AI_BASE_URL'],
   ] as const) {
     const fileUrl = urls[provider];
     // Env wins: only fold when the env carries no real value.

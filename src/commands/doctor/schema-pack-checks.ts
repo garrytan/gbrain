@@ -6,7 +6,9 @@
 import type { BrainEngine } from '../../core/engine.ts';
 import type { Check } from '../doctor.ts';
 import type { MisroutedResult } from '../../core/multi-source-drift.ts';
+import { statSync } from 'node:fs';
 import { redactConnectionInfo } from '../../core/audit/redact-connection-info.ts';
+import { formatPackBytes, OVERSIZED_PACK_RUNBOOK, schemaPackMaxBytes } from '../../core/schema-pack/loader.ts';
 import { loadActivePackForLocalEngine } from '../../core/schema-pack/best-effort.ts';
 import { sanitizeTypeForDisplay, storedTypeMissesPack } from '../../core/schema-pack/type-usage.ts';
 
@@ -34,11 +36,20 @@ export async function checkSchemaPackActive(engine: BrainEngine): Promise<Check>
       dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
     } catch { /* engine.config may not exist on very old brains */ }
     const pack = await loadActivePack({ cfg: loadConfigFileOnly(), remote: false, dbConfig });
-    return {
-      name: 'schema_pack_active',
-      status: 'ok',
-      message: `Active pack: ${pack.manifest.name} v${pack.manifest.version} (${pack.manifest.page_types.length} types, ${pack.manifest.link_types?.length ?? 0} link verbs)`,
-    };
+    const summary = `Active pack: ${pack.manifest.name} v${pack.manifest.version} (${pack.manifest.page_types.length} types, ${pack.manifest.link_types?.length ?? 0} link verbs)`;
+    // #6432: a mutable pack file past the warn bound is almost always the
+    // backslash-doubling growth an older release produced; say so before
+    // every process pays for loading it, and before it hits the hard bound.
+    const oversized = await oversizedMutablePack(pack.manifest.name);
+    if (oversized) {
+      return {
+        name: 'schema_pack_active',
+        status: 'warn',
+        message: `${summary}. Its file is ${formatPackBytes(oversized.bytes)} (warn bound ${formatPackBytes(oversized.bound)}; loading refuses at ${formatPackBytes(schemaPackMaxBytes())}). Open ${oversized.path} and restore the grown quoted lines (usually a link-type regex) by hand; runbook ${OVERSIZED_PACK_RUNBOOK}.`,
+        details: { code: 'schema_pack_oversized', path: oversized.path, bytes: oversized.bytes, warn_bytes: oversized.bound, docs: OVERSIZED_PACK_RUNBOOK },
+      };
+    }
+    return { name: 'schema_pack_active', status: 'ok', message: summary };
   } catch (e) {
     return {
       name: 'schema_pack_active',
@@ -49,6 +60,22 @@ export async function checkSchemaPackActive(engine: BrainEngine): Promise<Check>
 }
 
 const SCHEMA_PACK_DOCS = 'docs/architecture/schema-packs.md#undeclared-page-types';
+
+/** The mutable active pack's file when it exceeds the warn bound (`GBRAIN_SCHEMA_PACK_WARN_BYTES`, default 1 MiB), else null. */
+async function oversizedMutablePack(name: string): Promise<{ path: string; bytes: number; bound: number } | null> {
+  const raw = process.env.GBRAIN_SCHEMA_PACK_WARN_BYTES;
+  const parsed = raw ? Number(raw) : NaN;
+  const bound = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 1024 * 1024;
+  try {
+    const { BUNDLED_PACK_NAMES, locateMutablePackFile } = await import('../../core/schema-pack/mutate.ts');
+    if (BUNDLED_PACK_NAMES.has(name)) return null;
+    const { path } = locateMutablePackFile(name);
+    const bytes = statSync(path).size;
+    return bytes > bound ? { path, bytes, bound } : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * #5432: a check that could not read its input says "not verified" (warn),

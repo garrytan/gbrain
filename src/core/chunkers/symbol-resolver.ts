@@ -55,7 +55,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { currentTextProjectionFilter } from '../search/safe-chunks.ts';
+import { chunkVisibleFilter } from '../search/safe-chunks.ts';
 
 /**
  * Bump this ISO timestamp whenever the extractor or resolver shape
@@ -141,7 +141,7 @@ export async function resolveSymbolEdgesIncremental(
          JOIN pages p ON p.id = cc.page_id
          JOIN sources s ON s.id = p.source_id
         WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT s.archived
-          AND ${currentTextProjectionFilter('p')}
+          AND ${chunkVisibleFilter('p', 'cc')}
           AND (cc.edges_backfilled_at IS NULL
                OR cc.edges_backfilled_at < $2::timestamptz)
         ORDER BY cc.id
@@ -155,7 +155,7 @@ export async function resolveSymbolEdgesIncremental(
         `SELECT cc.id, cc.page_id, p.slug FROM content_chunks cc
          JOIN pages p ON p.id=cc.page_id JOIN sources s ON s.id=p.source_id
          WHERE cc.id=ANY($1::int[]) AND p.source_id=$2 AND p.deleted_at IS NULL AND NOT s.archived
-           AND ${currentTextProjectionFilter('p')}
+           AND ${chunkVisibleFilter('p', 'cc')}
            AND (cc.edges_backfilled_at IS NULL OR cc.edges_backfilled_at < $3::timestamptz)
          ORDER BY cc.id`, [chunks.map(chunk => chunk.id), opts.sourceId, EDGE_EXTRACTOR_VERSION_TS],
       );
@@ -219,6 +219,7 @@ async function processChunkBatch(
   const candidatesByKey = new Map<string, ChunkCandidate[]>();
   if (pagesToProbe.length > 0) {
     const rows = await engine.executeRaw<{ id: number; page_id: number; symbol_name_qualified: string }>(
+      // chunk-visibility-ok: code symbol candidates: code pages are never segmented (chooseBodyStorage)
       `SELECT id, page_id, symbol_name_qualified
          FROM content_chunks
         WHERE page_id = ANY($1::int[])

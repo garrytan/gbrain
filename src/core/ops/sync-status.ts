@@ -100,6 +100,7 @@ const sync_brain: Operation = {
       noEmbed: (p.no_embed as boolean) || false,
       noPull: (p.no_pull as boolean) || false,
       full: (p.full as boolean) || false,
+      drainHolder: { kind: 'mcp', id: null },
       ...sourceOpts,
     });
   },

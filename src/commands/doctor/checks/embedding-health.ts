@@ -20,6 +20,8 @@ import { checkError, doctorVerify, infoCheck, keylessEnablementFix } from '../ch
 import { brainRoutingArgs } from '../../../core/brain-resolver.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import { embeddingProviderIsFree } from '../../../core/embed-consent.ts';
+import { providerDeclineRecord } from '../../../core/setup/local-receipts.ts';
+import { providerConsentFix } from './provider-consent.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
 /** The opt-in live probe: one ~9-token embedding request, so `paid` + `egress` (runs verbatim once approved). */
@@ -148,6 +150,10 @@ async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
           details,
         });
       }
+    } else if (!(await embeddingProviderIsFree(configuredModel)) && providerDeclineRecord()) {
+      const fix = providerConsentFix(providerDeclineRecord()!);
+      checks.push(infoCheck('embedding_provider', `Not probed: skipped by consent. gbrain setup recorded provider use as declined, so the probe sends nothing to ${configuredModel}. The user decides; to allow provider use they run: ${fix.argv!.join(' ')}`,
+        'disabled_by_choice', fix, { probed: false, model: configuredModel, dimensions: configuredDims }));
     } else {
       // Live embed test
       const start = Date.now();

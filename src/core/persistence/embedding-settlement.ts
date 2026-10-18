@@ -24,7 +24,12 @@
  *
  * Every state change is a compare-and-set on state, attempts, execution token
  * and recovery. A candidate that changed since planning is `changed_since_preview`.
+ * Two failed effects are not candidates (GBRA-130 A-15): one with parked targets
+ * (`targets_parked`; `gbrain sources writer retry-effects` retries those) and a
+ * zero-norm refusal, which a retry repeats by design.
  */
+import { trueUpRequests } from './receipt-true-up.ts';
+import { EMBEDDING_ZERO_NORM } from '../ai/embedding-guard.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { opError, OperationError } from '../ops/contract.ts';
@@ -54,7 +59,8 @@ export interface EmbeddingCandidate {
 
 /** Stale queued (over an hour, or re-queued by this repair and not yet settled) and failed embedding effects of committed writes. */
 export const EMBEDDING_CANDIDATE_WHERE = `e.kind='embedding' AND r.state='committed' AND e.recovery IS NULL AND e.execution_token IS NULL
-  AND (e.state='failed' OR e.state='queued' AND (e.updated_at < now() - interval '1 hour' OR e.data ? 'repair_requeued_at'))`;
+  AND (e.state='failed' OR e.state='queued' AND (e.updated_at < now() - interval '1 hour' OR e.data ? 'repair_requeued_at'))
+  AND NOT (e.state='failed' AND e.error_code IN ('targets_parked','${EMBEDDING_ZERO_NORM}'))`;
 
 export async function listEmbeddingCandidates(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds: string[]): Promise<EmbeddingCandidate[]> {
   const rows = await engine.executeRaw<EmbeddingCandidate>(`SELECT e.id::text AS effect_id, r.source_id, r.slug, r.request_id::text AS request_id,
@@ -85,6 +91,15 @@ export function embeddingGrantId(runId: string, effectId: string | number): stri
  */
 export async function settleEmbeddingEffect(engine: BrainEngine, candidate: Pick<EmbeddingCandidate, 'effect_id' | 'state' | 'attempts'>,
   opts: { dryRun: boolean; config: GBrainConfig | null; hostId: string; runId?: string }): Promise<EmbeddingSettlement> {
+  let requestId: string | undefined;
+  const settlement = await settleInTransaction(engine, candidate, opts, id => { requestId = id; });
+  // #6696 (A1): the request's reservation shrinks once this commit settled its last effect, outside the settling transaction.
+  if (requestId && !opts.dryRun) await trueUpRequests(engine, [requestId]);
+  return settlement;
+}
+
+function settleInTransaction(engine: BrainEngine, candidate: Pick<EmbeddingCandidate, 'effect_id' | 'state' | 'attempts'>,
+  opts: { dryRun: boolean; config: GBrainConfig | null; hostId: string; runId?: string }, settled: (requestId: string) => void): Promise<EmbeddingSettlement> {
   return engine.transaction(async tx => {
     await declarePersistenceProtocol(tx);
     const [effect] = await tx.executeRaw<PersistenceEffect & { request_state: string }>(`SELECT e.*, r.state AS request_state
@@ -99,6 +114,7 @@ export async function settleEmbeddingEffect(engine: BrainEngine, candidate: Pick
           outcome=$3::text::jsonb, data=data-'repair_requeued_at', updated_at=now()
         WHERE id=$1 AND state=$2 AND attempts=$4 AND execution_token IS NULL AND recovery IS NULL RETURNING id`,
       [effect.id, effect.state, JSON.stringify(outcome), effect.attempts]);
+      if (rows.length) settled(effect.request_id);
       return rows.length > 0;
     };
     // The obligation of a removed (or replaced) source incarnation is moot: nothing can read those vectors.

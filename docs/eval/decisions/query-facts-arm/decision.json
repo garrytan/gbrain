@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "decision_id": "query-facts-arm",
+  "plan": "MEMORY_PROOF_WAVE fix lane (proposal 4)",
+  "title": "Facts arm in query: matching active saved facts as rows inside the caller's row count and budget",
+  "verdict_type": "quality",
+  "stage": "dev",
+  "candidate": {
+    "gbrain": "garrytan/gbrain@16288b95c",
+    "config": {
+      "search.query_facts_arm": "true"
+    }
+  },
+  "baselines": [
+    {
+      "gbrain": "garrytan/gbrain@16288b95c",
+      "config": {
+        "search.query_facts_arm": "false"
+      },
+      "note": "same build, same brain writes, same query op call, key off"
+    }
+  ],
+  "preregistration": "README.md in this directory, pushed in garrytan/gbrain@a87c3e2af before any code or gated run",
+  "models": {
+    "reader": "anthropic:claude-sonnet-5-5",
+    "judge": "anthropic:claude-sonnet-5-5 (B2 fixed judge for ambiguous answers)",
+    "embedding": "voyage:voyage-4 (1024d)",
+    "selection": "B-suite fixed reader and judge; gbrain default embedding"
+  },
+  "gates": {
+    "1": "B2 corrections (gbrain-evals eval/workload-suites, corrections-v1, seed 20261006, 100 items), forget-then-remember arm key on vs off; pass if key-on corrected-value accuracy is higher at after_1_write and after_5_writes and its stale-answer rate is not higher at either; edit-sync and append lose no more than 2 points with the key on",
+    "2": "NamedThingBench, relational retrieval-quality, LongMemEval nightly through the query op key on vs off; recall@10 over page rows; pass if no question's recall@10 is lower with the key on",
+    "3": "harness lane: LongMemEval knowledge-update and PersonaMem dev slices (optional; not run)",
+    "1b": "B2 corrections with --remember-valid-from (remember gets each item's correction_timestamp as valid_from), same suite, seed, items, reader, judge and budget as gate 1; forget-then-remember key on vs off; pass if key-on corrected accuracy is higher at after_1_write and after_5_writes and stale not higher; edit-sync and append lose no more than 2 points with the key on",
+    "2_revised": "gate 2's three corpora plus the two one-saved-fact-per-question diagnostic copies; pass if no question's recall@10 is lower with the key on in any of the five"
+  },
+  "decision_rule": "default-on only if gates 1 and 2 pass (and gate 3 if it runs); off until then",
+  "budget": {
+    "max_usd": 40,
+    "metered_spend_usd": 26.05
+  },
+  "reproduce": {
+    "gate_1": "cd gbrain-evals && bun eval/workload-suites/bench.ts corrections --phase answer --arms gbrain-forget-remember --budget-usd 6 --out <dir> --gbrain <gbrain>@16288b95c [--gbrain-search-config search.query_facts_arm=true] [--remember-valid-from]; then the same command with --phase score. The two bracketed flags come from bench-flags.patch in the gbrain-evals mirror of this record, applied to gbrain-evals 00baf2b.",
+    "gate_2": "bun evals/entity-anchoring/regression.ts --json --key search.query_facts_arm",
+    "gate_1b": "cd gbrain-evals (d01d3bc or later) && bun eval/workload-suites/bench.ts corrections --phase answer --arms <gbrain-forget-remember | gbrain-edit-sync,gbrain-append> --remember-valid-from [--gbrain-search-config search.query_facts_arm=true] --budget-usd <cap> --out <dir> --gbrain <gbrain>@947536f4c; then --phase score",
+    "gate_2_revised": "bun evals/entity-anchoring/regression.ts --json --key search.query_facts_arm (field pass_with_facts_diagnostics)"
+  },
+  "candidate_gate_1b": {
+    "gbrain": "garrytan/gbrain@947536f4c",
+    "config": {
+      "search.query_facts_arm": "true"
+    },
+    "change": "fact rows take spare capacity only (free slots under the row count, whole rows into the budget the pages leave)"
+  },
+  "baselines_gate_1b": [
+    {
+      "gbrain": "garrytan/gbrain@947536f4c",
+      "config": {
+        "search.query_facts_arm": "false"
+      },
+      "note": "same build, same correction-dated writes, key off"
+    }
+  ],
+  "preregistration_gate_1b": "README.md section 'Gate 1b and revised gate 2: preregistered' in garrytan/gbrain@c672352d4 (also gbrain-evals capy/mpw-gbrain-verdicts 0b2a6ae), before any gate 1b or revised gate 2 run",
+  "decision_rule_gate_1b": "default-on only if gate 1b and revised gate 2 both pass",
+  "budget_gate_1b": {
+    "max_usd": 30,
+    "metered_spend_usd": 18.05
+  }
+}

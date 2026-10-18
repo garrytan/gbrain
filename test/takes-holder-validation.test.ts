@@ -2,8 +2,8 @@
  * Validate v0.32 EXP-4 holder runtime grammar.
  *
  * Cross-modal eval (2026-05-10) scored attribution at 6.5/10. The #1 error
- * was holder/subject confusion — agents writing `holder=Garry` (capitalized),
- * `holder=people/Garry-Tan` (mixed case), or `holder=world/garry-tan`
+ * was holder/subject confusion — agents writing `holder=Alice` (capitalized),
+ * `holder=people/Alice-Example` (mixed case), or `holder=world/alice-example`
  * (slug stuffed into world). Codex review #3 caught that the initial regex
  * (`[a-z0-9-]+`) would also warn on legitimate slugs like `companies/acme.io`
  * and `people/foo_bar` — it must reuse the actual SLUG_SEGMENT_PATTERN
@@ -35,7 +35,7 @@ describe('isValidHolder — canonical forms', () => {
   });
 
   test('people/<slug> is valid', () => {
-    expect(isValidHolder('people/garry-tan')).toBe(true);
+    expect(isValidHolder('people/alice-example')).toBe(true);
     expect(isValidHolder('people/jared-friedman')).toBe(true);
   });
 
@@ -58,7 +58,7 @@ describe('isValidHolder — canonical forms', () => {
 
 describe('isValidHolder — legacy bare-slug form (v0.32 transition)', () => {
   test('bare lowercase identifier is allowed (production brains shipped this way)', () => {
-    expect(isValidHolder('garry')).toBe(true);
+    expect(isValidHolder('alice')).toBe(true);
     expect(isValidHolder('alice')).toBe(true);
   });
 
@@ -70,21 +70,21 @@ describe('isValidHolder — legacy bare-slug form (v0.32 transition)', () => {
 
 describe('isValidHolder — eval-flagged error modes (caught)', () => {
   test('uppercase letters rejected', () => {
-    expect(isValidHolder('Garry')).toBe(false);
-    expect(isValidHolder('GARRY')).toBe(false);
+    expect(isValidHolder('Alice')).toBe(false);
+    expect(isValidHolder('ALICE')).toBe(false);
   });
 
   test('mixed case in slug rejected', () => {
-    expect(isValidHolder('people/Garry-Tan')).toBe(false);
+    expect(isValidHolder('people/Alice-Example')).toBe(false);
     expect(isValidHolder('companies/Acme')).toBe(false);
   });
 
   test('slug stuffed into world rejected', () => {
-    expect(isValidHolder('world/garry-tan')).toBe(false);
+    expect(isValidHolder('world/alice-example')).toBe(false);
   });
 
   test('unrecognized prefix rejected', () => {
-    expect(isValidHolder('users/garry')).toBe(false);
+    expect(isValidHolder('users/alice')).toBe(false);
     expect(isValidHolder('agents/openclaw')).toBe(false);
   });
 
@@ -98,12 +98,12 @@ describe('isValidHolder — eval-flagged error modes (caught)', () => {
   });
 
   test('contains spaces rejected', () => {
-    expect(isValidHolder('garry tan')).toBe(false);
-    expect(isValidHolder('people/garry tan')).toBe(false);
+    expect(isValidHolder('alice example')).toBe(false);
+    expect(isValidHolder('people/alice example')).toBe(false);
   });
 
   test('contains forward-slash beyond namespace rejected', () => {
-    expect(isValidHolder('people/garry/extra')).toBe(false);
+    expect(isValidHolder('people/alice/extra')).toBe(false);
   });
 });
 
@@ -113,7 +113,7 @@ describe('HOLDER_REGEX export shape', () => {
   });
 
   test('is anchored (does not match substrings)', () => {
-    // The regex must use ^...$ so partial-match attacks like "world\nGarry"
+    // The regex must use ^...$ so partial-match attacks like "world\nAlice"
     // don't slip through.
     expect(HOLDER_REGEX.test('world extra')).toBe(false);
     expect(HOLDER_REGEX.test('extra world')).toBe(false);
@@ -125,9 +125,9 @@ describe('SLUG_SEGMENT_PATTERN — shared contract (Codex #3)', () => {
     // Pattern matches the same character class slugifySegment() keeps:
     // [a-z0-9._-]. Anchoring is up to consumers (HOLDER_REGEX wraps in ^...$).
     expect(SLUG_SEGMENT_PATTERN).toBeInstanceOf(RegExp);
-    const m = 'garry-tan'.match(SLUG_SEGMENT_PATTERN);
+    const m = 'alice-example'.match(SLUG_SEGMENT_PATTERN);
     expect(m).not.toBeNull();
-    expect(m![0]).toBe('garry-tan');
+    expect(m![0]).toBe('alice-example');
   });
 
   test('matches the strict subset that v0.32 holder validation expects', () => {
@@ -147,35 +147,35 @@ describe('parseTakesFence — TAKES_HOLDER_INVALID warning emission', () => {
   }
 
   test('valid canonical holder → no TAKES_HOLDER_INVALID warning', () => {
-    const { takes, warnings } = parseTakesFence(bodyWithHolder('people/garry-tan'));
+    const { takes, warnings } = parseTakesFence(bodyWithHolder('people/alice-example'));
     expect(takes).toHaveLength(1);
     expect(warnings.some(w => w.includes('TAKES_HOLDER_INVALID'))).toBe(false);
   });
 
   test('legacy bare-slug → no TAKES_HOLDER_INVALID warning (v0.32 compat)', () => {
-    const { takes, warnings } = parseTakesFence(bodyWithHolder('garry'));
+    const { takes, warnings } = parseTakesFence(bodyWithHolder('alice'));
     expect(takes).toHaveLength(1);
     expect(warnings.some(w => w.includes('TAKES_HOLDER_INVALID'))).toBe(false);
   });
 
   test('uppercase holder → warning emitted, row preserved', () => {
-    const { takes, warnings } = parseTakesFence(bodyWithHolder('Garry'));
+    const { takes, warnings } = parseTakesFence(bodyWithHolder('Alice'));
     expect(takes).toHaveLength(1); // Codex #4 — markdown source-of-truth: row preserved
-    expect(takes[0].holder).toBe('Garry'); // raw value retained
+    expect(takes[0].holder).toBe('Alice'); // raw value retained
     const holderWarn = warnings.find(w => w.includes('TAKES_HOLDER_INVALID'));
     expect(holderWarn).toBeDefined();
-    expect(holderWarn).toContain('"Garry"');
+    expect(holderWarn).toContain('"Alice"');
   });
 
-  test('world/garry-tan → warning emitted', () => {
-    const { warnings } = parseTakesFence(bodyWithHolder('world/garry-tan'));
+  test('world/alice-example → warning emitted', () => {
+    const { warnings } = parseTakesFence(bodyWithHolder('world/alice-example'));
     const holderWarn = warnings.find(w => w.includes('TAKES_HOLDER_INVALID'));
     expect(holderWarn).toBeDefined();
-    expect(holderWarn).toContain('"world/garry-tan"');
+    expect(holderWarn).toContain('"world/alice-example"');
   });
 
-  test('users/garry → warning emitted', () => {
-    const { warnings } = parseTakesFence(bodyWithHolder('users/garry'));
+  test('users/alice → warning emitted', () => {
+    const { warnings } = parseTakesFence(bodyWithHolder('users/alice'));
     const holderWarn = warnings.find(w => w.includes('TAKES_HOLDER_INVALID'));
     expect(holderWarn).toBeDefined();
   });
@@ -183,7 +183,7 @@ describe('parseTakesFence — TAKES_HOLDER_INVALID warning emission', () => {
 
 describe('classifyErrorCode — TAKES_HOLDER_INVALID coverage', () => {
   test('matches the literal token', () => {
-    expect(classifyErrorCode('TAKES_HOLDER_INVALID: "Garry" in row 1')).toBe('TAKES_HOLDER_INVALID');
+    expect(classifyErrorCode('TAKES_HOLDER_INVALID: "Alice" in row 1')).toBe('TAKES_HOLDER_INVALID');
   });
 
   test('case-insensitive', () => {

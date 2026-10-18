@@ -14,7 +14,7 @@ import {
   cosineSimilarity,
   classifyAgainstCandidates,
 } from '../src/core/facts/classify.ts';
-import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { __setChatTransportForTests, configureGateway, resetGateway, type ChatOpts } from '../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import type { FactRow } from '../src/core/engine.ts';
 
@@ -50,7 +50,9 @@ function makeFact(overrides: Partial<FactRow> & { id: number }): FactRow {
   };
 }
 
-const EMBED_LEN = 8;
+/** voyage-4's width: the cosine defaults come from its calibrated threshold (supersession-threshold.ts). */
+const EMBED_LEN = 1024;
+const VOYAGE = { embeddingModel: 'voyage:voyage-4' };
 function vec(...values: number[]): Float32Array {
   const a = new Float32Array(EMBED_LEN);
   for (let i = 0; i < values.length; i++) a[i] = values[i];
@@ -96,6 +98,7 @@ describe('classifyAgainstCandidates', () => {
     const result = await classifyAgainstCandidates(
       { fact: 'new', kind: 'fact', embedding: vec(1) },
       candidates,
+      VOYAGE,
     );
     expect(result.decision).toBe('duplicate');
     expect((result as { matched_id: number }).matched_id).toBe(42);
@@ -115,11 +118,20 @@ describe('classifyAgainstCandidates', () => {
     const result = await classifyAgainstCandidates(
       { fact: 'new', kind: 'fact', embedding: a },
       candidates,
+      VOYAGE,
     );
     // Gateway configured with env:{} above → isAvailable('chat') is false →
     // straight to cosine fallback. cos ≈ 0.93 ≥ 0.92 → duplicate.
     expect(result.decision).toBe('duplicate');
     expect((result as { reason: string }).reason).toBe('cosine_fallback');
+  });
+
+  test('an uncalibrated embedding model has no cosine fast path or cosine fallback', async () => {
+    const candidates = [makeFact({ id: 42, embedding: vec(1) })];
+    for (const opts of [{}, { embeddingModel: 'openai:text-embedding-3-large' }]) {
+      const result = await classifyAgainstCandidates({ fact: 'new', kind: 'fact', embedding: vec(1) }, candidates, opts);
+      expect(result).toEqual({ decision: 'independent', reason: 'cosine_fallback' });
+    }
   });
 
   test('no embedding on new fact → falls through to classifier path or cosine fallback', async () => {
@@ -159,10 +171,36 @@ describe('classify gate — key-aware, engine-free (CX10)', () => {
       const r = await classifyAgainstCandidates(
         { fact: 'x', kind: 'fact', embedding: vec(0.93, Math.sqrt(1 - 0.93 * 0.93), 0) },
         [existing],
+        VOYAGE,
       );
       expect(r.reason).toBe('cosine_fallback');
       expect(r.decision).toBe('duplicate');
       if (r.decision === 'duplicate') expect(r.matched_id).toBe(1);
     });
+  });
+});
+
+describe('classifier on a thinking route (#5331)', () => {
+  test('asks with thinking off, so a reasoning model returns its verdict inside the 200-token cap', async () => {
+    configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: { ANTHROPIC_API_KEY: 'sk-test' } });
+    __setChatTransportForTests(async (o: ChatOpts) => ({
+      text: o.thinking === 'off' ? '{"decision":"supersede","matched_id":7}' : '',
+      blocks: [],
+      stopReason: o.thinking === 'off' ? 'end' : 'length',
+      usage: { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-haiku-5-5',
+      providerId: 'anthropic',
+    }));
+    try {
+      const result = await classifyAgainstCandidates(
+        { fact: 'Alice works at Widget Co now', kind: 'fact', embedding: vec(1, 0) },
+        [makeFact({ id: 7, fact: 'Alice works at Acme Example', embedding: vec(0, 1) })],
+        { model: 'anthropic:claude-haiku-5-5' },
+      );
+      expect(result).toMatchObject({ decision: 'supersede', supersedes_id: 7, reason: 'classifier' });
+    } finally {
+      __setChatTransportForTests(null);
+      configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
+    }
   });
 });

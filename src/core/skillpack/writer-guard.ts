@@ -6,8 +6,12 @@ import type { SqlEngine } from '../persistence/model.ts';
 
 function refuse(error: unknown): never {
   if (error instanceof OperationError && error.code === 'writer_coordinator_required') {
-    throw new OperationError('skill_bundle_required', 'Legacy skill writers cannot change a managed canonical worktree.',
-      'Use put_skill with the catalog expected_revision and complete approved file bundle; an existing pack requires host-authorized adoptSharedSkillpack adoption. Run legacy optimization in an unmanaged working copy, then submit the reviewed result through put_skill.');
+    // #5606: name the exact managed route, so the refusal is not a dead end for skillpack sync / reference --apply-clean-hunks.
+    throw new OperationError('skill_bundle_required', 'Legacy skill writers (skillpack sync, reference --apply-clean-hunks, copy) cannot change a managed canonical worktree.',
+      'Preview the drift read-only with gbrain skillpack reference <slug> (no --apply-clean-hunks). To converge, publish the reviewed bundle through the coordinator: '
+      + 'gbrain call --source <source> import_skill_proposal "$(cat <private reviewed-proposal.json>)" with the current expected_revision, a unique request_id, the complete files and expected_hashes '
+      + '(docs/guides/shared-brain-skills.md#publish-reviewed-filesystem-edits), or put_skill with the catalog expected_revision; an existing pack requires host-authorized adoptSharedSkillpack adoption. '
+      + 'Run legacy optimization in an unmanaged working copy and submit the reviewed result the same way.');
   }
   throw error;
 }

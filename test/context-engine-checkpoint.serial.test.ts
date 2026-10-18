@@ -67,7 +67,7 @@ describe('checkpoint compaction (cathedral 5)', () => {
     // is SPOOLED regardless (durability first; sweep is the backstop).
     expect(bag.gbrain_checkpoint?.status).toBe('banked');
     expect(bag.gbrain_checkpoint?.reason).toBe('no_engine');
-    const corpus = join(home!, '.gbrain', 'transcripts', 'corpus');
+    const corpus = join(home!, '.gbrain', 'transcripts', 'corpus', 'sourced'); // #6268: the spool
     const segs = readdirSync(corpus).filter((f) => f.startsWith('oc-sess.seg-') && f.endsWith('.txt'));
     expect(segs).toHaveLength(1);
     const body = readFileSync(join(corpus, segs[0]), 'utf8');
@@ -86,7 +86,7 @@ describe('checkpoint compaction (cathedral 5)', () => {
     writeFileSync(sessionFile, lines.join('\n') + '\n');
     const engine = createGBrainContextEngine({ workspaceDir: tmpDir });
     await engine.compact({ sessionId: 'oc-long', sessionFile });
-    const corpus = join(home!, '.gbrain', 'transcripts', 'corpus');
+    const corpus = join(home!, '.gbrain', 'transcripts', 'corpus', 'sourced'); // #6268: the spool
     const segs = readdirSync(corpus).filter((f) => f.startsWith('oc-long.seg-'));
     expect(segs).toHaveLength(1);
     const body = readFileSync(join(corpus, segs[0]), 'utf8');
@@ -209,7 +209,7 @@ describe('checkpoint compaction (cathedral 5)', () => {
     writeFileSync(sessionFile, [sessionLine, msg('window text for the poll pin')].join('\n') + '\n');
     const engine = createGBrainContextEngine({ workspaceDir: tmpDir });
     await engine.compact({ sessionId: 'oc-poll', sessionFile });
-    const corpus = join(home!, '.gbrain', 'transcripts', 'corpus');
+    const corpus = join(home!, '.gbrain', 'transcripts', 'corpus', 'sourced'); // #6268: the spool
     const expectSeg = readSegmentLedger(corpus, 'oc-poll')[0]?.hash;
     expect(expectSeg).toBeTruthy();
 
@@ -288,7 +288,7 @@ describe('checkpoint compaction (cathedral 5)', () => {
     expect(bag.gbrain_checkpoint?.status).toBe('banked'); // rung 2 IPC acked
 
     // The spool landed under the SANITIZED key — never a path-shaped filename.
-    const corpus = join(home!, '.gbrain', 'transcripts', 'corpus');
+    const corpus = join(home!, '.gbrain', 'transcripts', 'corpus', 'sourced'); // #6268: the spool
     const files = readdirSync(corpus);
     const segs = files.filter((f) => f.startsWith(`${SAFE_ID}.seg-`) && f.endsWith('.txt'));
     expect(segs).toHaveLength(1);
@@ -314,7 +314,7 @@ describe('checkpoint compaction (cathedral 5)', () => {
     expect(polls.length).toBeGreaterThanOrEqual(1);
     for (const s of seen) expect(s.sessionId).toBe(SAFE_ID);
     // The flush ask names the sanitized segment file — same key end to end.
-    expect(banks[0].flushCorpusFile).toBe(`${SAFE_ID}.seg-${serveSeg}.txt`);
+    expect(banks[0].flushCorpusFile).toBe(`${SAFE_ID}.seg-${serveSeg}.src-_unresolved.txt`);
   });
 
   it('F5/CK8: sanitizeEngineSessionId — null for empty/all-dots/non-strings; real charset + clamp pins', () => {

@@ -336,9 +336,24 @@ describe('junk_entity_hubs connector contact pages (#6158)', () => {
     expect(check.message).not.toContain('generic-token');
     expect(check.message).not.toContain('junk_hub_exempt');
     expect(check.message).toContain('people/alice-example [google-example]');
-    expect((check as { fix_unavailable_reason?: string }).fix_unavailable_reason).toBe('operator_judgement');
+    // W14 P4.5: real remedies instead of "open policy question": cross_source makes the stub yield to its twin.
+    expect(check.message).not.toContain('open policy question');
+    expect(check.message).toContain('link_resolution.cross_source true');
+    expect(check.message).toContain('--contacts-dir');
+    expect((check as { fix_unavailable_reason?: string }).fix_unavailable_reason).toBeUndefined();
+    expect((check as { fix?: { argv: string[] } }).fix?.argv).toEqual(['gbrain', 'config', 'set', 'link_resolution.cross_source', 'true']);
     const details = check.details as { hubs: unknown[]; connector_twins: Array<Record<string, unknown>> };
     expect(details.hubs).toEqual([]);
-    expect(details.connector_twins).toEqual([expect.objectContaining({ slug: 'people/alice-example', source_id: 'google-example', canonical_twin: 'people/alice-example' })]);
+    expect(details.connector_twins).toEqual([expect.objectContaining({ slug: 'people/alice-example', source_id: 'google-example',
+      canonical_twin: 'people/alice-example', canonical_twin_source: 'default' })]);
+    // With cross_source already on, the next step is the mention pass itself.
+    await engine.setConfig('link_resolution.cross_source', 'true');
+    try {
+      const on = await checkJunkEntityHubs(engine, { edgeThreshold: 3, maxChunks: 2 });
+      expect((on as { fix?: { argv: string[] } }).fix?.argv).toEqual(['gbrain', 'extract', '--stale']);
+      expect(on.message).toContain('extract --stale');
+    } finally {
+      await engine.setConfig('link_resolution.cross_source', 'false');
+    }
   });
 });

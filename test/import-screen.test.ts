@@ -14,9 +14,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { importFromContent, MAX_FILE_SIZE } from '../src/core/import-file.ts';
-import { isContentRefusal, screenImportContent, type ImportSanityConfig } from '../src/core/import-screen.ts';
+import { contentRefusalFromReceipt, isContentRefusal, screenImportContent, type ImportSanityConfig } from '../src/core/import-screen.ts';
 import { managedImportContent, readImportBytes } from '../src/core/persistence/import-prepare.ts';
 import { readSyncFile } from '../src/core/persistence/sync-discovery.ts';
+import { SYNC_READ_BOUND } from '../src/core/persistence/sync-blobs.ts';
 import { frontmatterSlugConflictMessage } from '../src/core/persistence/verb-errors.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 
@@ -28,7 +29,8 @@ function mockEngine(): BrainEngine {
       if (prop === 'getPage') return (slug: string) => Promise.resolve(pages.get(slug) ?? null);
       if (prop === 'putPage') return async (slug: string, page: unknown) => { pages.set(slug, page); return page; };
       if (prop === 'transaction') return async (fn: (tx: BrainEngine) => Promise<unknown>) => fn(engine);
-      return () => Promise.resolve(prop === 'executeRaw' ? [] : null);
+      // #6482: the strict mode reader needs one well-formed unmanaged row.
+      return (sql?: unknown) => Promise.resolve(prop === 'executeRaw' ? (String(sql).includes('FROM persistence_brain') ? [{ enabled: false }] : []) : null);
     },
   }) as unknown as BrainEngine;
   return engine;
@@ -109,6 +111,15 @@ describe('the screen and every publication path agree', () => {
     const big = screenImportContent({ content: 'x', byteLength: MAX_FILE_SIZE + 1, path: 'src/a.ts' });
     expect(big).toMatchObject({ status: 'refused', refusal: { code: 'file_too_large', message: `Code file too large (${MAX_FILE_SIZE + 1} bytes)` } });
   });
+
+  // Large pages (A9): the refusal an agent reads must name the limit and say a page under it needs no splitting.
+  test('a Markdown page over the limit names the limit, and its next step splits only content over it', () => {
+    const big = screenImportContent({ content: doc('title: a'), byteLength: MAX_FILE_SIZE + 1, path: 'notes/page.md' });
+    expect(big).toMatchObject({ status: 'refused', refusal: { code: 'file_too_large',
+      message: `Content too large (${MAX_FILE_SIZE + 1} bytes, max ${MAX_FILE_SIZE}). Every page under that limit is stored and searchable; leave this file out of the source, or split it into files under the limit.` } });
+    expect(contentRefusalFromReceipt('file_too_large', `Content too large (${MAX_FILE_SIZE + 1} bytes, max ${MAX_FILE_SIZE}).`)).toEqual({ code: 'file_too_large',
+      suggestion: `The content is over the ${MAX_FILE_SIZE}-byte page limit, so it refuses on every retry. Every page under the limit is stored and searchable; only content over it must become several pages, each submitted with its own request_id.` });
+  });
 });
 
 describe('isContentRefusal', () => {
@@ -121,7 +132,7 @@ describe('isContentRefusal', () => {
       try { readImportBytes(big); } catch (error) { importRefusal = error as OperationError; }
       expect(isContentRefusal(importRefusal!.code, importRefusal!.message)).toBe(true);
       const huge = join(dir, 'huge.md');
-      writeFileSync(huge, Buffer.alloc(10 * 1024 ** 2 + 1, 'a'));
+      writeFileSync(huge, Buffer.alloc(SYNC_READ_BOUND + 1, 'a'));
       let syncRefusal: OperationError | null = null;
       try { readSyncFile(dir, 'huge.md'); } catch (error) { syncRefusal = error as OperationError; }
       expect(syncRefusal!.code).toBe('request_too_large');

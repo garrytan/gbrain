@@ -102,12 +102,16 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
     expect(await engine.getPage(SLUG, { sourceId: 'default' })).toBeNull();
   }, { databaseUrl, setup }), 120_000);
 
-  test('a revision conflict no journal request explains keeps blocking', () => managedBrain(async ({ engine, root }) => {
+  // #6340: a page that moved with no journal request to name is held too (the revision alone is the proof the page moved); the fix stays the reconcile preview.
+  test('a revision conflict no journal request explains is held by its revision, not left blocking', () => managedBrain(async ({ engine, root }) => {
     const { first } = await raced(engine, root, () => engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.putPage(SLUG, {
       type: 'person', title: 'Alice Example', compiled_truth: 'An unattributed database edit.', timeline: '', frontmatter: {}, content_hash: 'unattributed',
     }, { sourceId: 'default' }), TEST_WRITE_ATTRIBUTION)));
-    expect(first).toMatchObject({ status: 'blocked_by_failures', failureCodes: [{ code: 'revision_conflict', count: 1 }] });
-    expect(first.held ?? []).toEqual([]);
-    expect(first.managedWrite?.suggestion).toContain(`gbrain sources reconcile default ${SLUG} --preview`);
+    expect(first.status).not.toBe('blocked_by_failures');
+    expect(first.managedWrite).toBeUndefined();
+    expect(first.held?.map(hold => hold.code)).toEqual(['concurrent_write']);
+    expect(first.held![0]!.fix.why).toContain(`changed in the database`);
+    expect(first.held![0]!.fix.argv).toEqual(['gbrain', 'sources', 'reconcile', 'default', SLUG, '--preview']);
+    expect((await engine.getPage(SLUG, { sourceId: 'default' }))?.compiled_truth).toContain('An unattributed database edit.');
   }, { databaseUrl, setup }), 120_000);
 });

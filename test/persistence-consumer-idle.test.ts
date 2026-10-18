@@ -148,3 +148,26 @@ test('waiting on an admitted write wakes the resident consumer', async () => wit
     expect(wakes).toBe(1);
   } finally { await disposePersistenceConsumer(engine); }
 }));
+
+test('a tick while this consumer prepares a claimed write runs one probe statement instead of the fan-out', async () => withEnv(env, async () => {
+  const sources = await fixtures(engine, config);
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const { proxy, statements } = counting(engine);
+  const consumer = new PersistenceConsumer(proxy, { engine: 'pglite' }, async (_e, row) => { entered.resolve(); await release.promise; return prepared(row, sources); },
+    { hostId: config.hostId, onError: () => {} });
+  try {
+    const row = await admitWrite(engine, admission(config, sources[0], `active-${randomUUID().slice(0, 8)}`, 'body'));
+    await consumer.tick();
+    await entered.promise;
+    await settled(consumer);
+    statements.length = 0;
+    for (let i = 0; i < 3; i++) { await consumer.tick(); await settled(consumer); }
+    expect(statements.length).toBe(3);
+    release.resolve();
+    await waitFor(async () => (await getWriteRequestById(engine, row.id))?.state === 'committed', { timeoutMs: 5_000 });
+  } finally {
+    release.resolve();
+    await consumer.stop();
+  }
+}));

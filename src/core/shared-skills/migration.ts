@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { isThinClient } from '../config.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { getWorktreeBinding } from '../persistence/ownership.ts';
+import { getWorktreeBinding, readPersistenceBrain } from '../persistence/ownership.ts';
 import { checkedContentRoot, inventorySkillpack, sameInventory, type PackInventory } from './setup-files.ts';
 import { contentSetupKey, installPackagedSharedSkills, setupSharedBrainContent, type SharedContentReceipt } from './setup.ts';
 import type { DatabaseContentExportReceipt } from './migration-export.ts';
@@ -97,13 +97,8 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
     report.pending_actions.push('Canonical-content migration belongs on the host. Reconnect this client after upgrading its adapter; no host repository or local grants were created.');
     return report;
   }
-  const [brain] = await ctx.engine.executeRaw<{ brain_id: string; enabled: boolean; skill_bundles_enabled: boolean }>(
-    'SELECT brain_id,enabled,skill_bundles_enabled FROM persistence_brain WHERE singleton=1');
-  if (!brain) {
-    throw opError('writer_not_initialized', 'Apply the shared-skills schema before migrating content.',
-      'This brain has no persistence identity yet, so the shared-skills schema is not applied. Preview the pending migrations with the command in fix, then apply them.',
-      { fix: readFix('Lists the pending schema migrations without applying them.', { argv: ['gbrain', 'apply-migrations', '--dry-run', '--json'] }) });
-  }
+  // #6482: the shared fail-closed read; a missing singleton is `storage_error` with the writer-status probe, never "unmanaged".
+  const brain = await readPersistenceBrain(ctx.engine);
   report.brain_id = brain.brain_id;
   const publication = await legacyPublication(ctx);
   const limits = await readInventoryLimits(ctx.engine);

@@ -9,6 +9,15 @@ replay captured real-world queries as a BrainBench-Real fixture.
 
 ## The pipeline
 
+HTTP MCP servers (`gbrain serve --http`, both the OAuth and the legacy bearer
+transport) honor DB-plane settings such as `eval.capture` and `eval.scrub_pii`
+from `gbrain config set`, with file and environment settings taking
+precedence, as the CLI does. The server reads that effective config once at
+startup, so restart serve after a DB-plane change (#6589). A server whose
+database is degraded at startup uses the file and environment settings only.
+Capture remains opt-in, and PII scrubbing remains enabled unless explicitly
+disabled.
+
 ```
 MCP / CLI / subagent tool-bridge caller
      │

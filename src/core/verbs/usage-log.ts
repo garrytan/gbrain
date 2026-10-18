@@ -39,6 +39,33 @@ export interface VerbUsageEvent {
    * doctor's memory_writeback check labels it exactly that way (OV-A11):
    * a per-call ambient/explicit distinction does not exist on the wire. */
   remember_status?: string;
+  /** `entity` / `context_pack` with enrolled record types: rows that listed records, listed none, or were unavailable. */
+  records_firing?: RecordsFiring;
+}
+
+export interface RecordsFiring { listed: number; zero: number; unavailable: number }
+
+/**
+ * The firing counter for a verb result (usage log): every row that carried
+ * the record view, split into rows that listed records, rows that listed none
+ * and rows marked unavailable. Null when no row carried it (nothing enrolled).
+ */
+export function recordsFiring(result: unknown): RecordsFiring | null {
+  type Row = { found?: unknown; records?: unknown; references_unavailable?: unknown; siblings?: Row[]; sibling_records?: Row[];
+    identity_siblings?: { pages?: Row[] } };
+  const r = result as { results?: Row[]; cards?: Row[]; card?: Row } | null;
+  const rows: Row[] = [];
+  for (const x of r?.results ?? []) if (x?.found) rows.push(x, ...(x.siblings ?? []));
+  for (const c of r?.cards ?? []) rows.push(c, ...(c.sibling_records ?? []));
+  if (r?.card) rows.push(r.card, ...(r.card.identity_siblings?.pages ?? []));
+  const counted = rows.filter(x => Array.isArray(x.records) || x.references_unavailable);
+  if (!counted.length) return null;
+  const listed = (x: Row) => Array.isArray(x.records) && x.records.length > 0;
+  return {
+    listed: counted.filter(listed).length,
+    zero: counted.filter(x => Array.isArray(x.records) && x.records.length === 0).length,
+    unavailable: counted.filter(x => x.references_unavailable).length,
+  };
 }
 
 let _pathOverride: string | null = null;

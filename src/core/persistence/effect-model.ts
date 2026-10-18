@@ -1,6 +1,7 @@
 import type { WriteRequest } from './model.ts';
 import type { WithdrawalTarget } from '../facts/withdrawal-discovery.ts';
-import { fenceRepairCommitSubject } from '../fence-repair/receipt.ts';
+import { fenceRepairCommitSubject, type FenceRepairReceipt } from '../fence-repair/receipt.ts';
+import { contentRepairCommitSubject, contentRepairTrailer, type ContentRepairReceipt } from '../content-repair/receipt.ts';
 
 export type EffectKind = 'git' | 'embedding' | 'withdrawal-mirror' | 'facts-backstop' | 'links';
 /** Brain config key gating the remote mention-links effect; unset is on, false/0/no/off turns it off. */
@@ -11,26 +12,42 @@ export const REMOTE_MENTION_LINK_SOURCE = 'mcp-remote-mention';
 export const REMOTE_MENTION_OPERATIONS: readonly string[] = ['put_page', 'capture', 'edit_page'];
 /**
  * Commit metadata a trusted local preparer attaches to a page file target
- * (a fence repair): the subject when the file commits alone, and its body
- * line when it commits with other files. Location only, never page text.
+ * (a fence or content repair): the subject when the file commits alone, its
+ * body line when it commits with other files, and the `gbrain-repair:` Git
+ * trailer (`<hold_code> <tier> <confidence>`) the Git effect prints after a
+ * blank line, so `git log --format=%(trailers)` finds every repair commit.
+ * Location only, never page text.
  */
-export interface GitCommitNote { subject: string; line: string }
-/** A fence-repaired file's note: `fenceRepairCommitSubject` alone, `<path> (<classes>)` as its line in a batched commit. */
-export function fenceRepairCommit(path: string, classes: readonly string[]): GitCommitNote {
-  return { subject: fenceRepairCommitSubject(path, classes), line: `${path.replace(/[\u0000-\u001f\u007f]/g, '?')} (${classes.join(', ')})` };
+export interface GitCommitNote { subject: string; line: string; trailer?: string }
+const safe = (path: string) => path.replace(/[\u0000-\u001f\u007f]/g, '?');
+/** A fence-repaired file's note: `fenceRepairCommitSubject` alone, `<path> (<classes>)` as its line in a batched commit, trailer `gbrain-repair: invalid_fence <tier> high`. */
+export function fenceRepairCommit(path: string, classes: readonly string[], tier: FenceRepairReceipt['tier'] = 'deterministic'): GitCommitNote {
+  return { subject: fenceRepairCommitSubject(path, classes), line: `${safe(path)} (${classes.join(', ')})`, trailer: `gbrain-repair: invalid_fence ${tier} high` };
+}
+/** #6377 a slug-conflict repair's note: `gbrain: repair frontmatter slug in <path>`, `<path> (frontmatter_slug_conflict)` in a batch, trailer from the receipt's tier and confidence. */
+export function contentRepairCommit(path: string, receipt: Pick<ContentRepairReceipt, 'tier' | 'confidence'>): GitCommitNote {
+  return { subject: contentRepairCommitSubject(path), line: `${safe(path)} (frontmatter_slug_conflict)`, trailer: contentRepairTrailer(receipt) };
 }
 export interface ParkedTarget { slug?: string; error_code: string }
-export interface SkippedTarget { slug: string; reason: 'metafile' | 'file_database_drift' }
+/** `page_body_segmented`: a segmented page an older binary's mirror or Git scan passed by; this one mirrors and commits it. */
+export interface SkippedTarget { slug: string; reason: 'metafile' | 'file_database_drift' | 'page_body_segmented' | 'withdrawal_not_mirrored' }
+/** The code a page behind a failed withdrawal mirror is parked with: its file may still hold the withdrawn text. */
+export const WITHHELD_BY_MIRROR = 'withdrawal_mirror_failed';
 /** A Git or withdrawal target parks after this many consecutive execution failures. */
 export const PARK_AFTER_FAILURES = 5;
+/**
+ * A withdrawal mirror's recovery record. Version 1 embeds the mirrored file (`after`, base64). Version 2 is a segmented
+ * page's file, never held whole: `after` is null and `staging.publication` names the file streamed from the page's
+ * segments by path, SHA-256 (`afterHash`) and length, written once the record is durable (effect-recovery.ts).
+ */
 export interface EffectRecovery {
-  version: 1;
+  version: 1 | 2;
   kind: 'withdrawal-mirror';
   path: string;
   root: string;
   beforeHash: string | null;
   afterHash: string;
-  after: string;
+  after: string | null;
   mode: number | null;
   ownerEpoch: string;
   pageId: number;
@@ -48,9 +65,12 @@ export interface PersistenceEffect {
   source_incarnation: string;
   worktree_id: string | null;
   data: { version?: 2; targets?: WithdrawalTarget[]; slug?: string; page_id?: number; relative_path?: string; expected_hash?: string | null; after_slug?: string; source_id?: string; source_scan?: boolean; visibility?: 'private' | 'world'; embedding_attempt_base?: number; embedding_retry_base?: number;
+    /** Wave B: the occurrences a segmented write added; its embedding effect embeds only their chunk rows. */
+    occurrence_ids?: number[];
     /** A single-file Git target's GitCommitNote, when its preparer gave one. */
     commit_subject?: string;
     commit_line?: string;
+    commit_trailer?: string;
     /** Consecutive execution failures of the current Git or withdrawal target. */
     target_failures?: number;
     /** The target `target_failures` belongs to; a different target starts from zero. */
@@ -62,7 +82,11 @@ export interface PersistenceEffect {
     /** Explicit retry authorizations granted to this effect's parked targets. */
     retried?: number;
     /** #5396: scan targets passed without a file publication (a sync-skip metafile, or a file with an uncoordinated local edit). */
-    skipped?: SkippedTarget[] };
+    skipped?: SkippedTarget[];
+    /** GBRA-130 A-12: pages whose file this withdrawal mirror rewrote, recorded by its recovery with the cursor step. */
+    published?: string[];
+    /** The SHA-256 of the bytes this mirror wrote to each published page's file, at the page revision it rendered. */
+    published_files?: Record<string, { hash: string; revision: string }> };
   state: 'queued' | 'running' | 'committed' | 'failed';
   execution_token: string | null;
   claim_expires_at: string | Date | null;

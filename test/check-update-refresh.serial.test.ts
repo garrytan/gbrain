@@ -34,7 +34,7 @@ function bump(kind: 'minor' | 'patch' | 'micro'): string {
 function stubVersionFetch(body: string | null, status = 200): void {
   globalThis.fetch = (async (url: any) => {
     const u = String(url);
-    if (u.includes('/gbrain/master/VERSION')) {
+    if (u.includes('/gbrain/latest-stable/VERSION')) {
       if (body === null) throw new Error('network down');
       return new Response(body, { status });
     }

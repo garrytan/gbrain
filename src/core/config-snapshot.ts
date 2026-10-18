@@ -17,6 +17,7 @@
  * the process, so a `gbrain config set` from another process is picked up by
  * the next command exactly as before.
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 /** The only thing config resolution needs from an engine. */
 export interface ConfigReader {
@@ -62,4 +63,101 @@ export async function snapshotConfigReader(
       return rows[key] ?? null;
     },
   };
+}
+
+/**
+ * One config snapshot per MCP request.
+ *
+ * A remote MCP `search` resolves its settings in a dozen modules, each with
+ * its own `engine.getConfig(key)`, plus loaders that read the whole table.
+ * Behind a transaction pooler each read is a round trip, about 30 ms each to
+ * a remote database, for a statement the server answers in well under a
+ * millisecond (#6721).
+ *
+ * `withRequestConfigSnapshot(engine, fn)` runs `fn` with one snapshot of that
+ * engine's config table: the first read inside it takes the whole table in
+ * one statement, and every later `getConfig` / `getAllConfig` on the same
+ * engine object answers from it. The snapshot lives exactly as long as `fn`:
+ * reads after it settles (background work it started included) and reads on
+ * any other engine object (a transaction's, another brain's) go to the
+ * database as before. `setConfig` / `unsetConfig` on the engine update the
+ * snapshot, so a request reads its own writes. A write operation runs under
+ * `withoutRequestConfigSnapshot`: it reads config live, and when it settles
+ * the snapshot is dropped, so a later read in the same request takes a fresh
+ * one (raw-SQL config writes included). A failed bulk read leaves every key
+ * to its per-key read, the same fallback `loadConfigSnapshot` has.
+ */
+interface RequestSnapshot {
+  engine: object;
+  open: boolean;
+  rows: Promise<Map<string, string> | null> | null;
+}
+
+const requestSnapshot = new AsyncLocalStorage<{ held: RequestSnapshot; live: boolean }>();
+
+/** The open snapshot for `engine` in this async context, if any. */
+function activeSnapshot(engine: object): RequestSnapshot | undefined {
+  const store = requestSnapshot.getStore();
+  return store && !store.live && store.held.open && store.held.engine === engine ? store.held : undefined;
+}
+
+/** Run `fn` with one config snapshot of `engine`; an enclosing snapshot of the same engine is reused. */
+export async function withRequestConfigSnapshot<T>(engine: BulkConfigReader, fn: () => Promise<T>): Promise<T> {
+  if (activeSnapshot(engine)) return fn();
+  const held: RequestSnapshot = { engine, open: true, rows: null };
+  try {
+    return await requestSnapshot.run({ held, live: false }, fn);
+  } finally {
+    held.open = false;
+  }
+}
+
+/** Run `fn` reading config live (a write operation inside a request); the request's snapshot is retaken after it. */
+export async function withoutRequestConfigSnapshot<T>(fn: () => Promise<T>): Promise<T> {
+  const store = requestSnapshot.getStore();
+  if (!store) return fn();
+  try {
+    return await requestSnapshot.run({ held: store.held, live: true }, fn);
+  } finally {
+    store.held.rows = null;
+  }
+}
+
+function snapshotRows(engine: BulkConfigReader, held: RequestSnapshot): Promise<Map<string, string> | null> {
+  held.rows ??= requestSnapshot.run({ held, live: true }, () => loadConfigSnapshot(engine))
+    .then(rows => rows ? new Map(Object.entries(rows)) : null);
+  return held.rows;
+}
+
+/**
+ * The value of `key` from the request's snapshot of `engine`: a string, null
+ * when the key is unset, or undefined when no snapshot applies (no request
+ * snapshot, another engine, or the bulk read failed); the engine then reads
+ * the key itself.
+ */
+export async function requestConfigValue(engine: BulkConfigReader, key: string): Promise<string | null | undefined> {
+  const held = activeSnapshot(engine);
+  if (!held) return undefined;
+  const rows = await snapshotRows(engine, held);
+  return rows ? rows.get(key) ?? null : undefined;
+}
+
+/** The request's whole snapshot of `engine` as `getAllConfig` returns it, or undefined when none applies. */
+export async function requestConfigRows(engine: BulkConfigReader): Promise<Record<string, string> | undefined> {
+  const held = activeSnapshot(engine);
+  if (!held) return undefined;
+  const rows = await snapshotRows(engine, held);
+  return rows ? Object.fromEntries(rows) : undefined;
+}
+
+/** Keep an open snapshot of `engine` equal to a write the engine just made (value null = key removed). */
+export function noteRequestConfigWrite(engine: object, key: string, value: string | null): void {
+  const held = activeSnapshot(engine);
+  if (!held?.rows) return;
+  held.rows = held.rows.then(rows => {
+    if (!rows) return rows;
+    const next = new Map(rows);
+    if (value === null) next.delete(key); else next.set(key, value);
+    return next;
+  });
 }

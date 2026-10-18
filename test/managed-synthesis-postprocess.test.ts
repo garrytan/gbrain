@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -9,16 +9,22 @@ import { runPhaseSynthesize } from '../src/core/cycle/synthesize.ts';
 import { retryWriteAdmission } from '../src/core/persistence/admission-retry.ts';
 import * as journal from '../src/core/persistence/journal.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
-import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
+import { acquireWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { clientRequestUuid } from '../src/core/persistence/preconditions.ts';
+import { COMMITTED_OUTPUT_REQUESTS_SQL, journaledPageSlug } from '../src/core/cycle/synthesize-postprocess.ts';
+import { POSTPROCESS_PENDING_KEY } from '../src/core/cycle/synthesize-postprocess-deferral.ts';
+import { requestIndexesCheck } from '../src/commands/doctor/checks/persistence-requests.ts';
+import { PERSISTENCE_REQUEST_ID_INDEX } from '../src/core/persistence/schema.ts';
+import { buildIndexOnline } from '../src/core/schema-migrations/helpers.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { configureGateway, resetGateway, __setChatTransportForTests, __setEmbedTransportForTests, __setDecideTransportForTests } from '../src/core/ai/gateway.ts';
 import { flushDecideWrites } from '../src/core/ai/decide/store.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
-import { withEnv } from './helpers/with-env.ts';
 import * as staleEmbedding from '../src/core/embed-stale.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { childCommittedOrdinaryCycle, interruptAfterChild, laterQuote, managedSynthesisFixture, outputSlug, type SynthesisFixture } from './helpers/managed-synthesis-fixture.ts';
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
@@ -46,79 +52,7 @@ afterAll(async () => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-const laterQuote = 'a legitimate later quotation from a completely different interview';
-
-async function fixture(run: (f: {
-  engine: BrainEngine; sourceId: string; root: string;
-  opts: { brainDir: string; sourceId: string; dryRun: boolean; inputFile: string; date: string };
-  calls: () => number; edit: (slug: string) => Promise<void>;
-}) => Promise<void>, outputCount = 1, outputBody?: string) {
-  for (const engine of engines) {
-    const dir = mkdtempSync(join(tmpdir(), 'gbrain-synth-postprocess-'));
-    const root = join(dir, 'brain');
-    mkdirSync(root);
-    const sourceId = `synthesis-${randomUUID().slice(0, 8)}`;
-    let calls = 0;
-    try {
-      await withEnv({ GBRAIN_HOME: join(dir, 'home'), ANTHROPIC_API_KEY: 'sk-test-synthesis' }, async () => {
-        await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-        await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
-        await engine.setConfig('sync.write_through', 'true');
-        await claimWorktree(engine, sourceId, root);
-        const ctx = { engine, sourceId, remote: false as const, config: { engine: engine.kind, embedding_disabled: true },
-          dryRun: false, logger: { info() {}, warn() {}, error() {} } };
-        await submitPageMutation(ctx, { operation: 'put_page', params: {
-          slug: 'people/example', content: '---\ntitle: Example\ntype: note\n---\nExample evidence.', request_id: randomUUID(),
-        } });
-        const inputFile = join(root, '2026-09-20-session.txt');
-        const quote = 'we charge for durability because reliable memories should survive every tool';
-        writeFileSync(inputFile, `User: ${quote}.\n${'Assistant: Discuss the long term roadmap.\n'.repeat(15)}`);
-        for (const [key, value] of Object.entries({
-          'dream.synthesize.enabled': 'true', 'dream.synthesize.cooldown_hours': '0',
-          'dream.synthesize.min_chars': '100', 'dream.synthesize.link_manifest': 'false',
-          'dream.synthesize.mode': 'oneshot', 'dream.synthesize.quote_verify': 'true',
-          'models.dream.synthesize': 'anthropic:claude-sonnet-4-6',
-          'models.dream.triage': 'anthropic:claude-sonnet-4-6',
-        })) await engine.setConfig(key, value);
-        await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-        __setChatTransportForTests(async opts => {
-          calls++;
-          const hash = /hash suffix \(USE THIS in slugs\): ([a-z0-9-]+)/i.exec(String(opts.messages?.[0]?.content ?? ''))?.[1] ?? 'missing';
-          const text = (opts.system ?? '').startsWith('You triage a conversation transcript')
-            ? JSON.stringify({ score: 0.9, content_type: 'reflection', segments: [{ quote, note: 'evidence' }], entities: [], reasons: ['durable insight'] })
-            : JSON.stringify({ pages: Array.from({ length: outputCount }, (_, i) => ({
-              slug: `wiki/personal/reflections/session${i ? `-${i}` : ''}-${hash}`, title: `Session ${i}`, type: 'note',
-              body: outputBody ?? `A memory strategy with [[people/example]]. Evidence item ${i}. Allegedly: "an entirely invented quotation that should lose its marks".`,
-            })), skipped: false });
-          return { text, blocks: [{ type: 'text', text }], stopReason: 'end',
-            usage: { input_tokens: 100, output_tokens: 100, cache_read_tokens: 0, cache_creation_tokens: 0 },
-            model: opts.model!, providerId: 'anthropic' };
-        });
-        await run({ engine, sourceId, root, opts: { brainDir: root, sourceId, dryRun: false, inputFile, date: '2026-09-20' },
-          calls: () => calls, edit: async slug => {
-            const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
-            await submitPageMutation(ctx, { operation: 'put_page', params: { slug,
-              content: `---\ntitle: User revision\ntype: note\n---\nUser evidence: "${laterQuote}".`,
-              expected_revision: snapshot.revision, request_id: randomUUID() } });
-          } });
-      });
-    } finally {
-      await flushDecideWrites();
-      __setDecideTransportForTests(null);
-      configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: {} });
-      __setChatTransportForTests(null);
-      __setEmbedTransportForTests(null);
-      await disposePersistenceConsumer(engine);
-      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-      rmSync(dir, { recursive: true, force: true });
-    }
-  }
-}
-
-async function outputSlug(engine: BrainEngine, sourceId: string): Promise<string> {
-  const [row] = await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE source_id=$1 AND slug LIKE 'wiki/personal/reflections/session-%'", [sourceId]);
-  return row.slug;
-}
+const fixture = (run: (f: SynthesisFixture) => Promise<void>, outputCount = 1, outputBody?: string) => managedSynthesisFixture(engines, run, outputCount, outputBody);
 
 test('managed native synthesis quarantines interpretations around valid evidence before mirror/chunk publication', async () => {
   const supported = 'Reliable memories should survive every tool change.';
@@ -175,30 +109,6 @@ test('managed native synthesis quarantines interpretations around valid evidence
     }
   }, 1, [supported, ...unsupported, 'Related context: [[people/example]].'].join('\n\n'));
 }, 120_000);
-
-async function interruptAfterChild(engine: BrainEngine, sourceId: string, opts: Parameters<typeof runPhaseSynthesize>[1]) {
-  const controller = new AbortController();
-  const result = await runPhaseSynthesize(engine, { ...opts, signal: controller.signal, yieldDuringPhase: async () => {
-    const rows = await engine.executeRaw("SELECT id FROM minion_jobs WHERE status='completed' AND data->>'source_id'=$1", [sourceId]);
-    if (rows.length) controller.abort();
-  } });
-  expect(result.status).toBe('fail');
-  await disposePersistenceConsumer(engine);
-  await engine.executeRaw('DELETE FROM dream_verdicts');
-}
-
-/** An ordinary (corpus) cycle whose child committed before postprocessing ran; the cooldown is unstamped. */
-async function childCommittedOrdinaryCycle({ engine, sourceId, root, opts, calls }: Parameters<Parameters<typeof fixture>[0]>[0]) {
-  const corpus = join(root, '..', 'corpus');
-  mkdirSync(corpus);
-  writeFileSync(join(corpus, basename(opts.inputFile)), readFileSync(opts.inputFile));
-  await engine.setConfig('dream.synthesize.session_corpus_dir', corpus);
-  const ordinary = { brainDir: root, sourceId, dryRun: false };
-  await interruptAfterChild(engine, sourceId, ordinary);
-  const slug = await outputSlug(engine, sourceId);
-  await engine.executeRaw("DELETE FROM config WHERE key='dream.synthesize.last_completion_ts'");
-  return { ordinary, slug, jobsBefore: await engine.executeRaw('SELECT id FROM minion_jobs ORDER BY id'), spent: calls() };
-}
 
 /**
  * #6051: deterministic contention injection. Each maintenance admission for
@@ -272,6 +182,92 @@ test('interrupted synthesis postprocessing resumes once without rerunning either
   });
 }, 120_000);
 
+/**
+ * #6616: the retained tool input holds what the child sent; the journal holds the
+ * canonical forms. Each alias below rewrites only the retained input (and, for a
+ * printable client id, the journal row to that id's UUIDv5, as the write path
+ * would have stored it); postprocessing must still find the committed output and
+ * resume without another provider call.
+ */
+const RETAINED_ALIASES: Array<[string, (engine: BrainEngine, sourceId: string) => Promise<void>]> = [
+  ['an uppercase UUID request_id', async (engine, sourceId) => {
+    await engine.executeRaw(`UPDATE subagent_tool_executions SET input=jsonb_set(input,'{request_id}',to_jsonb(upper(input->>'request_id')))
+      WHERE tool_name='brain_put_page' AND job_id IN (SELECT id FROM minion_jobs WHERE data->>'source_id'=$1)`, [sourceId]);
+  }],
+  ['a printable client request_id', async (engine, sourceId) => {
+    const [tool] = await engine.executeRaw<{ request_id: string }>(`SELECT input->>'request_id' AS request_id FROM subagent_tool_executions
+      WHERE tool_name='brain_put_page' AND job_id IN (SELECT id FROM minion_jobs WHERE data->>'source_id'=$1)`, [sourceId]);
+    await engine.executeRaw('UPDATE persistence_requests SET request_id=$2::uuid WHERE source_id=$1 AND request_id::text=$3',
+      [sourceId, clientRequestUuid('synth-output-test-1'), tool.request_id]);
+    await engine.executeRaw(`UPDATE subagent_tool_executions SET input=jsonb_set(input,'{request_id}','"synth-output-test-1"')
+      WHERE tool_name='brain_put_page' AND job_id IN (SELECT id FROM minion_jobs WHERE data->>'source_id'=$1)`, [sourceId]);
+  }],
+  ['a mixed-case slug', async (engine, sourceId) => {
+    await engine.executeRaw(`UPDATE subagent_tool_executions SET input=jsonb_set(input,'{slug}',to_jsonb(replace(input->>'slug','session','SESSION')))
+      WHERE tool_name='brain_put_page' AND job_id IN (SELECT id FROM minion_jobs WHERE data->>'source_id'=$1)`, [sourceId]);
+  }],
+];
+
+for (const [alias, rewrite] of RETAINED_ALIASES) {
+  test(`#6616: interrupted postprocessing resumes a child output retained with ${alias}, without a provider call`, async () => {
+    await fixture(async ({ engine, sourceId, root, opts, calls }) => {
+      await interruptAfterChild(engine, sourceId, opts);
+      const slug = await outputSlug(engine, sourceId);
+      await rewrite(engine, sourceId);
+      const spent = calls();
+      const recovered = await runPhaseSynthesize(engine, opts);
+      expect(recovered.status, JSON.stringify(recovered.error ?? recovered.summary)).toBe('ok');
+      expect(calls()).toBe(spent);
+      expect(recovered.details.pages_written).toBe(1);
+      const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+      expect(snapshot.page.frontmatter.dream_generated).toBe(true);
+      expect(readFileSync(join(root, `${slug}.md`), 'utf8')).toContain('dream_generated: true');
+    });
+  }, 120_000);
+}
+
+test('#6616: a committed output that does not match source, incarnation, revision, slug or state still refuses', async () => {
+  const { loadCommittedSynthesisOutputs } = await import('../src/core/cycle/synthesize-postprocess.ts');
+  const { maintenancePreflight } = await import('../src/core/persistence/prepared-maintenance.ts');
+  await fixture(async ({ engine, sourceId, root, opts, calls }) => {
+    await interruptAfterChild(engine, sourceId, opts);
+    const authority = (await maintenancePreflight(engine, sourceId, root))!;
+    const [tool] = await engine.executeRaw<{ job_id: number | bigint; input: Record<string, unknown>; output: Record<string, unknown> }>(
+      `SELECT t.job_id,t.input,t.output FROM subagent_tool_executions t JOIN minion_jobs j ON j.id=t.job_id
+       WHERE j.data->>'source_id'=$1 AND t.tool_name='brain_put_page' AND t.status='complete'`, [sourceId]);
+    const ids = [Number(tool.job_id)];
+    expect(await loadCommittedSynthesisOutputs(engine, authority, ids)).toHaveLength(1);
+    for (const writer of [{ ...authority.writer, sourceId: 'unrelated-source' }, { ...authority.writer, sourceIncarnation: randomUUID() }]) {
+      expect(await loadCommittedSynthesisOutputs(engine, { ...authority, writer }, ids)).toEqual([]);
+    }
+    const spent = calls();
+    for (const [input, output] of [
+      [{ ...tool.input, slug: 'wiki/personal/reflections/unrelated' }, tool.output],
+      [tool.input, { ...tool.output, revision: randomUUID() }],
+      [tool.input, { ...tool.output, state: 'queued' }],
+    ]) {
+      await engine.executeRaw(`UPDATE subagent_tool_executions SET input=$2::text::jsonb,output=$3::text::jsonb WHERE job_id=$1 AND tool_name='brain_put_page'`,
+        [ids[0], JSON.stringify(input), JSON.stringify(output)]);
+      expect(await loadCommittedSynthesisOutputs(engine, authority, ids)).toEqual([]);
+      const refused = await runPhaseSynthesize(engine, opts);
+      expect(refused.status).toBe('fail');
+      expect(refused.error?.code).toBe('SYNTH_PHASE_FAIL');
+      expect(calls()).toBe(spent);
+    }
+  });
+}, 120_000);
+
+test('#6616: journaledPageSlug is the slug submitPageMutation journals', async () => {
+  await fixture(async ({ engine, sourceId }) => {
+    const requestId = randomUUID();
+    await submitPageMutation({ engine, sourceId, remote: false, config: { engine: engine.kind, embedding_disabled: true }, dryRun: false,
+      logger: { info() {}, warn() {}, error() {} } } as never,
+    { operation: 'put_page', params: { slug: 'Notes/Mixed-Case-Example', content: '---\ntitle: Mixed\ntype: note\n---\nBody.', request_id: requestId } });
+    const [row] = await engine.executeRaw<{ slug: string }>('SELECT slug FROM persistence_requests WHERE request_id=$1::uuid', [requestId]);
+    expect(row.slug).toBe(journaledPageSlug('Notes/Mixed-Case-Example'));
+  });
+}, 120_000);
+
 test('unfinished synthesis refuses an intervening user revision rather than adopting it', async () => {
   await fixture(async ({ engine, sourceId, root, opts, calls, edit }) => {
     await interruptAfterChild(engine, sourceId, opts);
@@ -282,24 +278,83 @@ test('unfinished synthesis refuses an intervening user revision rather than adop
     const bytes = readFileSync(path, 'utf8');
     const spent = calls();
     const replay = await runPhaseSynthesize(engine, opts);
-    expect(replay.status).toBe('fail');
+    // #6360: a user revision is a per-page warn, not a phase failure every cycle.
+    expect(replay.status).toBe('warn');
     expect(calls()).toBe(spent);
     expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(snapshot.revision);
     expect(readFileSync(path, 'utf8')).toBe(bytes);
   });
 }, 120_000);
 
-test('a revision_conflict phase failure keeps the suggestion that names the slug (#6242)', async () => {
+test('a revision_conflict output keeps the suggestion that names the slug (#6242, #6360)', async () => {
   await fixture(async ({ engine, sourceId, opts, edit }) => {
     await interruptAfterChild(engine, sourceId, opts);
     const slug = await outputSlug(engine, sourceId);
     await edit(slug);
     const replay = await runPhaseSynthesize(engine, opts);
-    expect(replay.status).toBe('fail');
-    expect(replay.error?.code).toBe('SYNTH_PHASE_FAIL');
-    expect(replay.details.error_code).toBe('revision_conflict');
-    expect(replay.error?.hint).toContain(slug);
-    expect(replay.error?.hint).toContain(sourceId);
+    expect(replay.status).toBe('warn');
+    const [conflict] = replay.details.postprocess_conflicts as Array<{ slug: string; message: string; fix: { argv: string[] } }>;
+    expect(conflict.slug).toBe(slug);
+    expect(conflict.message).toContain(slug);
+    expect(conflict.message).toContain(sourceId);
+    expect(conflict.fix.argv).toEqual(['gbrain', 'get', '--source', sourceId, '--', slug]);
+    expect(replay.details.pages_written).toBe(0);
+    expect(await engine.getConfig('dream.synthesize.last_completion_ts')).toBeTruthy();
+    const again = await runPhaseSynthesize(engine, opts);
+    expect(again.status).toBe('ok');
+    expect(again.details.postprocess_conflicts).toBeUndefined();
+  });
+}, 120_000);
+
+/** A local maintenance write that only adds `created:` to the child's page, as the next cycle's lint fix does (#6360). */
+async function maintenanceFrontmatterDrift(engine: BrainEngine, sourceId: string, slug: string) {
+  const { maintenancePreflight, publishMaintenancePage } = await import('../src/core/persistence/prepared-maintenance.ts');
+  const { serializePageToMarkdown } = await import('../src/core/markdown.ts');
+  const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+  const authority = (await maintenancePreflight(engine, sourceId))!;
+  const content = serializePageToMarkdown({ ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, created: '2026-09-20' } }, snapshot.tags);
+  await publishMaintenancePage(engine, authority, slug, content, { expectedRevision: snapshot.revision });
+  await disposePersistenceConsumer(engine);
+}
+
+test('a maintenance-only frontmatter drift after the child commit is adopted (#6360)', async () => {
+  await fixture(async ({ engine, sourceId, opts, calls }) => {
+    await interruptAfterChild(engine, sourceId, opts);
+    const slug = await outputSlug(engine, sourceId);
+    await maintenanceFrontmatterDrift(engine, sourceId, slug);
+    const spent = calls();
+    const recovered = await runPhaseSynthesize(engine, opts);
+    expect(recovered.status).toBe('ok');
+    expect(calls()).toBe(spent);
+    expect(recovered.details.pages_written).toBe(1);
+    const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+    expect(snapshot.page.frontmatter.dream_generated).toBe(true);
+    expect(String(snapshot.page.frontmatter.created)).toContain('2026-09-20');
+    expect(snapshot.page.compiled_truth).not.toContain('"an entirely invented');
+    await disposePersistenceConsumer(engine);
+    const replay = await runPhaseSynthesize(engine, opts);
+    expect(replay.status).toBe('ok');
+    expect(replay.details.pages_written).toBe(0);
+    expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(snapshot.revision);
+  });
+}, 120_000);
+
+test('a user put_page that only changes frontmatter is still refused, not adopted (#6360)', async () => {
+  await fixture(async ({ engine, sourceId, opts }) => {
+    await interruptAfterChild(engine, sourceId, opts);
+    const slug = await outputSlug(engine, sourceId);
+    const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+    const ctx = { engine, sourceId, remote: false as const, config: { engine: engine.kind, embedding_disabled: true },
+      dryRun: false, logger: { info() {}, warn() {}, error() {} } };
+    const { serializePageToMarkdown } = await import('../src/core/markdown.ts');
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug, request_id: randomUUID(), expected_revision: snapshot.revision,
+      content: serializePageToMarkdown({ ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, created: '2026-09-20' } }, snapshot.tags) } });
+    await disposePersistenceConsumer(engine);
+    const moved = (await engine.readPageSnapshot(slug, { sourceId }))!;
+    const replay = await runPhaseSynthesize(engine, opts);
+    expect(replay.status).toBe('warn');
+    expect((replay.details.postprocess_conflicts as unknown[]).length).toBe(1);
+    expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(moved.revision);
   });
 }, 120_000);
 
@@ -589,3 +644,146 @@ test('#6051: a storage error that is not admission contention still fails the ph
       "SELECT 1 FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND intent->>'kind'='managed_maintenance_page'", [sourceId, slug])).toEqual([]);
   });
 }, 120_000);
+
+/** #6757: the server's statement-timeout error (or a user cancel, which shares SQLSTATE 57014) on the matching read. */
+const STATEMENT_TIMEOUT = () => Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+function failCommittedOutputsRead(engine: BrainEngine, error: () => Error = STATEMENT_TIMEOUT) {
+  let hits = 0;
+  // Unbound: a transaction view inherits the method and must keep running on its own connection.
+  const executeRaw = engine.executeRaw as (this: unknown, ...args: unknown[]) => unknown;
+  const spy = spyOn(engine, 'executeRaw').mockImplementation((async function (this: unknown, sql: string, ...rest: unknown[]) {
+    if (sql === COMMITTED_OUTPUT_REQUESTS_SQL) { hits++; throw error(); }
+    return executeRaw.call(this, sql, ...rest);
+  }) as never);
+  return { hits: () => hits, restore: () => spy.mockRestore() };
+}
+const quietly = async <T>(fn: () => Promise<T>): Promise<T> => {
+  const write = spyOn(process.stderr, 'write').mockImplementation((() => true) as never);
+  try { return await fn(); } finally { write.mockRestore(); }
+};
+
+test('#6757: a committed-outputs read past the statement timeout defers the pass; after the transcript grows and the child rows are pruned, the replay itself runs zero child jobs and verifies the output\'s quotes against the current transcript', async () => {
+  await fixture(async ({ engine, sourceId, root, opts, calls }) => {
+    const timeout = failCommittedOutputsRead(engine);
+    let deferred: Awaited<ReturnType<typeof runPhaseSynthesize>>;
+    try { deferred = await quietly(() => runPhaseSynthesize(engine, opts)); } finally { timeout.restore(); }
+    expect(timeout.hits()).toBe(1);
+    expect(deferred.status, JSON.stringify(deferred.error ?? deferred.summary)).toBe('warn');
+    expect(deferred.details.postprocess_deferred).toMatchObject({ read: 'committed_outputs', outputs: 1, consecutive: 1 });
+    expect(deferred.summary).toContain('postprocessing deferred: the committed-outputs read hit the statement timeout');
+    expect(deferred.details.publish_deferred).toBeUndefined();
+    expect(deferred.details.pages_written).toBe(0);
+    expect(await engine.getConfig('dream.synthesize.last_completion_ts')).toBeNull();
+    const slug = await outputSlug(engine, sourceId);
+    const unstamped = (await engine.readPageSnapshot(slug, { sourceId }))!.page;
+    expect(unstamped.frontmatter.dream_generated).toBeUndefined();
+    expect(unstamped.compiled_truth).toContain('"an entirely invented');
+
+    // The transcript grows (a new content hash) and `jobs prune` removes the child's rows.
+    appendFileSync(opts.inputFile, 'User: one more line added after the first synthesis.\n');
+    await engine.executeRaw("DELETE FROM subagent_tool_executions WHERE job_id IN (SELECT id FROM minion_jobs WHERE data->>'source_id'=$1)", [sourceId]);
+    await engine.executeRaw("DELETE FROM minion_jobs WHERE data->>'source_id'=$1", [sourceId]);
+    await disposePersistenceConsumer(engine);
+    // A grown transcript is new input: dream may synthesize it again under its new hash. Here it triages below the
+    // threshold so that this pass submits no child of its own, and everything below is the replay of the deferred output.
+    let synthesisCalls = 0;
+    __setChatTransportForTests(async o => {
+      const triage = (o.system ?? '').startsWith('You triage a conversation transcript');
+      if (!triage) synthesisCalls++;
+      const text = triage ? JSON.stringify({ score: 0.1, content_type: 'routine', segments: [], entities: [], reasons: ['routine'] }) : JSON.stringify({ pages: [], skipped: true });
+      return { text, blocks: [{ type: 'text', text }], stopReason: 'end', usage: { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: o.model!, providerId: 'anthropic' };
+    });
+    const spent = calls();
+    const next = await quietly(() => runPhaseSynthesize(engine, opts));
+    expect(next.status, JSON.stringify(next.error ?? next.summary)).toBe('ok');
+    expect(synthesisCalls).toBe(0);
+    expect(calls()).toBe(spent);
+    expect(next.details.children_submitted ?? 0).toBe(0);
+    expect(await engine.executeRaw("SELECT id FROM minion_jobs WHERE name = 'subagent' AND data->>'source_id'=$1", [sourceId])).toEqual([]);
+    expect(next.details.postprocess_resumed).toEqual([slug]);
+    expect(next.details.written_slugs).toEqual([slug]);
+    const stamped = (await engine.readPageSnapshot(slug, { sourceId }))!.page;
+    expect(stamped.frontmatter.dream_generated).toBe(true);
+    // The grown transcript still lacks the invented quotation, so it fails grounding the way any unfound quote does.
+    expect(stamped.compiled_truth).not.toContain('"an entirely invented');
+    expect(stamped.frontmatter.unverified_claims).toEqual([expect.objectContaining({ reason: 'quote_not_in_source', detail: 'an entirely invented quotation that should lose its marks' })]);
+    expect(stamped.frontmatter.quote_verification).toBeUndefined();
+    expect(readFileSync(join(root, `${slug}.md`), 'utf8')).toContain('dream_generated: true');
+    expect(JSON.parse(await engine.getConfig(POSTPROCESS_PENDING_KEY) ?? '{}')[sourceId]).toBeUndefined();
+  });
+}, 120_000);
+
+test('#6757: a postprocess request read past the statement timeout defers that output, and the next ordinary pass finishes it without a provider call', async () => {
+  await fixture(async ({ engine, sourceId, opts, calls }) => {
+    await interruptAfterChild(engine, sourceId, opts);
+    const slug = await outputSlug(engine, sourceId);
+    const spent = calls();
+    const getWriteRequest = journal.getWriteRequest;
+    let hits = 0;
+    const spy = spyOn(journal, 'getWriteRequest').mockImplementation(async (...args) => {
+      if (!hits++) throw STATEMENT_TIMEOUT();
+      return getWriteRequest(...args);
+    });
+    let deferred: Awaited<ReturnType<typeof runPhaseSynthesize>>;
+    try { deferred = await quietly(() => runPhaseSynthesize(engine, opts)); } finally { spy.mockRestore(); }
+    expect(deferred.status, JSON.stringify(deferred.error ?? deferred.summary)).toBe('warn');
+    expect(deferred.details.postprocess_deferred).toMatchObject({ read: 'postprocess_request', outputs: 1, consecutive: 1 });
+    expect(deferred.details.pages_written).toBe(0);
+    expect(await engine.getConfig('dream.synthesize.last_completion_ts')).toBeNull();
+    expect((await engine.readPageSnapshot(slug, { sourceId }))!.page.frontmatter.dream_generated).toBeUndefined();
+    await disposePersistenceConsumer(engine);
+    const next = await runPhaseSynthesize(engine, opts);
+    expect(next.status, JSON.stringify(next.error ?? next.summary)).toBe('ok');
+    expect(calls()).toBe(spent);
+    expect(next.details.written_slugs).toEqual([slug]);
+    expect((await engine.readPageSnapshot(slug, { sourceId }))!.page.frontmatter.dream_generated).toBe(true);
+    expect((await engine.readPageSnapshot(slug, { sourceId }))!.page.frontmatter.quote_verification).toBeUndefined();
+    expect(JSON.parse(await engine.getConfig(POSTPROCESS_PENDING_KEY) ?? '{}')[sourceId]).toBeUndefined();
+  });
+}, 120_000);
+
+test('#6757: a user cancel on the committed-outputs read (SQLSTATE 57014, not a statement timeout) still fails the phase and defers nothing', async () => {
+  await fixture(async ({ engine, sourceId, opts }) => {
+    const cancel = failCommittedOutputsRead(engine, () => Object.assign(new Error('canceling statement due to user request'), { code: '57014' }));
+    let failed: Awaited<ReturnType<typeof runPhaseSynthesize>>;
+    try { failed = await runPhaseSynthesize(engine, opts); } finally { cancel.restore(); }
+    expect(cancel.hits()).toBe(1);
+    expect(failed.status).toBe('fail');
+    expect(failed.error?.code).toBe('SYNTH_PHASE_FAIL');
+    expect(JSON.parse(await engine.getConfig(POSTPROCESS_PENDING_KEY) ?? '{}')[sourceId]).toBeUndefined();
+  });
+}, 120_000);
+
+test('#6757: three deferred passes in a row put a line on doctor persistence_request_indexes; it names the rebuild only when the index is missing, and clears once a pass completes', async () => {
+  await fixture(async ({ engine, sourceId, opts, calls }) => {
+    const spent: number[] = [];
+    for (let pass = 1; pass <= 3; pass++) {
+      const timeout = failCommittedOutputsRead(engine);
+      let deferred: Awaited<ReturnType<typeof runPhaseSynthesize>>;
+      try { deferred = await quietly(() => runPhaseSynthesize(engine, opts)); } finally { timeout.restore(); }
+      expect(deferred.details.postprocess_deferred).toMatchObject({ read: 'committed_outputs', consecutive: pass });
+      await disposePersistenceConsumer(engine);
+      spent.push(calls());
+      if (pass === 2) expect((await requestIndexesCheck(engine)).status).toBe('ok');
+    }
+    expect(new Set(spent).size).toBe(1);
+    const valid = await requestIndexesCheck(engine);
+    expect(valid.status).toBe('warn');
+    expect(valid.message).toContain(`3 passes in a row on source ${sourceId}`);
+    expect(valid.message).toContain('the committed-outputs read');
+    expect(valid.message).toContain('1 output(s) pending');
+    expect(valid.message).not.toContain('gbrain repair request-indexes');
+    expect(valid.details).toMatchObject({ count: 0, postprocess_deferred: [expect.objectContaining({ source_id: sourceId, consecutive_passes: 3, read: 'committed_outputs', pending_outputs: 1 })] });
+    await engine.executeRaw(`DROP INDEX ${PERSISTENCE_REQUEST_ID_INDEX.name}`);
+    try {
+      const missing = await requestIndexesCheck(engine);
+      expect(missing.message).toContain(`${PERSISTENCE_REQUEST_ID_INDEX.name} is missing`);
+      expect(missing.message).toContain('gbrain repair request-indexes');
+      expect(missing.message).toContain(`3 passes in a row on source ${sourceId}`);
+    } finally { await buildIndexOnline(engine, 0, PERSISTENCE_REQUEST_ID_INDEX); }
+    const next = await runPhaseSynthesize(engine, opts);
+    expect(next.status, JSON.stringify(next.error ?? next.summary)).toBe('ok');
+    expect(calls()).toBe(spent[0]);
+    expect(await requestIndexesCheck(engine)).toMatchObject({ status: 'ok', message: 'Request-table indexes are valid.' });
+  });
+}, 180_000);

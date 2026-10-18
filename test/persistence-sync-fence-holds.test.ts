@@ -31,6 +31,7 @@ import { printSyncResult, type SyncOpts, type SyncResult } from '../src/commands
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { SYNC_IMPORT_PROVENANCE_OP } from '../src/core/persistence/sync-holds.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { waitFor } from './helpers/wait-for.ts';
 import { readFileSync } from 'node:fs';
@@ -118,7 +119,7 @@ test('a malformed fence among clean files: the sync finishes, holds that file wi
   expect(result.held![0]!.fix.argv).toEqual(preview);
   expect(result.held![0]!.fix.then?.argv).toEqual([...preview, '--apply']);
   expect(result.held![0]).toMatchObject({ line: 9, fence: { tier: 'resolver', auto_retry: false, next_attempt_after: null, classes: ['holder_unresolved'] } });
-  expect(result.holds_fix!.argv).toEqual(['gbrain', 'repair', 'fences', '--source', s.id]);
+  expect(result.holds_fix!.argv).toEqual(['gbrain', 'repair', 'content', '--source', s.id]); // #6377: the source-level step is the content lane
   for (const text of [JSON.stringify(result.held), result.holds_fix!.why]) expect(text).not.toContain('repair frontmatter');
   const text = printed(result);
   expect(text).toContain('Held people/malformed.md: invalid_fence (holder_unresolved) in the takes fence (body), row 1, column who, at line 9');
@@ -130,14 +131,14 @@ test('a malformed fence among clean files: the sync finishes, holds that file wi
   const rows = await engine.executeRaw<{ completed_keys: unknown }>("SELECT completed_keys FROM op_checkpoints WHERE op LIKE 'sync-hold%' AND fingerprint LIKE $1", [`${s.id}:%`]);
   for (const blob of [JSON.stringify(rows), JSON.stringify(result), text, lines, JSON.stringify(status)]) expectNoSecrets(blob);
   expect(lines).toContain(`gbrain repair fences --source ${s.id} --only people/malformed.md`);
-  // Doctor routes a fence-only source to the fence repair preview, never to frontmatter repair.
+  // Doctor routes a fence-only source to the content lane's preview (#6377), never to frontmatter repair.
   const doctor = await gitHeldFilesCheck(engine, [s.id]);
-  expect(doctor).toMatchObject({ status: 'warn', fix: { argv: ['gbrain', 'repair', 'fences', '--source', s.id] }, details: { fences: 1, auto_repair: { active: false } } });
-  expect(doctor.message).toContain(`gbrain repair fences --source ${s.id}`);
+  expect(doctor).toMatchObject({ status: 'warn', fix: { argv: ['gbrain', 'repair', 'content', '--source', s.id] }, details: { fences: 1, auto_repair: { active: false } } });
+  expect(doctor.message).toContain(`gbrain repair content --source ${s.id}`);
   expect(doctor.message).not.toContain('repair frontmatter');
-  // retry-held names the fence repair preview for what still refuses.
+  // retry-held names the content lane's preview for what still refuses.
   const retry = (await retryHeld(engine, s.id, { dryRun: false })).next_action;
-  expect(retry).toContain(`gbrain repair fences --source ${s.id}`);
+  expect(retry).toContain(`gbrain repair content --source ${s.id}`);
   expect(retry).not.toContain('repair frontmatter');
 
   s.write('people/malformed.md', takesPage('Malformed', take(1, 'Synthetic take', 'world'))); commit(s.root, 'fix the holder');
@@ -241,19 +242,24 @@ test('a legacy stored-row receipt holds the same bytes from the receipt; a compa
   await engine.unsetConfig('sync.holds');
   expect(await t.sync()).toMatchObject({ status: 'first_sync', held_count: 1, converted_from_failed: [compacted!.request_id] });
 
-  // ...but an arbitrary invalid_params receipt, compacted or not, is never a fence hold: the cursor stays blocked.
-  await engine.setConfig('sync.holds', 'fail');
-  const u = await source(engine, { 'notes/ok.md': note('Ok') });
-  u.write('notes/draft.md', MALFORMED);
-  expect((await u.sync({ workingTree: true })).status).toBe('blocked_by_failures');
-  const [arbitrary] = await u.failedRequests();
-  await engine.executeRaw("UPDATE persistence_requests SET error_message='The value is invalid.',error_detail=NULL WHERE request_id=$1::uuid", [arbitrary!.request_id]);
-  await engine.unsetConfig('sync.holds');
-  u.write('notes/draft.md', note('Now clean'));
-  expect((await u.sync({ workingTree: true })).status).toBe('blocked_by_failures');
-  await engine.executeRaw('UPDATE persistence_requests SET error_message=NULL,compacted=true WHERE request_id=$1::uuid', [arbitrary!.request_id]);
-  expect((await u.sync({ workingTree: true })).status).toBe('blocked_by_failures');
-  expect(await u.holds()).toEqual([]);
+  // ...but an arbitrary invalid_params receipt, compacted or not, is never a fence hold: once the file is clean, the next
+  // plain sync retries it (#6712 PR 3, L7: no --retry-failed) and nothing is held or converted.
+  for (const compacted of [false, true]) {
+    await engine.setConfig('sync.holds', 'fail');
+    const u = await source(engine, { 'notes/ok.md': note('Ok') });
+    u.write('notes/draft.md', MALFORMED);
+    expect((await u.sync({ workingTree: true })).status).toBe('blocked_by_failures');
+    const [arbitrary] = await u.failedRequests();
+    await engine.executeRaw(compacted ? 'UPDATE persistence_requests SET error_message=NULL,error_detail=NULL,compacted=true WHERE request_id=$1::uuid'
+      : "UPDATE persistence_requests SET error_message='The value is invalid.',error_detail=NULL WHERE request_id=$1::uuid", [arbitrary!.request_id]);
+    await engine.unsetConfig('sync.holds');
+    u.write('notes/draft.md', note('Now clean'));
+    const retried = await u.sync({ workingTree: true });
+    expect(retried.status).toBe('first_sync');
+    expect(retried.held ?? []).toEqual([]);
+    expect(retried.converted_from_failed ?? []).not.toContain(arbitrary!.request_id);
+    expect(await u.holds()).toEqual([]);
+  }
 }), 240_000);
 
 test('dry run lists the fence hold a real run would write and writes nothing', () => each(async engine => {
@@ -386,6 +392,8 @@ test('TE1: a stored take whose prior fence did not parse is updated by its norma
     await tx.executeRaw("UPDATE pages SET compiled_truth=$3 WHERE source_id=$1 AND slug=$2", [s.id, 'people/probe', bad.split('---\n').slice(2).join('---\n')]);
     await tx.executeRaw("INSERT INTO takes(page_id,row_num,claim,kind,holder,weight) SELECT id,2,'Second take','assessment','brain',0.7 FROM pages WHERE source_id=$1 AND slug=$2", [s.id, 'people/probe']);
   }, TEST_WRITE_ATTRIBUTION));
+  // That older writer recorded no import provenance (a recorded database-only edit is held #6712 file_drift instead).
+  await engine.executeRaw("DELETE FROM op_checkpoints WHERE op=$1 AND completed_keys->0->>'page_id'=(SELECT id::text FROM pages WHERE source_id=$2 AND slug=$3)", [SYNC_IMPORT_PROVENANCE_OP, s.id, 'people/probe']);
   s.write('people/probe.md', bad); commit(s.root, 'invented kind');
   const result = await s.sync();
   expect(result).toMatchObject({ status: 'synced', fences_normalized: { count: 1, by_class: { kind_map: 1 } } });

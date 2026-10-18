@@ -165,6 +165,14 @@ describe("explicit-file seams in the ci:local wrappers", () => {
     expect(list("run-slow-tests.sh", "--dry-run-list", "test/x.slow.test.ts")).toEqual(["test/x.slow.test.ts"]);
   });
 
+  it("run-slow-tests.sh exposes its exclusive subset of discovery", () => {
+    const exclusive = list("run-slow-tests.sh", "--dry-run-list-exclusive");
+    expect(exclusive).toContain("test/entity-card-perf.slow.test.ts");
+    const all = list("run-slow-tests.sh", "--dry-run-list");
+    for (const file of exclusive) expect(all).toContain(file);
+    expect(list("run-slow-tests.sh", "--dry-run-list-exclusive", "test/x.slow.test.ts")).toEqual([]);
+  });
+
   it("run-serial-tests.sh lists positional files and exposes its exclusive subset", () => {
     expect(list("run-serial-tests.sh", "--dry-run-list", "test/x.serial.test.ts")).toEqual(["test/x.serial.test.ts"]);
     const exclusive = list("run-serial-tests.sh", "--dry-run-list-exclusive");

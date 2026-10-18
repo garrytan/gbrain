@@ -135,12 +135,12 @@ module path when it keeps exporting the name; "module-private" means the old mod
 
 | Old symbol | Kind | Still importable from | New location(s) |
 |---|---|---|---|
-| `CLI_ONLY` | moved | `src/cli.ts:CLI_ONLY` | `src/cli/command-table.ts:CLI_ONLY` |
+| `CLI_ONLY` | moved | `src/cli/main.ts:CLI_ONLY` | `src/cli/command-table.ts:CLI_ONLY` |
 | `CLI_ONLY_SELF_HELP` | moved | module-private | `src/cli/command-table.ts:CLI_ONLY_SELF_HELP` |
 | `STARTUP_HOOK_SKIP_COMMANDS` | moved | module-private | `src/cli/command-table.ts:STARTUP_HOOK_SKIP_COMMANDS` |
-| `THIN_CLIENT_REFUSED_COMMANDS` | moved | `src/cli.ts:THIN_CLIENT_REFUSED_COMMANDS` | `src/cli/command-table.ts:THIN_CLIENT_REFUSED_COMMANDS` |
-| `handleCliOnly` | split | `src/cli.ts:handleCliOnly` | `src/cli.ts:connectCliOnlyEngine`<br>`src/cli.ts:prepareConnectedDispatch`<br>`src/cli.ts:routeCliOnlyBeforeTable`<br>`src/cli.ts:routeEngineFreeSubcommands`<br>`src/cli.ts:runReadOnlyTimeoutDispatch`<br>`src/cli/commands/advisor.ts:run`<br>`src/cli/commands/agent.ts:run`<br>`src/cli/commands/anomalies.ts:run`<br>… and 87 more (see the JSON) |
-| `main` | extracted | `src/cli.ts:main` | `src/cli.ts:runSharedOperation` |
+| `THIN_CLIENT_REFUSED_COMMANDS` | moved | `src/cli/main.ts:THIN_CLIENT_REFUSED_COMMANDS` | `src/cli/command-table.ts:THIN_CLIENT_REFUSED_COMMANDS` |
+| `handleCliOnly` | split | `src/cli/main.ts:handleCliOnly` | `src/cli/main.ts:connectCliOnlyEngine`<br>`src/cli/main.ts:prepareConnectedDispatch`<br>`src/cli/main.ts:routeCliOnlyBeforeTable`<br>`src/cli/main.ts:routeEngineFreeSubcommands`<br>`src/cli/main.ts:runReadOnlyTimeoutDispatch`<br>`src/cli/commands/advisor.ts:run`<br>`src/cli/commands/agent.ts:run`<br>`src/cli/commands/anomalies.ts:run`<br>… and 87 more (see the JSON) |
+| `main` | extracted | `src/cli/main.ts:main` | `src/cli/main.ts:runSharedOperation` |
 
 ### `src/commands/autopilot.ts`
 

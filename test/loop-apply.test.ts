@@ -225,7 +225,10 @@ describe('applyThreadLoopVerdict', () => {
     expect(rows[0].counterparty_email).toBe('dave@example.com');
   });
 
-  test('alias in a DIFFERENT source does not resolve (source isolation)', async () => {
+  // #5504 (wave 14 PR4, T8): an exact-email alias is an identity signal, so a page carrying it in exactly
+  // one other source resolves and the loop records that source; the loop row itself stays in the
+  // connector source. Name matches never cross sources (test/loops-counterparty-null-entity.test.ts).
+  test('exact-email alias in a DIFFERENT source resolves and records its source (#5504)', async () => {
     await engine.executeRaw(
       `INSERT INTO sources (id, name) VALUES ('g2', 'g2') ON CONFLICT (id) DO NOTHING`,
     );
@@ -241,7 +244,9 @@ describe('applyThreadLoopVerdict', () => {
     await applyThreadLoopVerdict(engine, 'g1', inboundThread('carol@example.com'), MY, null, NOW);
     const rows = await listOpenLoops(engine, { sourceIds: ['g1'], status: 'open' });
     expect(rows).toHaveLength(1);
-    expect(rows[0].counterparty_slug).toBeNull();
+    expect(rows[0].source_id).toBe('g1');
+    expect(rows[0].counterparty_slug).toBe('people/carol-example');
+    expect(rows[0].counterparty_source_id).toBe('g2');
   });
 
   test('suppressed sender never opens a NEW loop (with the cache seam cleared)', async () => {

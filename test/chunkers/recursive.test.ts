@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { chunkText } from '../../src/core/chunkers/recursive.ts';
+import { cpuMs } from '../helpers/cpu-time.ts';
 
 describe('Recursive Text Chunker', () => {
   test('returns empty array for empty input', () => {
@@ -212,5 +213,17 @@ describe('CJK chunking (v0.32.7)', () => {
     expect(chunks.length).toBeGreaterThan(0);
     // Should have been chunked by word boundaries (English-dominant doc).
     expect(chunks.every(c => /^[\x20-\x7e\s]+$/.test(c.text))).toBe(true);
+  });
+});
+
+describe('large pages: delimiter splitting is linear', () => {
+  test('a 4 MiB single-paragraph page chunks in well under a second per MiB', () => {
+    const sentence = 'Plain prose about acme-example. ';
+    const text = sentence.repeat(Math.floor((4 * 1024 * 1024) / sentence.length));
+    let chunks: ReturnType<typeof chunkText> = [];
+    const used = cpuMs(() => { chunks = chunkText(text); });
+    expect(chunks.length).toBeGreaterThan(1000);
+    expect(chunks.every(c => c.text.length <= 6000)).toBe(true);
+    expect(used).toBeLessThan(3000);
   });
 });

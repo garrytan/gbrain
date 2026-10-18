@@ -44,7 +44,8 @@ export function lastForwardProgressAt(): number {
  * long-running loop stops itself before a strict deadline so it, not the
  * watchdog, writes the final result.
  */
-export interface RunDeadline { atMs: number; strict: boolean }
+/** `progressWindowMs`: a progress-aware deadline stops only once this long passed without progress (#6712 PR 1: a drain-lease follower's budget). */
+export interface RunDeadline { atMs: number; strict: boolean; progressWindowMs?: number }
 let runDeadline: RunDeadline | null = null;
 export function registerRunDeadline(deadline: RunDeadline | null): void {
   runDeadline = deadline;

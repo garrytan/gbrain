@@ -234,6 +234,14 @@
         "name": "persistence_capacity"
       },
       {
+        "category": "ops",
+        "name": "persistence_compaction"
+      },
+      {
+        "category": "ops",
+        "name": "persistence_counter_drift"
+      },
+      {
         "category": "brain",
         "name": "parked_effects"
       },
@@ -246,12 +254,20 @@
         "name": "writer_version"
       },
       {
+        "category": "ops",
+        "name": "segmented_storage"
+      },
+      {
         "category": "brain",
         "name": "self_capture"
       },
       {
         "category": "ops",
         "name": "vector_plan"
+      },
+      {
+        "category": "ops",
+        "name": "keyword_plan"
       },
       {
         "category": "ops",

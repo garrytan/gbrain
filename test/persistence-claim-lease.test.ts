@@ -13,7 +13,7 @@
  * in milliseconds, with no datastore.
  */
 import { describe, expect, test } from 'bun:test';
-import { CLAIM_LOST, endLostLease, startClaimLease } from '../src/core/persistence/claim-lease.ts';
+import { CLAIM_LOST, endLostLease, holdClaimForPublication, startClaimLease } from '../src/core/persistence/claim-lease.ts';
 
 const FAST = { everyMs: 5, deadlineMs: 40 };
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -22,10 +22,15 @@ const lostWithin = (lease: { lost: Promise<void> }, ms: number) =>
 
 describe('startClaimLease', () => {
   test('healthy renewals keep the claim held and whileHeld yields the work result', async () => {
+    // Event-driven: the work finishes once the third renewal has run, so a
+    // loaded runner that fires the interval late slows the test, never fails it.
     let renewals = 0;
-    const lease = startClaimLease(async () => { renewals++; return true; }, FAST);
+    let thirdRenewal!: () => void;
+    const renewedThrice = new Promise<void>(resolve => { thirdRenewal = resolve; });
+    const lease = startClaimLease(async () => { if (++renewals === 3) thirdRenewal(); return true; }, FAST);
     try {
-      const result = await lease.whileHeld(sleep(80).then(() => 'prepared'));
+      const work = Promise.race([renewedThrice.then(() => 'prepared'), sleep(5_000).then(() => 'renewals stopped')]);
+      const result = await lease.whileHeld(work);
       expect(result).toBe('prepared');
       expect(lease.held).toBe(true);
       expect(renewals).toBeGreaterThan(2);
@@ -140,5 +145,36 @@ describe('startClaimLease', () => {
     const started = performance.now();
     await endLostLease(lease, 50);
     expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe('holdClaimForPublication (#6574)', () => {
+  test('stops the cadence, lets the in-flight renewal settle first, then stamps once', async () => {
+    const order: string[] = [];
+    let renewals = 0;
+    let finishRenewal!: () => void;
+    const lease = startClaimLease(async () => {
+      renewals++;
+      order.push('renewal started');
+      await new Promise<void>(resolve => { finishRenewal = resolve; });
+      order.push('renewal settled');
+      return true;
+    }, { everyMs: 5, deadlineMs: 5_000 });
+    for (let i = 0; i < 200 && renewals === 0; i++) await sleep(5);
+    expect(renewals).toBe(1);
+    const held = holdClaimForPublication(lease, async () => { order.push('stamped'); });
+    await sleep(20);
+    expect(order).toEqual(['renewal started']);
+    finishRenewal();
+    await held;
+    expect(order).toEqual(['renewal started', 'renewal settled', 'stamped']);
+    await sleep(30);
+    expect(renewals).toBe(1);
+    expect(lease.held).toBe(true);
+  });
+
+  test('a stamp that fails leaves the publication to its own token check instead of throwing', async () => {
+    const lease = startClaimLease(async () => true, FAST);
+    await expect(holdClaimForPublication(lease, async () => { throw new Error('connection reset'); })).resolves.toBeUndefined();
   });
 });

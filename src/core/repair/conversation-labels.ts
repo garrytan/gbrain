@@ -34,6 +34,12 @@
  * `--max-cost-usd`). A managed brain publishes one database-only
  * `managed_maintenance_conversation_label_retire` request per page; an
  * unmanaged brain writes under the page lock. Never automatic.
+ *
+ * Segmented pages (Wave B) are not classified: the candidate filter matches
+ * the label line against the page row's body columns, which a segmented page
+ * leaves empty. Their active per-segment extractor facts, on pages the fixed
+ * extractor has not stamped, are counted
+ * (`segmented_pages`, `segmented_facts`) and the pages named in a warning.
  */
 import type { BrainEngine, NewFact } from '../engine.ts';
 import type { Page } from '../types.ts';
@@ -56,6 +62,7 @@ import { readConversationBodyForParsing } from '../conversation-parser/body.ts';
 import { conversationSkip } from '../facts/conversation-skip.ts';
 import { LABEL_RETIRED_MARKER } from '../facts/conversation-publication.ts';
 import { LEGACY_TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE, stampExtractorVersion } from '../facts/audit-sources.ts';
+import { SEGMENTED_SAMPLE } from './timeline.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 
 export const CONVERSATION_LABELS_INTENT = 'managed_maintenance_conversation_label_retire';
@@ -232,7 +239,9 @@ export const conversationLabelsRepair: RepairHandler = {
           `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
           'docs/guides/repair.md#conversation-labels');
       }
-      const approved = await loadApprovedSet<LabelPage>(engine, { command: 'conversation-labels', hash: opts.expect, previewCommand: command });
+      const approved = await loadApprovedSet<LabelPage>(engine, { command: 'conversation-labels', hash: opts.expect, previewCommand: command,
+        emptyHash: async () => previewHash({ kind: 'conversation-labels-v1', brain_id: scope.brain_id, sources: (await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids])),
+          selection: { source_ids: scope.source_ids, include_ambiguous: includeAmbiguous }, facts: [], pages: [] }) });
       const scopeKey = JSON.stringify(scope.source_ids);
       if (approved.items.some(page => page.include_ambiguous !== includeAmbiguous || JSON.stringify(page.scope) !== scopeKey)) {
         throw previewChangedError(opts.expect, command);
@@ -245,6 +254,12 @@ export const conversationLabelsRepair: RepairHandler = {
         details: { handoff: handoffCommands(approved.items) } };
     }
     const facts = await classifyLabelFacts(engine, scope.source_ids);
+    const segmented = await engine.executeRaw<{ source_id: string; slug: string; n: number }>(`SELECT p.source_id, p.slug, count(*)::int AS n
+        FROM facts f JOIN pages p ON p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL
+       WHERE f.source_id=ANY($1::text[]) AND f.source=$2 AND f.expired_at IS NULL AND p.body_storage='segmented'
+         AND NOT EXISTS (SELECT 1 FROM facts o WHERE o.source_id=f.source_id AND o.source_markdown_slug=f.source_markdown_slug
+           AND o.source IN ($3, $4) AND o.expired_at IS NULL AND o.context ~ 'extractor_version=[0-9]+$')
+       GROUP BY p.id, p.source_id, p.slug ORDER BY p.id`, [scope.source_ids, SEGMENT_SOURCE, TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE]);
     const selected = facts.filter(fact => fact.class === 'evidenced' || fact.class === 'ambiguous' && includeAmbiguous);
     const pages = new Map<string, LabelPage>();
     for (const fact of selected) {
@@ -274,8 +289,12 @@ export const conversationLabelsRepair: RepairHandler = {
       items: batchItems(approved, hash), preview_hash: hash, listing,
       residuals: { evidenced: count('evidenced'), ambiguous: count('ambiguous'), excluded: count('excluded'),
         non_extractable_pages: approved.filter(p => p.outcome === 'non_extractable').length, awaiting_reextraction_pages: awaiting.length,
-        awaiting_segments: awaiting.reduce((n, p) => n + p.segments, 0) },
-      warnings: ['This command makes no model calls.'],
+        awaiting_segments: awaiting.reduce((n, p) => n + p.segments, 0),
+        ...(segmented.length ? { segmented_pages: segmented.length, segmented_facts: segmented.reduce((n, p) => n + Number(p.n), 0) } : {}) },
+      warnings: ['This command makes no model calls.', ...(segmented.length ? [`segmented_pages: ${segmented.length} segmented page(s) `
+        + `(${segmented.slice(0, SEGMENTED_SAMPLE).map(p => `${p.source_id}:${p.slug}`).join(', ')}${segmented.length > SEGMENTED_SAMPLE ? ', …' : ''}) `
+        + 'carry conversation facts that are not checked for misattributed labels: the candidate filter reads the page body as one string, '
+        + 'so this repair does not handle segmented pages, and no command does yet.'] : [])],
       details: { pages: approved.map(({ source_id, slug, outcome, facts: rows, segments, non_extractable_reason }) =>
         ({ source_id, slug, outcome, facts: rows.length, segments, ...(non_extractable_reason ? { reason: non_extractable_reason } : {}) })),
       handoff: handoffCommands(approved) },

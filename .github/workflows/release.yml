@@ -88,7 +88,7 @@ jobs:
             scripts
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.3
       - id: gate
         name: Wait for Test and E2E Tests on the release commit
         env:
@@ -120,13 +120,15 @@ jobs:
           ref: ${{ needs.ci-gate.outputs.sha }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.3
       - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock', 'admin/bun.lock') }}
           restore-keys: bun-cache-${{ runner.os }}-
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       # Supply-chain: build the admin UI FRESH from admin/src so the compiled
       # binary embeds a bundle a reviewer can trace to source — not the committed
       # admin/dist bytes. `build:admin` runs `vite build` then regenerates
@@ -279,7 +281,7 @@ jobs:
       - if: steps.gate.outputs.publish == 'true'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.3
       - if: steps.gate.outputs.publish == 'true'
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
@@ -287,7 +289,9 @@ jobs:
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-cache-${{ runner.os }}-
       - if: steps.gate.outputs.publish == 'true'
-        run: bun install --frozen-lockfile
+        name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile
       - if: steps.gate.outputs.publish == 'true'
         name: Generate template tree and byte-diff against the vendored copy
         run: |
@@ -360,8 +364,10 @@ jobs:
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.4.2
-      - run: bun install --frozen-lockfile
+          bun-version: 1.4.3
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile
       - name: Drift gate — committed plugin tree matches the generator
         run: bash scripts/check-plugin-tree.sh
       - name: Assemble the plugin dist tree

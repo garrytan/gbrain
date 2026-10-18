@@ -91,3 +91,43 @@ export function filterPagesToWindow<T extends DatedPage>(pages: T[], window: Tem
   }
   return { kept, droppedOutOfWindow, undatedKept };
 }
+
+// PR #5086 (@tarush1989), wave 14 P3.17: a window from exactly one explicit date in the question.
+const MONTH_NAMES = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+const MONTH_NAME_YEAR = new RegExp(`\\b(${MONTH_NAMES.join('|')})\\s+(\\d{4})\\b`, 'gi');
+
+/**
+ * The one explicit date a question names, as `since`/`until` bounds spanning it: an ISO day (`2026-09-15`), an ISO
+ * month (`2026-09`) or an English month name with a four-digit year ("September 2026"). Fail closed to null on
+ * anything else: no token, a bare year ("in 2026", "GPT-4"), two or more distinct tokens (a range the caller must
+ * spell out), a token `parseTemporalWindow` refuses (`2026-13`, `2026-02-30`), a relative phrase ("next week").
+ * Deterministic: no clock, no timezone.
+ */
+export function parseQuestionWindow(question: string | null | undefined): { since: string; until: string } | null {
+  if (typeof question !== 'string' || !question) return null;
+  const tokens = new Set<string>();
+  for (const m of question.matchAll(/\b(\d{4}-\d{2}-\d{2})\b/g)) tokens.add(m[1]);
+  for (const m of question.matchAll(/\b(\d{4}-\d{2})\b(?!-\d)/g)) tokens.add(m[1]);
+  for (const m of question.matchAll(MONTH_NAME_YEAR)) tokens.add(`${m[2]}-${String(MONTH_NAMES.indexOf(m[1].toLowerCase()) + 1).padStart(2, '0')}`);
+  if (tokens.size !== 1) return null;
+  const [token] = tokens;
+  try { parseTemporalWindow(token, token); } catch { return null; }
+  return { since: token, until: token };
+}
+
+export interface ResolvedThinkWindow {
+  window: TemporalWindow;
+  /** Who bounded the synthesis: the caller's `since`/`until`, or the one explicit date the question named. */
+  source: 'caller' | 'question';
+  since: string | undefined;
+  until: string | undefined;
+}
+
+/** `runThink`'s window: a caller bound is authoritative (and still validated); only when both are absent does the question's one explicit date apply. */
+export function resolveThinkWindow(question: string, since?: string | null, until?: string | null): ResolvedThinkWindow | null {
+  const caller = parseTemporalWindow(since, until);
+  if (caller) return { window: caller, source: 'caller', since: since?.trim() || undefined, until: until?.trim() || undefined };
+  const derived = parseQuestionWindow(question);
+  if (!derived) return null;
+  return { window: parseTemporalWindow(derived.since, derived.until)!, source: 'question', ...derived };
+}

@@ -10,6 +10,7 @@
  * A Markdown-only clone does not carry DB-only withdrawal records.
  */
 
+import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 
 import type { BrainEngine } from '../engine.ts';
@@ -20,8 +21,12 @@ import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fen
 import { parseMarkdown } from '../markdown.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { contentHash } from '../utils.ts';
+import { isSegmentedPage } from '../page-body/page-shape.ts';
+import { rewriteLiveSegmentedFences } from '../page-body/segment-rewrite.ts';
+import type { BodyRegion } from '../page-body/types.ts';
 import { recordFactWithdrawal } from './withdrawal.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { markBeliefCommits } from '../belief/append.ts';
 import { withdrawnFact } from './withdrawal-overlay.ts';
 
 export interface ForgetFactResult {
@@ -73,11 +78,13 @@ export function supersededFact(fact: ParsedFact, today: string, newRowNum: numbe
  * Strike fence row `rowNum` inside `body` with `strike` (strikethrough,
  * valid_until = today, and a withdrawal or supersession marker in context,
  * preserving existing context). Returns the rewritten body, or null when the
- * fence lacks the row (DB drifted from markdown) or its markers — callers
- * fall back to a DB-only expire.
+ * fence lacks the row (DB drifted from markdown), its markers, or does not
+ * parse cleanly (re-rendering it would drop the rows the parser skipped) —
+ * callers fall back to a DB-only expire and the bytes stay as they are.
  */
 export function strikeFenceRow(body: string, rowNum: number, strike: (fact: ParsedFact) => ParsedFact): string | null {
   const parsed = parseFactsFence(body);
+  if (parsed.warnings.length > 0) return null;
   const target = parsed.facts.find(f => f.rowNum === rowNum);
   if (!target) return null;
   const updated: ParsedFact[] = parsed.facts.map(f => f.rowNum === rowNum ? strike(f) : f);
@@ -165,7 +172,11 @@ export async function forgetFactInFence(
     await maintenanceTransaction(engine, tx => tx.executeRaw(`UPDATE facts SET valid_until = LEAST(COALESCE(valid_until, now()), now()), expired_at = now()
       WHERE id = $1 AND expired_at IS NULL`, [factId]));
   } else {
-    await maintenanceTransaction(engine, tx => recordFactWithdrawal(tx, factId, row.source_id, opts.worldOnly === true));
+    // W1 #6783 §5.1: the withdrawal's ledger publication is marked committed once its transaction commits.
+    const publicationId = randomUUID();
+    const beliefReport = { appended: 0 };
+    await maintenanceTransaction(engine, tx => recordFactWithdrawal(tx, factId, row.source_id, opts.worldOnly === true, { publicationId, beliefReport }));
+    if (beliefReport.appended) await markBeliefCommits(engine, [publicationId]).catch(() => undefined);
   }
 
   if (row.expired_at !== null) {
@@ -174,11 +185,24 @@ export async function forgetFactInFence(
 
   // Mirror the retraction in the page body. The withdrawal record protects
   // active facts even if this best-effort mirror fails or a stale file returns.
+  // Wave B (spec 11): a segmented page's row is struck in the segment holding its fence (a new generation; only the
+  // rewritten occurrences' chunks are replaced), never by loading the body. As `strikeFenceRow` on the whole string,
+  // only the first facts fence is a candidate: of the compiled truth for the DB body, of truth then timeline for the
+  // file mirror (the file holds both); a first fence without the row strikes nothing.
+  const strikeSegments = async (pageId: number, regions: readonly BodyRegion[], strikeRow = strike): Promise<void> => {
+    let first = true;
+    await maintenanceTransaction(engine, tx => rewriteLiveSegmentedFences(tx, pageId, async (fence, at) => {
+      if (!first || !regions.includes(at.region) || !fence.includes(FENCE_BEGIN)) return fence;
+      first = false;
+      return strikeFenceRow(fence, row.row_num!, strikeRow) ?? fence;
+    }));
+  };
   const strikeDbBody = async (): Promise<void> => {
     if (row.row_num === null || row.source_markdown_slug === null) return;
     const slug = row.source_markdown_slug;
     const page = await engine.getPage(slug, { sourceId: row.source_id });
     if (!page) return;
+    if (isSegmentedPage(page)) return strikeSegments(page.id, ['truth']);
     const struck = strikeFenceRow(page.compiled_truth ?? '', row.row_num, strike);
     if (struck === null) return;
     // The FILE was not rewritten on this tier, so the row must NOT keep the
@@ -287,7 +311,11 @@ export async function forgetFactInFence(
       try {
         const reparsed = parseMarkdown(tmpBody, `${slug}.md`);
         const page = await engine.getPage(slug, { sourceId: row.source_id });
-        if (page) {
+        // The withdrawal already struck the segmented row with the overlay's reason; it takes the file's row, as the
+        // inline body takes the file's text, so the caller's reason reaches the stored body.
+        const fileRow = parseFactsFence(tmpBody).facts.find(f => f.rowNum === targetRowNum);
+        if (page && isSegmentedPage(page)) await strikeSegments(page.id, ['truth', 'timeline'], fileRow ? () => fileRow : strike);
+        else if (page) {
           await maintenanceTransaction(engine, tx => tx.refreshPageBody(slug, row.source_id,
             sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline),
             page.content_hash || contentHash(page)));

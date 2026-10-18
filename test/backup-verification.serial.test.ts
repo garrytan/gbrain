@@ -296,3 +296,128 @@ test('the remote probe reads the user git config through HOME, so an insteadOf r
     expect(result.state).toBe('ok');
   });
 }, 15_000);
+
+// #6499: a probe is started only with its full two-second slot; a sub-slot leftover defers the root as budget_exhausted.
+type ExecFileStub = (file: string, args: string[], options: { timeout: number }, callback: (error: Error | null, stdout: string) => void) => unknown;
+
+/** A remote that answers correctly after `answerMs`, killed the way execFile kills a timed-out child when the slot is shorter. */
+function slowRemote(answerMs: number, timeouts: number[]): ExecFileStub {
+  return (_file, args, options, callback) => {
+    timeouts.push(options.timeout);
+    const head = git(args[args.indexOf('-C') + 1], 'rev-parse', 'HEAD');
+    const ref = args[args.length - 1];
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const finish = (error: Error | null, stdout: string) => { for (const t of timers) clearTimeout(t); callback(error, stdout); };
+    timers.push(setTimeout(() => finish(null, `${head}\t${ref}\n`), answerMs));
+    timers.push(setTimeout(() => finish(Object.assign(new Error('killed'), { killed: true, signal: 'SIGTERM', code: null }), ''), options.timeout));
+    return {};
+  };
+}
+
+/**
+ * `slowRemote` on a virtual clock: each probe advances `Date.now()` by exactly `answerMs` and answers on the next tick, so the
+ * sweep deadline sees only probe time. Real local git work between probes on a loaded runner can't eat the 4th probe's slot.
+ */
+function virtualSlowRemote(answerMs: number, timeouts: number[]): { restore: () => void } {
+  let clock = Date.now();
+  const time = spyOn(Date, 'now').mockImplementation(() => clock);
+  const probe = spyOn(childProcess, 'execFile').mockImplementation(((_file: string, args: string[], options: { timeout: number }, callback: (error: Error | null, stdout: string) => void) => {
+    timeouts.push(options.timeout);
+    const head = git(args[args.indexOf('-C') + 1], 'rev-parse', 'HEAD');
+    const ref = args[args.length - 1];
+    clock += Math.min(answerMs, options.timeout);
+    setImmediate(() => answerMs < options.timeout
+      ? callback(null, `${head}\t${ref}\n`)
+      : callback(Object.assign(new Error('killed'), { killed: true, signal: 'SIGTERM', code: null }), ''));
+    return {};
+  }) as unknown as typeof childProcess.execFile);
+  return { restore: () => { probe.mockRestore(); time.mockRestore(); } };
+}
+
+test('a remote that would not get its full slot is deferred as budget_exhausted, never probed on a sub-slot (#6499)', async () => {
+  const roots = await Promise.all(Array.from({ length: 5 }, async (_, i) => (await repository(`slow-${i}`)).root));
+  const timeouts: number[] = [];
+  const probe = virtualSlowRemote(1_700, timeouts);
+  try {
+    const result = await computeBackupCoverage(engine(roots), verified);
+    expect(timeouts).toEqual([BACKUP_REMOTE_TIMEOUT_MS, BACKUP_REMOTE_TIMEOUT_MS, BACKUP_REMOTE_TIMEOUT_MS, BACKUP_REMOTE_TIMEOUT_MS]);
+    const states = result.assets.filter(a => a.kind === 'source_repo').map(a => a.verification?.state);
+    expect(states.filter(s => s === 'verified')).toHaveLength(4);
+    expect(states).toContain('budget_exhausted');
+    expect(states).not.toContain('unavailable');
+  } finally { probe.restore(); }
+}, 20_000);
+
+test('a deferred probe keeps first-pass verified evidence; a transport failure still supersedes it (#6499)', async () => {
+  const roots = await Promise.all(Array.from({ length: 5 }, async (_, i) => (await repository(`keep-${i}`)).root));
+  const first = await getBackupStatus(engine(roots), { ...verified, forceRefresh: true });
+  expect(first.assets.filter(a => a.verification?.state === 'verified')).toHaveLength(5);
+  const timeouts: number[] = [];
+  const probe = virtualSlowRemote(1_700, timeouts);
+  try {
+    const second = await getBackupStatus(engine(roots), { ...verified, forceRefresh: true, now: new Date(now.getTime() + 1000) });
+    expect(timeouts).toHaveLength(4);
+    expect(second.assets.filter(a => a.kind === 'source_repo').map(a => a.verification?.state)).toEqual(['verified', 'verified', 'verified', 'verified', 'verified']);
+    expect(second.totals.recoverable_repos).toBe(5);
+  } finally { probe.restore(); }
+  const failing = spyOn(childProcess, 'execFile').mockImplementation(((_f: string, _a: string[], options: { timeout: number }, callback: (error: Error | null, stdout: string) => void) => {
+    timeouts.push(options.timeout);
+    setTimeout(() => callback(Object.assign(new Error('fatal: could not read from remote'), { code: 128 }), ''), 10);
+    return {};
+  }) as unknown as typeof childProcess.execFile);
+  try {
+    const third = await getBackupStatus(engine(roots), { ...verified, forceRefresh: true, now: new Date(now.getTime() + 2000) });
+    expect(third.assets.filter(a => a.kind === 'source_repo').every(a => a.verification?.state === 'unavailable' && a.verification.cause === 'exit')).toBe(true);
+    expect(third.totals.recoverable_repos).toBe(0);
+  } finally { failing.mockRestore(); }
+}, 30_000);
+
+test('assessBackupRepository with less than a full slot left starts no git process; a killed full-slot probe says cause: timeout (#6499)', async () => {
+  const { root } = await repository('direct');
+  const calls: number[] = [];
+  const probe = spyOn(childProcess, 'execFile').mockImplementation(slowRemote(5_000, calls) as unknown as typeof childProcess.execFile);
+  try {
+    const deferred = await assessBackupRepository(root, 'source_repo', 'source-id', now, { remaining: 1, deadline: Date.now() + 1_000 });
+    expect(calls).toEqual([]);
+    expect(deferred.verification).toMatchObject({ state: 'budget_exhausted' });
+    expect(deferred.verification).not.toHaveProperty('cause');
+    const killed = await assessBackupRepository(root, 'source_repo', 'source-id', now, { remaining: 1 });
+    expect(calls).toEqual([BACKUP_REMOTE_TIMEOUT_MS]);
+    expect(killed.verification).toMatchObject({ state: 'unavailable', cause: 'timeout' });
+  } finally { probe.mockRestore(); }
+}, 15_000);
+
+/** The error execFileSync throws when its `timeout` kills a slow git (what a loaded runner produced). */
+function timeOutLocalGit(match: (args: string[]) => boolean) {
+  const real = childProcess.execFileSync;
+  return spyOn(childProcess, 'execFileSync').mockImplementation(((file: string, args: string[], options: unknown) => {
+    if (file === 'git' && match(args)) throw Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT', signal: 'SIGTERM', status: null });
+    return real(file, args, options as Parameters<typeof real>[2]);
+  }) as unknown as typeof childProcess.execFileSync);
+}
+
+test('a local git probe that times out keeps an established bad verdict and never certifies a repository', async () => {
+  const { root } = await repository('slow-local');
+  git(root, 'commit', '--allow-empty', '-m', 'unpushed after a failed push');
+  const statusPath = pushStatusPathForRoot(root);
+  mkdirSync(join(statusPath, '..'), { recursive: true });
+  writeFileSync(statusPath, JSON.stringify({ schema_version: 'gbrain-push-status-v1', root, ok: false, reason: 'offline', timestamp: now.toISOString() }));
+  let slow = timeOutLocalGit(args => args.includes('status'));
+  try {
+    const failed = await assessBackupRepository(root, 'source_repo', 'source-id', now);
+    expect(failed).toMatchObject({ state: 'failing', detail: 'last_push_failed' });
+    const result = await computeBackupCoverage(engine([root]), verified);
+    expect(result.totals.failing).toBe(1);
+    expect(result.totals.recoverable_repos).toBe(0);
+  } finally { slow.mockRestore(); }
+  rmSync(statusPath);
+  slow = timeOutLocalGit(args => args.includes('--absolute-git-dir'));
+  try {
+    expect(await assessBackupRepository(root, 'source_repo', 'source-id', now)).toMatchObject({ state: 'unpushed', ahead: 1 });
+  } finally { slow.mockRestore(); }
+  git(root, 'push');
+  slow = timeOutLocalGit(args => args.includes('--absolute-git-dir'));
+  try {
+    expect(await assessBackupRepository(root, 'source_repo', 'source-id', now)).toMatchObject({ state: 'unknown', detail: 'probe_failed' });
+  } finally { slow.mockRestore(); }
+});

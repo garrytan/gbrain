@@ -253,7 +253,7 @@ describe('put_page persistence boundary', () => {
     const executeRaw = engine.executeRaw;
     let rejected = false;
     engine.executeRaw = function<T>(sql: string, params?: unknown[]): Promise<T[]> {
-      if (sql.includes('SET source_path = $1')) {
+      if (/SET source_path ?= ?\$\d/.test(sql)) {
         rejected = true;
         throw new Error('fixture source-path write rejected');
       }
@@ -410,14 +410,21 @@ describe('put_page persistence boundary', () => {
     const body = content('Content with a replaced chunk generation.');
     await engine.setConfig('sync.repo_path', '');
     configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, env: { OPENAI_API_KEY: 'sk-test' } });
+    let rechunked: Array<[number, number, string]> = [];
     __setEmbedTransportForTests(async ({ values }) => {
       await importFromContent(engine, slug, body, { noEmbed: true, sourceId: 'default', forceRechunk: true });
+      rechunked = (await engine.getChunks(slug, { sourceId: 'default' })).map(chunk => [chunk.id, chunk.chunk_index, chunk.chunk_text]);
       return { values, warnings: [], embeddings: values.map(() => new Array(1536).fill(0.1)), usage: { tokens: 1 } };
     });
     const result = await put(slug, body);
     expect(result.response.isError).not.toBe(true);
-    expect(await embedding(result)).toMatchObject({ state: 'committed', reason: 'revision_changed' });
-    expect((await engine.getChunks(slug, { sourceId: 'default' })).every(chunk => chunk.embedding_is_null)).toBe(true);
+    // A4: the vectors describe the same chunk text and embedding input, so they land on the
+    // rechunked rows; the newer chunk generation itself stays (same ids, indices and text).
+    expect(await embedding(result)).toMatchObject({ state: 'committed' });
+    const after = await engine.getChunks(slug, { sourceId: 'default' });
+    expect(rechunked.length).toBeGreaterThan(0);
+    expect(after.map(chunk => [chunk.id, chunk.chunk_index, chunk.chunk_text])).toEqual(rechunked);
+    expect(after.every(chunk => !chunk.embedding_is_null)).toBe(true);
   });
 
   for (const action of ['soft-delete', 'hard-delete', 'recreate'] as const) {

@@ -31,7 +31,7 @@
  * Fail-open everywhere: a probe error returns the organic results unchanged.
  */
 
-import { sanitizeRemoteBody } from '../remote-body.ts';
+import { pageLeadSource, projectedLead } from '../page-window/bounded-lead.ts';
 import { hasReadPolicy } from './read-policy-sql.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, PageReadPolicy } from '../types.ts';
@@ -129,7 +129,8 @@ export async function structuralExactLookup(
           title: page.title,
           type: page.type,
           source_id: page.source_id ?? scope ?? 'default',
-          chunk_text: sanitizeRemoteBody(page.compiled_truth ?? '').slice(0, 200),
+          // Large pages: a bounded, withdrawal-overlaid prefix is sanitized, never the whole body.
+          chunk_text: (await projectedLead(engine, { slug: page.slug, source_id: page.source_id ?? scope ?? 'default', compiled_truth: await pageLeadSource(engine, page) })).slice(0, 200),
           chunk_index: 0,
           chunk_id: 0,
           score: 0, // caller assigns the injection score
@@ -191,6 +192,16 @@ export async function applyExactLookupTier(
   } catch {
     return results;
   }
+  return applyExactLookupHits(results, hits);
+}
+
+/**
+ * A54 — the apply half of the tier, for hits `structuralExactLookup` already
+ * returned (the rerank gate looks them up before reranking; this applies them
+ * at the tier's post-rerank position without a second probe). Hit rows are
+ * copied before injection, so one hit list can be applied once per search.
+ */
+export function applyExactLookupHits(results: SearchResult[], hits: readonly SearchResult[]): SearchResult[] {
   if (hits.length === 0) return results;
 
   const out = [...results];

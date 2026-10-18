@@ -8,7 +8,7 @@
  */
 import { existsSync, realpathSync } from 'fs';
 import { resolve as pathResolve, join } from 'path';
-import { CHUNKER_VERSION } from '../../core/chunkers/code.ts';
+import { chunkerStamp } from '../../core/chunkers/code.ts';
 import { currentCompanyBrainSync } from '../../core/company-brain/profile.ts';
 import { serr, slog } from '../../core/console-prefix.ts';
 import type { BrainEngine } from '../../core/engine.ts';
@@ -21,7 +21,8 @@ import {
   readChunkerVersion,
 } from '../../core/sync-anchor.ts';
 import type { SlugRootMode } from '../../core/sync-anchor.ts';
-import { buildDetachedWorkingTreeManifest, computeSyncDelta } from '../../core/sync-delta.ts';
+import { buildDetachedWorkingTreeManifest, mergeSyncManifests } from '../../core/sync-delta.ts';
+import { confirmedSyncDelta, confirmRenameIdentities } from '../../core/sync-rename-identity.ts';
 import {
   git,
   isWithinRoot,
@@ -51,6 +52,7 @@ import { performFullSync } from './full.ts';
 import { applyHoldsToManifest, planHoldRescreen, wouldHoldFields, type LegacyHolds } from './holds.ts';
 import { sweepOrphanedRenameSentinels } from './rename-reconcile.ts';
 import type { SyncPlan, SyncActivePack } from './sync-run.ts';
+import { formatUrlClonePullBlock, urlClonePullBlock } from '../../core/url-clone.ts';
 
 export type PreflightOutcome = { readonly done: SyncResult } | { readonly plan: SyncPlan };
 
@@ -635,6 +637,9 @@ async function pullAndResolveHead(
       } else {
         serr(`Warning: git pull failed: ${msg.slice(0, 200)}`); // #1315 stderr-first
       }
+      // #6946: an owned clone's own checkout blocks it; name the files and the preview-first repair.
+      const block = opts.sourceId ? await urlClonePullBlock(engine, opts.sourceId) : null;
+      if (block) serr(formatUrlClonePullBlock(block));
     } finally {
       shutdown.release();
     }
@@ -837,7 +842,7 @@ async function resolveWorkingTreeScope(
   // population, etc.). Without this, upgraded brains silently stay on
   // the old chunks — the whole reason we bumped the version.
   const storedVersion = await readChunkerVersion(engine, opts.sourceId);
-  const currentVersion = String(CHUNKER_VERSION);
+  const currentVersion = chunkerStamp();
   const versionMismatch = storedVersion !== null && storedVersion !== currentVersion;
   const versionNeverSet = storedVersion === null && opts.sourceId !== undefined;
   // Untracked-gap fix: the working-tree manifest is now built for attached
@@ -892,6 +897,10 @@ async function resolveWorkingTreeScope(
   // scoped source thinks in), same form runImport matches on full sync.
   const scopeRel = (p: string): string =>
     scoped && p.startsWith(syncScopeRelPath + '/') ? p.slice(syncScopeRelPath.length + 1) : p;
+  // #6729: an imported dirty tree's inexact renames are confirmed (base HEAD, target the working tree) before any
+  // filter reads them; a manifest only counted as drift decomposes its renames anyway.
+  if (importWorkingTree) workingTreeManifest = await confirmRenameIdentities(engine, gitContextRoot, 'HEAD', null, workingTreeManifest,
+    { sourceId: opts.sourceId ?? DEFAULT_SOURCE_ID, sourcePathOf: scopeRel });
   const includedPaths = company ? new Set(company.plan.manifest.filter(entry => entry.disposition === 'included').map(entry => entry.path)) : null;
   const storedPaths = company ? new Set((await engine.executeRaw<{ source_path: string }>('SELECT source_path FROM pages WHERE source_id=$1 AND source_path IS NOT NULL', [opts.sourceId!])).map(page => page.source_path)) : null;
   const isSelectedForRun = (path: string, options?: Parameters<typeof isSyncable>[1]): boolean => company
@@ -989,9 +998,9 @@ async function computeFilteredDelta(
   // buffer, and a gc'd anchor object can't be diffed at all. On either
   // `unavailable`, fall back to the authoritative full reconcile instead of
   // throwing — a slow correct reconcile beats a hard error or a silent walk.
-  const delta = computeSyncDelta(gitContextRoot, lastCommit, pin, {
-    detachedManifest: importWorkingTree ? workingTreeManifest : null,
-  });
+  // #6729: inexact renames keep their page identity only when confirmed, before the company fold, the unsyncable fold
+  // and the hold replay read the manifest; the already-confirmed working-tree manifest merges after.
+  const delta = await confirmedSyncDelta(engine, gitContextRoot, lastCommit, pin, { sourceId: opts.sourceId ?? DEFAULT_SOURCE_ID, sourcePathOf: scopeRel });
   if (delta.status === 'unavailable') {
     serr(
       `[sync] delta ${lastCommit.slice(0, 8)}..${pin.slice(0, 8)} unavailable ` +
@@ -999,7 +1008,7 @@ async function computeFilteredDelta(
     );
     return { done: await performFullSync(engine, fullSyncRoots, headCommit, opts, holds) };
   }
-  const manifest = delta.manifest;
+  const manifest = importWorkingTree ? mergeSyncManifests(delta.manifest, workingTreeManifest) : delta.manifest;
   if (company) {
     manifest.added.push(...manifest.renamed.map(rename => rename.to));
     manifest.deleted.push(...manifest.renamed.map(rename => rename.from));
@@ -1070,7 +1079,7 @@ async function computeFilteredDelta(
     filtered.added = filtered.added.map(scopeRel);
     filtered.modified = filtered.modified.map(scopeRel);
     filtered.deleted = filtered.deleted.map(scopeRel);
-    filtered.renamed = filtered.renamed.map(r => ({ from: scopeRel(r.from), to: scopeRel(r.to) }));
+    filtered.renamed = filtered.renamed.map(r => ({ ...r, from: scopeRel(r.from), to: scopeRel(r.to) }));
   }
 
   // Working-tree mass-delete valve: merged working-tree deletes bypass the

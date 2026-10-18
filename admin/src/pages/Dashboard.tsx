@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
+import { startVisibilityPoll } from '../lib/visibility-poll';
 
 interface FeedEvent {
   agent: string;
@@ -18,8 +19,11 @@ export function DashboardPage() {
   const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
-    api.stats().then(setStats).catch(() => {});
-    api.health().then(setHealth).catch(() => {});
+    const refresh = () => {
+      api.stats().then(setStats).catch(() => {});
+      api.health().then(setHealth).catch(() => {});
+    };
+    refresh();
 
     const es = new EventSource('/admin/events', { withCredentials: true });
     eventSourceRef.current = es;
@@ -39,12 +43,10 @@ export function DashboardPage() {
       }, 3000);
     };
 
-    const interval = setInterval(() => {
-      api.stats().then(setStats).catch(() => {});
-      api.health().then(setHealth).catch(() => {});
-    }, 30000);
+    // #5061: both calls are full-table aggregates on Postgres; a background tab stops polling.
+    const stopPoll = startVisibilityPoll(refresh, 30000, document);
 
-    return () => { es.close(); clearInterval(interval); };
+    return () => { es.close(); stopPoll(); };
   }, []);
 
   const timeAgo = (ts: string) => {

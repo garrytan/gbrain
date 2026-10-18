@@ -6,7 +6,7 @@
           "chunk_id": 93,
           "chunk_index": 0,
           "page_id": 49,
-          "score": 1.0915073509461095,
+          "score": 1.091507366417381,
           "slug": "concepts/knowledge-graph-zh",
           "source_id": "default"
         },
@@ -14,7 +14,7 @@
           "chunk_id": 94,
           "chunk_index": 0,
           "page_id": 50,
-          "score": 0.8109990773030933,
+          "score": 0.8109990837695327,
           "slug": "concepts/knowledge-graph-zh-team",
           "source_id": "team-example"
         },
@@ -208,7 +208,7 @@
           "chunk_id": 93,
           "chunk_index": 0,
           "page_id": 49,
-          "score": 1.0915073509461095,
+          "score": 1.091507366417381,
           "slug": "concepts/knowledge-graph-zh",
           "source_id": "default"
         },
@@ -216,7 +216,7 @@
           "chunk_id": 94,
           "chunk_index": 0,
           "page_id": 50,
-          "score": 0.8109990773030933,
+          "score": 0.8109990837695327,
           "slug": "concepts/knowledge-graph-zh-team",
           "source_id": "team-example"
         },
@@ -410,7 +410,7 @@
           "chunk_id": 93,
           "chunk_index": 0,
           "page_id": 49,
-          "score": 1.0915073509461095,
+          "score": 1.091507366417381,
           "slug": "concepts/knowledge-graph-zh",
           "source_id": "default"
         },
@@ -418,7 +418,7 @@
           "chunk_id": 94,
           "chunk_index": 0,
           "page_id": 50,
-          "score": 0.8109990773030933,
+          "score": 0.8109990837695327,
           "slug": "concepts/knowledge-graph-zh-team",
           "source_id": "team-example"
         },
@@ -614,7 +614,7 @@
           "chunk_id": 13,
           "chunk_index": 0,
           "page_id": 7,
-          "score": 0.8332784974957957,
+          "score": 0.8332785040091131,
           "slug": "people/widget-example-6",
           "source_id": "default"
         },
@@ -622,7 +622,7 @@
           "chunk_id": 37,
           "chunk_index": 0,
           "page_id": 19,
-          "score": 0.8218030876597302,
+          "score": 0.8218030941730475,
           "slug": "people/widget-example-18",
           "source_id": "default"
         },
@@ -630,7 +630,7 @@
           "chunk_id": 61,
           "chunk_index": 0,
           "page_id": 31,
-          "score": 0.8106978523345054,
+          "score": 0.8106978588478227,
           "slug": "people/widget-example-30",
           "source_id": "default"
         },
@@ -638,7 +638,7 @@
           "chunk_id": 85,
           "chunk_index": 0,
           "page_id": 43,
-          "score": 0.7999451641624624,
+          "score": 0.7999451706757797,
           "slug": "people/widget-example-42",
           "source_id": "default"
         },
@@ -646,7 +646,7 @@
           "chunk_id": 25,
           "chunk_index": 0,
           "page_id": 13,
-          "score": 0.7895284974957958,
+          "score": 0.7895285040091131,
           "slug": "notes/widget-example-12",
           "source_id": "default"
         },
@@ -654,7 +654,7 @@
           "chunk_id": 49,
           "chunk_index": 0,
           "page_id": 25,
-          "score": 0.779432343649642,
+          "score": 0.7794323501629593,
           "slug": "notes/widget-example-24",
           "source_id": "default"
         },
@@ -662,7 +662,7 @@
           "chunk_id": 73,
           "chunk_index": 0,
           "page_id": 37,
-          "score": 0.7696421338594321,
+          "score": 0.7696421403727495,
           "slug": "notes/widget-example-36",
           "source_id": "default"
         },
@@ -670,7 +670,7 @@
           "chunk_id": 1,
           "chunk_index": 0,
           "page_id": 1,
-          "score": 0.7521560320794746,
+          "score": 0.7521560229941747,
           "slug": "notes/widget-example-0",
           "source_id": "default"
         },
@@ -678,7 +678,7 @@
           "chunk_id": 2,
           "chunk_index": 0,
           "page_id": 2,
-          "score": 0.7102290688007845,
+          "score": 0.7102290613267459,
           "slug": "concepts/garden-example-1",
           "source_id": "default"
         },
@@ -686,7 +686,7 @@
           "chunk_id": 26,
           "chunk_index": 0,
           "page_id": 14,
-          "score": 0.7012776621511682,
+          "score": 0.7012776546771295,
           "slug": "concepts/garden-example-13",
           "source_id": "default"
         },
@@ -694,7 +694,7 @@
           "chunk_id": 50,
           "chunk_index": 0,
           "page_id": 26,
-          "score": 0.6925820099772552,
+          "score": 0.6925820025032166,
           "slug": "concepts/garden-example-25",
           "source_id": "default"
         },
@@ -702,7 +702,7 @@
           "chunk_id": 74,
           "chunk_index": 0,
           "page_id": 38,
-          "score": 0.6841313057519031,
+          "score": 0.6841312982778645,
           "slug": "concepts/garden-example-37",
           "source_id": "default"
         },
@@ -710,7 +710,7 @@
           "chunk_id": 14,
           "chunk_index": 0,
           "page_id": 8,
-          "score": 0.6759153433105884,
+          "score": 0.6759153358365498,
           "slug": "companies/garden-example-7",
           "source_id": "default"
         },
@@ -718,7 +718,7 @@
           "chunk_id": 38,
           "chunk_index": 0,
           "page_id": 20,
-          "score": 0.6679244757306798,
+          "score": 0.6679244682566412,
           "slug": "companies/garden-example-19",
           "source_id": "default"
         },
@@ -726,7 +726,7 @@
           "chunk_id": 62,
           "chunk_index": 0,
           "page_id": 32,
-          "score": 0.6601495775448227,
+          "score": 0.6601495700707841,
           "slug": "companies/garden-example-31",
           "source_id": "default"
         },
@@ -734,7 +734,7 @@
           "chunk_id": 86,
           "chunk_index": 0,
           "page_id": 44,
-          "score": 0.6525820099772551,
+          "score": 0.6525820025032165,
           "slug": "companies/garden-example-43",
           "source_id": "default"
         },
@@ -742,7 +742,7 @@
           "chunk_id": 90,
           "chunk_index": 0,
           "page_id": 46,
-          "score": 0.607403834697885,
+          "score": 0.6074038386690284,
           "slug": "companies/acme-example",
           "source_id": "default"
         },
@@ -750,7 +750,7 @@
           "chunk_id": 21,
           "chunk_index": 1,
           "page_id": 11,
-          "score": 0.5976778422412548,
+          "score": 0.5976778511900303,
           "slug": "people/roadmap-example-10",
           "source_id": "default"
         },
@@ -758,7 +758,7 @@
           "chunk_id": 45,
           "chunk_index": 1,
           "page_id": 23,
-          "score": 0.5906848352482477,
+          "score": 0.5906848441970232,
           "slug": "people/roadmap-example-22",
           "source_id": "default"
         },
@@ -766,7 +766,7 @@
           "chunk_id": 69,
           "chunk_index": 1,
           "page_id": 35,
-          "score": 0.5838688664069625,
+          "score": 0.583868875355738,
           "slug": "people/roadmap-example-34",
           "source_id": "default"
         },
@@ -774,7 +774,7 @@
           "chunk_id": 88,
           "chunk_index": 0,
           "page_id": 45,
-          "score": 0.5772232967867093,
+          "score": 0.5772233041791086,
           "slug": "people/alice-example",
           "source_id": "default"
         },
@@ -782,7 +782,7 @@
           "chunk_id": 9,
           "chunk_index": 1,
           "page_id": 5,
-          "score": 0.5707418153052278,
+          "score": 0.5707418242540033,
           "slug": "notes/roadmap-example-4",
           "source_id": "default"
         },
@@ -790,7 +790,7 @@
           "chunk_id": 33,
           "chunk_index": 1,
           "page_id": 17,
-          "score": 0.5644184187379289,
+          "score": 0.5644184276867044,
           "slug": "notes/roadmap-example-16",
           "source_id": "default"
         },
@@ -798,7 +798,7 @@
           "chunk_id": 57,
           "chunk_index": 1,
           "page_id": 29,
-          "score": 0.5582473931722515,
+          "score": 0.558247402121027,
           "slug": "notes/roadmap-example-28",
           "source_id": "default"
         },
@@ -806,7 +806,7 @@
           "chunk_id": 81,
           "chunk_index": 1,
           "page_id": 41,
-          "score": 0.5522232967867093,
+          "score": 0.5522233057354848,
           "slug": "notes/roadmap-example-40",
           "source_id": "default"
         }
@@ -816,7 +816,7 @@
           "chunk_id": 13,
           "chunk_index": 0,
           "page_id": 7,
-          "score": 0.8332784974957957,
+          "score": 0.8332785040091131,
           "slug": "people/widget-example-6",
           "source_id": "default"
         },
@@ -824,7 +824,7 @@
           "chunk_id": 37,
           "chunk_index": 0,
           "page_id": 19,
-          "score": 0.8218030876597302,
+          "score": 0.8218030941730475,
           "slug": "people/widget-example-18",
           "source_id": "default"
         },
@@ -832,7 +832,7 @@
           "chunk_id": 61,
           "chunk_index": 0,
           "page_id": 31,
-          "score": 0.8106978523345054,
+          "score": 0.8106978588478227,
           "slug": "people/widget-example-30",
           "source_id": "default"
         },
@@ -840,7 +840,7 @@
           "chunk_id": 85,
           "chunk_index": 0,
           "page_id": 43,
-          "score": 0.7999451641624624,
+          "score": 0.7999451706757797,
           "slug": "people/widget-example-42",
           "source_id": "default"
         },
@@ -848,7 +848,7 @@
           "chunk_id": 25,
           "chunk_index": 0,
           "page_id": 13,
-          "score": 0.7895284974957958,
+          "score": 0.7895285040091131,
           "slug": "notes/widget-example-12",
           "source_id": "default"
         },
@@ -856,7 +856,7 @@
           "chunk_id": 49,
           "chunk_index": 0,
           "page_id": 25,
-          "score": 0.779432343649642,
+          "score": 0.7794323501629593,
           "slug": "notes/widget-example-24",
           "source_id": "default"
         },
@@ -864,7 +864,7 @@
           "chunk_id": 73,
           "chunk_index": 0,
           "page_id": 37,
-          "score": 0.7696421338594321,
+          "score": 0.7696421403727495,
           "slug": "notes/widget-example-36",
           "source_id": "default"
         },
@@ -872,7 +872,7 @@
           "chunk_id": 1,
           "chunk_index": 0,
           "page_id": 1,
-          "score": 0.7521560320794746,
+          "score": 0.7521560229941747,
           "slug": "notes/widget-example-0",
           "source_id": "default"
         },
@@ -880,7 +880,7 @@
           "chunk_id": 2,
           "chunk_index": 0,
           "page_id": 2,
-          "score": 0.7102290688007845,
+          "score": 0.7102290613267459,
           "slug": "concepts/garden-example-1",
           "source_id": "default"
         },
@@ -888,7 +888,7 @@
           "chunk_id": 26,
           "chunk_index": 0,
           "page_id": 14,
-          "score": 0.7012776621511682,
+          "score": 0.7012776546771295,
           "slug": "concepts/garden-example-13",
           "source_id": "default"
         },
@@ -896,7 +896,7 @@
           "chunk_id": 50,
           "chunk_index": 0,
           "page_id": 26,
-          "score": 0.6925820099772552,
+          "score": 0.6925820025032166,
           "slug": "concepts/garden-example-25",
           "source_id": "default"
         },
@@ -904,7 +904,7 @@
           "chunk_id": 74,
           "chunk_index": 0,
           "page_id": 38,
-          "score": 0.6841313057519031,
+          "score": 0.6841312982778645,
           "slug": "concepts/garden-example-37",
           "source_id": "default"
         },
@@ -912,7 +912,7 @@
           "chunk_id": 14,
           "chunk_index": 0,
           "page_id": 8,
-          "score": 0.6759153433105884,
+          "score": 0.6759153358365498,
           "slug": "companies/garden-example-7",
           "source_id": "default"
         },
@@ -920,7 +920,7 @@
           "chunk_id": 38,
           "chunk_index": 0,
           "page_id": 20,
-          "score": 0.6679244757306798,
+          "score": 0.6679244682566412,
           "slug": "companies/garden-example-19",
           "source_id": "default"
         },
@@ -928,7 +928,7 @@
           "chunk_id": 62,
           "chunk_index": 0,
           "page_id": 32,
-          "score": 0.6601495775448227,
+          "score": 0.6601495700707841,
           "slug": "companies/garden-example-31",
           "source_id": "default"
         },
@@ -936,7 +936,7 @@
           "chunk_id": 86,
           "chunk_index": 0,
           "page_id": 44,
-          "score": 0.6525820099772551,
+          "score": 0.6525820025032165,
           "slug": "companies/garden-example-43",
           "source_id": "default"
         },
@@ -944,7 +944,7 @@
           "chunk_id": 90,
           "chunk_index": 0,
           "page_id": 46,
-          "score": 0.607403834697885,
+          "score": 0.6074038386690284,
           "slug": "companies/acme-example",
           "source_id": "default"
         },
@@ -952,7 +952,7 @@
           "chunk_id": 21,
           "chunk_index": 1,
           "page_id": 11,
-          "score": 0.5976778422412548,
+          "score": 0.5976778511900303,
           "slug": "people/roadmap-example-10",
           "source_id": "default"
         },
@@ -960,7 +960,7 @@
           "chunk_id": 45,
           "chunk_index": 1,
           "page_id": 23,
-          "score": 0.5906848352482477,
+          "score": 0.5906848441970232,
           "slug": "people/roadmap-example-22",
           "source_id": "default"
         },
@@ -968,7 +968,7 @@
           "chunk_id": 69,
           "chunk_index": 1,
           "page_id": 35,
-          "score": 0.5838688664069625,
+          "score": 0.583868875355738,
           "slug": "people/roadmap-example-34",
           "source_id": "default"
         },
@@ -976,7 +976,7 @@
           "chunk_id": 88,
           "chunk_index": 0,
           "page_id": 45,
-          "score": 0.5772232967867093,
+          "score": 0.5772233041791086,
           "slug": "people/alice-example",
           "source_id": "default"
         },
@@ -984,7 +984,7 @@
           "chunk_id": 9,
           "chunk_index": 1,
           "page_id": 5,
-          "score": 0.5707418153052278,
+          "score": 0.5707418242540033,
           "slug": "notes/roadmap-example-4",
           "source_id": "default"
         },
@@ -992,7 +992,7 @@
           "chunk_id": 33,
           "chunk_index": 1,
           "page_id": 17,
-          "score": 0.5644184187379289,
+          "score": 0.5644184276867044,
           "slug": "notes/roadmap-example-16",
           "source_id": "default"
         },
@@ -1000,7 +1000,7 @@
           "chunk_id": 57,
           "chunk_index": 1,
           "page_id": 29,
-          "score": 0.5582473931722515,
+          "score": 0.558247402121027,
           "slug": "notes/roadmap-example-28",
           "source_id": "default"
         },
@@ -1008,7 +1008,7 @@
           "chunk_id": 81,
           "chunk_index": 1,
           "page_id": 41,
-          "score": 0.5522232967867093,
+          "score": 0.5522233057354848,
           "slug": "notes/roadmap-example-40",
           "source_id": "default"
         }
@@ -1018,7 +1018,7 @@
           "chunk_id": 13,
           "chunk_index": 0,
           "page_id": 7,
-          "score": 0.8332784974957957,
+          "score": 0.8332785040091131,
           "slug": "people/widget-example-6",
           "source_id": "default"
         },
@@ -1026,7 +1026,7 @@
           "chunk_id": 37,
           "chunk_index": 0,
           "page_id": 19,
-          "score": 0.8218030876597302,
+          "score": 0.8218030941730475,
           "slug": "people/widget-example-18",
           "source_id": "default"
         },
@@ -1034,7 +1034,7 @@
           "chunk_id": 61,
           "chunk_index": 0,
           "page_id": 31,
-          "score": 0.8106978523345054,
+          "score": 0.8106978588478227,
           "slug": "people/widget-example-30",
           "source_id": "default"
         },
@@ -1042,7 +1042,7 @@
           "chunk_id": 85,
           "chunk_index": 0,
           "page_id": 43,
-          "score": 0.7999451641624624,
+          "score": 0.7999451706757797,
           "slug": "people/widget-example-42",
           "source_id": "default"
         },
@@ -1050,7 +1050,7 @@
           "chunk_id": 25,
           "chunk_index": 0,
           "page_id": 13,
-          "score": 0.7895284974957958,
+          "score": 0.7895285040091131,
           "slug": "notes/widget-example-12",
           "source_id": "default"
         },
@@ -1058,7 +1058,7 @@
           "chunk_id": 49,
           "chunk_index": 0,
           "page_id": 25,
-          "score": 0.779432343649642,
+          "score": 0.7794323501629593,
           "slug": "notes/widget-example-24",
           "source_id": "default"
         },
@@ -1066,7 +1066,7 @@
           "chunk_id": 73,
           "chunk_index": 0,
           "page_id": 37,
-          "score": 0.7696421338594321,
+          "score": 0.7696421403727495,
           "slug": "notes/widget-example-36",
           "source_id": "default"
         },
@@ -1074,7 +1074,7 @@
           "chunk_id": 1,
           "chunk_index": 0,
           "page_id": 1,
-          "score": 0.7521560320794746,
+          "score": 0.7521560229941747,
           "slug": "notes/widget-example-0",
           "source_id": "default"
         },
@@ -1082,7 +1082,7 @@
           "chunk_id": 2,
           "chunk_index": 0,
           "page_id": 2,
-          "score": 0.7102290688007845,
+          "score": 0.7102290613267459,
           "slug": "concepts/garden-example-1",
           "source_id": "default"
         },
@@ -1090,7 +1090,7 @@
           "chunk_id": 26,
           "chunk_index": 0,
           "page_id": 14,
-          "score": 0.7012776621511682,
+          "score": 0.7012776546771295,
           "slug": "concepts/garden-example-13",
           "source_id": "default"
         },
@@ -1098,7 +1098,7 @@
           "chunk_id": 50,
           "chunk_index": 0,
           "page_id": 26,
-          "score": 0.6925820099772552,
+          "score": 0.6925820025032166,
           "slug": "concepts/garden-example-25",
           "source_id": "default"
         },
@@ -1106,7 +1106,7 @@
           "chunk_id": 74,
           "chunk_index": 0,
           "page_id": 38,
-          "score": 0.6841313057519031,
+          "score": 0.6841312982778645,
           "slug": "concepts/garden-example-37",
           "source_id": "default"
         },
@@ -1114,7 +1114,7 @@
           "chunk_id": 14,
           "chunk_index": 0,
           "page_id": 8,
-          "score": 0.6759153433105884,
+          "score": 0.6759153358365498,
           "slug": "companies/garden-example-7",
           "source_id": "default"
         },
@@ -1122,7 +1122,7 @@
           "chunk_id": 38,
           "chunk_index": 0,
           "page_id": 20,
-          "score": 0.6679244757306798,
+          "score": 0.6679244682566412,
           "slug": "companies/garden-example-19",
           "source_id": "default"
         },
@@ -1130,7 +1130,7 @@
           "chunk_id": 62,
           "chunk_index": 0,
           "page_id": 32,
-          "score": 0.6601495775448227,
+          "score": 0.6601495700707841,
           "slug": "companies/garden-example-31",
           "source_id": "default"
         },
@@ -1138,7 +1138,7 @@
           "chunk_id": 86,
           "chunk_index": 0,
           "page_id": 44,
-          "score": 0.6525820099772551,
+          "score": 0.6525820025032165,
           "slug": "companies/garden-example-43",
           "source_id": "default"
         },
@@ -1146,7 +1146,7 @@
           "chunk_id": 90,
           "chunk_index": 0,
           "page_id": 46,
-          "score": 0.607403834697885,
+          "score": 0.6074038386690284,
           "slug": "companies/acme-example",
           "source_id": "default"
         },
@@ -1154,7 +1154,7 @@
           "chunk_id": 21,
           "chunk_index": 1,
           "page_id": 11,
-          "score": 0.5976778422412548,
+          "score": 0.5976778511900303,
           "slug": "people/roadmap-example-10",
           "source_id": "default"
         },
@@ -1162,7 +1162,7 @@
           "chunk_id": 45,
           "chunk_index": 1,
           "page_id": 23,
-          "score": 0.5906848352482477,
+          "score": 0.5906848441970232,
           "slug": "people/roadmap-example-22",
           "source_id": "default"
         },
@@ -1170,7 +1170,7 @@
           "chunk_id": 69,
           "chunk_index": 1,
           "page_id": 35,
-          "score": 0.5838688664069625,
+          "score": 0.583868875355738,
           "slug": "people/roadmap-example-34",
           "source_id": "default"
         },
@@ -1178,7 +1178,7 @@
           "chunk_id": 88,
           "chunk_index": 0,
           "page_id": 45,
-          "score": 0.5772232967867093,
+          "score": 0.5772233041791086,
           "slug": "people/alice-example",
           "source_id": "default"
         },
@@ -1186,7 +1186,7 @@
           "chunk_id": 9,
           "chunk_index": 1,
           "page_id": 5,
-          "score": 0.5707418153052278,
+          "score": 0.5707418242540033,
           "slug": "notes/roadmap-example-4",
           "source_id": "default"
         },
@@ -1194,7 +1194,7 @@
           "chunk_id": 33,
           "chunk_index": 1,
           "page_id": 17,
-          "score": 0.5644184187379289,
+          "score": 0.5644184276867044,
           "slug": "notes/roadmap-example-16",
           "source_id": "default"
         },
@@ -1202,7 +1202,7 @@
           "chunk_id": 57,
           "chunk_index": 1,
           "page_id": 29,
-          "score": 0.5582473931722515,
+          "score": 0.558247402121027,
           "slug": "notes/roadmap-example-28",
           "source_id": "default"
         },
@@ -1210,7 +1210,7 @@
           "chunk_id": 81,
           "chunk_index": 1,
           "page_id": 41,
-          "score": 0.5522232967867093,
+          "score": 0.5522233057354848,
           "slug": "notes/roadmap-example-40",
           "source_id": "default"
         }
@@ -1222,7 +1222,7 @@
           "chunk_id": 89,
           "chunk_index": 1,
           "page_id": 45,
-          "score": 0.914330352493528,
+          "score": 0.9143303462463827,
           "slug": "people/alice-example",
           "source_id": "default"
         },
@@ -1230,7 +1230,7 @@
           "chunk_id": 90,
           "chunk_index": 0,
           "page_id": 46,
-          "score": 0.8226886688139218,
+          "score": 0.8226886841449679,
           "slug": "companies/acme-example",
           "source_id": "default"
         },
@@ -1238,7 +1238,7 @@
           "chunk_id": 58,
           "chunk_index": 0,
           "page_id": 30,
-          "score": 0.7321916105892262,
+          "score": 0.7321916112956884,
           "slug": "concepts/graph-example-29",
           "source_id": "team-example"
         },
@@ -1246,7 +1246,7 @@
           "chunk_id": 82,
           "chunk_index": 0,
           "page_id": 42,
-          "score": 0.7214389224171832,
+          "score": 0.7214389231236454,
           "slug": "concepts/graph-example-41",
           "source_id": "team-example"
         },
@@ -1254,7 +1254,7 @@
           "chunk_id": 10,
           "chunk_index": 0,
           "page_id": 6,
-          "score": 0.7110222557505166,
+          "score": 0.7110222548246383,
           "slug": "concepts/graph-example-5",
           "source_id": "team-example"
         },
@@ -1262,7 +1262,7 @@
           "chunk_id": 34,
           "chunk_index": 0,
           "page_id": 18,
-          "score": 0.7009261019043628,
+          "score": 0.7009261009784845,
           "slug": "concepts/graph-example-17",
           "source_id": "team-example"
         },
@@ -1270,7 +1270,7 @@
           "chunk_id": 22,
           "chunk_index": 0,
           "page_id": 12,
-          "score": 0.6911358921141529,
+          "score": 0.6911358911882747,
           "slug": "companies/graph-example-11",
           "source_id": "team-example"
         },
@@ -1278,7 +1278,7 @@
           "chunk_id": 46,
           "chunk_index": 0,
           "page_id": 24,
-          "score": 0.6816379273923077,
+          "score": 0.6816379264664294,
           "slug": "companies/graph-example-23",
           "source_id": "team-example"
         },
@@ -1286,7 +1286,7 @@
           "chunk_id": 70,
           "chunk_index": 0,
           "page_id": 36,
-          "score": 0.6724193145740459,
+          "score": 0.6724193136481676,
           "slug": "companies/graph-example-35",
           "source_id": "team-example"
         },
@@ -1294,7 +1294,7 @@
           "chunk_id": 76,
           "chunk_index": 0,
           "page_id": 39,
-          "score": 0.6624042677268704,
+          "score": 0.6624042648717162,
           "slug": "people/quantum-example-38",
           "source_id": "team-example"
         },
@@ -1302,7 +1302,7 @@
           "chunk_id": 4,
           "chunk_index": 0,
           "page_id": 3,
-          "score": 0.6537086155529575,
+          "score": 0.6537086094965212,
           "slug": "people/quantum-example-2",
           "source_id": "team-example"
         },
@@ -1310,7 +1310,7 @@
           "chunk_id": 28,
           "chunk_index": 0,
           "page_id": 15,
-          "score": 0.6452579113276053,
+          "score": 0.6452579052711691,
           "slug": "people/quantum-example-14",
           "source_id": "team-example"
         },
@@ -1318,7 +1318,7 @@
           "chunk_id": 52,
           "chunk_index": 0,
           "page_id": 27,
-          "score": 0.6370419488862907,
+          "score": 0.6370419428298545,
           "slug": "people/quantum-example-26",
           "source_id": "team-example"
         },
@@ -1326,7 +1326,7 @@
           "chunk_id": 16,
           "chunk_index": 0,
           "page_id": 9,
-          "score": 0.6304835624104602,
+          "score": 0.630483564550746,
           "slug": "notes/quantum-example-8",
           "source_id": "team-example"
         },
@@ -1334,7 +1334,7 @@
           "chunk_id": 40,
           "chunk_index": 0,
           "page_id": 21,
-          "score": 0.621276183120525,
+          "score": 0.6212761770640888,
           "slug": "notes/quantum-example-20",
           "source_id": "team-example"
         },
@@ -1342,7 +1342,7 @@
           "chunk_id": 64,
           "chunk_index": 0,
           "page_id": 33,
-          "score": 0.6137086155529574,
+          "score": 0.6137086094965212,
           "slug": "notes/quantum-example-32",
           "source_id": "team-example"
         },
@@ -1350,7 +1350,7 @@
           "chunk_id": 94,
           "chunk_index": 0,
           "page_id": 50,
-          "score": 0.5699520870230571,
+          "score": 0.5699520877445674,
           "slug": "concepts/knowledge-graph-zh-team",
           "source_id": "team-example"
         },
@@ -1358,7 +1358,7 @@
           "chunk_id": 13,
           "chunk_index": 0,
           "page_id": 7,
-          "score": 0.5508956173303705,
+          "score": 0.5508956174307346,
           "slug": "people/widget-example-6",
           "source_id": "default"
         },
@@ -1366,7 +1366,7 @@
           "chunk_id": 37,
           "chunk_index": 0,
           "page_id": 19,
-          "score": 0.5439026103373634,
+          "score": 0.5439026104377275,
           "slug": "people/widget-example-18",
           "source_id": "default"
         },
@@ -1374,7 +1374,7 @@
           "chunk_id": 61,
           "chunk_index": 0,
           "page_id": 31,
-          "score": 0.5370866414960782,
+          "score": 0.5370866415964423,
           "slug": "people/widget-example-30",
           "source_id": "default"
         },
@@ -1382,7 +1382,7 @@
           "chunk_id": 85,
           "chunk_index": 0,
           "page_id": 43,
-          "score": 0.530441071875825,
+          "score": 0.5304410719761891,
           "slug": "people/widget-example-42",
           "source_id": "default"
         },
@@ -1390,7 +1390,7 @@
           "chunk_id": 25,
           "chunk_index": 0,
           "page_id": 13,
-          "score": 0.5239595903943436,
+          "score": 0.5239595904947076,
           "slug": "notes/widget-example-12",
           "source_id": "default"
         },
@@ -1398,7 +1398,7 @@
           "chunk_id": 49,
           "chunk_index": 0,
           "page_id": 25,
-          "score": 0.5176361938270446,
+          "score": 0.5176361939274087,
           "slug": "notes/widget-example-24",
           "source_id": "default"
         },
@@ -1406,7 +1406,7 @@
           "chunk_id": 73,
           "chunk_index": 0,
           "page_id": 37,
-          "score": 0.5114651682613672,
+          "score": 0.5114651683617313,
           "slug": "notes/widget-example-36",
           "source_id": "default"
         },
@@ -1414,7 +1414,7 @@
           "chunk_id": 1,
           "chunk_index": 0,
           "page_id": 1,
-          "score": 0.5051149575460285,
+          "score": 0.5051149571990993,
           "slug": "notes/widget-example-0",
           "source_id": "default"
         }
@@ -1424,7 +1424,7 @@
           "chunk_id": 89,
           "chunk_index": 1,
           "page_id": 45,
-          "score": 0.914330352493528,
+          "score": 0.9143303462463827,
           "slug": "people/alice-example",
           "source_id": "default"
         },
@@ -1432,7 +1432,7 @@
           "chunk_id": 90,
           "chunk_index": 0,
           "page_id": 46,
-          "score": 0.8226886688139218,
+          "score": 0.8226886841449679,
           "slug": "companies/acme-example",
           "source_id": "default"
         },
@@ -1440,7 +1440,7 @@
           "chunk_id": 58,
           "chunk_index": 0,
           "page_id": 30,
-          "score": 0.7321916105892262,
+          "score": 0.7321916112956884,
           "slug": "concepts/graph-example-29",
           "source_id": "team-example"
         },
@@ -1448,7 +1448,7 @@
           "chunk_id": 82,
           "chunk_index": 0,
           "page_id": 42,
-          "score": 0.7214389224171832,
+          "score": 0.7214389231236454,
           "slug": "concepts/graph-example-41",
           "source_id": "team-example"
         },
@@ -1456,7 +1456,7 @@
           "chunk_id": 10,
           "chunk_index": 0,
           "page_id": 6,
-          "score": 0.7110222557505166,
+          "score": 0.7110222548246383,
           "slug": "concepts/graph-example-5",
           "source_id": "team-example"
         },
@@ -1464,7 +1464,7 @@
           "chunk_id": 34,
           "chunk_index": 0,
           "page_id": 18,
-          "score": 0.7009261019043628,
+          "score": 0.7009261009784845,
           "slug": "concepts/graph-example-17",
           "source_id": "team-example"
         },
@@ -1472,7 +1472,7 @@
           "chunk_id": 22,
           "chunk_index": 0,
           "page_id": 12,
-          "score": 0.6911358921141529,
+          "score": 0.6911358911882747,
           "slug": "companies/graph-example-11",
           "source_id": "team-example"
         },
@@ -1480,7 +1480,7 @@
           "chunk_id": 46,
           "chunk_index": 0,
           "page_id": 24,
-          "score": 0.6816379273923077,
+          "score": 0.6816379264664294,
           "slug": "companies/graph-example-23",
           "source_id": "team-example"
         },
@@ -1488,7 +1488,7 @@
           "chunk_id": 70,
           "chunk_index": 0,
           "page_id": 36,
-          "score": 0.6724193145740459,
+          "score": 0.6724193136481676,
           "slug": "companies/graph-example-35",
           "source_id": "team-example"
         },
@@ -1496,7 +1496,7 @@
           "chunk_id": 76,
           "chunk_index": 0,
           "page_id": 39,
-          "score": 0.6624042677268704,
+          "score": 0.6624042648717162,
           "slug": "people/quantum-example-38",
           "source_id": "team-example"
         },
@@ -1504,7 +1504,7 @@
           "chunk_id": 4,
           "chunk_index": 0,
           "page_id": 3,
-          "score": 0.6537086155529575,
+          "score": 0.6537086094965212,
           "slug": "people/quantum-example-2",
           "source_id": "team-example"
         },
@@ -1512,7 +1512,7 @@
           "chunk_id": 28,
           "chunk_index": 0,
           "page_id": 15,
-          "score": 0.6452579113276053,
+          "score": 0.6452579052711691,
           "slug": "people/quantum-example-14",
           "source_id": "team-example"
         },
@@ -1520,7 +1520,7 @@
           "chunk_id": 52,
           "chunk_index": 0,
           "page_id": 27,
-          "score": 0.6370419488862907,
+          "score": 0.6370419428298545,
           "slug": "people/quantum-example-26",
           "source_id": "team-example"
         },
@@ -1528,7 +1528,7 @@
           "chunk_id": 16,
           "chunk_index": 0,
           "page_id": 9,
-          "score": 0.6304835624104602,
+          "score": 0.630483564550746,
           "slug": "notes/quantum-example-8",
           "source_id": "team-example"
         },
@@ -1536,7 +1536,7 @@
           "chunk_id": 40,
           "chunk_index": 0,
           "page_id": 21,
-          "score": 0.621276183120525,
+          "score": 0.6212761770640888,
           "slug": "notes/quantum-example-20",
           "source_id": "team-example"
         },
@@ -1544,7 +1544,7 @@
           "chunk_id": 64,
           "chunk_index": 0,
           "page_id": 33,
-          "score": 0.6137086155529574,
+          "score": 0.6137086094965212,
           "slug": "notes/quantum-example-32",
           "source_id": "team-example"
         },
@@ -1552,7 +1552,7 @@
           "chunk_id": 94,
           "chunk_index": 0,
           "page_id": 50,
-          "score": 0.5699520870230571,
+          "score": 0.5699520877445674,
           "slug": "concepts/knowledge-graph-zh-team",
           "source_id": "team-example"
         },
@@ -1560,7 +1560,7 @@
           "chunk_id": 13,
           "chunk_index": 0,
           "page_id": 7,
-          "score": 0.5508956173303705,
+          "score": 0.5508956174307346,
           "slug": "people/widget-example-6",
           "source_id": "default"
         },
@@ -1568,7 +1568,7 @@
           "chunk_id": 37,
           "chunk_index": 0,
           "page_id": 19,
-          "score": 0.5439026103373634,
+          "score": 0.5439026104377275,
           "slug": "people/widget-example-18",
           "source_id": "default"
         },
@@ -1576,7 +1576,7 @@
           "chunk_id": 61,
           "chunk_index": 0,
           "page_id": 31,
-          "score": 0.5370866414960782,
+          "score": 0.5370866415964423,
           "slug": "people/widget-example-30",
           "source_id": "default"
         },
@@ -1584,7 +1584,7 @@
           "chunk_id": 85,
           "chunk_index": 0,
           "page_id": 43,
-          "score": 0.530441071875825,
+          "score": 0.5304410719761891,
           "slug": "people/widget-example-42",
           "source_id": "default"
         },
@@ -1592,7 +1592,7 @@
           "chunk_id": 25,
           "chunk_index": 0,
           "page_id": 13,
-          "score": 0.5239595903943436,
+          "score": 0.5239595904947076,
           "slug": "notes/widget-example-12",
           "source_id": "default"
         },
@@ -1600,7 +1600,7 @@
           "chunk_id": 49,
           "chunk_index": 0,
           "page_id": 25,
-          "score": 0.5176361938270446,
+          "score": 0.5176361939274087,
           "slug": "notes/widget-example-24",
           "source_id": "default"
         },
@@ -1608,7 +1608,7 @@
           "chunk_id": 73,
           "chunk_index": 0,
           "page_id": 37,
-          "score": 0.5114651682613672,
+          "score": 0.5114651683617313,
           "slug": "notes/widget-example-36",
           "source_id": "default"
         },
@@ -1616,7 +1616,7 @@
           "chunk_id": 1,
           "chunk_index": 0,
           "page_id": 1,
-          "score": 0.5051149575460285,
+          "score": 0.5051149571990993,
           "slug": "notes/widget-example-0",
           "source_id": "default"
         }
@@ -1626,7 +1626,7 @@
           "chunk_id": 89,
           "chunk_index": 1,
           "page_id": 45,
-          "score": 0.914330352493528,
+          "score": 0.9143303462463827,
           "slug": "people/alice-example",
           "source_id": "default"
         },
@@ -1634,7 +1634,7 @@
           "chunk_id": 90,
           "chunk_index": 0,
           "page_id": 46,
-          "score": 0.8226886688139218,
+          "score": 0.8226886841449679,
           "slug": "companies/acme-example",
           "source_id": "default"
         },
@@ -1642,7 +1642,7 @@
           "chunk_id": 58,
           "chunk_index": 0,
           "page_id": 30,
-          "score": 0.7321916105892262,
+          "score": 0.7321916112956884,
           "slug": "concepts/graph-example-29",
           "source_id": "team-example"
         },
@@ -1650,7 +1650,7 @@
           "chunk_id": 82,
           "chunk_index": 0,
           "page_id": 42,
-          "score": 0.7214389224171832,
+          "score": 0.7214389231236454,
           "slug": "concepts/graph-example-41",
           "source_id": "team-example"
         },
@@ -1658,7 +1658,7 @@
           "chunk_id": 10,
           "chunk_index": 0,
           "page_id": 6,
-          "score": 0.7110222557505166,
+          "score": 0.7110222548246383,
           "slug": "concepts/graph-example-5",
           "source_id": "team-example"
         },
@@ -1666,7 +1666,7 @@
           "chunk_id": 34,
           "chunk_index": 0,
           "page_id": 18,
-          "score": 0.7009261019043628,
+          "score": 0.7009261009784845,
           "slug": "concepts/graph-example-17",
           "source_id": "team-example"
         },
@@ -1674,7 +1674,7 @@
           "chunk_id": 22,
           "chunk_index": 0,
           "page_id": 12,
-          "score": 0.6911358921141529,
+          "score": 0.6911358911882747,
           "slug": "companies/graph-example-11",
           "source_id": "team-example"
         },
@@ -1682,7 +1682,7 @@
           "chunk_id": 46,
           "chunk_index": 0,
           "page_id": 24,
-          "score": 0.6816379273923077,
+          "score": 0.6816379264664294,
           "slug": "companies/graph-example-23",
           "source_id": "team-example"
         },
@@ -1690,7 +1690,7 @@
           "chunk_id": 70,
           "chunk_index": 0,
           "page_id": 36,
-          "score": 0.6724193145740459,
+          "score": 0.6724193136481676,
           "slug": "companies/graph-example-35",
           "source_id": "team-example"
         },
@@ -1698,7 +1698,7 @@
           "chunk_id": 76,
           "chunk_index": 0,
           "page_id": 39,
-          "score": 0.6624042677268704,
+          "score": 0.6624042648717162,
           "slug": "people/quantum-example-38",
           "source_id": "team-example"
         },
@@ -1706,7 +1706,7 @@
           "chunk_id": 4,
           "chunk_index": 0,
           "page_id": 3,
-          "score": 0.6537086155529575,
+          "score": 0.6537086094965212,
           "slug": "people/quantum-example-2",
           "source_id": "team-example"
         },
@@ -1714,7 +1714,7 @@
           "chunk_id": 28,
           "chunk_index": 0,
           "page_id": 15,
-          "score": 0.6452579113276053,
+          "score": 0.6452579052711691,
           "slug": "people/quantum-example-14",
           "source_id": "team-example"
         },
@@ -1722,7 +1722,7 @@
           "chunk_id": 52,
           "chunk_index": 0,
           "page_id": 27,
-          "score": 0.6370419488862907,
+          "score": 0.6370419428298545,
           "slug": "people/quantum-example-26",
           "source_id": "team-example"
         },
@@ -1730,7 +1730,7 @@
           "chunk_id": 16,
           "chunk_index": 0,
           "page_id": 9,
-          "score": 0.6304835624104602,
+          "score": 0.630483564550746,
           "slug": "notes/quantum-example-8",
           "source_id": "team-example"
         },
@@ -1738,7 +1738,7 @@
           "chunk_id": 40,
           "chunk_index": 0,
           "page_id": 21,
-          "score": 0.621276183120525,
+          "score": 0.6212761770640888,
           "slug": "notes/quantum-example-20",
           "source_id": "team-example"
         },
@@ -1746,7 +1746,7 @@
           "chunk_id": 64,
           "chunk_index": 0,
           "page_id": 33,
-          "score": 0.6137086155529574,
+          "score": 0.6137086094965212,
           "slug": "notes/quantum-example-32",
           "source_id": "team-example"
         },
@@ -1754,7 +1754,7 @@
           "chunk_id": 94,
           "chunk_index": 0,
           "page_id": 50,
-          "score": 0.5699520870230571,
+          "score": 0.5699520877445674,
           "slug": "concepts/knowledge-graph-zh-team",
           "source_id": "team-example"
         },
@@ -1762,7 +1762,7 @@
           "chunk_id": 13,
           "chunk_index": 0,
           "page_id": 7,
-          "score": 0.5508956173303705,
+          "score": 0.5508956174307346,
           "slug": "people/widget-example-6",
           "source_id": "default"
         },
@@ -1770,7 +1770,7 @@
           "chunk_id": 37,
           "chunk_index": 0,
           "page_id": 19,
-          "score": 0.5439026103373634,
+          "score": 0.5439026104377275,
           "slug": "people/widget-example-18",
           "source_id": "default"
         },
@@ -1778,7 +1778,7 @@
           "chunk_id": 61,
           "chunk_index": 0,
           "page_id": 31,
-          "score": 0.5370866414960782,
+          "score": 0.5370866415964423,
           "slug": "people/widget-example-30",
           "source_id": "default"
         },
@@ -1786,7 +1786,7 @@
           "chunk_id": 85,
           "chunk_index": 0,
           "page_id": 43,
-          "score": 0.530441071875825,
+          "score": 0.5304410719761891,
           "slug": "people/widget-example-42",
           "source_id": "default"
         },
@@ -1794,7 +1794,7 @@
           "chunk_id": 25,
           "chunk_index": 0,
           "page_id": 13,
-          "score": 0.5239595903943436,
+          "score": 0.5239595904947076,
           "slug": "notes/widget-example-12",
           "source_id": "default"
         },
@@ -1802,7 +1802,7 @@
           "chunk_id": 49,
           "chunk_index": 0,
           "page_id": 25,
-          "score": 0.5176361938270446,
+          "score": 0.5176361939274087,
           "slug": "notes/widget-example-24",
           "source_id": "default"
         },
@@ -1810,7 +1810,7 @@
           "chunk_id": 73,
           "chunk_index": 0,
           "page_id": 37,
-          "score": 0.5114651682613672,
+          "score": 0.5114651683617313,
           "slug": "notes/widget-example-36",
           "source_id": "default"
         },
@@ -1818,7 +1818,7 @@
           "chunk_id": 1,
           "chunk_index": 0,
           "page_id": 1,
-          "score": 0.5051149575460285,
+          "score": 0.5051149571990993,
           "slug": "notes/widget-example-0",
           "source_id": "default"
         }
@@ -1830,7 +1830,7 @@
           "chunk_id": 76,
           "chunk_index": 0,
           "page_id": 39,
-          "score": 0.8490998632821949,
+          "score": 0.8490998640924738,
           "slug": "people/quantum-example-38",
           "source_id": "team-example"
         },
@@ -1838,7 +1838,7 @@
           "chunk_id": 4,
           "chunk_index": 0,
           "page_id": 3,
-          "score": 0.8376244534461293,
+          "score": 0.8376244453693658,
           "slug": "people/quantum-example-2",
           "source_id": "team-example"
         },
@@ -1846,7 +1846,7 @@
           "chunk_id": 28,
           "chunk_index": 0,
           "page_id": 15,
-          "score": 0.8265192181209046,
+          "score": 0.826519210044141,
           "slug": "people/quantum-example-14",
           "source_id": "team-example"
         },
@@ -1854,7 +1854,7 @@
           "chunk_id": 52,
           "chunk_index": 0,
           "page_id": 27,
-          "score": 0.8157665299488616,
+          "score": 0.815766521872098,
           "slug": "people/quantum-example-26",
           "source_id": "team-example"
         },
@@ -1862,7 +1862,7 @@
           "chunk_id": 16,
           "chunk_index": 0,
           "page_id": 9,
-          "score": 0.8093265574228543,
+          "score": 0.8093265519462989,
           "slug": "notes/quantum-example-8",
           "source_id": "team-example"
         }
@@ -1872,7 +1872,7 @@
           "chunk_id": 76,
           "chunk_index": 0,
           "page_id": 39,
-          "score": 0.8490998632821949,
+          "score": 0.8490998640924738,
           "slug": "people/quantum-example-38",
           "source_id": "team-example"
         },
@@ -1880,7 +1880,7 @@
           "chunk_id": 4,
           "chunk_index": 0,
           "page_id": 3,
-          "score": 0.8376244534461293,
+          "score": 0.8376244453693658,
           "slug": "people/quantum-example-2",
           "source_id": "team-example"
         },
@@ -1888,7 +1888,7 @@
           "chunk_id": 28,
           "chunk_index": 0,
           "page_id": 15,
-          "score": 0.8265192181209046,
+          "score": 0.826519210044141,
           "slug": "people/quantum-example-14",
           "source_id": "team-example"
         },
@@ -1896,7 +1896,7 @@
           "chunk_id": 52,
           "chunk_index": 0,
           "page_id": 27,
-          "score": 0.8157665299488616,
+          "score": 0.815766521872098,
           "slug": "people/quantum-example-26",
           "source_id": "team-example"
         },
@@ -1904,7 +1904,7 @@
           "chunk_id": 16,
           "chunk_index": 0,
           "page_id": 9,
-          "score": 0.8093265574228543,
+          "score": 0.8093265519462989,
           "slug": "notes/quantum-example-8",
           "source_id": "team-example"
         }
@@ -1914,7 +1914,7 @@
           "chunk_id": 76,
           "chunk_index": 0,
           "page_id": 39,
-          "score": 0.8490998632821949,
+          "score": 0.8490998640924738,
           "slug": "people/quantum-example-38",
           "source_id": "team-example"
         },
@@ -1922,7 +1922,7 @@
           "chunk_id": 4,
           "chunk_index": 0,
           "page_id": 3,
-          "score": 0.8376244534461293,
+          "score": 0.8376244453693658,
           "slug": "people/quantum-example-2",
           "source_id": "team-example"
         },
@@ -1930,7 +1930,7 @@
           "chunk_id": 28,
           "chunk_index": 0,
           "page_id": 15,
-          "score": 0.8265192181209046,
+          "score": 0.826519210044141,
           "slug": "people/quantum-example-14",
           "source_id": "team-example"
         },
@@ -1938,7 +1938,7 @@
           "chunk_id": 52,
           "chunk_index": 0,
           "page_id": 27,
-          "score": 0.8157665299488616,
+          "score": 0.815766521872098,
           "slug": "people/quantum-example-26",
           "source_id": "team-example"
         },
@@ -1946,7 +1946,7 @@
           "chunk_id": 16,
           "chunk_index": 0,
           "page_id": 9,
-          "score": 0.8093265574228543,
+          "score": 0.8093265519462989,
           "slug": "notes/quantum-example-8",
           "source_id": "team-example"
         }
@@ -1958,7 +1958,7 @@
           "chunk_id": 2,
           "chunk_index": 0,
           "page_id": 2,
-          "score": 0.7606091526731326,
+          "score": 0.7606091511068003,
           "slug": "concepts/garden-example-1",
           "source_id": "default"
         },
@@ -1966,7 +1966,7 @@
           "chunk_id": 26,
           "chunk_index": 0,
           "page_id": 14,
-          "score": 0.749133742837067,
+          "score": 0.7491337412707347,
           "slug": "concepts/garden-example-13",
           "source_id": "default"
         },
@@ -1974,7 +1974,7 @@
           "chunk_id": 50,
           "chunk_index": 0,
           "page_id": 26,
-          "score": 0.7380285075118422,
+          "score": 0.73802850594551,
           "slug": "concepts/garden-example-25",
           "source_id": "default"
         },
@@ -1982,7 +1982,7 @@
           "chunk_id": 74,
           "chunk_index": 0,
           "page_id": 38,
-          "score": 0.7272758193397992,
+          "score": 0.727275817773467,
           "slug": "concepts/garden-example-37",
           "source_id": "default"
         },
@@ -1990,7 +1990,7 @@
           "chunk_id": 14,
           "chunk_index": 0,
           "page_id": 8,
-          "score": 0.7168591526731326,
+          "score": 0.7168591511068003,
           "slug": "companies/garden-example-7",
           "source_id": "default"
         },
@@ -1998,7 +1998,7 @@
           "chunk_id": 38,
           "chunk_index": 0,
           "page_id": 20,
-          "score": 0.7067629988269788,
+          "score": 0.7067629972606465,
           "slug": "companies/garden-example-19",
           "source_id": "default"
         },
@@ -2006,7 +2006,7 @@
           "chunk_id": 62,
           "chunk_index": 0,
           "page_id": 32,
-          "score": 0.696972789036769,
+          "score": 0.6969727874704367,
           "slug": "companies/garden-example-31",
           "source_id": "default"
         },
@@ -2014,7 +2014,7 @@
           "chunk_id": 86,
           "chunk_index": 0,
           "page_id": 44,
-          "score": 0.6874748243149237,
+          "score": 0.6874748227485914,
           "slug": "companies/garden-example-43",
           "source_id": "default"
         },
@@ -2022,7 +2022,7 @@
           "chunk_id": 92,
           "chunk_index": 0,
           "page_id": 48,
-          "score": 0.6535039171035611,
+          "score": 0.6535039239740842,
           "slug": "notes/garden-news-archive",
           "source_id": "default"
         },
@@ -2030,7 +2030,7 @@
           "chunk_id": 11,
           "chunk_index": 1,
           "page_id": 6,
-          "score": 0.6340502798157684,
+          "score": 0.6340502797043277,
           "slug": "concepts/graph-example-5",
           "source_id": "team-example"
         },
@@ -2038,7 +2038,7 @@
           "chunk_id": 35,
           "chunk_index": 1,
           "page_id": 18,
-          "score": 0.6253546276418555,
+          "score": 0.6253546275304147,
           "slug": "concepts/graph-example-17",
           "source_id": "team-example"
         },
@@ -2046,7 +2046,7 @@
           "chunk_id": 59,
           "chunk_index": 1,
           "page_id": 30,
-          "score": 0.6169039234165034,
+          "score": 0.6169039233050626,
           "slug": "concepts/graph-example-29",
           "source_id": "team-example"
         },
@@ -2054,7 +2054,7 @@
           "chunk_id": 83,
           "chunk_index": 1,
           "page_id": 42,
-          "score": 0.6086879609751887,
+          "score": 0.608687960863748,
           "slug": "concepts/graph-example-41",
           "source_id": "team-example"
         },
@@ -2062,7 +2062,7 @@
           "chunk_id": 91,
           "chunk_index": 0,
           "page_id": 47,
-          "score": 0.6080751492888234,
+          "score": 0.60807515158553,
           "slug": "notes/garden-news-latest",
           "source_id": "default"
         },
@@ -2070,7 +2070,7 @@
           "chunk_id": 23,
           "chunk_index": 1,
           "page_id": 12,
-          "score": 0.592922195209423,
+          "score": 0.5929221950979823,
           "slug": "companies/graph-example-11",
           "source_id": "team-example"
         },
@@ -2078,7 +2078,7 @@
           "chunk_id": 47,
           "chunk_index": 1,
           "page_id": 24,
-          "score": 0.5853546276418554,
+          "score": 0.5853546275304147,
           "slug": "companies/graph-example-23",
           "source_id": "team-example"
         },
@@ -2086,7 +2086,7 @@
           "chunk_id": 71,
           "chunk_index": 1,
           "page_id": 36,
-          "score": 0.5779862065892238,
+          "score": 0.5779862064777831,
           "slug": "companies/graph-example-35",
           "source_id": "team-example"
         },
@@ -2094,7 +2094,7 @@
           "chunk_id": 30,
           "chunk_index": 2,
           "page_id": 15,
-          "score": 0.568421315525074,
+          "score": 0.5684213134838687,
           "slug": "people/quantum-example-14",
           "source_id": "team-example"
         },
@@ -2102,7 +2102,7 @@
           "chunk_id": 54,
           "chunk_index": 2,
           "page_id": 27,
-          "score": 0.5614283085320669,
+          "score": 0.5614283064908616,
           "slug": "people/quantum-example-26",
           "source_id": "team-example"
         },
@@ -2110,7 +2110,7 @@
           "chunk_id": 78,
           "chunk_index": 2,
           "page_id": 39,
-          "score": 0.5546123396907817,
+          "score": 0.5546123376495764,
           "slug": "people/quantum-example-38",
           "source_id": "team-example"
         },
@@ -2118,7 +2118,7 @@
           "chunk_id": 6,
           "chunk_index": 2,
           "page_id": 3,
-          "score": 0.5466224991046933,
+          "score": 0.5466224989778548,
           "slug": "people/quantum-example-2",
           "source_id": "team-example"
         },
@@ -2126,7 +2126,7 @@
           "chunk_id": 18,
           "chunk_index": 2,
           "page_id": 9,
-          "score": 0.5420978432752742,
+          "score": 0.5420978432580738,
           "slug": "notes/quantum-example-8",
           "source_id": "team-example"
         },
@@ -2134,7 +2134,7 @@
           "chunk_id": 42,
           "chunk_index": 2,
           "page_id": 21,
-          "score": 0.5351618920217481,
+          "score": 0.5351618899805428,
           "slug": "notes/quantum-example-20",
           "source_id": "team-example"
         },
@@ -2142,7 +2142,7 @@
           "chunk_id": 66,
           "chunk_index": 2,
           "page_id": 33,
-          "score": 0.5289908664560707,
+          "score": 0.5289908644148655,
           "slug": "notes/quantum-example-32",
           "source_id": "team-example"
         },
@@ -2160,7 +2160,7 @@
           "chunk_id": 2,
           "chunk_index": 0,
           "page_id": 2,
-          "score": 0.7606091526731326,
+          "score": 0.7606091511068003,
           "slug": "concepts/garden-example-1",
           "source_id": "default"
         },
@@ -2168,7 +2168,7 @@
           "chunk_id": 26,
           "chunk_index": 0,
           "page_id": 14,
-          "score": 0.749133742837067,
+          "score": 0.7491337412707347,
           "slug": "concepts/garden-example-13",
           "source_id": "default"
         },
@@ -2176,7 +2176,7 @@
           "chunk_id": 50,
           "chunk_index": 0,
           "page_id": 26,
-          "score": 0.7380285075118422,
+          "score": 0.73802850594551,
           "slug": "concepts/garden-example-25",
           "source_id": "default"
         },
@@ -2184,7 +2184,7 @@
           "chunk_id": 74,
           "chunk_index": 0,
           "page_id": 38,
-          "score": 0.7272758193397992,
+          "score": 0.727275817773467,
           "slug": "concepts/garden-example-37",
           "source_id": "default"
         },
@@ -2192,7 +2192,7 @@
           "chunk_id": 14,
           "chunk_index": 0,
           "page_id": 8,
-          "score": 0.7168591526731326,
+          "score": 0.7168591511068003,
           "slug": "companies/garden-example-7",
           "source_id": "default"
         },
@@ -2200,7 +2200,7 @@
           "chunk_id": 38,
           "chunk_index": 0,
           "page_id": 20,
-          "score": 0.7067629988269788,
+          "score": 0.7067629972606465,
           "slug": "companies/garden-example-19",
           "source_id": "default"
         },
@@ -2208,7 +2208,7 @@
           "chunk_id": 62,
           "chunk_index": 0,
           "page_id": 32,
-          "score": 0.696972789036769,
+          "score": 0.6969727874704367,
           "slug": "companies/garden-example-31",
           "source_id": "default"
         },
@@ -2216,7 +2216,7 @@
           "chunk_id": 86,
           "chunk_index": 0,
           "page_id": 44,
-          "score": 0.6874748243149237,
+          "score": 0.6874748227485914,
           "slug": "companies/garden-example-43",
           "source_id": "default"
         },
@@ -2224,7 +2224,7 @@
           "chunk_id": 92,
           "chunk_index": 0,
           "page_id": 48,
-          "score": 0.6535039171035611,
+          "score": 0.6535039239740842,
           "slug": "notes/garden-news-archive",
           "source_id": "default"
         },
@@ -2232,7 +2232,7 @@
           "chunk_id": 11,
           "chunk_index": 1,
           "page_id": 6,
-          "score": 0.6340502798157684,
+          "score": 0.6340502797043277,
           "slug": "concepts/graph-example-5",
           "source_id": "team-example"
         },
@@ -2240,7 +2240,7 @@
           "chunk_id": 35,
           "chunk_index": 1,
           "page_id": 18,
-          "score": 0.6253546276418555,
+          "score": 0.6253546275304147,
           "slug": "concepts/graph-example-17",
           "source_id": "team-example"
         },
@@ -2248,7 +2248,7 @@
           "chunk_id": 59,
           "chunk_index": 1,
           "page_id": 30,
-          "score": 0.6169039234165034,
+          "score": 0.6169039233050626,
           "slug": "concepts/graph-example-29",
           "source_id": "team-example"
         },
@@ -2256,7 +2256,7 @@
           "chunk_id": 83,
           "chunk_index": 1,
           "page_id": 42,
-          "score": 0.6086879609751887,
+          "score": 0.608687960863748,
           "slug": "concepts/graph-example-41",
           "source_id": "team-example"
         },
@@ -2264,7 +2264,7 @@
           "chunk_id": 91,
           "chunk_index": 0,
           "page_id": 47,
-          "score": 0.6080751492888234,
+          "score": 0.60807515158553,
           "slug": "notes/garden-news-latest",
           "source_id": "default"
         },
@@ -2272,7 +2272,7 @@
           "chunk_id": 23,
           "chunk_index": 1,
           "page_id": 12,
-          "score": 0.592922195209423,
+          "score": 0.5929221950979823,
           "slug": "companies/graph-example-11",
           "source_id": "team-example"
         },
@@ -2280,7 +2280,7 @@
           "chunk_id": 47,
           "chunk_index": 1,
           "page_id": 24,
-          "score": 0.5853546276418554,
+          "score": 0.5853546275304147,
           "slug": "companies/graph-example-23",
           "source_id": "team-example"
         },
@@ -2288,7 +2288,7 @@
           "chunk_id": 71,
           "chunk_index": 1,
           "page_id": 36,
-          "score": 0.5779862065892238,
+          "score": 0.5779862064777831,
           "slug": "companies/graph-example-35",
           "source_id": "team-example"
         },
@@ -2296,7 +2296,7 @@
           "chunk_id": 30,
           "chunk_index": 2,
           "page_id": 15,
-          "score": 0.568421315525074,
+          "score": 0.5684213134838687,
           "slug": "people/quantum-example-14",
           "source_id": "team-example"
         },
@@ -2304,7 +2304,7 @@
           "chunk_id": 54,
           "chunk_index": 2,
           "page_id": 27,
-          "score": 0.5614283085320669,
+          "score": 0.5614283064908616,
           "slug": "people/quantum-example-26",
           "source_id": "team-example"
         },
@@ -2312,7 +2312,7 @@
           "chunk_id": 78,
           "chunk_index": 2,
           "page_id": 39,
-          "score": 0.5546123396907817,
+          "score": 0.5546123376495764,
           "slug": "people/quantum-example-38",
           "source_id": "team-example"
         },
@@ -2320,7 +2320,7 @@
           "chunk_id": 6,
           "chunk_index": 2,
           "page_id": 3,
-          "score": 0.5466224991046933,
+          "score": 0.5466224989778548,
           "slug": "people/quantum-example-2",
           "source_id": "team-example"
         },
@@ -2328,7 +2328,7 @@
           "chunk_id": 18,
           "chunk_index": 2,
           "page_id": 9,
-          "score": 0.5420978432752742,
+          "score": 0.5420978432580738,
           "slug": "notes/quantum-example-8",
           "source_id": "team-example"
         },
@@ -2336,7 +2336,7 @@
           "chunk_id": 42,
           "chunk_index": 2,
           "page_id": 21,
-          "score": 0.5351618920217481,
+          "score": 0.5351618899805428,
           "slug": "notes/quantum-example-20",
           "source_id": "team-example"
         },
@@ -2344,7 +2344,7 @@
           "chunk_id": 66,
           "chunk_index": 2,
           "page_id": 33,
-          "score": 0.5289908664560707,
+          "score": 0.5289908644148655,
           "slug": "notes/quantum-example-32",
           "source_id": "team-example"
         },
@@ -2362,7 +2362,7 @@
           "chunk_id": 2,
           "chunk_index": 0,
           "page_id": 2,
-          "score": 0.7606091526731326,
+          "score": 0.7606091511068003,
           "slug": "concepts/garden-example-1",
           "source_id": "default"
         },
@@ -2370,7 +2370,7 @@
           "chunk_id": 26,
           "chunk_index": 0,
           "page_id": 14,
-          "score": 0.749133742837067,
+          "score": 0.7491337412707347,
           "slug": "concepts/garden-example-13",
           "source_id": "default"
         },
@@ -2378,7 +2378,7 @@
           "chunk_id": 50,
           "chunk_index": 0,
           "page_id": 26,
-          "score": 0.7380285075118422,
+          "score": 0.73802850594551,
           "slug": "concepts/garden-example-25",
           "source_id": "default"
         },
@@ -2386,7 +2386,7 @@
           "chunk_id": 74,
           "chunk_index": 0,
           "page_id": 38,
-          "score": 0.7272758193397992,
+          "score": 0.727275817773467,
           "slug": "concepts/garden-example-37",
           "source_id": "default"
         },
@@ -2394,7 +2394,7 @@
           "chunk_id": 14,
           "chunk_index": 0,
           "page_id": 8,
-          "score": 0.7168591526731326,
+          "score": 0.7168591511068003,
           "slug": "companies/garden-example-7",
           "source_id": "default"
         },
@@ -2402,7 +2402,7 @@
           "chunk_id": 38,
           "chunk_index": 0,
           "page_id": 20,
-          "score": 0.7067629988269788,
+          "score": 0.7067629972606465,
           "slug": "companies/garden-example-19",
           "source_id": "default"
         },
@@ -2410,7 +2410,7 @@
           "chunk_id": 62,
           "chunk_index": 0,
           "page_id": 32,
-          "score": 0.696972789036769,
+          "score": 0.6969727874704367,
           "slug": "companies/garden-example-31",
           "source_id": "default"
         },
@@ -2418,7 +2418,7 @@
           "chunk_id": 86,
           "chunk_index": 0,
           "page_id": 44,
-          "score": 0.6874748243149237,
+          "score": 0.6874748227485914,
           "slug": "companies/garden-example-43",
           "source_id": "default"
         },
@@ -2426,7 +2426,7 @@
           "chunk_id": 92,
           "chunk_index": 0,
           "page_id": 48,
-          "score": 0.6535039171035611,
+          "score": 0.6535039239740842,
           "slug": "notes/garden-news-archive",
           "source_id": "default"
         },
@@ -2434,7 +2434,7 @@
           "chunk_id": 11,
           "chunk_index": 1,
           "page_id": 6,
-          "score": 0.6340502798157684,
+          "score": 0.6340502797043277,
           "slug": "concepts/graph-example-5",
           "source_id": "team-example"
         },
@@ -2442,7 +2442,7 @@
           "chunk_id": 35,
           "chunk_index": 1,
           "page_id": 18,
-          "score": 0.6253546276418555,
+          "score": 0.6253546275304147,
           "slug": "concepts/graph-example-17",
           "source_id": "team-example"
         },
@@ -2450,7 +2450,7 @@
           "chunk_id": 59,
           "chunk_index": 1,
           "page_id": 30,
-          "score": 0.6169039234165034,
+          "score": 0.6169039233050626,
           "slug": "concepts/graph-example-29",
           "source_id": "team-example"
         },
@@ -2458,7 +2458,7 @@
           "chunk_id": 83,
           "chunk_index": 1,
           "page_id": 42,
-          "score": 0.6086879609751887,
+          "score": 0.608687960863748,
           "slug": "concepts/graph-example-41",
           "source_id": "team-example"
         },
@@ -2466,7 +2466,7 @@
           "chunk_id": 91,
           "chunk_index": 0,
           "page_id": 47,
-          "score": 0.6080751492888234,
+          "score": 0.60807515158553,
           "slug": "notes/garden-news-latest",
           "source_id": "default"
         },
@@ -2474,7 +2474,7 @@
           "chunk_id": 23,
           "chunk_index": 1,
           "page_id": 12,
-          "score": 0.592922195209423,
+          "score": 0.5929221950979823,
           "slug": "companies/graph-example-11",
           "source_id": "team-example"
         },
@@ -2482,7 +2482,7 @@
           "chunk_id": 47,
           "chunk_index": 1,
           "page_id": 24,
-          "score": 0.5853546276418554,
+          "score": 0.5853546275304147,
           "slug": "companies/graph-example-23",
           "source_id": "team-example"
         },
@@ -2490,7 +2490,7 @@
           "chunk_id": 71,
           "chunk_index": 1,
           "page_id": 36,
-          "score": 0.5779862065892238,
+          "score": 0.5779862064777831,
           "slug": "companies/graph-example-35",
           "source_id": "team-example"
         },
@@ -2498,7 +2498,7 @@
           "chunk_id": 30,
           "chunk_index": 2,
           "page_id": 15,
-          "score": 0.568421315525074,
+          "score": 0.5684213134838687,
           "slug": "people/quantum-example-14",
           "source_id": "team-example"
         },
@@ -2506,7 +2506,7 @@
           "chunk_id": 54,
           "chunk_index": 2,
           "page_id": 27,
-          "score": 0.5614283085320669,
+          "score": 0.5614283064908616,
           "slug": "people/quantum-example-26",
           "source_id": "team-example"
         },
@@ -2514,7 +2514,7 @@
           "chunk_id": 78,
           "chunk_index": 2,
           "page_id": 39,
-          "score": 0.5546123396907817,
+          "score": 0.5546123376495764,
           "slug": "people/quantum-example-38",
           "source_id": "team-example"
         },
@@ -2522,7 +2522,7 @@
           "chunk_id": 6,
           "chunk_index": 2,
           "page_id": 3,
-          "score": 0.5466224991046933,
+          "score": 0.5466224989778548,
           "slug": "people/quantum-example-2",
           "source_id": "team-example"
         },
@@ -2530,7 +2530,7 @@
           "chunk_id": 18,
           "chunk_index": 2,
           "page_id": 9,
-          "score": 0.5420978432752742,
+          "score": 0.5420978432580738,
           "slug": "notes/quantum-example-8",
           "source_id": "team-example"
         },
@@ -2538,7 +2538,7 @@
           "chunk_id": 42,
           "chunk_index": 2,
           "page_id": 21,
-          "score": 0.5351618920217481,
+          "score": 0.5351618899805428,
           "slug": "notes/quantum-example-20",
           "source_id": "team-example"
         },
@@ -2546,7 +2546,7 @@
           "chunk_id": 66,
           "chunk_index": 2,
           "page_id": 33,
-          "score": 0.5289908664560707,
+          "score": 0.5289908644148655,
           "slug": "notes/quantum-example-32",
           "source_id": "team-example"
         },
@@ -2566,7 +2566,7 @@
           "chunk_id": 12,
           "chunk_index": 2,
           "page_id": 6,
-          "score": 0.8359895241734874,
+          "score": 0.8359895210262991,
           "slug": "concepts/graph-example-5",
           "source_id": "team-example"
         },
@@ -2574,7 +2574,7 @@
           "chunk_id": 60,
           "chunk_index": 2,
           "page_id": 30,
-          "score": 0.8245141143374218,
+          "score": 0.8245141111902335,
           "slug": "concepts/graph-example-29",
           "source_id": "team-example"
         },
@@ -2582,7 +2582,7 @@
           "chunk_id": 84,
           "chunk_index": 2,
           "page_id": 42,
-          "score": 0.813408879012197,
+          "score": 0.8134088758650088,
           "slug": "concepts/graph-example-41",
           "source_id": "team-example"
         },
@@ -2590,7 +2590,7 @@
           "chunk_id": 36,
           "chunk_index": 2,
           "page_id": 18,
-          "score": 0.802656190840154,
+          "score": 0.8026561795873594,
           "slug": "concepts/graph-example-17",
           "source_id": "team-example"
         },
@@ -2598,7 +2598,7 @@
           "chunk_id": 48,
           "chunk_index": 2,
           "page_id": 24,
-          "score": 0.7922395241734874,
+          "score": 0.7922395210262991,
           "slug": "companies/graph-example-23",
           "source_id": "team-example"
         },
@@ -2606,7 +2606,7 @@
           "chunk_id": 72,
           "chunk_index": 2,
           "page_id": 36,
-          "score": 0.7821433703273336,
+          "score": 0.7821433671801453,
           "slug": "companies/graph-example-35",
           "source_id": "team-example"
         },
@@ -2614,7 +2614,7 @@
           "chunk_id": 24,
           "chunk_index": 2,
           "page_id": 12,
-          "score": 0.7723531605371238,
+          "score": 0.7723531492843291,
           "slug": "companies/graph-example-11",
           "source_id": "team-example"
         },
@@ -2622,7 +2622,7 @@
           "chunk_id": 5,
           "chunk_index": 1,
           "page_id": 3,
-          "score": 0.7201161524658225,
+          "score": 0.7201161632534946,
           "slug": "people/quantum-example-2",
           "source_id": "team-example"
         },
@@ -2630,7 +2630,7 @@
           "chunk_id": 29,
           "chunk_index": 1,
           "page_id": 15,
-          "score": 0.7108975396475607,
+          "score": 0.7108975504352328,
           "slug": "people/quantum-example-14",
           "source_id": "team-example"
         },
@@ -2638,7 +2638,7 @@
           "chunk_id": 53,
           "chunk_index": 1,
           "page_id": 27,
-          "score": 0.7019461329979444,
+          "score": 0.7019461437856165,
           "slug": "people/quantum-example-26",
           "source_id": "team-example"
         },
@@ -2646,7 +2646,7 @@
           "chunk_id": 77,
           "chunk_index": 1,
           "page_id": 39,
-          "score": 0.6932504808240314,
+          "score": 0.6932504916117035,
           "slug": "people/quantum-example-38",
           "source_id": "team-example"
         },
@@ -2654,7 +2654,7 @@
           "chunk_id": 17,
           "chunk_index": 1,
           "page_id": 9,
-          "score": 0.6847997765986793,
+          "score": 0.6847997873863514,
           "slug": "notes/quantum-example-8",
           "source_id": "team-example"
         },
@@ -2662,7 +2662,7 @@
           "chunk_id": 41,
           "chunk_index": 1,
           "page_id": 21,
-          "score": 0.6765838141573647,
+          "score": 0.6765838249450368,
           "slug": "notes/quantum-example-20",
           "source_id": "team-example"
         },
@@ -2670,7 +2670,7 @@
           "chunk_id": 65,
           "chunk_index": 1,
           "page_id": 33,
-          "score": 0.668592946577456,
+          "score": 0.6685929573651281,
           "slug": "notes/quantum-example-32",
           "source_id": "team-example"
         },
@@ -2688,7 +2688,7 @@
           "chunk_id": 12,
           "chunk_index": 2,
           "page_id": 6,
-          "score": 0.8359895241734874,
+          "score": 0.8359895210262991,
           "slug": "concepts/graph-example-5",
           "source_id": "team-example"
         },
@@ -2696,7 +2696,7 @@
           "chunk_id": 60,
           "chunk_index": 2,
           "page_id": 30,
-          "score": 0.8245141143374218,
+          "score": 0.8245141111902335,
           "slug": "concepts/graph-example-29",
           "source_id": "team-example"
         },
@@ -2704,7 +2704,7 @@
           "chunk_id": 84,
           "chunk_index": 2,
           "page_id": 42,
-          "score": 0.813408879012197,
+          "score": 0.8134088758650088,
           "slug": "concepts/graph-example-41",
           "source_id": "team-example"
         },
@@ -2712,7 +2712,7 @@
           "chunk_id": 36,
           "chunk_index": 2,
           "page_id": 18,
-          "score": 0.802656190840154,
+          "score": 0.8026561795873594,
           "slug": "concepts/graph-example-17",
           "source_id": "team-example"
         },
@@ -2720,7 +2720,7 @@
           "chunk_id": 48,
           "chunk_index": 2,
           "page_id": 24,
-          "score": 0.7922395241734874,
+          "score": 0.7922395210262991,
           "slug": "companies/graph-example-23",
           "source_id": "team-example"
         },
@@ -2728,7 +2728,7 @@
           "chunk_id": 72,
           "chunk_index": 2,
           "page_id": 36,
-          "score": 0.7821433703273336,
+          "score": 0.7821433671801453,
           "slug": "companies/graph-example-35",
           "source_id": "team-example"
         },
@@ -2736,7 +2736,7 @@
           "chunk_id": 24,
           "chunk_index": 2,
           "page_id": 12,
-          "score": 0.7723531605371238,
+          "score": 0.7723531492843291,
           "slug": "companies/graph-example-11",
           "source_id": "team-example"
         },
@@ -2744,7 +2744,7 @@
           "chunk_id": 5,
           "chunk_index": 1,
           "page_id": 3,
-          "score": 0.7201161524658225,
+          "score": 0.7201161632534946,
           "slug": "people/quantum-example-2",
           "source_id": "team-example"
         },
@@ -2752,7 +2752,7 @@
           "chunk_id": 29,
           "chunk_index": 1,
           "page_id": 15,
-          "score": 0.7108975396475607,
+          "score": 0.7108975504352328,
           "slug": "people/quantum-example-14",
           "source_id": "team-example"
         },
@@ -2760,7 +2760,7 @@
           "chunk_id": 53,
           "chunk_index": 1,
           "page_id": 27,
-          "score": 0.7019461329979444,
+          "score": 0.7019461437856165,
           "slug": "people/quantum-example-26",
           "source_id": "team-example"
         },
@@ -2768,7 +2768,7 @@
           "chunk_id": 77,
           "chunk_index": 1,
           "page_id": 39,
-          "score": 0.6932504808240314,
+          "score": 0.6932504916117035,
           "slug": "people/quantum-example-38",
           "source_id": "team-example"
         },
@@ -2776,7 +2776,7 @@
           "chunk_id": 17,
           "chunk_index": 1,
           "page_id": 9,
-          "score": 0.6847997765986793,
+          "score": 0.6847997873863514,
           "slug": "notes/quantum-example-8",
           "source_id": "team-example"
         },
@@ -2784,7 +2784,7 @@
           "chunk_id": 41,
           "chunk_index": 1,
           "page_id": 21,
-          "score": 0.6765838141573647,
+          "score": 0.6765838249450368,
           "slug": "notes/quantum-example-20",
           "source_id": "team-example"
         },
@@ -2792,7 +2792,7 @@
           "chunk_id": 65,
           "chunk_index": 1,
           "page_id": 33,
-          "score": 0.668592946577456,
+          "score": 0.6685929573651281,
           "slug": "notes/quantum-example-32",
           "source_id": "team-example"
         },
@@ -2810,7 +2810,7 @@
           "chunk_id": 12,
           "chunk_index": 2,
           "page_id": 6,
-          "score": 0.8359895241734874,
+          "score": 0.8359895210262991,
           "slug": "concepts/graph-example-5",
           "source_id": "team-example"
         },
@@ -2818,7 +2818,7 @@
           "chunk_id": 60,
           "chunk_index": 2,
           "page_id": 30,
-          "score": 0.8245141143374218,
+          "score": 0.8245141111902335,
           "slug": "concepts/graph-example-29",
           "source_id": "team-example"
         },
@@ -2826,7 +2826,7 @@
           "chunk_id": 84,
           "chunk_index": 2,
           "page_id": 42,
-          "score": 0.813408879012197,
+          "score": 0.8134088758650088,
           "slug": "concepts/graph-example-41",
           "source_id": "team-example"
         },
@@ -2834,7 +2834,7 @@
           "chunk_id": 36,
           "chunk_index": 2,
           "page_id": 18,
-          "score": 0.802656190840154,
+          "score": 0.8026561795873594,
           "slug": "concepts/graph-example-17",
           "source_id": "team-example"
         },
@@ -2842,7 +2842,7 @@
           "chunk_id": 48,
           "chunk_index": 2,
           "page_id": 24,
-          "score": 0.7922395241734874,
+          "score": 0.7922395210262991,
           "slug": "companies/graph-example-23",
           "source_id": "team-example"
         },
@@ -2850,7 +2850,7 @@
           "chunk_id": 72,
           "chunk_index": 2,
           "page_id": 36,
-          "score": 0.7821433703273336,
+          "score": 0.7821433671801453,
           "slug": "companies/graph-example-35",
           "source_id": "team-example"
         },
@@ -2858,7 +2858,7 @@
           "chunk_id": 24,
           "chunk_index": 2,
           "page_id": 12,
-          "score": 0.7723531605371238,
+          "score": 0.7723531492843291,
           "slug": "companies/graph-example-11",
           "source_id": "team-example"
         },
@@ -2866,7 +2866,7 @@
           "chunk_id": 5,
           "chunk_index": 1,
           "page_id": 3,
-          "score": 0.7201161524658225,
+          "score": 0.7201161632534946,
           "slug": "people/quantum-example-2",
           "source_id": "team-example"
         },
@@ -2874,7 +2874,7 @@
           "chunk_id": 29,
           "chunk_index": 1,
           "page_id": 15,
-          "score": 0.7108975396475607,
+          "score": 0.7108975504352328,
           "slug": "people/quantum-example-14",
           "source_id": "team-example"
         },
@@ -2882,7 +2882,7 @@
           "chunk_id": 53,
           "chunk_index": 1,
           "page_id": 27,
-          "score": 0.7019461329979444,
+          "score": 0.7019461437856165,
           "slug": "people/quantum-example-26",
           "source_id": "team-example"
         },
@@ -2890,7 +2890,7 @@
           "chunk_id": 77,
           "chunk_index": 1,
           "page_id": 39,
-          "score": 0.6932504808240314,
+          "score": 0.6932504916117035,
           "slug": "people/quantum-example-38",
           "source_id": "team-example"
         },
@@ -2898,7 +2898,7 @@
           "chunk_id": 17,
           "chunk_index": 1,
           "page_id": 9,
-          "score": 0.6847997765986793,
+          "score": 0.6847997873863514,
           "slug": "notes/quantum-example-8",
           "source_id": "team-example"
         },
@@ -2906,7 +2906,7 @@
           "chunk_id": 41,
           "chunk_index": 1,
           "page_id": 21,
-          "score": 0.6765838141573647,
+          "score": 0.6765838249450368,
           "slug": "notes/quantum-example-20",
           "source_id": "team-example"
         },
@@ -2914,7 +2914,7 @@
           "chunk_id": 65,
           "chunk_index": 1,
           "page_id": 33,
-          "score": 0.668592946577456,
+          "score": 0.6685929573651281,
           "slug": "notes/quantum-example-32",
           "source_id": "team-example"
         },
@@ -2934,7 +2934,7 @@
           "chunk_id": 91,
           "chunk_index": 0,
           "page_id": 47,
-          "score": 1.3526386087404616,
+          "score": 1.352638607715436,
           "slug": "notes/garden-news-latest",
           "source_id": "default"
         },
@@ -2942,7 +2942,7 @@
           "chunk_id": 92,
           "chunk_index": 0,
           "page_id": 48,
-          "score": 0.4781673917943123,
+          "score": 0.4781674061247895,
           "slug": "notes/garden-news-archive",
           "source_id": "default"
         },
@@ -2950,7 +2950,7 @@
           "chunk_id": 15,
           "chunk_index": 1,
           "page_id": 8,
-          "score": 0.4768555619627832,
+          "score": 0.4768555580625993,
           "slug": "companies/garden-example-7",
           "source_id": "default"
         },
@@ -2958,7 +2958,7 @@
           "chunk_id": 39,
           "chunk_index": 1,
           "page_id": 20,
-          "score": 0.46572636059817796,
+          "score": 0.4657263566881819,
           "slug": "companies/garden-example-19",
           "source_id": "default"
         },
@@ -2966,7 +2966,7 @@
           "chunk_id": 63,
           "chunk_index": 1,
           "page_id": 32,
-          "score": 0.4527263825038185,
+          "score": 0.4527263786060335,
           "slug": "companies/garden-example-31",
           "source_id": "default"
         },
@@ -2974,7 +2974,7 @@
           "chunk_id": 87,
           "chunk_index": 1,
           "page_id": 44,
-          "score": 0.44296245710877985,
+          "score": 0.4429624532012699,
           "slug": "companies/garden-example-43",
           "source_id": "default"
         },
@@ -2982,7 +2982,7 @@
           "chunk_id": 13,
           "chunk_index": 0,
           "page_id": 7,
-          "score": 0.43084706115873855,
+          "score": 0.4308470596940813,
           "slug": "people/widget-example-6",
           "source_id": "default"
         },
@@ -2990,7 +2990,7 @@
           "chunk_id": 37,
           "chunk_index": 0,
           "page_id": 19,
-          "score": 0.4219197281365182,
+          "score": 0.42191972666848293,
           "slug": "people/widget-example-18",
           "source_id": "default"
         },
@@ -2998,7 +2998,7 @@
           "chunk_id": 61,
           "chunk_index": 0,
           "page_id": 31,
-          "score": 0.41136075536767414,
+          "score": 0.4113607539038436,
           "slug": "people/widget-example-30",
           "source_id": "default"
         },
@@ -3006,7 +3006,7 @@
           "chunk_id": 27,
           "chunk_index": 1,
           "page_id": 14,
-          "score": 0.4050470498933969,
+          "score": 0.4050470465365592,
           "slug": "concepts/garden-example-13",
           "source_id": "default"
         },
@@ -3014,7 +3014,7 @@
           "chunk_id": 85,
           "chunk_index": 0,
           "page_id": 43,
-          "score": 0.403429876498049,
+          "score": 0.40342987503086913,
           "slug": "people/widget-example-42",
           "source_id": "default"
         },
@@ -3022,7 +3022,7 @@
           "chunk_id": 51,
           "chunk_index": 1,
           "page_id": 26,
-          "score": 0.3947906396369867,
+          "score": 0.394790636280149,
           "slug": "concepts/garden-example-25",
           "source_id": "default"
         },
@@ -3030,7 +3030,7 @@
           "chunk_id": 25,
           "chunk_index": 0,
           "page_id": 13,
-          "score": 0.38518999122830333,
+          "score": 0.3851899899034203,
           "slug": "notes/widget-example-12",
           "source_id": "default"
         },
@@ -3038,7 +3038,7 @@
           "chunk_id": 75,
           "chunk_index": 1,
           "page_id": 38,
-          "score": 0.3851465523809592,
+          "score": 0.3851465490241215,
           "slug": "concepts/garden-example-37",
           "source_id": "default"
         },
@@ -3046,7 +3046,7 @@
           "chunk_id": 49,
           "chunk_index": 0,
           "page_id": 25,
-          "score": 0.37680868346547397,
+          "score": 0.37680868213945856,
           "slug": "notes/widget-example-24",
           "source_id": "default"
         },
@@ -3054,7 +3054,7 @@
           "chunk_id": 73,
           "chunk_index": 0,
           "page_id": 37,
-          "score": 0.36817748122461497,
+          "score": 0.3681774799000081,
           "slug": "notes/widget-example-36",
           "source_id": "default"
         },
@@ -3062,7 +3062,7 @@
           "chunk_id": 1,
           "chunk_index": 0,
           "page_id": 1,
-          "score": 0.3521094947307734,
+          "score": 0.35210948750662374,
           "slug": "notes/widget-example-0",
           "source_id": "default"
         },
@@ -3070,7 +3070,7 @@
           "chunk_id": 3,
           "chunk_index": 1,
           "page_id": 2,
-          "score": 0.34339782879867786,
+          "score": 0.3433978304665989,
           "slug": "concepts/garden-example-1",
           "source_id": "default"
         },
@@ -3078,7 +3078,7 @@
           "chunk_id": 94,
           "chunk_index": 0,
           "page_id": 50,
-          "score": 0.31304857383118245,
+          "score": 0.3130485739845498,
           "slug": "concepts/knowledge-graph-zh-team",
           "source_id": "team-example"
         },
@@ -3094,7 +3094,7 @@
           "chunk_id": 93,
           "chunk_index": 0,
           "page_id": 49,
-          "score": 0.2968066515797859,
+          "score": 0.29680665081626273,
           "slug": "concepts/knowledge-graph-zh",
           "source_id": "default"
         },
@@ -3136,7 +3136,7 @@
           "chunk_id": 91,
           "chunk_index": 0,
           "page_id": 47,
-          "score": 1.3526386087404616,
+          "score": 1.352638607715436,
           "slug": "notes/garden-news-latest",
           "source_id": "default"
         },
@@ -3144,7 +3144,7 @@
           "chunk_id": 92,
           "chunk_index": 0,
           "page_id": 48,
-          "score": 0.4781673917943123,
+          "score": 0.4781674061247895,
           "slug": "notes/garden-news-archive",
           "source_id": "default"
         },
@@ -3152,7 +3152,7 @@
           "chunk_id": 15,
           "chunk_index": 1,
           "page_id": 8,
-          "score": 0.4768555619627832,
+          "score": 0.4768555580625993,
           "slug": "companies/garden-example-7",
           "source_id": "default"
         },
@@ -3160,7 +3160,7 @@
           "chunk_id": 39,
           "chunk_index": 1,
           "page_id": 20,
-          "score": 0.46572636059817796,
+          "score": 0.4657263566881819,
           "slug": "companies/garden-example-19",
           "source_id": "default"
         },
@@ -3168,7 +3168,7 @@
           "chunk_id": 63,
           "chunk_index": 1,
           "page_id": 32,
-          "score": 0.4527263825038185,
+          "score": 0.4527263786060335,
           "slug": "companies/garden-example-31",
           "source_id": "default"
         },
@@ -3176,7 +3176,7 @@
           "chunk_id": 87,
           "chunk_index": 1,
           "page_id": 44,
-          "score": 0.44296245710877985,
+          "score": 0.4429624532012699,
           "slug": "companies/garden-example-43",
           "source_id": "default"
         },
@@ -3184,7 +3184,7 @@
           "chunk_id": 13,
           "chunk_index": 0,
           "page_id": 7,
-          "score": 0.43084706115873855,
+          "score": 0.4308470596940813,
           "slug": "people/widget-example-6",
           "source_id": "default"
         },
@@ -3192,7 +3192,7 @@
           "chunk_id": 37,
           "chunk_index": 0,
           "page_id": 19,
-          "score": 0.4219197281365182,
+          "score": 0.42191972666848293,
           "slug": "people/widget-example-18",
           "source_id": "default"
         },
@@ -3200,7 +3200,7 @@
           "chunk_id": 61,
           "chunk_index": 0,
           "page_id": 31,
-          "score": 0.41136075536767414,
+          "score": 0.4113607539038436,
           "slug": "people/widget-example-30",
           "source_id": "default"
         },
@@ -3208,7 +3208,7 @@
           "chunk_id": 27,
           "chunk_index": 1,
           "page_id": 14,
-          "score": 0.4050470498933969,
+          "score": 0.4050470465365592,
           "slug": "concepts/garden-example-13",
           "source_id": "default"
         },
@@ -3216,7 +3216,7 @@
           "chunk_id": 85,
           "chunk_index": 0,
           "page_id": 43,
-          "score": 0.403429876498049,
+          "score": 0.40342987503086913,
           "slug": "people/widget-example-42",
           "source_id": "default"
         },
@@ -3224,7 +3224,7 @@
           "chunk_id": 51,
           "chunk_index": 1,
           "page_id": 26,
-          "score": 0.3947906396369867,
+          "score": 0.394790636280149,
           "slug": "concepts/garden-example-25",
           "source_id": "default"
         },
@@ -3232,7 +3232,7 @@
           "chunk_id": 25,
           "chunk_index": 0,
           "page_id": 13,
-          "score": 0.38518999122830333,
+          "score": 0.3851899899034203,
           "slug": "notes/widget-example-12",
           "source_id": "default"
         },
@@ -3240,7 +3240,7 @@
           "chunk_id": 75,
           "chunk_index": 1,
           "page_id": 38,
-          "score": 0.3851465523809592,
+          "score": 0.3851465490241215,
           "slug": "concepts/garden-example-37",
           "source_id": "default"
         },
@@ -3248,7 +3248,7 @@
           "chunk_id": 49,
           "chunk_index": 0,
           "page_id": 25,
-          "score": 0.37680868346547397,
+          "score": 0.37680868213945856,
           "slug": "notes/widget-example-24",
           "source_id": "default"
         },
@@ -3256,7 +3256,7 @@
           "chunk_id": 73,
           "chunk_index": 0,
           "page_id": 37,
-          "score": 0.36817748122461497,
+          "score": 0.3681774799000081,
           "slug": "notes/widget-example-36",
           "source_id": "default"
         },
@@ -3264,7 +3264,7 @@
           "chunk_id": 1,
           "chunk_index": 0,
           "page_id": 1,
-          "score": 0.3521094947307734,
+          "score": 0.35210948750662374,
           "slug": "notes/widget-example-0",
           "source_id": "default"
         },
@@ -3272,7 +3272,7 @@
           "chunk_id": 3,
           "chunk_index": 1,
           "page_id": 2,
-          "score": 0.34339782879867786,
+          "score": 0.3433978304665989,
           "slug": "concepts/garden-example-1",
           "source_id": "default"
         },
@@ -3280,7 +3280,7 @@
           "chunk_id": 94,
           "chunk_index": 0,
           "page_id": 50,
-          "score": 0.31304857383118245,
+          "score": 0.3130485739845498,
           "slug": "concepts/knowledge-graph-zh-team",
           "source_id": "team-example"
         },
@@ -3296,7 +3296,7 @@
           "chunk_id": 93,
           "chunk_index": 0,
           "page_id": 49,
-          "score": 0.2968066515797859,
+          "score": 0.29680665081626273,
           "slug": "concepts/knowledge-graph-zh",
           "source_id": "default"
         },
@@ -3338,7 +3338,7 @@
           "chunk_id": 91,
           "chunk_index": 0,
           "page_id": 47,
-          "score": 1.3526386087404616,
+          "score": 1.352638607715436,
           "slug": "notes/garden-news-latest",
           "source_id": "default"
         },
@@ -3346,7 +3346,7 @@
           "chunk_id": 92,
           "chunk_index": 0,
           "page_id": 48,
-          "score": 0.4781673917943123,
+          "score": 0.4781674061247895,
           "slug": "notes/garden-news-archive",
           "source_id": "default"
         },
@@ -3354,7 +3354,7 @@
           "chunk_id": 15,
           "chunk_index": 1,
           "page_id": 8,
-          "score": 0.4768555619627832,
+          "score": 0.4768555580625993,
           "slug": "companies/garden-example-7",
           "source_id": "default"
         },
@@ -3362,7 +3362,7 @@
           "chunk_id": 39,
           "chunk_index": 1,
           "page_id": 20,
-          "score": 0.46572636059817796,
+          "score": 0.4657263566881819,
           "slug": "companies/garden-example-19",
           "source_id": "default"
         },
@@ -3370,7 +3370,7 @@
           "chunk_id": 63,
           "chunk_index": 1,
           "page_id": 32,
-          "score": 0.4527263825038185,
+          "score": 0.4527263786060335,
           "slug": "companies/garden-example-31",
           "source_id": "default"
         },
@@ -3378,7 +3378,7 @@
           "chunk_id": 87,
           "chunk_index": 1,
           "page_id": 44,
-          "score": 0.44296245710877985,
+          "score": 0.4429624532012699,
           "slug": "companies/garden-example-43",
           "source_id": "default"
         },
@@ -3386,7 +3386,7 @@
           "chunk_id": 13,
           "chunk_index": 0,
           "page_id": 7,
-          "score": 0.43084706115873855,
+          "score": 0.4308470596940813,
           "slug": "people/widget-example-6",
           "source_id": "default"
         },
@@ -3394,7 +3394,7 @@
           "chunk_id": 37,
           "chunk_index": 0,
           "page_id": 19,
-          "score": 0.4219197281365182,
+          "score": 0.42191972666848293,
           "slug": "people/widget-example-18",
           "source_id": "default"
         },
@@ -3402,7 +3402,7 @@
           "chunk_id": 61,
           "chunk_index": 0,
           "page_id": 31,
-          "score": 0.41136075536767414,
+          "score": 0.4113607539038436,
           "slug": "people/widget-example-30",
           "source_id": "default"
         },
@@ -3410,7 +3410,7 @@
           "chunk_id": 27,
           "chunk_index": 1,
           "page_id": 14,
-          "score": 0.4050470498933969,
+          "score": 0.4050470465365592,
           "slug": "concepts/garden-example-13",
           "source_id": "default"
         },
@@ -3418,7 +3418,7 @@
           "chunk_id": 85,
           "chunk_index": 0,
           "page_id": 43,
-          "score": 0.403429876498049,
+          "score": 0.40342987503086913,
           "slug": "people/widget-example-42",
           "source_id": "default"
         },
@@ -3426,7 +3426,7 @@
           "chunk_id": 51,
           "chunk_index": 1,
           "page_id": 26,
-          "score": 0.3947906396369867,
+          "score": 0.394790636280149,
           "slug": "concepts/garden-example-25",
           "source_id": "default"
         },
@@ -3434,7 +3434,7 @@
           "chunk_id": 25,
           "chunk_index": 0,
           "page_id": 13,
-          "score": 0.38518999122830333,
+          "score": 0.3851899899034203,
           "slug": "notes/widget-example-12",
           "source_id": "default"
         },
@@ -3442,7 +3442,7 @@
           "chunk_id": 75,
           "chunk_index": 1,
           "page_id": 38,
-          "score": 0.3851465523809592,
+          "score": 0.3851465490241215,
           "slug": "concepts/garden-example-37",
           "source_id": "default"
         },
@@ -3450,7 +3450,7 @@
           "chunk_id": 49,
           "chunk_index": 0,
           "page_id": 25,
-          "score": 0.37680868346547397,
+          "score": 0.37680868213945856,
           "slug": "notes/widget-example-24",
           "source_id": "default"
         },
@@ -3458,7 +3458,7 @@
           "chunk_id": 73,
           "chunk_index": 0,
           "page_id": 37,
-          "score": 0.36817748122461497,
+          "score": 0.3681774799000081,
           "slug": "notes/widget-example-36",
           "source_id": "default"
         },
@@ -3466,7 +3466,7 @@
           "chunk_id": 1,
           "chunk_index": 0,
           "page_id": 1,
-          "score": 0.3521094947307734,
+          "score": 0.35210948750662374,
           "slug": "notes/widget-example-0",
           "source_id": "default"
         },
@@ -3474,7 +3474,7 @@
           "chunk_id": 3,
           "chunk_index": 1,
           "page_id": 2,
-          "score": 0.34339782879867786,
+          "score": 0.3433978304665989,
           "slug": "concepts/garden-example-1",
           "source_id": "default"
         },
@@ -3482,7 +3482,7 @@
           "chunk_id": 94,
           "chunk_index": 0,
           "page_id": 50,
-          "score": 0.31304857383118245,
+          "score": 0.3130485739845498,
           "slug": "concepts/knowledge-graph-zh-team",
           "source_id": "team-example"
         },
@@ -3498,7 +3498,7 @@
           "chunk_id": 93,
           "chunk_index": 0,
           "page_id": 49,
-          "score": 0.2968066515797859,
+          "score": 0.29680665081626273,
           "slug": "concepts/knowledge-graph-zh",
           "source_id": "default"
         },
@@ -3542,7 +3542,7 @@
           "chunk_id": 90,
           "chunk_index": 0,
           "page_id": 46,
-          "score": 1.4575970103807563,
+          "score": 1.4575970371698164,
           "slug": "companies/acme-example",
           "source_id": "default"
         },
@@ -3550,7 +3550,7 @@
           "chunk_id": 88,
           "chunk_index": 0,
           "page_id": 45,
-          "score": 0.7834742522783664,
+          "score": 0.7834742638972819,
           "slug": "people/alice-example",
           "source_id": "default"
         },
@@ -3558,7 +3558,7 @@
           "chunk_id": 89,
           "chunk_index": 1,
           "page_id": 45,
-          "score": 0.4953475521093488,
+          "score": 0.4953475518192795,
           "slug": "people/alice-example",
           "source_id": "default"
         },
@@ -3566,7 +3566,7 @@
           "chunk_id": 94,
           "chunk_index": 0,
           "page_id": 50,
-          "score": 0.2456220586014417,
+          "score": 0.24562205932295203,
           "slug": "concepts/knowledge-graph-zh-team",
           "source_id": "team-example"
         },
@@ -3744,7 +3744,7 @@
           "chunk_id": 90,
           "chunk_index": 0,
           "page_id": 46,
-          "score": 1.4575970103807563,
+          "score": 1.4575970371698164,
           "slug": "companies/acme-example",
           "source_id": "default"
         },
@@ -3752,7 +3752,7 @@
           "chunk_id": 88,
           "chunk_index": 0,
           "page_id": 45,
-          "score": 0.7834742522783664,
+          "score": 0.7834742638972819,
           "slug": "people/alice-example",
           "source_id": "default"
         },
@@ -3760,7 +3760,7 @@
           "chunk_id": 89,
           "chunk_index": 1,
           "page_id": 45,
-          "score": 0.4953475521093488,
+          "score": 0.4953475518192795,
           "slug": "people/alice-example",
           "source_id": "default"
         },
@@ -3768,7 +3768,7 @@
           "chunk_id": 94,
           "chunk_index": 0,
           "page_id": 50,
-          "score": 0.2456220586014417,
+          "score": 0.24562205932295203,
           "slug": "concepts/knowledge-graph-zh-team",
           "source_id": "team-example"
         },
@@ -3946,7 +3946,7 @@
           "chunk_id": 90,
           "chunk_index": 0,
           "page_id": 46,
-          "score": 1.4575970103807563,
+          "score": 1.4575970371698164,
           "slug": "companies/acme-example",
           "source_id": "default"
         },
@@ -3954,7 +3954,7 @@
           "chunk_id": 88,
           "chunk_index": 0,
           "page_id": 45,
-          "score": 0.7834742522783664,
+          "score": 0.7834742638972819,
           "slug": "people/alice-example",
           "source_id": "default"
         },
@@ -3962,7 +3962,7 @@
           "chunk_id": 89,
           "chunk_index": 1,
           "page_id": 45,
-          "score": 0.4953475521093488,
+          "score": 0.4953475518192795,
           "slug": "people/alice-example",
           "source_id": "default"
         },
@@ -3970,7 +3970,7 @@
           "chunk_id": 94,
           "chunk_index": 0,
           "page_id": 50,
-          "score": 0.2456220586014417,
+          "score": 0.24562205932295203,
           "slug": "concepts/knowledge-graph-zh-team",
           "source_id": "team-example"
         },

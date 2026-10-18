@@ -131,6 +131,8 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'backlinks',
   'sync',
   'fence_repair',                // #6188 — fence repair (global maintenance lane)
+  'content_repair',              // #6377 — the rest of the content-repair lane (slug conflicts)
+  'unindexed_files',             // #6865 — committed files with no page and no hold, scheduled for a re-screen
   'synthesize',
   'extract',
   'extract_facts',               // v0.32.2 — reconcile fence → DB facts index
@@ -145,6 +147,7 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'calibration_profile',        // v0.36.1.0
   'edge_contradictions',        // temporal typed edges (proposals by default)
   'drift',                       // #2653 — drift detection (default OFF, report-only)
+  'standing_questions',          // C4 pinned questions (no pins = skipped)
   'chronicle',                   // #5876 — Life Chronicle events (default ON)
   'facts_drain',                 // GBRA-40 Lane D — automatic facts drain (PGLite)
   'conversation_facts_backfill', // v0.41.11.0 — opt-in conversation backfill

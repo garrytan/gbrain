@@ -140,7 +140,10 @@ export function trajectoryMethodologyNote(extractorModel: string): string {
   return `extractor=${name}-preprocess-full-haystack-v1`;
 }
 
-const EXTRACTOR_SYSTEM_PROMPT = `You extract typed claims and events from a single chat-session transcript.
+/** Output cap the extractor call sends. */
+export const EXTRACTOR_MAX_TOKENS = 2000;
+
+export const EXTRACTOR_SYSTEM_PROMPT = `You extract typed claims and events from a single chat-session transcript.
 
 Output a JSON array of records. Each record has these fields:
   - entity:     The thing the claim is ABOUT (person name, company, place, object).
@@ -269,7 +272,7 @@ async function callExtractor(
   try {
     response = await client.create({
       model,
-      max_tokens: 2000,
+      max_tokens: EXTRACTOR_MAX_TOKENS,
       system: EXTRACTOR_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: body }],
     });

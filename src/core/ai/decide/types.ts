@@ -114,17 +114,33 @@ export interface DecideResult {
 export type DecideFailureReason =
   | 'timeout' | 'rate_limited' | 'provider_error' | 'malformed_response' | 'mixed_model'
   | 'budget_exhausted' | 'no_key' | 'no_provider' | 'pinned_model_unavailable' | 'payload_too_large'
-  | 'egress' | 'late' | 'llm_capability';
+  | 'egress' | 'late' | 'llm_capability' | 'unpriced_model';
+
+/**
+ * Answers a failed decision's settled batches returned before it failed (#6519).
+ * Never applied; error receipts record them for audit. `model_resolved` is null
+ * when the settled batches disagree on the model.
+ */
+export interface DecidePartial {
+  answers: Record<string, DecideAnswer>;
+  model_resolved: string | null;
+}
 
 export class DecideError extends Error {
   reason: DecideFailureReason;
   status?: number;
+  partial?: DecidePartial;
   constructor(reason: DecideFailureReason, message: string, status?: number) {
     super(message);
     this.name = 'DecideError';
     this.reason = reason;
     this.status = status;
   }
+}
+
+/** The settled answers a failed runDecide carried, for its error receipts. */
+export function partialOf(err: unknown): DecidePartial | undefined {
+  return err instanceof DecideError ? err.partial : undefined;
 }
 
 /** The number a threshold compares against: noul p, choice probability of the chosen label, normalized score. */

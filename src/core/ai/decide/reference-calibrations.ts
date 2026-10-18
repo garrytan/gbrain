@@ -89,3 +89,22 @@ export function recommendedSlots(
   }
   return [...slots];
 }
+
+/**
+ * #6497: the newest shipped reference for the calibration a slot policy uses,
+ * as `ref:<id>`, or null when none applies. A row counts only when it matches
+ * the slot, call site, provider and resolved model `selectCalibration` would
+ * match on (a `conflict` row for `review_withdraw` is never newer for the
+ * `sweep` call site) and differs from the calibration in use.
+ */
+export function newerReference(
+  policy: { slot: DecideSlot; callSite: string; provider: string; model: string | null; calibration?: { ref: string } },
+  references: readonly ReferenceCalibration[] = REFERENCE_CALIBRATIONS,
+): string | null {
+  if (!policy.calibration || !policy.model) return null;
+  const newest = references
+    .filter((r) => r.slot === policy.slot && r.call_site === policy.callSite && r.provider === policy.provider && r.model_resolved === policy.model)
+    .at(-1);
+  if (!newest || `ref:${newest.id}` === policy.calibration.ref) return null;
+  return `ref:${newest.id}`;
+}

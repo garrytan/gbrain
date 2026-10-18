@@ -1,4 +1,5 @@
 import type { SearchOpts } from '../types.ts';
+import type { VectorSearchStatement } from './vector-statement.ts';
 
 export interface VectorPoolBatch {
   rows: Record<string, unknown>[];
@@ -14,7 +15,58 @@ export interface VectorPoolAttempt {
   maxScanTuples: number;
   remainingMs: number;
   exact: boolean;
+  /** Run the statement's `indexWalkSql` with INDEX_WALK_SETTINGS instead of `sql`. */
+  indexWalk?: boolean;
+  /** Run the statement's `scopeScanSql` instead of `sql`. */
+  scopeScan?: boolean;
 }
+
+/**
+ * Runs the statement's index walk, then its scope scan (each when present),
+ * before the pool. Walk rows answer the search when its window is full and
+ * they fill the limit; scope-scan rows when they fill the limit or the scope
+ * ran out of eligible chunks (a short window). Otherwise, or past an
+ * attempt's 2 s budget, this returns null and the caller runs the pool. The
+ * walk may visit its whole over-fetched window, so its tuple budget covers it.
+ */
+export async function searchIndexWalk(
+  stmt: Pick<VectorSearchStatement, 'indexWalkSql' | 'scopeScanSql' | 'innerLimit' | 'indexWalkOverfetch'>,
+  limit: number,
+  run: (attempt: VectorPoolAttempt) => Promise<VectorPoolBatch>,
+): Promise<Record<string, unknown>[] | null> {
+  const attempt = async (kind: { indexWalk: true } | { scopeScan: true }) => {
+    try {
+      return await run({ innerLimit: stmt.innerLimit, maxScanTuples: Math.max(2_000, stmt.innerLimit * stmt.indexWalkOverfetch), remainingMs: 2_000, exact: false, ...kind });
+    } catch (error) {
+      if ((error as { code?: string }).code === '57014') return null;
+      throw error;
+    }
+  };
+  if (stmt.indexWalkSql) {
+    const batch = await attempt({ indexWalk: true });
+    if (batch && batch.candidatePool >= stmt.innerLimit && batch.rows.length >= limit) return batch.rows;
+  }
+  if (stmt.scopeScanSql) {
+    const batch = await attempt({ scopeScan: true });
+    if (batch && (batch.rows.length >= limit || batch.candidatePool < stmt.innerLimit)) return batch.rows;
+  }
+  return null;
+}
+
+/**
+ * `hnsw.max_scan_tuples` for every pooled attempt: pgvector's own default.
+ * A filtered pooled attempt asks for `innerLimit` eligible chunks and is
+ * accepted once they cover `limit` pages, so its scan budget decides how far
+ * it can reach. At 2,000 tuples a 10% source or visibility filter found about
+ * 200 eligible chunks: enough pages to be accepted, too shallow to hold the
+ * true neighbours. At 20,000 the window fills down to about 1% selectivity
+ * at limit 50: 10%-filter recall@50 rose from 0.52-0.63 to 0.96-0.99 on 1M and
+ * 2M synthetic chunks and from 0.77 to 0.97 on 1M voyage-4 chunks under a
+ * random filter, for 16 to 36 ms more p50 (docs/eval/hnsw-scale-bench.md).
+ * An unfiltered scan stops at its LIMIT long before either budget, so only
+ * filtered searches pay for the deeper visit.
+ */
+export const POOL_MAX_SCAN_TUPLES = 20_000;
 
 export function remainingVectorBudget(deadline: number): number {
   const remaining = Math.floor(deadline - performance.now());
@@ -43,7 +95,7 @@ export async function searchVectorPool(
   try {
     for (;;) {
       if (remaining() === 0) { reason = 'deadline'; break; }
-      batch = await run({ innerLimit, maxScanTuples: Math.min(2_000 * 4 ** escalations, 20_000), remainingMs: remaining(), exact: false });
+      batch = await run({ innerLimit, maxScanTuples: POOL_MAX_SCAN_TUPLES, remainingMs: remaining(), exact: false });
       if (batch.rows.length >= limit) return batch.rows;
       if (batch.candidatePool < innerLimit) {
         if (!indexed) return batch.rows;
@@ -56,7 +108,7 @@ export async function searchVectorPool(
     }
     if (engine === 'postgres' && indexed && remaining() > 0) {
       exactFallback = true;
-      batch = await run({ innerLimit, maxScanTuples: 20_000, remainingMs: remaining(), exact: true });
+      batch = await run({ innerLimit, maxScanTuples: POOL_MAX_SCAN_TUPLES, remainingMs: remaining(), exact: true });
       if (batch.rows.length >= limit || batch.exhausted) return batch.rows;
       reason = remaining() === 0 ? 'deadline' : 'candidate_budget';
     }

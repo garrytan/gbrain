@@ -12,7 +12,9 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { nextGroupSize, resolveBulkSettings } from '../src/core/persistence/sync-group.ts';
 import { withEnv } from './helpers/with-env.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
-import { WINDOW_CANCEL_MESSAGE, cancelOrphanedWindowGroup, windowPredecessor, windowPredecessorCommitted } from '../src/core/persistence/sync-window.ts';
+import { claimedHeadOrder, windowPredecessor } from '../src/core/persistence/sync-window.ts';
+import { waitFor } from './helpers/wait-for.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-managed-bulk-'));
 let engine: BrainEngine | undefined;
@@ -93,7 +95,14 @@ test('a bulk drain publishes groups in one transaction while every page keeps it
   expect(cursor!.n).toBe(0);
 }), 300_000);
 
-test('a failing member is attributed to its own page, earlier members commit and later members are cancelled, not published', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
+/** #6712: the entries of a run that were admitted more than once (a duplicate admission). */
+const admittedTwice = (e: BrainEngine, id: string, except = '') => e.executeRaw<{ run: string; idx: string; n: number }>(`SELECT intent->>'runId' AS run,intent->>'index' AS idx,count(*)::int AS n
+  FROM persistence_requests WHERE source_id=$1 AND intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND slug<>$2 GROUP BY 1,2 HAVING count(*)>1`, [id, except]);
+/** #6712: every admitted request of the source has settled (the consumer keeps publishing after the run returns). */
+const settledAll = (e: BrainEngine, id: string) => waitFor(async () => (await e.executeRaw("SELECT 1 FROM persistence_requests WHERE source_id=$1 AND state IN ('queued','running','recovering') LIMIT 1", [id])).length === 0,
+  { timeoutMs: 60_000, label: 'admitted requests settle' });
+
+test('#6712: a failing member is attributed to its own page; the members before and after it commit on their own fate', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
   if (!engine) return;
   const f = await fixture(engine, notes(10, i => i === 3 ? '---\ntitle: Conflict\nslug: notes/other\n---\nA conflicting identity must not be imported.\n' : null));
   // #5988 holds such a file by default; the fail-closed policy keeps it a publication failure inside the group.
@@ -103,18 +112,19 @@ test('a failing member is attributed to its own page, earlier members commit and
   expect(result).toMatchObject({ status: 'blocked_by_failures', failedFiles: 1 });
   expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'blocked_by_failures' });
   expect(result.managedWrite?.slug).toBe('notes/n3');
-  for (let i = 0; i < 3; i++) expect(await engine.getPage(`notes/n${i}`, { sourceId: f.id })).not.toBeNull();
-  for (let i = 3; i < 10; i++) expect(await engine.getPage(`notes/n${i}`, { sourceId: f.id })).toBeNull();
+  await settledAll(engine, f.id);
   const states = await engine.executeRaw<{ slug: string; state: string }>(
     `SELECT slug,state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence`, [f.id]);
   expect(states.find(row => row.slug === 'notes/n3')?.state).toBe('failed');
-  expect(states.filter(row => row.state === 'committed').map(row => row.slug)).toEqual(['notes/n0', 'notes/n1', 'notes/n2']);
-  expect(states.filter(row => !['committed', 'failed'].includes(row.state)).every(row => row.state === 'cancelled')).toBe(true);
+  // Nothing is cancelled for another page's failure: every other admitted page commits.
+  expect(states.filter(row => row.slug !== 'notes/n3').every(row => row.state === 'committed')).toBe(true);
+  for (const row of states.filter(row => row.state === 'committed')) expect(await engine.getPage(row.slug, { sourceId: f.id })).not.toBeNull();
+  expect(await engine.getPage('notes/n3', { sourceId: f.id })).toBeNull();
 }), 300_000);
 
 test('a held file ends the group before it: it is held without a request and every other page commits (#5988)', async () => withEnv({ GBRAIN_HOME: home }, async () => {
   if (!engine) return;
-  const f = await fixture(engine, notes(10, i => i === 3 ? '---\ntitle: Conflict\nslug: notes/other\n---\nA conflicting identity must not be imported.\n' : null));
+  const f = await fixture(engine, notes(10, i => i === 3 ? '---\ntitle: Conflict\nslug: notes/n1\n---\nA conflicting identity must not be imported.\n' : null));
   const result = await performSync(engine, { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, drain: true });
   expect(result.drain).toMatchObject({ outcome: 'synced' });
   expect(result).toMatchObject({ holds_outstanding: 1 });
@@ -145,46 +155,154 @@ test('a draining sync admits the next group while the current one publishes; eve
   // Publication order follows manifest (admission) order.
   const published = rows.map(row => row.published);
   expect([...published].sort()).toEqual(published);
-  const [cursor] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM op_checkpoints WHERE op='managed-sync' AND (completed_keys->0 ? 'window' OR completed_keys->0 ? 'group')");
+  const [cursor] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM op_checkpoints WHERE op='managed-sync' AND (completed_keys->0 ? 'window' OR completed_keys->0 ? 'group') AND completed_keys->0->>'sourceId'=$1", [f.id]);
   expect(cursor!.n).toBe(0);
 }), 300_000);
 
-test('a failed page cancels the group admitted ahead of it; nothing after the failure publishes', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
+test('#6712: a failed page leaves the groups admitted ahead of it in the cursor until their own receipts are read; nothing is admitted twice', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
   if (!engine) return;
-  const f = await fixture(engine, notes(40, i => i === 2 ? '---\ntitle: Conflict\nslug: notes/other\n---\nA conflicting identity must not be imported.\n' : null));
+  const conflict = '---\ntitle: Conflict\nslug: notes/other\n---\nA conflicting identity must not be imported.\n';
+  const f = await fixture(engine, notes(40, i => i === 2 ? conflict : null));
   await engine.setConfig('sync.holds', 'fail');
-  const result = await performSync(engine, { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, drain: true })
-    .finally(() => engine!.unsetConfig('sync.holds'));
-  expect(result.drain).toMatchObject({ outcome: 'blocked' });
-  expect(result.managedWrite?.slug).toBe('notes/n2');
-  const rows = await engine.executeRaw<{ slug: string; state: string; after: string | null; grp: string | null; error_message: string | null }>(
-    `SELECT slug,state,intent->>'after' AS after,intent->>'group' AS grp,error_message FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence`, [f.id]);
-  // Rows are in manifest (admission) order: every page before the failure committed, every page after it was cancelled.
-  const failedAt = rows.findIndex(row => row.slug === 'notes/n2');
-  expect(rows[failedAt]!.state).toBe('failed');
-  expect(rows.slice(0, failedAt).every(row => row.state === 'committed')).toBe(true);
-  expect(rows.slice(failedAt + 1).every(row => row.state === 'cancelled')).toBe(true);
-  for (const row of rows.slice(failedAt)) expect(await engine.getPage(row.slug, { sourceId: f.id })).toBeNull();
-  // The group admitted ahead of the failed one is cancelled with the window reason.
-  const ahead = rows.slice(failedAt + 1).filter(row => row.after && row.grp !== rows[failedAt]!.grp);
-  expect(ahead.length).toBeGreaterThan(0);
-  for (const row of ahead) expect(row).toMatchObject({ state: 'cancelled', error_message: WINDOW_CANCEL_MESSAGE });
-  const [cursor] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0 ? 'window' AND completed_keys->0->>'sourceId'=$1", [f.id]);
-  expect(cursor!.n).toBe(0);
+  try {
+    const result = await performSync(engine, { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, drain: true });
+    expect(result.drain).toMatchObject({ outcome: 'blocked' });
+    expect(result.managedWrite?.slug).toBe('notes/n2');
+    await settledAll(engine, f.id);
+    const rows = await engine.executeRaw<{ request_id: string; slug: string; state: string }>(
+      `SELECT request_id::text AS request_id,slug,state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence`, [f.id]);
+    const failedAt = rows.findIndex(row => row.slug === 'notes/n2');
+    expect(rows[failedAt]!.state).toBe('failed');
+    expect(rows.filter((_, i) => i !== failedAt).every(row => row.state === 'committed')).toBe(true);
+    // Every request admitted after the failure is still named by the blocked cursor (its pending entry or window), so a resume reads its receipt instead of freezing it again.
+    const [cursor] = await engine.executeRaw<{ keys: { pending?: { requestId: string }; window?: Array<Array<{ requestId: string }>>; done?: boolean } }>(
+      "SELECT completed_keys->0 AS keys FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [f.id]);
+    expect(cursor!.keys.done).not.toBe(true);
+    const held = new Set([cursor!.keys.pending?.requestId, ...(cursor!.keys.window ?? []).flat().map(member => member.requestId)]);
+    for (const row of rows.slice(failedAt)) expect(held.has(row.request_id)).toBe(true);
+    // The file is fixed; the same plain sync finishes, every page committed exactly once.
+    writeFileSync(join(f.root, 'notes/n2.md'), '---\ntitle: Note 2\n---\nA durable observation number 2.\n');
+    execFileSync('git', ['-C', f.root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qam', 'fix']);
+    const resumed = await performSync(engine, { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, drain: true, retryFailed: true });
+    expect(resumed.drain).toMatchObject({ outcome: 'synced' });
+    // --retry-failed rediscovered the manifest under a new run; within each run every entry was admitted at most once.
+    expect(await admittedTwice(engine, f.id)).toEqual([]);
+    for (let i = 0; i < 40; i++) expect(await engine.getPage(`notes/n${i}`, { sourceId: f.id })).not.toBeNull();
+    const conflicts = await engine.executeRaw("SELECT 1 FROM persistence_requests WHERE source_id=$1 AND error_code='revision_conflict'", [f.id]);
+    expect(conflicts).toHaveLength(0);
+  } finally { await engine.unsetConfig('sync.holds'); }
 }), 300_000);
 
-test('a claimed window group whose predecessor did not commit is cancelled by the consumer, not published', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+test('#6712 (#6565): a database refusal stops the run, and the next plain sync re-freezes every page the same refusal failed, so one run converges once it is lifted', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
+  if (!engine) return;
+  const f = await fixture(engine, notes(24));
+  const opts = { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, drain: true };
+  expect((await performSync(engine, opts)).drain).toMatchObject({ outcome: 'synced' });
+  for (let i = 0; i < 24; i++) writeFileSync(join(f.root, `notes/n${i}.md`), `---\ntitle: Note ${i}\n---\nA revised observation number ${i}.\n`);
+  execFileSync('git', ['-C', f.root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qam', 'revise']);
+  const since = (await engine.executeRaw<{ at: string }>('SELECT now()::text AS at'))[0]!.at;
+  await engine.executeRaw(`CREATE FUNCTION bulk_systemic_refusal() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'test: systemic refusal'; END $$`);
+  await engine.executeRaw('CREATE TRIGGER bulk_systemic_refusal BEFORE INSERT OR UPDATE ON pages FOR EACH ROW EXECUTE FUNCTION bulk_systemic_refusal()');
+  try {
+    expect((await performSync(engine, opts)).drain).toMatchObject({ outcome: 'blocked' });
+    await settledAll(engine, f.id);
+  } finally { await engine.executeRaw('DROP TRIGGER bulk_systemic_refusal ON pages; DROP FUNCTION bulk_systemic_refusal()'); }
+  const [refused] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM persistence_requests WHERE source_id=$1
+    AND intent->>'kind'='managed_sync_import' AND state='failed' AND created_at > $2::timestamptz`, [f.id, since]);
+  expect(refused!.n).toBeGreaterThan(1);
+  expect((await performSync(engine, opts)).drain).toMatchObject({ outcome: 'synced' });
+  for (let i = 0; i < 24; i++) expect((await engine.getPage(`notes/n${i}`, { sourceId: f.id }))?.compiled_truth).toContain(`revised observation number ${i}`);
+}), 300_000);
+
+/**
+ * #6712 Eng finding ("followers that commit after the failure CAS"): the group admitted ahead of a failed page is
+ * held back in preparation until the drain has saved the failure and is gone (under `sync.holds=fail` it stops blocked;
+ * under the default policy it is killed right after the cursor step that holds the failed page); it then commits. The
+ * cursor must still name every such request, so the resume reads their receipts: nothing is admitted twice, nothing
+ * reads a false revision_conflict, and the checkpoint waits for them. The failed page is a content refusal under
+ * `sync.holds=fail`, and a preparation that outlives its budget (`preparation_stalled`, held) under the default policy.
+ */
+for (const policy of ['fail', 'hold'] as const) test(`#6712: window followers that commit after the failure CAS and a drainer kill are read on resume, never re-admitted (sync.holds=${policy})`, async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
+  if (!engine) return;
+  const e = engine;
+  const conflict = '---\ntitle: Conflict\nslug: notes/other\n---\nA conflicting identity must not be imported.\n';
+  const f = await fixture(e, notes(40, i => i === 2 && policy === 'fail' ? conflict : null));
+  const config: Array<[string, string]> = policy === 'fail' ? [['sync.holds', 'fail']] : [];
+  for (const [key, value] of config) await e.setConfig(key, value);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const stalled = new Set<string>();
+  let failedRequest: string | null = null;
+  installFaultHook(async (point, detail) => {
+    // Default policy: the cursor step that holds or defers the failed page is the last thing the drainer does.
+    if ((point === 'sync:held_settled' || point === 'sync:retry_deferred') && detail.sourceId === f.id) throw new Error('drainer killed after the failure CAS');
+    if (point !== 'consumer:preparing' || detail.sourceId !== f.id || !detail.requestId) return;
+    const [row] = await e.executeRaw<{ slug: string; grp: string | null; idx: number }>("SELECT slug,intent->>'group' AS grp,(intent->>'index')::int AS idx FROM persistence_requests WHERE request_id=$1::uuid", [detail.requestId]);
+    if (row?.slug === 'notes/n2') {
+      failedRequest ??= detail.requestId;
+      // Default policy: the file changes under the admitted request (uncommitted bytes), so its publication refuses it.
+      if (policy === 'hold') writeFileSync(join(f.root, 'notes/n2.md'), '---\ntitle: Note 2\n---\nEdited after admission, not committed.\n');
+      return;
+    }
+    const [failed] = await e.executeRaw<{ grp: string | null; idx: number }>("SELECT intent->>'group' AS grp,(intent->>'index')::int AS idx FROM persistence_requests WHERE source_id=$1 AND slug='notes/n2' ORDER BY sequence LIMIT 1", [f.id]);
+    // Hold back every request admitted in a group after the failed page's group until the drain is gone.
+    if (!row || !failed || row.grp === failed.grp || row.idx <= failed.idx) return;
+    stalled.add(detail.requestId);
+    await Promise.race([gate, new Promise(resolve => detail.signal?.addEventListener('abort', resolve))]);
+  });
+  try {
+    const killed = await performSync(e, { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, drain: true }).catch((error: Error) => error);
+    if (policy === 'fail') expect((killed as { drain?: unknown }).drain).toMatchObject({ outcome: 'blocked' });
+    else expect(String(killed)).toContain('drainer killed after the failure CAS');
+    expect(failedRequest).not.toBeNull();
+    expect(stalled.size).toBeGreaterThan(0);
+    // The drain is gone; the cursor saved the failure (or the hold) and still names every request admitted after it.
+    const cursorKeys = async () => (await e.executeRaw<{ keys: { done?: boolean; pending?: { requestId: string }; group?: Array<{ requestId: string }>; window?: Array<Array<{ requestId: string }>> } }>(
+      "SELECT completed_keys->0 AS keys FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [f.id]))[0]!.keys;
+    const before = await cursorKeys();
+    const named = new Set([before.pending?.requestId, ...(before.group ?? []).map(m => m.requestId), ...(before.window ?? []).flat().map(m => m.requestId)]);
+    for (const id of stalled) expect(named.has(id)).toBe(true);
+    // Now the held-back followers commit, after the failure CAS, with nobody observing them.
+    release();
+    await settledAll(e, f.id);
+    for (const id of stalled) expect((await e.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [id]))[0]!.state).toBe('committed');
+    // No premature checkpoint: the source did not advance, the cursor is not done.
+    expect((await cursorKeys()).done).not.toBe(true);
+    expect((await e.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [f.id]))[0]!.last_commit).toBeNull();
+    installFaultHook(undefined);
+    if (policy === 'fail') {
+      // A plain resume stays on the failed page and admits nothing again.
+      const again = await performSync(e, { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, drain: true });
+      expect(again.drain).toMatchObject({ outcome: 'blocked' });
+      // Only the failed page may be re-frozen, once for the same bytes (#5988 E6); no follower is admitted again.
+      expect(await admittedTwice(e, f.id, 'notes/n2')).toEqual([]);
+      writeFileSync(join(f.root, 'notes/n2.md'), '---\ntitle: Note 2\n---\nA durable observation number 2.\n');
+      execFileSync('git', ['-C', f.root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qam', 'fix']);
+    }
+    const resumed = await performSync(e, { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, drain: true, ...(policy === 'fail' ? { retryFailed: true } : {}) });
+    expect(resumed.drain).toMatchObject({ outcome: 'synced' });
+    await settledAll(e, f.id);
+    expect(await admittedTwice(e, f.id, 'notes/n2')).toEqual([]);
+    for (const id of stalled) expect((await e.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [id]))[0]!.state).toBe('committed');
+    expect(await e.executeRaw("SELECT 1 FROM persistence_requests WHERE source_id=$1 AND error_code='revision_conflict'", [f.id])).toHaveLength(0);
+    for (let i = 0; i < 40; i++) if (i !== 2 || policy === 'fail') expect(await e.getPage(`notes/n${i}`, { sourceId: f.id })).not.toBeNull();
+  } finally {
+    installFaultHook(undefined); release();
+    for (const [key] of config) await e.unsetConfig(key);
+  }
+}), 300_000);
+
+test('#6712: a claimed window head publishes whatever its predecessor became; it is never cancelled for it', async () => withEnv({ GBRAIN_HOME: home }, async () => {
   if (!engine) return;
   const f = await fixture(engine, notes(1));
   const [worktree] = await engine.executeRaw<{ worktree_id: string }>('SELECT worktree_id FROM persistence_source_bindings WHERE source_id=$1', [f.id]);
   const missing = randomUUID();
-  const head = { id: randomUUID(), request_id: randomUUID(), worktree_id: worktree!.worktree_id, principal_kind: 'local_cli', principal_id: randomUUID(),
+  const head = { id: randomUUID(), request_id: randomUUID(), worktree_id: worktree!.worktree_id, principal_kind: 'local_cli', principal_id: randomUUID(), sequence: 1,
     execution_token: null, state: 'queued', intent: { kind: 'managed_sync_import', after: missing } } as unknown as WriteRequest;
   expect(windowPredecessor(head)).toBe(missing);
-  expect(await windowPredecessorCommitted(engine, head)).toBe(false);
-  expect(await windowPredecessorCommitted(engine, { ...head, intent: { kind: 'managed_sync_import' } } as unknown as WriteRequest)).toBe(true);
-  // A row that does not exist settles nothing and publishes nothing.
-  expect(await cancelOrphanedWindowGroup(engine, head)).toEqual([]);
+  expect(await claimedHeadOrder(engine, head, false)).toBeNull();
+  expect(await claimedHeadOrder(engine, head, true)).toBeNull();
 }), 300_000);
 
 test('--no-bulk publishes one page per transaction', async () => withEnv({ GBRAIN_HOME: home }, async () => {

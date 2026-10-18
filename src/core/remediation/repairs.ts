@@ -20,12 +20,14 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
-import { resolveRepairScope, type RepairKind } from '../repair/core.ts';
+import { resolveRepairScope, type RepairKind, type RepairResult, type RepairScope } from '../repair/core.ts';
 import { AUTO_REPAIR_REGISTRY, explicitKindRequired, repairApplyCommand, repairMayEmbed, repairRunner, repairSpec, type RepairKindSpec } from '../repair/registry.ts';
 import { cliRenderContext, renderAction, type RenderedAction } from '../agent-output.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { isStatementTimeoutError } from '../retry-matcher.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
+import { withAdmissionOrigin } from '../persistence/admission-origin.ts';
+import { classifyItemFailure } from '../item-failure.ts';
 
 export interface RepairPlanStep {
   step: number;
@@ -57,6 +59,8 @@ export interface RepairStepResult {
   status: RepairStepStatus;
   applied: number;
   skipped: number;
+  /** Items refused per item and left unchanged (`failed[]` of the run); any makes the step `failed`, never `completed`. */
+  failed: number;
   message?: string;
 }
 
@@ -71,7 +75,7 @@ export interface RepairPlanReport { steps: RepairPlanStep[]; previewFailures: Re
 const PREVIEW_ERROR_MAX_CHARS = 300;
 
 /** Redact before truncating, so a cut can never split a credential the redactor would have matched. */
-function describePreviewFailure(kind: RepairKind, error: unknown): RepairPreviewFailure {
+export function describePreviewFailure(kind: RepairKind, error: unknown): RepairPreviewFailure {
   const timedOut = isStatementTimeoutError(error);
   const detail = redactConnectionInfo(error instanceof Error ? error.message : String(error));
   const cause = timedOut ? 'hit the database statement timeout (GBRAIN_STATEMENT_TIMEOUT)' : 'raised an error';
@@ -85,6 +89,21 @@ function describePreviewFailure(kind: RepairKind, error: unknown): RepairPreview
       verify: { argv: ['gbrain', 'doctor', '--remediation-plan', '--json'] },
     }, cliRenderContext()),
   };
+}
+
+/**
+ * GBRA-130 (A-45, A-46): a kind whose plan or apply threw an item-scoped error inside a multi-kind loop (`gbrain repair`,
+ * `--all`, the content lane), as an empty result that stops with reason `error`, the redacted message and the kind's
+ * read-only preview as its fix, so the loop reports it and runs the next kind.
+ */
+export function kindErrorResult(kind: RepairKind, scope: RepairScope, opts: { apply: boolean; error: unknown; source?: string }): RepairResult {
+  const { message } = describePreviewFailure(kind, opts.error);
+  const preview = ['gbrain', 'repair', kind, ...(opts.source ? ['--source', opts.source] : [])];
+  return { kind, mode: opts.apply ? 'apply' : 'dry_run', scope, affected: 0, sample: [], residuals: {},
+    cost: { lifetime_ids: 0, receipt_bytes: 0, embedding_pages: 0, embedding_usd: 0 }, capacity: [], resumed_from: null, applied: 0, skipped: 0, failed: [], complete: false,
+    apply_command: repairApplyCommand(kind, { source: opts.source }),
+    stopped: { reason: 'error', code: classifyItemFailure(opts.error).code, message: `The ${kind} ${opts.apply ? 'repair' : 'preview'} raised an error, so ${kind} did not finish; every other kind ran. ${message}`,
+      fix: readFix(`Repeats the ${kind} preview on the brain host to show the error; it writes nothing.`, { argv: [...preview, '--json'] }) } };
 }
 
 /** `{ repair_preview_failures }` when any preview failed, else nothing, so a healthy plan's JSON is unchanged. */
@@ -168,7 +187,7 @@ export async function runRepairSteps(engine: BrainEngine, steps: RepairPlanStep[
   const runner = await repairRunner(engine, { apply: true, noEmbed: opts.noEmbed, registry: opts.registry });
   const results: RepairStepResult[] = [];
   for (const step of steps) {
-    const base = { id: step.id, kind: step.kind, applied: 0, skipped: 0 };
+    const base = { id: step.id, kind: step.kind, applied: 0, skipped: 0, failed: 0 };
     let result: RepairStepResult;
     const remaining = opts.remainingUsd();
     if (step.paid && remaining !== undefined && (step.est_usd_cost === null || step.est_usd_cost > remaining)) {
@@ -182,12 +201,16 @@ export async function runRepairSteps(engine: BrainEngine, steps: RepairPlanStep[
       if (step.paid && step.embeds === 'effect' && step.est_usd_cost) opts.charge?.(step.est_usd_cost - (step.llm_usd ?? 0));
       const spentBefore = opts.spentUsd?.() ?? 0;
       try {
-        const applied = llm ? await runner.run(step.kind, scope, { maxLlmUsd: opts.remainingUsd() })
-          : step.paid && step.embeds === 'inline' && opts.stepBudget ? await opts.stepBudget(() => runner.run(step.kind, scope)) : await runner.run(step.kind, scope);
+        // #6696 (A5): an approved repair step is the operator's own write, like gbrain repair; an enclosing background scope still wins.
+        const applied = await withAdmissionOrigin('interactive', () => llm ? runner.run(step.kind, scope, { maxLlmUsd: opts.remainingUsd() })
+          : step.paid && step.embeds === 'inline' && opts.stepBudget ? opts.stepBudget(() => runner.run(step.kind, scope)) : runner.run(step.kind, scope));
         if (llm) opts.charge?.(Math.max(0, (applied.cost.llm_usd ?? 0) - ((opts.spentUsd?.() ?? 0) - spentBefore)));
-        result = { ...base, applied: applied.applied, skipped: applied.skipped,
-          status: applied.stopped?.reason === 'budget_exhausted' ? 'budget_exhausted' : applied.stopped ? 'stopped' : applied.complete ? 'completed' : 'stopped',
-          ...(applied.stopped ? { message: applied.stopped.message } : {}) };
+        const failed = applied.failed.length;
+        const failedMessage = failed ? `${failed} item(s) refused and left unchanged (first: ${applied.failed[0]!.item}, ${applied.failed[0]!.reason}); `
+          + `the next full scan retries them: ${applied.apply_command}` : undefined;
+        result = { ...base, applied: applied.applied, skipped: applied.skipped, failed,
+          status: applied.stopped?.reason === 'budget_exhausted' ? 'budget_exhausted' : applied.stopped ? 'stopped' : failed ? 'failed' : applied.complete ? 'completed' : 'stopped',
+          ...(applied.stopped ? { message: failedMessage ? `${applied.stopped.message} ${failedMessage}` : applied.stopped.message } : failedMessage ? { message: failedMessage } : {}) };
         // A callee (for example the stale-embedding pass) may swallow BudgetExhausted; the tracker still knows.
         if (step.paid && step.embeds === 'inline' && opts.exhausted?.()) result = { ...result, status: 'budget_exhausted',
           message: 'The --max-usd budget ran out during the step; re-sealed pages keep their text, and the rest of their embeddings resume with the printed resume command or gbrain embed --stale.' };

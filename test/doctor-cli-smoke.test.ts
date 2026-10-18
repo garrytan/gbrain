@@ -81,6 +81,7 @@ describe('gbrain doctor --json subprocess smoke (D10/CMT-2)', () => {
       const env = {
         HOME: home,
         GBRAIN_HOME: home,
+        GBRAIN_AUDIT_DIR: join(home, 'audit'),
         PATH: `${shim.binDir}:${process.env.PATH ?? ''}`,
       };
 

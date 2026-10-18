@@ -1,4 +1,4 @@
-import type { Operation, ParamDef } from '../core/operations.ts';
+import type { OperationMeta, ParamDef } from '../core/ops/contract.ts';
 
 export interface McpToolDef {
   name: string;
@@ -65,7 +65,7 @@ export function paramDefToSchema(p: ParamDef): Record<string, unknown> {
  * the server. Declared only when the op doesn't already declare them
  * (several ops carry a real `dry_run` param).
  */
-function strictPassthroughProperties(op: Operation): Record<string, unknown> {
+function strictPassthroughProperties(op: OperationMeta): Record<string, unknown> {
   return {
     ...('_meta' in op.params ? {} : {
       _meta: {
@@ -87,7 +87,7 @@ function strictPassthroughProperties(op: Operation): Record<string, unknown> {
  * `destructiveHint` and `openWorldHint` keep the MCP defaults (no metadata
  * separates additive from destructive writes yet).
  */
-export function toolAnnotations(op: Operation): McpToolDef['annotations'] | undefined {
+export function toolAnnotations(op: OperationMeta): McpToolDef['annotations'] | undefined {
   if (op.annotations) return op.annotations;
   if (op.mutating === false) return { readOnlyHint: true };
   if (op.mutating === true) return op.idempotent === true ? { readOnlyHint: false, idempotentHint: true } : { readOnlyHint: false };
@@ -104,7 +104,7 @@ export function toolAnnotations(op: Operation): McpToolDef['annotations'] | unde
  * the schema with `additionalProperties: false`, keeping client-side
  * validation aligned with the server's reject posture.
  */
-export function buildToolDefs(ops: Operation[], opts?: { strictParams?: boolean }): McpToolDef[] {
+export function buildToolDefs(ops: OperationMeta[], opts?: { strictParams?: boolean }): McpToolDef[] {
   const strict = opts?.strictParams === true;
   return ops.map(op => {
     const annotations = toolAnnotations(op);

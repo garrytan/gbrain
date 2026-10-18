@@ -35,6 +35,9 @@ describe('exit code table', () => {
     expect(exitCodes.CONFIRMATION_REQUIRED_EXIT_CODE).toBe(3);
     expect(exitCodes.PENDING_WRITE_EXIT_CODE).toBe(10);
     expect(exitCodes.BUDGET_STOP_EXIT_CODE).toBe(11);
+    expect(exitCodes.HARNESS_PENDING_VERIFY_EXIT_CODE).toBe(13);
+    expect(exitCodes.HARNESS_CLEANUP_PENDING_EXIT_CODE).toBe(14);
+    expect(exitCodes.SERVE_UNHEALTHY_EXIT_CODE).toBe(69);
     expect(exitCodes.MIGRATIONS_RUNNING_EXIT_CODE).toBe(75);
     expect(exitCodes.TIMEOUT_EXIT_CODE).toBe(124);
     expect(exitCodes.INTERRUPTED_EXIT_CODE).toBe(130);
@@ -50,6 +53,9 @@ describe('exit code table', () => {
     expect(exitCodeForCode('invalid_params')).toBe(2);
     expect(exitCodeForCode('unknown_flag')).toBe(2);
     expect(exitCodeForCode('write_pending')).toBe(10);
+    expect(exitCodeForCode('pending_verify')).toBe(13);
+    expect(exitCodeForCode('bootstrap_cleanup_pending')).toBe(14);
+    expect(exitCodeForCode('serve_unhealthy_exit')).toBe(69);
     expect(exitCodeForCode('timeout')).toBe(124);
     expect(exitCodeForCode('interrupted')).toBe(130);
     expect(exitCodeForCode('internal_error')).toBe(1);
@@ -78,7 +84,7 @@ describe('exit code table', () => {
 
   test('the exit-codes guide documents every value; the CHANGELOG carries the contract v1 exit changes', () => {
     const doc = readFileSync(join(ROOT, 'docs/guides/exit-codes.md'), 'utf8');
-    for (const v of [0, 1, 2, 3, 10, 11, 75, 124, 130]) expect(doc).toContain(`| ${v} |`);
+    for (const v of [0, 1, 2, 3, 10, 11, 14, 69, 75, 124, 130]) expect(doc).toContain(`| ${v} |`);
     expect(doc).toContain('CHANGELOG.md#exit-code-changes-by-command');
     expect(readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')).toContain('#### Exit code changes by command');
   });

@@ -20,6 +20,8 @@ export function stableJson(value: unknown): string {
 }
 export function digest(value: unknown): string { return sha256(stableJson(value)); }
 export function sha256(value: string | Uint8Array): string { return createHash('sha256').update(value).digest('hex'); }
+/** Git's blob id of `bytes` (`git hash-object --no-filters`) in the repository's object format. */
+export function gitBlobOid(bytes: Uint8Array, format: 'sha1' | 'sha256'): string { return createHash(format).update(`blob ${bytes.length}\0`).update(bytes).digest('hex'); }
 export function jsonBytes(value: unknown): number { return Buffer.byteLength(stableJson(value), 'utf8'); }
 export function requireUuid(value: string): string {
   if (!isWriteRequestId(value)) {

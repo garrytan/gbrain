@@ -48,6 +48,14 @@ export interface DecideContext {
 
 const BACKGROUND_DEFAULT_MS = 60_000;
 
+let testClock: (() => number) | undefined;
+/** Drive runDecide's deadline arithmetic from `clock` when the caller passes no `now`; returns the restore. */
+export function __setDecideClockForTests(clock: (() => number) | undefined): () => void {
+  const prev = testClock;
+  testClock = clock;
+  return () => { testClock = prev; };
+}
+
 export async function loadDecideConfig(engine: BrainEngine | null, opts: { evalSlots?: string } = {}): Promise<DecideConfig> {
   return readDecideConfig(engine ? await loadConfigSnapshot(engine) : null, { ...opts, typesafeKey: hasTypesafeKey() });
 }
@@ -69,7 +77,7 @@ function emptyResult(provider: string, lane: DecideLane, refused: Record<string,
 }
 
 export async function runDecide(req: DecideRequest, ctx: DecideContext): Promise<DecideResult> {
-  const now = ctx.now ?? Date.now;
+  const now = ctx.now ?? testClock ?? Date.now;
   const started = now();
   const cfg = ctx.config ?? await loadDecideConfig(ctx.engine);
   const provider = req.provider ?? cfg.slots[req.slot].provider;
@@ -124,6 +132,14 @@ function deadlineSignal(deadlineAt: number, now: () => number, caller?: AbortSig
   return { signal: ctrl.signal, done: () => { clearTimeout(t); caller?.removeEventListener('abort', onAbort); } };
 }
 
+/** Attach the settled batches' answers to a failed decision (#6519); a policy error passes through bare. */
+function withPartial(err: unknown, answers: Record<string, DecideAnswer>, models: Set<string>): unknown {
+  if (err instanceof DecideError && Object.keys(answers).length > 0) {
+    err.partial = { answers: { ...answers }, model_resolved: models.size === 1 ? [...models][0]! : null };
+  }
+  return err;
+}
+
 function asDecideError(err: unknown, signal: AbortSignal, caller?: AbortSignal): unknown {
   if (err instanceof DecideError || isAIInvocationPolicyError(err)) return err;
   if (signal.aborted) return caller?.aborted ? new DecideError('provider_error', 'decide: caller aborted') : new DecideError('timeout', 'decide: deadline exceeded');
@@ -148,7 +164,13 @@ async function runTypesafe(req: DecideRequest, ctx: DecideContext, cfg: DecideCo
   }
   const budgetKind = req.budgetKind ?? 'decide';
   const estimatedTokens = plan.reduce((n, b) => n + b.estimatedInputTokens, 0);
-  const priced = (tokens: number) => usageCostUsd(a.provider, tokens, 0, budgetKind) ?? 0;
+  // [R18] (#5980): an id with no shipped tariff and no operator price is
+  // refused before transport. `?? 0` here would admit it as free against the
+  // daily and remote-share budgets and write $0 spend rows for a real bill.
+  if (usageCostUsd(a.provider, 1, 0, budgetKind, cfg.pricingOverrides) === null) {
+    throw new DecideError('unpriced_model', `decide: ${a.provider} has no price; register one with gbrain pricing set ${a.provider} --rate <usd-per-1M-input-tokens> --source <url>`);
+  }
+  const priced = (tokens: number) => usageCostUsd(a.provider, tokens, 0, budgetKind, cfg.pricingOverrides)!;
   if (budgetKind === 'decide' && ctx.engine) {
     const spent = await dailySpend(ctx.engine, a.now()).catch(() => ({ total: 0, remote: 0 }));
     const estimate = priced(estimatedTokens);
@@ -210,12 +232,12 @@ async function runTypesafe(req: DecideRequest, ctx: DecideContext, cfg: DecideCo
       }
     }, { concurrency: a.lane === 'hot' ? cfg.maxConcurrency : cfg.backgroundConcurrency, deadlineAt: a.deadlineAt, signal, lane: a.lane, now: a.now });
   } catch (err) {
-    throw asDecideError(err, signal, req.signal);
+    throw withPartial(asDecideError(err, signal, req.signal), answers, models);
   } finally {
     done();
     recordOnTracker(tracker, { modelId: a.provider, reservation, inputTokens, outputTokens: 0, kind: budgetKind, label: 'gateway.decide' });
   }
-  if (models.size > 1) throw new DecideError('mixed_model', `decide: batches answered by ${models.size} different models`);
+  if (models.size > 1) throw withPartial(new DecideError('mixed_model', `decide: batches answered by ${models.size} different models`), answers, models);
   const modelResolved = [...models][0] ?? modelId;
   return {
     decision_id: randomUUID(), provider: a.provider, model_alias: modelId, model_resolved: modelResolved, answers, refused: {},
@@ -255,11 +277,11 @@ async function runLlm(req: DecideRequest, cfg: DecideConfig, a: RunArgs): Promis
       Object.assign(answers, parseLlmReply(reply.text, questions));
     }, { concurrency: a.lane === 'hot' ? cfg.maxConcurrency : cfg.backgroundConcurrency, deadlineAt: a.deadlineAt, signal, lane: a.lane, now: a.now });
   } catch (err) {
-    throw asDecideError(err, signal, req.signal);
+    throw withPartial(asDecideError(err, signal, req.signal), answers, models);
   } finally {
     done();
   }
-  if (models.size > 1) throw new DecideError('mixed_model', 'decide: batches answered by different models');
+  if (models.size > 1) throw withPartial(new DecideError('mixed_model', 'decide: batches answered by different models'), answers, models);
   return {
     decision_id: randomUUID(), provider: a.provider, model_alias: model, model_resolved: [...models][0] ?? model, answers, refused: {},
     usage: { input_tokens: inputTokens, output_tokens: outputTokens }, cost_usd: 0, latency_ms: 0, batches: plan.length, lane: a.lane,

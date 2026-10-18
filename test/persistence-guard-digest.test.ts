@@ -6,6 +6,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../src/core/markdown.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { prepareFileTarget } from '../src/core/persistence/page-prepare.ts';
+import { applyInference } from '../src/core/frontmatter-inference.ts';
+import { slugifyPath } from '../src/core/sync.ts';
 
 // #5521 / #5635: the coordinated write guard compares the parsed canonical file
 // with the stored row. A file with no frontmatter `type:` keeps the stored type
@@ -90,4 +92,78 @@ test('#5622 a new captured page claims its in-source file only when the bytes ar
   await expect(prepareFileTarget(engine, row, null, 'Rendered page', undefined, { capture: { path: 'notes/captured-race.md', hash: sha256('x² observation\n') } }))
     .rejects.toMatchObject({ code: 'source_changed' });
   expect((await prepareFileTarget(engine, row, null, 'Rendered page', undefined, { capture: { path: 'notes/captured-race.md', hash: sha256('x2 observation\n') } }))?.path).toBe(file);
+});
+
+// Directory-inferred pages: an importer prepends path-inferred frontmatter (`date`, `source`, tags) to a
+// frontmatter-less file before it parses it (applyInference in import-prepare.ts), so the stored row carries those
+// fields while the canonical file never does. The guard must read the file the way the importer did.
+async function seedInferred(rel: string, body: string, opts: { storedType?: string; bom?: boolean } = {}) {
+  const slug = slugifyPath(rel);
+  const parsed = parseMarkdown(applyInference(rel, body).content, rel);
+  await engine.putPage(slug, { type: (opts.storedType ?? parsed.type) as typeof parsed.type, title: parsed.title, compiled_truth: parsed.compiled_truth,
+    timeline: parsed.timeline, frontmatter: parsed.frontmatter, tags: parsed.tags }, { sourceId });
+  for (const tag of parsed.tags) await engine.addTag(slug, tag, { sourceId, tagSource: 'frontmatter' });
+  await engine.executeRaw('UPDATE pages SET source_path=$1 WHERE source_id=$2 AND slug=$3', [rel, sourceId, slug]);
+  const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+  const file = join(root, rel);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${opts.bom ? '\uFEFF' : ''}${body}`);
+  return { snapshot, file, row: { source_id: sourceId, worktree_id: worktreeId, slug } };
+}
+const INFERRED_REL = 'Apple Notes/Ideas/2021-06-20 Packing list.md';
+
+test('a frontmatter-less file under a directory-inference rule is not drift against the row the importer stored', async () => {
+  const { snapshot, row, file } = await seedInferred(INFERRED_REL, 'Passport, charger, notebook.\n');
+  // The premises: the row holds inferred fields the file cannot carry.
+  expect(Object.keys(snapshot.page.frontmatter ?? {}).sort()).toEqual(['date', 'source']);
+  expect(snapshot.tags.length).toBeGreaterThan(0);
+  expect(readFileSync(file, 'utf8')).not.toMatch(/^---/);
+  for (const attempt of [1, 2]) {
+    expect((await prepareFileTarget(engine, row, snapshot, `Replacement ${attempt}`))?.path).toBe(file);
+  }
+  expect((await prepareFileTarget(engine, row, snapshot, null))?.path).toBe(file);
+});
+
+test('a real body edit to a directory-inferred file is still refused', async () => {
+  const { snapshot, row, file } = await seedInferred('Apple Notes/Ideas/2021-06-21 Edited.md', 'Original text.\n');
+  writeFileSync(file, 'Original text.\nUncoordinated local edit.\n');
+  await expect(prepareFileTarget(engine, row, snapshot, 'Replacement')).rejects.toMatchObject({ code: 'source_changed', detail: 'file_database_drift' });
+});
+
+test('an explicit frontmatter value that disagrees with the inferred row is still refused', async () => {
+  const { snapshot, row, file } = await seedInferred('Apple Notes/Ideas/2021-06-22 Explicit.md', 'Body.\n');
+  writeFileSync(file, '---\ndate: 1999-01-01\n---\nBody.\n');
+  await expect(prepareFileTarget(engine, row, snapshot, 'Replacement')).rejects.toMatchObject({ code: 'source_changed' });
+});
+
+test('an inferred type is not a declared one: a stored type that differs from the path default is kept', async () => {
+  const { snapshot, row, file } = await seedInferred('Apple Notes/Ideas/2021-06-23 Retyped.md', 'Body.\n', { storedType: 'note' });
+  expect(snapshot.page.type).toBe('note');
+  expect(parseMarkdown(applyInference('Apple Notes/Ideas/2021-06-23 Retyped.md', readFileSync(file, 'utf8')).content, row.slug).type).not.toBe('note');
+  expect((await prepareFileTarget(engine, row, snapshot, 'Replacement'))?.path).toBe(file);
+});
+
+test('a BOM in front of an inferred heading title does not make an untouched file drift', async () => {
+  // runbooks/ takes its title from the first heading; the importer strips the BOM before inferring it.
+  const { snapshot, row, file } = await seedInferred('runbooks/restore-db.md', '# Restore the database\n\nSteps.\n', { bom: true });
+  expect(snapshot.page.title).toBe('Restore the database');
+  expect(readFileSync(file, 'utf8').charCodeAt(0)).toBe(0xFEFF);
+  expect((await prepareFileTarget(engine, row, snapshot, 'Replacement'))?.path).toBe(file);
+});
+
+// #6605 review: `gbrain reindex` on an unmanaged brain imports with `inferFrontmatter: false`, so its row carries no
+// inferred keys. The raw reading of the untouched file still matches it after the brain is managed.
+test('a row imported without inference (unmanaged reindex) still matches its untouched frontmatter-less file', async () => {
+  const rel = 'Apple Notes/Ideas/2021-06-24 Reindexed.md';
+  const slug = slugifyPath(rel);
+  const parsed = parseMarkdown('Body without inference.\n', rel);
+  await engine.putPage(slug, { type: parsed.type, title: parsed.title, compiled_truth: parsed.compiled_truth, timeline: parsed.timeline,
+    frontmatter: parsed.frontmatter, tags: parsed.tags }, { sourceId });
+  await engine.executeRaw('UPDATE pages SET source_path=$1 WHERE source_id=$2 AND slug=$3', [rel, sourceId, slug]);
+  const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+  expect(snapshot.page.frontmatter ?? {}).toEqual({});
+  const file = join(root, rel);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, 'Body without inference.\n');
+  expect((await prepareFileTarget(engine, { source_id: sourceId, worktree_id: worktreeId, slug }, snapshot, 'Replacement'))?.path).toBe(file);
 });

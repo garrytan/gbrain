@@ -111,7 +111,7 @@ async function syncFixture(engine: BrainEngine) {
 
 test('#5470 working-tree sync: a dirty file re-queued on the next run takes no second admission', async () => each(async engine => {
   const f = await syncFixture(engine);
-  const opts = { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, workingTree: true, explicitProcessing: [] };
+  const opts = { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, workingTree: true };
   expect((await performManagedSync(engine, opts)).status).not.toBe('partial');
   writeFileSync(join(f.root, 'a.md'), '---\ntitle: a\n---\nAn uncommitted working-tree edit.\n');
   expect((await performManagedSync(engine, opts)).status).not.toBe('partial');

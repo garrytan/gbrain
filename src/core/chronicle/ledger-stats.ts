@@ -1,7 +1,7 @@
 // Life Chronicle (#5876): read-only rollups of the `chronicle_page_state` ledger for doctor and
 // the advisor. One query module so the surfaces cannot drift from the ledger's columns.
 import type { BrainEngine } from '../engine.ts';
-import { isUndefinedTableError } from '../utils.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 
 export interface ChronicleLedgerStats {
   /** False when the ledger table is absent (migration not applied yet). */
@@ -71,7 +71,7 @@ export async function readChronicleLedgerStats(engine: BrainEngine): Promise<Chr
         incompleteRecords: Number(counts?.incomplete ?? 0) },
     };
   } catch (error) {
-    if (isUndefinedTableError(error)) return EMPTY;
+    if (isMissingSchemaObject(error, 'table', ['chronicle_page_state', 'chronicle_judge_reservations'])) return EMPTY;
     throw error;
   }
 }

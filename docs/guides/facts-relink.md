@@ -31,6 +31,21 @@ not. Pass `infer_entity: false` to skip inference for one call.
 Page imports work the same way, and a fact extracted from an entity page with
 no other name in it belongs to that page.
 
+### CJK subjects need a literal slug or a delimiter
+
+Chinese, Japanese and Korean text has no spaces between words, so write-time
+inference and relink's free tiers cannot tell where an unspaced name ends.
+They link a CJK subject only from its literal page slug followed by a space or
+punctuation. Unspaced natural-name inference is unsupported: name the page
+with `--entity` (or `entity`) instead. Relink's model tier also needs the name
+set off by a space or punctuation.
+
+| Fact text | Free inference |
+|---|---|
+| `people/王小明 负责项目。` | links `people/王小明` |
+| `people/王小明负责项目。` | no link |
+| `王小明负责项目。` | no link |
+
 Turn write-time inference off with `gbrain config set facts.entity_inference
 off`. That does not undo earlier links, and it does not affect `gbrain facts
 relink`.
@@ -100,6 +115,37 @@ gbrain forget <fact-id>
 gbrain remember "<the fact>" --provenance "<source>" --entity <slug>
 ```
 
+## Conversation facts
+
+Facts `gbrain extract-conversation-facts` stored without an entity belong to
+their conversation page, so plain `gbrain facts relink` never examines them.
+Link them for free, with the same rule as write-time inference (exactly one
+entity page named in full, no competing name, no model call):
+
+```bash
+gbrain facts relink --conversation --dry-run          # what would link; writes nothing
+gbrain facts relink --conversation                    # the 50 pages with the most untried unlinked facts
+gbrain facts relink --conversation --slugs a,b        # exactly these pages
+```
+
+A linked fact stays on its conversation page with the entity set and the note
+`entity relinked from mention`: same row, provenance and trust, no Markdown
+edit, so it needs no consent. A re-extraction of the page
+(`extract-conversation-facts --force`) keeps the link on the claim's new row
+without a second copy. A fact no entity can be proven for is recorded,
+so doctor `unlinked_facts` then offers a paid re-extraction of its page
+(`gbrain extract-conversation-facts --slugs … --force`, previewed with
+`--dry-run`, capped with `--max-cost-usd`) instead of this relink again.
+A miss the table below does not remember (`no_page`, `no_mention`,
+`withdrawn`) is tried for free again once a new page is created in the
+source, for example the missing entity page.
+
+Every completed extraction of a page is remembered with the page's content
+hash. While the page still has that content, doctor offers no paid
+re-extraction for it: facts still unlinked there are listed for linking by
+hand (forget each one and remember it again with `--entity`). Editing the
+page's content offers the re-extraction again.
+
 ## Why a fact was not linked
 
 | Reason | Remembered | What to do |
@@ -117,7 +163,7 @@ gbrain remember "<the fact>" --provenance "<source>" --entity <slug>
 | `fence_malformed` | no | The entity page has a ## Facts fence that cannot be normalized. Preview the fence repair of that page (`repair fences --slug <entity-slug>` on the brain host; read-only, and it names the exact edit for anything it will not repair), apply it, then rerun. |
 | `claim_unfenceable` | no | The claim text cannot be written to a fence row unchanged (for example it is wrapped in ~~). Forget it and remember a cleaned-up claim with --entity. |
 | `visibility_conflict` | no | The entity already has the same claim from the same source with the other visibility, and a page indexes only one. Forget the copy you do not want, then rerun. |
-| `fence_owned` | no | The fact lives in another page fence (a transcript). Relink does not move fence-owned facts. |
+| `fence_owned` | no | The fact lives in another page fence or is a conversation page's extracted fact. Relink does not move fence-owned facts; conversation facts are linked by relink with --conversation (free, preview with --dry-run). |
 | `budget_exhausted` | no | The model tier reached --max-usd. Raise --max-usd (or pass off) and rerun with the printed continuation command. |
 | `revision_conflict` | no | The fact or the entity page changed while relink ran. Rerun. |
 

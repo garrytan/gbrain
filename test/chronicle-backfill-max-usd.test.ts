@@ -188,6 +188,60 @@ for (const backend of testBackends()) {
       expect(row).toMatchObject({ state: 'pending', attempts: 2, cost_attempts: [1] });
     });
 
+    test('an exhausted failed revision with no lease is admitted by the preview and capped recovery', async () => {
+      await pages(1);
+      await backfill({ yes: true, max_usd: 100 });
+      await engine.executeRaw("UPDATE chronicle_page_state SET state='failed', reason='campaign_exhausted', attempts=5, next_attempt_at=NULL");
+      const [before] = await ledger();
+      const unit = await perPage();
+      const cap = unit + 0.01;
+      expect(await backfill({ dry_run: true, max_usd: cap })).toMatchObject({ queued: 1, fits_under_cap: 1 });
+      expect(await ledger()).toEqual([before]);
+      expect(await backfill({ yes: true, max_usd: 0.5 })).toMatchObject({ queued: 0, cap_reached: true });
+      expect(await ledger()).toEqual([before]);
+      const recovered = await backfill({ yes: true, max_usd: cap });
+      expect(recovered).toMatchObject({ queued: 1, fits_under_cap: 1, cap_reached: false });
+      expect(recovered.worst_case_usd).toBeLessThanOrEqual(cap);
+      const [after] = await ledger();
+      expect(after).toMatchObject({ source_id: before.source_id, page_id: before.page_id, content_hash: before.content_hash,
+        extractor_version: before.extractor_version, state: 'pending', reason: null, attempts: 0, next_attempt_at: null,
+        campaign_id: recovered.campaign_id, max_attempts: 5, pricing_policy: 'enforced' });
+      expect(after.campaign_id).not.toBe(before.campaign_id);
+      expect(Number(after.attempt_cap_usd)).toBe(0.25);
+      expect(Number(after.campaign_max_usd)).toBeCloseTo(cap, 6);
+      const judge = spendingJudge(() => ({ events: [] }));
+      await runPhaseChronicle(engine, { judge });
+      expect(judge.calls).toBe(1);
+      expect(judge.caps).toEqual([0.25]);
+      expect((await ledger())[0]).toMatchObject({ state: 'extracted', attempts: 1 });
+    });
+
+    test('an exhausted failed revision keeps its active lease and recovers after expiry', async () => {
+      await pages(1);
+      await backfill({ yes: true, max_usd: 100 });
+      await engine.executeRaw("UPDATE chronicle_page_state SET state='failed', attempts=5, next_attempt_at=now()+interval '1 hour'");
+      const [leased] = await ledger();
+      expect(await backfill({ yes: true, max_usd: 100 })).toMatchObject({ queued: 0 });
+      expect(await ledger()).toEqual([leased]);
+      await expire();
+      expect(await backfill({ yes: true, max_usd: 100 })).toMatchObject({ queued: 1 });
+      expect((await ledger())[0]).toMatchObject({ state: 'pending', attempts: 0, next_attempt_at: null });
+    });
+
+    test('NULL-lease recovery respects source scope and leaves other source rows intact', async () => {
+      await pages(1);
+      await engine.executeRaw("INSERT INTO sources (id,name) VALUES ('other-src','other-src') ON CONFLICT DO NOTHING");
+      await engine.putPage('meetings/m1', { type: 'meeting', title: 'm1', compiled_truth: LONG }, { sourceId: 'other-src' });
+      await backfill({ yes: true, max_usd: 100 });
+      await engine.executeRaw("UPDATE chronicle_page_state SET state='pending', attempts=5, next_attempt_at=NULL");
+      const before = await ledger();
+      const result = await operationsByName.chronicle_backfill.handler({ ...ctx(), sourceId: 'default' }, { yes: true, max_usd: 100 }) as Result;
+      expect(result.queued).toBe(1);
+      const after = await ledger();
+      expect(after.find((row) => row.source_id === 'other-src')).toEqual(before.find((row) => row.source_id === 'other-src'));
+      expect(after.find((row) => row.source_id === 'default')).toMatchObject({ state: 'pending', attempts: 0, campaign_id: result.campaign_id });
+    });
+
     test('a restart mid-campaign queues only the rest, each campaign within its own bound', async () => {
       await pages(4);
       const unit = await perPage();

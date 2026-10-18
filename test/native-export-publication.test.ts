@@ -138,6 +138,37 @@ describe('native export publication', () => {
     expect(readFileSync(join(root, marker), 'utf8')).toBe(incomplete);
   });
 
+  test('publishes a staged file by path in bounded reads, byte for byte, across several read buffers', async () => {
+    const stage = temporary();
+    const root = join(temporary(), 'out');
+    const bytes = Buffer.alloc(3 * 1024 * 1024 + 7);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 31 + (i >> 11)) & 255;
+    writeFileSync(join(stage, 'page.md'), bytes);
+    writeFileSync(join(stage, 'empty.md'), '');
+    const { publisher, handle } = await begin(root);
+    publisher.publishExportFileFrom(handle, 'notes/ü.md', join(stage, 'page.md'));
+    publisher.publishExportFileFrom(handle, 'empty.md', join(stage, 'empty.md'));
+    publisher.completeExport(handle);
+    expect(readFileSync(join(root, 'notes/ü.md')).equals(bytes)).toBe(true);
+    expect(readFileSync(join(root, 'empty.md')).length).toBe(0);
+    expect(readdirSync(join(root, 'notes'))).toEqual(['ü.md']);
+    expect(readFileSync(join(stage, 'page.md')).equals(bytes)).toBe(true);
+  });
+
+  test.skipIf(process.platform === 'win32').each(['relative', 'missing', 'directory', 'symlink'])('a %s staged source refuses without a leaf and poisons completion', async kind => {
+    const stage = temporary();
+    const root = temporary();
+    writeFileSync(join(stage, 'real.md'), 'staged bytes');
+    mkdirSync(join(stage, 'dir'));
+    symlinkSync(join(stage, 'real.md'), join(stage, 'link.md'));
+    const source = { relative: 'real.md', missing: join(stage, 'absent.md'), directory: join(stage, 'dir'), symlink: join(stage, 'link.md') }[kind]!;
+    const { publisher, handle } = await begin(root);
+    expect(() => publisher.publishExportFileFrom(handle, 'page.md', source)).toThrow();
+    expect(() => publisher.completeExport(handle)).toThrow();
+    expect(readdirSync(root)).toEqual([marker]);
+    expect(readFileSync(join(root, marker), 'utf8')).toBe(incomplete);
+  });
+
   test('rejects a nonbuffer without permitting completion', async () => {
     const { publisher, handle } = await begin(temporary());
     expect(() => publisher.publishExportFile(handle, 'file', 'text' as unknown as Buffer)).toThrow();

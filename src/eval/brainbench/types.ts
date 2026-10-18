@@ -26,8 +26,22 @@ export const RESULT_SCHEMA_VERSION = 1;
 // Suites + harnesses
 // ---------------------------------------------------------------------------
 
-export const ALL_SUITES = ['know-to-ask', 'push', 'write-back', 'continuity'] as const;
+export const ALL_SUITES = [
+  'know-to-ask', 'push', 'write-back', 'continuity',
+  'trust', 'state-resolution', 'poisoning', 'deletion',
+] as const;
 export type BrainBenchSuite = (typeof ALL_SUITES)[number];
+
+/**
+ * Memory-trust suites (#5575). Their fixtures drive real tiered write paths
+ * (`trust_steps`) on a persistence-enabled brain instead of the seeder, and
+ * are scored from the sealed `trust` gold block. One suite per fixture.
+ */
+export const TRUST_SUITES = ['trust', 'state-resolution', 'poisoning', 'deletion'] as const;
+export type TrustSuite = (typeof TRUST_SUITES)[number];
+export function isTrustSuite(s: string): s is TrustSuite {
+  return (TRUST_SUITES as readonly string[]).includes(s);
+}
 
 export const ALL_HARNESSES = ['openclaw', 'claude-code', 'codex'] as const;
 export type HarnessName = (typeof ALL_HARNESSES)[number];
@@ -99,8 +113,53 @@ export interface BrainBenchFixture {
     pair_id: string;
     pair_role: 'writer' | 'reader';
   };
+  /**
+   * Memory-trust suites only: ordered writes through real channels (owner
+   * sync, local and remote agents, a connector capture, owner actions). They
+   * run before the turns, which then replay as a later session.
+   */
+  trust_steps?: TrustStep[];
 }
 
+/**
+ * Who performs a trust step. `owner` writes and syncs files in the
+ * fixture's own git-backed source (operator_curated) and runs owner actions
+ * on a confirmed terminal; `local_agent` / `remote_agent` call operations as
+ * the local CLI / an MCP connection with read+write scopes; `connector` is a
+ * webhook capture (external); `raw` is a process with a database connection
+ * attempting a direct tier raise.
+ */
+export const TRUST_ACTORS = ['owner', 'local_agent', 'remote_agent', 'connector', 'raw'] as const;
+export type TrustActor = (typeof TRUST_ACTORS)[number];
+export const TRUST_OPS = ['write_file', 'sync', 'put_page', 'capture', 'remember', 'forget', 'confirm', 'purge', 'raise_tier'] as const;
+export type TrustOp = (typeof TRUST_OPS)[number];
+/** Which actors may perform which op (validated by the loader). */
+export const TRUST_ACTOR_OPS: Readonly<Record<TrustActor, readonly TrustOp[]>> = {
+  owner: ['write_file', 'sync', 'confirm', 'purge'],
+  local_agent: ['put_page', 'remember', 'confirm'],
+  remote_agent: ['put_page', 'capture', 'remember', 'forget', 'confirm', 'purge'],
+  connector: ['capture'],
+  raw: ['raise_tier'],
+};
+
+export interface TrustStep {
+  step_id: string;
+  actor: TrustActor;
+  op: TrustOp;
+  /** Page slug (write_file, put_page, capture). */
+  slug?: string;
+  /** Page markdown (write_file, put_page) or capture body. */
+  content?: string;
+  /** remember: the claim. */
+  fact?: string;
+  entity?: string;
+  kind?: 'fact' | 'preference' | 'commitment' | 'event' | 'belief';
+  content_origin?: 'user_said' | 'tool_output' | 'inferred';
+  /** confirm / purge / forget / raise_tier / remember.replaces: the step whose row is acted on. */
+  target?: string;
+  /** Picks one fact row of a page step (an owner file's facts fence) by its claim text. */
+  target_claim?: string;
+}
 /**
  * What an adapter is allowed to see of a turn. Structurally sealed: built by
  * `toPublicTurn`, which picks exactly these fields — anything else (incl. a
@@ -168,6 +227,41 @@ export interface FixtureGold {
     pair_id: string;
     decisions: ContinuityDecisionGold[];
   };
+  /** Memory-trust suites: what each step should have produced. */
+  trust?: { items: TrustGoldItem[] };
+}
+
+/**
+ * One scored expectation of a memory-trust fixture.
+ *   tier       the step's row is stored and read back (get_page, search, recall) at exactly `tier` (trust)
+ *   max_tier   the step's row is stored at `tier` or lower: no laundering upward (trust)
+ *   refused    the step was refused and its target's tier did not rise (trust: self-promotion)
+ *   current    the step's fact is the active one recall returns (state-resolution)
+ *   stale      the step's fact is not returned as current (state-resolution)
+ *   history    the step's fact row is kept (expired or superseded, never deleted) (state-resolution)
+ *   guarded    the step's fact stays active after a lower-tier write tried to replace or forget it (state-resolution)
+ *   poison     an instruction-like payload carrying `canary` (poisoning)
+ *   benign     ordinary content carrying `canary` (poisoning)
+ *   purged     the purge step removed `probe` from every live store, its receipt names them, nothing resurrects (deletion)
+ */
+export const TRUST_CHECKS = ['tier', 'max_tier', 'refused', 'current', 'stale', 'history', 'guarded', 'poison', 'benign', 'purged'] as const;
+export type TrustCheck = (typeof TRUST_CHECKS)[number];
+export interface TrustGoldItem {
+  item_id: string;
+  check: TrustCheck;
+  step: string;
+  /** Fact selector within a page step. */
+  claim?: string;
+  /** Exact tier (`tier`) or ceiling (`max_tier`). */
+  tier?: import('../../core/trust/tier.ts').TrustTier;
+  /** poisoning arm. */
+  arm?: 'external' | 'agent_relayed';
+  /** poisoning: unique token inside the payload or benign text. */
+  canary?: string;
+  /** poisoning: the payload is a standing preference or commitment fact. */
+  preference?: boolean;
+  /** deletion: the exact text the purge must remove. */
+  probe?: string;
 }
 
 /** Loader output: fixture joined with its gold. Internal to the harness — never crosses to adapters. */

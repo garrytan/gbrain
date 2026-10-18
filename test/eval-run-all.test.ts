@@ -110,10 +110,10 @@ describe('estimateRunCost', () => {
     expect(est.retrieval_usd).toBeGreaterThan(0);
   });
 
-  test('tokenmax incurs expansion cost (Haiku per query)', () => {
+  test('expansion cost follows the mode bundle: no mode expands by default since GBRA-94', () => {
     const bal = estimateRunCost({ suites: ['replay'], modes: ['balanced'], limit: 100 });
     const tok = estimateRunCost({ suites: ['replay'], modes: ['tokenmax'], limit: 100 });
-    expect(tok.retrieval_usd).toBeGreaterThan(bal.retrieval_usd);
+    expect(tok.retrieval_usd).toBe(bal.retrieval_usd);
   });
 
   test('replay suite has zero answer cost', () => {

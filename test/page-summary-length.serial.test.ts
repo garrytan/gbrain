@@ -130,9 +130,31 @@ describe('surrogate-safe document truncation (#5316)', () => {
       'a'.repeat(SYNOPSIS_DOC_MAX_CHARS - 1) + '𝑇' + 'b'.repeat(100);
     const result = await generatePerChunkSynopsis({ ...baseArgs, documentText });
     expect(result.kind).toBe('success');
-    const prompt = captured[0].messages[0].content as string;
+    // Two text blocks since PR #6341 (page, chunk); the truncation lives in the page block.
+    const content = captured[0].messages[0].content;
+    expect(typeof content).not.toBe('string');
+    const prompt = (content as Array<{ type: string; text: string }>).map(b => b.text).join('\n');
     expect(prompt.isWellFormed()).toBe(true);
     expect(() => JSON.parse(JSON.stringify(prompt))).not.toThrow();
     expect(prompt).toContain('chars truncated for synopsis budget');
+  });
+});
+
+function thinkingRoute(answerText: string) {
+  return async (o: ChatOpts) => ({
+    text: o.thinking === 'off' ? answerText : '',
+    blocks: [],
+    stopReason: (o.thinking === 'off' ? 'end' : 'length') as 'end' | 'length',
+    usage: { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 },
+    model: 'anthropic:claude-haiku-5-5',
+    providerId: 'anthropic',
+  });
+}
+
+describe('thinking route (#6342)', () => {
+  test('the synopsis call turns thinking off, so a reasoning model keeps its synopsis', async () => {
+    __setChatTransportForTests(thinkingRoute('A one-sentence synopsis about the series A.'));
+    const r = await generatePerChunkSynopsis(baseArgs);
+    expect(r).toMatchObject({ kind: 'success', synopsis: 'A one-sentence synopsis about the series A.' });
   });
 });

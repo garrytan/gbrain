@@ -140,7 +140,7 @@ export async function runChronicleBackfill(engine: BrainEngine, opts: ChronicleB
       id: number; source_id: string; slug: string; type: string; compiled_truth: string | null; frontmatter: Record<string, unknown> | null;
       effective_date: Date | string | null; effective_date_source: string | null; content_hash: string | null; done: boolean;
     }>(
-      `SELECT p.id, p.source_id, p.slug, p.type, p.compiled_truth, p.frontmatter, p.effective_date, p.effective_date_source, p.content_hash,
+      `SELECT p.id, p.source_id, p.slug, p.type, coalesce(p.compiled_truth, p.truth_lead) AS compiled_truth, p.frontmatter, p.effective_date, p.effective_date_source, p.content_hash,
               EXISTS (SELECT 1 FROM chronicle_page_state c WHERE c.page_id=p.id AND c.content_hash=p.content_hash
                 AND c.extractor_version=$3 AND (c.state='extracted' OR (c.state IN ('pending','failed') AND c.trigger='backfill' AND c.attempts < ${CHRONICLE_DEFAULTS.maxAttempts}))) AS done
          FROM pages p

@@ -1,21 +1,45 @@
 /**
- * v0.32.3 search-lite install-time mode picker tests.
+ * Install-time search-mode picker.
  *
- * Pure-function coverage (recommendModeFor + parseModeInput) plus the
- * idempotent runModePicker behavior. The interactive TTY branch is
- * exercised indirectly via the non-TTY path here; full TTY simulation
- * lives in the e2e suite (test/e2e/...).
+ * The recommendation over every input combination (chat key yes/no, ready
+ * reranker yes/no, Haiku / Opus / unknown model), the inputs resolved from
+ * the environment and from a key saved only in ~/.gbrain/config.json, the
+ * shared cost matrix and banners, `--search-mode` (operator choice,
+ * refuse-or-force), `search.mode_source`, and the `--json` event. The TTY
+ * menu branch needs a terminal and is not exercised here.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
-  recommendModeFor,
+  MODE_PICKER_MENU,
   parseModeInput,
+  recommendModeFor,
+  resolveModePickerInputs,
   runModePicker,
+  searchModeChoiceFromArgs,
 } from '../src/commands/init-mode-picker.ts';
+import {
+  COST_MATRIX_MODELS,
+  MODE_REASONS,
+  agentBannerLines,
+  costMatrixLines,
+  costMatrixSentence,
+  monthlyPayloadCost,
+  upgradeBannerLines,
+} from '../src/core/search/mode-advice.ts';
+import { canonicalLookup } from '../src/core/model-pricing.ts';
 import { withEnv } from './helpers/with-env.ts';
 
+const NO_KEYS = {
+  ANTHROPIC_API_KEY: undefined, OPENAI_API_KEY: undefined, GOOGLE_GENERATIVE_AI_API_KEY: undefined,
+  GEMINI_API_KEY: undefined, VOYAGE_API_KEY: undefined, OPENROUTER_API_KEY: undefined,
+};
+
 let engine: PGLiteEngine;
+let home: string;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
@@ -28,239 +52,303 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  home = mkdtempSync(join(tmpdir(), 'gbrain-mode-picker-'));
   await engine.executeRaw(`DELETE FROM config WHERE key LIKE 'search.%' OR key LIKE 'models.%'`);
 });
 
-describe('recommendModeFor — auto-suggestion heuristic', () => {
-  test('Opus default → tokenmax', () => {
-    const r = recommendModeFor({ defaultModel: 'anthropic:claude-opus-4-7' });
-    expect(r.mode).toBe('tokenmax');
-    expect(r.reason).toMatch(/Opus/);
+/** Runs `fn` with no provider keys and a fresh GBRAIN_HOME, plus `env`. */
+function inHome<T>(env: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
+  return withEnv({ ...NO_KEYS, GBRAIN_HOME: home, ...env }, fn);
+}
+
+function writeConfigFile(fields: Record<string, string>): void {
+  mkdirSync(join(home, '.gbrain'), { recursive: true });
+  writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', ...fields }));
+}
+
+async function captureLog(fn: () => Promise<unknown>): Promise<string[]> {
+  const original = console.log;
+  const lines: string[] = [];
+  console.log = (msg?: unknown) => { lines.push(String(msg ?? '')); };
+  try { await fn(); } finally { console.log = original; }
+  return lines;
+}
+
+describe('recommendModeFor: every input combination', () => {
+  const models = [
+    { name: 'Haiku', subagentModel: 'anthropic:claude-haiku-5-5' },
+    { name: 'Opus', defaultModel: 'anthropic:claude-opus-5-5' },
+    { name: 'unknown', subagentModel: undefined },
+  ] as const;
+  const expected = (model: string, chat: boolean, rerank: boolean): string => {
+    if (model === 'Haiku') return 'conservative';
+    if (!chat && !rerank) return 'conservative';
+    return chat ? 'tokenmax' : 'balanced';
+  };
+  for (const m of models) {
+    for (const chat of [true, false]) {
+      for (const rerank of [true, false]) {
+        test(`${m.name} model, chat key ${chat ? 'yes' : 'no'}, reranker ${rerank ? 'ready' : 'not ready'} → ${expected(m.name, chat, rerank)}`, () => {
+          const { name: _name, ...model } = m;
+          const r = recommendModeFor({ ...model, hasChatKey: chat, hasRerankKey: rerank });
+          expect(r.mode).toBe(expected(m.name, chat, rerank) as never);
+          expect(r.reason.length).toBeGreaterThan(0);
+        });
+      }
+    }
+  }
+
+  test('each branch names its reason', () => {
+    expect(recommendModeFor({ subagentModel: 'anthropic:claude-haiku-5-5', hasChatKey: true }).reason).toBe(MODE_REASONS.haiku);
+    expect(recommendModeFor({ hasChatKey: false, hasRerankKey: false }).reason).toBe(MODE_REASONS.noKeys);
+    expect(recommendModeFor({ hasChatKey: false, hasRerankKey: true }).reason).toBe(MODE_REASONS.rerankOnly);
+    expect(recommendModeFor({ defaultModel: 'anthropic:claude-opus-5-5', hasChatKey: true }).reason).toBe(MODE_REASONS.opus);
+    expect(recommendModeFor({ hasChatKey: true, hasRerankKey: true }).reason).toBe(MODE_REASONS.default);
   });
 
-  test('Opus subagent → tokenmax', () => {
-    const r = recommendModeFor({ subagentModel: 'anthropic:claude-opus-4-7' });
-    expect(r.mode).toBe('tokenmax');
+  test('unknown key state is not "no keys": empty inputs get the default', () => {
+    expect(recommendModeFor({}).mode).toBe('tokenmax');
   });
 
-  test('Haiku subagent → conservative', () => {
-    const r = recommendModeFor({ subagentModel: 'anthropic:claude-haiku-4-5' });
-    expect(r.mode).toBe('conservative');
-    expect(r.reason).toMatch(/Haiku/);
-  });
-
-  test('No expansion-capable key → conservative (LLM expansion cannot run)', () => {
-    const r = recommendModeFor({ hasExpansionKey: false });
-    expect(r.mode).toBe('conservative');
-    // Provider-neutral copy: expansion routes through the chat lane, so an
-    // Anthropic or Google key counts — the reason must not say "No OpenAI".
-    expect(r.reason).toMatch(/expansion-capable/i);
-    expect(r.reason).not.toMatch(/No OpenAI key/);
-  });
-
-  test('Sonnet / unknown → tokenmax (preserve-v0.31.x default)', () => {
-    const r = recommendModeFor({ subagentModel: 'anthropic:claude-sonnet-4-6', hasExpansionKey: true });
-    expect(r.mode).toBe('tokenmax');
-    expect(r.reason).toMatch(/v0\.31\.x|preserve/i);
-  });
-
-  test('Empty inputs → tokenmax (preserve-v0.31.x default)', () => {
-    const r = recommendModeFor({});
-    expect(r.mode).toBe('tokenmax');
-  });
-
-
-  test('Haiku subagent wins over Opus default (cost-sensitive takes precedence)', () => {
-    // Reordered in the install-picker DX pass: Haiku check fires BEFORE Opus
-    // because a user running a Haiku subagent loop is signalling cost
-    // sensitivity. Tokenmax over Haiku would silently dump 50-chunk payloads
-    // into a model that struggles past 5-10 chunks. The Haiku floor wins.
-    const r = recommendModeFor({
-      defaultModel: 'anthropic:claude-opus-4-7',
-      subagentModel: 'anthropic:claude-haiku-4-5',
-      hasExpansionKey: true,
-    });
+  test('a Haiku subagent wins over an Opus default model', () => {
+    const r = recommendModeFor({ defaultModel: 'anthropic:claude-opus-5-5', subagentModel: 'anthropic:claude-haiku-5-5', hasChatKey: true, hasRerankKey: true });
     expect(r.mode).toBe('conservative');
   });
 });
 
-describe('MENU_TEXT cost-matrix anchors (must match CLAUDE.md + methodology doc)', () => {
-  test('25x corner-to-corner spread framing is named', async () => {
-    const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
-    // Updating these REQUIRES bumping CLAUDE.md ## Search Mode + the
-    // methodology doc + README in lockstep.
-    expect(MODE_PICKER_MENU).toContain('25x');
-    expect(MODE_PICKER_MENU).toContain('corner-to-corner');
+describe('resolveModePickerInputs: keys through mergedProviderEnv and reranker readiness', () => {
+  test('no keys anywhere → no chat key, reranker not ready → conservative', async () => {
+    await inHome({}, async () => {
+      const inputs = await resolveModePickerInputs(engine);
+      expect(inputs.hasChatKey).toBe(false);
+      expect(inputs.hasRerankKey).toBe(false);
+      expect(recommendModeFor(inputs).mode).toBe('conservative');
+    });
   });
 
-  test('does not claim the semantic result cache saves money while it is disabled', async () => {
-    const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
-    // CLAUDE.md ## Search Mode: "Semantic result caching is temporarily
-    // disabled; budget for fresh retrieval on every query."
-    expect(MODE_PICKER_MENU).not.toContain('semantic cache is free');
-    expect(MODE_PICKER_MENU).toContain('semantic result caching is temporarily disabled');
+  test('a Voyage key in the environment without a chat key → balanced', async () => {
+    await inHome({ VOYAGE_API_KEY: 'pa-test-stub' }, async () => {
+      const inputs = await resolveModePickerInputs(engine);
+      expect(inputs).toMatchObject({ hasChatKey: false, hasRerankKey: true });
+      expect(recommendModeFor(inputs)).toEqual({ mode: 'balanced', reason: MODE_REASONS.rerankOnly });
+    });
   });
 
-  test('cost matrix lists every cell at the natural diagonal and corners', async () => {
-    const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
-    // Three anchor cells from the natural diagonal at 10K/mo volume. Scales
-    // linearly; multiplying by 10 gives the 100K/mo numbers the methodology
-    // doc + CLAUDE.md cite ("multiply by 10 for 100K/mo" prose anchor).
-    expect(MODE_PICKER_MENU).toContain('$40/mo');     // conservative + Haiku
-    expect(MODE_PICKER_MENU).toContain('$300/mo');    // balanced + Sonnet (default natural)
-    expect(MODE_PICKER_MENU).toContain('$1,000/mo');  // tokenmax + Opus
+  test('a Voyage key saved only in ~/.gbrain/config.json counts', async () => {
+    writeConfigFile({ voyage_api_key: 'pa-test-stub' });
+    await inHome({}, async () => {
+      const inputs = await resolveModePickerInputs(engine);
+      expect(inputs).toMatchObject({ hasChatKey: false, hasRerankKey: true });
+      expect(recommendModeFor(inputs).mode).toBe('balanced');
+    });
   });
 
-  test('volume frame is 10K queries/month with linear-scale callout', async () => {
-    const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
-    expect(MODE_PICKER_MENU).toContain('10K queries/mo');
-    expect(MODE_PICKER_MENU).toContain('scales linearly');
+  test('a chat key saved only in ~/.gbrain/config.json counts', async () => {
+    writeConfigFile({ anthropic_api_key: 'sk-ant-test-stub' });
+    await inHome({}, async () => {
+      const inputs = await resolveModePickerInputs(engine);
+      expect(inputs.hasChatKey).toBe(true);
+      expect(inputs.hasRerankKey).toBe(false);
+      expect(recommendModeFor(inputs)).toEqual({ mode: 'tokenmax', reason: MODE_REASONS.default });
+    });
   });
 
-  test('all three downstream model rates are explicit', async () => {
-    const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
-    expect(MODE_PICKER_MENU).toContain('Haiku 4.5');
-    expect(MODE_PICKER_MENU).toContain('Sonnet 4.6');
-    expect(MODE_PICKER_MENU).toContain('Opus 4.7');
-    expect(MODE_PICKER_MENU).toContain('$1/M');
-    expect(MODE_PICKER_MENU).toContain('$3/M');
-    expect(MODE_PICKER_MENU).toContain('$5/M');
+  test('GEMINI_API_KEY counts as a chat key', async () => {
+    await inHome({ GEMINI_API_KEY: 'gm-test-stub' }, async () => {
+      expect((await resolveModePickerInputs(engine)).hasChatKey).toBe(true);
+    });
   });
 
-  test('query-verb Haiku-expansion surcharge is named explicitly, not attributed to tokenmax', async () => {
-    const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
-    // Cross-line match — the surcharge phrase can wrap.
+  test('a configured reranker that cannot run is not counted ready because a Voyage key exists', async () => {
+    await engine.setConfig('search.reranker.model', 'nonexistent-provider:model');
+    await inHome({ VOYAGE_API_KEY: 'pa-test-stub' }, async () => {
+      const inputs = await resolveModePickerInputs(engine);
+      expect(inputs.hasRerankKey).toBe(false);
+      expect(recommendModeFor(inputs).mode).toBe('conservative');
+    });
+  });
+
+  test('model tiers are read from the brain config', async () => {
+    await engine.setConfig('models.tier.subagent', 'anthropic:claude-haiku-5-5');
+    await inHome({ ANTHROPIC_API_KEY: 'sk-ant-test-stub' }, async () => {
+      const inputs = await resolveModePickerInputs(engine);
+      expect(inputs.subagentModel).toBe('anthropic:claude-haiku-5-5');
+      expect(recommendModeFor(inputs).mode).toBe('conservative');
+    });
+  });
+});
+
+describe('cost matrix: newest models, priced from model-pricing', () => {
+  test('prices every cell from the canonical pricing table', () => {
+    for (const { id } of COST_MATRIX_MODELS) {
+      const input = canonicalLookup(id)!.input;
+      expect(monthlyPayloadCost('conservative', id)).toBeCloseTo(4_000 * 10_000 / 1e6 * input, 6);
+      expect(monthlyPayloadCost('balanced', id)).toBeCloseTo(10_000 * 10_000 / 1e6 * input, 6);
+      expect(monthlyPayloadCost('tokenmax', id)).toBeCloseTo(20_000 * 10_000 / 1e6 * input, 6);
+    }
+  });
+
+  test('names the newest Anthropic models, not retired ones', () => {
+    const text = costMatrixLines().join('\n');
+    for (const label of ['Haiku 5.5', 'Sonnet 5.5', 'Opus 5.5']) expect(text).toContain(label);
+    for (const old of ['Haiku 4.5', 'Sonnet 4.6', 'Opus 4.7', '25x']) expect(text).not.toContain(old);
+    expect(text).toContain('10K queries/mo');
+    expect(text).toContain('Scales linearly');
+  });
+
+  test('the menu, the [AGENT] banner and the upgrade banner print the same matrix', () => {
+    const matrix = costMatrixLines('  ').slice(2, 7).map(l => l.trim());
+    const surfaces = [MODE_PICKER_MENU, agentBannerLines('balanced', 'r').join('\n'), upgradeBannerLines().join('\n')];
+    for (const surface of surfaces) for (const row of matrix) expect(surface).toContain(row);
+  });
+
+  test('INSTALL_FOR_AGENTS.md Step 3.5 carries the generated matrix verbatim', () => {
+    const doc = readFileSync(join(import.meta.dir, '..', 'INSTALL_FOR_AGENTS.md'), 'utf8');
+    expect(doc).toContain(costMatrixLines('  ').join('\n'));
+  });
+
+  test('the first-run sentence carries the same cells', () => {
+    const sentence = costMatrixSentence();
+    expect(sentence).toContain('Haiku 5.5 / Sonnet 5.5 / Opus 5.5');
+    expect(sentence).toContain(`balanced $10 / $200 / $400`);
+  });
+
+  test('the menu states the query expansion rule and no cache refill', () => {
     const flat = MODE_PICKER_MENU.replace(/\s+/g, ' ');
-    expect(flat).toContain('gbrain query adds ~$1.50 per 1K queries');
-    expect(MODE_PICKER_MENU).toContain('Haiku expansion call');
-    // `gbrain query` expands in every mode (#4601); the surcharge is not a tokenmax line item.
-    expect(flat).not.toContain('tokenmax adds');
-    expect(flat).toContain('--no-expand');
-  });
-
-  test('cache-hit discount framing is named', async () => {
-    const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
-    expect(MODE_PICKER_MENU).toContain('cache');
-    // The numbers below are full-payload pre-cache; real loops see 50-80% discount.
-    expect(MODE_PICKER_MENU).toMatch(/50-80%|discount/);
-  });
-
-  test('tune command is surfaced as the next step', async () => {
-    const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
+    expect(flat).toContain('`gbrain query` does not expand by default in any mode');
+    expect(flat).toContain('`gbrain search` never expands');
+    expect(flat).toContain('`gbrain config set search.expansion true` turns the default on for the brain');
+    expect(flat).not.toMatch(/in every mode/);
+    expect(MODE_PICKER_MENU).toContain('semantic result caching is temporarily disabled');
     expect(MODE_PICKER_MENU).toContain('gbrain search tune');
   });
 });
 
-describe('parseModeInput — menu choice mapper', () => {
-  test('numeric 1/2/3 → conservative/balanced/tokenmax', () => {
+describe('parseModeInput', () => {
+  test('numeric 1/2/3 and names (case-insensitive)', () => {
     expect(parseModeInput('1')).toBe('conservative');
     expect(parseModeInput('2')).toBe('balanced');
     expect(parseModeInput('3')).toBe('tokenmax');
-  });
-
-  test('mode names (case-insensitive)', () => {
-    expect(parseModeInput('conservative')).toBe('conservative');
-    expect(parseModeInput('CONSERVATIVE')).toBe('conservative');
-    expect(parseModeInput('TokenMax')).toBe('tokenmax');
-    expect(parseModeInput(' balanced ')).toBe('balanced');
+    expect(parseModeInput(' TokenMax ')).toBe('tokenmax');
   });
 
   test('empty / unrecognized → null', () => {
-    expect(parseModeInput('')).toBeNull();
-    expect(parseModeInput('   ')).toBeNull();
-    expect(parseModeInput('foo')).toBeNull();
-    expect(parseModeInput('4')).toBeNull();
-    expect(parseModeInput('0')).toBeNull();
+    for (const raw of ['', '   ', 'foo', '4', '0']) expect(parseModeInput(raw)).toBeNull();
   });
 });
 
-describe('runModePicker non-TTY surfaces full matrix + [AGENT] directive', () => {
-  test('non-TTY output includes the cost matrix and the [AGENT] directive', async () => {
-    const originalLog = console.log;
-    const captured: string[] = [];
-    console.log = (msg: string) => { captured.push(String(msg)); };
-    try {
-      await runModePicker(engine);
-    } finally {
-      console.log = originalLog;
-    }
-    const out = captured.join('\n');
-    // Matrix corners + diagonal mid
-    expect(out).toContain('$40/mo');
-    expect(out).toContain('$300/mo');
-    expect(out).toContain('$1,000/mo');
-    // 25x spread framing
-    expect(out).toContain('25x corner-to-corner');
-    // Explicit agent directive — load-bearing for agent-platform install paths
-    expect(out).toContain('[AGENT]');
-    expect(out.toLowerCase()).toContain('show this matrix');
-    expect(out).toContain('INSTALL_FOR_AGENTS.md');
-  });
-});
-
-describe('runModePicker — non-TTY auto-select + idempotent', () => {
-  test('non-TTY auto-selects + writes config + emits operator hint', async () => {
-    // Bun test runs non-TTY by default.
-    const picked = await runModePicker(engine);
-    // Default model unset → balanced. Should write search.mode.
-    const stored = await engine.getConfig('search.mode');
-    expect(stored).toBe(picked);
-    expect(['conservative', 'balanced', 'tokenmax']).toContain(picked);
-  });
-
-  test('idempotent: second call returns existing mode without overwrite', async () => {
-    await engine.setConfig('search.mode', 'tokenmax');
-    const picked = await runModePicker(engine);
-    expect(picked).toBe('tokenmax');
-    // No accidental overwrite.
-    const stored = await engine.getConfig('search.mode');
-    expect(stored).toBe('tokenmax');
-  });
-
-  test('--force re-prompts even if mode is already set', async () => {
-    await engine.setConfig('search.mode', 'conservative');
-    // Non-TTY + force → re-runs auto-suggest with current inputs.
-    const picked = await runModePicker(engine, { force: true });
-    // With no model hints + no API key state, default is balanced. The picker
-    // will overwrite the existing mode.
-    expect(['conservative', 'balanced', 'tokenmax']).toContain(picked);
-    const stored = await engine.getConfig('search.mode');
-    expect(stored).toBe(picked);
-  });
-
-  test('jsonOutput mode emits a structured event and writes config', async () => {
-    // Capture console.log output.
-    const originalLog = console.log;
-    const captured: string[] = [];
-    console.log = (msg: string) => { captured.push(msg); };
-    try {
-      const picked = await runModePicker(engine, { jsonOutput: true });
-      const stored = await engine.getConfig('search.mode');
-      expect(stored).toBe(picked);
-      const jsonLine = captured.find(l => l.startsWith('{'));
-      expect(jsonLine).toBeDefined();
-      const obj = JSON.parse(jsonLine!);
-      expect(obj.phase).toBe('search_mode_picker');
-      expect(obj.auto).toBe(true);
-      expect(['conservative', 'balanced', 'tokenmax']).toContain(obj.mode);
-    } finally {
-      console.log = originalLog;
-    }
-  });
-
-  test('Opus default model + OpenAI key → picker auto-recommends tokenmax', async () => {
-    // OPENAI_API_KEY must be present — the no-key short-circuit fires before
-    // the Opus check (gbrain can't do vector search without embeddings).
-    await withEnv({ OPENAI_API_KEY: 'sk-test-stub' }, async () => {
-      await engine.setConfig('models.default', 'anthropic:claude-opus-4-7');
-      const picked = await runModePicker(engine);
-      expect(picked).toBe('tokenmax');
+describe('runModePicker: non-TTY and --json', () => {
+  test('non-TTY applies tokenmax for a keyed brain, records auto, prints the [AGENT] banner', async () => {
+    await inHome({ ANTHROPIC_API_KEY: 'sk-ant-test-stub' }, async () => {
+      let decision: { mode: string; reason: string } | undefined;
+      const out = (await captureLog(() => runModePicker(engine, { onDecision: d => { decision = d; } }))).join('\n');
+      expect(await engine.getConfig('search.mode')).toBe('tokenmax');
+      expect(await engine.getConfig('search.mode_source')).toBe('auto');
+      expect(decision).toEqual({ mode: 'tokenmax', reason: MODE_REASONS.default });
+      expect(out).toContain('[gbrain] search mode tentatively set to: tokenmax');
+      expect(out.toLowerCase()).toContain('show this matrix');
+      expect(out).toContain('INSTALL_FOR_AGENTS.md');
+      expect(out).toContain('gbrain init --search-mode <mode>');
+      expect(out).toContain('Opus 5.5');
     });
   });
 
-  test('Haiku subagent → picker auto-recommends conservative', async () => {
-    await engine.setConfig('models.tier.subagent', 'anthropic:claude-haiku-4-5');
-    const picked = await runModePicker(engine);
-    expect(picked).toBe('conservative');
+  test('non-TTY on a keyless brain applies conservative', async () => {
+    await inHome({}, async () => {
+      await captureLog(() => runModePicker(engine));
+      expect(await engine.getConfig('search.mode')).toBe('conservative');
+      expect(await engine.getConfig('search.mode_source')).toBe('auto');
+    });
+  });
+
+  test('--json emits one structured event with auto: true and source auto', async () => {
+    await inHome({ VOYAGE_API_KEY: 'pa-test-stub' }, async () => {
+      const lines = await captureLog(() => runModePicker(engine, { jsonOutput: true }));
+      const event = JSON.parse(lines.find(l => l.startsWith('{'))!);
+      expect(event).toEqual({ phase: 'search_mode_picker', mode: 'balanced', reason: MODE_REASONS.rerankOnly, auto: true, source: 'auto' });
+      expect(await engine.getConfig('search.mode')).toBe('balanced');
+    });
+  });
+
+  test('idempotent: an existing mode is kept and nothing is recorded', async () => {
+    await engine.setConfig('search.mode', 'tokenmax');
+    await inHome({ ANTHROPIC_API_KEY: 'sk-ant-test-stub' }, async () => {
+      let decided = false;
+      expect(await runModePicker(engine, { onDecision: () => { decided = true; } })).toBe('tokenmax');
+      expect(decided).toBe(false);
+      expect(await engine.getConfig('search.mode')).toBe('tokenmax');
+      expect(await engine.getConfig('search.mode_source')).toBeNull();
+    });
+  });
+
+  test('--force re-runs the recommendation over an existing mode', async () => {
+    await engine.setConfig('search.mode', 'tokenmax');
+    await inHome({ ANTHROPIC_API_KEY: 'sk-ant-test-stub' }, async () => {
+      await engine.setConfig('search.mode', 'conservative');
+      await captureLog(() => runModePicker(engine, { force: true }));
+      expect(await engine.getConfig('search.mode')).toBe('tokenmax');
+      expect(await engine.getConfig('search.mode_source')).toBe('auto');
+    });
+  });
+});
+
+describe('init --search-mode: the operator\'s choice', () => {
+  const fail = (message: string): never => { throw new Error(`refused: ${message}`); };
+
+  test('parses the flag; an invalid value is refused', () => {
+    expect(searchModeChoiceFromArgs(['--pglite'], fail)).toEqual({});
+    expect(searchModeChoiceFromArgs(['--search-mode', 'Balanced'], fail)).toMatchObject({ explicit: 'balanced', force: false });
+    expect(searchModeChoiceFromArgs(['--search-mode', 'tokenmax', '--force'], fail)).toMatchObject({ explicit: 'tokenmax', force: true });
+    expect(() => searchModeChoiceFromArgs(['--search-mode', 'max'], fail)).toThrow(/--search-mode must be one of conservative, balanced, tokenmax/);
+    expect(() => searchModeChoiceFromArgs(['--search-mode'], fail)).toThrow(/--search-mode must be one of/);
+  });
+
+  test('a fresh brain records the choice as operator and asks nothing', async () => {
+    await inHome({}, async () => {
+      let decided = false;
+      const lines = await captureLog(() => runModePicker(engine, { explicit: 'tokenmax', jsonOutput: true, onDecision: () => { decided = true; } }));
+      expect(decided).toBe(false);
+      expect(await engine.getConfig('search.mode')).toBe('tokenmax');
+      expect(await engine.getConfig('search.mode_source')).toBe('operator');
+      expect(JSON.parse(lines.find(l => l.startsWith('{'))!)).toMatchObject({ phase: 'search_mode_picker', mode: 'tokenmax', auto: false, source: 'operator' });
+      expect(lines.join('\n')).not.toContain('[AGENT]');
+    });
+  });
+
+  test('an existing brain with another mode refuses without --force and changes nothing', async () => {
+    await engine.setConfig('search.mode', 'balanced');
+    await inHome({}, async () => {
+      await expect(runModePicker(engine, { explicit: 'tokenmax', refuse: fail })).rejects.toThrow(
+        /refused: This brain already has search.mode balanced.*gbrain config set search.mode tokenmax.*--force/,
+      );
+      expect(await engine.getConfig('search.mode')).toBe('balanced');
+      expect(await engine.getConfig('search.mode_source')).toBeNull();
+    });
+  });
+
+  test('--force replaces an existing brain\'s mode and records operator', async () => {
+    await engine.setConfig('search.mode', 'balanced');
+    await inHome({}, async () => {
+      await captureLog(() => runModePicker(engine, { explicit: 'tokenmax', force: true }));
+      expect(await engine.getConfig('search.mode')).toBe('tokenmax');
+      expect(await engine.getConfig('search.mode_source')).toBe('operator');
+    });
+  });
+
+  test('the same mode on an existing brain is accepted and marks it the operator\'s', async () => {
+    await engine.setConfig('search.mode', 'tokenmax');
+    await inHome({}, async () => {
+      await captureLog(() => runModePicker(engine, { explicit: 'tokenmax', refuse: fail }));
+      expect(await engine.getConfig('search.mode_source')).toBe('operator');
+    });
+  });
+});
+
+describe('upgrade banner', () => {
+  test('states the default a mode-less brain runs and the recommendation from the shared source', () => {
+    const text = upgradeBannerLines().join('\n');
+    expect(text).toContain('runs balanced');
+    expect(text).toContain('Recommended for a brain with a chat key: tokenmax');
+    expect(text).not.toMatch(/expand=true|preserves current retrieval shape|v0\.31/);
   });
 });

@@ -1,6 +1,6 @@
 /** #6255 (fix wave 12, W1.4): `gbrain write-request --help` names its routing flags and the receipt states. */
 import { expect, test } from 'bun:test';
-import { printOpHelp } from '../src/cli.ts';
+import { printOpHelp } from '../src/cli/main.ts';
 import { operationsByName } from '../src/core/operations.ts';
 
 test('write-request help shows --brain, --json and the pending versus final states', () => {

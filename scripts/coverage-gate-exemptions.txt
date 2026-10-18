@@ -5,7 +5,7 @@
 # They are still REPORTED in the gate's table, tagged:
 #   [e2e-exempt]            coverage for these lives in DATABASE_URL-gated
 #                           e2e lanes that the PR corpus may not run
-#   [subprocess-undercount] src/cli.ts only: the CLI is exercised via child
+#   [subprocess-undercount] src/cli.ts and src/cli/main.ts only: the CLI is exercised via child
 #                           processes and bun coverage does not propagate
 #                           into subprocesses, so its numbers undercount
 #
@@ -23,3 +23,5 @@ src/core/migrate.ts
 # Transferred with the MIGRATIONS array from migrate.ts (refactor wave 1, W3 split).
 src/core/schema-migrations/
 src/cli.ts
+# The dispatcher body moved here from src/cli.ts (cold-start fast path); same subprocess undercount.
+src/cli/main.ts

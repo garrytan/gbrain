@@ -1,6 +1,7 @@
 /**
  * Database reachability: the PGLite data-dir diagnosis and scratch-store probe
- * that run when the connect failed, the connection check itself (live, or
+ * that run when the connect failed, the near-backup-cap size warning on a
+ * healthy PGLite brain (#6649), the connection check itself (live, or
  * synthesized when there is no engine), and the two early stops that end the
  * run before the DB checks.
  *
@@ -17,10 +18,13 @@ import { exclusiveFix, liveServeOwner } from '../../../core/exclusive-fix.ts';
 import { startHeartbeat } from '../../../core/progress.ts';
 import { checkPgliteScratchProbe } from './core-health.ts';
 import { computePgliteDataDirCheck } from './pglite-worker.ts';
+import { BACKUP_ARCHIVE_MAX_BYTES } from '../../../core/backup/archive.ts';
+import { BACKUP_SIZE_WARN_RATIO, PHYSICAL_COPY_RUNBOOK, estimatedTarBytes, formatGiB, physicalCopyFix } from '../../../core/backup/preflight.ts';
 import type { Check } from '../../doctor.ts';
 import { classifyPgAccessError } from '../../../core/pg-access-classify.ts';
 import { dbRepairRecurrenceCheck } from './engine-fit.ts';
 import { STOP_DOCTOR, connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { DoctorBudgetError, budgetUnknownCheck } from '../budget.ts';
 
 async function runPgliteDataDir(ctx: DoctorContext): Promise<Check[]> {
   const { args, engine, fastMode, progress } = ctx;
@@ -62,6 +66,17 @@ async function runPgliteDataDir(ctx: DoctorContext): Promise<Check[]> {
       }
     }
 
+    // #6649: a healthy PGLite brain nearing the backup-archive cap is warned before `gbrain backup create` refuses.
+    if (engine && !fastMode && cfgForProbe?.engine === 'pglite' && cfgForProbe.database_path) {
+      try {
+        const { resolve } = await import('node:path');
+        const sizeCheck = backupSizeCheck(resolve(cfgForProbe.database_path));
+        if (sizeCheck) checks.push(sizeCheck);
+      } catch {
+        // Best-effort: an unreadable data dir must not stop doctor.
+      }
+    }
+
     const dirExplainsFailure = dirVerdict === 'locked' || dirVerdict === 'missing';
     if (probeRequested || (pgliteInitFailed && !dirExplainsFailure)) {
       progress.start('doctor.pglite_probe');
@@ -85,6 +100,26 @@ async function runPgliteDataDir(ctx: DoctorContext): Promise<Check[]> {
     }
   }
   return checks;
+}
+
+/**
+ * #6649: `pglite_data_dir` warns once the data dir's estimated archive size
+ * passes BACKUP_SIZE_WARN_RATIO of the 8 GiB backup cap, naming
+ * `backup_too_large` and the physical-copy runbook. Null below the ratio.
+ * `estimatedBytes` is injectable so tests need not write gigabytes.
+ */
+export function backupSizeCheck(dataDir: string, estimatedBytes?: number): Check | null {
+  const bytes = estimatedBytes ?? estimatedTarBytes(dataDir);
+  if (bytes < BACKUP_ARCHIVE_MAX_BYTES * BACKUP_SIZE_WARN_RATIO) return null;
+  const over = bytes > BACKUP_ARCHIVE_MAX_BYTES;
+  return {
+    name: 'pglite_data_dir',
+    status: 'warn',
+    message: `backup_too_large: this PGLite brain needs about ${formatGiB(bytes)} in a backup archive, ${over ? 'over' : 'near'} the ${formatGiB(BACKUP_ARCHIVE_MAX_BYTES)} cap, ` +
+      `so \`gbrain backup create\` ${over ? 'refuses it' : 'will refuse it soon'}. Plan a quiesced physical copy (${PHYSICAL_COPY_RUNBOOK}).`,
+    details: { code: 'backup_too_large', data_dir: dataDir, estimated_bytes: bytes, limit_bytes: BACKUP_ARCHIVE_MAX_BYTES, over_limit: over },
+    fix: physicalCopyFix(),
+  };
 }
 
 export const pgliteDataDirEntry: DoctorEntry = {
@@ -150,6 +185,12 @@ function classifiedConnectionCheck(e: unknown, dbSource?: DbUrlSource): Check {
         { requires_exclusive: true }), owner),
     };
   }
+  // C-3: a legacy lock whose owner cannot be proven dead never frees itself; its fix asks the user and starts with the preview.
+  const legacy = e as { code?: unknown; reason?: unknown; fix?: Action; message?: unknown } | null;
+  if (legacy?.code === 'pglite_busy' && legacy.reason === 'legacy_owner_unverified' && legacy.fix) {
+    return { name: 'connection', status: 'fail', readiness_state: 'unknown', message: `${String(legacy.message)} The database checks did not run.`,
+      details: { reason: 'legacy_owner_unverified' }, fix: legacy.fix };
+  }
   const d = classifyPgAccessError(e, { url: loadConfig()?.database_url ?? null });
   const source = describeUrlSource(dbSource ?? getDbUrlSource());
   return {
@@ -189,7 +230,10 @@ async function runOfflineConnection(ctx: DoctorContext): Promise<Check[]> {
     // whether a URL exists (env or config-file) — the caller simply
     // skipped the connection. When null, there really is no config
     // anywhere.
-    if (!fastMode && dbSource && connectError !== undefined) {
+    if (connectError instanceof DoctorBudgetError) {
+      // #6696 B1: the connect was still pending at the run's deadline: unknown, not an outage.
+      checks.push(budgetUnknownCheck('connection', connectError.elapsedMs, ctx.deadline?.budgetMs ?? connectError.elapsedMs));
+    } else if (!fastMode && dbSource && connectError !== undefined) {
       // 2c-bis: a REAL connect failure — synthesize the classified check so
       // `checks[name=="connection"]` exists in every failure shape.
       checks.push(classifiedConnectionCheck(connectError, dbSource));
@@ -268,9 +312,19 @@ async function runConnection(ctx: DoctorContext): Promise<Check[]> {
   // 3. Connection
   progress.heartbeat('connection');
   try {
-    const stats = await engine.getStats();
-    checks.push({ name: 'connection', status: 'ok', message: `Connected, ${stats.page_count} pages` });
+    // #6696 B1: the ops tier proves the round trip only; the page count is a full count the deadline does not afford.
+    if (ctx.tier === 'ops') {
+      await engine.executeRaw('SELECT 1 AS ok');
+      checks.push({ name: 'connection', status: 'ok', message: 'Connected (ops tier: page count not read).' });
+    } else {
+      const stats = await engine.getStats();
+      checks.push({ name: 'connection', status: 'ok', message: `Connected, ${stats.page_count} pages` });
+    }
   } catch (e: unknown) {
+    // A round trip the ops deadline ended (a saturated pool, a blocked server) is unknown, not a classified outage.
+    const deadlineAt = ctx.deadline?.deadlineAt;
+    if (e instanceof DoctorBudgetError) throw e;
+    if (ctx.tier === 'ops' && deadlineAt != null && Date.now() >= deadlineAt) throw new DoctorBudgetError(Date.now() - ctx.deadline!.startedAt);
     // db-availability loop (2c): classified + redacted, with the fix hint.
     checks.push(classifiedConnectionCheck(e));
     progress.finish();

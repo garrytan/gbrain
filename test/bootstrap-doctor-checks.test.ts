@@ -244,7 +244,8 @@ describe('bootstrap_harness_health (#4043)', () => {
     const checks = await run(parent);
     const c = byName(checks, 'bootstrap_harness_health');
     expect(c?.status).toBe('fail');
-    expect(c?.message).toMatch(/never revoked/);
+    // #6743: per-id wording (this id has no enrollment to leave, so revoking it is safe).
+    expect(c?.message).toContain('44444444-4444-4444-4444-444444444444: status unknown; no enrollment holds it; a re-run revokes it (or `gbrain auth revoke` by id)');
   }, T);
 
   test('healthy receipt + unreachable serve → WARN (normal transient), never fail', async () => {

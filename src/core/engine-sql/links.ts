@@ -21,7 +21,7 @@ import { PageMissingError } from '../engine-errors.ts';
 import { QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead, ScopedRead } from './brands.ts';
-import { sqlFragment, trustedSql } from './fragment.ts';
+import { sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { refreshRelationships, type RelationshipKey } from '../link-relationships.ts';
 import { isTemporalLinkType, relationshipFilterSql, temporalLinkJoinSql, TEMPORAL_LINK_SELECT_SQL, annotateTemporalRow } from '../link-validity.ts';
 import type { LinkReadScope } from '../link-validity.ts';
@@ -94,6 +94,63 @@ export async function addLink(
   }
 
 
+/** One code path a markdown page cites (`src/core/sync.ts:42`), with the slug of its code page. */
+export interface CodeReference { codeSlug: string; path: string; line?: number }
+
+/**
+ * The doc↔impl edges for every code path one markdown page cites, in one
+ * statement (#6712 L6; the import paths wrote two savepointed addLink calls per
+ * reference). Each reference writes what the addLink pair wrote: page→code
+ * `documents` (context `cited at <path>:<line>`, or the path) and code→page
+ * `documented_by` (context the path), both `markdown` edges whose origin is the
+ * page, field `compiled_truth`. Endpoints resolve source-qualified in the
+ * page's source under FOR KEY SHARE in the same statement snapshot; an edge
+ * whose endpoint is missing is skipped alone (a code page not imported yet);
+ * an existing edge takes the new context and origin_field; a repeated edge
+ * keeps its last occurrence, as sequential upserts would. Returns the edges
+ * written (inserted or updated).
+ */
+export async function addCodeReferenceLinks(exec: Pick<SqlExecutor, 'executeRaw'>, slug: string, sourceId: string, refs: CodeReference[]): Promise<number> {
+  const edges = new Map<string, { from_slug: string; to_slug: string; link_type: string; context: string }>();
+  for (const ref of refs) {
+    for (const [from, to, linkType, context] of [
+      [slug, ref.codeSlug, 'documents', ref.line ? `cited at ${ref.path}:${ref.line}` : ref.path],
+      [ref.codeSlug, slug, 'documented_by', ref.path],
+    ] as const) {
+      const key = JSON.stringify([from, to, linkType]);
+      edges.delete(key);
+      edges.set(key, { from_slug: from, to_slug: to, link_type: linkType, context: sanitizeForJsonb(context) });
+    }
+  }
+  if (!edges.size) return 0;
+  const rows = [...edges.values()].map((edge, ord) => ({ ...edge, ord }));
+  const written = await executeRawJsonb<RelationshipKey>(exec,
+    `WITH v AS (
+       SELECT * FROM jsonb_to_recordset(($3::jsonb)->'rows') AS v(ord int, from_slug text, to_slug text, link_type text, context text)
+     ), endpoints AS (
+       SELECT p.id, p.slug FROM pages p
+       WHERE p.source_id = $1 AND p.slug IN (SELECT from_slug FROM v UNION SELECT to_slug FROM v)
+       ORDER BY p.id
+       FOR KEY SHARE
+     )
+     INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, origin_page_id, origin_field)
+     SELECT f.id, t.id, v.link_type, v.context, 'markdown', o.id, 'compiled_truth'
+     FROM v
+     JOIN endpoints f ON f.slug = v.from_slug
+     JOIN endpoints t ON t.slug = v.to_slug
+     LEFT JOIN endpoints o ON o.slug = $2::text
+     ORDER BY v.ord
+     ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO UPDATE SET
+       context = EXCLUDED.context,
+       origin_field = EXCLUDED.origin_field
+     RETURNING from_page_id, to_page_id, link_type`,
+    [sourceId, slug],
+    [{ rows }],
+  );
+  await refreshRelationships(exec, written);
+  return written.length;
+}
+
 export async function addLinksBatch(exec: SqlExecutor, links: LinkBatchInput[]): Promise<number> {
     // #1861: pass the batch as one JSONB document via jsonb_to_recordset instead
     // of N parallel unnest(${arr}::text[]). The old text[] array-literal path
@@ -107,12 +164,12 @@ export async function addLinksBatch(exec: SqlExecutor, links: LinkBatchInput[]):
     const rows = buildLinkRows(links);
     const insert = (target: SqlExecutor) => executeRawJsonb<RelationshipKey>(
       target,
-      `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, link_kind, origin_page_id, origin_field)
-       SELECT f.id, t.id, v.link_type, v.context, v.link_source, v.link_kind, o.id, v.origin_field
+      `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, link_kind, origin_page_id, origin_field, resolution_type)
+       SELECT f.id, t.id, v.link_type, v.context, v.link_source, v.link_kind, o.id, v.origin_field, v.resolution_type
        FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(
          from_slug text, to_slug text, link_type text, context text, link_source text,
          origin_slug text, origin_field text, from_source_id text, to_source_id text,
-         origin_source_id text, link_kind text
+         origin_source_id text, link_kind text, resolution_type text
        )
        JOIN pages f ON f.slug = v.from_slug AND f.source_id = v.from_source_id
        JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id
@@ -464,6 +521,73 @@ export async function findOrphanPages(exec: LegacyUnscopedRead, opts?: {
   }
 
 
+/**
+ * Breadth-first walk shared by `traverseGraph` and `traversePathsDetailed`.
+ *
+ * Each recursive row is one whole BFS layer: its depth, its frontier and every
+ * page visited so far. A layer expands the frontier through one indexed
+ * `links` join with the caller's per-step filters (soft delete, privacy,
+ * source scope, link type, temporal policy), drops already-visited pages with a
+ * hash anti-join, and keeps at most `layerCap` new pages and never more than
+ * TRAVERSE_WALK_ROW_CAP + 1 visited pages in total, in (slug, id) order. Every
+ * page therefore appears once, at its shortest distance from the seed, and the
+ * work is bounded by the pages and edges touched instead of by the number of
+ * simple paths (the old per-path CTE took 22 s on a 12-page clique at depth 5).
+ *
+ * Emits two CTEs: `bfs` and `walk(id, depth, pos)`, where `pos` is the page's
+ * position in visit order. A walk with more than TRAVERSE_WALK_ROW_CAP rows was
+ * truncated; callers keep `pos <= TRAVERSE_WALK_ROW_CAP`.
+ */
+function bfsWalkCtes(w: {
+  seed: SqlFragment;
+  maxLayer: number;
+  direction: 'in' | 'out' | 'both';
+  step: SqlFragment;
+  layerCap?: number;
+}) {
+  const out = sqlFragment`SELECT p2.id, p2.slug FROM unnest(bfs.frontier) f(id)
+          JOIN links l ON l.from_page_id = f.id
+          JOIN pages p2 ON p2.id = l.to_page_id
+          WHERE ${w.step}`;
+  const into = sqlFragment`SELECT p2.id, p2.slug FROM unnest(bfs.frontier) f(id)
+          JOIN links l ON l.to_page_id = f.id
+          JOIN pages p2 ON p2.id = l.from_page_id
+          WHERE ${w.step}`;
+  const neighbours = w.direction === 'out' ? out : w.direction === 'in' ? into : sqlFragment`${out} UNION ALL ${into}`;
+  const budget = sqlFragment`greatest(0, ${TRAVERSE_WALK_ROW_CAP + 1}::int - cardinality(bfs.visited))`;
+  const limit = w.layerCap !== undefined && w.layerCap > 0 ? sqlFragment`least(${w.layerCap}::int, ${budget})` : budget;
+  return sqlFragment`bfs(depth, frontier, visited) AS (
+        SELECT 0, array_agg(p.id ORDER BY p.slug, p.id), array_agg(p.id ORDER BY p.slug, p.id)
+        FROM pages p WHERE ${w.seed}
+        HAVING count(*) > 0
+        UNION ALL
+        SELECT bfs.depth + 1, n.next, bfs.visited || n.next
+        FROM bfs CROSS JOIN LATERAL (
+          SELECT array_agg(c.id ORDER BY c.slug, c.id) AS next
+          FROM (
+            SELECT DISTINCT nb.id, nb.slug FROM (${neighbours}) nb
+            WHERE NOT EXISTS (SELECT 1 FROM unnest(bfs.visited) v(id) WHERE v.id = nb.id)
+            ORDER BY nb.slug, nb.id
+            LIMIT ${limit}
+          ) c
+        ) n
+        WHERE bfs.depth < ${w.maxLayer}::int AND n.next IS NOT NULL
+      ),
+      walk AS (
+        SELECT u.id, b.depth, row_number() OVER (ORDER BY b.depth, u.ord) AS pos
+        FROM bfs b CROSS JOIN LATERAL unnest(b.frontier) WITH ORDINALITY u(id, ord)
+      )`;
+}
+
+const SCOPED_SOURCE_COLUMNS = { p: 'p.source_id', p2: 'p2.source_id', p3: 'p3.source_id', pf: 'pf.source_id', pt: 'pt.source_id' } as const;
+
+function sourceScope(alias: keyof typeof SCOPED_SOURCE_COLUMNS, opts?: { sourceId?: string; sourceIds?: string[] }) {
+  const column = trustedSql(SCOPED_SOURCE_COLUMNS[alias]);
+  if (opts?.sourceIds && opts.sourceIds.length > 0) return sqlFragment`AND ${column} = ANY(${opts.sourceIds}::text[])`;
+  if (opts?.sourceId) return sqlFragment`AND ${column} = ${opts.sourceId}`;
+  return sqlFragment``;
+}
+
 export async function traverseGraph(
   exec: LegacyUnscopedRead,
     slug: string,
@@ -472,98 +596,45 @@ export async function traverseGraph(
   ): Promise<GraphNode[]> {
     const privacy = (page: string, link?: string) => opts?.excludePrivate
       ? trustedSql(`AND ${privatePagesFilterFragment(page)}${link ? ` AND ${privateLinkOriginFilterFragment(link)}` : ''}`) : sqlFragment``;
-    // v0.34.1 (#861 — P0 leak seal): scope visited nodes to the caller's
-    // source(s). Without this, the walk follows edges into pages from
-    // foreign sources, leaking topology + page metadata. The filter
-    // applies at BOTH the seed (root must be in scope) AND the recursive
-    // step (every visited neighbor must be in scope). The aggregation
-    // subquery also filters so the per-node `links` array only includes
-    // edges to in-scope pages.
-    const useSourceIds = opts?.sourceIds && opts.sourceIds.length > 0;
-    const seedScope = useSourceIds
-      ? sqlFragment`AND p.source_id = ANY(${opts!.sourceIds!}::text[])`
-      : opts?.sourceId
-        ? sqlFragment`AND p.source_id = ${opts.sourceId}`
-        : sqlFragment``;
-    const stepScope = useSourceIds
-      ? sqlFragment`AND p2.source_id = ANY(${opts!.sourceIds!}::text[])`
-      : opts?.sourceId
-        ? sqlFragment`AND p2.source_id = ${opts.sourceId}`
-        : sqlFragment``;
-    const aggScope = useSourceIds
-      ? sqlFragment`AND p3.source_id = ANY(${opts!.sourceIds!}::text[])`
-      : opts?.sourceId
-        ? sqlFragment`AND p3.source_id = ${opts.sourceId}`
-        : sqlFragment``;
-    // T8 (v0.36+): frontier cap. When set, the recursive term applies a
-    // parenthesized LIMIT N with ORDER BY (slug, id) for stable selection.
-    // Postgres' parenthesized-LIMIT inside a recursive term caps per
-    // ITERATION, which maps approximately to per-BFS-LAYER (the mapping is
-    // exact when fanout is bounded; for hub-fanout graphs the cap fires
-    // early). Post-query, count rows per depth — if any depth == cap, fire
-    // the truncation callback.
-    const cap = opts?.frontierCap;
-    const recursiveStep = cap !== undefined && cap > 0
-      ? sqlFragment`(SELECT p2.id, p2.slug, p2.source_id, p2.title, p2.type, g.depth + 1, g.visited || p2.id
-             FROM graph g
-             JOIN links l ON l.from_page_id = g.id
-             JOIN pages p2 ON p2.id = l.to_page_id
-             WHERE g.depth < ${depth}
-               AND NOT (p2.id = ANY(g.visited))
-               AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
-               ${stepScope} ${temporalWalkFilter('l', opts)}
-             ORDER BY p2.slug ASC, p2.id ASC
-             LIMIT ${cap})`
-      : sqlFragment`SELECT p2.id, p2.slug, p2.source_id, p2.title, p2.type, g.depth + 1, g.visited || p2.id
-            FROM graph g
-            JOIN links l ON l.from_page_id = g.id
-            JOIN pages p2 ON p2.id = l.to_page_id
-            WHERE g.depth < ${depth}
-              AND NOT (p2.id = ANY(g.visited))
-              AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
-              ${stepScope} ${temporalWalkFilter('l', opts)}`;
-    // Cycle prevention: visited array tracks page IDs already in the path.
+    // v0.34.1 (#861 — P0 leak seal): visited pages are scoped to the caller's
+    // source(s) at the seed and at every step, and the per-node `links`
+    // aggregation only includes edges to in-scope pages.
+    // T8 (v0.36+): `frontierCap` bounds the new pages each BFS layer adds,
+    // chosen in (slug, id) order.
     const rows = (await exec.run(sqlFragment`
-      WITH RECURSIVE graph AS (
-        SELECT p.id, p.slug, p.source_id, p.title, p.type, 0 as depth, ARRAY[p.id] as visited
-        FROM pages p WHERE p.slug = ${slug} AND p.deleted_at IS NULL ${privacy('p')} ${seedScope}
-
-        UNION ALL
-
-        ${recursiveStep}
-      )
-      SELECT DISTINCT g.slug, g.source_id, g.title, g.type, g.depth,
+      WITH RECURSIVE ${bfsWalkCtes({
+        seed: sqlFragment`p.slug = ${slug} AND p.deleted_at IS NULL ${privacy('p')} ${sourceScope('p', opts)}`,
+        maxLayer: depth,
+        direction: 'out',
+        step: sqlFragment`p2.deleted_at IS NULL ${privacy('p2', 'l')} ${sourceScope('p2', opts)} ${temporalWalkFilter('l', opts)}`,
+        layerCap: opts?.frontierCap,
+      })}
+      SELECT g.slug, g.source_id, g.title, g.type, g.depth,
         coalesce(
           -- jsonb_agg(DISTINCT ...) collapses duplicate (to_slug, link_type)
           -- edges that originate from different provenance (markdown body
           -- vs frontmatter vs auto-extracted). The underlying links table
           -- preserves every row with its origin_page_id / link_source —
           -- the dedup is presentation-only for the legacy traverseGraph
-          -- aggregation. traversePaths has its own in-memory dedup at a
-          -- different layer. See plan Bug 6/10.
+          -- aggregation. See plan Bug 6/10.
           (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
            FROM links l2
            JOIN pages p3 ON p3.id = l2.to_page_id
-           WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL ${privacy('p3', 'l2')} ${aggScope} ${temporalWalkFilter('l2', opts)}),
+           WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL ${privacy('p3', 'l2')} ${sourceScope('p3', opts)} ${temporalWalkFilter('l2', opts)}),
           '[]'::jsonb
         ) as links
-      FROM (SELECT DISTINCT id, slug, source_id, title, type, depth
-            FROM (SELECT id, slug, source_id, title, type, depth FROM graph LIMIT ${TRAVERSE_WALK_ROW_CAP}) capped) g
+      FROM (SELECT p.id, p.slug, p.source_id, p.title, p.type, w.depth
+            FROM walk w JOIN pages p ON p.id = w.id
+            WHERE w.pos <= ${TRAVERSE_WALK_ROW_CAP}::int) g
       ORDER BY g.depth, g.slug, g.source_id
     `)).rows;
-
-    // T8 truncation-detection callback was designed here but the v1 algorithm
-    // had both false-positive (organic count == cap) and false-negative
-    // (LIMIT-before-DISTINCT in diamond graphs) cases caught by adversarial
-    // review. Stripped pending the dedupe-then-cap SQL rewrite + real Postgres
-    // parity coverage. See TODOS.md → "T8 truncation signal".
 
     return rows.map((r: Record<string, unknown>) => ({
       slug: r.slug as string,
       source_id: r.source_id as string,
       title: r.title as string,
       type: r.type as string,
-      depth: r.depth as number,
+      depth: Number(r.depth),
       links: (typeof r.links === 'string' ? JSON.parse(r.links) : r.links) as { to_slug: string; link_type: string }[],
     }));
   }
@@ -579,59 +650,24 @@ export async function traversePathsDetailed(
     const depth = opts?.depth ?? 5;
     const direction = opts?.direction ?? 'out';
     const linkType = opts?.linkType ?? null;
-    const linkTypeMatches = linkType !== null;
-    // v0.34.1 (#861 — P0 leak seal): source-scope filter fragments. Applied
-    // at seed (root must be in scope) AND at every recursive step (neighbor
-    // must be in scope) AND in the SELECT join (final edges respect scope).
-    // The 'both' branch needs filters on BOTH endpoint joins.
-    const useSourceIds = opts?.sourceIds && opts.sourceIds.length > 0;
-    const seedScope = useSourceIds
-      ? sqlFragment`AND p.source_id = ANY(${opts!.sourceIds!}::text[])`
-      : opts?.sourceId
-        ? sqlFragment`AND p.source_id = ${opts.sourceId}`
-        : sqlFragment``;
-    const stepScope = useSourceIds
-      ? sqlFragment`AND p2.source_id = ANY(${opts!.sourceIds!}::text[])`
-      : opts?.sourceId
-        ? sqlFragment`AND p2.source_id = ${opts.sourceId}`
-        : sqlFragment``;
-    // For the 'both' direction's final SELECT, both endpoint joins (pf, pt)
-    // get scope filters so edges crossing into a foreign source are dropped.
-    const pfScope = useSourceIds
-      ? sqlFragment`AND pf.source_id = ANY(${opts!.sourceIds!}::text[])`
-      : opts?.sourceId
-        ? sqlFragment`AND pf.source_id = ${opts.sourceId}`
-        : sqlFragment``;
-    const ptScope = useSourceIds
-      ? sqlFragment`AND pt.source_id = ANY(${opts!.sourceIds!}::text[])`
-      : opts?.sourceId
-        ? sqlFragment`AND pt.source_id = ${opts.sourceId}`
-        : sqlFragment``;
-
-    // #3754: soft-deleted pages are excluded at seed, every recursive step, and
-    // the final SELECT joins — a deleted page neither anchors, relays, nor
-    // terminates a path (mirrors pglite-engine.traversePaths).
-    let rows;
-    if (direction === 'out') {
-      rows = (await exec.run(sqlFragment`
-        WITH RECURSIVE walk AS (
-          SELECT p.id, p.slug, p.source_id, 0::int as depth, ARRAY[p.id] as visited
-          FROM pages p WHERE p.slug = ${slug} AND p.deleted_at IS NULL ${privacy('p')} ${seedScope}
-          UNION ALL
-          SELECT p2.id, p2.slug, p2.source_id, w.depth + 1, w.visited || p2.id
-          FROM walk w
-          JOIN links l ON l.from_page_id = w.id
-          JOIN pages p2 ON p2.id = l.to_page_id
-          WHERE w.depth + 1 < ${depth}
-            AND NOT (p2.id = ANY(w.visited))
-            AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
-            AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''}) ${temporalWalkFilter('l', opts)}
-            ${stepScope}
-        ),
-        capped AS (SELECT id, slug, source_id, depth FROM walk LIMIT ${TRAVERSE_WALK_ROW_CAP + 1}),
-        nodes AS (SELECT DISTINCT id, slug, source_id, depth FROM capped)
-        SELECT (SELECT count(*) FROM capped) > ${TRAVERSE_WALK_ROW_CAP} AS walk_truncated,
-               w.id as from_id, w.slug as from_slug, w.source_id as from_source_id,
+    const linkTypeFilter = linkType !== null ? sqlFragment`AND l.link_type = ${linkType}` : sqlFragment``;
+    // v0.34.1 (#861 — P0 leak seal) and #3754: source scope, soft delete,
+    // privacy, link type and temporal policy apply at the seed, at every BFS
+    // step and on both endpoints of every returned edge, so an out-of-scope,
+    // private or deleted page neither anchors, relays nor terminates a path.
+    // The walk visits pages at depth < `depth`; each qualifying edge is
+    // returned once, at one past the depth of its shallower visited endpoint
+    // on the walked side ('both' counts either endpoint).
+    const walk = bfsWalkCtes({
+      seed: sqlFragment`p.slug = ${slug} AND p.deleted_at IS NULL ${privacy('p')} ${sourceScope('p', opts)}`,
+      maxLayer: depth - 1,
+      direction,
+      step: sqlFragment`p2.deleted_at IS NULL ${privacy('p2', 'l')} ${linkTypeFilter} ${temporalWalkFilter('l', opts)} ${sourceScope('p2', opts)}`,
+    });
+    const visited = sqlFragment`nodes AS (SELECT p.id, p.slug, p.source_id, w.depth FROM walk w JOIN pages p ON p.id = w.id WHERE w.pos <= ${TRAVERSE_WALK_ROW_CAP}::int)`;
+    const walkTruncated = sqlFragment`(SELECT count(*) FROM walk) > ${TRAVERSE_WALK_ROW_CAP}::int AS walk_truncated`;
+    const edges = direction === 'out'
+      ? sqlFragment`w.id as from_id, w.slug as from_slug, w.source_id as from_source_id,
                p2.id as to_id, p2.slug as to_slug, p2.source_id as to_source_id,
                l.link_type, l.context, w.depth + 1 as depth
         FROM nodes w
@@ -639,31 +675,10 @@ export async function traversePathsDetailed(
         JOIN pages p2 ON p2.id = l.to_page_id
         WHERE w.depth < ${depth}
           AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
-          AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''}) ${temporalWalkFilter('l', opts)}
-          ${stepScope}
-        ORDER BY depth, from_slug, to_slug, from_source_id, to_source_id
-        LIMIT ${TRAVERSE_PATH_ROW_CAP + 1}
-      `)).rows;
-    } else if (direction === 'in') {
-      rows = (await exec.run(sqlFragment`
-        WITH RECURSIVE walk AS (
-          SELECT p.id, p.slug, p.source_id, 0::int as depth, ARRAY[p.id] as visited
-          FROM pages p WHERE p.slug = ${slug} AND p.deleted_at IS NULL ${privacy('p')} ${seedScope}
-          UNION ALL
-          SELECT p2.id, p2.slug, p2.source_id, w.depth + 1, w.visited || p2.id
-          FROM walk w
-          JOIN links l ON l.to_page_id = w.id
-          JOIN pages p2 ON p2.id = l.from_page_id
-          WHERE w.depth + 1 < ${depth}
-            AND NOT (p2.id = ANY(w.visited))
-            AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
-            AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''}) ${temporalWalkFilter('l', opts)}
-            ${stepScope}
-        ),
-        capped AS (SELECT id, slug, source_id, depth FROM walk LIMIT ${TRAVERSE_WALK_ROW_CAP + 1}),
-        nodes AS (SELECT DISTINCT id, slug, source_id, depth FROM capped)
-        SELECT (SELECT count(*) FROM capped) > ${TRAVERSE_WALK_ROW_CAP} AS walk_truncated,
-               p2.id as from_id, p2.slug as from_slug, p2.source_id as from_source_id,
+          ${linkTypeFilter} ${temporalWalkFilter('l', opts)}
+          ${sourceScope('p2', opts)}`
+      : direction === 'in'
+        ? sqlFragment`p2.id as from_id, p2.slug as from_slug, p2.source_id as from_source_id,
                w.id as to_id, w.slug as to_slug, w.source_id as to_source_id,
                l.link_type, l.context, w.depth + 1 as depth
         FROM nodes w
@@ -671,54 +686,44 @@ export async function traversePathsDetailed(
         JOIN pages p2 ON p2.id = l.from_page_id
         WHERE w.depth < ${depth}
           AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
-          AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''}) ${temporalWalkFilter('l', opts)}
-          ${stepScope}
-        ORDER BY depth, from_slug, to_slug, from_source_id, to_source_id
-        LIMIT ${TRAVERSE_PATH_ROW_CAP + 1}
-      `)).rows;
-    } else {
-      rows = (await exec.run(sqlFragment`
-        WITH RECURSIVE walk AS (
-          SELECT p.id, 0::int as depth, ARRAY[p.id] as visited
-          FROM pages p WHERE p.slug = ${slug} AND p.deleted_at IS NULL ${privacy('p')} ${seedScope}
-          UNION ALL
-          SELECT p2.id, w.depth + 1, w.visited || p2.id
-          FROM walk w
-          JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
-          JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END
-          WHERE w.depth + 1 < ${depth}
-            AND NOT (p2.id = ANY(w.visited))
-            AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
-            AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''}) ${temporalWalkFilter('l', opts)}
-            ${stepScope}
-        ),
-        capped AS (SELECT id, depth FROM walk LIMIT ${TRAVERSE_WALK_ROW_CAP + 1}),
-        nodes AS (SELECT DISTINCT id, depth FROM capped)
-        SELECT (SELECT count(*) FROM capped) > ${TRAVERSE_WALK_ROW_CAP} AS walk_truncated,
-               pf.id as from_id, pf.slug as from_slug, pf.source_id as from_source_id,
+          ${linkTypeFilter} ${temporalWalkFilter('l', opts)}
+          ${sourceScope('p2', opts)}`
+        : sqlFragment`pf.id as from_id, pf.slug as from_slug, pf.source_id as from_source_id,
                pt.id as to_id, pt.slug as to_slug, pt.source_id as to_source_id,
-               l.link_type, l.context, w.depth + 1 as depth
-        FROM nodes w
-        JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
+               l.link_type, l.context, e.depth + 1 as depth
+        FROM (
+          SELECT l.id AS link_id, wf.depth FROM nodes wf
+          JOIN links l ON l.from_page_id = wf.id
+          LEFT JOIN nodes wt ON wt.id = l.to_page_id
+          WHERE wt.id IS NULL OR wf.depth <= wt.depth
+          UNION ALL
+          SELECT l.id, wt.depth FROM nodes wt
+          JOIN links l ON l.to_page_id = wt.id
+          LEFT JOIN nodes wf ON wf.id = l.from_page_id
+          WHERE wf.id IS NULL OR wt.depth < wf.depth
+        ) e
+        JOIN links l ON l.id = e.link_id
         JOIN pages pf ON pf.id = l.from_page_id
         JOIN pages pt ON pt.id = l.to_page_id
-        WHERE w.depth < ${depth}
+        WHERE e.depth < ${depth}
           AND pf.deleted_at IS NULL ${privacy('pf', 'l')}
           AND pt.deleted_at IS NULL ${privacy('pt')}
-          AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''}) ${temporalWalkFilter('l', opts)}
-          ${pfScope}
-          ${ptScope}
-        ORDER BY depth, from_slug, to_slug, from_source_id, to_source_id
-        LIMIT ${TRAVERSE_PATH_ROW_CAP + 1}
-      `)).rows;
-    }
+          ${linkTypeFilter} ${temporalWalkFilter('l', opts)}
+          ${sourceScope('pf', opts)}
+          ${sourceScope('pt', opts)}`;
+    const rows = (await exec.run(sqlFragment`
+      WITH RECURSIVE ${walk}, ${visited}
+      SELECT ${walkTruncated}, ${edges}
+      ORDER BY depth, from_slug, to_slug, from_source_id, to_source_id
+      LIMIT ${TRAVERSE_PATH_ROW_CAP + 1}
+    `)).rows;
 
     // Row cap: the LIMIT above fetched CAP + 1 rows; the probe row only tells
     // us the walk overflowed and is dropped with everything past the cap.
     const truncated = rows.length > TRAVERSE_PATH_ROW_CAP || (rows as Array<{ walk_truncated?: boolean }>).some((r) => r.walk_truncated === true);
     const bounded = (truncated ? rows.slice(0, TRAVERSE_PATH_ROW_CAP) : rows) as Record<string, unknown>[];
-    // Dedup edges (same edge can appear via multiple visited paths). Keyed on
-    // page ids, so the same slug in two sources stays two distinct edges.
+    // Duplicate link rows (same edge, different provenance) collapse here.
+    // Keyed on page ids, so the same slug in two sources stays two edges.
     const seen = new Set<string>();
     const result: GraphPath[] = [];
     for (const r of bounded) {

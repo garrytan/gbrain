@@ -261,7 +261,8 @@ export async function reserveGroup(engine: BrainEngine, opts: GroupReserveOpts):
     if (opts.capCents !== null) {
       const spend = await readGroupSpend(tx, key);
       const remaining = opts.capCents - spend.committedCents - spend.overdueCents;
-      if (remaining <= 0) throw new GroupBudgetRefusal('exhausted', key, spend, opts.capCents);
+      const knownFree = estimated === 0 && opts.estimateKnown !== false;
+      if (remaining < 0 || remaining === 0 && !knownFree) throw new GroupBudgetRefusal('exhausted', key, spend, opts.capCents);
       estimated = Math.min(estimated, remaining);
       if (spend.liveCents > 0 && spend.liveCents + estimated > remaining) {
         throw new GroupBudgetRefusal('pressure', key, spend, opts.capCents);

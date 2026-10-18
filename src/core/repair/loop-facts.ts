@@ -52,7 +52,8 @@ export const loopFactsRepair: RepairHandler = {
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }
-    const approved = await loadApprovedSet<ApprovedLoop>(engine, { command: 'loop-facts', hash: opts.expect, previewCommand: command });
+    const approved = await loadApprovedSet<ApprovedLoop>(engine, { command: 'loop-facts', hash: opts.expect, previewCommand: command,
+      emptyHash: async () => previewHash({ kind: 'loop-facts-v1', brain_id: scope.brain_id, sources: (await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids])), selection: { source_ids: scope.source_ids }, loops: [] }) });
     if (approved.items.some(loop => JSON.stringify(loop.selection) !== JSON.stringify(scope.source_ids))) throw previewChangedError(opts.expect, command);
     const items = approved.items.map(({ selection: _selection, ...loop }, index) => item(loop, opts.expect!, index === approved.items.length - 1));
     return { items: items.filter(entry => afterCursor(entry.cursor, after)), preview_hash: opts.expect, residuals: {} };

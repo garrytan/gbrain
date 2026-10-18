@@ -15,7 +15,9 @@
  * (→ auth_required, no refreshAccessToken). Chat-capable orgs are discovered
  * lazily and memoized per client instance (each sync builds a fresh client →
  * account-safe); every one is listed, and each conversation is fetched from
- * the org that listed it. The list is paged with limit/offset (C-17).
+ * the org that listed it: stubs carry `orgId`, which the sync records with a
+ * failed conversation so a later retry by id reaches the same org (#6387).
+ * The list is paged with limit/offset (C-17).
  */
 
 import type { HostSpecTarget } from '../../bootstrap/host-specs.ts';
@@ -109,6 +111,7 @@ export const claudeProvider: ChatHistoryProvider = {
   strategies: ['browser-session'],
   specTarget: CLAUDE_WEB_API_SPEC_TARGET,
   baseUrl: CLAUDE_BASE_URL,
+  routesByOrg: true,
 
   async authHeaders(cred: ConnectorCredential): Promise<Record<string, string>> {
     const h: Record<string, string> = {};
@@ -177,6 +180,7 @@ export const claudeProvider: ChatHistoryProvider = {
             title: typeof r.name === 'string' ? r.name : undefined,
             updatedAt,
             createdAt: toIso(r.created_at) || undefined,
+            orgId: org,
           });
         }
         if (fresh === 0 || allOlder) break;
@@ -194,9 +198,9 @@ export const claudeProvider: ChatHistoryProvider = {
   async fetchConversation(
     client: ConnectorClient,
     id: string,
-    opts: { signal?: AbortSignal } = {},
+    opts: { signal?: AbortSignal; orgId?: string } = {},
   ): Promise<Record<string, unknown>> {
-    const org = memoConversationOrg.get(client)?.get(id) ?? (await resolveOrgs(client, opts.signal))[0];
+    const org = opts.orgId ?? memoConversationOrg.get(client)?.get(id) ?? (await resolveOrgs(client, opts.signal))[0];
     const conv = await client.fetchJSON<Record<string, unknown>>(
       `/api/organizations/${encodeURIComponent(org)}/chat_conversations/${encodeURIComponent(id)}?tree=True&rendering_mode=messages`,
       { signal: opts.signal },

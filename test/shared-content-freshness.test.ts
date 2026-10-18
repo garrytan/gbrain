@@ -67,13 +67,13 @@ test('external roots and absent, incomplete, unowned or mismatched receipts stil
       expect(await ownedContentFreshness(engine, [f.sourceId])).toEqual([]);
       const check = await checkSyncFreshness(engine);
       expect(check.status).toBe('fail');
-      expect(check.message).toContain(`'${f.sourceId}' has never been synced`);
+      expect(check.message).toContain(`'${f.sourceId}': no successful sync recorded`);
     }
     await engine.setConfig(f.key, JSON.stringify(f.receipt));
     for (const config of [{ kind: 'google' }, { remote_url: 'https://example.invalid/repo' }, { managed_clone: true }, { company_brain: {} }, 'invalid-policy']) {
       await engine.executeRaw('UPDATE sources SET config=$2::text::jsonb WHERE id=$1', [f.sourceId, JSON.stringify(config)]);
       expect(await ownedContentFreshness(engine, [f.sourceId])).toEqual([]);
-      expect((await checkSyncFreshness(engine)).message).toContain(`'${f.sourceId}' has never been synced`);
+      expect((await checkSyncFreshness(engine)).message).toContain(`'${f.sourceId}': no successful sync recorded`);
     }
     await withManagedFixtureWrite(engine, [f.sourceId], tx => tx.executeRaw("UPDATE sources SET config='{}',last_commit=$2 WHERE id=$1", [f.sourceId, 'a'.repeat(40)]));
     expect(await ownedContentFreshness(engine, [f.sourceId])).toEqual([]);
@@ -85,7 +85,7 @@ test('source incarnation and canonical host-binding changes invalidate the owned
     const f = await fixture(engine);
     await engine.executeRaw('UPDATE persistence_host_bindings SET local_path=$2 WHERE worktree_id=$1::uuid', [f.binding.worktree_id, join(home, 'moved')]);
     expect(await ownedContentFreshness(engine, [f.sourceId])).toEqual([]);
-    expect((await checkSyncFreshness(engine)).message).toContain(`'${f.sourceId}' has never been synced`);
+    expect((await checkSyncFreshness(engine)).message).toContain(`'${f.sourceId}': no successful sync recorded`);
     await engine.executeRaw('UPDATE persistence_host_bindings SET local_path=$2 WHERE worktree_id=$1::uuid', [f.binding.worktree_id, f.root]);
     await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");

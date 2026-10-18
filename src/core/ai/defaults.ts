@@ -16,7 +16,7 @@ export const DEFAULT_EMBEDDING_MODEL = 'voyage:voyage-4';
 export const DEFAULT_EMBEDDING_DIMENSIONS = 1024;
 export const NEW_INSTALL_DEFAULT_EMBEDDING_MODEL = DEFAULT_EMBEDDING_MODEL;
 export const NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS = DEFAULT_EMBEDDING_DIMENSIONS;
-export const DEFAULT_RERANKER_MODEL = 'voyage:rerank-2.5';
+export const DEFAULT_RERANKER_MODEL = 'voyage:rerank-3-lite';
 export const NEW_INSTALL_DEFAULT_RERANKER_MODEL = DEFAULT_RERANKER_MODEL;
 
 export function renderCanonicalMigrationCommands(opts: { colDims?: number | null } = {}): {

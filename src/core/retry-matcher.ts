@@ -48,6 +48,12 @@ const CONN_PATTERNS = [
   // retry, the checkpoint write (and every other pool-contending write) is
   // dropped during the exact spike #1794's resumable sync must survive.
   /EMAXCONNSESSION/i,
+  // #6340: the socket errnos postgres.js surfaces as "write <ERRNO> host:port" when a
+  // session-mode pooler drops the connection mid-statement (ECONNABORTED was the one
+  // that ended four managed catch-up runs in one afternoon). Same class as ECONNRESET.
+  /ECONNABORTED/i,
+  /ETIMEDOUT/i,
+  /EPIPE/i,
   /too many clients already/i,
   /max.*clients?.*in session mode/i,
   /remaining connection slots are reserved/i,
@@ -142,6 +148,19 @@ export function isRetryableConnError(err: unknown): boolean {
   }
   const msg = getMessage(err);
   return CONN_PATTERNS.some(p => p.test(msg));
+}
+
+/**
+ * #6355: did the database session go away under a statement that was already sent? Narrower than
+ * `isRetryableConnError` (no auth or startup races): the connection-class SQLSTATEs, postgres.js's own
+ * connection codes, the server's admin/crash shutdown codes (`pg_terminate_backend`, a failover) and the
+ * socket errnos. Such an error says nothing about whether the statement's transaction committed, so a
+ * caller that sent a write must re-read its retained request id instead of inferring rollback.
+ */
+export function isConnectionLoss(err: unknown): boolean {
+  const code = getCode(err);
+  if (code && (/^08/.test(code) || ['CONNECTION_CLOSED', 'CONNECTION_ENDED', 'CONNECTION_DESTROYED', '57P01', '57P02', '57P03'].includes(code))) return true;
+  return /\b(ECONNRESET|ECONNABORTED|ETIMEDOUT|EPIPE)\b|Connection terminated unexpectedly|server closed the connection|connection.*closed|terminating connection due to administrator command/i.test(getMessage(err));
 }
 
 /**

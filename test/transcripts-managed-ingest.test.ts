@@ -15,7 +15,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { makeContext } from '../src/cli.ts';
+import { makeContext } from '../src/cli/main.ts';
 import { runTranscriptsIngest } from '../src/core/transcripts/ingest.ts';
 import { runTranscripts } from '../src/commands/transcripts.ts';
 import { disposePersistenceConsumer, stopPersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -104,6 +104,24 @@ describe('transcripts ingest on a writer-claimed brain', () => {
     await claimBrain();
     await expect(ingest(exportFile('a.json', false), { context: false })).rejects.toThrow(/cannot mutate a managed brain through the legacy writer/);
     expect(await conversationPages()).toEqual([]);
+  }, 120_000);
+
+  test('a stale higher-numbered part is deleted through the coordinator as a revision-bound delete_page request (#5235)', async () => {
+    // Unmanaged first import, so the base slug is known; the stale part is seeded directly while direct writes are still allowed.
+    const first = await ingest(exportFile('a.json', false));
+    expect(first.pages).toMatchObject({ imported: 1 });
+    const [page] = await conversationPages();
+    const stale = `${page!.slug}-p2`;
+    await engine.putPage(stale, { type: 'note', title: 'Stale part', compiled_truth: 'left behind by a re-split', timeline: '', frontmatter: {} }, { sourceId: 'default' });
+    await claimBrain();
+    const again = await ingest(exportFile('b.json', false));
+    expect(again).toMatchObject({ sessionsErrored: 0, erroredFiles: 0, partsDeleted: 1 });
+    expect((await conversationPages()).map(row => row.slug)).toEqual([page!.slug]);
+    const deletes = await engine.executeRaw<{ slug: string; state: string; principal_kind: string }>(
+      `SELECT slug, state, principal_kind FROM persistence_requests WHERE operation = 'delete_page' ORDER BY sequence`);
+    expect(deletes).toEqual([{ slug: stale, state: 'committed', principal_kind: 'local_cli' }]);
+    const [row] = await engine.executeRaw<{ deleted: boolean }>('SELECT deleted_at IS NOT NULL AS deleted FROM pages WHERE slug=$1', [stale]);
+    expect(row.deleted).toBe(true);
   }, 120_000);
 
   test('a dry run on a managed brain plans without submitting anything', async () => {

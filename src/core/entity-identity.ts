@@ -28,7 +28,7 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { Link } from './types.ts';
-import { isUndefinedTableError } from './utils.ts';
+import { isMissingSchemaObject } from './utils.ts';
 import { privatePagesFilterFragment } from './search/private-visibility.ts';
 
 /** Config key for the flag-gated retrieval union. Default OFF. */
@@ -245,7 +245,7 @@ export async function listEntityIdentities(
     }));
   } catch (e) {
     // Pre-v137 brain (table missing): identity is simply "not set up yet".
-    if (isUndefinedTableError(e)) return [];
+    if (isMissingSchemaObject(e, 'table', 'entity_identities')) return [];
     throw e;
   }
 }
@@ -270,7 +270,7 @@ export async function identityIdsForPages(
     );
     return new Map(rows.map((r): [string, string] => [`${r.source_id}:${r.slug}`, r.entity_id]).filter(([k]) => wanted.has(k)));
   } catch (e) {
-    if (isUndefinedTableError(e)) return new Map();
+    if (isMissingSchemaObject(e, 'table', 'entity_identities')) return new Map();
     throw e;
   }
 }

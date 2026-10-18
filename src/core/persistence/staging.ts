@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, unlinkSync } from 'node:fs';
+import { closeSync, constants, fchmodSync, fstatSync, lstatSync, openSync, renameSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { atomicStagingPath, validateAtomicStagingPath } from '../atomic-write.ts';
 import { flushDirectory } from '../fs-durable.ts';
@@ -7,10 +7,15 @@ import { opError, OperationError } from '../ops/contract.ts';
 import { sha256 } from './digest.ts';
 import type { BrainEngine } from '../engine.ts';
 import { readJournalLimits } from './limits.ts';
+import { beforeStageCopyPath, hashDescriptor, streamingStagePath, validateBeforeStagePath } from './large-file.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 
 export interface RecoveryStagingFile { path: string; hash: string; bytes: number }
-export interface RecoveryStaging { publication?: RecoveryStagingFile; restoration?: RecoveryStagingFile }
+/**
+ * `before` (model.ts): the staged copy of a prior canonical file over the single-string ceiling,
+ * which recovery renames back instead of decoding an embedded before-image; kept until recovery decides.
+ */
+export interface RecoveryStaging { publication?: RecoveryStagingFile; restoration?: RecoveryStagingFile; before?: RecoveryStagingFile }
 interface StagedRecovery { path: string; root: string; staging?: RecoveryStaging }
 interface StoredFileRecovery extends StagedRecovery { before?: string | null; after?: string | null }
 type StoredRecovery = StoredFileRecovery | { files: StoredFileRecovery[] };
@@ -28,7 +33,7 @@ function stages(record: StagedRecovery): RecoveryStagingFile[] {
   const result = Object.values(record.staging ?? {}).filter((stage): stage is RecoveryStagingFile => !!stage);
   if (new Set(result.map(stage => stage.path)).size !== result.length) throw blocked();
   for (const stage of result) {
-    try { validateAtomicStagingPath(record.path, stage.path); } catch { throw blocked(); }
+    try { if (stage === record.staging?.before) validateBeforeStagePath(record.path, stage.path); else validateAtomicStagingPath(record.path, stage.path); } catch { throw blocked(); }
     if (!isWriteTargetContained(stage.path, record.root) || !Number.isSafeInteger(stage.bytes) || stage.bytes < 0
       || !/^[a-f0-9]{64}$/.test(stage.hash)) throw blocked();
   }
@@ -53,30 +58,101 @@ function flushParent(path: string): void {
   }
 }
 
-/** Called under the owner lock. Partial/unknown stages are preserved, never guessed. */
-export function cleanupRecoveryStaging(record: StagedRecovery): void {
+/**
+ * Runs `settle` on a present stage leaf once it is proven the reserved file: a regular file with one link, its
+ * recorded size and digest (read in pieces), unchanged while it was read. False when the leaf is absent.
+ */
+function withVerifiedStage(stage: RecoveryStagingFile, settle: (fd: number) => void): boolean {
+  const leaf = statIfPresent(stage.path);
+  if (!leaf) return false;
+  if (!leaf.isFile() || leaf.nlink !== 1 || leaf.size !== stage.bytes) throw blocked();
+  const fd = openSync(stage.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const opened = fstatSync(fd);
+    if (opened.dev !== leaf.dev || opened.ino !== leaf.ino || opened.birthtimeMs !== leaf.birthtimeMs
+      || opened.size !== stage.bytes || hashDescriptor(fd).hash !== stage.hash) throw blocked();
+    const current = statIfPresent(stage.path);
+    if (!current?.isFile() || current.dev !== opened.dev || current.ino !== opened.ino
+      || current.birthtimeMs !== opened.birthtimeMs || current.size !== opened.size || current.mtimeMs !== opened.mtimeMs) throw blocked();
+    settle(fd);
+  } finally { closeSync(fd); }
+  return true;
+}
+
+/**
+ * Removes a regular file at `path` unread (a symlink, directory or other leaf refuses); flushes its directory.
+ */
+function removeUnread(path: string): void {
+  const leaf = statIfPresent(path);
+  if (leaf && !leaf.isFile()) throw blocked();
+  if (leaf) unlinkSync(path);
+  flushParent(path);
+}
+
+/**
+ * Called under the owner lock. Partial/unknown stages are preserved, never guessed, with two exceptions that hold no
+ * bytes recovery needs: a before stage's copy still under its temporary name (`beforeStageCopyPath`: the copy was never
+ * renamed, so publication never started) is always removed, and `priorIntact` (the canonical file still holds the
+ * recorded prior bytes, `beforeHash`) removes the before stage itself unread, so a copy a crash cut short at the stage's
+ * name (a binary that copied in place) cannot block the worktree. `keepBefore`: a live request's recovery keeps the
+ * prior file's copy until it has decided whether to rename it back (`restoreBeforeStage`).
+ */
+export function cleanupRecoveryStaging(record: StagedRecovery, opts: { keepBefore?: boolean; priorIntact?: boolean } = {}): void {
+  const before = record.staging?.before;
+  discardStreamingStage(record);
   for (const stage of stages(record)) {
-    const leaf = statIfPresent(stage.path);
-    if (!leaf) { flushParent(stage.path); continue; }
-    if (!leaf.isFile() || leaf.nlink !== 1 || leaf.size !== stage.bytes) throw blocked();
-    const fd = openSync(stage.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    try {
-      const opened = fstatSync(fd);
-      if (opened.dev !== leaf.dev || opened.ino !== leaf.ino || opened.birthtimeMs !== leaf.birthtimeMs
-        || opened.size !== stage.bytes || sha256(readFileSync(fd)) !== stage.hash) throw blocked();
-      const current = statIfPresent(stage.path);
-      if (!current?.isFile() || current.dev !== opened.dev || current.ino !== opened.ino
-        || current.birthtimeMs !== opened.birthtimeMs || current.size !== opened.size || current.mtimeMs !== opened.mtimeMs) throw blocked();
-      unlinkSync(stage.path);
-    } finally { closeSync(fd); }
+    if (stage === before) {
+      removeUnread(beforeStageCopyPath(stage.path));
+      if (opts.keepBefore) continue;
+      if (opts.priorIntact) { removeUnread(stage.path); continue; }
+    }
+    withVerifiedStage(stage, () => unlinkSync(stage.path));
     flushParent(stage.path);
   }
+}
+
+/**
+ * Recovery's restoration of a version 3 record: the verified copy of the prior file is renamed over the canonical
+ * path with its recorded mode. A missing copy refuses (`unexpected_staging_bytes`): the bytes cannot be guessed.
+ */
+export function restoreBeforeStage(record: StagedRecovery & { mode: number | null }, boundary?: (phase: 'file_replaced' | 'directory_flushed') => void): void {
+  const stage = record.staging?.before;
+  if (!stage || !stages(record).includes(stage)) throw blocked();
+  const restored = withVerifiedStage(stage, fd => {
+    if (record.mode !== null) fchmodSync(fd, record.mode);
+    renameSync(stage.path, record.path);
+  });
+  if (!restored) throw blocked();
+  boundary?.('file_replaced');
+  flushDirectory(dirname(record.path));
+  boundary?.('directory_flushed');
+}
+
+/**
+ * Removes, unread, a publication stage's stream still under its in-progress name (`streamingStagePath`): a stream a crash
+ * cut short. It was never renamed to the stage's name, so it was never published and holds no bytes recovery needs.
+ */
+export function discardStreamingStage(record: StagedRecovery): void {
+  const publication = record.staging?.publication;
+  if (publication && stages(record).includes(publication)) removeUnread(streamingStagePath(publication.path));
+}
+
+/**
+ * A version 2 mirror record's forward publication (effect-recovery.ts): its verified publication stage, streamed from
+ * the page's segments, is renamed over the canonical path. A missing stage refuses (`unexpected_staging_bytes`).
+ */
+export function publishStreamedStage(record: StagedRecovery): void {
+  const stage = record.staging?.publication;
+  if (!stage || !stages(record).includes(stage)) throw blocked();
+  if (!withVerifiedStage(stage, () => renameSync(stage.path, record.path))) throw blocked();
+  flushDirectory(dirname(record.path));
 }
 
 /** The final accounting fence also protects direct terminal-cleanup callers. */
 export function assertRecoveryStagingAbsent(record: StagedRecovery): void {
   for (const stage of stages(record)) {
-    if (statIfPresent(stage.path)) throw blocked();
+    if (statIfPresent(stage.path) || (stage === record.staging?.before && statIfPresent(beforeStageCopyPath(stage.path)))
+      || (stage === record.staging?.publication && statIfPresent(streamingStagePath(stage.path)))) throw blocked();
     flushParent(stage.path);
   }
 }

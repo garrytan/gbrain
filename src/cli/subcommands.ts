@@ -17,14 +17,16 @@
  * returns before startup side effects, strict argument checks and engine
  * access.
  */
-export const PAGES_SUBCOMMANDS = ['purge-deleted'] as const;
+export const PAGES_SUBCOMMANDS = ['purge-deleted', 'purges', 'unpurge', 'unsearchable', 'ghosts'] as const;
 export const CACHE_SUBCOMMANDS = ['stats', 'clear', 'prune'] as const;
 export const INTEGRITY_SUBCOMMANDS = ['check', 'auto', 'review', 'reset-progress'] as const;
 export const HOOK_SUBCOMMANDS = ['session-start', 'user-prompt', 'stop', 'session-end', 'compact'] as const;
 export const SEARCH_SUBCOMMANDS = ['modes', 'stats', 'tune', 'diagnose'] as const;
-export const EDGE_PROPOSALS_SUBCOMMANDS = ['list', 'show', 'accept', 'reject', 'undo', 'date'] as const;
+export const EDGE_PROPOSALS_SUBCOMMANDS = ['list', 'show', 'accept', 'reject', 'undo', 'date', 'retry'] as const;
 export const CONFIG_SUBCOMMANDS = ['show', 'get', 'set', 'unset'] as const;
-export const QUARANTINE_SUBCOMMANDS = ['list', 'clear', 'scan'] as const;
+export const QUARANTINE_SUBCOMMANDS = ['list', 'clear', 'scan', 'release', 'drop'] as const;
+export const CORE_SUBCOMMANDS = ['list', 'show', 'status', 'add', 'remove', 'diff', 'ack', 'init', 'suggest'] as const;
+export const LOOPS_SUBCOMMANDS = ['list', 'show', 'done', 'drop', 'mute', 'unmute'] as const;
 export const SCHEMA_SUBCOMMANDS = [
   'active', 'list', 'show', 'validate', 'use', 'detect', 'suggest', 'review-candidates', 'init', 'fork', 'edit',
   'diff', 'graph', 'lint', 'explain', 'review-orphans', 'downgrade', 'usage', 'stats', 'cardinality-preview',
@@ -52,6 +54,10 @@ export const ROUTERS: Readonly<Record<string, RouterInventory>> = {
   schema: { subcommands: SCHEMA_SUBCOMMANDS, bareHelpFirst: true },
   config: { subcommands: CONFIG_SUBCOMMANDS, bareHelpFirst: true },
   quarantine: { subcommands: QUARANTINE_SUBCOMMANDS, bareHelpFirst: true },
+  // #6521: these two were SELF_HELP_WITHOUT_ENGINE entries whose handlers answered help only as the first token,
+  // so `core list --help` ran `list` against a null engine and `loops show --help` exited 2 "needs a loop id".
+  core: { subcommands: CORE_SUBCOMMANDS, bareHelpFirst: true },
+  loops: { subcommands: LOOPS_SUBCOMMANDS, bareHelpFirst: true },
 };
 
 /** `--help` / `-h` before any `--` terminator. */

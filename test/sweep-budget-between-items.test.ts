@@ -6,6 +6,12 @@
  * each scheduled `sweep --once` paid one model call and finished nothing.
  *
  * Hermetic in-memory PGLite + chat-transport stub (sweep-corpus-windows harness).
+ * The budget reads an injected clock that only the (stubbed) extraction
+ * advances, by 400 ms per call: the passes before the corpus take no budget
+ * however loaded the machine is, so the first extraction always starts, runs
+ * past the 150 ms budget, and the budget then holds the next file. The stub
+ * also really waits 400 ms, past the real budget timer, so an abort reaching
+ * the extraction would still cut it off.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -28,6 +34,9 @@ const KEYED: CapabilityReport = {
 let engine: PGLiteEngine;
 let dir: string;
 let calls = 0;
+/** The sweep's clock: advanced only by extractions. */
+let clock = 0;
+const now = () => clock;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
@@ -41,9 +50,11 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'gbrain-sweep-budget-'));
   await engine.setConfig('dream.synthesize.session_corpus_dir', dir);
   calls = 0;
+  clock = 1_000_000;
   __resetCheckpointHarvestForTests();
   __setChatTransportForTests(async (): Promise<ChatResult> => {
     calls++;
+    clock += 400;
     await new Promise((r) => setTimeout(r, 400));
     return {
       text: JSON.stringify({ facts: [] }),
@@ -65,7 +76,7 @@ test('an extraction slower than the budget finishes and writes its sidecar; the 
   writeFileSync(join(dir, 'a.txt'), text);
   writeFileSync(join(dir, 'b.txt'), text.replace('Thursdays', 'Fridays'));
 
-  const r = await runMaintenanceSweep(engine, { sourceId: 'default', capabilities: KEYED, budgetMs: 150, batchLimit: 20 });
+  const r = await runMaintenanceSweep(engine, { sourceId: 'default', capabilities: KEYED, budgetMs: 150, batchLimit: 20, now });
 
   expect(calls).toBe(1);
   expect(existsSync(join(dir, 'a.txt' + CORPUS_INGESTED_SUFFIX))).toBe(true);
@@ -73,7 +84,7 @@ test('an extraction slower than the budget finishes and writes its sidecar; the 
   expect(existsSync(join(dir, 'b.txt' + CORPUS_INGESTED_SUFFIX))).toBe(false);
   expect(r.skipped.some((s) => s.reason === 'budget_exhausted:corpus')).toBe(true);
 
-  const again = await runMaintenanceSweep(engine, { sourceId: 'default', capabilities: KEYED, budgetMs: 150, batchLimit: 20 });
+  const again = await runMaintenanceSweep(engine, { sourceId: 'default', capabilities: KEYED, budgetMs: 150, batchLimit: 20, now });
   expect(calls).toBe(2);
   expect(again.corpusIngested).toBe(1);
   expect(existsSync(join(dir, 'b.txt' + CORPUS_INGESTED_SUFFIX))).toBe(true);

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { sanitizeRemoteBody } from '../src/core/remote-body.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, renderFactsTable } from '../src/core/facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../src/core/takes-fence.ts';
+import { cpuMs } from './helpers/cpu-time.ts';
 
 function facts(world: string, privateClaim: string): string {
   return renderFactsTable([
@@ -27,9 +28,8 @@ describe('strict remote body sanitizer', () => {
     // Facts markers took seconds here; a forward scan has ample headroom.
     const blockCount = 16_000;
     const body = `${TAKES_FENCE_BEGIN}\nx\n${TAKES_FENCE_END}\n`.repeat(blockCount);
-    const start = performance.now();
-    const result = sanitizeRemoteBody(body);
-    const elapsedMs = performance.now() - start;
+    let result = '';
+    const elapsedMs = cpuMs(() => { result = sanitizeRemoteBody(body); });
     expect(result).toBe('\n'.repeat(blockCount));
     expect(elapsedMs).toBeLessThan(1_000);
   });

@@ -50,7 +50,7 @@ Use the explicit command:
 ```bash
 export GBRAIN_FTS_LANGUAGE=portuguese
 gbrain reindex-search-vector --dry-run    # preview: language + row counts
-gbrain reindex-search-vector --yes        # recreate triggers + backfill
+gbrain reindex-search-vector --yes        # recreate triggers + backfill + rebuild the facts keyword index
 ```
 
 The stamp survives later schema work: `initSchema()` — including the replay

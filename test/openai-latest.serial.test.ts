@@ -25,8 +25,9 @@ import {
   _resetOpenAILatestForTests,
 } from '../src/core/ai/openai-latest.ts';
 import { resolveTierDefault, openaiStaticTierFallback } from '../src/core/model-config.ts';
+import { configDir } from '../src/core/config.ts';
 
-const PINNED = ['GBRAIN_HOME', 'GBRAIN_MODEL_DISCOVERY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY'] as const;
+const PINNED = ['GBRAIN_HOME', 'GBRAIN_MODEL_DISCOVERY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'CLAUDE_CONFIG_DIR'] as const;
 let saved: Record<string, string | undefined>;
 let tmpHome: string;
 
@@ -193,6 +194,26 @@ describe('refresh + cache + resolution overlay', () => {
     expect(calls).toBe(1); // fresh cache → throttled
     await refreshLatestOpenAIModels({ env: { OPENAI_API_KEY: 'k' }, fetchImpl: counting, force: true });
     expect(calls).toBe(2);
+  });
+
+  test('a provider-use decline recorded by gbrain setup stops discovery, even forced; acceptance does not', async () => {
+    process.env.CLAUDE_CONFIG_DIR = tmpHome;
+    const receipt = join(tmpHome, '.gbrain-connection-claude-code-gbrain.json');
+    const write = (providers: string) => writeFileSync(receipt, JSON.stringify({
+      harness: 'claude-code', connection: 'local-stdio', setup_receipt_version: 1, status: 'installed', name: 'gbrain',
+      gbrain_home: configDir(), scope: 'user', consent: { providers: { value: providers, source: 'flag' } },
+    }));
+    let calls = 0;
+    const counting = (async () => {
+      calls++;
+      return new Response(JSON.stringify({ data: [{ id: 'gpt-5.6' }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    write('declined');
+    await refreshLatestOpenAIModels({ env: { OPENAI_API_KEY: 'k' }, fetchImpl: counting, force: true });
+    expect(calls).toBe(0);
+    write('accepted');
+    await refreshLatestOpenAIModels({ env: { OPENAI_API_KEY: 'k' }, fetchImpl: counting, force: true });
+    expect(calls).toBe(1);
   });
 
   test('concurrent refreshes for the same identity share one fetch', async () => {

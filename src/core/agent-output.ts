@@ -13,7 +13,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { VERSION } from '../version.ts';
-import { OperationError, __registerOperationErrorRenderer } from './ops/contract.ts';
+import { OperationError, __registerOperationErrorRenderer, type WithdrawnDetail } from './ops/contract.ts';
 import { StructuredAgentError } from './errors.ts';
 import { canonicalCodeFor, codeEntry, codeClass, codeRetryable, exitCodeForCode } from './error-catalogue.ts';
 import { VERB_NAMES } from './verbs.ts';
@@ -29,6 +29,8 @@ export const CONTRACT_VERSION = 1 as const;
 export type Effect = 'paid' | 'destructive' | 'credentials' | 'egress' | 'persistent_install';
 export type Actor = 'agent' | 'user' | 'host_admin' | 'provider';
 export type Next = 'run' | 'ask_user' | 'tell_user_to_run' | 'wait' | 'report';
+/** A fix expected to run longer than this is the user's or host admin's (`tell_user_to_run`), never the agent's. */
+export const AGENT_TOOL_LIMIT_MS = 120_000;
 export type Transport = 'cli' | 'stdio' | 'http';
 export type Surface = 'verbs' | 'starter' | 'full';
 export type ErrorClass = 'caller' | 'consent' | 'retryable' | 'unavailable' | 'server' | 'host_only';
@@ -40,6 +42,8 @@ export interface ActionInput { name: string; how: string }
 
 /** Stored/constructed form. Never carries `next` or `command`: both are computed at render time. */
 export interface Action {
+  /** Escalation only: an action the agent must not take without asking renders `next: ask_user` whatever else it carries. */
+  ask_user?: true;
   argv?: string[];
   mcp?: McpCall;
   consent: Effect[];
@@ -56,7 +60,7 @@ export interface Action {
 }
 
 /** Wire form: what an agent reads. */
-export interface RenderedAction extends Omit<Action, 'then' | 'docs'> {
+export interface RenderedAction extends Omit<Action, 'then' | 'docs' | 'ask_user'> {
   command?: string;
   next: Next;
   docs?: string;
@@ -74,6 +78,13 @@ export interface Notice {
   fix?: Action;
   user_message?: string;
   decisions?: Decision[];
+  /**
+   * Unrendered: the NoticeLedger's dedupe identity. A per-call code carrying
+   * one is deduped per session under `code` + this key instead of riding
+   * every call; any code carrying one dedupes under it instead of `code`
+   * alone. renderNotice never copies it, so it never reaches the wire.
+   */
+  dedupe_key?: string;
 }
 export interface RenderedNotice extends Omit<Notice, 'fix'> { fix?: RenderedAction; contract_version: 1 }
 
@@ -95,6 +106,8 @@ export interface AgentEnvelope {
   detail?: string; protocol_version?: 1; write_request?: unknown; write_error?: string;
   /** #6188: a fence refusal's location and blocking issues (location and class only). */
   fence?: Record<string, unknown>; fence_issues?: Array<Record<string, unknown>>;
+  /** A `fact_withdrawn` refusal's withdrawal (`at`, `subject`, `visibility`). */
+  withdrawn?: WithdrawnDetail;
 }
 
 export interface RenderContext {
@@ -225,6 +238,7 @@ function warnInvalidRepoBase(value: string): void {
 
 /** The published decision table (first matching row wins). */
 export function deriveNext(a: Action, ctx: RenderContext): Next {
+  if (a.ask_user) return 'ask_user';
   const callableMcp = a.mcp !== undefined && ctx.isCallable(a.mcp.tool);
   const mcpOnlyOnCli = ctx.transport === 'cli' && !a.argv?.length && a.mcp !== undefined && !callableMcp;
   if (!a.argv?.length && !callableMcp && !mcpOnlyOnCli) return 'report';
@@ -365,6 +379,7 @@ export interface EnvelopeParts {
   retryable?: boolean;
   fence?: Record<string, unknown>;
   fence_issues?: Array<Record<string, unknown>>;
+  withdrawn?: WithdrawnDetail;
 }
 
 /** Replace each occurrence of `bare` that is a whole command (not followed by a word, path or more flags). */
@@ -413,12 +428,13 @@ export function buildEnvelope(p: EnvelopeParts, ctx: RenderContext): AgentEnvelo
     ...(p.write_error !== undefined ? { write_error: p.write_error } : {}),
     ...(p.fence !== undefined ? { fence: p.fence } : {}),
     ...(p.fence_issues?.length ? { fence_issues: p.fence_issues } : {}),
+    ...(p.withdrawn !== undefined ? { withdrawn: p.withdrawn } : {}),
     ...(p.reason !== undefined ? { reason: p.reason } : {}),
     ...(p.why !== undefined ? { why: p.why } : {}),
     ...(fix ? { fix } : {}),
     docs_cmd: ['gbrain', 'errors', p.code],
-    class: codeClass(p.code),
-    retryable: p.retryable ?? codeRetryable(p.code),
+    class: codeClass(p.code, p.reason),
+    retryable: p.retryable ?? codeRetryable(p.code, p.reason),
     ...(notices ? { notices } : {}),
     contract_version: CONTRACT_VERSION,
   };
@@ -555,6 +571,7 @@ const ROWS: Row[] = [
         protocol_version: e.protocolVersion === 1 ? 1 : undefined,
         write_request: j.write_request, write_error: e.writeError,
         ...(e.fence ? { fence: e.fence } : {}), ...(e.fenceIssues?.length ? { fence_issues: e.fenceIssues } : {}),
+        ...(e.withdrawn ? { withdrawn: e.withdrawn } : {}),
         ...(e.retryable !== undefined ? { retryable: e.retryable } : {}),
       };
     },
@@ -833,7 +850,7 @@ export function projectionConflictLine(e: unknown, command: string): string | nu
 /** Pure: callers write the strings. TTY order: `Error [code]: msg` / `Fix:` / `Why:` / `Docs:`. */
 export function renderCliError(e: unknown, opts: { json: boolean; command: string; tty: boolean }): CliErrorRender {
   const env = toAgentError(e, { transport: 'cli', command: opts.command, render: cliRenderContext() });
-  const exitCode = exitCodeForCode(env.code);
+  const exitCode = exitCodeForCode(env.code, env.reason);
   if (opts.json) return { stdout: `${JSON.stringify(env, null, 2)}\n`, exitCode };
   const lines = [`Error [${env.code}]: ${env.message}`];
   const relay = env.fix && !env.fix.command && env.fix.mcp ? `call ${env.fix.mcp.tool} over MCP with ${JSON.stringify(env.fix.mcp.arguments)}` : undefined;

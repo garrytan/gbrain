@@ -177,6 +177,7 @@ export const CWD_DOTENV_PROTECTED_KEYS: readonly string[] = [
   'GBRAIN_BIN_OVERRIDE',             // gbrain binary used by claw-test
   // --- root / registry redirect ------------------------------------------
   'GBRAIN_HOME',                     // relocates ~/.gbrain (config, .env, keys, registry)
+  'GBRAIN_COORDINATION_HOME',        // #6765: where a checkout's writer coordination lock goes when GBRAIN_HOME is inside it; a planted value moves the lock two writers must share
   'GBRAIN_MOUNTS_PATH',              // brain mounts registry file
   'GBRAIN_WORKER_STATUS_PATH',
   'GBRAIN_WORKER_STATUS_TOKEN',

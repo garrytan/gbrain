@@ -14,13 +14,14 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { performSync } from '../src/commands/sync/perform.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { resolveBulkSettings } from '../src/core/persistence/sync-group.ts';
-import { WINDOW_CANCEL_MESSAGE } from '../src/core/persistence/sync-window.ts';
 import { acquireShared, DEFER_WAIT_MS, deferToLease, exclusiveAcquired, joinLease, leaseDraining, leaseWounded, yieldLease } from '../src/core/persistence/worktree-lease.ts';
 import type { NativeLockHandle } from '../src/core/persistence/native-lock.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { awaitLaneTurn, closeLaneRun, laneApplyBegin, laneClaim, laneOf, laneRoots, laneTask, openLanes } from '../src/core/persistence/sync-lanes.ts';
 import { lanesLimit } from '../src/core/persistence/sync-drain.ts';
+import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
+import { waitFor } from './helpers/wait-for.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-managed-lanes-'));
 let engine: BrainEngine | undefined;
@@ -193,7 +194,7 @@ test('a lane that joins while the last holder is still releasing the native lock
   expect(held).toBe(false);
 });
 
-test('a lane waits for its predecessor to commit, yields to a requeued or unadmitted one and stops after a failed one', async () => {
+test('a lane waits for its predecessor to end, yields to a requeued or unadmitted one and takes its turn after a failed one (#6712)', async () => {
   openLanes('wt-turn', 'run-turn', 4, null);
   const state = laneOf({ worktree_id: 'wt-turn', intent: { lane: 'run-turn' } } as never)!;
   const rows = [{ request_id: 'b', principal_kind: 'local_cli', principal_id: 'p', intent: { after: 'a', lane: 'run-turn' } }] as never;
@@ -201,7 +202,9 @@ test('a lane waits for its predecessor to commit, yields to a requeued or unadmi
   await awaitLaneTurn(tx(['running', 'running', 'committed']), state, rows);
   await expect(awaitLaneTurn(tx(['running', 'queued']), state, rows)).rejects.toMatchObject({ reason: 'predecessor_requeued' });
   await expect(awaitLaneTurn(tx([null]), state, rows)).rejects.toMatchObject({ reason: 'predecessor_requeued' });
-  await expect(awaitLaneTurn(tx(['running', 'failed']), state, rows)).rejects.toMatchObject({ reason: 'predecessor_failed' });
+  // #6712 (one page, one fate): a predecessor that ended without committing does not stop this group; it commits in its turn.
+  await awaitLaneTurn(tx(['running', 'failed']), state, rows);
+  await awaitLaneTurn(tx(['cancelled']), state, rows);
   await expect(awaitLaneTurn(tx(['running', 'running', 'running']), state, rows, 60)).rejects.toMatchObject({ reason: 'order_timeout' });
   await closeLaneRun('run-turn');
   expect(laneOf({ worktree_id: 'wt-turn', intent: { lane: 'run-turn' } } as never)).toBeNull();
@@ -294,7 +297,7 @@ test('admit-ahead fits the writer\'s outstanding-request limit instead of stoppi
   }
 }), 300_000);
 
-test('a failed page under lanes stops the run: earlier pages commit, nothing after it publishes', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, GBRAIN_SYNC_BULK_SIZE: '4' }, async () => {
+test('a failed page under lanes stops the run and cancels nothing: every other admitted page commits as its own fate (#6712)', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, GBRAIN_SYNC_BULK_SIZE: '4' }, async () => {
   if (!engine) return;
   const f = await fixture(engine, notes(60, i => i === 30 ? '---\ntitle: Conflict\nslug: notes/other\n---\nA conflicting identity must not be imported.\n' : null));
   await engine.setConfig('sync.holds', 'fail');
@@ -302,14 +305,73 @@ test('a failed page under lanes stops the run: earlier pages commit, nothing aft
     .finally(() => engine!.unsetConfig('sync.holds'));
   expect(result.drain).toMatchObject({ outcome: 'blocked' });
   expect(result.managedWrite?.slug).toBe('notes/n030');
+  // The groups admitted after the failure keep publishing after the run returns.
+  await waitFor(async () => (await imports(engine!, f.id)).every(row => row.state !== 'queued' && row.state !== 'running'), { timeoutMs: 60_000, label: 'admitted pages settle' });
   const rows = await imports(engine, f.id);
   const failedAt = rows.findIndex(row => row.slug === 'notes/n030');
   expect(rows[failedAt]!.state).toBe('failed');
-  expect(rows.slice(0, failedAt).every(row => row.state === 'committed')).toBe(true);
-  expect(rows.slice(failedAt + 1).filter(row => row.state !== 'cancelled').map(row => `${row.slug} ${row.state} group=${row.grp} lane=${row.lane}`)).toEqual([]);
-  for (const row of rows.slice(failedAt + 1)) expect(await engine.getPage(row.slug, { sourceId: f.id })).toBeNull();
-  const laterGroups = rows.slice(failedAt + 1).filter(row => row.grp !== rows[failedAt]!.grp);
-  for (const row of laterGroups) expect(row.error_message).toBe(WINDOW_CANCEL_MESSAGE);
+  expect(rows.filter((_, i) => i !== failedAt && rows[i]!.state !== 'committed').map(row => `${row.slug} ${row.state} group=${row.grp} lane=${row.lane}`)).toEqual([]);
+  expect(rows.slice(failedAt + 1).length).toBeGreaterThan(0);
+  for (const row of rows.slice(failedAt + 1)) expect(await engine.getPage(row.slug, { sourceId: f.id })).not.toBeNull();
+}), 300_000);
+
+/**
+ * #6712 (convergence mode e): a page edited after it was frozen is refused inside its lane group's transaction. That
+ * page alone takes its fate (held `worktree_dirty` once its deferrals run out) and the rest of the group still publishes;
+ * before, the whole group fell back to the single path, whose exclusive lock waits behind the lanes, and the drain
+ * released and re-claimed the group without end.
+ */
+test('a page edited after its freeze fails alone inside a lane group; the group still publishes and the run ends with the page held', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, GBRAIN_SYNC_BULK_SIZE: '8' }, async () => {
+  if (!engine) return;
+  const f = await fixture(engine, notes(60));
+  const opts = { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, drain: true, lanes: 4 };
+  expect((await performSync(engine, opts)).drain).toMatchObject({ outcome: 'synced' });
+  const revised = (i: number, word: string) => `---\ntitle: Note ${i}\n---\nA ${word} observation number ${i}.\n`;
+  for (let i = 0; i < 40; i++) writeFileSync(join(f.root, `notes/n${pad(i)}.md`), revised(i, 'revised'));
+  git(f.root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qam', 'revise');
+  const edited = 'notes/n013.md';
+  // The edited page's group is held in preparation until a later lane group has applied and waits for its turn behind it,
+  // so the refusal always lands while that group waits (the window CI hit only under load: the group sent back to the
+  // queue made every lane group waiting behind it yield, `predecessor_requeued`, and count as a fallback).
+  const requestRow = async (requestId: string | undefined) => (await engine!.executeRaw<{ slug: string; idx: number }>(
+    "SELECT slug, (intent->>'index')::int AS idx FROM persistence_requests WHERE request_id=$1::uuid", [requestId ?? null]))[0];
+  let behind: () => void = () => {};
+  const laterGroupWaiting = new Promise<void>(resolve => { behind = resolve; });
+  let waited = false, reached = false;
+  installFaultHook(async (point, detail) => {
+    if (point === 'sync:after_freeze' && detail.sourceId === f.id && detail.path === edited) writeFileSync(join(f.root, edited), revised(13, 'uncommitted'));
+    if (detail.sourceId !== f.id || !detail.requestId) return;
+    if (point === 'lane:applied' && ((await requestRow(detail.requestId))?.idx ?? -1) > 13) { reached = true; behind(); }
+    if (point === 'consumer:preparing' && !waited && (await requestRow(detail.requestId))?.slug === 'notes/n013') {
+      waited = true;
+      await Promise.race([laterGroupWaiting, new Promise(resolve => setTimeout(resolve, 20_000))]);
+    }
+  });
+  // Every claim of this source that goes back to the queue, and why.
+  await engine.executeRaw(`CREATE TABLE lane_requeues(slug text, reason text);
+    CREATE FUNCTION lane_requeue_log() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      INSERT INTO lane_requeues VALUES (NEW.slug, NEW.blocked_reason); RETURN NEW; END $$;
+    CREATE TRIGGER lane_requeue_log AFTER UPDATE ON persistence_requests FOR EACH ROW
+      WHEN (OLD.state = 'running' AND NEW.state = 'queued' AND NEW.source_id = '${f.id}') EXECUTE FUNCTION lane_requeue_log()`);
+  const stop = new AbortController(), timer = setTimeout(() => stop.abort(), 90_000);
+  let result, requeues: Array<{ slug: string; reason: string | null }> = [];
+  try {
+    result = await performSync(engine, { ...opts, signal: stop.signal });
+    requeues = await engine.executeRaw('SELECT slug, reason FROM lane_requeues ORDER BY slug');
+  } finally {
+    clearTimeout(timer); installFaultHook(undefined);
+    await engine.executeRaw('DROP TRIGGER lane_requeue_log ON persistence_requests; DROP FUNCTION lane_requeue_log(); DROP TABLE lane_requeues');
+  }
+  expect(stop.signal.aborted).toBe(false);
+  expect(waited && reached).toBe(true);
+  // The refused page's group keeps its other members' claims and publishes them; none goes back to the queue.
+  expect(requeues).toEqual([]);
+  expect(result.drain?.outcome).not.toBe('blocked');
+  // The refused page never sends its group to the single path or back to the queue (a lane fallback each).
+  expect(result.drain?.bulk?.lanes.fallbacks).toBe(0);
+  const status = await readSyncStatus(engine, f.id);
+  expect(status.holds.map(hold => `${hold.code}:${hold.path}`)).toEqual([`worktree_dirty:${edited}`]);
+  for (let i = 0; i < 40; i++) if (i !== 13) expect((await engine.getPage(`notes/n${pad(i)}`, { sourceId: f.id }))?.compiled_truth).toContain(`revised observation number ${i}`);
 }), 300_000);
 
 test('a crash right after a group is admitted and saved skips nothing and admits nothing twice; the first group is small', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_BULK_SIZE: '4' }, async () => {

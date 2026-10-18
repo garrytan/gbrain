@@ -88,6 +88,27 @@ describe('test:stress runner', () => {
     expect(r.manifest.files[0]).toMatchObject({ status: 'not-stressed', reason: expect.stringContaining('owning job in .github/workflows/heavy-tests.yml') });
   });
 
+  test('a file that skips without the PgBouncer fixture its owning pooled job requires is not stressed', () => {
+    const body = "import { test } from 'bun:test';\nconst pooled = process.env.GBRAIN_PGBOUNCER_URL;\ntest.skipIf(!pooled)('pooled', () => {});\n";
+    const root = tree({
+      'test/pooled.test.ts': body,
+      'test/orphan-pooled.test.ts': body,
+      '.github/workflows/persistence-validation.yml': 'jobs:\n  pooled:\n    steps:\n      - env:\n          GBRAIN_CI_REQUIRE_PGBOUNCER: \'1\'\n        run: bun test test/pooled.test.ts\n',
+    });
+    const owned = stress(root, 'test/orphan-pooled.test.ts', 'test/pooled.test.ts', '--iterations', '2');
+    const byFile = Object.fromEntries(owned.manifest.files.map((f: { file: string }) => [f.file, f]));
+    expect(byFile['test/pooled.test.ts']).toMatchObject({ status: 'not-stressed', reason: expect.stringContaining('owning pooled job in .github/workflows/persistence-validation.yml') });
+    expect(byFile['test/orphan-pooled.test.ts']).toMatchObject({ status: 'fail' });
+    expect(owned.code, owned.out).toBe(1);
+  });
+
+  test('a file that skips without an external Supavisor URL no CI job holds is not stressed', () => {
+    const root = tree({ 'test/supavisor.test.ts': "import { test } from 'bun:test';\nconst url = process.env.GBRAIN_SUPAVISOR_URL;\ntest.skipIf(!url)('through supavisor', () => {});\n" });
+    const r = stress(root, 'test/supavisor.test.ts', '--iterations', '2');
+    expect(r.code, r.out).toBe(0);
+    expect(r.manifest.files[0]).toMatchObject({ status: 'not-stressed', reason: expect.stringContaining('GBRAIN_SUPAVISOR_URL (a credentialed external service no CI job holds)') });
+  });
+
   test('a test that ran in the first iteration and skips later is an unexpected skip', () => {
     const root = tree({ 'test/vanish.test.ts': "import { test } from 'bun:test';\nif (Number(process.env.GBRAIN_TEST_SEED) % 2 === 1) test('sometimes', () => {});\ntest('always', () => {});\n" });
     const r = stress(root, 'test/vanish.test.ts', '--iterations', '2', '--seed', '1');

@@ -225,6 +225,13 @@ export interface ContextPackRequest {
    * the OpenClaw assemble lane. An older serve ignores it and assembles.
    */
   coreOnly?: boolean;
+  /**
+   * #5575 ENG-11 (additive, coreOnly companion): the trust cache identity of
+   * the client's memoized core block. When the serve's current identity
+   * matches, it answers `coreTrust.unchanged` without assembling. An older
+   * serve ignores it and returns the full block without an identity.
+   */
+  coreIdentity?: string;
 }
 
 export type IpcRequest =
@@ -263,7 +270,11 @@ export interface ContextPackResponse {
 
 export type ResolveHandler = (req: ResolveRequest) => Promise<PointerBlock | null>;
 export type TurnContextHandler = (req: TurnContextRequest) => Promise<TurnContextResult | null>;
-export type ContextPackHandler = (req: ContextPackRequest) => Promise<TurnContextResult | null>;
+/**
+ * `progress.assembled` is set by a handler once its pack is assembled; the transport's backstop returns that pack
+ * (marked `server_budget`) instead of nothing when the handler's later work (core, session state, brief) runs past it.
+ */
+export type ContextPackHandler = (req: ContextPackRequest, progress?: { assembled?: TurnContextResult | null }) => Promise<TurnContextResult | null>;
 
 export type SyncStartIpcHandler = (req: SyncStartRequest) => SyncStartResponse | Promise<SyncStartResponse>;
 export type SyncStatusIpcHandler = (req: SyncStatusRequest) => SyncStatusResponse | Promise<SyncStatusResponse>;
@@ -302,6 +313,12 @@ export interface IpcServerOpts {
    * and must not be counted.
    */
   onTurnContextDelivered?: (result: TurnContextResult, req: TurnContextRequest) => void;
+  /**
+   * context_pack sibling of onTurnContextDelivered (wave 5 D5): fired ONLY
+   * after an ok context_pack response with a non-empty block was written —
+   * the SessionStart brief's delivery seam (telemetry + repeat ledger).
+   */
+  onContextPackDelivered?: (result: TurnContextResult, req: ContextPackRequest) => void;
   /**
    * The server's registered source [CX2-10]. turn_context requests naming a
    * DIFFERENT sourceId are rejected with 'source_mismatch'; the handler always
@@ -826,6 +843,7 @@ export async function startResolveIpcServer(
         let resp: string;
         let delivered: { block: PointerBlock; req: ResolveRequest } | null = null;
         let deliveredTurnContext: { result: TurnContextResult; req: TurnContextRequest } | null = null;
+        let deliveredPack: { result: TurnContextResult; req: ContextPackRequest } | null = null;
         try {
           const parsed = JSON.parse(line) as IpcRequest;
           const kind = (parsed as { kind?: unknown }).kind ?? 'resolve';
@@ -854,9 +872,10 @@ export async function startResolveIpcServer(
               deliveredTurnContext = { result: tcResp.block, req };
             }
           } else if (kind === 'context_pack') {
-            resp = JSON.stringify(
-              await handleContextPack(parsed as ContextPackRequest, handlers, opts),
-            );
+            const req = parsed as ContextPackRequest;
+            const cpResp = await handleContextPack(req, handlers, opts);
+            resp = JSON.stringify(cpResp);
+            if (cpResp.ok && cpResp.block && cpResp.block.text) deliveredPack = { result: cpResp.block, req };
           } else if (kind === 'sync_start') {
             resp = JSON.stringify(
               await handleSyncKind(parsed as SyncStartRequest, handlers.sync_start, opts),
@@ -892,6 +911,9 @@ export async function startResolveIpcServer(
           }
           if (deliveredTurnContext && opts.onTurnContextDelivered) {
             try { opts.onTurnContextDelivered(deliveredTurnContext.result, deliveredTurnContext.req); } catch { /* telemetry only */ }
+          }
+          if (deliveredPack && opts.onContextPackDelivered) {
+            try { opts.onContextPackDelivered(deliveredPack.result, deliveredPack.req); } catch { /* telemetry only */ }
           }
         } catch { /* client gone — do NOT log undelivered pointers */ }
         conn.end();
@@ -988,9 +1010,10 @@ async function handleContextPack(
       const t = setTimeout(() => r('__budget__'), CONTEXT_PACK_SERVER_BUDGET_MS + 200);
       t.unref?.();
     });
-    const result = await Promise.race([handlers.context_pack(req), budget]);
+    const progress: { assembled?: TurnContextResult | null } = {};
+    const result = await Promise.race([handlers.context_pack(req, progress), budget]);
     if (result === '__budget__') {
-      return { ok: true, protocol: 2, block: null, degradedReason: 'server_budget' };
+      return { ok: true, protocol: 2, block: progress.assembled ?? null, degradedReason: 'server_budget' };
     }
     return {
       ok: true,

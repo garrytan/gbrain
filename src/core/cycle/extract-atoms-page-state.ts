@@ -4,6 +4,14 @@ import { stableJson } from '../persistence/digest.ts';
 import type { BrainEngine } from '../engine.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 
+/**
+ * gbrain#4148: consecutive same-content failures of a content-deterministic
+ * class (malformed model output or provider content block) before the page is tombstoned so the
+ * backlog floor can clear. A content edit resets the streak. #6325: a managed
+ * page or transcript settles held_failed at the same bound.
+ */
+export const MAX_DETERMINISTIC_FAILURES = 3;
+
 export interface AtomPageIdentity {
   pageId: number;
   sourceIncarnation: string;
@@ -33,8 +41,8 @@ export class AtomPageStateError extends Error {
 export async function readAtomPageIdentity(engine: SqlEngine, sourceId: string, item: AtomPageInput): Promise<AtomPageIdentity | undefined> {
   const [row] = await engine.executeRaw<{ id: number; incarnation: string; knowledge_revision: string }>(
     `SELECT p.id, s.incarnation, p.knowledge_revision FROM pages p JOIN sources s ON s.id=p.source_id
-      WHERE p.source_id=$1 AND p.slug=$2 AND p.content_hash=$3 AND p.compiled_truth=$4 AND p.deleted_at IS NULL`,
-    [sourceId, item.slug, item.contentHash, item.content]);
+      WHERE p.source_id=$1 AND p.slug=$2 AND p.content_hash=$3 AND p.deleted_at IS NULL`,
+    [sourceId, item.slug, item.contentHash]);
   return row && { pageId: row.id, sourceIncarnation: row.incarnation, revision: row.knowledge_revision };
 }
 
@@ -45,16 +53,16 @@ export async function writeAtomPageState(
   const { pageId, sourceIncarnation, revision } = item.identity;
   const [row] = await engine.executeRaw<{ fail_count: number }>(
     `INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned)
-      SELECT s.incarnation, p.id, p.content_hash, $8::integer, $9::boolean
+      SELECT s.incarnation, p.id, p.content_hash, $7::integer, $8::boolean
       FROM pages p JOIN sources s ON s.id=p.source_id
       WHERE p.id=$1 AND s.incarnation=$2::uuid AND p.source_id=$3 AND p.slug=$4
-        AND p.content_hash=$5 AND p.knowledge_revision=$6::uuid AND p.compiled_truth=$7 AND p.deleted_at IS NULL
+        AND p.content_hash=$5 AND p.knowledge_revision=$6::uuid AND p.deleted_at IS NULL
       FOR SHARE OF p, s
       ON CONFLICT (source_incarnation, page_id, content_hash) DO UPDATE
         SET fail_count=extract_atoms_page_state.fail_count + EXCLUDED.fail_count,
             tombstoned=extract_atoms_page_state.tombstoned OR EXCLUDED.tombstoned, updated_at=now()
       RETURNING fail_count`,
-    [pageId, sourceIncarnation, sourceId, item.slug, item.contentHash, revision, item.content,
+    [pageId, sourceIncarnation, sourceId, item.slug, item.contentHash, revision,
       outcome === 'failure' ? 1 : 0, outcome === 'complete']).catch((error: unknown) => {
     const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
     throw new AtomPageStateError(code === '42P01' ? 'schema' : code === '42501' ? 'denied' : 'storage');
@@ -111,7 +119,8 @@ export async function transferLegacyAtomPageState(engine: SqlEngine, before: Pag
     for (const key of LEGACY_KEYS) delete frontmatter[key];
     return { sourceId: snapshot.page.source_id, slug: snapshot.page.slug, type: snapshot.page.type,
       title: snapshot.page.title, body: snapshot.page.compiled_truth,
-      timeline: snapshot.page.timeline, frontmatter, tags: [...snapshot.tags].sort(), withdrawals: snapshot.withdrawals };
+      timeline: snapshot.page.timeline, frontmatter, tags: [...snapshot.tags].sort(), withdrawals: snapshot.withdrawals,
+      global_purges: snapshot.globalPurges ?? null };
   };
   if (stableJson(canonical(before)) !== stableJson(canonical(after))) return false;
   const [existing] = await engine.executeRaw<{ fail_count: number; tombstoned: boolean }>(

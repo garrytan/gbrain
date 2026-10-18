@@ -24,7 +24,7 @@ import { withEnv } from './with-env.ts';
 export type WaveFindingKind = 'timeline' | 'visibility' | 'safe_index' | 'capacity' | 'parked' | 'self_capture' | 'stale_embedding' | 'old_writer';
 export const ALL_WAVE_FINDINGS: WaveFindingKind[] = ['timeline', 'visibility', 'safe_index', 'capacity', 'parked', 'self_capture', 'stale_embedding', 'old_writer'];
 
-export const put = (ctx: OperationContext, slug: string, body: string, type = 'note', extra = '') => submitPageMutation(ctx, { operation: 'put_page',
+export const put = (ctx: OperationContext, slug: string, body: string, type = 'note', extra = '') => submitPageMutation({ ...ctx, admissionOrigin: 'interactive' }, { operation: 'put_page',
   params: { slug, request_id: randomUUID(), content: `---\ntype: ${type}\ntitle: ${slug}\n${extra}---\n\n${body}\n` } });
 
 async function protocol(engine: BrainEngine, sql: string, params: unknown[] = []) {
@@ -50,7 +50,7 @@ export async function seedWaveFindings(brain: ManagedBrain, home: string, kinds:
   }
   await disposePersistenceConsumer(engine);
   if (kinds.includes('capacity')) {
-    // 85% of a principal's permanent request ids, with room left under the 90% stop for the repairs.
+    // 85% of a principal's permanent request ids: past the 80% background pause line (#6696), with room left for the seeding writes and the approved repairs, which are interactive.
     await engine.setConfig('persistence.limits.principal_lifetime_ids', '1000');
     await protocol(engine, "UPDATE persistence_counters SET lifetime_ids=850 WHERE key LIKE 'principal:%'");
   }

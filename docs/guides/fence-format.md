@@ -34,7 +34,7 @@ A facts fence sits between `<!--- gbrain:facts:begin -->` and `<!--- gbrain:fact
 <a id="facts-columns"></a>
 ## Facts columns
 
-Facts cells are read by position.
+Facts cells are read by the column the header names, in any order. A header with a column that is not one of these names, a column named twice, or no column for a row that cannot be left off reads no rows: the fence is held until it is repaired (the repair maps the [header spellings](#header-spellings) and the order). A header in canonical order may be shorter than its rows: the cells after it keep their canonical position. A row may leave off only trailing columns marked below, and a cell past the last column must be empty.
 
 | Position | Column | Values | May be left off the row end | Default when the header lacks it | Meaning |
 | --- | --- | --- | --- | --- | --- |
@@ -52,6 +52,7 @@ Facts cells are read by position.
 | 12 | `claim_value` | a number, optionally with 1,234 separators or a k/M/B suffix | yes | - | Value of a typed claim. |
 | 13 | `claim_unit` | free text | yes | - | Unit (`USD`, `people`, ...), or empty. |
 | 14 | `claim_period` | free text | yes | - | Period (`monthly`, `annual`, ...), or empty. |
+| 15 | `attributed_to` | `user`, `assistant`, `other` | yes | - | Who asserted the claim, or empty. |
 
 <a id="facts-layouts"></a>
 - **Narrow, 10 cells** (what gbrain writes unless a row needs a wide column):
@@ -66,6 +67,13 @@ Facts cells are read by position.
   ```text
   | # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context | claim_metric | claim_value | claim_unit | claim_period |
   |---|-------|------|------------|------------|------------|------------|-------------|--------|---------|--------------|-------------|------------|--------------|
+  ```
+
+- **Attributed, 15 cells** (adds `attributed_to`; written when a row records who asserted it, and rows without it may stop at 14 cells):
+
+  ```text
+  | # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context | claim_metric | claim_value | claim_unit | claim_period | attributed_to |
+  |---|-------|------|------------|------------|------------|------------|-------------|--------|---------|--------------|-------------|------------|--------------|---------------|
   ```
 
 - **Shortest row, 9 cells:** the narrow row without `context`. A row that is short anywhere else is `short_row`.
@@ -168,7 +176,9 @@ These rules run on every write path for free. They edit or move cell text and ne
 
 | Class | What it rewrites |
 | --- | --- |
+| `merge_fences` | A section with more than one fence of a kind becomes one fence when every fence has both markers, the same canonical header and nothing but table lines inside: the later fences' rows are appended to the first in document order, a later row whose cells (every column but `#`) equal a kept row's as written is dropped, a number that now collides is renumbered (see [row numbers](#row-numbers)) and a `superseded by #N` reference follows its own fence's row N, and the later markers, tables and a repeated section heading above them are removed. Anything else stays `repeated_marker` and a person merges the fences. |
 | `close_fence` | A fence with no end marker gets one directly after its table, when nothing but blank lines follows the last row up to the end of the section. |
+| `close_fence_trailing` | A fence with no end marker whose table is followed by page text gets the end marker directly after its last row, so the text that followed becomes visible, when every trailing line is prose (no `|`, no fence marker; a line with a `|` only after the repair model read the tail as prose) and either the page is private (its body is never shown to remote readers, so nothing new is disclosed) or the user approved those exact lines through the hash-bound apply the preview prints. A world-visible page with no approval is `tail_exposure_approval`; a tail the model read as rows, or a marker mention, is `unclosed_ambiguous_tail` and a person closes the fence. |
 | `marker_form` | Two-dash takes markers (`<!-- gbrain:takes:begin -->`) directly above a takes table become the three-dash markers. Two-dash facts markers are not a fence and are left alone. |
 | `stray_empty_cell` | A row with more cells than its header (with no header: than the narrow layout, or 14 facts cells) loses empty cells, only when exactly one choice of empty cells to remove leaves every checked column (`#`, kind, confidence, visibility, notability, `claim_value`; takes kind, holder, weight) valid. Otherwise the row is `extra_cells` and a person fixes it. |
 | `renumber` | A row number that is zero, negative, not a number or a duplicate gets a new number (see [row numbers](#row-numbers)). |
@@ -217,9 +227,9 @@ Header cells are compared case-insensitively, with spaces, `_` and `-` treated a
 
 A problem the rules above cannot fix exactly is held or refused with a reason. The reason says which tier clears it:
 
-- **llm** (Tier 3, the repair model rewrites only the named rows, or answers HOLD when a row has two readings): [`header_unmapped`](write-refusals.md#fence-header_unmapped), [`no_header`](write-refusals.md#fence-no_header), [`row_before_header`](write-refusals.md#fence-row_before_header), [`short_row`](write-refusals.md#fence-short_row).
+- **llm** (Tier 3, the repair model rewrites only the named rows, or answers HOLD when a row has two readings): [`header_unmapped`](write-refusals.md#fence-header_unmapped), [`no_header`](write-refusals.md#fence-no_header), [`row_before_header`](write-refusals.md#fence-row_before_header), [`short_row`](write-refusals.md#fence-short_row), [`unclosed_trailing_content`](write-refusals.md#fence-unclosed_trailing_content).
 - **resolver** (Tier 2, verified holder lookup, free): [`holder_unresolved`](write-refusals.md#fence-holder_unresolved).
-- **manual** (a person edits the fence; gbrain never guesses): [`extra_cells`](write-refusals.md#fence-extra_cells), [`claim_split`](write-refusals.md#fence-claim_split), [`missing_begin`](write-refusals.md#fence-missing_begin), [`split_rows`](write-refusals.md#fence-split_rows), [`unclosed_trailing_content`](write-refusals.md#fence-unclosed_trailing_content), [`marker_near_miss`](write-refusals.md#fence-marker_near_miss), [`repeated_marker`](write-refusals.md#fence-repeated_marker), [`takes_in_facts`](write-refusals.md#fence-takes_in_facts), [`superseded_ambiguous`](write-refusals.md#fence-superseded_ambiguous), [`enum_unmapped`](write-refusals.md#fence-enum_unmapped), [`weight_missing`](write-refusals.md#fence-weight_missing), [`holder_missing`](write-refusals.md#fence-holder_missing), [`confidence_out_of_range`](write-refusals.md#fence-confidence_out_of_range), [`claim_value_invalid`](write-refusals.md#fence-claim_value_invalid), [`takes_kind_unsupported`](write-refusals.md#fence-takes_kind_unsupported).
+- **manual** (a person edits the fence; gbrain never guesses): [`extra_cells`](write-refusals.md#fence-extra_cells), [`claim_split`](write-refusals.md#fence-claim_split), [`missing_begin`](write-refusals.md#fence-missing_begin), [`split_rows`](write-refusals.md#fence-split_rows), [`marker_near_miss`](write-refusals.md#fence-marker_near_miss), [`repeated_marker`](write-refusals.md#fence-repeated_marker), [`takes_in_facts`](write-refusals.md#fence-takes_in_facts), [`superseded_ambiguous`](write-refusals.md#fence-superseded_ambiguous), [`enum_unmapped`](write-refusals.md#fence-enum_unmapped), [`weight_missing`](write-refusals.md#fence-weight_missing), [`holder_missing`](write-refusals.md#fence-holder_missing), [`confidence_out_of_range`](write-refusals.md#fence-confidence_out_of_range), [`claim_value_invalid`](write-refusals.md#fence-claim_value_invalid), [`takes_kind_unsupported`](write-refusals.md#fence-takes_kind_unsupported).
 
 <a id="gates"></a>
 ### Gates every repair passes
@@ -232,7 +242,7 @@ No tier writes a fence until all of these hold, and the result is one the rules 
 | (b) | [`claim_changed`](write-refusals.md#fence-claim_changed) | Every claim cell is unchanged (struck claims included). |
 | (c) | [`row_number_changed`](write-refusals.md#fence-row_number_changed) | Every row number that was valid and unique still names the same claim. |
 | (d) | [`visibility_loosened`](write-refusals.md#fence-visibility_loosened) | No row becomes more visible: `private` never turns `world`. |
-| (e) | [`row_count_changed`](write-refusals.md#fence-row_count_changed) | No row is added or dropped, and every row of the fence stays inside it. |
+| (e) | [`row_count_changed`](write-refusals.md#fence-row_count_changed) | No row is added or dropped, and every row of the fence stays inside it; under `merge_fences` the only rows dropped are the exact duplicates its mapping names. |
 | (f) | [`cell_changed`](write-refusals.md#fence-cell_changed) | A cell valid in its column keeps its text; a misaligned cell may only move, and text changes only through a named rule. |
-| (g) | [`protection_loosened`](write-refusals.md#fence-protection_loosened) | Text the privacy boundary hid before the repair stays hidden after it. |
+| (g) | [`protection_loosened`](write-refusals.md#fence-protection_loosened) | Text the privacy boundary hid before the repair stays hidden after it, except the trailing lines a `close_fence_trailing` fix shows (admitted only on a private page or under the user's approval). |
 <!-- END GENERATED fence-format -->

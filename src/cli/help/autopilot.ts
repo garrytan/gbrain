@@ -1,4 +1,4 @@
-/** D3 curated help for `gbrain autopilot` (flags read by src/commands/autopilot.ts, autopilot-daemon.ts, autopilot-pause.ts). */
+/** D3 curated help for `gbrain autopilot` (flags read by src/commands/autopilot.ts, autopilot-daemon.ts, autopilot-pause.ts, autopilot-retry-global.ts). */
 import type { CliHelpSpec } from '../command-table.ts';
 
 export const help: CliHelpSpec = {
@@ -7,6 +7,7 @@ export const help: CliHelpSpec = {
     'gbrain autopilot [--repo <path>] [--interval <s>] [--json] [--no-worker] [--inline]',
     'gbrain autopilot --install [--repo <path>] [--target macos|linux-systemd|ephemeral-container|linux-cron] [--force]',
     'gbrain autopilot --uninstall | --status [--json] | pause [--reason <text>] | resume',
+    'gbrain autopilot --retry-global [--phase <name>] [--json]',
   ].join('\n'),
   flags: [
     { name: '--repo', type: 'string', desc: 'Brain repository to maintain (default: config sync.repo_path).' },
@@ -20,10 +21,12 @@ export const help: CliHelpSpec = {
     { name: '--inject-bootstrap', type: 'boolean', desc: 'With --install in an ephemeral container: add the start script to the agent bootstrap (automatic when OpenClaw is detected).' },
     { name: '--no-inject', type: 'boolean', desc: 'With --install: never edit the agent bootstrap files.' },
     { name: '--uninstall', type: 'boolean', desc: 'Remove the installed daemon.' },
-    { name: '--status', type: 'boolean', desc: 'Report whether the daemon is installed and running.' },
+    { name: '--status', type: 'boolean', desc: 'Report whether the daemon is installed and running, and whether brain-wide maintenance is stalled (exit 1).' },
     { name: '--pause', type: 'boolean', desc: 'Operator hold: the daemon skips cycles until resumed (same as `pause`).' },
     { name: '--resume', type: 'boolean', desc: 'Lift the operator hold (same as `resume`).' },
     { name: '--reason', type: 'string', desc: 'With --pause: why the brain is held (recorded in the pause marker).' },
+    { name: '--retry-global', type: 'boolean', desc: 'End the back-off of brain-wide maintenance phases that kept failing, so the next pass runs them again.' },
+    { name: '--phase', type: 'string', desc: 'With --retry-global: release only this phase.' },
   ],
   examples: [
     'gbrain autopilot --status --json',

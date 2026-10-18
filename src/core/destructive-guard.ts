@@ -22,8 +22,10 @@ import { resolve as resolvePath } from 'node:path';
 import { isPathContained } from './path-confine.ts';
 import { defaultCloneDir } from './sources-ops.ts';
 import { gbrainPath } from './config.ts';
-import { isUndefinedColumnError, isUndefinedTableError } from './utils.ts';
+import { isMissingSchemaObject } from './utils.ts';
 import { deleteSourceRow, EXPIRED_ARCHIVE_SQL, UNVERIFIED_ARCHIVE_SQL, unverifiedArchiveReason } from './source-delete.ts';
+import { ItemRun } from './item-failure.ts';
+import { cliRenderContext, renderAction, type RenderedAction } from './agent-output.ts';
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -107,13 +109,11 @@ export async function clientsReferencingSource(
     );
     return rows.map((r) => ({ clientId: r.client_id, clientName: r.client_name, deleted: r.deleted === true }));
   } catch (e) {
-    if (isUndefinedTableError(e)) return [];
-    // isUndefinedColumnError is code-first (any 42703 matches), and the
-    // primary query references BOTH optional columns — disambiguate on the
-    // message, which names the missing column.
-    const msg = e instanceof Error ? e.message : String(e);
-    if (isUndefinedColumnError(e, 'source_id') && msg.includes('source_id')) return [];
-    if (!(isUndefinedColumnError(e, 'deleted_at') && msg.includes('deleted_at'))) throw e;
+    if (isMissingSchemaObject(e, 'table', 'oauth_clients')) return [];
+    // The primary query references BOTH optional columns; the strict
+    // predicate tells them apart by the column the error names.
+    if (isMissingSchemaObject(e, 'column', 'source_id')) return [];
+    if (!isMissingSchemaObject(e, 'column', 'deleted_at')) throw e;
     try {
       const rows = await engine.executeRaw<{ client_id: string; client_name: string }>(
         `SELECT client_id, client_name FROM oauth_clients
@@ -124,7 +124,7 @@ export async function clientsReferencingSource(
       return rows.map((r) => ({ clientId: r.client_id, clientName: r.client_name, deleted: false }));
     } catch (e2) {
       // The fallback's only optional column is source_id — no column ⇒ no FK.
-      if (isUndefinedColumnError(e2, 'source_id')) return [];
+      if (isMissingSchemaObject(e2, 'column', 'source_id')) return [];
       throw e2;
     }
   }
@@ -242,7 +242,7 @@ export async function assessDestructiveImpact(
     );
     factCount = factRows[0]?.n ?? 0;
   } catch (e) {
-    if (!isUndefinedTableError(e)) throw e;
+    if (!isMissingSchemaObject(e, 'table', 'facts')) throw e;
   }
 
   // PR6 D5b: fold the FK-RESTRICT referent count into the preview so the
@@ -449,7 +449,14 @@ export interface PurgeExpiredResult {
    * every client is revoked-and-purged or re-scoped. Blocked is a policy
    * outcome, not an error: the sweep reports it and moves on.
    */
-  blocked: Array<{ id: string; reason: string }>;
+  blocked: Array<{
+    id: string;
+    reason: string;
+    /** GBRA-130 A-50 (unmanaged): the classified code of a delete that failed for this source alone (statement_timeout, lock_timeout, ...). */
+    code?: string;
+    /** With `code`: the manual purge of this source, for the user to run (`next: tell_user_to_run`). */
+    fix?: RenderedAction;
+  }>;
 }
 
 /**
@@ -461,8 +468,12 @@ export interface PurgeExpiredResult {
  * aborted the whole statement, wedging the nightly purge forever. The sweep is
  * now per-source: each DELETE re-checks the expiry predicate (no
  * select-then-delete race with a concurrent restore), ONLY the FK-restriction
- * error class (SQLSTATE 23503) is treated as blocked-and-reported, and every
- * other error re-raises. (Supersedes #4238's set-based NOT-EXISTS variant at
+ * error class (SQLSTATE 23503) is treated as blocked-and-reported.
+ * GBRA-130 A-50: any other failure of one source's delete is classified
+ * (classifyItemFailure via ItemRun): an item-scoped one (a statement timeout on
+ * a large source's cascade, a lock timeout) is reported in `blocked` with its
+ * code and the manual purge as its fix, and the sweep continues; a run-scoped
+ * one, or a sweep where most sources fail, re-raises. (Supersedes #4238's set-based NOT-EXISTS variant at
  * merge: the 23503 catch covers ANY current or future RESTRICT FK — including
  * soft-deleted oauth_clients, since the FK is physical — not just the one
  * table an EXISTS prefilter names, and the structured {purged, blocked}
@@ -493,6 +504,7 @@ export async function purgeExpiredSources(
   const purged: string[] = [];
   const blocked: PurgeExpiredResult['blocked'] = await unverifiedArchives(engine);
   const cloneRoot = gbrainPath('clones');
+  const items = new ItemRun('retention.expired_sources');
   for (const candidate of candidates) {
     const { id } = candidate;
     try {
@@ -529,6 +541,7 @@ export async function purgeExpiredSources(
       }
       // 0 rows = restored/already gone between SELECT and DELETE; neither
       // purged nor blocked.
+      items.succeed();
     } catch (err) {
       // SQLSTATE 23503 foreign_key_violation — same detection idiom as
       // oauth-provider.ts's delete path for this exact FK.
@@ -541,7 +554,13 @@ export async function purgeExpiredSources(
         });
         continue;
       }
-      throw err;
+      const failure = items.fail(id, err);
+      blocked.push({
+        id, code: failure.code,
+        reason: `its delete failed (${failure.message}); the next retention sweep retries it`,
+        fix: renderAction({ argv: ['gbrain', 'sources', 'purge', id, '--confirm-destructive'], consent: ['destructive'], actor: 'user', requires_exclusive: false,
+          why: 'Purges this expired archived source by hand, outside the nightly sweep.' }, cliRenderContext()),
+      });
     }
   }
   return { purged, blocked };

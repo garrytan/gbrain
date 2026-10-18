@@ -1,0 +1,32 @@
+[
+  {
+    "sourcePage": "meetings/standup.md",
+    "targetPage": "people/alice.md",
+    "entityName": "Alice",
+    "sourceTitle": "Daily standup"
+  },
+  {
+    "sourcePage": "meetings/standup.md",
+    "targetPage": "people/bob.md",
+    "entityName": "people/bob",
+    "sourceTitle": "Daily standup"
+  },
+  {
+    "sourcePage": "meetings/offsite.md",
+    "targetPage": "people/bob.md",
+    "entityName": "Bob",
+    "sourceTitle": "Offsite"
+  },
+  {
+    "sourcePage": "notes/deep/idea.md",
+    "targetPage": "people/bob.md",
+    "entityName": "Bobby",
+    "sourceTitle": "Idea"
+  },
+  {
+    "sourcePage": "notes/deep/idea.md",
+    "targetPage": "companies/acme.md",
+    "entityName": "companies/acme",
+    "sourceTitle": "Idea"
+  }
+]

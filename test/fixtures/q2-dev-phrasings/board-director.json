@@ -1,0 +1,19 @@
+{
+  "id": "q2-dev-board-director",
+  "note": "Development-only phrasing for the Q2 typing units (gbrain test/fixtures/q2-dev-phrasings). Not held-out material. Board wording that entails no employment, placed in the advisory, investment and alumni slots; the advisory slot's ledger gold (advises) is not entailed by board wording, so advisor traps fail on every build by construction.",
+  "templates": {
+    "current": "{name} works at {company} as {role}.",
+    "stale_summary": "{name} works at {company} as {role}.",
+    "rejoin_eu": "Previously at {company}, {name} now runs {company}'s EU team.",
+    "former": "Earlier, {name} worked at {company}.",
+    "advises": "{name} is also a board director at {company}.",
+    "tl_move": "linkedin — Left {prev} to join {company} as {role}",
+    "tl_join": "linkedin — Joined {company} as {role}",
+    "tl_leave": "linkedin — Left {company}",
+    "tl_advise": "note — Became a board director at {company}",
+    "tl_invest": "note — Joined as an investor in {company}",
+    "tl_alumni": "meeting — Became an independent director of {company}",
+    "explicit_start": "note — Started works_at [[{slug}]] as {role}",
+    "explicit_end": "note — Ended works_at [[{slug}]]"
+  }
+}

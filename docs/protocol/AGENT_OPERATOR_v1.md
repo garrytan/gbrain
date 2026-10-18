@@ -275,7 +275,7 @@ stdout (`--json`):
       "decisions": [
         {
           "id": "search_mode",
-          "question": "Which search mode should this brain use? Per-query search payload cost at 10K queries/month (Haiku 4.5 / Sonnet 4.6 / Opus 4.7): conservative $40 / $120 / $200, balanced $100 / $300 / $500, tokenmax $200 / $600 / $1,000 per month.",
+          "question": "Which search mode should this brain use? Estimated downstream input cost of the retrieved payload at 10K queries/month (Haiku 5.5 / Sonnet 5.5 / Opus 5.5): conservative $4 / $80 / $160, balanced $10 / $200 / $400, tokenmax $20 / $400 / $800 per month.",
           "options": [
             {
               "id": "conservative",
@@ -312,7 +312,7 @@ stdout (`--json`):
             }
           ],
           "default": "conservative",
-          "default_reason": "No expansion-capable API key (Anthropic/OpenAI/Google) — start with a tight result budget; semantic result caching is temporarily disabled."
+          "default_reason": "No chat key (Anthropic/OpenAI/Google) and no ready reranker — conservative keeps a tight 4K budget; balanced's reranker could not run."
         },
         {
           "id": "writeback",
@@ -625,7 +625,8 @@ interface RenderedAction {
 `verify.argv`, `then`) names the brain and source the failing call acted on:
 `--brain <id>` for commands that open a brain, `--source <id>` for commands that
 resolve their source through the ambient chain (shared ops, and CLI commands the
-command table marks `routes_source`). gbrain appends them when it renders the
+command table marks `routes_source`; `gbrain extract`, whose `--source` is the
+fs|db mode, gets `--source-id <id>`). gbrain appends them when it renders the
 fix, before any bare `--`, and keeps flags the fix already carries. So you can
 run the fix later from another directory, or under a different `GBRAIN_BRAIN_ID`,
 `GBRAIN_SOURCE`, `.gbrain-mount` or `.gbrain-source`, and it still acts on the
@@ -661,17 +662,20 @@ per-token price), obtain each value as `how` describes and substitute it for
 | `host_admin` | the operator of the brain host (a remote brain over HTTP, scope grants, server restarts). Never authorizable from MCP |
 | `provider` | an outside service you wait on (rate limits, outages) |
 
+A fix expected to run past 120 s (`AGENT_TOOL_LIMIT_MS`) is never `agent`; it renders `tell_user_to_run`.
+
 ### The `next` decision table
 
 First matching row wins.
 
 | # | Condition | `next` |
 |---|---|---|
-| 1 | no runnable step (no `argv`, no callable `mcp`, and not an MCP-only fix on the CLI) | `report`: relay `message`; run `gbrain doctor --json` where you can |
-| 2 | `actor = provider` | `wait`: retry after the stated delay with the same request identity |
-| 3 | `actor` is `user` or `host_admin`, or the fix is CLI-only and you are on MCP, or MCP-only and you are on the CLI | `tell_user_to_run` |
-| 4 | `consent` is non-empty and not covered by a matching preapproval (`destructive` never is) | `ask_user` |
-| 5 | otherwise | `run` |
+| 1 | the stored fix asks the user (a refusal whose every way out is the user's decision, such as `owner_unavailable` with `detail: unbound_source`) | `ask_user` |
+| 2 | no runnable step (no `argv`, no callable `mcp`, and not an MCP-only fix on the CLI) | `report`: relay `message`; run `gbrain doctor --json` where you can |
+| 3 | `actor = provider` | `wait`: retry after the stated delay with the same request identity |
+| 4 | `actor` is `user` or `host_admin`, or the fix is CLI-only and you are on MCP, or MCP-only and you are on the CLI | `tell_user_to_run` |
+| 5 | `consent` is non-empty and not covered by a matching preapproval (`destructive` never is) | `ask_user` |
+| 6 | otherwise | `run` |
 
 A CLI-only fix rendered for an MCP caller gets actor `user` on stdio and
 `host_admin` on HTTP, and `next: tell_user_to_run`. The mirror case: an
@@ -744,12 +748,20 @@ final document.
 | `coaching` | the setup limits what the user is trying to do | mention it once, at a natural point; follow `fix.next` if the user wants it |
 | `info` | context for this result | use it; no action needed |
 
-**Dedupe and budget.** On stdio, a notice shows once per server process. HTTP
-is stateless, so dedupe is per authenticated client and session, and
-`degraded` and `safety` notices ride every affected call. At most 2
-`coaching` notices per session. Notices that describe one call's result
-(`empty_retrieval`, `unknown_param`, `listing_truncated`, `delta_incomplete`)
-are never deduped.
+**Dedupe and budget.** On stdio and the CLI, a notice shows once per process,
+except the notices that describe one call's result. HTTP is stateless, so
+dedupe is per authenticated client and session, and `degraded` and `safety`
+notices ride every affected call. At most 2 `coaching` notices per session.
+Notices that describe one call's result (`degraded_recall`, `empty_retrieval`,
+`unknown_param`, `listing_truncated`, `delta_incomplete`, `facts_unembedded`)
+are never deduped on any transport, with one exception: a `degraded_recall`
+whose only stages come from the brain's configuration (`embed_unavailable` on
+a keyless brain, which degrades every search the same way) shows once per
+stdio or CLI session. A transient degradation (`rerank_failed`,
+`embed_timeout`, a failed keyword or title arm, or any other stage) shows on
+every affected call, so a failure, a recovery and the same failure again show
+the notice twice. A notice missing from a later call never means that call
+was healthy: `_meta.retrieval.degraded` records every call's stages.
 
 **Degraded retry hint.** A `degraded` notice whose fix has `actor: provider`
 renders `next: wait`: repeat the same call (the fix carries it) after the delay
@@ -783,7 +795,7 @@ instead.
 | `behavior_changes` (safety) | the first tool result per brain | the first tool result per authenticated client (names no chain entries or providers) | once, on stderr, on the first command; `gbrain doctor --only behavior_changes` reads it again |
 | `chat_fallback_hop` (safety) | the first fallback hop of the server process | never | the first hop of the command |
 | `backup_coverage` | once per process | never | the CLI startup rail |
-| `degraded_recall`, `empty_retrieval`, `source_binding_narrowed` and the other per-call notices | every affected call | every affected call (redacted) | the command's own notices |
+| `degraded_recall`, `empty_retrieval`, `source_binding_narrowed` and the other per-call notices | every affected call (a keyless brain's configuration-only `degraded_recall`: once per session) | every affected call (redacted) | the command's own notices |
 
 HTTP gets no onboarding coaching because the counts are brain-wide (they cross
 source-scoped grants) and every remedy runs on the brain host, which a remote
@@ -985,6 +997,8 @@ that work in this conversation.
 | 3 | `confirmation_required`, nothing ran | stop, relay `user_message`, run `fix.command` only after the user agrees |
 | 10 | write accepted, still pending | poll the receipt (`gbrain write-request -- <id>`) |
 | 11 | partial, resumable budget stop | run `resume_command` |
+| 13 | `pending_verify`: a harness wired, verification waits for the serve | start the serve, then run `fix.command` |
+| 14 | `bootstrap_cleanup_pending`: a harness is wired; old shared-skills enrollments or token ids still await cleanup | follow `fix.next` (re-run, or relay the owner's revoke step), then re-run |
 | 75 | another runner holds the migration lock | wait, then retry |
 | 124 | the command's deadline elapsed | inspect what is still running |
 | 130 | interrupted | ask the user whether to re-run |
@@ -999,6 +1013,20 @@ exactly one JSON document to stdout (or NDJSON lines for `eval export`,
 stderr. If such a command exits non-zero without writing its document, gbrain
 writes a fallback: `{error: "command_failed", code, message, suggestion,
 exit_code, contract_version: 1}`.
+
+## A write refused `owner_unavailable` with `detail: unbound_source`
+
+On a Postgres brain in classic mode the files in a source's checkout are the
+truth, and gbrain only reads them. Do not retry, and do not claim the source or
+activate managed mode to get one write through: both change the whole brain and
+claiming blocks classic sync. If you can run commands on the brain host, write
+`<checkout>/<slug>.md`, commit it, run `gbrain sync --source <id>`, then read the
+page back. If you are connected remotely, tell the user: "Your brain is in
+classic mode, so I can't save pages directly. Save it as `<slug>.md` in the
+`<id>` folder, commit it, and run `gbrain sync --source <id>`." Offer
+`persistence.unbound_write database_only` or managed mode only as the user's
+choice, with what each costs
+([unbound sources](../guides/write-refusals.md#unbound-sources-on-postgres)).
 
 ## Marker grammar
 

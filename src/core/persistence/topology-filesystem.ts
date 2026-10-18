@@ -8,6 +8,7 @@ import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { durableSsrfFlags, GIT_ENV, GIT_SSRF_SUBCOMMAND_FLAGS, parseRemoteUrl } from '../git-remote.ts';
 import { persistenceHome } from './identity.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 export { flushDirectory as flushTopologyDirectory } from '../fs-durable.ts';
 const recoveryFix=(why:string):Action=>readFix(why,{argv:['gbrain','sources','writer','status','--json']});
@@ -71,7 +72,7 @@ export async function cloneTopologyCheckout(url:string,destination:string,maxByt
   const base=join(persistenceHome(),'empty-hooks');mkdirSync(base,{recursive:true,mode:0o700});
   const hooks=mkdtempSync(join(base,'clone-'));
   const child=spawn('git',[...durableSsrfFlags(),'-c',`core.hooksPath=${hooks}`, 'clone',...GIT_SSRF_SUBCOMMAND_FLAGS,'--depth=1','--',url,destination],
-    {stdio:['ignore','ignore','ignore'],detached:process.platform!=='win32',env:{...process.env,...GIT_ENV}});
+    {stdio:['ignore','ignore','ignore'],detached:process.platform!=='win32',env:gitChildEnv({ ...GIT_ENV })});
   let failure:unknown,check:Promise<void>|undefined,stopping:Promise<void>|undefined,abandon=()=>{};
   const stop=(error:unknown)=>{
     failure??=error;

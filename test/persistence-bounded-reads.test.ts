@@ -46,6 +46,23 @@ test('a raw statement runs with the remaining budget and the clock\'s signal; a 
   expect(typeof reads.getConfig).toBe('function');
 });
 
+test('a read issued after the deadline is refused before it is sent: the deadline, never a fast read that finished inside the 1 ms floor', async () => {
+  const { engine, calls } = fakeEngine('postgres', async () => [{ ok: true }]);
+  const clock = startClaimPhase(Date.now() - 5_000, undefined, 1_000);
+  enterClaimStep(clock, 'journal_sweep');
+  const error = await boundedReads(engine, clock).executeRaw('SELECT 1 FROM persistence_requests').then(() => null, (e: unknown) => e);
+  expect(error).toBeInstanceOf(PreparationDeadlineError);
+  expect(preparationAbortReason(error)).toBe('preparation_deadline');
+  expect((error as PreparationDeadlineError).sqlstate).toBeNull();
+  expect((error as PreparationDeadlineError).message).toContain('at step journal_sweep was not sent');
+  expect(calls).toHaveLength(0);
+  const cancel = new AbortController();
+  const aborted = startClaimPhase(Date.now() - 5_000, cancel.signal, 1_000);
+  cancel.abort(new Error('claim released'));
+  await expect(boundedReads(engine, aborted).executeRaw('SELECT 1 FROM persistence_requests')).rejects.toThrow('claim released');
+  expect(calls).toHaveLength(0);
+});
+
 test('without a deadline, or on PGLite, the view is the engine itself', () => {
   const { engine } = fakeEngine('postgres', async () => []);
   expect(boundedReads(engine, undefined)).toBe(engine);

@@ -10,6 +10,7 @@
  */
 import { describe, test, expect } from 'bun:test';
 import { parseRelationalPlan, isRelationalQuery } from '../src/core/search/relational-plan.ts';
+import { cpuMs } from './helpers/cpu-time.ts';
 
 type Hop = [string, 'object' | 'subject'];
 const shape = (q: string) => {
@@ -147,9 +148,7 @@ describe('single-relation and non-relational queries stay with the one-hop parse
 
   test('linear time on a long adversarial input', () => {
     const q = `${'founders of investors of '.repeat(20)}x`.slice(0, 512);
-    const started = performance.now();
-    parseRelationalPlan(q);
-    expect(performance.now() - started).toBeLessThan(50);
+    expect(cpuMs(() => parseRelationalPlan(q))).toBeLessThan(50);
   });
 });
 

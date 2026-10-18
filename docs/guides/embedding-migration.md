@@ -29,7 +29,7 @@ llama-server, and other bring-your-own-model providers).
 ## Recommended targets
 
 - **`voyage:voyage-4 --dim 1024`** (the default for new installs). One
-  `VOYAGE_API_KEY` covers embedding, the `rerank-2.5` reranker, and the
+  `VOYAGE_API_KEY` covers embedding, the `rerank-3-lite` reranker, and the
   multimodal model; the voyage-4 family shares one embedding space, so you
   can later point the query model at `voyage-4-large` or `voyage-4-lite`
   without reindexing. Note: **1280 is not a valid Voyage width** (valid:
@@ -217,8 +217,12 @@ archived blockers refuse migration before new authorization or provider calls.
 Standalone brain-wide `embed --stale` can repair active work while explicitly
 reporting archived blockers as incomplete; it does not dispatch archived text.
 Restoring an archived source still requires the owner's deliberate approval.
-Unsealed unsupported media needs its original importer; a sealed imported image
-with usable stored chunks can migrate through the existing embedder. These are
+An unsealed image page the importer already attested (`sealable` in doctor
+`text_projection_readiness`) is sealed keyless by `gbrain projections drain`
+(preview with `gbrain projections drain --dry-run`); every other unsealed image
+needs its original importer (`gbrain embed --stale --images --dry-run`, then the
+paid run). A sealed imported image with usable stored chunks can migrate
+through the existing embedder. These are
 phase-local checks, not a purge path or permission for raw SQL, a forced marker
 reset, or a new override. `--status` and `--dry-run` describe runnable work and
 estimates; they do not prove that the live retained-vector check will pass.
@@ -252,8 +256,11 @@ of prior debits. The CLI does not infer that a failure means zero writes.
    If the cap is exhausted, fix the underlying provider problem and explicitly
    raise the **total** authorization to continue. Do not reset the marker.
    Projection recovery may have made durable progress even when migration
-   invalidation was refused. Unsealed unsupported media needs its original
-   importer; never stamp projection revisions with SQL.
+   invalidation was refused. `gbrain doctor --only text_projection_readiness
+   --json` counts the blocked pages by class: `gbrain projections drain` seals
+   the `sealable` images, and `reimport` images need their original importer
+   (`gbrain embed --stale --images --dry-run`, then the paid run). Never stamp
+   projection revisions with SQL.
 5. Verify `facts_pending`, remaining chunks and the completion receipt with
    `--status --json`, then perform a known-positive retrieval in the same
    brain and a genuine miss. `--no-embed` is deliberately deferred, not
@@ -389,7 +396,7 @@ disables reranking, `--reranker keep` leaves it, `--reranker
 <provider:model>` picks explicitly (validated before anything runs). When the
 target provider has no reranker (OpenAI), the run prints an ACTION line with
 the exact commands instead of silently enabling a third provider:
-`gbrain config set search.reranker.model voyage:rerank-2.5` (needs
+`gbrain config set search.reranker.model voyage:rerank-3-lite` (needs
 `VOYAGE_API_KEY`) or `gbrain config set search.reranker.enabled false`. A
 failed reranker probe keeps the previous config and is reported as
 `switch_failed` — never silent, never fatal to the migration.

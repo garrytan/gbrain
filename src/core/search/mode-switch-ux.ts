@@ -124,25 +124,28 @@ export function summarizeTransition(
       kind: 'tokenmax_opt_in',
       reindex_required: true,
       reindex_command: 'gbrain reindex --markdown',
-      cost_estimate_per_query_cents: 0.03, // ~$0.0003 per typical search
+      cost_estimate_per_query_cents: 0.06, // ~$0.0006: rerank-3-lite at 50 candidates (gbrain-evals #148)
       callout_lines: [
         `Switched to tokenmax. Per-chunk Haiku synopsis enabled.`,
         `Backfill cost (one-time): ~$1-5 per 10K pages via Anthropic Haiku.`,
-        `Per-query overhead: ~$0.0003 (reranker + slightly larger payload).`,
+        `Per-query overhead: ~$0.0006 (reranker + slightly larger payload).`,
         `Run \`gbrain reindex --markdown\` to backfill existing pages.`,
       ],
     };
   }
 
-  // Narrowing: dropping a feature (e.g. balanced → conservative drops
-  // reranker + expansion). Cache will refill within TTL; no backfill.
+  // Narrowing: dropping a feature (e.g. balanced → conservative drops the
+  // reranker; tokenmax → balanced drops synopsis context). Semantic result caching is off, so nothing refills; no backfill.
   if (oldMode && narrowness(newMode) < narrowness(oldMode)) {
     return {
       kind: 'narrowing',
       reindex_required: false,
       callout_lines: [
         `Switched to ${newMode}. Some features dropped from prior mode.`,
-        `Cache refills within TTL (default 1h). No backfill required.`,
+        ...(oldMode === 'tokenmax'
+          ? ['New chunks embed with title context instead of per-chunk synopses; existing vectors keep serving until they are replaced.']
+          : []),
+        `The next search uses ${newMode} (semantic result caching is disabled). No backfill required.`,
       ],
     };
   }
@@ -155,7 +158,7 @@ export function summarizeTransition(
       `Switched to ${newMode}.`,
       oldMode
         ? `Existing wrapped embeddings (if any) continue serving queries.`
-        : `First-time mode set. Cache will populate as queries run.`,
+        : `First-time mode set; the next search uses it.`,
     ],
   };
 }

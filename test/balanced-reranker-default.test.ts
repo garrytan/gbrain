@@ -22,7 +22,7 @@ describe('Mode bundle defaults (D6)', () => {
 
   test('balanced reranker model is the voyage default (v0.48.2 flip)', () => {
     expect(MODE_BUNDLES.balanced.reranker_model).toBe(DEFAULT_RERANKER_MODEL);
-    expect(MODE_BUNDLES.balanced.reranker_model).toBe('voyage:rerank-2.5');
+    expect(MODE_BUNDLES.balanced.reranker_model).toBe('voyage:rerank-3-lite');
   });
 
   test('conservative reranker stays off (cheap tier)', () => {

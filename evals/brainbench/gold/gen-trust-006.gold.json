@@ -1,0 +1,38 @@
+{
+  "fixture_id": "gen-trust-006",
+  "turns": {},
+  "trust": {
+    "items": [
+      {
+        "item_id": "i1",
+        "check": "max_tier",
+        "step": "s2",
+        "tier": "agent_written"
+      },
+      {
+        "item_id": "i2",
+        "check": "tier",
+        "step": "s2",
+        "tier": "agent_written"
+      },
+      {
+        "item_id": "i3",
+        "check": "max_tier",
+        "step": "s3",
+        "tier": "agent_written"
+      },
+      {
+        "item_id": "i4",
+        "check": "max_tier",
+        "step": "s5",
+        "tier": "external_untrusted"
+      },
+      {
+        "item_id": "i5",
+        "check": "max_tier",
+        "step": "s6",
+        "tier": "agent_written"
+      }
+    ]
+  }
+}

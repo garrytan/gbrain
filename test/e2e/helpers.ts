@@ -10,10 +10,13 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join, resolve, relative, dirname, basename, extname } from 'path';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
+import { ORIGIN_INDEX } from '../../src/core/persistence/origin-index.ts';
 import * as db from '../../src/core/db.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { parseMarkdown } from '../../src/core/markdown.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
+import { TRUST_BACKFILL_COMPLETED_KEY } from '../../src/core/trust/schema.ts';
+import { WRITE_GATE_SCAN_BASELINE_KEY } from '../../src/core/write-gate-schema.ts';
 import { configureGateway } from '../../src/core/ai/gateway.ts';
 import { runSchemaTransition } from '../../src/core/embedding-migration.ts';
 import { buildDeferredAnnIndexes } from '../../src/core/embedding-ann-build.ts';
@@ -40,6 +43,9 @@ const FIXTURES_DIR = resolve(import.meta.dir, 'fixtures');
 let engine: PostgresEngine | null = null;
 
 const ALL_TABLES = [
+  // C4 pinned questions: no FKs (pointers only); cleared so pins never leak across files.
+  'question_evidence',
+  'pinned_questions',
   'fact_withdrawals',
   // v0.31: facts must come BEFORE pages too (FK to sources, but tests
   // seed via direct SQL so the row stays referenced until truncated).
@@ -62,6 +68,10 @@ const ALL_TABLES = [
   'minion_attachments',
   'minion_inbox',
   'minion_jobs',
+  // A fresh-database `gbrain init` commits a protocol-2 shared-skill request;
+  // the request guard refuses to delete it (cascading from a source delete)
+  // in any later protocol-1 session. TRUNCATE fires no row guard.
+  'persistence_requests',
 ];
 
 /**
@@ -112,7 +122,10 @@ export async function setupDB(options: { replayMigrations?: boolean } = {}): Pro
     }
   }
 
-  await conn.unsafe(options.replayMigrations ? 'TRUNCATE config' : "DELETE FROM config WHERE key <> 'version'");
+  // A warm reset keeps what the migrations seeded on the empty brain: the version and the trust bookkeeping
+  // (v226 backfill completion, v227 scan baseline), both still true of the emptied tables.
+  if (options.replayMigrations) await conn.unsafe('TRUNCATE config');
+  else await conn.unsafe('DELETE FROM config WHERE key <> ALL($1::text[])', [['version', TRUST_BACKFILL_COMPLETED_KEY, WRITE_GATE_SCAN_BASELINE_KEY]]);
 
   // Re-seed config (initSchema inserts default config rows)
   await conn.unsafe(`
@@ -132,9 +145,15 @@ export async function setupDB(options: { replayMigrations?: boolean } = {}): Pro
   try {
     // A file that activated managed persistence and exited without
     // deactivating leaves the writer guard armed, and its sources trigger
-    // rejects the reset below (writer_coordinator_required). Restore the
-    // schema default (disabled) first.
-    await conn.unsafe(`UPDATE persistence_brain SET enabled = false, activated_at = NULL WHERE singleton = 1`);
+    // rejects the reset below (writer_coordinator_required). A fresh-database
+    // `gbrain init` also raises the writer protocol floor to 2 with shared
+    // skill bundles on, after which every protocol-1 request is refused
+    // (writer_upgrade_required). Restore the schema defaults (disabled, floor
+    // 1, bundles off) first. The floor trigger forbids lowering it by UPDATE,
+    // so the singleton row is replaced with its other columns kept.
+    await conn.unsafe(`WITH old AS (DELETE FROM persistence_brain WHERE singleton = 1 RETURNING *)
+      INSERT INTO persistence_brain SELECT (jsonb_populate_record(NULL::persistence_brain, to_jsonb(old)
+        || '{"enabled": false, "activated_at": null, "writer_protocol_floor": 1, "skill_bundles_enabled": false}'::jsonb)).* FROM old`);
     await conn.unsafe(`DELETE FROM sources WHERE id <> 'default'`);
     // Only the sync-identity columns: local_path feeds writeSyncAnchor's
     // ownership guard (#3735) and last_commit/last_sync_at feed first_sync
@@ -155,6 +174,9 @@ export async function setupDB(options: { replayMigrations?: boolean } = {}): Pro
   // MIGRATIONS array and only run when engine.initSchema() executes them.
   // Idempotent: re-running migrations on an already-migrated DB is a no-op.
   await engine.initSchema();
+  // #6948: a test that seeds legacy origin twins drops pages_live_origin_key, which the migrations do not rebuild on
+  // an already-migrated database; the emptied tables hold no twin, so every file starts with the index a fresh brain has.
+  await engine.executeRaw(ORIGIN_INDEX.sql);
   return engine;
 }
 

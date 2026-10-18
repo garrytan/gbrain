@@ -112,6 +112,14 @@ One page per conversation. Date-prefixed slugs make origin tracing sortable
 and feed the recency ranking; the frontmatter `date:` drives the page's
 `effective_date` (used by `--since`/`--until` filters).
 
+**Don't split a conversation for size.** One page per conversation is fine up
+to the 24 MiB page ceiling: it is chunked and keyword-searchable at any size
+under it, and a page over 1 MiB embeds after the write. Don't write `-p2`,
+`-p3` part pages to get under a size limit. Only a conversation over 24 MiB
+needs more than one page. If an MCP transport refuses a large page, import the
+file on the brain host instead (Step 4). Limits and costs:
+`docs/guides/memory-boundaries.md#large-pages`.
+
 **Slug collisions are real — disambiguate deterministically.** Untitled threads
 share a title ("New chat"), and several conversations can land on the same day,
 so `YYYY-MM-DD-new-chat` collides across threads. `put_page` has no

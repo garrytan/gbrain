@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\n  \"error\": \"invalid_params\",\n  \"code\": \"invalid_params\",\n  \"message\": \"fact_withdrawn: this exact claim was explicitly forgotten in this source and visibility.\",\n  \"suggestion\": \"A forgotten claim stays withdrawn, and remembering the same text again is refused; a claim forgotten without an entity is withdrawn for every entity. If it is still true, remember it in new words. To link a fact saved without an entity, do not forget it: remember it with entity and replaces set to its fact id.\",\n  \"docs\": \"{{DOCS_BASE}}/docs/guides/error-codes.md#invalid_params\",\n  \"protocol_version\": 1,\n  \"withdrawn\": {\n    \"at\": \"2026-10-12T00:00:00.000Z\",\n    \"subject\": \"all_entities\",\n    \"visibility\": \"world\"\n  },\n  \"docs_cmd\": [\n    \"gbrain\",\n    \"errors\",\n    \"invalid_params\"\n  ],\n  \"class\": \"caller\",\n  \"retryable\": false,\n  \"contract_version\": 1\n}"
+    }
+  ],
+  "isError": true
+}

@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from '../spawn.ts';
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { buildGitEnv } from '../git-remote.ts';
@@ -13,6 +13,17 @@ export const BACKUP_REMOTE_BUDGET_MS = 8_000;
 export const BACKUP_REMOTE_TIMEOUT_MS = 2_000;
 
 export interface RemoteProbeBudget { remaining: number; deadline?: number }
+
+/**
+ * A remote probe starts only when its full `BACKUP_REMOTE_TIMEOUT_MS` slot is
+ * still inside the sweep deadline. A probe started on the leftover sub-slot
+ * would be killed mid-handshake and record a healthy slow remote as
+ * `unavailable` (#6499); deferring it reports `budget_exhausted` instead.
+ */
+export function budgetAllowsProbe(budget: RemoteProbeBudget, nowMs: number = Date.now()): boolean {
+  if (budget.remaining <= 0) return false;
+  return budget.deadline === undefined || budget.deadline - nowMs >= BACKUP_REMOTE_TIMEOUT_MS;
+}
 
 /** Variables that locate the user's own git config, credentials and network path. */
 export const BACKUP_GIT_ENV_ALLOWLIST = ['HOME', 'PATH', 'XDG_CONFIG_HOME', 'SSH_AUTH_SOCK', 'GIT_CONFIG_GLOBAL',
@@ -61,8 +72,9 @@ export async function assessBackupRepository(
   previous?: BackupAssetVerdict,
 ): Promise<BackupAssetVerdict> {
   const asset: BackupAssetVerdict = { kind, id, state: 'unknown', fix_argv: null, verification: { state: 'not_checked' } };
+  let failedPush = false;
   try {
-    const failedPush = readPushStatusForRoot(root)?.ok === false;
+    failedPush = readPushStatusForRoot(root)?.ok === false;
     // #6083: a managed canonical worktree is committed and pushed by its persistence owner; `sources push` refuses there.
     const managed = managedFilesystemRootFor(root);
     const managedFix = managed ? ['gbrain', 'sources', 'writer', 'status', ...(managed.sourceId ? [managed.sourceId] : []), '--probe', '--json'] : null;
@@ -115,8 +127,7 @@ export async function assessBackupRepository(
       return asset;
     }
     budget.deadline ??= Date.now() + BACKUP_REMOTE_BUDGET_MS;
-    const remainingMs = budget.deadline - Date.now();
-    if (budget.remaining <= 0 || remainingMs <= 0) {
+    if (!budgetAllowsProbe(budget)) {
       asset.verification = { state: 'budget_exhausted', repository_fingerprint: fingerprint };
       return asset;
     }
@@ -126,11 +137,13 @@ export async function assessBackupRepository(
       execFile('git', ['-C', root, '-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always',
         '-c', 'protocol.https.allow=always', '-c', 'protocol.http.allow=always', '-c', 'protocol.ssh.allow=always',
         '-c', 'http.followRedirects=false', '-c', 'credential.interactive=false', 'ls-remote', '--exit-code', '--refs', 'origin', ref], {
-        encoding: 'utf8', timeout: Math.min(BACKUP_REMOTE_TIMEOUT_MS, remainingMs), maxBuffer: 64 * 1024,
+        encoding: 'utf8', timeout: BACKUP_REMOTE_TIMEOUT_MS, maxBuffer: 64 * 1024,
         env: { ...backupGitEnv(), GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', SSH_ASKPASS_REQUIRE: 'never', GIT_SSH_COMMAND: 'ssh -oBatchMode=yes -oStrictHostKeyChecking=yes -oConnectTimeout=2' },
       }, (error, stdout) => error ? reject(error) : resolve(stdout));
-    }).catch(error => {
-      asset.verification = { state: error.code === 2 ? 'missing_ref' : 'unavailable', checked_at: now.toISOString(), repository_fingerprint: fingerprint };
+    }).catch((error: { code?: unknown; killed?: boolean }) => {
+      asset.verification = error.code === 2
+        ? { state: 'missing_ref', checked_at: now.toISOString(), repository_fingerprint: fingerprint }
+        : { state: 'unavailable', cause: error.killed ? 'timeout' : 'exit', checked_at: now.toISOString(), repository_fingerprint: fingerprint };
       return null;
     });
     if (output === null) return asset;
@@ -153,6 +166,10 @@ export async function assessBackupRepository(
     }
     return asset;
   } catch {
+    // A later local probe that failed (a 2 s git timeout on a loaded host) cannot undo a finding already
+    // established: a recorded failed push, or commits/edits a completed probe saw. It never certifies `ok`.
+    if (failedPush) return { ...asset, state: 'failing', detail: 'last_push_failed', verification: { state: 'unavailable' } };
+    if (asset.state === 'unpushed' || asset.state === 'dirty') return { ...asset, verification: { state: 'unavailable' } };
     return { ...asset, state: 'unknown', detail: 'probe_failed', verification: { state: 'unavailable' } };
   }
 }

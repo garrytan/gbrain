@@ -206,7 +206,7 @@ for (const backend of testBackends()) {
       const file = readFileSync(join(root, `${LEGACY_FILE_SLUG}.md`), 'utf8');
       const phase = await __testing.phaseBFenceFacts(engine, OPTS);
       expect(phase).toMatchObject({ name: 'fence_facts', status: 'failed' });
-      expect(phase.detail).toStartWith('queue_capacity: Write capacity exhausted: principal permanent request IDs (0 used of 0).');
+      expect(phase.detail).toStartWith('write_quota_exhausted: Write capacity exhausted: principal permanent request IDs (0 used of 0).');
       expect(phase.detail).toContain('gbrain config set persistence.limits.principal_lifetime_ids ');
       expect(await factRows(engine, [...seed.legacyFactIds, ...seed.dbOnlyFactIds])).toEqual(before);
       expect(readFileSync(join(root, `${LEGACY_FILE_SLUG}.md`), 'utf8')).toBe(file);
@@ -231,6 +231,23 @@ for (const backend of testBackends()) {
       await engine.putPage('people/erin-example', { type: 'person', title: 'Erin Example', compiled_truth: '# Erin Example' }, { sourceId: 'archived-example' });
       await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence)
         VALUES ('archived-example', 'people/erin-example', 'Erin example left Acme example', 'fact', 'world', 'medium', now(), 'mcp:put_page', 0.8)`);
+    } });
+  }, 120_000);
+
+  // #6685: fenced rows left in the index after their page was deleted.
+  test.each([
+    ['all expired: skipped, not drift', [true, true], { status: 'complete', detail: 'pages_checked=0 skipped_expired_no_page=1' }],
+    ['one live row: still drift', [true, false], { status: 'failed', detail: '1 pages drifted: projects/gone-example (page missing)' }],
+  ])(`${backend}: verify on a deleted page's fenced rows, %s (#6685)`, async (_case, expired, expected) => {
+    await managedBrain(async ({ engine }) => {
+      expect(await __testing.phaseCVerify(engine, OPTS)).toMatchObject(expected);
+    }, { databaseUrl, setup: async ({ engine }) => {
+      for (const [index, isExpired] of expired.entries()) {
+        await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence,
+            row_num, source_markdown_slug, expired_at)
+          VALUES ('default', 'projects/gone-example', $1, 'fact', 'private', 'medium', now(), 'manual', 1.0, $2, 'projects/gone-example',
+            CASE WHEN $3::boolean THEN now() ELSE NULL END)`, [`Claim ${index + 1}`, index + 1, isExpired]);
+      }
     } });
   }, 120_000);
 

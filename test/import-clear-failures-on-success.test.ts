@@ -22,6 +22,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runImport } from '../src/commands/import.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { loadSyncFailures } from '../src/core/sync-failure-ledger.ts';
+import { PAGE_MAX_BYTES } from '../src/core/page-size-policy.ts';
 
 let engine: PGLiteEngine;
 
@@ -48,7 +49,7 @@ describe('a path that fails then succeeds clears its ledger row (#3839)', () => 
     // Run 1: poison.md is oversized (deterministic soft-failure, same
     // MAX_FILE_SIZE trigger as the #3838 test — no thrown exception needed).
     const poisonPath = join(repo, 'poison.md');
-    writeFileSync(poisonPath, '---\ntype: note\n---\n' + 'x'.repeat(5_000_001));
+    writeFileSync(poisonPath, '---\ntype: note\n---\n' + 'x'.repeat(PAGE_MAX_BYTES + 1));
 
     const gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-home-'));
 

@@ -117,6 +117,16 @@ async function replayedAuthority(engine: SqlEngine, stored: WriteAuthority, oper
   return a;
 }
 
+/**
+ * #6517: whether a receipt may name another page's slug to this writer: the trusted local owner always; a remote
+ * writer only when the slug is inside its prefix grant (and delegated namespace) and visible to it.
+ */
+export async function slugDisclosable(engine: SqlEngine, a: WriteAuthority, slug: string): Promise<boolean> {
+  if (!a.remote) return true;
+  if (!prefixAllowed(a.slugPrefixes, slug)) return false;
+  if ((a.delegated || a.restrictedNamespace) && !matchesSlugAllowList(slug, a.delegatedPrefixes ?? [])) return false;
+  return authorizePageVisibility(engine, a, slug).then(() => true, () => false);
+}
 /** Caller holds source guards first. FOR SHARE serializes publication against revocation. */
 export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, operation: string, slug: string, lock = false): Promise<void> {
   if (a.version !== 1 || !a.principal || !a.sourceId || !a.sourceIncarnation) deny('Missing durable write authority.');

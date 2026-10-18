@@ -113,3 +113,31 @@ export function conversationFactsEligibleSql(alias: string, typesParam: string, 
   return `${alias}.type = ANY(${typesParam}::text[]) AND ${marker} NOT IN (${list(FLAG_FALSE)})` +
     (strict ? ` AND (${alias}.type = 'conversation' OR ${marker} IN (${list(FLAG_TRUE)}))` : '');
 }
+
+/** One parsed conversation turn (or one piece of a turn split for the window budget). */
+export interface ConversationMessage {
+  speaker: string;
+  /** ISO 8601 timestamp parsed from the rendered message line. */
+  timestamp: string;
+  text: string;
+}
+
+/** One bounded extraction window: whole turns (or pieces) from one eligible gap group. */
+export interface ConversationSegment {
+  messages: ConversationMessage[];
+  startIso: string;
+  endIso: string;
+  participants: string[];
+}
+
+/** Options for `splitIntoSegments` (src/core/facts/conversation-windows.ts). */
+export interface SplitSegmentsOpts {
+  gapMinutes?: number;
+  maxMessages?: number;
+  /** Drop messages with timestamp <= this ISO before splitting. */
+  sinceIso?: string;
+  /** Rendered-character budget per window, header included. Default SEGMENT_TEXT_CHAR_LIMIT. */
+  maxChars?: number;
+  /** Page title rendered into every window header; counted against `maxChars`. */
+  pageTitle?: string;
+}

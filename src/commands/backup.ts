@@ -15,6 +15,7 @@
  * back to the cached verdict + age (cache-derived exit code), never a crash;
  */
 
+import { isAbsolute } from 'node:path';
 import { OperationError, opError } from '../core/ops/contract.ts';
 import { redactUrlsInText } from '../core/url-redact.ts';
 import { redactConnectionInfo } from '../core/audit/redact-connection-info.ts';
@@ -36,7 +37,7 @@ import {
 const BACKUP_USAGE: Record<string, { usage: string; example: string }> = {
   create: { usage: 'gbrain backup create --output /absolute/private/path/archive.gbrain-backup [--json]',
     example: 'gbrain backup create --output /srv/private/brain-2026-10-03.gbrain-backup' },
-  restore: { usage: 'gbrain backup restore ARCHIVE --into /absolute/new-root [--mode new-brain|recovery] [--confirm-quiesced] [--confirm-backup-compatible] [--confirm-authority-reviewed] [--json]',
+  restore: { usage: 'gbrain backup restore ARCHIVE --into /absolute/new-root [--mode new-brain|recovery] [--purge-mirror /absolute/purge-events.jsonl] [--confirm-quiesced] [--confirm-backup-compatible] [--confirm-authority-reviewed] [--json]',
     example: 'gbrain backup restore /srv/private/brain-2026-10-03.gbrain-backup --into /srv/gbrain-restored' },
 };
 
@@ -88,7 +89,10 @@ const HELP =
   '                        --confirm-authority-reviewed. Old service exclusion is\n' +
   '                        operator-enforced, not verified by these attestations.\n' +
   '                        Both modes revoke archived authority and disable publication.\n' +
-  '                        Quarantine unfinished jobs; never start automation.\n\n' +
+  '                        Quarantine unfinished jobs; never start automation.\n' +
+  '                        Replays purges made after the archive from the original\n' +
+  '                        brain\'s .gbrain/purge-events.jsonl, or the copy named by\n' +
+  '                        --purge-mirror ABS when that root is gone.\n\n' +
   '  --json   Structured verdict (includes the recovery field).\n\n' +
   'Exit codes: 0 ok / 1 warn / 2 usage error. Off switches: GBRAIN_BACKUP_CHECK=0 or\n' +
   '`gbrain config set backup.check_enabled false`. Interval:\n' +
@@ -164,7 +168,7 @@ export async function runBackupCli(
       for (let i = 1; i < args.length; i++) {
         const arg = args[i];
         if (arg === '--json') continue;
-        if (arg === '--output' || arg === '--into' || arg === '--mode') {
+        if (arg === '--output' || arg === '--into' || arg === '--mode' || arg === '--purge-mirror') {
           if (!args[i + 1] || args[i + 1].startsWith('--')) throw backupUsageError(sub, `Missing value for ${arg}.`);
           values[arg] = args[++i];
         } else if (['--confirm-quiesced', '--confirm-backup-compatible', '--confirm-authority-reviewed'].includes(arg)) confirmations.add(arg);
@@ -173,16 +177,17 @@ export async function runBackupCli(
       }
       const { createPgliteBackup, restorePgliteBackup } = await import('../core/backup/snapshot.ts');
       if (sub === 'create') {
-        if (!values['--output'] || values['--into'] || values['--mode'] || confirmations.size || positional.length) throw backupUsageError(sub, 'gbrain backup create takes exactly --output <absolute archive path>.');
+        if (!values['--output'] || values['--into'] || values['--mode'] || values['--purge-mirror'] || confirmations.size || positional.length) throw backupUsageError(sub, 'gbrain backup create takes exactly --output <absolute archive path>.');
         const result = await createPgliteBackup({ output: values['--output'] });
         if (json) console.log(JSON.stringify({ ok: true, ...result }));
         else console.log(`Backup created: ${result.archive}\nSensitive full database state; protect any off-VM copy.\nExcluded assets: ${(result.manifest.omitted as string[]).join('; ')}`);
       } else {
         if (!values['--into'] || values['--output'] || positional.length !== 1) throw backupUsageError(sub, 'gbrain backup restore takes one ARCHIVE and --into <absolute new root>.');
         if (values['--mode'] !== undefined && !['new-brain', 'recovery'].includes(values['--mode'])) throw new Error('Restore --mode must be new-brain or recovery.');
+        if (values['--purge-mirror'] !== undefined && !isAbsolute(values['--purge-mirror'])) throw backupUsageError(sub, '--purge-mirror takes an absolute path to a copy of the original brain\'s .gbrain/purge-events.jsonl.');
         const result = await restorePgliteBackup({ archive: positional[0], into: values['--into'], mode: values['--mode'] === 'recovery' ? 'recovery' : 'new_brain',
           confirmQuiesced: confirmations.has('--confirm-quiesced'), confirmBackupCompatible: confirmations.has('--confirm-backup-compatible'),
-          confirmAuthorityReviewed: confirmations.has('--confirm-authority-reviewed') });
+          confirmAuthorityReviewed: confirmations.has('--confirm-authority-reviewed'), ...(values['--purge-mirror'] ? { purgeMirror: values['--purge-mirror'] } : {}) });
         if (json) console.log(JSON.stringify({ ok: true, ...result }));
         else console.log(`Restored memory: ${result.root}\n${result.quarantined_jobs} unfinished jobs quarantined; no automation started.\n${result.reconnect_required.join('\n')}\nRun setup-in-agent.sh for this root to restore its runtime, then reconnect excluded credentials/services and verify memory.`);
       }
@@ -192,6 +197,11 @@ export async function runBackupCli(
         const { writeCliError } = await import('../cli/cli-error.ts');
         writeCliError(error, 'backup', { json, legacy: { ok: false, reason: 'invalid_params', message: error.message } });
         return { exitCode: 2 };
+      }
+      if (error instanceof OperationError && (error.code === 'backup_too_large' || error.code === 'unmanaged_database_path')) {
+        const { writeCliError } = await import('../cli/cli-error.ts');
+        writeCliError(error, 'backup', { json, legacy: { ok: false, reason: error.code, message: error.message } });
+        return { exitCode: 1 };
       }
       const detail = (typeof error === 'object' && error !== null ? error : {}) as { code?: unknown; retryable?: unknown };
       const reason = typeof detail.code === 'string' && SAFE_ERROR_FIELD.test(detail.code) ? detail.code : 'backup_failed';

@@ -56,7 +56,7 @@ for (const kind of testBackends()) {
       if (scratch) rmSync(scratch, { recursive: true, force: true });
     });
     const check = (name: string, fn: () => Promise<void>) => test(name, () => withEnv({ GBRAIN_HOME: scratch }, fn), 120_000);
-    async function fixture() {
+    async function fixture(body = 'Current') {
       await registerLocalWriter(engine, 'cli');
       const sourceId = `embedding-${randomUUID()}`;
       const [source] = await engine.executeRaw<{ incarnation: string }>('INSERT INTO sources(id,name) VALUES($1,$1) RETURNING incarnation', [sourceId]);
@@ -68,7 +68,7 @@ for (const kind of testBackends()) {
       const row = (await claimNextWrite(engine, localHostId()))!;
       expect(row.id).toBe(admitted.id);
       await publishMutation(engine, row, { observedRevision: null, apply: async tx => {
-        await tx.putPage('page', page('Current'), { sourceId }); return {};
+        await tx.putPage('page', page(body), { sourceId }); return {};
       } }, localHostId());
       const prepared = (await readProjectionSnapshot(engine, 'page', sourceId, { allowUnsealed: true }))!;
       await installPageProjection(engine, prepared, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: 'Current' }], { seal: true });
@@ -100,10 +100,20 @@ for (const kind of testBackends()) {
         'SELECT state,attempts,error_code,EXTRACT(EPOCH FROM next_attempt_at-now())*1000 AS wait_ms FROM persistence_effects WHERE id=$1', [effectId]))[0];
     }
 
+    check('large pages: a page held by embed.max_usd_per_page completes its effect without calling the provider', async () => {
+      const f = await fixture('x'.repeat(1024 * 1024 + 10));
+      await engine.executeRaw("INSERT INTO page_embedding_budget (page_id, state, reason) VALUES ($1, 'held', 'upgrade_backfill')", [f.snapshot.page.id]);
+      let calls = 0;
+      await run(async () => { calls++; return vectors(); });
+      expect(calls).toBe(0);
+      expect((await state(f.effectId)).state).toBe('committed');
+      expect((await readProjectionSnapshot(engine, 'page', f.sourceId))!.chunks[0].embedding).toBeNull();
+    });
+
     check('already-complete projection uses provenance without reading vectors or calling the provider', async () => {
       const f = await fixture();
       const prepared = (await readProjectionSnapshot(engine, 'page', f.sourceId))!;
-      expect(await installPageEmbeddings(engine, prepared, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: 'Current', embedding: vectors()[0], model }], signature)).toBe(true);
+      expect((await installPageEmbeddings(engine, prepared, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: 'Current', embedding: vectors()[0], model }], signature)).complete).toBe(true);
       expect((await readProjectionSnapshot(engine, 'page', f.sourceId))!.chunks[0].embedding).toBeNull();
       let calls = 0;
       await run(async () => { calls++; return vectors(); });

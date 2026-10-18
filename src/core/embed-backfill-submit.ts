@@ -30,6 +30,10 @@
  *      embed-backfill-tagged rows in the budget audit JSONL. Refuses
  *      submission when spend has hit the cap.
  *
+ *   4. Stall cap (#6803). Backs off, then refuses, while the source's last
+ *      backfills failed identically with nothing embedded and its blockers
+ *      have not changed since (embed-backfill-stall.ts).
+ *
  * Both bounds are config-overridable:
  *   - `embed.backfill_cooldown_min`        (default 10)
  *   - `embed.backfill_max_usd_per_source_24h`  (default 25)
@@ -43,6 +47,7 @@ import { opError } from './ops/contract.ts';
 import { readFix } from './ops/op-fix.ts';
 import { embedBackfillWorkerSurface } from './minions/embed-backfill-admission.ts';
 import { MinionQueue } from './minions/queue.ts';
+import { EMBED_BACKFILL_STALL_LIMIT, readEmbedBackfillBlockers, readEmbedBackfillStall } from './embed-backfill-stall.ts';
 import { parseUsdLimit, resolveSpendPosture, type SpendPosture } from './spend-posture.ts';
 
 export const COOLDOWN_CONFIG_KEY = 'embed.backfill_cooldown_min';
@@ -57,6 +62,8 @@ export type SubmitEmbedBackfillResult =
   | { status: 'cooldown'; reason: 'active_or_waiting'; cooldownRemainingSeconds: null }
   | { status: 'cooldown'; reason: 'recently_finished'; cooldownRemainingSeconds: number }
   | { status: 'spend_capped'; spend24hUsd: number; spendCapUsd: number }
+  /** #6803: the last EMBED_BACKFILL_STALL_LIMIT backfills failed identically with nothing embedded, and nothing has changed since. */
+  | { status: 'stalled'; failures: number; remaining: number; blocked: number; lastFailedAt: string }
   | { status: 'no_worker_surface'; engineKind: 'pglite' | 'unknown' };
 
 export type SubmitEmbedBackfillStatus = SubmitEmbedBackfillResult['status'];
@@ -171,7 +178,7 @@ export async function submitEmbedBackfill(
   );
 
   if (lastJob[0]) {
-    if (lastJob[0].status === 'active' || lastJob[0].status === 'waiting') {
+    if (lastJob[0].status === 'active' || lastJob[0].status === 'waiting' || lastJob[0].status === 'delayed') {
       // Active or waiting has no truthful retry countdown; keep the payload
       // required and explicit instead of omitting a branch-dependent field.
       return { status: 'cooldown', reason: 'active_or_waiting', cooldownRemainingSeconds: null };
@@ -187,6 +194,24 @@ export async function submitEmbedBackfill(
           cooldownRemainingSeconds: Math.ceil((cooldownMs - ageMs) / 1000),
         };
       }
+    }
+  }
+
+  // ── #6803: identical no-progress failures ───────────────────
+  // Back off (cooldown x2 per identical failure) and stop at the stall limit
+  // while the source's blockers are exactly what the failed runs recorded.
+  // A different fingerprint (new stale chunks, a blocker repaired or added)
+  // re-arms the next submission; a run that embedded something or completed
+  // already ended the streak.
+  const stall = await readEmbedBackfillStall(engine, sourceId);
+  if (stall && (await readEmbedBackfillBlockers(engine, sourceId, stall.signature)).fingerprint === stall.fingerprint) {
+    if (stall.failures >= EMBED_BACKFILL_STALL_LIMIT) {
+      return { status: 'stalled', failures: stall.failures, remaining: stall.remaining, blocked: stall.blocked, lastFailedAt: stall.last_finished_at.toISOString() };
+    }
+    const backoffMs = cooldownMin * 60_000 * 2 ** stall.failures;
+    const ageMs = now - stall.last_finished_at.getTime();
+    if (ageMs < backoffMs) {
+      return { status: 'cooldown', reason: 'recently_finished', cooldownRemainingSeconds: Math.ceil((backoffMs - ageMs) / 1000) };
     }
   }
 

@@ -1,0 +1,44 @@
+{
+  "chunker": {
+    "golden/tiny": "eeeb8d6dfbf5d312229d9c89e68f03f3d7a9843d059cc9dec8e90e2a1a73ec52",
+    "golden/empty-body": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "golden/no-frontmatter": "ecf41c263d7803056af769133a045999b5690093fba963629763d4599ff34dab",
+    "golden/fences": "6164ba600ce00f95566ee8b31f58aed12a16d86a63d70c26ce30d0835cba1e9a",
+    "golden/timeline": "3eec295c0ff24ca9b5c02a62c3aab7bfe761e1898d96d0aed26b25c99d55f954",
+    "golden/crlf": "a8d79689ddbb3fc634aa3c6cf0fb13b4e40656fed44f7f74bdb054c5fea89aa8",
+    "golden/long-line": "347027e4882536951c0c1e95cd972b58b40726ba7735b0e8aee319f5b2e47bdd",
+    "golden/cjk": "dcb5dee8337d88f49aac435c807b9b518c45f3274a8d6058913fdcdf0c85a5c8",
+    "golden/prose-100000": "7c478de6f23510db2bbc1405cdd4f5e996ed2a91587d25370936d110b05ad574",
+    "golden/prose-500000": "9753c967150753293798e9996251091f4538b362c472a7886a46d442d9b4239b",
+    "golden/prose-900000": "694c44befb2fab25d18a594b1b36fc3ca3ffb26a40c33c648867d105f0c70eea",
+    "golden/at-threshold": "8cc07b67c54b8e527ee1698a499838532ec5dcd6c64fd511b0e0155c0d5cc7fa"
+  },
+  "rows": {
+    "golden/tiny": "6794688d62ba7f517ca96f6539c9394641aa0ab9a299ed3ee203c763b3800247",
+    "golden/empty-body": "cf3337c08204b43c89f57403ee646dfea57e7eb61bef6335e18e6f0750c88a06",
+    "golden/no-frontmatter": "a8feca3bf7aa292854b0b5b123dfcb9c5ea3c16a44cb4c15fdd0f5c80d4711f4",
+    "golden/fences": "0f6f3b9ae8800b7c5db6904a6d3dc21c6f05b0bdb94139e44343c08a6839c15b",
+    "golden/timeline": "eede967c1d8ca20011ffb8ab8542710dce8c11bda183241faac3e17d54d080d5",
+    "golden/crlf": "ce6f3d6240750001d279cd74e7095755c5663d7e660c37e63ced0f8c38037334",
+    "golden/long-line": "65c1d9730ab30bf6352894465eaae026ce3b1168d1d412e8992438ce658c3ca3",
+    "golden/cjk": "d1f7a9038c623bbc17b8a1fe6e08eadd856341d089ebf27ce4e4b291376412a1",
+    "golden/prose-100000": "b0e26a29b4e8df0d5d4515ce658c42f2ab9db6cff0ca6a67fc146d7bafee6fc0",
+    "golden/prose-500000": "bedf6011d92195ae0e0d32bb20ff51193c3d587be871337d519ec16771a2a564",
+    "golden/prose-900000": "6ea0cf2282ab03f840cd837c432f479315bb944258f930ee6f56bfe0a1ce879b",
+    "golden/at-threshold": "aef313469326c1321cf92e6f9c20bf597cd9b8eb419984f9582df3f262b91826"
+  },
+  "bodyBytes": {
+    "golden/tiny": 19,
+    "golden/empty-body": 0,
+    "golden/no-frontmatter": 278,
+    "golden/fences": 20243,
+    "golden/timeline": 30173,
+    "golden/crlf": 40482,
+    "golden/long-line": 300205,
+    "golden/cjk": 440000,
+    "golden/prose-100000": 100000,
+    "golden/prose-500000": 499999,
+    "golden/prose-900000": 900000,
+    "golden/at-threshold": 1048576
+  }
+}

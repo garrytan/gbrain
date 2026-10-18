@@ -10,14 +10,24 @@
  */
 import type { BrainEngine } from './engine.ts';
 import { loadConfig, loadConfigWithEngine } from './config.ts';
-import { assessContentSanity, type ContentSanityResult } from './content-sanity.ts';
-import { dropClassifierMarkers, hasCurrentQuarantineOverride, QUARANTINE_OVERRIDE_KEY, withQuarantineOverride } from './quarantine-override.ts';
-import { CONTENT_FLAG_KEY, QUARANTINE_KEY } from './quarantine.ts';
-import { EMBED_SKIP_KEY } from './embed-skip.ts';
+import { loadConfigSnapshot } from './config-snapshot.ts';
+import { assessContentSanity, ContentSanityBlockError, DEFAULT_BYTES_BLOCK, type ContentSanityResult } from './content-sanity.ts';
+import { carryStoredQuarantineOverride, dropClassifierMarkers, hasCurrentQuarantineOverride, QUARANTINE_OVERRIDE_KEY, withQuarantineOverride } from './quarantine-override.ts';
+import { logContentSanityAssessment } from './audit/content-sanity-audit.ts';
+import { buildEmbedSkipMarker, EMBED_SKIP_KEY } from './embed-skip.ts';
+import { buildContentFlagMarker, buildQuarantineMarker, CONTENT_FLAG_KEY, QUARANTINE_KEY } from './quarantine.ts';
 import { ATOMS_SCAN_HASH_KEY } from './utils.ts';
+import { applyTrustAllowRules } from './trust/allow-rules.ts';
+import { compareTrust, isTrustTier, OWNER_TIER_FLOOR } from './trust/tier.ts';
+import {
+  assessPageForGate, DEFAULT_WRITE_GATE_CONFIG, parseWriteGateConfig, writeGateDetail, writeGateRejectedError,
+  type WriteGateAssessment, type WriteGateConfig, type WriteGateInput,
+} from './write-gate.ts';
+import { clearStalePageGateReceipts, recordPageGateReceipt } from './write-gate-store.ts';
 import { loadOperatorLiterals } from './content-sanity-literals.ts';
 import { classifyImportHold, contentSizeHold, parseMarkdown, type ContentHold, type ParseOpts, type ParsedMarkdown } from './markdown.ts';
 import { isCodeFilePath } from './sync.ts';
+import { contentHash } from './utils.ts';
 import { opError, type OperationError } from './ops/contract.ts';
 import type { Action } from './agent-output.ts';
 import { fenceFixText, fenceLocationFromMessage, fenceRefusal } from './fence-repair/refusal.ts';
@@ -25,8 +35,15 @@ import type { FenceMessageLocation } from './fence-repair/reasons.ts';
 import { fenceIssuesWire, fenceStep, type FenceIssueWire } from './fence-repair/tier1.ts';
 import type { FenceCtx, FenceFix, FencePage, FenceReason } from './fence-repair/types.ts';
 import { effectiveVisibility } from './search/private-visibility.ts';
+import { CODE_FILE_MAX_BYTES, PAGE_MAX_BYTES } from './page-size-policy.ts';
 
-export const MAX_FILE_SIZE = 5_000_000; // 5MB
+/** Largest Markdown page import admits: the Wave A ceiling (page-size-policy.ts). */
+export const MAX_FILE_SIZE = PAGE_MAX_BYTES;
+
+/** The size bound for a file at `path`: code keeps its own 5 MB bound (no content sanity, tree-sitter and edge extraction). */
+export function importSizeLimit(path: string): number {
+  return isCodeFilePath(path) ? CODE_FILE_MAX_BYTES : MAX_FILE_SIZE;
+}
 
 type ContentSanityConfig = NonNullable<NonNullable<ReturnType<typeof loadConfig>>['content_sanity']>;
 
@@ -35,28 +52,239 @@ export interface ImportSanityConfig {
   disabled: boolean;
   extraLiterals: ReturnType<typeof loadOperatorLiterals>;
   junkDisposition: 'quarantine' | 'reject';
+  /** #5575 `write_gate.external_mode` / `write_gate.agent_mode` (DB plane, local-only); absent = defaults. */
+  writeGate?: WriteGateConfig;
 }
 
 /**
  * Effective content-sanity config: env > file > DB > defaults. A transient
  * engine error falls back to file/env values. `GBRAIN_NO_SANITY=1` is read
- * directly because loadConfig() is null on config-less PGLite setups.
+ * directly because loadConfig() is null on config-less PGLite setups. The
+ * write-gate keys ride the same lift; an unreadable value falls back to the
+ * defaults (flag for both), never to `off`.
  */
 export async function loadImportSanityConfig(engine: BrainEngine): Promise<ImportSanityConfig> {
   const baseCfg = loadConfig();
   let effectiveCfg = baseCfg;
+  // One whole-table read answers the DB config lift and the write-gate keys (#6007 statement budget).
+  const snapshot = await loadConfigSnapshot(engine);
+  const reader = snapshot ? {
+    getConfig: async (key: string) => snapshot[key] ?? null,
+    getAllConfig: async () => snapshot,
+    listConfigKeys: async (prefix: string) => Object.keys(snapshot).filter(key => key.startsWith(prefix)),
+  } : engine;
+  const readKey = async (key: string) => { try { return await reader.getConfig(key); } catch { return null; } };
+  const gateKeys = Promise.all([readKey('write_gate.external_mode'), readKey('write_gate.agent_mode')]);
   try {
-    effectiveCfg = await loadConfigWithEngine(engine, baseCfg);
+    effectiveCfg = await loadConfigWithEngine(reader, baseCfg);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`[gbrain] content-sanity: DB config lift failed (${msg}); falling back to file/env\n`);
   }
+  const [externalMode, agentMode] = await gateKeys;
   const cs = effectiveCfg?.content_sanity ?? {};
   const disabled = cs.disabled === true || process.env.GBRAIN_NO_SANITY === '1';
   return {
     cs, disabled,
     extraLiterals: cs.junk_patterns_enabled !== false && !disabled ? loadOperatorLiterals() : [],
     junkDisposition: cs.junk_disposition === 'reject' ? 'reject' : 'quarantine',
+    writeGate: parseWriteGateConfig({ external_mode: externalMode, agent_mode: agentMode }),
+  };
+}
+
+/**
+ * The bytes_block every size check applies: the write gate's resolution (DB
+ * config plane over file and env, #6526), capped at the page ceiling, and the
+ * ceiling itself when content sanity is disabled. Doctor's oversized_pages and
+ * the oversized-page backfill read it, so they agree with the gate.
+ */
+export async function effectiveBytesBlock(engine: BrainEngine): Promise<number> {
+  const sanity = await loadImportSanityConfig(engine);
+  const block = sanity.disabled ? PAGE_MAX_BYTES : (sanity.cs.bytes_block ?? DEFAULT_BYTES_BLOCK);
+  return Math.min(block, PAGE_MAX_BYTES);
+}
+
+export interface ContentDispositionContext {
+  slug: string;
+  sourceId?: string;
+  /** The incoming gate-owned markers were stripped (no `preserveGateMarkers`): a stored quarantine override may be carried (quarantine-override.ts). */
+  stripped: boolean;
+  /** #5575: tier and origin of this write; absent skips the write gate. */
+  writeGate?: WriteGateInput;
+  /** Wave B: the whole body's bytes when `parsed` holds only its head (a streamed page). */
+  bodyBytes?: number;
+  /** Wave B: the bytes_block a streamed page is judged against while `content_sanity.bytes_block` is unset (its page ceiling). */
+  defaultBytesBlock?: number;
+}
+
+export interface ContentDisposition {
+  quarantined: boolean;
+  flagged: boolean;
+  flagReason?: 'markup_heavy' | 'oversized' | 'instruction_like';
+  /** The write-gate assessment, when the caller passed `writeGate`. */
+  gate: WriteGateAssessment | null;
+  /** Records the gate's flag/quarantine receipt for the written page inside the publication transaction. */
+  persistReceipt: (tx: BrainEngine, page: { existed: boolean }) => Promise<void>;
+}
+
+/**
+ * The page disposition `importFromContent` applies before hashing: the v0.41
+ * content-sanity gate (#1699) and the #5575 write gate, most severe wins.
+ * Runs after parseMarkdown and the guardrail seam, before the hash compute,
+ * so a marker it sets (`embed_skip`, `quarantine`, `content_flag`) reaches
+ * the hash and the page write never short-circuits on hash equality.
+ *
+ * Content sanity:
+ *   - kill-switch (`content_sanity.disabled` / `GBRAIN_NO_SANITY=1`): assess
+ *     and audit as a bypass, loud stderr per offending ingest, write anyway.
+ *   - hard-block (junk pattern or operator literal) under
+ *     `junk_disposition: reject`: throw ContentSanityBlockError, the single
+ *     throw point every wrapper (import errors, put_page envelope, sync
+ *     failure record) already handles; otherwise quarantine (hidden, zero
+ *     chunks, reviewable via `gbrain quarantine list`).
+ *   - soft-block (oversize without a junk hit): `embed_skip` plus a
+ *     `content_flag`, so chunks stay empty and old chunks are purged.
+ *   - markup-heavy: `content_flag`, page stays searchable.
+ * Write gate (only with `ctx.writeGate`; its own `write_gate.*` switches):
+ *   - reject: throw `write_gate_rejected`.
+ *   - quarantine: `quarantine` marker (reason `instruction_like`) unless
+ *     content sanity already quarantined the page.
+ *   - flag: `content_flag` (reason `instruction_like`) unless quarantined.
+ *   - a write the gate allows drops a stale `instruction_like` marker.
+ * Effective config: env > file > DB > defaults, read once per import with the
+ * write-gate keys in the same lift (`loadImportSanityConfig`).
+ */
+export async function settleContentDisposition(engine: BrainEngine, parsed: ParsedMarkdown, ctx: ContentDispositionContext): Promise<ContentDisposition> {
+  const { slug, sourceId } = ctx;
+  let pageQuarantined = false;
+  let pageFlagged = false;
+  let pageFlagReason: ContentDisposition['flagReason'];
+  const sanityCfg = await loadImportSanityConfig(engine);
+  const sanityDisabled = sanityCfg.disabled;
+  // Disposition for the high-confidence junk path: quarantine (hide) by
+  // default, or reject (throw → sync-failure) when the operator opts in.
+  const junkDisposition = sanityCfg.junkDisposition;
+  const sanityResult = await carryStoredQuarantineOverride(engine, parsed, assessImportSanity(parsed, sanityCfg, ctx.bodyBytes, ctx.defaultBytesBlock), { slug, sourceId, stripped: ctx.stripped });
+  if (!sanityDisabled && !sanityResult.shouldQuarantine && sanityResult.flag_reason !== 'oversized' && (parsed.frontmatter[EMBED_SKIP_KEY] as { reason?: unknown } | undefined)?.reason === 'oversized') {
+    delete parsed.frontmatter[EMBED_SKIP_KEY];
+    if ((parsed.frontmatter[CONTENT_FLAG_KEY] as { reason?: unknown } | undefined)?.reason === 'oversized') delete parsed.frontmatter[CONTENT_FLAG_KEY];
+  }
+
+  if (sanityDisabled) {
+    // Kill-switch active: loud stderr per offending ingest. Operator
+    // explicitly opted into the bypass and gets noisy feedback every
+    // time it fires so they remember the gate is off. Audit as a
+    // bypass (page lands regardless).
+    logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
+      bypass: true,
+    });
+    if (sanityResult.shouldQuarantine || sanityResult.shouldFlag) {
+      process.stderr.write(
+        `[gbrain] content-sanity bypass (GBRAIN_NO_SANITY=1): ${slug} — ${sanityResult.reason_messages.join('; ')}\n`,
+      );
+    }
+  } else if (sanityResult.shouldQuarantine) {
+    // High-confidence junk (Cloudflare/CAPTCHA pattern or operator
+    // literal). The detail names which fired.
+    const detail = [
+      ...sanityResult.junk_pattern_matches,
+      ...sanityResult.literal_substring_matches,
+    ].join(', ');
+    const reason = sanityResult.junk_pattern_matches.length > 0
+      ? 'junk_pattern'
+      : 'literal_substring';
+    if (junkDisposition === 'reject') {
+      // Operator opted into hard-block. Throw with PAGE_QUARANTINE so
+      // classifyErrorCode bins it. Existing exception flow at every
+      // wrapper site (import errors counter, put_page MCP envelope,
+      // sync failure record) fires through this single throw point.
+      logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
+        disposition: 'reject',
+      });
+      throw new ContentSanityBlockError(sanityResult);
+    }
+    // Default: quarantine (hide). Page lands with the marker, writes
+    // zero chunks (chunking guard below widens to isQuarantined), is
+    // excluded from search via QUARANTINE_FILTER_FRAGMENT, reviewable
+    // via get_page / `gbrain quarantine list`.
+    parsed.frontmatter[QUARANTINE_KEY] = buildQuarantineMarker(reason, detail, {
+      bytes: sanityResult.bytes,
+    });
+    pageQuarantined = true;
+    logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
+      disposition: 'quarantine',
+    });
+    process.stderr.write(
+      `[gbrain] content-sanity quarantine: ${slug} — ${detail} (hidden from search, reviewable via 'gbrain quarantine list')\n`,
+    );
+  } else if (sanityResult.shouldFlag) {
+    // Fuzzy markup-heavy OR oversize. The page stays usable; the agent
+    // gets warned (Garry's paradigm — "this is odd, you decide").
+    const flagReason = sanityResult.flag_reason!; // non-null when shouldFlag
+    const flagDetail = sanityResult.reason_messages.join('; ');
+    parsed.frontmatter[CONTENT_FLAG_KEY] = buildContentFlagMarker(flagReason, flagDetail, {
+      ...(sanityResult.markup_ratio !== null ? { markup_ratio: sanityResult.markup_ratio } : {}),
+      bytes: sanityResult.bytes,
+    });
+    pageFlagged = true;
+    pageFlagReason = flagReason;
+    if (flagReason === 'oversized') {
+      // Oversize also skips embedding (existing embed_skip marker). The
+      // chunking guard below honors it; tx.deleteChunks purges old chunks.
+      parsed.frontmatter[EMBED_SKIP_KEY] = buildEmbedSkipMarker(sanityResult.bytes);
+      logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
+        disposition: 'soft_block',
+      });
+      // #3893 (reimplemented from @y2688): console.warn, not bare stderr —
+      // soft_block silently drops embedding, and console-level warns are
+      // what operator log hooks and collectors can observe.
+      console.warn(
+        `[gbrain] content-sanity flag (oversized): ${slug} (${sanityResult.bytes} bytes) — page lands, embedding skipped, agent warned`,
+      );
+    } else {
+      // markup_heavy: page ingests NORMALLY (keeps chunks, embeds). The
+      // content_flag marker rides along for the agent warning.
+      logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
+        disposition: 'flag',
+      });
+      process.stderr.write(
+        `[gbrain] content-sanity flag (markup_heavy): ${slug} (ratio ${sanityResult.markup_ratio?.toFixed(2)}) — stays searchable, agent warned\n`,
+      );
+    }
+  } else if (sanityResult.reasons.includes('oversize_warn')) {
+    // Warn tier: page lands normally; lint surface picks up too.
+    logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
+      disposition: 'warn',
+    });
+    process.stderr.write(
+      `[gbrain] content-sanity warn: ${slug} (${sanityResult.bytes} bytes) — exceeds warn threshold; stored and searchable, no action needed\n`,
+    );
+  }
+  const gate = ctx.writeGate ? await applyTrustAllowRules(engine, assessPageForGate(parsed, ctx.writeGate, sanityCfg.writeGate ?? DEFAULT_WRITE_GATE_CONFIG),
+    { sourceId: sourceId ?? 'default', sourceUri: ctx.writeGate.origin?.source_uri ?? null }) : null;
+  if (gate) {
+    if (gate.verdict === 'reject') throw writeGateRejectedError(gate);
+    const detail = writeGateDetail(gate);
+    for (const key of [QUARANTINE_KEY, CONTENT_FLAG_KEY]) {
+      if ((parsed.frontmatter[key] as { reason?: unknown } | undefined)?.reason === 'instruction_like') delete parsed.frontmatter[key];
+    }
+    if (gate.verdict === 'quarantine' && !pageQuarantined) {
+      parsed.frontmatter[QUARANTINE_KEY] = buildQuarantineMarker('instruction_like', detail);
+      pageQuarantined = true;
+      process.stderr.write(`[gbrain] ${detail}: ${slug} quarantined (hidden from search, reviewable via 'gbrain quarantine list')\n`);
+    } else if (gate.verdict === 'flag' && !pageQuarantined) {
+      parsed.frontmatter[CONTENT_FLAG_KEY] = buildContentFlagMarker('instruction_like', detail);
+      pageFlagged = true;
+      pageFlagReason = 'instruction_like';
+    }
+  }
+  return {
+    quarantined: pageQuarantined, flagged: pageFlagged, ...(pageFlagReason ? { flagReason: pageFlagReason } : {}), gate,
+    persistReceipt: async (tx, page) => {
+      // A page created by this write has a fresh id, so no receipt can name it yet (#6007: no delete on create).
+      if (gate?.ran && page.existed) await clearStalePageGateReceipts(tx, { slug, sourceId: sourceId ?? 'default', contentHash: gate.contentHash });
+      if (gate) await recordPageGateReceipt(tx, { slug, sourceId: sourceId ?? 'default', assessment: gate, requestId: ctx.writeGate?.requestId ?? null });
+    },
   };
 }
 
@@ -74,24 +302,34 @@ export const GATE_OWNED_FRONTMATTER_KEYS = [QUARANTINE_KEY, CONTENT_FLAG_KEY, EM
  * mining (`atoms_scan_hash`) or forge a cleared state (`quarantine_override`).
  * A preserving path keeps its own override only while it binds the content,
  * and a current override drops classifier markers the content still carries.
+ * A preserving file import that carries a write gate (owner sync and file
+ * import, managed sync and import) keeps it only when that gate's tier is
+ * owner-tier (wave 13). File repair and reconcile pass no gate, so they pass
+ * the source's owner tier as `overrideTier` and the same rule applies. An unreadable tier fails closed.
  */
-export function stripGateOwnedMarkers(parsed: Pick<ParsedMarkdown, 'frontmatter' | 'title' | 'type' | 'compiled_truth' | 'timeline'>, opts: { preserveGateMarkers?: boolean }): void {
+export function stripGateOwnedMarkers(parsed: Pick<ParsedMarkdown, 'frontmatter' | 'title' | 'type' | 'compiled_truth' | 'timeline'>,
+  opts: { preserveGateMarkers?: boolean; writeGate?: { tier?: unknown }; overrideTier?: unknown }): void {
   if (opts.preserveGateMarkers !== true) {
     for (const key of GATE_OWNED_FRONTMATTER_KEYS) delete parsed.frontmatter[key];
     return;
   }
-  if (Object.hasOwn(parsed.frontmatter, QUARANTINE_OVERRIDE_KEY) && !hasCurrentQuarantineOverride(parsed)) delete parsed.frontmatter[QUARANTINE_OVERRIDE_KEY];
+  const tiered = opts.writeGate !== undefined || Object.hasOwn(opts, 'overrideTier');
+  const tier = opts.writeGate !== undefined ? opts.writeGate.tier : opts.overrideTier;
+  const ownerGate = !tiered || isTrustTier(tier) && compareTrust(tier, OWNER_TIER_FLOOR) >= 0;
+  if (Object.hasOwn(parsed.frontmatter, QUARANTINE_OVERRIDE_KEY) && (!ownerGate || !hasCurrentQuarantineOverride(parsed))) delete parsed.frontmatter[QUARANTINE_OVERRIDE_KEY];
   dropClassifierMarkers(parsed as ParsedMarkdown);
 }
 
 /** #6259: a page carrying a current `quarantine_override` keeps the classifier's verdict off (see quarantine-override.ts). */
-export function assessImportSanity(page: Pick<ParsedMarkdown, 'compiled_truth' | 'timeline' | 'title' | 'type'> & { frontmatter?: Record<string, unknown> }, cfg: ImportSanityConfig): ContentSanityResult {
+export function assessImportSanity(page: Pick<ParsedMarkdown, 'compiled_truth' | 'timeline' | 'title' | 'type'> & { frontmatter?: Record<string, unknown> }, cfg: ImportSanityConfig,
+  bodyBytes?: number, defaultBytesBlock?: number): ContentSanityResult {
   return withQuarantineOverride(assessContentSanity({
     compiled_truth: page.compiled_truth,
+    ...(bodyBytes !== undefined ? { body_bytes: bodyBytes } : {}),
     timeline: page.timeline ?? '',
     title: page.title,
     bytes_warn: cfg.cs.bytes_warn,
-    bytes_block: cfg.cs.bytes_block,
+    bytes_block: cfg.cs.bytes_block ?? defaultBytesBlock,
     max_markup_ratio: cfg.cs.max_markup_ratio,
     prose_check_enabled: cfg.cs.prose_check_enabled,
     page_kind: page.type,
@@ -107,7 +345,7 @@ export function assessImportSanity(page: Pick<ParsedMarkdown, 'compiled_truth' |
  * with its location-only `fence`.
  */
 export interface ContentRefusal extends Omit<ContentHold, 'code' | 'reason'> {
-  code: ContentHold['code'] | 'content_rejected' | 'invalid_fence';
+  code: ContentHold['code'] | 'content_rejected' | 'invalid_fence' | 'purged_content' | 'write_gate_rejected';
   reason?: ContentHold['reason'] | FenceReason;
   fence?: FenceMessageLocation;
   /** #6188 (D18): every issue that blocks the write, location and class only. */
@@ -164,6 +402,12 @@ export interface ImportScreenInput {
   fences?: 'coordinated' | 'lenient';
   /** #6188: `fences.normalize`; false treats a fixable fence as residual. Default true. */
   normalize?: boolean;
+  /** #5575: the source's page purge tombstones (content hash -> purged slug), prefetched by the caller. */
+  purgedPages?: ReadonlyMap<string, string>;
+  /** #5575: tier and origin of this write; under `write_gate.external_mode: reject` (from `sanity`) a gate reject refuses `write_gate_rejected`. */
+  writeGate?: WriteGateInput;
+  /** #6712 PR 2: the owner's trust allow rules that preparation applies (`applyTrustAllowRules`); a reject they cover is not refused. */
+  gateAllowed?: (gate: { families: readonly string[]; detectorError: boolean }) => boolean;
 }
 
 export type ImportScreenResult =
@@ -179,12 +423,15 @@ export function screenNormalized(result: ImportScreenResult): boolean {
 export function screenImportContent(input: ImportScreenInput): ImportScreenResult {
   if (input.published?.()) return { status: 'published' };
   const codeFile = isCodeFilePath(input.path);
-  const size = contentSizeHold(input.byteLength ?? Buffer.byteLength(input.content, 'utf-8'), MAX_FILE_SIZE, codeFile);
+  const size = contentSizeHold(input.byteLength ?? Buffer.byteLength(input.content, 'utf-8'), codeFile ? CODE_FILE_MAX_BYTES : MAX_FILE_SIZE, codeFile);
   if (size) return { status: 'refused', refusal: size };
   if (codeFile) return { status: 'importable', parsed: null };
   const parsed = parseMarkdown(input.content, input.path, { validate: true, ...(input.activePack ? { activePack: input.activePack } : {}) });
   const hold = classifyImportHold(parsed, { expectedSlug: input.expectedSlug, slugExempt: input.slugExempt, slugConflictMessage: input.slugConflictMessage });
   if (hold) return { status: 'refused', refusal: hold };
+  const purgedAs = input.purgedPages?.size ? input.purgedPages.get(contentHash(parsed)) : undefined;
+  if (purgedAs !== undefined) return { status: 'refused', refusal: { code: 'purged_content',
+    message: `${input.path} carries the content of page ${purgedAs}, which the owner purged; it was not imported.` } };
   let fences: FenceScreen | undefined;
   if (input.fences) {
     const before = { compiled_truth: parsed.compiled_truth, timeline: parsed.timeline ?? '' };
@@ -201,8 +448,15 @@ export function screenImportContent(input: ImportScreenInput): ImportScreenResul
     const result = assessImportSanity(parsed, input.sanity);
     if (result.shouldQuarantine) return { status: 'refused', refusal: { code: 'content_rejected', message: `Content rejected by sanity gate: ${result.reason_messages.join('; ')}` } };
   }
+  if (input.writeGate?.tier === 'external_untrusted' && input.sanity?.writeGate?.externalMode === 'reject') {
+    const gate = assessPageForGate(parsed, input.writeGate, input.sanity.writeGate);
+    if (gate.verdict === 'reject' && !input.gateAllowed?.(gate)) return { status: 'refused', refusal: { code: 'write_gate_rejected', message: writeGateRejectedError(gate).message } };
+  }
   return { status: 'importable', parsed, ...(fences ? { fences } : {}) };
 }
+
+/** The next step of a page write over the page limit; a page under it never needs splitting. */
+export const PAGE_OVER_LIMIT_SUGGESTION = `The content is over the ${MAX_FILE_SIZE}-byte page limit, so it refuses on every retry. Every page under the limit is stored and searchable; only content over it must become several pages, each submitted with its own request_id.`;
 
 /**
  * The typed refusal a publication path throws. `legacy_error` keeps the wire
@@ -236,7 +490,7 @@ export function contentRefusalFromReceipt(code: string | null | undefined, messa
   const typed = CONTENT_REFUSAL_CODES.has(code!) ? code as ContentRefusal['code']
     : /^Invalid YAML frontmatter/.test(text) ? 'invalid_frontmatter'
     : /slug/.test(text) ? 'frontmatter_slug_conflict'
-    : /PAGE_JUNK_PATTERN/.test(text) ? 'content_rejected' : 'file_too_large';
+    : /PAGE_JUNK_PATTERN/.test(text) ? 'content_rejected' : /which the owner purged/.test(text) ? 'purged_content' : 'file_too_large';
   const reason = typed !== 'invalid_frontmatter' ? undefined
     : /ambiguous protected key/.test(text) ? 'ambiguous_protected_key' as const
     : /ambiguous identity key/.test(text) ? 'ambiguous_identity_key' as const
@@ -245,17 +499,20 @@ export function contentRefusalFromReceipt(code: string | null | undefined, messa
   const suggestion = typed === 'invalid_frontmatter' ? `The content itself was refused, so resubmitting it unchanged refuses again. Correct ${where}: one line per key with its whole value quoted, then submit the corrected content with a new request_id.`
     : typed === 'frontmatter_slug_conflict' ? 'The content declares a slug that conflicts with its path. Remove the `slug:` line or make it match, then submit with a new request_id.'
     : typed === 'content_rejected' ? 'The content-sanity gate rejects this content under the operator\'s junk_disposition=reject setting. Remove the matched junk, then submit with a new request_id.'
-    : 'The content is over the import size limit. Split it into smaller pages, then submit each with its own request_id.';
+    : typed === 'purged_content' ? 'This content was purged by the owner and stays out of the brain. Do not resubmit it; write new content, or ask the user to clear the tombstone on the brain host (gbrain pages unpurge).'
+    : typed === 'write_gate_rejected' ? 'The write gate refuses this external instruction-like content under the operator\'s write_gate.external_mode=reject setting, so it refuses on every retry. Tell the user; changing that setting is their decision.'
+    : PAGE_OVER_LIMIT_SUGGESTION;
   return { code: typed, ...(reason ? { reason } : {}), ...(key ? { key } : {}), ...(line !== undefined ? { line } : {}), suggestion };
 }
 
-const CONTENT_REFUSAL_CODES = new Set(['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'content_rejected']);
+const CONTENT_REFUSAL_CODES = new Set(['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'content_rejected', 'purged_content', 'write_gate_rejected']);
 const LEGACY_CONTENT_MESSAGES: Array<[code: string, pattern: RegExp]> = [
   ['invalid_params', /^Invalid YAML frontmatter(?::| at line \d| in )/],
   ['invalid_params', /^The frontmatter slug "[^"\n]*" in [^\n]+ conflicts with its path, which expects slug "[^"\n]*"\./],
   ['invalid_params', /^Frontmatter slug "[^"\n]*" does not match path-derived slug "[^"\n]*"/],
   ['invalid_params', /^Content too large \(\d+ bytes, max \d+\)/],
   ['invalid_params', /^File too large \(/],
+  ['invalid_params', /^[^\n]+ carries the content of page [^\n]+, which the owner purged; it was not imported\.$/],
   ['invalid_params', /^Code file too large \(\d+ bytes\)/],
   ['request_too_large', /^Sync file exceeds the bounded import size\.$/],
   ['storage_error', /^Publication failed \(PAGE_JUNK_PATTERN\)\. Inspect owner diagnostics\.$/],

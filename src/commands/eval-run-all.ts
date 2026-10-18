@@ -30,7 +30,7 @@
 import { writeFileSync, mkdirSync, appendFileSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
-import { SEARCH_MODES, type SearchMode } from '../core/search/mode.ts';
+import { MODE_BUNDLES, SEARCH_MODES, type SearchMode } from '../core/search/mode.ts';
 import { redactSecrets } from '../eval/longmemeval/run-config.ts';
 import { OperationError, opError } from '../core/ops/contract.ts';
 import type { Action } from '../core/agent-output.ts';
@@ -214,7 +214,7 @@ export interface EvalRunRecord {
 
 function getRepoRoot(): string {
   try {
-    const { execSync } = require('child_process') as typeof import('child_process');
+    const { execSync } = require('../core/spawn.ts') as typeof import('../core/spawn.ts');
     return execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim();
   } catch {
     return process.cwd();
@@ -223,7 +223,7 @@ function getRepoRoot(): string {
 
 function getCommitSha(): string {
   try {
-    const { execSync } = require('child_process') as typeof import('child_process');
+    const { execSync } = require('../core/spawn.ts') as typeof import('../core/spawn.ts');
     return execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim();
   } catch {
     return 'unknown';
@@ -292,7 +292,7 @@ export function estimateRunCost(opts: { suites: string[]; modes: SearchMode[]; l
   for (const suite of opts.suites) {
     for (const mode of opts.modes) {
       // Retrieval side: 1 embed + (optional Haiku) per query.
-      const expansionCalls = mode === 'tokenmax' ? Qper : 0;
+      const expansionCalls = MODE_BUNDLES[mode].expansion ? Qper : 0;
       const retCost = Qper * 0.00001 + expansionCalls * 0.001;
       // Answer side: 1 Sonnet/Opus call per query for longmemeval; 0 for replay/brainbench.
       const answerCost = suite === 'longmemeval' ? Qper * 0.015 : 0;

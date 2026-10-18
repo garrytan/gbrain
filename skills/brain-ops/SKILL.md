@@ -125,7 +125,7 @@ Before using ANY external API to research a person, company, or topic:
 
 1. `gbrain entity "<name>"` (v0.43+) — ONE known person/company/project → full card (description, aliases, open threads, recent events, edges, backlink/fact counts). Zero LLM calls, sub-100ms. This one call replaces steps 2–6 for known-entity lookups; near-misses return suggestions.
 2. `gbrain search "name"` — exact-token lookup for existing pages (cheap hybrid, no expansion)
-3. `gbrain query "natural question about name"` — concept/landscape questions go here FIRST (expansion recovers synonym phrasings; a nonzero `search` count is not proof of completeness)
+3. `gbrain query "natural question about name"` — concept/landscape questions go here FIRST (meaning-match plus reranking recovers synonym phrasings; `--expand` adds LLM rewrites when results look thin; a nonzero `search` count is not proof of completeness)
 4. `gbrain get <slug>` — if you know the slug, read the full page
 5. Check backlinks: who references this entity?
 6. Check timeline: recent events involving this entity
@@ -255,6 +255,7 @@ the citation is `[gstack:plans/foo]`. That's the whole rule.
 Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `put_page` returns `revision_conflict`: re-read the page, merge your change into the new text, and save with the new revision. `write_pending` (exit 10): poll `get_write_request` (`gbrain write-request <request_id>`) before claiming the write landed.
+- `put_page` (or `capture`, tags, timeline) returns `owner_unavailable` with `detail: unbound_source`: this is a classic Postgres brain. Write the page as a file in the source's checkout, commit, and run `gbrain sync --source <id>`; if you are remote, give those three steps to the user. Never claim the source or switch modes to get the write through (see the [agent operator protocol](../conventions/agent-operator-protocol.md#a-write-refused-owner_unavailable-with-detail-unbound_source)).
 - A write is refused by the secret scan or a slug fence (`permission_denied`): do not strip or rename to dodge it; tell the user what was refused and why (see `docs/guides/write-refusals.md`).
 - `recall` / `search` returns nothing with a degraded notice or `search_degraded`: say the brain is searching keywords only right now, not that nothing is saved.
 - `insufficient_scope` / `scope_denied` over MCP: the connection lacks that scope. Tell the user; never ask for a broader token just to make a write pass.
@@ -272,7 +273,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 ## Tools Used
 
 - `search` — cheap hybrid search (vector + keyword, no expansion)
-- `query` — hybrid search + LLM multi-query expansion (concept/landscape questions)
+- `query` — hybrid search for concept/landscape questions (`--expand` adds LLM multi-query expansion)
 - `get_page` — read a brain page
 - `put_page` — create/update brain pages
 - `add_link` — cross-reference entities

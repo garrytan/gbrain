@@ -296,6 +296,40 @@ ${subtypes}`);
     expect(fs.readFileSync(file, 'utf8')).toContain('subtype: therapy');
   });
 
+  test('a grandfather validate:false stamp held only by the database is not an uncoordinated file edit (#6429)', async () => {
+    const ctx = makeCtx({ remote: true });
+    const slug = 'companies/acme-example';
+    const file = path.join(brainDir, `${slug}.md`);
+    const content = '---\ntitle: Acme Example\ntype: company\n---\n\nFirst note.';
+    const first = await putPage.handler(ctx, { slug, content }) as { revision: string };
+    expect(fs.readFileSync(file, 'utf8')).not.toContain('validate:');
+    // The unmanaged v0.13.1 grandfather path stamps the database row and never writes the file (v0_13_1.ts, raw UPDATE).
+    await engine.executeRaw(`UPDATE pages SET frontmatter=jsonb_set(COALESCE(frontmatter,'{}'::jsonb),'{validate}','false'::jsonb) WHERE slug=$1 AND source_id='default'`, [slug]);
+    const stamped = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+    expect(stamped?.page.frontmatter.validate).toBe(false);
+    expect(stamped?.revision).not.toBe(first.revision);
+
+    const edited = await putPage.handler(ctx, { slug, content: content.replace('First', 'Second'), expected_revision: stamped!.revision });
+    expect(edited).toMatchObject({ state: 'committed' });
+    expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.page.compiled_truth).toBe('Second note.');
+
+    // A memory write renders the stored page, so it publishes the stamp to the file instead of refusing.
+    await engine.executeRaw(`UPDATE pages SET frontmatter=jsonb_set(COALESCE(frontmatter,'{}'::jsonb),'{validate}','false'::jsonb) WHERE slug=$1 AND source_id='default'`, [slug]);
+    const remember = operations.find((o) => o.name === 'remember')!;
+    const saved = await withEnv({ GBRAIN_HOME: path.join(tmpRoot, 'home') }, () => remember.handler(ctx,
+      { fact: 'Acme Example moved to Austin', provenance: 'user told me, 2026-10-10', entity: slug, visibility: 'world', request_id: randomUUID() })) as { state?: string; status?: string };
+    expect(saved.state ?? saved.status).toMatch(/committed|inserted/);
+    const onDisk = fs.readFileSync(file, 'utf8');
+    expect(onDisk).toContain('validate: false');
+    expect(onDisk).toContain('Acme Example moved to Austin');
+
+    // A file that records its own decision still wins: that is a real edit, not the stamp.
+    fs.writeFileSync(file, onDisk.replace('validate: false', 'validate: true'));
+    const current = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+    await expect(putPage.handler(ctx, { slug, content: content.replace('First', 'Third'), expected_revision: current!.revision }))
+      .rejects.toMatchObject({ code: 'source_changed' });
+  });
+
   test('stamps provenance frontmatter (ingested_via=put_page for local CLI)', async () => {
     const ctx = makeCtx({ remote: false });
     const result = (await putPage.handler(ctx, {
@@ -404,8 +438,10 @@ ${subtypes}`);
     fs.writeFileSync(file, content);
     await putPage.handler(makeCtx({ remote: true }), { slug, content: content.replace('Existing body', 'Edited body'), force: true });
     const after = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
+    // The edit is a remote agent write over an unclassified legacy row (stored tier unknown, no marker in the file):
+    // the marker names the writer's tier, never a permanent `unknown` cap (#6550; #5575 CEO-21 keeps the marker).
     expect(after.page.frontmatter).toEqual({ source_kind: 'mcp:put_page', ingested_via: 'mcp:put_page',
-      ingested_at: before.page.ingested_at!.toISOString() });
+      ingested_at: before.page.ingested_at!.toISOString(), trust_tier: 'agent_written' });
     expect(after.page.source_kind).toBe('mcp:put_page');
     expect(after.page.ingested_at).toEqual(before.page.ingested_at);
     expect(parseMarkdown(fs.readFileSync(file, 'utf8'), slug).frontmatter).toEqual(after.page.frontmatter);

@@ -116,3 +116,27 @@ describe('hybrid wiring (#5989)', () => {
     }
   });
 });
+
+describe('Korean particles in the CJK keyword match (#6666)', () => {
+  test('an inflected term finds the page about its stem, on the chunk and page paths', async () => {
+    await page('notes/glucose', '혈당 수치가 아침에 높았다.');
+    await page('notes/other', '오늘은 운동을 했다.');
+    expect(slugs(await engine.searchKeyword('혈당에서'))).toEqual(['notes/glucose']);
+    const rows = await engine.searchKeywordPages('혈당에서', undefined, { limit: 10 });
+    expect(slugs(rows)).toEqual(['notes/glucose']);
+    expect(await engine.countKeywordPages('혈당에서')).toBe(rows.length);
+  });
+
+  test('the strict AND keeps every term: a second stemmed term that matches nothing still finds nothing', async () => {
+    await page('notes/glucose', '혈당 수치가 아침에 높았다.');
+    expect(await engine.searchKeyword('혈당에서 검진을')).toEqual([]);
+    await page('notes/both', '혈당 검진 결과를 받았다.');
+    expect(slugs(await engine.searchKeyword('혈당에서 검진을'))).toEqual(['notes/both']);
+  });
+
+  test('a word that merely ends in a particle syllable is not stripped to one syllable', async () => {
+    await page('notes/meeting', '회의 일정을 잡았다.');
+    await page('notes/hoe', '회 한 접시를 먹었다.');
+    expect(slugs(await engine.searchKeyword('회의'))).toEqual(['notes/meeting']);
+  });
+});

@@ -1,10 +1,10 @@
 {
   "lane": "serial",
   "unit": "seconds",
-  "run": null,
-  "commit": null,
-  "source": "file",
-  "measuredFiles": 368,
-  "totalFiles": 368,
-  "mergeExisting": true
+  "run": "39038536177",
+  "commit": "15b1595140d02edb3581be0b510c183295c79288",
+  "source": "github",
+  "measuredFiles": 427,
+  "totalFiles": 427,
+  "mergeExisting": false
 }

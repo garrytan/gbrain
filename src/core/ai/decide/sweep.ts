@@ -34,7 +34,7 @@ import {
 import { writeReceipts } from './receipts.ts';
 import { requeueWithdrawnAnchorsNear, reviewKindEnabled, runReviewLanes } from './review-lane.ts';
 import { flushDecideWrites, hmacRef, listCalibrations, receiptSalt, recentResolvedModels } from './store.ts';
-import { DecideError, type DecideQuestion, type DecideResult } from './types.ts';
+import { DecideError, partialOf, type DecideQuestion, type DecideResult } from './types.ts';
 
 export const SWEEP_MAX_FACTS = 200;
 const SWEEP_REQUEST_DEADLINE_MS = 30_000;
@@ -162,7 +162,7 @@ async function judgePairs(ctx: SweepContext, fact: SweepFact, claim: PairFact, o
       { engine, config: ctx.cfg, sourceId: fact.source_id });
   } catch (err) {
     const reason = err instanceof DecideError ? err.reason : 'provider_error';
-    ctx.receipts.push(writeReceipts(engine, { ...base, mode: receiptMode(ctx.policy), provider: ctx.policy.provider, policy: ctx.policy, questions, outcomes: {}, fallbackOutcome: 'error', reason }));
+    ctx.receipts.push(writeReceipts(engine, { ...base, mode: receiptMode(ctx.policy), provider: ctx.policy.provider, policy: ctx.policy, questions, outcomes: {}, fallbackOutcome: 'error', reason, partial: partialOf(err) }));
     result.skipped++;
     if (!PERMANENT_FAILURES.has(reason)) {
       await deferFact(engine, fact.source_id, fact.id, reason);

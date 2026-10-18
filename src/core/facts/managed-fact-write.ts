@@ -3,6 +3,7 @@ import type { FactsBackstopCtx } from './backstop.ts';
 import type { FenceInputFact } from './fence-write.ts';
 import type { ExtractedFact } from './extract.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import type { TaintInput, WriteTrust } from '../trust/tier.ts';
 import { prepareManagedFactsSession, publishManagedFacts, resolveManagedFactsEmbedding, resumeManagedFacts } from '../persistence/facts-maintenance.ts';
 
 function factsContext(engine: BrainEngine, sourceId: string, requestIntent: Record<string, unknown>, sessionId: string | null = null): FactsBackstopCtx {
@@ -24,7 +25,7 @@ export async function managedFactWritePreflight(engine: BrainEngine, sourceId: s
  * replays its receipt. Returned ids follow input order.
  */
 export async function publishManagedEntityFacts(engine: BrainEngine, sourceId: string, entity: string | null,
-  facts: FenceInputFact[], options: { supersede?: boolean; attributeFallback?: boolean } = {}): Promise<{ inserted: number; duplicate: number; superseded: number; ids: number[] }> {
+  facts: FenceInputFact[], options: { supersede?: boolean; attributeFallback?: boolean; derivation?: { trust: WriteTrust; inputs: readonly TaintInput[] } } = {}): Promise<{ inserted: number; duplicate: number; superseded: number; ids: number[] }> {
   const out = { inserted: 0, duplicate: 0, superseded: 0, ids: new Array<number>(facts.length) };
   for (const visibility of ['private', 'world'] as const) {
     const positions = facts.flatMap((fact, i) => fact.visibility === visibility ? [i] : []);
@@ -34,7 +35,7 @@ export async function publishManagedEntityFacts(engine: BrainEngine, sourceId: s
       ...(options.attributeFallback ? { attribute_fallback: true } : {}),
       facts: group.map(f => [f.fact, f.kind, f.source, f.notability, f.confidence ?? 1, f.validFrom?.toISOString() ?? null,
         f.validUntil?.toISOString() ?? null, f.sessionId, f.context ?? null]) }, group[0].sessionId);
-    const session = (await prepareManagedFactsSession(ctx, { turnText: '' }))!;
+    const session = (await prepareManagedFactsSession(ctx, { turnText: '' }, options.derivation))!;
     let result = await resumeManagedFacts(engine, session);
     if (!result) {
       const signature = await resolveManagedFactsEmbedding(engine, session.config);

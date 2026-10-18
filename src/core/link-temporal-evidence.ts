@@ -25,6 +25,7 @@ import {
   type TransitionKind, type TransitionProducer,
 } from './link-validity.ts';
 import { KNOWN_LINK_TYPES } from './search/relational-intent.ts';
+import { U4_NOT_EMPLOYMENT_ROLE, typingUnitEnabled } from './link-typing-units.ts';
 
 export interface OwnedRow {
   from_slug: string;
@@ -67,9 +68,13 @@ const NOT_PAST_ROLE = String.raw`(?!(?:promoted|hired|named|appointed|made|elect
 const NOT_PERFECT = String.raw`(?<!\b(?:has|have|'s|’s)\s+(?:\w+\s+)?)`;
 const OWNED = String.raw`(?:(?:her|his|their|my|the)\s+)?(?:time|stint|tenure|role|job|run)\s+`;
 
+/** Employment start cues; `notJob` guards the "became … at/of" and "took … role at" forms (U4). */
+// nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- notJob is only '' or the module-level literal U4_NOT_EMPLOYMENT_ROLE, both fixed at load; no caller input reaches the pattern
+const employmentStart = (notJob: string) => new RegExp(String.raw`\b(?:(?:re-?)?join(?:ed|s|ing)?(?:\s+${ROLE}(?:at|as))?|(?:was\s+)?hired\s+(?:by|at|as\s+${ROLE}at)|started\s+(?:at|with|working\s+(?:at|for)|(?:a\s+)?new\s+(?:role|job|position)\s+at)|became\s+${notJob}${ROLE}(?:at|of)|promoted\s+to\s+${ROLE}(?:at|of)|signed\s+on\s+(?:at|with)|named\s+${ROLE}(?:at|of)|accepted\s+(?:an?\s+)?(?:offer|role|position|job)\s+(?:at|with|from)|took\s+(?:an?\s+|the\s+)?${notJob}(?:\w+\s+){0,2}?(?:role|job|position)\s+(?:at|with)|came\s+(?:on\s+board|aboard)\s+(?:at|with)|went\s+to\s+work\s+(?:at|for)|returned\s+to)\s*$`, 'i');
+
 const EMPLOYMENT = {
   end: new RegExp(String.raw`\b(?:left|leaving|departed(?:\s+from)?|quit|resigned(?:\s+as\s+${ROLE})?(?:\s+from|\s+at)?|stepped\s+down(?:\s+as\s+${ROLE})?(?:\s+from|\s+at)?|stepped\s+away\s+from|moved\s+on\s+from|(?:moved|switched|transitioned|jumped)\s+(?:over\s+|out\s+)?from|(?:was\s+)?laid\s+off\s+(?:from|by|at)|(?:was\s+)?let\s+go\s+(?:from|by)|(?:was\s+)?fired\s+(?:from|by)|no\s+longer\s+(?:at|with|works\s+at|working\s+at)|exited|parted\s+ways\s+with|retired\s+from|(?:wrapped\s+up|finished|ended|concluded)\s+(?:${OWNED})?(?:at|with)|last\s+day\s+at|departure\s+from)\s*$`, 'i'),
-  start: new RegExp(String.raw`\b(?:(?:re-?)?join(?:ed|s|ing)?(?:\s+${ROLE}(?:at|as))?|(?:was\s+)?hired\s+(?:by|at|as\s+${ROLE}at)|started\s+(?:at|with|working\s+(?:at|for)|(?:a\s+)?new\s+(?:role|job|position)\s+at)|became\s+${ROLE}(?:at|of)|promoted\s+to\s+${ROLE}(?:at|of)|signed\s+on\s+(?:at|with)|named\s+${ROLE}(?:at|of)|accepted\s+(?:an?\s+)?(?:offer|role|position|job)\s+(?:at|with|from)|took\s+(?:an?\s+|the\s+)?(?:\w+\s+){0,2}?(?:role|job|position)\s+(?:at|with)|came\s+(?:on\s+board|aboard)\s+(?:at|with)|went\s+to\s+work\s+(?:at|for)|returned\s+to)\s*$`, 'i'),
+  start: employmentStart(''),
   past: new RegExp(String.raw`\b(?:previously(?:\s+worked)?\s+(?:at|with|for)|formerly(?:\s+${ROLE})?\s*(?:at|of|with)|former\s+${ROLE}(?:at|of|with)|ex-[\w-]+\s+(?:at|of)|used\s+to\s+work\s+(?:at|for)|${NOT_PERFECT}worked\s+(?:at|for|with)|${NOT_PERFECT}spent\s+(?:[\w-]+\s+){1,4}?(?:at|with)|(?:his|her|their|my)\s+(?:time|stint|tenure)\s+at|stint\s+at|was\s+${NOT_PAST_ROLE}${ROLE}(?:at|of)|alum(?:nus|na|ni)?\s+of)\s*$`, 'i'),
 };
 
@@ -105,9 +110,12 @@ const EVENT_START: Record<string, RegExp> = {
   founded: /\b(?:founded|co-?founded|started)\s*$/i,
 };
 
+/** U4 (src/core/link-typing-units.ts): the employment cues with advisory, board and investor roles kept out of the start cue. */
+const EMPLOYMENT_U4 = { ...EMPLOYMENT, start: employmentStart(U4_NOT_EMPLOYMENT_ROLE) };
+
 type CueSet = { end: RegExp; start: RegExp; past: RegExp };
 function cuesFor(linkType: string): CueSet | null {
-  if (linkType === 'works_at') return EMPLOYMENT;
+  if (linkType === 'works_at') return typingUnitEnabled('U4') ? EMPLOYMENT_U4 : EMPLOYMENT;
   if (linkType === 'advises') return ADVISORY;
   if (linkType === 'yc_partner') return PARTNER;
   return null;
@@ -164,9 +172,10 @@ const EXPLICIT_RE = /\b(Started|Ended)\s+([a-z][a-z0-9_]*)\s+(?:\[\[([^\]|\n]+)(
 const isRelationToken = (token: string) => token.includes('_') || KNOWN_LINK_TYPES.has(token) || relationSemantics(token) !== 'reference';
 const hasExplicit = (text: string) => [...text.matchAll(EXPLICIT_RE)].some(m => isRelationToken(m[2]));
 
-interface DatedLine { date: string; text: string; dream: boolean }
+export interface DatedLine { date: string; text: string; dream: boolean }
 
-function datedLines(content: string): DatedLine[] {
+/** The dated timeline lines of `content` outside code fences. */
+export function datedLines(content: string): DatedLine[] {
   const out: DatedLine[] = [];
   let fence = false;
   for (const line of content.split('\n')) {
@@ -190,18 +199,44 @@ export interface PageForEvidence {
   frontmatter: Record<string, unknown> | null | undefined;
 }
 
-export function deriveTemporalEvidence(page: PageForEvidence, rows: readonly OwnedRow[]): TemporalEvidence {
+/** Receives each derived transition with the stable id of the cue that produced it (`cue.*`, `unit.*`). */
+export type TransitionExplainer = (t: DerivedTransition, rule: string) => void;
+
+/**
+ * What temporal evidence reads from a page body: the dated lines of the joined body and every reference in the
+ * compiled truth outside dated lines, with the clause before it. A segmented page collects them block by block.
+ */
+export interface TemporalInputs { lines: DatedLine[]; narrative: NarrativeRef[] }
+export interface NarrativeRef { target: string; window: string }
+
+/** The references of a compiled-truth text outside dated lines, each with the clause before it (windowBefore). */
+export function narrativeRefs(truth: string): NarrativeRef[] {
+  const narrative = stripDatedLines(truth);
+  let prevEnd = 0;
+  return referencesIn(narrative).map(ref => {
+    const window = windowBefore(narrative, ref.index, prevEnd);
+    prevEnd = ref.index + 2;
+    return { target: ref.target, window };
+  });
+}
+
+export function deriveTemporalEvidence(page: PageForEvidence, rows: readonly OwnedRow[], explain?: TransitionExplainer): TemporalEvidence {
+  return temporalEvidenceFrom(page, { lines: datedLines(`${page.compiled_truth ?? ''}\n${page.timeline ?? ''}`), narrative: narrativeRefs(page.compiled_truth ?? '') },
+    rows, explain);
+}
+
+export function temporalEvidenceFrom(page: Pick<PageForEvidence, 'slug' | 'frontmatter'>, inputs: TemporalInputs, rows: readonly OwnedRow[],
+  explain?: TransitionExplainer): TemporalEvidence {
   const tense = new Map<string, AssertionTense>();
   const transitions: DerivedTransition[] = [];
   const unmatched: TemporalEvidence['unmatched'] = [];
-  const content = `${page.compiled_truth ?? ''}\n${page.timeline ?? ''}`;
-  const lines = datedLines(content);
+  const { lines } = inputs;
   const temporalRows = rows.filter(r => relationSemantics(r.link_type) !== 'reference');
   const other = (r: OwnedRow) => (r.from_slug === page.slug ? r.to_slug : r.from_slug);
   const seen = new Set<string>();
-  const push = (t: DerivedTransition) => {
+  const push = (t: DerivedTransition, rule: string) => {
     const k = `${t.from_slug}\0${t.to_slug}\0${t.link_type}\0${t.kind}\0${t.occurred_on}\0${t.producer}`;
-    if (!seen.has(k)) { seen.add(k); transitions.push(t); }
+    if (!seen.has(k)) { seen.add(k); transitions.push(t); explain?.(t, rule); }
   };
 
   // 1. Explicit grammar inside dated timeline entries.
@@ -217,7 +252,7 @@ export function deriveTemporalEvidence(page: PageForEvidence, rows: readonly Own
       const resolved = target.includes('/') ? target : temporalRows.map(other).find(slug => refersTo(target, slug)) ?? null;
       if (!resolved) { unmatched.push({ line: line.text, reason: 'no_target' }); continue; }
       push({ from_slug: page.slug, to_slug: resolved, link_type: linkType, kind: m[1] === 'Started' ? 'start' : 'end',
-        occurred_on: line.date, date_precision: 'day', producer: line.dream ? 'dream' : 'explicit', line_hash: lineHash(line.text) });
+        occurred_on: line.date, date_precision: 'day', producer: line.dream ? 'dream' : 'explicit', line_hash: lineHash(line.text) }, 'cue.explicit');
     }
   }
 
@@ -241,56 +276,61 @@ export function deriveTemporalEvidence(page: PageForEvidence, rows: readonly Own
       for (const r of temporalRows) {
         if (!refersTo(ref.target, other(r)) || !r.link_type) continue;
         const cues = cuesFor(r.link_type);
+        const family = r.link_type === 'works_at' ? 'employment' : r.link_type === 'advises' ? 'advisory' : 'partner';
         let kind: TransitionKind | null = null;
+        let rule = '';
         if (cues) {
           if (eventLine) continue;
           if (qualified) {
             if (r.link_type !== 'advises' || !ADVISORY_BOARD_AFTER.test(line.text.slice(ref.end))) continue;
             kind = /\b(?:left|stepped\s+(?:down|off|away)\s+from|resigned\s+from)\s*$/i.test(window) ? 'end'
               : /\b(?:(?:re-?)?joined|was\s+(?:added|named|appointed)\s+to)\s*$/i.test(window) ? 'start' : null;
-          } else kind = cues.end.test(window) ? 'end'
-            : cues.start.test(window) || (prevEnded.has(r.link_type) && /^\s*(?:to|for)\s*$/i.test(between)) ? 'start' : null;
-        } else if (EVENT_START[r.link_type]?.test(window)) kind = 'start';
+            rule = `cue.advisory_board.${kind}`;
+          } else if (cues.end.test(window)) { kind = 'end'; rule = `cue.${family}.end`; }
+          else if (cues.start.test(window)) { kind = 'start'; rule = `cue.${family}.start`; }
+          else if (prevEnded.has(r.link_type) && /^\s*(?:to|for)\s*$/i.test(between)) { kind = 'start'; rule = 'cue.after_end.to_for'; }
+        } else if (EVENT_START[r.link_type]?.test(window)) { kind = 'start'; rule = `cue.event.${r.link_type}`; }
         if (!kind) continue;
         if (kind === 'end') endedHere.add(r.link_type);
         push({ from_slug: r.from_slug, to_slug: r.to_slug, link_type: r.link_type, kind, occurred_on: line.date,
-          date_precision: 'day', producer: line.dream ? 'dream' : 'timeline', line_hash: lineHash(line.text) });
+          date_precision: 'day', producer: line.dream ? 'dream' : 'timeline', line_hash: lineHash(line.text) }, rule);
       }
       prevEnded = endedHere;
     }
   }
 
   // 3. Frontmatter since/until on relationship objects ({name, since, until}).
+  //    A name matches its target exactly or as a slug prefix ("Acme" for
+  //    acme-example); when several objects in the field match one target, only
+  //    the exact matches date it, so "MSA" never dates msa-renewal beside "MSA Renewal".
   const fm = page.frontmatter ?? {};
   for (const r of temporalRows) {
     if (r.link_source !== 'frontmatter' || !r.origin_field) continue;
     const field = fm[r.origin_field];
-    const items = Array.isArray(field) ? field : [field];
-    for (const item of items) {
-      if (!item || typeof item !== 'object') continue;
+    const named = (Array.isArray(field) ? field : [field]).flatMap(item => {
+      if (!item || typeof item !== 'object') return [];
       const obj = item as Record<string, unknown>;
       const name = typeof obj.name === 'string' ? obj.name : typeof obj.slug === 'string' ? obj.slug : null;
-      if (!name || !nameMatches(name, other(r))) continue;
+      const match = name ? nameMatch(name, other(r)) : null;
+      return name && match ? [{ obj, name, exact: match === 'exact' }] : [];
+    });
+    for (const { obj, name } of named.length > 1 ? named.filter(n => n.exact) : named) {
       for (const [key, kind] of [['since', 'start'], ['until', 'end']] as const) {
         const d = normalizePartialDate(stringish(obj[key]));
         if (!d) continue;
         push({ from_slug: r.from_slug, to_slug: r.to_slug, link_type: r.link_type!, kind, occurred_on: d.date,
-          date_precision: d.precision, producer: 'frontmatter', line_hash: lineHash(`${r.origin_field}:${name}:${key}`) });
+          date_precision: d.precision, producer: 'frontmatter', line_hash: lineHash(`${r.origin_field}:${name}:${key}`) }, `cue.frontmatter.${key}`);
       }
     }
   }
 
   // 4. Tense of each owned assertion row, from compiled-truth mentions only.
-  const narrative = stripDatedLines(page.compiled_truth ?? '');
-  const narrativeRefs = referencesIn(narrative);
   for (const r of temporalRows) {
     const cues = relationSemantics(r.link_type) === 'state' ? cuesFor(r.link_type!) : null;
     if (!cues) { if (relationSemantics(r.link_type) === 'state') tense.set(rowKey(r), 'present'); continue; }
-    let past = 0, present = 0, prevEnd = 0;
-    for (const ref of narrativeRefs) {
-      const window = windowBefore(narrative, ref.index, prevEnd);
-      prevEnd = ref.index + 2;
-      if (!refersTo(ref.target, other(r))) continue;
+    let past = 0, present = 0;
+    for (const { target, window } of inputs.narrative) {
+      if (!refersTo(target, other(r))) continue;
       if (cues.past.test(window) || cues.end.test(window)) past++; else present++;
     }
     tense.set(rowKey(r), past > 0 && present === 0 && r.link_source !== 'frontmatter' ? 'past' : 'present');
@@ -310,8 +350,9 @@ function stringish(v: unknown): string | null {
   return /^\d{4}-\d{2}-\d{2}T00:00:00(?:\.0+)?Z$/.test(v) ? v.slice(0, 10) : v;
 }
 
-function nameMatches(name: string, slug: string): boolean {
+function nameMatch(name: string, slug: string): 'exact' | 'prefix' | null {
   const base = slug.split('/').pop()!.toLowerCase();
   const norm = name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  return norm === base || base.startsWith(`${norm}-`) || normalizeLinkTarget(name).toLowerCase() === slug.toLowerCase();
+  if (norm === base || normalizeLinkTarget(name).toLowerCase() === slug.toLowerCase()) return 'exact';
+  return base.startsWith(`${norm}-`) ? 'prefix' : null;
 }

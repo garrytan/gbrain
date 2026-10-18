@@ -3,6 +3,9 @@
 Each accepted mutation has a durable request UUID scoped to one brain and one
 authenticated principal. A response distinguishes acceptance from commitment.
 Keep the UUID and original arguments until the request reaches a terminal state.
+A caller may send any `request_id` of 1 to 128 printable ASCII characters; a
+non-UUID id maps to a deterministic UUID, receipts echo the original as
+`client_request_id`, and the receipt helpers accept either.
 
 **Say to your agent:** *"Update this page without overwriting a newer revision;
 use `get_page` and `put_page`, then check the durable receipt."* Or: *"Inspect my
@@ -13,8 +16,8 @@ the setup."*
 
 Read an existing page with `get_page` and `include_content: true`. Preserve its
 complete `content`, `revision`, and source. Send the edited complete content to
-`put_page` with `expected_revision` equal to that revision and a newly generated
-`request_id` UUID. Capture replacements, delete, restore, and version revert also
+`put_page` with `expected_revision` equal to that revision and a new
+`request_id` (or none). Capture replacements, delete, restore, and version revert also
 accept the revision precondition. `force: true` is an explicit overwrite choice;
 it is mutually exclusive with `expected_revision`.
 
@@ -284,6 +287,17 @@ makes it report-only on any brain (`details.lint_fix: false`, phase `warn`
 while issues remain); `gbrain config set cycle.lint_fix true` turns repairs
 back on. An explicit `gbrain lint <dir> --fix` is not affected.
 
+**Turn the lint phase off entirely:** `cycle.lint.enabled` (default `true`)
+is the off switch for the cycle's lint phase. A brain whose page contract
+differs from `gbrain lint`'s rules (its own frontmatter checks in write hooks
+or CI, say) otherwise carries a lint warning on every cycle that nothing can
+clear. `gbrain config set cycle.lint.enabled false` makes the phase report
+`skipped` (`details.reason: disabled`, with the enable command in
+`details.enable_hint`) without reading a single file; `gbrain dream --phase
+lint --once` runs it once while it is off; `gbrain config set
+cycle.lint.enabled true` turns it back on. `gbrain lint <dir>` and the
+`lint`/`lint-fix` minion jobs are not affected.
+
 **Skip files the cycle should not lint:** `cycle.lint_exclude` (string, default
 unset = exclude nothing) is a comma-separated list of directory or file
 basenames that the cycle's lint phase and the `lint`/`lint-fix` minion jobs
@@ -332,6 +346,11 @@ Receipts include `request_id`, `state`, and `retry_after_ms`, with optional
 revision, outcome, persistence status, and timestamps. Terminal receipts have
 `retry_after_ms: null`. Private queued content, credential hashes, and recovery
 bytes are never part of the receipt.
+A committed write of a page stored in segments also says whether search sees
+it yet: `searchable: true`, or `searchable: "pending"` with
+`searchable_retry_after_ms` and `searchable_fix` (read the receipt again) while
+its chunks are built after commit; see
+[when a segmented write is searchable](memory-boundaries.md#segmented-searchable).
 
 Nonterminal receipts may include a validated `diagnostic` with `age_ms`,
 `assessment` (`pending`, `blocked`, or `stalled`), a closed `reason`, and
@@ -371,7 +390,12 @@ The admin health indicators count it as `accepted_pending`, outside the error
 rate, with `pending_writes`, `oldest_pending_write_age_seconds` and
 `pending_writes_later_failed`. `owner_unavailable`
 and `writer_lock_unavailable` do not authorize a competing owner or a fresh
-request ID. `queue_capacity` refuses additional admission without evicting
+request ID. A process that cannot open the worktree lock file at all (a sandbox,
+an unwritable lock directory) leaves its write `queued` with
+`blocked_reason: writer_lock_unavailable` (receipt `next_action:
+inspect_owner`) for an owner process that can take the lock; retrying from the
+same process fails the same way, and the OS error stays in the owner-only
+detail. `queue_capacity` refuses additional admission without evicting
 existing requests. `revision_required`, `revision_conflict`,
 `idempotency_conflict`, and `source_changed` require correcting the caller's
 intent or authority. `recovery_required` names unresolved publication state.
@@ -512,19 +536,19 @@ If its recorded file bytes no longer match, preserve the file and receipt and
 resolve the conflict on the owner; do not delete recovery records.
 
 If a sync cursor was already invalidated, keep its failure visible until the
-owner has checked the canonical content. Then explicitly re-enumerate with the
-same source and processing options:
+owner has checked the canonical content. Then rerun the plain sync with the
+same source and processing options; it retries what the previous run recorded:
 
 ```bash
-gbrain sync --source example-source --no-pull --no-embed --no-extract --retry-failed
+gbrain sync --source example-source --no-pull --no-embed --no-extract
 ```
 
 Use `--no-embed` and `--no-extract` here only if they were the original sync
 options; retain the original `--no-schema-pack` choice as well. An unfinished
-cursor keeps its processing options: a run that omits these flags (including
-autopilot and `sync` jobs) adopts them, and an explicit conflicting flag refuses
-with `cursor_processing_options_conflict`, naming the stored options and the
-exact resume command. Explicit retry
+cursor keeps its processing opt-outs: every run that resumes it (including
+autopilot and `sync` jobs) inherits them, a flag that asks for more processing
+than the cursor stored is reported as inherited instead of refused, and the
+result names it in `inherited_options` (since 0.60.255.0, #6712). Explicit retry
 retains old terminal receipts, refuses while work is still active and creates
 fresh guarded requests. It does not ignore revision conflicts. Inspect the
 result and the original withdrawal receipt, then verify that the fact is inactive
@@ -652,6 +676,25 @@ expired lease needs explicit inspection and removal; elapsed time does not prove
 its writer stopped. A failed activation leaves managed mode disabled. Status
 reports `enabled: false` until activation commits. Run an ordinary write and
 read its receipt and revision before resuming writers on the upgraded hosts.
+
+### Git durability at activation
+
+Activation does not turn on Git durability. A filesystem source whose owner
+will not commit or push page writes (durability off, or not recorded with no
+harden post-commit hook) gets one `git_durability_not_enabled` entry in the
+report's `warnings[]` (on stderr as well without `--json`), in the dry run and
+in the real run. Activation still proceeds; the source's Git effects complete
+as skipped (`durability_not_enabled`) until it is enabled. `sources harden` is
+refused once the brain is managed, so enable it with the recorded setting:
+
+```bash
+gbrain sources writer git-durability <source> --enable --dry-run --json
+gbrain sources writer git-durability <source> --enable \
+  --admin-intent writer_git_durability --expected-state <reviewed-admin-state> --json
+```
+
+The preview lists the skipped Git effects; enabling re-queues them, one per
+file, so the pages written while durability was off get committed and pushed.
 
 CLI and stdio registrations are durable, separate principals. The CLI lane is
 trusted local administration; stdio remains an untrusted memory caller.
@@ -820,9 +863,9 @@ Default admission limits are enforced atomically:
 | --- | ---: | ---: |
 | Outstanding requests | 100 | 1,000 |
 | Queued intent bytes | 32 MiB | 256 MiB |
-| Lifetime request IDs | 250,000 | 1,000,000 |
-| Terminal receipt reservation | 1.5 GiB | 8 GiB |
-| Recovery bytes | — | 1 GiB, also 256 MiB per worktree |
+| Lifetime request IDs | 2,000,000 | 8,000,000 |
+| Terminal receipt reservation | 16 GiB | 64 GiB |
+| Recovery bytes | — | 1 GiB, also 256 MiB per worktree (with `pages.segmented_storage on`: twice `pages.max_bytes` plus 2 MiB, at least 256 MiB) |
 
 Completion space is reserved at admission. Beforeimage/recovery bytes are
 reserved before filesystem publication. Reaching a limit refuses additional
@@ -833,10 +876,15 @@ not evicted, and receipts with unfinished effects stay retained without
 blocking compaction of later receipts. Lifetime IDs and replay protection are
 not silently reset.
 
-Each admission reserves at least 16 KiB of receipt bytes until compaction; a
-compacted receipt keeps about 4 KiB. The cumulative defaults cover one
-principal admitting about 600 writes a day for at least a year. Every limit and
-the retention window are brain-wide database settings:
+Each admission reserves at least 16 KiB of receipt bytes. When the request
+finishes and none of its effects is still pending, the reservation shrinks in
+the same statement to what the receipt keeps (its intent, authority, outcome,
+error, effects and 4 KiB of slack), so a `remember`, a maintenance write or a
+conflict gives most of its 16 KiB back at once; a page write whose embedding or
+Git effect is still queued keeps its reservation until compaction. A compacted
+receipt keeps about 4 KiB. The cumulative defaults cover one principal
+admitting 5,000 writes a day for at least a year ([growth model](#growth-model)).
+Every limit and the retention window are brain-wide database settings:
 
 ```bash
 gbrain config set persistence.limits.principal_lifetime_ids 500000
@@ -850,9 +898,134 @@ Keys are `persistence.limits.<limit>` for `principal_outstanding`,
 `brain_outstanding`, `principal_intent_bytes`, `brain_intent_bytes`,
 `principal_lifetime_ids`, `brain_lifetime_ids`, `principal_terminal_bytes`,
 `brain_terminal_bytes`, `brain_recovery_bytes` and `worktree_recovery_bytes`,
-each a nonnegative integer. `gbrain doctor` warns (`persistence_capacity`) once
-a principal or the brain uses 80% of its lifetime IDs or receipt bytes and
-prints the `gbrain config set` command with a value that covers about one more
-year at the current admission rate; a `queue_capacity` refusal carries the same
-command. Raising a cap is a mitigation: lifetime IDs remain permanent replay
-protection.
+each a nonnegative integer. `gbrain doctor` (`persistence_capacity`) forecasts
+each cumulative cap from the full last-7-day admission aggregate: it warns when
+a principal or the brain uses 80% of its lifetime IDs or receipt bytes or would
+run out within `persistence.capacity.warn_days` (30) days, and fails at 95% or
+within `persistence.capacity.fail_days` (7) days. Receipt bytes are forecast at
+their compacted (net) size once compaction can start; the finding's `basis`
+says which rate it used. It prints the `gbrain config set` command with a value
+that covers about one more year at that rate; `persistence_request_growth`
+uses the same threshold and value, and a `write_quota_exhausted` refusal
+carries the same command. Raising a cap is a mitigation: lifetime IDs remain
+permanent replay protection.
+
+<a id="growth-model"></a>
+### Growth model
+
+The defaults come from this model, sized for an autopilot brain that admits
+5,000 requests a day for 365 days. Configured values are never changed.
+
+- **Request IDs** are permanent, so they grow by the admission rate:
+  5,000 × 365 = 1,825,000. The principal default is 2,000,000; the brain
+  default, 8,000,000, keeps the brain at four principals' worth.
+- **Receipt bytes** grow by two parts. Through the 30-day retention window a
+  receipt holds its reservation (up to 16,384 bytes; true-up returns most of
+  it when no effect is pending), and after compaction it keeps about 4,096
+  bytes (a compacted `put_page` measures about 3.9 KB). After a year at
+  5,000 a day: 5,000 × 4,096 × 335 + 5,000 × 16,384 × 30 = 6,860,800,000 +
+  2,457,600,000 = 9,318,400,000 bytes (8.7 GiB).
+- **Bulk days** (a reclone or a full sync) hold their reservations for the
+  window too. A 22,074-admission day reserves 22,074 × 16,384 =
+  361,660,416 bytes; three in one window is about 1.0 GiB.
+- **Carried-in use**: a brain that already holds 74,982 receipts at
+  1,228,424,148 bytes (16,383 bytes each, nothing compacted yet) adds 1.1 GiB.
+
+8.7 + 1.0 + 1.1 = 10.8 GiB, so the principal default is 16 GiB, which still
+covers the year if compacted receipts average 7 KB instead of 4 KB
+(5,000 × 7,168 × 335 + 2,457,600,000 = 14.5 GB, plus the same 2.1 GiB). The
+brain default is 64 GiB.
+
+For scale: the previous principal default of 1.5 GiB (1,610,612,736 bytes)
+left that brain 382,188,588 bytes, or 23,327 more admissions at 16,384 bytes:
+about 7 days at 3,308 a day and one day at 22,074. On the new defaults the
+same brain has (2,000,000 − 74,982) / 3,308 = 581 days of request IDs at its
+current rate, 385 at 5,000 a day.
+
+**Autopilot brains: check capacity on day one.** An autopilot brain admits
+far more requests than an interactive one. After its first day of runs:
+
+```bash
+gbrain doctor --only persistence_capacity,persistence_request_growth --json
+```
+
+**Say to your agent:** *"How many days of write capacity does my brain have left?"*
+
+<a id="counter-drift"></a>
+### Counter drift and compaction health
+
+Two read-only doctor checks watch the receipt-bytes accounting:
+
+- `persistence_counter_drift` compares each `persistence_counters` row
+  (brain and every principal) with what the receipts hold
+  (`terminal_reservation` per request plus lifecycle receipts) in one
+  statement, and reports `persistence.true_up.clamped`, the number of
+  settle-time decrements that were clamped at zero. Each drifting scope in
+  `details.drift` names its `direction`: `overcharge` (a positive delta) is a
+  bounded charge against write capacity that no receipt holds, so writes are
+  refused a little early and no data is lost; `undercount` (a negative delta)
+  lets writes use capacity the receipts already reserve. `receipts_by_kind`
+  splits the receipt side into `requests` and `topology_changes` (rows and
+  bytes), and `details.incident` is `current` because the comparison is
+  live. It changes nothing, and there is no reconcile repair yet: report a
+  persistent drift with `gbrain doctor --only persistence_counter_drift --json`.
+- `persistence_compaction` reads `persistence.maintenance.last_compaction`,
+  the record each resident consumer's compaction pass writes (`at`,
+  `host_id`, `compacted`, `freed_bytes`, `skipped_by_reason`), and warns when
+  a full consumer has run longer than
+  `persistence.maintenance.compaction_stale_hours` (default 24) without a
+  pass. Its fix previews `gbrain repair receipt-compaction --json`.
+
+<a id="quota-near-exhaustion"></a>
+### Quota near exhaustion
+
+When `persistence_capacity` warns or fails, or a write is refused with
+`write_quota_exhausted`:
+
+1. Read the finding: `gbrain doctor --only persistence_capacity --json`.
+   `details.resources[]` names the scope, resource, days left and `basis`;
+   `fix` is the reversible unblock.
+2. Run the `gbrain config set <key> <value>` it prints on the brain host
+   (undo with `gbrain config unset <key>`). Writes resume at once; retry the
+   refused write with the same `request_id`.
+3. Verify: `gbrain doctor --only persistence_capacity --json` reads `ok`.
+
+Raising a receipt-bytes cap is safe: the counter tracks bytes that are really
+stored, and compaction frees the window's reservations as receipts age out.
+
+**Warnings before the wall.** A cap at or past 80%, or one that runs out
+within `persistence.capacity.warn_days` (default 30), adds the
+`[gbrain notice write_capacity_low]` notice (kind `info`) with the same
+`gbrain config set` command. Write and sync receipts carry it at most once an
+hour per process per scope (a remote client sees only the brain and its own
+principal); `gbrain sync status`, doctor and autopilot cycle output carry it
+every time. `gbrain notices mute write_capacity_low` mutes it on receipts;
+doctor still reports it. When a cap passes
+`persistence.capacity.background_pause_pct` (default 80) background
+producers pause and `[gbrain notice write_capacity_backpressure]` (kind
+`degraded`) fires once when the pause starts. Every notice reads a capacity
+snapshot that refreshes at most once a minute; no write computes a forecast.
+
+**Alerting (hosted operators).** The admin `/metrics` endpoint exports
+`gbrain_write_capacity_used`, `gbrain_write_capacity_limit` and
+`gbrain_write_capacity_days_to_exhaustion`, labelled `scope` and `resource`
+(`lifetime_ids` or `terminal_bytes`), from the same snapshot. The public
+`/health` probe is unchanged. A Prometheus rule that pages before the
+background pause and before the wall:
+
+```yaml
+groups:
+  - name: gbrain-write-capacity
+    rules:
+      - alert: GbrainWriteCapacityLow
+        expr: gbrain_write_capacity_used / gbrain_write_capacity_limit >= 0.8 or gbrain_write_capacity_days_to_exhaustion < 30
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.scope }} {{ $labels.resource }} write cap near exhaustion"
+          runbook: docs/guides/concurrent-writes.md#quota-near-exhaustion
+      - alert: GbrainWriteCapacityCritical
+        expr: gbrain_write_capacity_used / gbrain_write_capacity_limit >= 0.95 or gbrain_write_capacity_days_to_exhaustion < 7
+        for: 5m
+        labels: { severity: critical }
+```

@@ -426,6 +426,13 @@ the harmful side take the no-change outcome. `qualify` refuses with
 `insufficient_n` and prints the number of families needed when the dataset
 is too small to prove the bound (35 of 35 correct is the minimum at 0.90).
 Use `--call-site think` to calibrate a slot's `think` question separately.
+To see which items were behind a failing bound, add `--items-out <path>`:
+`qualify` writes the harmful actions it judged (item id, family, split,
+slice, protected, the answer value and whether the action was correct) with
+a header naming the calibration, model and policy fingerprint, mode 0600 and
+no input text. It reuses the answers `qualify` already has, so it makes no
+extra provider call. Keep this file out of the calibration dataset: tuning
+on the eval half's failures spoils the bound.
 
 ### Escape hatches
 
@@ -468,8 +475,11 @@ evidence       on (inactive: model_drift)
 plus a `requested: ... / effective: ... / cause: ... / fix: ...` line naming
 the one command that fixes it. A new GBrain release never silently moves an
 enabled slot to a newer reference calibration; `status` shows `newer
-reference available` and you adopt it with
-`gbrain decide calibrations adopt <id>`.
+reference available: ref:<id>` only when a shipped reference exists for the
+same slot, call site, provider and model as the calibration in use, and you
+adopt it with the command it prints, `gbrain decide calibrations adopt
+ref:<id>` (`adopt local:<id>` or `adopt <id>` picks one you built with
+`calibrate`).
 
 ## Fail directions
 
@@ -528,7 +538,7 @@ what: [TypeSafe data handling](../ai-providers/typesafe.md#what-never-leaves-the
 System One (decide): provider typesafe:jev-1.13.0; key: TYPESAFE_API_KEY
 egress: private=deny; consent query=allow candidates=allow facts=deny conversation=deny; deny_sources: none; fallback: none
 budget: $0.0002 of $1.00 today (remote $0.0000, cap 50%); not covered: S1 on: reranker spend controls (BudgetKind rerank); llm: providers: chat spend controls (BudgetKind chat)
-reranker: voyage:rerank-2.5 (enabled, mode balanced); Jev called: no
+reranker: voyage:rerank-3-lite (enabled, mode balanced); Jev called: no
 
   rerank         ready for on ~$0.5377/1k queries (estimate)
   evidence       on threshold 0.300 (override) ~$0.3873/1k queries (estimate) 24h: 12 decisions, 0.0% errors
@@ -676,6 +686,7 @@ cause, a fix command and a link to a row here.
 | <a id="egress_fallback_missing"></a>`egress_fallback_missing` | Items egress refused have no fallback provider. | `gbrain config set decide.egress_fallback llm:<provider:model>`, or accept the fail direction for them. |
 | <a id="split_mismatch"></a>`split_mismatch` | The calibration was built from a different dataset split, or not from the calibrate half only. | `gbrain decide calibrate --slot <slot> --dataset <jsonl>` on the same dataset file. |
 | <a id="pinned_model_unavailable"></a>`pinned_model_unavailable` | The provider no longer serves the pinned model. Calls take the fail direction. | `gbrain config set decide.provider typesafe:<new-id> && gbrain decide calibrations list`, then recalibrate or adopt a reference calibration for the new id. |
+| <a id="unpriced_model"></a>`unpriced_model` | The configured `typesafe:<model>` id has no shipped tariff and no operator price, so its spend cannot be metered against `decide.budget.daily_usd`. Nothing was sent. | Register the price the endpoint bills: `gbrain pricing set typesafe:<model> --rate <usd-per-1M-input-tokens> --source <pricing-page-url>`, then `gbrain decide probe`. |
 | <a id="budget_exhausted"></a>`budget_exhausted` | Today's third-party decide spend reached `decide.budget.daily_usd`. Slots take their fail direction until UTC midnight. | Wait, or `gbrain config set decide.budget.daily_usd <usd>`. |
 | <a id="thin_client"></a>`thin_client` | This install is a thin client; `gbrain decide` runs on the brain host. | Run `gbrain decide` on the brain host. |
 | <a id="malformed_response"></a>`malformed_response` | The response missed a question or carried an invalid value. The decision took its fail direction. | `gbrain decide probe`; if it persists, check TypeSafe's status. |
@@ -687,7 +698,7 @@ cause, a fix command and a link to a row here.
 Receipt skip reasons (`error_reason` on skipped or error rows) also include
 `egress`, `late`, `timeout`, `rate_limited`, `provider_error`, `mixed_model`,
 `no_embedding`, `no_entity`, `missing_provenance`, `denied_source`,
-`payload_too_large`, `cache_hit` and `no_candidates`.
+`payload_too_large`, `unpriced_model`, `cache_hit` and `no_candidates`.
 
 ## Advanced diagnostics
 

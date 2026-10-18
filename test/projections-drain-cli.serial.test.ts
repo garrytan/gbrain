@@ -70,7 +70,10 @@ describe('gbrain projections drain', () => {
     expect(human.stdout).toContain('projections drain: 2 rebuilt, 0 superseded, 0 failed, 0 remaining. The projection backlog is empty.');
     const again = await runCli(['projections', 'drain', '--json'], { home: healthyHome });
     expect(again.exitCode).toBe(0);
-    expect(JSON.parse(again.stdout)).toEqual({ rebuilt: 0, superseded: 0, failed: [], remaining: 0 });
+    // #6803: the JSON now also carries limited, the image seal counts and every class left.
+    expect(JSON.parse(again.stdout)).toEqual({ rebuilt: 0, superseded: 0, failed: [], remaining: 0, limited: false, sealed: 0, sealed_with_visual: 0,
+      sealed_text_only: 0, statistics_refreshed: false, remaining_by_class: { pending: 0, failed: 0, oldest_age_seconds: null, sealable: 0,
+        sealable_with_visual: 0, reimport: 0, ocr_required: 0, protected: 0, archived: 0, as_of: expect.any(String) } });
   }, 120_000);
 
   test('exit 1 reports each failed page with its source, slug, reason and next action', async () => {

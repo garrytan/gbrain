@@ -16,6 +16,12 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { submissionAuthority } from '../src/core/persistence/authority.ts';
+import { admitWrite, claimNextWrite } from '../src/core/persistence/journal.ts';
+import { localHostId } from '../src/core/persistence/identity.ts';
+import { getWorktreeBinding } from '../src/core/persistence/ownership.ts';
+import { preparePageMutation } from '../src/core/persistence/page-prepare.ts';
+import { publishMutation } from '../src/core/persistence/coordinator.ts';
 
 let engine: PGLiteEngine;
 let tmpRoot: string;
@@ -172,4 +178,65 @@ describe('managed purge artifact and receipt boundaries', () => {
     expect(error.code).toBe('storage_error'); expect(await rowState()).toBe('live');
     expect(readFileSync(join(file, 'keep'), 'utf8')).toBe('preserved directory contents');
   });
+});
+
+// #6368: a tombstone whose file is under sync.exclude does not own that file; its purge is database-only.
+describe('managed purge of a sync-excluded tombstone (#6368)', () => {
+  for (const edited of [false, true]) {
+    test(`excluded tombstone with an ${edited ? 'edited' : 'unchanged'} file purges database-only and keeps the file`, async () => {
+      const file = await seedPageWithFile();
+      await engine.softDeletePage(SLUG, { sourceId: 'default' });
+      await engine.setConfig('sync.exclude', 'secrets/');
+      if (edited) writeFileSync(file, 'A local edit the user keeps.');
+      const bytes = readFileSync(file, 'utf8');
+      const result = await purge();
+      expect(result).toMatchObject({ status: 'purged', state: 'committed', write_through: { written: false, skipped: 'sync_excluded' } });
+      expect(await rowState()).toBe('absent');
+      expect(existsSync(file)).toBe(true);
+      expect(readFileSync(file, 'utf8')).toBe(bytes);
+    });
+  }
+  test('a glob exclusion relative to the source root also applies; a non-excluded tombstone keeps the artifact contract', async () => {
+    const file = await seedPageWithFile();
+    await engine.softDeletePage(SLUG, { sourceId: 'default' });
+    await engine.setConfig('sync.exclude', 'other/**, **/leaked-*.md');
+    expect((await purge())).toMatchObject({ status: 'purged', write_through: { skipped: 'sync_excluded' } });
+    expect(existsSync(file)).toBe(true);
+  });
+  test('a non-excluded tombstone with an edited file still refuses', async () => {
+    const file = await seedPageWithFile();
+    await engine.softDeletePage(SLUG, { sourceId: 'default' });
+    await engine.setConfig('sync.exclude', 'other/');
+    writeFileSync(file, 'Unknown local edit must survive.');
+    expect((await failure(await parameters({ purge: true }), 'conflict')).code).toBe('source_changed');
+    expect(readFileSync(file, 'utf8')).toBe('Unknown local edit must survive.');
+  });
+  test('a live page under an excluded path keeps the artifact contract', async () => {
+    const live = await seedPageWithFile();
+    await engine.setConfig('sync.exclude', 'secrets/');
+    expect(await purge()).toMatchObject({ status: 'purged', write_through: { written: true } });
+    expect(existsSync(live)).toBe(false);
+  });
+  test('an exclusion removed between preparation and publication refuses the purge and keeps the file', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const file = await seedPageWithFile();
+    await engine.softDeletePage(SLUG, { sourceId: 'default' });
+    await engine.setConfig('sync.exclude', 'secrets/');
+    await putPage.handler(context(), { slug: 'notes/bootstrap-writer', content: CONTENT, request_id: randomUUID() });
+    const snapshot = (await engine.readPageSnapshot(SLUG, { sourceId: 'default', includeDeleted: true }))!;
+    const [source] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation FROM sources WHERE id='default'");
+    const authority = await submissionAuthority(context(), 'delete_page', 'default', source!.incarnation, SLUG);
+    const binding = (await getWorktreeBinding(engine, 'default'))!;
+    const intent = { purge: true, expected_revision: snapshot.revision };
+    await admitWrite(engine, { principal: authority.principal, authority, operation: 'delete_page', sourceId: 'default', sourceIncarnation: source!.incarnation,
+      slug: SLUG, pageId: snapshot.page.id, worktreeId: binding.worktree_id, topologyGeneration: binding.topology_generation, requestId: randomUUID(), callerIntent: intent, intent });
+    const row = (await claimNextWrite(engine, localHostId()))!;
+    const prepared = await preparePageMutation(engine, row, context().config);
+    expect(prepared.databaseOnlyReason).toBe('sync_excluded');
+    await engine.setConfig('sync.exclude', '');
+    const settled = await publishMutation(engine, row, prepared);
+    expect(settled.state).not.toBe('committed');
+    expect(settled.error_code).toBe('source_changed');
+    expect(await rowState()).toBe('tombstone');
+    expect(readFileSync(file, 'utf8')).toBe(CONTENT);
+  }));
 });

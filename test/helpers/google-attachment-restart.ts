@@ -14,7 +14,7 @@ await engine.connect(input.database);
 const kill = () => { writeSync(1, `GMAIL_CRASH ${input.crash}\n`); process.kill(process.pid, 'SIGKILL'); };
 if (input.crash) {
   const transaction = engine.transaction;
-  engine.transaction = async function <T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>): Promise<T> {
+  engine.transaction = async function <T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>, opts?: Parameters<BrainEngine['transaction']>[1]): Promise<T> {
     const result = await transaction.call(this, async tx => {
       const executeRaw = tx.executeRaw;
       if (input.crash === 'before_publication') tx.executeRaw = async function (sql, params) {
@@ -28,7 +28,7 @@ if (input.crash) {
       const row = value as Partial<WriteRequest> | undefined;
       if (input.crash === 'after_publication' && row?.state === 'committed' && row.intent?.kind === 'connector_v2_google_receipts') kill();
       return value;
-    });
+    }, opts);
     const row = result as Partial<WriteRequest> | undefined;
     if (row?.state === 'committed' && (input.crash === 'after_metadata_commit' && row.intent?.kind === 'connector_v2_google_receipts' ||
       input.crash === 'after_checkpoint_commit' && row.intent?.kind === 'connector_v2_checkpoint' &&

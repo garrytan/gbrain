@@ -61,7 +61,7 @@ describe('#4653 schema inspection verbs honor DB-config schema_pack (tier 4)', (
   test('schema show prints the DB-configured pack header', () => {
     const r = runSchema('show');
     expect(r.status).toBe(0);
-    expect((r.stdout ?? '').split('\n')[0]).toBe('# gbrain-base-v2 v1.3.0');
+    expect((r.stdout ?? '').split('\n')[0]).toBe('# gbrain-base-v2 v1.4.0');
   }, 90_000);
 
   test('schema explain <v2-only type> exits 0', () => {

@@ -77,6 +77,20 @@
             "textSha256": "8e168723e3839daeec0e83980381f4418b39245a7dac73c11fbe04375bd79d95"
           }
         ],
+        "chunkId": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "string",
+              "number",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, true as resolved FROM code_edges_chunk WHERE from_chunk_id = $1::int AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_chunk.from_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_chunk.to_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) AND source_id = $2 UNION ALL SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, false as resolved FROM code_edges_symbol WHERE from_chunk_id = $3::int AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_symbol.from_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) AND source_id = $4 LIMIT $5",
+            "textSha256": "c9bfbe76c75e1f0e2879e7ae6396dbbfafa1cb409a633a2f6679497b5f8e5a92"
+          }
+        ],
         "default": [
           {
             "lane": "pool",
@@ -105,6 +119,20 @@
         ]
       },
       "getCallersOf": {
+        "chunkId": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "string",
+              "number",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, true as resolved FROM code_edges_chunk WHERE to_chunk_id = $1::int AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_chunk.from_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_chunk.to_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) AND source_id = $2 UNION ALL SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, false as resolved FROM code_edges_symbol WHERE (edge_metadata->>'resolved_chunk_id')::int = $3::int AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_symbol.from_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) AND source_id = $4 LIMIT $5",
+            "textSha256": "ac70ef2296e47ecbbbde75fd59f4e0fbea9f77aee36ba46709d1db6a8b4780ba"
+          }
+        ],
         "default": [
           {
             "lane": "pool",

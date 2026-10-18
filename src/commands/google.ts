@@ -59,6 +59,7 @@ import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 // ── Shared bits ──────────────────────────────────────────────────────────────
 
 import { ALL_GOOGLE_SERVICES, type GoogleService } from '../core/google/types.ts';
+import { sourceCalendarReadability, type CalendarProbe, type CalendarReadability } from './google-calendar-status.ts';
 
 export const GOOGLE_SERVICES = ALL_GOOGLE_SERVICES;
 export type { GoogleService };
@@ -673,8 +674,9 @@ export async function runGoogleStatus(args: string[]): Promise<void> {
     accounts.push(row);
   }
 
-  // Linked sources: best-effort, engine optional.
-  let linkedSources: Array<{ id: string; account: string | null }> = [];
+  // Linked sources: best-effort, engine optional. #5012 item 9: each one that
+  // syncs Calendar reports whether its configured calendar is readable.
+  let linkedSources: Array<{ id: string; account: string | null; calendar?: CalendarReadability }> = [];
   try {
     const { loadConfig, toEngineConfig } = await import('../core/config.ts');
     const cfg = loadConfig();
@@ -684,21 +686,25 @@ export async function runGoogleStatus(args: string[]): Promise<void> {
       const engine = await createEngine(engineConfig);
       await engine.connect(engineConfig);
       try {
-        const rows = await engine.executeRaw<{ id: string; config: unknown }>(
-          `SELECT id, config FROM sources WHERE archived IS NOT TRUE`,
+        const rows = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null; config: unknown }>(
+          `SELECT id, incarnation::text AS incarnation, local_path, config FROM sources WHERE archived IS NOT TRUE`,
           [],
         );
-        linkedSources = rows
-          .map((r) => {
-            const c =
-              typeof r.config === 'string'
-                ? (JSON.parse(r.config) as Record<string, unknown>)
-                : ((r.config ?? {}) as Record<string, unknown>);
-            return c.kind === 'google'
-              ? { id: r.id, account: typeof c.g_account === 'string' ? c.g_account : null }
-              : null;
-          })
-          .filter((x): x is { id: string; account: string | null } => x !== null);
+        const calendarProbe: CalendarProbe | null = probe ? async (account, calendarId) => {
+          const entry = await vault.get(credentialId(GOOGLE_PROVIDER, account));
+          if (!entry) throw new CredentialError('not_connected', ` for ${account}`);
+          const { CalendarClient } = await import('../core/google/google-clients.ts');
+          return new CalendarClient(new GoogleTokenProvider(vault, entry.id, fetch), fetch, () => {}, entry.meta.client_id).probeCalendar(calendarId);
+        } : null;
+        for (const r of rows) {
+          const c =
+            typeof r.config === 'string'
+              ? (JSON.parse(r.config) as Record<string, unknown>)
+              : ((r.config ?? {}) as Record<string, unknown>);
+          if (c.kind !== 'google') continue;
+          const calendar = await sourceCalendarReadability(engine, { ...r, config: c }, calendarProbe).catch(() => null);
+          linkedSources.push({ id: r.id, account: typeof c.g_account === 'string' ? c.g_account : null, ...(calendar ? { calendar } : {}) });
+        }
       } finally {
         await engine.disconnect();
       }
@@ -707,11 +713,13 @@ export async function runGoogleStatus(args: string[]): Promise<void> {
     /* no engine — vault-only status */
   }
 
+  const unreadableCalendars = linkedSources.filter((s) => s.calendar?.code === 'calendar_unreadable');
+  if (unreadableCalendars.length > 0) setCliExitVerdict(1);
   if (json) {
     process.stdout.write(
       JSON.stringify(
         {
-          ok: true,
+          ok: unreadableCalendars.length === 0,
           status: accounts.length > 0 ? 'connected' : 'not_connected',
           client_on_file: client !== null,
           accounts,
@@ -747,6 +755,12 @@ export async function runGoogleStatus(args: string[]): Promise<void> {
     process.stdout.write(
       `Linked sources: ${linkedSources.map((s) => s.id).join(', ')}\n`,
     );
+    for (const s of unreadableCalendars) {
+      const cal = s.calendar!;
+      process.stdout.write(`  ${s.id}: calendar_unreadable — ${s.account ?? 'this account'} cannot read calendar "${cal.calendar_id}" `
+        + `(HTTP ${cal.http_status}, ${cal.checked === 'live' ? 'checked now' : 'at the last sync'}); its sync imports no events.\n`
+        + `    List readable calendars: ${cal.fix!.list_command}\n    Change the source's calendar: ${cal.fix!.set_command}\n`);
+    }
   } else {
     process.stdout.write('Linked sources: none yet — `gbrain sources add <id> --kind google --account <email>`\n');
   }
@@ -809,7 +823,9 @@ Subcommands:
                --history-days <n>       backfill window for the source (default 90)
                --sync-budget-ms <ms>    first-sync wall-clock budget
                (+ all connect flags above)
-  status       accounts, scopes, refresh probe, linked sources  [--json] [--no-probe]
+  status       accounts, scopes, refresh probe, linked sources and whether each
+               source's calendar is readable  [--json] [--no-probe]
+               (--no-probe: no network; reports the last sync's calendar result)
   attachments backfill --source <id> [--yes] [--limit 1-25] [--retry-failed] [--json]
                bounded metadata-only repair of imported Gmail; managed persistence required
                See docs/guides/google-connect.md#attachment-receipts-and-historical-repair

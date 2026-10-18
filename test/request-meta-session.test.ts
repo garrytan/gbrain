@@ -49,7 +49,7 @@ describe('per-session hot-memory cache stays bounded under remote session ids', 
   test('2000 random remote session ids leave at most HOT_MEMORY_CACHE_MAX_ENTRIES entries', async () => {
     __resetHotMemoryCacheForTests();
     const engine = {
-      executeRaw: async () => [{ n: 0, at: null }],
+      executeRaw: async () => [{ n: 0, at: null, generation: '0' }],
       listFactsBySession: async () => [],
       listFactsSince: async () => [],
     };

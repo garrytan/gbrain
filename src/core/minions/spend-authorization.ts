@@ -20,6 +20,7 @@ import type { BrainEngine } from '../engine.ts';
 import { shellQuote, type Action, type Effect } from '../agent-output.ts';
 import { DEFAULT_PAID_CAP_USD, resumeMaxUsd, type Authorization } from '../consent.ts';
 import { opError } from '../ops/contract.ts';
+import { loadPricingOverrides } from '../budget/budget-tracker.ts';
 import { withAIInvocationGuard } from '../ai/invocation-guard.ts';
 import { GroupBudgetRefusal, RESERVATION_TTL_MS, readGroupSpend, reserveGroup, settle, type GroupSpend } from './budget-meter.ts';
 import { actualCents, maximumInvocationCents } from './delegated-spend.ts';
@@ -290,8 +291,9 @@ export async function runWithJobSpend<T>(
   const capCents = cents(record.cap_usd!);
   const seen: { refusal: SpendGroupRefusedError | SpendGroupPressureError | null } = { refusal: null };
   let warned = false;
+  const pricingOverrides = await loadPricingOverrides(engine);
   const guard = async (call: Parameters<Parameters<typeof withAIInvocationGuard>[0]>[0]) => {
-    const max = maximumInvocationCents(call);
+    const max = maximumInvocationCents(call, pricingOverrides);
     if (max === null) {
       if (record.cap_source === 'user') throw (seen.refusal = await spendRefusal(engine, job, record, { kind: 'no_pricing', model: call.model }));
       if (!warned) {
@@ -311,7 +313,7 @@ export async function runWithJobSpend<T>(
       throw (seen.refusal = await spendRefusal(engine, job, record, { kind: 'cost', overdueHolds: true }));
     }
     return { async settle(usage: Parameters<typeof actualCents>[1]) {
-      const c = actualCents(call, usage);
+      const c = actualCents(call, usage, pricingOverrides);
       if (c !== null) await settle(engine, hold.reservationId, c, call.operation);
       else await engine.executeRaw(
         `UPDATE mcp_spend_reservations SET usage_unknown_reason = $2 WHERE reservation_id = $1 AND status IN ('pending','expired')`,

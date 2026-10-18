@@ -10,7 +10,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { embedQuery } from '../embedding.ts';
+import { embedQueryWithPrefix } from './query-prefix.ts';
 import { loadConfig, loadConfigWithEngine } from '../config.ts';
 import { resolveEmbeddingColumn } from './embedding-column.ts';
 import { hybridSearch } from './hybrid.ts';
@@ -248,7 +248,7 @@ async function runQuery(
     const { assertBrainEmbeddingEnabled } = await import('../embedding-dim-check.ts');
     await assertBrainEmbeddingEnabled(engine, cfg);
     const column = resolveEmbeddingColumn(undefined, cfg ?? { engine: 'pglite' });
-    const embedding = await embedQuery(query, column.embeddingModel
+    const embedding = await embedQueryWithPrefix(engine, query, column.embeddingModel
       ? { embeddingModel: column.embeddingModel, dimensions: column.dimensions }
       : undefined);
     const results = await engine.searchVector(embedding, { limit, embeddingColumn: column });

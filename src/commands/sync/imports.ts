@@ -25,8 +25,10 @@ import {
 import { isPathSafe } from '../../core/sync-git.ts';
 import { resolveStallAbortSeconds, composeAbortSignals } from '../../core/sync-reconcile.ts';
 import { sanitizePathForDisplay } from '../../core/sync.ts';
+import { syncFailureCode } from '../../core/sync-failure-ledger.ts';
 import { isWindowsColonTarget } from '../../core/persistence/native-file-target.ts';
 import { ERROR_CATALOGUE } from '../../core/error-catalogue.ts';
+import { enginePoolStats } from '../../core/postgres-engine/pool-stats.ts';
 import type { SyncOpts, SyncResult } from '../sync.ts';
 import { clearLegacyHold, holdRefusedImport, noteScreenedImport, type LegacyHolds } from './holds.ts';
 import { partial, markCompleted, noteTypeWarning, maybeYield } from './sync-run.ts';
@@ -88,11 +90,20 @@ export async function runImportsPhase(
   // a killed run banks `completed`, the next run skips it (no per-file disk
   // read or content_hash DB lookup for done files).
   const importsToDo = resumeFilter(addsAndMods, [...completed]);
+  // GBRA-130 A-18: files an earlier run of this drain already banked count as
+  // the breaker's successes, so a resumed run that re-attempts only the
+  // failing files is not mistaken for a run where most files fail.
+  for (let i = importsToDo.length; i < addsAndMods.length; i++) run.itemRun.succeed();
+  // Their imports still prove other files of this drain import, so an infra
+  // failure the resumed run re-attempts alone keeps its isolated streak.
+  run.bankedImports = addsAndMods.filter(path => completed.has(path) && !holds?.existing.has(path)).length;
 
   const { effectiveConcurrency, runParallel } = await resolveImportConcurrency(engine, opts, importsToDo.length);
 
   if (importsToDo.length > 0) {
     progress.start('sync.imports', importsToDo.length);
+    // #6366 (P4.7): the pool's state as the drain starts, so a later hang report carries it next to the stall line.
+    serr(`[sync] imports start: ${importsToDo.length} file(s), concurrency ${effectiveConcurrency}${poolLine(engine)}`);
 
     // Core import logic shared by serial and parallel paths.
     // Paths from git diff are relative to gitContextRoot; under #4342's
@@ -231,7 +242,7 @@ function startStallWatchdog(
     stallTimer = setInterval(() => {
       if (Date.now() - progressAt.last >= stallMs) {
         serr(
-          `[sync] no import progress for ${stallSeconds}s — aborting (stall watchdog). ` +
+          `[sync] no import progress for ${stallSeconds}s — aborting (stall watchdog)${poolLine(run.engine)}. ` +
           `The per-source lock will release; the next 'gbrain sync' resumes from the checkpoint.`,
         );
         run.stallAborted = true;
@@ -243,6 +254,12 @@ function startStallWatchdog(
     opts = { ...opts, signal: composeAbortSignals(opts.signal, stallController.signal) };
   }
   return { opts, stallTimer, progressAt };
+}
+
+/** #6366: ` · pool max=<n> checked_out=<n> waiters=<n>` for an engine that reports a pool (Postgres), empty otherwise. */
+export function poolLine(engine: unknown): string {
+  const pool = enginePoolStats(engine);
+  return pool ? ` · pool max=${pool.max} checked_out=${pool.checked_out} waiters=${pool.waiters}` : '';
 }
 
 /** Core import logic shared by the serial and parallel paths. */
@@ -342,6 +359,7 @@ async function importOnePath(run: SyncRun, ctx: ImportContext, eng: BrainEngine,
       // persist. partial() reports this so cron operators see how
       // much actually landed before --timeout fired.
       run.filesImported++;
+      run.itemRun.succeed();
       await clearLegacyHold(eng, holds, path);
       // v0.42.x (#1794): checkpoint this path so a kill banks it.
       await markCompleted(run, path);
@@ -367,12 +385,16 @@ async function importOnePath(run: SyncRun, ctx: ImportContext, eng: BrainEngine,
       await markCompleted(run, path);
     }
   } catch (e: unknown) {
+    // GBRA-130 A-18: a run-scoped failure (lost connection, failed
+    // transaction, abort, an unavailable writer) stops the sync before the
+    // ledger records anything; a file's own failure carries a structured code.
+    run.itemRun.record(path, e);
     const msg = e instanceof Error ? e.message : String(e);
     if (await holdRefusedImport(eng, holds, path, filePath, { status: 'error', error: msg })) {
       await markCompleted(run, path);
     } else {
       serr(`  Warning: skipped ${path}: ${msg}`);
-      failedFiles.push({ path, error: msg });
+      failedFiles.push({ path, error: msg, code: syncFailureCode(e, path) });
     }
   } finally {
     permit.release();

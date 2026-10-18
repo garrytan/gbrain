@@ -7,6 +7,8 @@
  * Privacy: records only versions + outcome + reason. No paths, no content.
  */
 
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createAuditWriter } from './audit-writer.ts';
 
 export interface SelfUpgradeAuditEvent {
@@ -39,4 +41,38 @@ export function readRecentSelfUpgrades(days = 7, now?: Date): SelfUpgradeAuditEv
 
 export function selfUpgradeAuditFilename(now?: Date): string {
   return writer.computeFilename(now);
+}
+
+/**
+ * #6828: every retained self-upgrade audit row, in ts order (all weekly files,
+ * not the 2-week `readRecent` window): the known-bad recovery needs the swap
+ * that recorded an entry, however old. Corrupt rows are skipped.
+ */
+export function readAllSelfUpgrades(): SelfUpgradeAuditEvent[] {
+  const dir = writer.resolveDir();
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter((f) => /^self-upgrade-.*\.jsonl$/.test(f));
+  } catch {
+    return [];
+  }
+  const out: SelfUpgradeAuditEvent[] = [];
+  for (const f of files) {
+    let content: string;
+    try {
+      content = readFileSync(join(dir, f), 'utf8');
+    } catch {
+      continue;
+    }
+    for (const line of content.split('\n')) {
+      if (!line) continue;
+      try {
+        const ev = JSON.parse(line) as SelfUpgradeAuditEvent;
+        if (typeof ev.ts === 'string') out.push(ev);
+      } catch {
+        /* corrupt row */
+      }
+    }
+  }
+  return out.toSorted((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
 }

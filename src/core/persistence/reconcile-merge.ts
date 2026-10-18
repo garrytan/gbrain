@@ -1,5 +1,6 @@
 import type { ParsedPage } from '../import-file.ts';
 import type { Page } from '../types.ts';
+import { comparableFrontmatter } from '../markdown.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { digest, stableJson } from './digest.ts';
@@ -15,7 +16,7 @@ const protectedKeys = new Set([...RECONCILE_SCAN_KEYS, ...RECONCILE_SAFETY_KEYS,
 
 export function reconcileCanonical(page: Pick<Page, 'type' | 'title' | 'compiled_truth' | 'timeline' | 'frontmatter'>, tags: string[]): ParsedPage {
   const value = { type: page.type, title: page.title, compiled_truth: page.compiled_truth, timeline: page.timeline ?? '',
-    frontmatter: page.frontmatter, tags: [...new Set(tags)].sort() };
+    frontmatter: comparableFrontmatter(page.frontmatter), tags: [...new Set(tags)].sort() };
   validateReconcileJson(value, true);
   return JSON.parse(stableJson(value)) as ParsedPage;
 }

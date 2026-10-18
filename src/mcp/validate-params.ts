@@ -156,6 +156,15 @@ export function normalizeOptionalParams(op: Operation, params: Record<string, un
 export const UNKNOWN_PARAM_ALLOWLIST: ReadonlySet<string> = new Set(['_meta', 'dry_run']);
 
 /**
+ * #5970: names clients send for a declared param that edit distance cannot
+ * reach. The suggestion names only the op's own declared params (checked at
+ * use), so an alias can never point at another op's surface.
+ */
+const PARAM_ALIAS_HINTS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  add_timeline_entry: { content: 'detail', text: 'detail', body: 'detail' },
+};
+
+/**
  * `_meta.warnings` entry shape (amendment 13) — documented in
  * docs/protocol/MCP_META_CHANNELS.md. `suggestion` is the nearest DECLARED
  * param name when one is within edit distance; the candidates are ONLY the
@@ -182,10 +191,12 @@ export interface UnknownParamWarning {
 export function findUnknownParams(op: Operation, params: Record<string, unknown>): UnknownParamWarning[] {
   const declared = Object.keys(op.params);
   const declaredSet = new Set(declared);
+  const aliases = PARAM_ALIAS_HINTS[op.name];
   const warnings: UnknownParamWarning[] = [];
   for (const key of Object.keys(params)) {
     if (declaredSet.has(key) || UNKNOWN_PARAM_ALLOWLIST.has(key)) continue;
-    const nearest = suggestNearest(key, declared);
+    const alias = aliases?.[key];
+    const nearest = alias && declaredSet.has(alias) ? alias : suggestNearest(key, declared);
     warnings.push({ code: 'unknown_param', param: key, ...(nearest ? { suggestion: nearest } : {}) });
   }
   return warnings;

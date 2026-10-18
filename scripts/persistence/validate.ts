@@ -7,7 +7,7 @@ import postgres from '#postgres'
 import { assertSafeE2eDatabaseUrl } from '../../test/helpers/db-guard.ts';
 import { distribution, type HarnessConfig } from './harness.ts';
 import { keylessBrainEnv } from '../../test/helpers/provider-env.ts';
-import { boundedDiagnostic, diagnosticError, retentionMetadata } from './failure-diagnostics.ts';
+import { boundedDiagnostic, connectionDiagnostic, diagnosticError, retentionMetadata } from './failure-diagnostics.ts';
 import { FULL_ROBOT_SECONDS, replayEntries, runDigest, runRobotPhase, type RobotRun } from './robot-driver.ts';
 import { shrinkRun } from './shrink.ts';
 
@@ -66,12 +66,21 @@ export function spawnWorker(configPath: string, home: string, role: string, args
     async kill() { if (child.exitCode === null) child.kill('SIGKILL'); await child.exited; await reading; } };
 }
 
+/** A full robot gate ran the whole budget, skipped nothing, and every requested crash happened and recovered cleanly (#6584). */
+export function robotFullGate(robot: Pick<Awaited<ReturnType<typeof runRobotPhase>>, 'violations' | 'fault_hook_errors' | 'faults_not_reached'>
+  & { lease_bound_seams_skipped?: string[]; lease_bound_faults_skipped?: string[] }, robotSeconds: number): boolean {
+  return robotSeconds >= FULL_ROBOT_SECONDS && robot.violations.length === 0
+    && robot.fault_hook_errors.length === 0 && robot.faults_not_reached.length === 0
+    && (robot.lease_bound_seams_skipped ?? []).length === 0 && (robot.lease_bound_faults_skipped ?? []).length === 0;
+}
+
 /** The failing runs plus the exact command that replays them and the one that shrinks the first. */
 export function robotFailure(failing: RobotRun[], options: ValidationOptions): string {
   const manifest = options.manifest ?? `.context/persistence-${options.engine}-manifest.json`;
   const env = options.engine === 'postgres' ? 'DATABASE_URL=<test url> ' : '';
   const lines = failing.slice(0, 5).map(run => `  ${run.schedule} seed=${run.seed} ${run.fault ? `${run.fault.point}#${run.fault.nth}` : run.process ?? 'no crash'} [${runDigest(run)}]: `
-    + run.violations.slice(0, 3).map(v => `${v.class}: ${v.detail}`).join(' | '));
+    + (run.violations.length ? run.violations.slice(0, 3).map(v => `${v.class}: ${v.detail}`).join(' | ')
+      : run.hook_error !== undefined ? `fault_hook_error: ${run.hook_error}` : 'fault_not_reached: the worker finished without reaching the requested fault'));
   return [`Crash robot found ${failing.length} failing run(s):`, ...lines,
     `Replay: ${env}bun --no-env-file scripts/persistence/validate.ts --engine=${options.engine} --replay=${manifest}`,
     `Shrink: ${env}bun --no-env-file scripts/persistence/validate.ts --engine=${options.engine} --shrink=${manifest} (writes ${manifest}.shrunk.json)`].join('\n');
@@ -138,14 +147,14 @@ export async function runValidation(options: ValidationOptions) {
         manifest.status = manifest.shrink.accepted ? 'passed' : 'failed'; manifest.full_gate = false; return manifest;
       }
       manifest.robot = await runRobotPhase(robotOptions({ replay: entries }));
-      manifest.status = manifest.robot.violations.length ? 'failed' : 'passed'; manifest.full_gate = false;
-      if (manifest.robot.violations.length) throw new Error(robotFailure(manifest.robot.failing_runs, options));
+      manifest.status = manifest.robot.failing_runs.length ? 'failed' : 'passed'; manifest.full_gate = false;
+      if (manifest.robot.failing_runs.length) throw new Error(robotFailure(manifest.robot.failing_runs, options));
       return manifest;
     }
     if (options.robotSeconds) {
       manifest.robot = await runRobotPhase(robotOptions());
       process.stderr.write(`[persistence] ${options.engine}: crash robot ran ${manifest.robot.sequences_x_crash_points} sequence x crash point runs over ${manifest.robot.schedules} schedules\n`);
-      if (manifest.robot.violations.length) throw new Error(robotFailure(manifest.robot.failing_runs, options));
+      if (manifest.robot.failing_runs.length) throw new Error(robotFailure(manifest.robot.failing_runs, options));
     }
     if (options.crashes !== false) for (const boundary of CRASH_BOUNDARIES) {
       const { path } = await phase(`crash-${boundary}`); const requestId = randomUUID();
@@ -195,8 +204,7 @@ export async function runValidation(options: ValidationOptions) {
     manifest.status = 'passed';
     const executedBoundaries = manifest.crash_cases.map((entry: { boundary: string }) => entry.boundary);
     if (options.crashes !== false) assert.deepEqual(executedBoundaries, [...CRASH_BOUNDARIES]);
-    if (manifest.robot) manifest.robot_full_gate = (options.robotSeconds ?? 0) >= FULL_ROBOT_SECONDS && manifest.robot.violations.length === 0
-      && (manifest.robot.lease_bound_seams_skipped ?? []).length === 0 && (manifest.robot.lease_bound_faults_skipped ?? []).length === 0;
+    if (manifest.robot) manifest.robot_full_gate = robotFullGate(manifest.robot, options.robotSeconds ?? 0);
     manifest.full_gate = counts.schedules >= 1000 && counts.operations >= 10_000
       && executedBoundaries.length === CRASH_BOUNDARIES.length && CRASH_BOUNDARIES.every((boundary, index) => executedBoundaries[index] === boundary)
       && manifest.crash_cases.every((entry: { staging_cleanup_verified?: boolean }) => entry.staging_cleanup_verified === true)
@@ -215,6 +223,7 @@ export async function runValidation(options: ValidationOptions) {
         assert(response.ok, 'Owner diagnostic endpoint failed'); return response.json();
       }, 1_750))),
     }));
+    if (admin) manifest.connection_diagnostic = await boundedDiagnostic(() => connectionDiagnostic(admin!));
     throw error;
   }
   finally {

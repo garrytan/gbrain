@@ -1,12 +1,16 @@
 import type { BrainEngine, LinkBatchInput } from './engine.ts';
 import { extractPageLinks, unwrapWikilink, resolvedLinkCandidate,
-  isCrossSourceLinksEnabled, type LinkCandidate, type LinkExtractionPack, type SlugResolver } from './link-extraction.ts';
+  isCrossSourceLinksEnabled, type LinkCandidate, type LinkExtractionPack, type PageLinksResult, type SlugResolver } from './link-extraction.ts';
 import { fetchSource, isSourceFederated } from './sources-load.ts';
 import { parseMarkdown } from './markdown.ts';
 import { isValidSourceId } from './source-id.ts';
 import { buildSourceLocalReferenceIndex } from './source-local-reference-index.ts';
 import { collectWantedLinks, isWantedPagesEnabled } from './wanted-links.ts';
-import { lineGrammarOptions } from './line-grammar.ts';
+import { readLineGrammarSettings } from './line-grammar.ts';
+import { DerivedLinkSettingsChangedError } from './derived-links.ts';
+import { isSegmentedPage } from './page-body/page-shape.ts';
+import { extractSegmentedPageLinks } from './page-body/segment-links.ts';
+import type { TemporalBody } from './link-temporal-apply.ts';
 
 export interface LinkPageMetadata {
   slug: string;
@@ -71,24 +75,37 @@ export async function reconcileSourceLinks(
       return result;
     }
     const sourceIncarnation = sources[0].incarnation;
-    const pages = await loadLinkPageMetadata(engine, sourceId);
-    const index = new Map(pages.map(page => [page.slug, page]));
+    // #4680: every source's live pages, so the source policy can resolve a target into another
+    // source (names still resolve within the origin's source: makeIndexedLinkResolver filters).
+    const pages = await loadLinkPageMetadata(engine);
+    const metadata = new Map(pages.map(page => [`${page.source_id}\0${page.slug}`, page]));
+    const endpoints = indexLinkSources(pages);
+    const policy = await loadLinkSourcePolicy(engine, sourceId);
     const resolver = makeIndexedLinkResolver(pages, sourceId);
     const wantedEnabled = await isWantedPagesEnabled(engine);
-    const lineGrammar = await lineGrammarOptions(engine);
-    const remaining = pages.filter(page => !opts.afterSlug || page.slug > opts.afterSlug)
+    const grammar = await readLineGrammarSettings(engine);
+    const lineGrammar = { enabled: grammar.enabled, allowUndeclaredTypes: grammar.allowUndeclaredTypes };
+    const remaining = pages.filter(page => page.source_id === sourceId && (!opts.afterSlug || page.slug > opts.afterSlug))
       .sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
-    for (const metadata of remaining.slice(0, limit)) {
-      originSlug = metadata.slug;
+    for (const own of remaining.slice(0, limit)) {
+      originSlug = own.slug;
       const snapshot = await engine.readPageSnapshot(originSlug, { sourceId });
-      if (!snapshot || snapshot.revision !== metadata.knowledge_revision || snapshot.sourceIncarnation !== sourceIncarnation) {
+      if (!snapshot || snapshot.revision !== own.knowledge_revision || snapshot.sourceIncarnation !== sourceIncarnation) {
         result.failures.push({ originSlug, code: 'revision_conflict' });
         return result;
       }
       const page = snapshot.page;
-      const extracted = await extractPageLinks(page.slug, `${page.compiled_truth}\n${page.timeline}`, page.frontmatter,
-        page.type, resolver, { pack: opts.pack, globalBasename: opts.globalBasename, lineGrammar,
-          targetType: (slug, source) => !source || source === sourceId ? index.get(slug)?.type : undefined });
+      const sourcesOf = makeLinkSourceResolver(page.slug, sourceId, endpoints, policy);
+      const linkOpts = { pack: opts.pack, globalBasename: opts.globalBasename, lineGrammar,
+        targetType: (slug: string, source?: string) => {
+          const resolved = sourcesOf.resolve({ targetSlug: slug, targetSourceId: source, linkType: '', context: '' });
+          return resolved.ok ? metadata.get(`${resolved.toSourceId}\0${slug}`)?.type : undefined;
+        } };
+      // A segmented body is read block by block, and its temporal inputs with it (the publication never reads it).
+      const extracted: PageLinksResult & { temporalBody?: TemporalBody } = isSegmentedPage(page)
+        ? await extractSegmentedPageLinks(engine, { id: Number(page.id), slug: page.slug, source_id: sourceId, type: page.type, frontmatter: page.frontmatter },
+          resolver, { ...linkOpts, temporal: true })
+        : await extractPageLinks(page.slug, `${page.compiled_truth}\n${page.timeline}`, page.frontmatter, page.type, resolver, linkOpts);
       for (const ref of extracted.unresolved) {
         const target = unwrapWikilink(ref.name);
         const qualifier = target.split(':')[0];
@@ -102,26 +119,25 @@ export async function reconcileSourceLinks(
       }
       const rows: LinkBatchInput[] = [];
       for (const candidate of extracted.candidates) {
-        const from = candidate.fromSlug ?? page.slug;
-        if (candidate.targetSourceId && candidate.targetSourceId !== sourceId) {
-          result.unresolved.push({ originSlug, target: `${candidate.targetSourceId}:${candidate.targetSlug}`, reason: 'cross_source' });
-          continue;
-        }
-        if (!index.has(from) || !index.has(candidate.targetSlug)) {
-          result.unresolved.push({ originSlug, target: candidate.targetSlug, reason: 'missing_target' });
-          continue;
-        }
-        rows.push(resolvedLinkCandidate(candidate, page.slug, sourceId,
-          { fromSlug: from, fromSourceId: sourceId, toSourceId: sourceId }));
+        const admitted = sourcesOf.admit(candidate);
+        if (admitted.ok) { rows.push(admitted.row); continue; }
+        const crossSource = admitted.reason === 'cross_source';
+        result.unresolved.push({ originSlug, reason: crossSource ? 'cross_source' : 'missing_target',
+          target: crossSource && candidate.targetSourceId ? `${candidate.targetSourceId}:${candidate.targetSlug}` : candidate.targetSlug });
       }
       const wanted = wantedEnabled ? collectWantedLinks({ candidates: extracted.candidates, frontmatterUnresolved: extracted.unresolved,
-        originSourceId: sourceId, crossSourceAllowed: false, resolve: candidate =>
-          candidate.targetSourceId && candidate.targetSourceId !== sourceId ? { ok: false, reason: 'cross_source' }
-            : !index.has(candidate.targetSlug) ? { ok: false, reason: 'missing_target' } : { ok: true } }) : [];
-      const written = await engine.replaceDerivedLinks({ slug: page.slug, sourceId,
-        expectedRevision: snapshot.revision, sourceIncarnation }, rows, { wanted: { producers: ['body', 'frontmatter'], rows: wanted }, expectedEndpoints:
-          [...new Set(rows.flatMap(row => [row.from_slug, row.to_slug]))].map(slug => ({ slug, sourceId,
-            revision: index.get(slug)!.knowledge_revision })) });
+        originSourceId: sourceId, crossSourceAllowed: sourcesOf.crossSourceAllowed, resolve: sourcesOf.resolve }) : [];
+      let written: { created: number; removed: number };
+      try {
+        written = await engine.replaceDerivedLinks({ slug: page.slug, sourceId,
+          expectedRevision: snapshot.revision, sourceIncarnation }, rows, { lineGrammar: grammar,
+          wanted: { producers: ['body', 'frontmatter'], rows: wanted }, expectedEndpoints: capturedLinkEndpoints(rows, metadata),
+          ...(extracted.temporalBody ? { temporalBody: extracted.temporalBody } : {}) });
+      } catch (error) {
+        if (!(error instanceof DerivedLinkSettingsChangedError)) throw error;
+        result.failures.push({ originSlug, code: 'revision_conflict' });
+        return result;
+      }
       result.pagesProcessed++;
       result.linksCreated += written.created;
       result.linksRemoved += written.removed;
@@ -229,17 +245,59 @@ export function indexLinkSources(pages: ReadonlyArray<{ slug: string; source_id:
   return { allSlugs, slugToSources };
 }
 
-export async function loadLinkSourcePolicy(engine: BrainEngine, sourceId: string) {
+export interface LinkSourcePolicy { allowCrossSource: boolean; crossSource: boolean; defaultSourceId: string }
+
+export async function loadLinkSourcePolicy(engine: BrainEngine, sourceId: string): Promise<LinkSourcePolicy> {
   const [source, crossSource, defaultSourceId] = await Promise.all([
     fetchSource(engine, sourceId), isCrossSourceLinksEnabled(engine), resolveLinkFallbackDefault(engine),
   ]);
   return { allowCrossSource: source !== null && !source.archived && isSourceFederated(source.config), crossSource, defaultSourceId };
 }
 
-export function capturedLinkEndpoints(links: LinkBatchInput[], metadata: ReadonlyMap<string, Pick<LinkPageMetadata, 'slug' | 'source_id' | 'knowledge_revision'>>) {
+export type LinkCandidateAdmission = { ok: true; row: LinkBatchInput } | Exclude<CandidateSourceResolution, { ok: true }>;
+
+/**
+ * #4680: the one source-policy resolver for one origin page, shared by put_page's link
+ * preparation and the source reconciliation sweep (`extract links --source db` applies the
+ * same `resolveCandidateSources` contract inline). `resolve` decides both endpoints'
+ * sources under the policy; `admit` turns an approved candidate into its link row and
+ * requires only that an outbound edge originates in the origin's own source (publication
+ * enforces that too): a target the policy resolved into another source is admitted, a
+ * candidate the policy refused is a counted drop. Canonical attendance is the one edge
+ * whose far endpoint, the person, may live in another source.
+ */
+export function makeLinkSourceResolver(pageSlug: string, pageSourceId: string,
+  endpoints: { allSlugs: Set<string>; slugToSources: Map<string, string[]> }, policy: LinkSourcePolicy) {
+  const resolve = (candidate: LinkCandidate): CandidateSourceResolution => resolveCandidateSources(candidate, pageSlug, pageSourceId,
+    endpoints.allSlugs, endpoints.slugToSources, policy.allowCrossSource, policy);
+  return {
+    resolve,
+    crossSourceAllowed: policy.allowCrossSource || policy.crossSource,
+    admit(candidate: LinkCandidate): LinkCandidateAdmission {
+      const resolved = resolve(candidate);
+      if (!resolved.ok) return resolved;
+      if (!candidate.canonicalAttendance && resolved.fromSourceId !== pageSourceId) return { ok: false, reason: 'cross_source' };
+      return { ok: true, row: resolvedLinkCandidate(candidate, pageSlug, pageSourceId, resolved) };
+    },
+  };
+}
+
+/**
+ * Endpoint fences for one origin's link batch: every endpoint at the revision
+ * the resolver census captured. The source-qualified `origin`, when given, is
+ * left out (#6474): its body and type came from the snapshot whose revision
+ * `expectedRevision` already fences at publication, so fencing it again at
+ * the older census revision would defer a page rewritten between the census
+ * and its own read even though the run extracted its live body. A page with
+ * the same slug in another source is still fenced. This is the one place the
+ * rule lives; the managed preparation and both DB walks call it.
+ */
+export function capturedLinkEndpoints(links: LinkBatchInput[], metadata: ReadonlyMap<string, Pick<LinkPageMetadata, 'slug' | 'source_id' | 'knowledge_revision'>>,
+  origin?: { slug: string; sourceId: string }) {
   const keys = new Set(links.flatMap(link => [
     `${link.from_source_id ?? 'default'}\0${link.from_slug}`, `${link.to_source_id ?? 'default'}\0${link.to_slug}`,
   ]));
+  if (origin) keys.delete(`${origin.sourceId}\0${origin.slug}`);
   return [...keys].map(key => {
     const endpoint = metadata.get(key);
     if (!endpoint) throw new Error('A derived link endpoint was not captured during type resolution');

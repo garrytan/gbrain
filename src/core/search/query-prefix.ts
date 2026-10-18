@@ -8,6 +8,7 @@
  * There is no default: nothing is guessed from the model id at query time.
  */
 import type { BrainEngine } from '../engine.ts';
+import { embedQuery } from '../embedding.ts';
 
 export const EMBEDDING_QUERY_PREFIX_KEY = 'embedding_query_prefix';
 
@@ -20,6 +21,24 @@ export async function loadEmbeddingQueryPrefix(engine: BrainEngine): Promise<str
   }
 }
 
+/**
+ * #3783: the query-side embedding for callers outside hybrid search (think,
+ * takes, CRAG escalation, auto-think, search diagnose, eval's vector
+ * baseline). It loads the selected brain's prefix and embeds with the
+ * unbounded `embedQuery`, so each call site keeps its own deadline behavior;
+ * hybrid search keeps its bounded `embedQueryBounded`. Every query embed
+ * outside these two paths is a bug the call-site guard
+ * (test/query-embed-call-sites.test.ts) refuses.
+ */
+export async function embedQueryWithPrefix(
+  engine: BrainEngine,
+  text: string,
+  opts?: { embeddingModel?: string; dimensions?: number },
+): Promise<Float32Array> {
+  const queryPrefix = await loadEmbeddingQueryPrefix(engine);
+  return embedQuery(text, { ...(opts ?? {}), ...(queryPrefix ? { queryPrefix } : {}) });
+}
+
 /** Model families whose model cards ask for a query instruction, with the documented value. */
 const QUERY_PREFIX_FAMILIES: ReadonlyArray<{ family: string; pattern: RegExp; value: string }> = [
   { family: 'Qwen3-Embedding', pattern: /qwen3[-_]?embed/,
@@ -27,6 +46,9 @@ const QUERY_PREFIX_FAMILIES: ReadonlyArray<{ family: string; pattern: RegExp; va
   { family: 'e5', pattern: /(^|[/:_-])(multilingual-)?e5([-_.]|$)/, value: 'query: ' },
   { family: 'BGE', pattern: /(^|[/:_-])bge-(?!m3)/, value: 'Represent this sentence for searching relevant passages: ' },
   { family: 'nomic-embed', pattern: /nomic-embed/, value: 'search_query: ' },
+  // PR #6062 (query half, @xorets): the model card's retrieval task prompt; the document-side `title: … | text: …`
+  // formatting is a per-model document transform and stays a tracked feature, not a prefix.
+  { family: 'EmbeddingGemma', pattern: /embeddinggemma/, value: 'task: search result | query: ' },
 ];
 
 export function suggestedQueryPrefix(embeddingModel: string): { family: string; value: string } | null {

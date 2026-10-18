@@ -87,9 +87,7 @@ export function hasCJK(s: string): boolean {
  */
 export function countCJKAwareWords(s: string): number {
   if (s.length === 0) return 0;
-  return isCJKDominant(s)
-    ? s.replace(/\s/g, '').length
-    : (s.match(/\S+/g) || []).length;
+  return wordCountOf(wordStats(s));
 }
 
 /**
@@ -99,11 +97,93 @@ export function countCJKAwareWords(s: string): number {
  * chunker's overlap extractor) route through this so the two cannot drift.
  */
 export function isCJKDominant(s: string): boolean {
-  const nonWhitespace = s.replace(/\s/g, '').length;
-  if (nonWhitespace === 0) return false;
-  const cjkMatches = s.match(new RegExp(`[${CJK_SLUG_CHARS}]`, 'g'));
-  const cjkCount = cjkMatches ? cjkMatches.length : 0;
-  return cjkCount / nonWhitespace >= CJK_DENSITY_THRESHOLD;
+  return statsAreCJKDominant(wordStats(s));
+}
+
+/**
+ * Everything countCJKAwareWords needs, gathered in one pass over UTF-16
+ * code units: non-whitespace units, BMP CJK units (the CJK_SLUG_CHARS
+ * ranges), and `/\S+/g` runs. The first/last flags let two adjacent
+ * strings' stats combine in O(1) (concatWordStats), so a caller that grows
+ * a string piece by piece never recounts it.
+ */
+export interface WordStats {
+  length: number;
+  nonWhitespace: number;
+  cjk: number;
+  runs: number;
+  startsNonWhitespace: boolean;
+  endsNonWhitespace: boolean;
+}
+
+const CJK_UNIT_RANGES: ReadonlyArray<readonly [number, number]> = Array.from(
+  CJK_SLUG_CHARS.matchAll(/(.)-(.)/g),
+  m => [m[1]!.charCodeAt(0), m[2]!.charCodeAt(0)] as const,
+);
+
+const CJK_UNIT_MIN = Math.min(...CJK_UNIT_RANGES.map(([lo]) => lo));
+
+function isCJKUnit(c: number): boolean {
+  if (c < CJK_UNIT_MIN) return false;
+  for (const [lo, hi] of CJK_UNIT_RANGES) if (c >= lo && c <= hi) return true;
+  return false;
+}
+
+/** Exactly the code units JavaScript's `\s` matches. */
+function isWhitespaceUnit(c: number): boolean {
+  if (c <= 0x20) return c === 0x20 || (c >= 0x09 && c <= 0x0d);
+  if (c < 0xa0) return false;
+  return c === 0xa0 || c === 0x1680 || (c >= 0x2000 && c <= 0x200a)
+    || c === 0x2028 || c === 0x2029 || c === 0x202f || c === 0x205f
+    || c === 0x3000 || c === 0xfeff;
+}
+
+export function wordStats(s: string): WordStats {
+  let nonWhitespace = 0;
+  let cjk = 0;
+  let runs = 0;
+  let prevNonWhitespace = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (isWhitespaceUnit(c)) {
+      prevNonWhitespace = false;
+      continue;
+    }
+    nonWhitespace++;
+    if (isCJKUnit(c)) cjk++;
+    if (!prevNonWhitespace) runs++;
+    prevNonWhitespace = true;
+  }
+  return {
+    length: s.length,
+    nonWhitespace,
+    cjk,
+    runs,
+    startsNonWhitespace: s.length > 0 && !isWhitespaceUnit(s.charCodeAt(0)),
+    endsNonWhitespace: prevNonWhitespace,
+  };
+}
+
+/** Stats of `a + b` from the stats of `a` and `b`. */
+export function concatWordStats(a: WordStats, b: WordStats): WordStats {
+  return {
+    length: a.length + b.length,
+    nonWhitespace: a.nonWhitespace + b.nonWhitespace,
+    cjk: a.cjk + b.cjk,
+    runs: a.runs + b.runs - (a.endsNonWhitespace && b.startsNonWhitespace ? 1 : 0),
+    startsNonWhitespace: a.length === 0 ? b.startsNonWhitespace : a.startsNonWhitespace,
+    endsNonWhitespace: b.length === 0 ? a.endsNonWhitespace : b.endsNonWhitespace,
+  };
+}
+
+export function statsAreCJKDominant(st: WordStats): boolean {
+  if (st.nonWhitespace === 0) return false;
+  return st.cjk / st.nonWhitespace >= CJK_DENSITY_THRESHOLD;
+}
+
+/** countCJKAwareWords of the string the stats describe. */
+export function wordCountOf(st: WordStats): number {
+  return statsAreCJKDominant(st) ? st.nonWhitespace : st.runs;
 }
 
 /**
@@ -129,3 +209,42 @@ export function splitCJKQueryTerms(query: string): string[] {
   return Array.from(new Set(terms));
 }
 
+
+/**
+ * Korean postpositions (조사), longest first so `endsWith` takes the longest
+ * particle ("에서" before "에"/"서", "으로" before "로").
+ */
+const KO_PARTICLES: readonly string[] = [
+  '에서는', '에게서', '으로는', '으로서',
+  '에서', '에게', '한테', '까지', '부터', '보다', '처럼', '마다',
+  '조차', '라도', '이나', '으로', '로서',
+  '은', '는', '이', '가', '을', '를', '에', '의', '로', '와', '과', '도', '만',
+];
+
+/** One-syllable stems ("회의" → "회") match almost everything, so a stem keeps 2+ characters. */
+const KO_MIN_STEM_LENGTH = 2;
+
+/**
+ * The noun stem of a Korean term with a trailing particle ("혈당에서" →
+ * "혈당"), or the term unchanged. Korean attaches particles to the noun, so
+ * the substring match would otherwise miss a page that says "혈당 수치". The
+ * stem is a substring of the inflected form, so matching the stem alone
+ * covers both spellings. Stripping is lexical (고양이 → 고양), which only
+ * widens a fallback match.
+ */
+export function stripKoreanParticle(term: string): string {
+  for (const p of KO_PARTICLES) {
+    if (term.length - p.length >= KO_MIN_STEM_LENGTH && term.endsWith(p)) return term.slice(0, -p.length);
+    if (term.endsWith(p)) return term;
+  }
+  return term;
+}
+
+/**
+ * The terms every CJK keyword builder matches: whitespace-split, Korean
+ * particles stripped, deduplicated in order. The count, the keyword pages and
+ * the chunk search all read this, so a count never disagrees with the rows.
+ */
+export function cjkMatchTerms(query: string): string[] {
+  return Array.from(new Set(splitCJKQueryTerms(query).map(stripKoreanParticle)));
+}

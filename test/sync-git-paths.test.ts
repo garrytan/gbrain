@@ -27,7 +27,7 @@ describe('Git-relative sync scope paths (#5108)', () => {
       expect(manifest.modified.filter(inScope)).toEqual(['docs/brain/nested/changed.md']);
       expect(manifest.deleted.filter(inScope)).toEqual(['docs/brain/deleted.md']);
       expect(manifest.renamed.filter(r => inScope(r.to))).toEqual([
-        { from: 'docs/brain/old.md', to: 'docs/brain/new.md' },
+        { from: 'docs/brain/old.md', to: 'docs/brain/new.md', similarity: 100 },
       ]);
       expect(manifest.modified[0]!.slice(scope.length + 1)).toBe('nested/changed.md');
     });

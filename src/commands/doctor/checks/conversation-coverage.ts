@@ -19,7 +19,7 @@ export async function computeConversationFormatCoverageCheck(
 ): Promise<Check> {
   const name = 'conversation_format_coverage';
   try {
-    const { readConversationBodyForParsing } = await import('../../../core/conversation-parser/body.ts');
+    const { ConversationBodyTooLargeError, readConversationBodyForParsing } = await import('../../../core/conversation-parser/body.ts');
     const { parseConversation } = await import('../../../core/conversation-parser/parse.ts');
     // Single source of truth for the conversation-facts type allowlist (#4135).
     const allowedTypes = ALLOWED_TYPES;
@@ -43,8 +43,14 @@ export async function computeConversationFormatCoverageCheck(
     const hitsByPattern: Record<string, number> = {};
     let unmatched = 0;
     let summaryOnly = 0;
+    let oversized = 0;
     for (const page of sample) {
-      const body = await readConversationBodyForParsing(engine, page);
+      // An oversized raw_transcript sidecar is never read; extraction_input_truncated reports it.
+      const body = await readConversationBodyForParsing(engine, page).catch((error: unknown) => {
+        if (error instanceof ConversationBodyTooLargeError) return null;
+        throw error;
+      });
+      if (body === null) { oversized++; continue; }
       const result = parseConversation(body, { page, noPolish: true, noFallback: true });
       // #4193: a no_match on a page that never claimed a transcript
       // (summary-only meeting/slack page) is not parser debt. Report it
@@ -59,7 +65,7 @@ export async function computeConversationFormatCoverageCheck(
       hitsByPattern[id] = (hitsByPattern[id] ?? 0) + 1;
       if (result.phase === 'no_match') unmatched++;
     }
-    const candidates = sample.length - summaryOnly;
+    const candidates = sample.length - summaryOnly - oversized;
     const unmatchedPct = candidates > 0 ? (unmatched / candidates) * 100 : 0;
     const breakdown = Object.entries(hitsByPattern)
       .sort(([, a], [, b]) => b - a)

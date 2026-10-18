@@ -63,10 +63,29 @@ export function inertBlock(value: unknown, max = 1500): string {
   return s;
 }
 
-/** Production client: REST with GH_TOKEN/GITHUB_TOKEN (Actions), else the authenticated `gh api` CLI (local dry runs). */
-export function restClient(repo: string, token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN): GitHubClient {
+/** Delays before each retry of a GET that failed with a 5xx (GitHub's transient 502/503/504) or got no response at all; a 4xx fails at once and writes are never retried. */
+export const GET_RETRY_DELAYS_MS = [1_000, 3_000, 9_000];
+
+async function retryingGet<T>(method: string, sleep: (ms: number) => Promise<unknown>, call: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await call();
+    } catch (e) {
+      const { status, network } = e as { status?: number; network?: boolean };
+      if (method !== 'GET' || !((status ?? 0) >= 500 || network) || attempt >= GET_RETRY_DELAYS_MS.length) throw e;
+      await sleep(GET_RETRY_DELAYS_MS[attempt]!);
+    }
+  }
+}
+
+/** Production client: REST with GH_TOKEN/GITHUB_TOKEN (Actions), else the authenticated `gh api` CLI (local dry runs); a GET that fails with a 5xx is retried per GET_RETRY_DELAYS_MS. */
+export function restClient(repo: string, token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN, sleep: (ms: number) => Promise<unknown> = Bun.sleep): GitHubClient {
   const resolve = (path: string) => path.replace('{repo}', repo).replace(/^\//, '');
-  if (!token) return ghCliClient(resolve);
+  const client = token ? tokenClient(resolve, token) : ghCliClient(resolve);
+  return { ...client, request: <T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown) => retryingGet(method, sleep, () => client.request<T>(method, path, body)) };
+}
+
+function tokenClient(resolve: (path: string) => string, token: string): GitHubClient {
   return {
     async request<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<T> {
       const url = `https://api.github.com/${resolve(path)}`;
@@ -79,6 +98,8 @@ export function restClient(repo: string, token = process.env.GH_TOKEN || process
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         },
         body: body === undefined ? undefined : JSON.stringify(body),
+      }).catch((e: unknown) => {
+        throw Object.assign(new Error(`GitHub API ${method} ${url} -> no response: ${e instanceof Error ? e.message : String(e)}`), { network: true });
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '');

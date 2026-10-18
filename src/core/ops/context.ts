@@ -476,6 +476,14 @@ export const CLIENT_FENCED_WRITE_OPS: ReadonlySet<string> = new Set([
   'get_write_request', 'list_write_requests', 'cancel_write_request',
   'takes_add', 'takes_update', 'takes_resolve', 'takes_supersede', 'takes_remove',
   'put_skill', 'delete_skill',
+  // #5913: remember fences the one slug it writes (the caller's entity, or
+  // memory/unattributed) in planRememberTarget (persistence/memory-mutations.ts)
+  // before admission, so an inferred or unattributed target outside the
+  // prefixes is refused, and `replaces` is confined to the same entity and
+  // page (facts/single-prepare.ts decideReplacement). forget/forget_fact stay
+  // off the list: a withdrawal's write set (withdrawal-discovery.ts) reaches
+  // pages the fenced slug does not name, so they wait for a confined closure.
+  'remember',
 ]);
 
 /**
@@ -1220,7 +1228,10 @@ export function stampEvidenceSafe(results: SearchResult[]): void {
 }
 
 export function stampDeepResearchIds(results: SearchResult[]): void {
-  for (const r of results) (r as SearchResult & { id?: string }).id = encodeDeepResearchId(r.source_id, r.slug);
+  // Large pages (T24): a hit past the page's first chunk names its chunk, so fetch can return that evidence from a page too
+  // large to send whole (the first window already holds chunk 0, whose id stays the plain page id).
+  for (const r of results) if (r.result_type !== 'fact') (r as SearchResult & { id?: string }).id = encodeDeepResearchId(r.source_id, r.slug,
+    Number.isSafeInteger(r.chunk_id) && r.chunk_id > 0 && r.chunk_index > 0 ? { chunkId: r.chunk_id } : undefined);
 }
 
 /** T4 — shared eval-capture for the `search` op (keyword-only + cheap-hybrid paths). */

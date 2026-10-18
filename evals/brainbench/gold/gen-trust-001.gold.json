@@ -1,0 +1,50 @@
+{
+  "fixture_id": "gen-trust-001",
+  "turns": {},
+  "trust": {
+    "items": [
+      {
+        "item_id": "i1",
+        "check": "tier",
+        "step": "s1",
+        "tier": "operator_curated"
+      },
+      {
+        "item_id": "i2",
+        "check": "tier",
+        "step": "s2",
+        "tier": "agent_written"
+      },
+      {
+        "item_id": "i3",
+        "check": "tier",
+        "step": "s3",
+        "tier": "agent_written"
+      },
+      {
+        "item_id": "i4",
+        "check": "tier",
+        "step": "s4",
+        "tier": "external_untrusted"
+      },
+      {
+        "item_id": "i5",
+        "check": "tier",
+        "step": "s5",
+        "tier": "external_untrusted"
+      },
+      {
+        "item_id": "i6",
+        "check": "tier",
+        "step": "s6",
+        "tier": "agent_written"
+      },
+      {
+        "item_id": "i7",
+        "check": "tier",
+        "step": "s7",
+        "tier": "external_untrusted"
+      }
+    ]
+  }
+}

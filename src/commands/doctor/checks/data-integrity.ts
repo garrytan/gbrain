@@ -18,6 +18,7 @@ import {
 } from './core-health.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { withSkippedSegmented } from '../check-fix.ts';
 
 async function runIntegrity(ctx: DoctorContext): Promise<Check[]> {
   const { progress } = ctx;
@@ -34,11 +35,12 @@ async function runIntegrity(ctx: DoctorContext): Promise<Check[]> {
     const { scanIntegrity } = await import('../../integrity.ts');
     const res = await scanIntegrity(engine, { limit: 500 });
     const total = res.bareHits.length + res.externalHits.length;
+    const unread = res.skipped.length ? ` ${res.skipped.length} page(s) could not be scanned (first: ${res.skipped[0]!.source_id}:${res.skipped[0]!.slug}, ${res.skipped[0]!.reason}); gbrain integrity check lists them.` : '';
     if (total === 0) {
       checks.push({
         name: 'integrity',
         status: 'ok',
-        message: `Sampled ${res.pagesScanned} pages; no bare-tweet phrases or external links.`,
+        message: `Sampled ${res.pagesScanned} pages; no bare-tweet phrases or external links.${unread}`,
       });
     } else if (res.bareHits.length > 0) {
       // v0.40.3.0 T8b (D8): emit integrity-auto RemediationStep.
@@ -61,7 +63,7 @@ async function runIntegrity(ctx: DoctorContext): Promise<Check[]> {
       checks.push({
         name: 'integrity',
         status: 'warn',
-        message: `Sampled ${res.pagesScanned} pages; ${res.bareHits.length} bare-tweet phrase(s), ${res.externalHits.length} external link(s). Run: gbrain integrity check (or integrity auto to repair).`,
+        message: `Sampled ${res.pagesScanned} pages; ${res.bareHits.length} bare-tweet phrase(s), ${res.externalHits.length} external link(s). Run: gbrain integrity check (or integrity auto to repair).${unread}`,
         remediation: [integrityStep],
         remediation_status: 'remediable',
       });
@@ -69,7 +71,7 @@ async function runIntegrity(ctx: DoctorContext): Promise<Check[]> {
       checks.push({
         name: 'integrity',
         status: 'ok',
-        message: `Sampled ${res.pagesScanned} pages; ${res.externalHits.length} external link(s) (no bare tweets).`,
+        message: `Sampled ${res.pagesScanned} pages; ${res.externalHits.length} external link(s) (no bare tweets).${unread}`,
       });
     }
   } catch (e) {
@@ -330,15 +332,26 @@ async function runMarkdownBody(ctx: DoctorContext): Promise<Check[]> {
          AND (rd.data ->> 'content') ~ '(^|\n)##+ '
        LIMIT 100`,
     );
+    // Decision #10: a segmented page's compiled_truth is NULL, so the length comparison above passes it by.
+    const [segmented] = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(DISTINCT p.id)::int AS n
+       FROM pages p
+       JOIN raw_data rd ON rd.page_id = p.id
+       WHERE p.body_storage = 'segmented'
+         AND rd.data ? 'content'
+         AND length(rd.data ->> 'content') > 1000
+         AND (rd.data ->> 'content') ~ '(^|\n)##+ '`,
+    ).catch(() => []);
+    const skipped = Number(segmented?.n ?? 0);
     if (rows.length === 0) {
-      checks.push({ name: 'markdown_body_completeness', status: 'ok', message: 'No truncated bodies detected' });
+      checks.push(withSkippedSegmented({ name: 'markdown_body_completeness', status: 'ok', message: 'No truncated bodies detected' }, skipped));
     } else {
       const sample = rows.slice(0, 3).map((r) => r.slug).join(', ');
-      checks.push({
+      checks.push(withSkippedSegmented({
         name: 'markdown_body_completeness',
         status: 'warn',
         message: `${rows.length} page(s) appear truncated (sample: ${sample}). Re-import: edit each page body, then run gbrain sync (see docs/integrations/reliability-repair.md)`,
-      });
+      }, skipped));
     }
   } catch {
     // pages_raw.raw_data may not exist on older schemas; best-effort.

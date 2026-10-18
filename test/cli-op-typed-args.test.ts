@@ -3,7 +3,7 @@
  * ends options in parseOpArgs, matching findUnknownOpFlag).
  */
 import { describe, expect, test } from 'bun:test';
-import { parseOpArgs, findUnknownOpFlag } from '../src/cli.ts';
+import { parseOpArgs, findUnknownOpFlag } from '../src/cli/main.ts';
 import { operations, OperationError } from '../src/core/operations.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 import { mkdtempSync } from 'node:fs';

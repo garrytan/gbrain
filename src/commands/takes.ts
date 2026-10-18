@@ -30,7 +30,7 @@ import { resolveOwnerHolder } from '../core/owner-holder.ts';
 import { embedStaleTakes } from '../core/embed-takes.ts';
 import { assertBrainEmbeddingEnabled } from '../core/embedding-dim-check.ts';
 import { loadConfig } from '../core/config.ts';
-import { embedQuery } from '../core/embedding.ts';
+import { embedQueryWithPrefix } from '../core/search/query-prefix.ts';
 import {
   listPendingProposals,
   acceptProposal,
@@ -184,7 +184,7 @@ async function cmdSearch(engine: BrainEngine, args: string[]): Promise<void> {
     await assertBrainEmbeddingEnabled(engine, loadConfig());
     const { validateEmbeddingCreds } = await import('../core/embed-preflight.ts');
     validateEmbeddingCreds();
-    const queryEmbedding = await embedQuery(query);
+    const queryEmbedding = await embedQueryWithPrefix(engine, query);
     hits = await engine.searchTakesVector(queryEmbedding, { limit });
   } else {
     hits = await engine.searchTakes(query, { limit });
@@ -251,12 +251,43 @@ async function cmdScorecard(engine: BrainEngine, args: string[]): Promise<void> 
   const domainPrefix = flagValue(args, '--domain');
   const since = flagValue(args, '--since');
   const until = flagValue(args, '--until');
+  const groupBy = flagValue(args, '--group-by');
+  const minNRaw = flagValue(args, '--min-n');
+  const fail = (message: string): never => { process.stderr.write(`${message}\n`); process.exit(1); };
+  if (groupBy !== undefined && groupBy !== 'holder' && groupBy !== 'source') fail('--group-by holder|source groups the scorecard by holder or by source.');
+  const minN = minNRaw === undefined ? undefined : Number(minNRaw);
+  if (minN !== undefined && !(Number.isSafeInteger(minN) && minN >= 1)) fail('--min-n requires a positive integer, e.g. --min-n 10.');
   const { PARTIAL_RATE_WARNING_THRESHOLD } = await import('../core/takes-resolution.ts');
 
   const card = await engine.getScorecard(
     { holder, domainPrefix, since, until },
     /* allowList */ undefined, // CLI is local + trusted; MCP path threads allowList from the caller
   );
+
+  // W7: per-holder or per-source rows from the private forecast journal.
+  let printGroups = () => {};
+  if (groupBy) {
+    const { readForecastJournal, scorecardGroups, SCORECARD_DEFAULT_MIN_N } = await import('../core/forecast-journal.ts');
+    const sourceId = flagValue(args, '--source-id');
+    const query = { ...(sourceId ? { sourceId } : {}), ...(holder ? { holder } : {}), ...(domainPrefix ? { about: domainPrefix } : {}),
+      ...(since ? { since } : {}), ...(until ? { until } : {}) };
+    const groups = await scorecardGroups(engine, { ...query, groupBy: groupBy as 'holder' | 'source', ...(minN !== undefined ? { minN } : {}) });
+    const journal = (await readForecastJournal(engine, { ...query, limit: 0 })).totals;
+    if (json) {
+      console.log(JSON.stringify({ ...card, groups, journal }, null, 2));
+      return;
+    }
+    const f = (n: number | null, digits = 3) => n === null ? '—' : n.toFixed(digits);
+    printGroups = () => {
+      console.log('');
+      console.log(`## By ${groupBy} (min_n=${minN ?? SCORECARD_DEFAULT_MIN_N}; ${journal.predictions} predictions, ${journal.unresolved} unresolved)`);
+      for (const g of groups) {
+        const interval = g.accuracy_wilson95 ? `[${f(g.accuracy_wilson95[0])}, ${f(g.accuracy_wilson95[1])}]` : '—';
+        console.log(`  ${g.key}  n=${g.n}  accuracy=${f(g.accuracy)}  shrunk=${f(g.accuracy_shrunk)}  wilson95=${interval}  recent=${f(g.accuracy_recent)}  ` +
+          `Brier=${f(g.brier, 4)}  skill=${f(g.brier_skill)}  citations=${g.citations}  unresolved=${g.unresolved} (${g.overdue} overdue)${g.low_n ? '  low_n' : ''}`);
+      }
+    };
+  }
 
   if (json) {
     console.log(JSON.stringify(card, null, 2));
@@ -270,6 +301,7 @@ async function cmdScorecard(engine: BrainEngine, args: string[]): Promise<void> 
   const unresolvableCount = card.unresolvable_count ?? 0;
   if (card.resolved === 0 && unresolvableCount === 0) {
     console.log(`No resolved bets yet${holder ? ` for ${holder}` : ''}.`);
+    printGroups();
     return;
   }
   const fmt = (n: number | null | undefined, digits = 3) =>
@@ -305,6 +337,85 @@ async function cmdScorecard(engine: BrainEngine, args: string[]): Promise<void> 
   if (card.resolved < 100 && card.resolved > 0) {
     console.log('');
     console.log(`  Note: n=${card.resolved} is small. Brier is noisy below ~100 resolved bets.`);
+  }
+  printGroups();
+}
+
+/**
+ * W6: the review surface for grade_takes. The cycle caches a verdict per take
+ * (`take_grade_cache`) and, with auto-resolve off, applies none; this lists
+ * the newest verdict per take so the owner can review them, marking verdicts
+ * whose judge model and prompt the W6 eval did not measure
+ * (`GRADE_TAKES_MEASURED_MODELS`, `GRADE_TAKES_MEASURED_PROMPT_VERSION`).
+ * Trusted local only: there is no MCP op, so a thin client refuses it.
+ */
+async function cmdGrades(engine: BrainEngine, args: string[]): Promise<void> {
+  const json = flagPresent(args, '--json');
+  const verdict = flagValue(args, '--verdict');
+  const minRaw = flagValue(args, '--min-confidence');
+  const limitRaw = flagValue(args, '--limit');
+  const applied = flagPresent(args, '--applied');
+  const unapplied = flagPresent(args, '--unapplied');
+  if (verdict !== undefined && !['correct', 'incorrect', 'partial', 'unresolvable'].includes(verdict)) {
+    console.error(`Invalid --verdict "${verdict}". Expected correct, incorrect, partial or unresolvable.`);
+    process.exit(1);
+  }
+  const minConfidence = minRaw === undefined ? undefined : Number(minRaw);
+  if (minConfidence !== undefined && (!Number.isFinite(minConfidence) || minConfidence < 0 || minConfidence > 1)) {
+    console.error(`Invalid --min-confidence "${minRaw}". Expected a number from 0 to 1.`);
+    process.exit(1);
+  }
+  const limit = limitRaw === undefined ? 50 : Number(limitRaw);
+  if (!Number.isInteger(limit) || limit < 1) {
+    console.error(`Invalid --limit "${limitRaw}". Expected a positive integer.`);
+    process.exit(1);
+  }
+  if (applied && unapplied) {
+    console.error('Error: --applied and --unapplied are mutually exclusive (choose one).');
+    process.exit(1);
+  }
+
+  const { gradeJudgeMeasured } = await import('../core/cycle/grade-takes-measured.ts');
+  const rows = await engine.executeRaw<{
+    take_id: number; source_id: string; page_slug: string; row_num: number; claim: string; holder: string; since_date: string | null;
+    verdict: string; confidence: number; applied: boolean; judge_model_id: string; prompt_version: string; graded_at: string | Date;
+  }>(
+    `SELECT * FROM (
+       SELECT DISTINCT ON (g.take_id)
+              g.take_id, p.source_id, p.slug AS page_slug, t.row_num, t.claim, t.holder, t.since_date,
+              g.verdict, g.confidence, g.applied, g.judge_model_id, g.prompt_version, g.graded_at
+         FROM take_grade_cache g
+         JOIN takes t ON t.id = g.take_id
+         JOIN pages p ON p.id = t.page_id
+        WHERE p.deleted_at IS NULL
+        ORDER BY g.take_id, g.graded_at DESC
+     ) latest
+     WHERE ($1::text IS NULL OR verdict = $1)
+       AND ($2::real IS NULL OR confidence >= $2)
+       AND ($3::boolean IS NULL OR applied = $3)
+     ORDER BY graded_at DESC, take_id DESC
+     LIMIT $4`,
+    [verdict ?? null, minConfidence ?? null, applied ? true : unapplied ? false : null, limit],
+  );
+  const grades = rows.map(r => ({
+    ...r,
+    confidence: Number(r.confidence),
+    graded_at: r.graded_at instanceof Date ? r.graded_at.toISOString() : String(r.graded_at),
+    judge_measured: gradeJudgeMeasured(r.judge_model_id, r.prompt_version),
+  }));
+
+  if (json) {
+    console.log(JSON.stringify(grades, null, 2));
+    return;
+  }
+  if (grades.length === 0) {
+    console.log('No grade_takes verdicts match.');
+    return;
+  }
+  console.log(`# grade_takes verdicts (newest per take, ${grades.length} shown)`);
+  for (const g of grades) {
+    console.log(`  ${g.page_slug}#${g.row_num} [${g.holder}] ${g.verdict} @ ${g.confidence.toFixed(2)}${g.applied ? ' applied' : ''}  judge ${g.judge_model_id}${g.judge_measured ? '' : ' (not measured by W6)'}  ${g.graded_at.slice(0, 10)}`);
+    console.log(`      ${g.claim}${g.since_date ? `  (made ${g.since_date})` : ''}`);
   }
 }
 
@@ -365,6 +476,26 @@ async function cmdCalibration(engine: BrainEngine, args: string[]): Promise<void
  */
 async function cmdPropose(engine: BrainEngine, args: string[], sourceId: string): Promise<void> {
   const json = flagPresent(args, '--json');
+  // GBRA-130 A-25: pages propose_takes held with a failure tombstone after
+  // repeated deterministic extractor failures: list them, or release one page
+  // (or every page) so the next run re-extracts it.
+  if (flagPresent(args, '--failed') || flagPresent(args, '--retry-failed')) {
+    const explicit = flagValue(args, '--source');
+    const target = explicit ? await resolveSourceId(engine, explicit) : sourceId;
+    const { listFailedProposals, retryFailedProposals } = await import('../core/cycle/propose-takes-failures.ts');
+    if (flagPresent(args, '--retry-failed')) {
+      const { released } = await retryFailedProposals(engine, target, flagValue(args, '--slug'));
+      if (json) console.log(JSON.stringify({ source_id: target, released }, null, 2));
+      else console.log(released.length ? `Released ${released.length} page(s) in ${target}; the next propose_takes run re-extracts them: ${released.join(', ')}` : `No held pages in ${target}.`);
+      return;
+    }
+    const failed = await listFailedProposals(engine, target);
+    if (json) { console.log(JSON.stringify(failed, null, 2)); return; }
+    if (failed.length === 0) { console.log(`No pages held by propose_takes in ${target}.`); return; }
+    for (const f of failed) console.log(`${f.slug} (${f.code}, prompt ${f.prompt_version}, held ${f.proposed_at})`);
+    console.log(`Retry one with \`gbrain takes propose --retry-failed --slug <slug> --source ${target}\`, or every page by omitting --slug.`);
+    return;
+  }
   const acceptRaw = flagValue(args, '--accept');
   const rejectRaw = flagValue(args, '--reject');
   if (acceptRaw !== undefined && rejectRaw !== undefined) {
@@ -493,10 +624,26 @@ Subcommands:
                                           Promote a proposal into the page's takes fence (source take_proposals#<id>;
                                           edits mark it "(edited)" and the queue keeps the original text)
   takes propose --reject <id>             Dismiss a proposal
+  takes propose --failed [--source <id>] [--json]
+                                          Pages propose_takes held after repeated extractor failures
+  takes propose --retry-failed [--slug <slug>] [--source <id>] [--json]
+                                          Release held pages so the next propose_takes run re-extracts them
   takes scorecard [<holder>] [--domain <prefix>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]
                                           Aggregate calibration scorecard (v0.30.0)
+                  [--group-by holder|source] [--min-n N] [--source-id <id>]
+                                          Per-holder or per-source rows from the forecast journal (W7, private)
+  takes journal [--holder h] [--about <slug-prefix>] [--state resolved|overdue|open|undated]
+                [--since YYYY-MM] [--until YYYY-MM] [--limit N] [--source-id <id>] [--json]
+                                          Every prediction with its time, horizon, state and resolution (W7, private)
   takes calibration [<holder>] [--bucket-size 0.1] [--json]
                                           Calibration curve binned by stated weight (v0.30.0)
+  takes horizon scan [--apply] [--source-id <id>] [--json]
+                                          Preview (or write) each take's stated deadline (W7, private)
+  takes horizon set <slug> --row N --date YYYY-MM-DD | clear <slug> --row N
+                                          Set or clear a take's horizon as the owner
+  takes grades [--verdict v] [--min-confidence 0.95] [--applied|--unapplied] [--limit 50] [--json]
+                                          Review grade_takes verdicts: the newest cached verdict per take,
+                                          newest first; marks verdicts whose judge the W6 eval did not measure
 
 Common flags:
   --dir <path>    Verify the configured canonical directory for mutations
@@ -526,8 +673,11 @@ Common flags:
     // #2411: `takes propose` used to fall through to the slug path and print
     // "No takes on propose." — the LLM proposal queue had no drain surface.
     case 'propose':     return cmdPropose(engine, rest, await resolveTakesSourceId(engine));
+    case 'horizon':     return cmdHorizon(engine, rest);
+    case 'journal':     return cmdJournal(engine, rest);
     case 'scorecard':   return cmdScorecard(engine, rest);
     case 'calibration': return cmdCalibration(engine, rest);
+    case 'grades':      return cmdGrades(engine, rest);
     case 'revisit':     return cmdRevisit(engine, rest);
     case 'extract':     return cmdExtract(engine, rest);
     default:
@@ -727,4 +877,97 @@ async function cmdRevisit(_engine: BrainEngine, rest: string[]): Promise<void> {
     process.stderr.write(`Editor exited with status ${result.status ?? 'unknown'}\n`);
   }
   void execFileSync;
+}
+
+/**
+ * W7: the stated horizon of each take (`scan`, preview-first) and the
+ * owner's own horizon (`set`, `clear`), in the private `take_horizons`
+ * table (src/core/takes-horizon.ts). Trusted local only: there is no MCP op,
+ * so a thin client refuses it.
+ */
+async function cmdHorizon(engine: BrainEngine, args: string[]): Promise<void> {
+  const usage = 'Usage: gbrain takes horizon scan [--apply] [--source-id <id>] [--json]\n' +
+    '       gbrain takes horizon set <slug> --row N --date YYYY-MM-DD [--source-id <id>]\n' +
+    '       gbrain takes horizon clear <slug> --row N [--source-id <id>]';
+  const fail = (message: string): never => { process.stderr.write(`${message}\n`); process.exit(1); };
+  const { scanStatedHorizons, setTakeHorizon, clearTakeHorizon } = await import('../core/takes-horizon.ts');
+  const [sub, ...rest] = args;
+  const json = flagPresent(rest, '--json');
+
+  if (sub === 'scan') {
+    const apply = flagPresent(rest, '--apply');
+    const sourceId = flagValue(rest, '--source-id');
+    const scan = await scanStatedHorizons(engine, { apply, ...(sourceId ? { sourceId } : {}) });
+    if (json) {
+      console.log(JSON.stringify({ applied: apply, ...scan }, null, 2));
+      return;
+    }
+    for (const p of scan.proposed) console.log(`  take ${p.take_id}: ${p.horizon_date} (${p.basis}, "${p.phrase}")${p.replaces ? ` replaces ${p.replaces}` : ''}  ${p.claim}`);
+    const tail = `${scan.kept_owner} owner horizon(s) kept, ${scan.unparsed} take(s) state no single deadline.`;
+    if (apply) console.log(`Wrote ${scan.written} stated horizon(s). ${tail}`);
+    else console.log(`${scan.proposed.length} stated horizon(s) to write. ${tail}${scan.proposed.length ? ' Write them with: gbrain takes horizon scan --apply' : ''}`);
+    return;
+  }
+
+  if (sub !== 'set' && sub !== 'clear') fail(usage);
+  const slug = rest[0] && !rest[0].startsWith('-') ? rest[0] : fail(usage);
+  const rowRaw = flagValue(rest, '--row');
+  const row = rowRaw === undefined ? NaN : Number(rowRaw);
+  if (!Number.isSafeInteger(row) || row < 1) fail(`--row requires the take's row number (a positive integer), e.g. --row 1.\n${usage}`);
+  const sourceId = await resolveSourceId(engine, flagValue(rest, '--source-id') ?? null);
+  const [take] = await engine.executeRaw<{ id: number | string }>(
+    `SELECT t.id FROM takes t JOIN pages p ON p.id = t.page_id
+      WHERE p.source_id = $1 AND p.slug = $2 AND t.row_num = $3 AND p.deleted_at IS NULL`,
+    [sourceId, slug, row]);
+  if (!take) fail(`No take ${slug}#${row} on source ${sourceId}. List the page's takes with: gbrain takes ${slug}`);
+  const takeId = Number(take!.id);
+
+  if (sub === 'set') {
+    const date = flagValue(rest, '--date') ?? fail(`--date YYYY-MM-DD is required.\n${usage}`);
+    await setTakeHorizon(engine, takeId, date, 'owner').catch((e: Error) => fail(e.message));
+    console.log(`Set the horizon of ${slug}#${row} to ${date} (owner).`);
+    return;
+  }
+  console.log(await clearTakeHorizon(engine, takeId) ? `Cleared the horizon of ${slug}#${row}.` : `${slug}#${row} had no horizon.`);
+}
+
+/**
+ * W7: the private forecast journal (src/core/forecast-journal.ts). Every
+ * prediction with its prediction time (certified or labelled uncertified),
+ * horizon, state and resolution; the totals keep the unresolved denominator
+ * whatever --state or --limit shows. Trusted local only: there is no MCP op,
+ * so a thin client refuses it.
+ */
+async function cmdJournal(engine: BrainEngine, args: string[]): Promise<void> {
+  const usage = 'Usage: gbrain takes journal [--holder h] [--about <slug-prefix>] [--state resolved|overdue|open|undated]\n' +
+    '       [--since YYYY-MM] [--until YYYY-MM] [--limit N] [--source-id <id>] [--json]';
+  const fail = (message: string): never => { process.stderr.write(`${message}\n`); process.exit(1); };
+  const { readForecastJournal } = await import('../core/forecast-journal.ts');
+  const state = flagValue(args, '--state');
+  if (state !== undefined && !['resolved', 'overdue', 'open', 'undated'].includes(state)) fail(usage);
+  const limitRaw = flagValue(args, '--limit');
+  const limit = limitRaw === undefined ? undefined : Number(limitRaw);
+  if (limit !== undefined && !(Number.isSafeInteger(limit) && limit >= 1)) fail(`--limit requires a positive integer, e.g. --limit 50.\n${usage}`);
+  const value = (flag: string) => flagValue(args, flag);
+  const journal = await readForecastJournal(engine, {
+    ...(value('--source-id') ? { sourceId: value('--source-id') } : {}), ...(value('--holder') ? { holder: value('--holder') } : {}),
+    ...(value('--about') ? { about: value('--about') } : {}), ...(value('--since') ? { since: value('--since') } : {}),
+    ...(value('--until') ? { until: value('--until') } : {}), ...(state ? { state: state as 'resolved' } : {}), ...(limit ? { limit } : {}),
+  });
+  if (flagPresent(args, '--json')) {
+    console.log(JSON.stringify(journal, null, 2));
+    return;
+  }
+  const t = journal.totals;
+  console.log(`${t.predictions} predictions: ${t.resolved} resolved, ${t.unresolved} unresolved (${t.overdue} overdue, ${t.open} open, ${t.undated} undated)`);
+  console.log(`Prediction times certified by the belief ledger: ${t.certified_prediction_times} of ${t.predictions}.`);
+  for (const e of journal.entries) {
+    const predicted = e.prediction.at ? `${e.prediction.at} (${e.prediction.basis}, ${e.prediction.certified ? 'certified' : 'uncertified'})` : 'unknown';
+    const horizon = e.horizon ? `${e.horizon.date} (${e.horizon.basis})` : 'none';
+    const weight = e.weight === null ? '' : ` w=${e.weight.toFixed(2)}`;
+    const resolution = e.resolution ? `  resolved ${e.resolution.quality}${e.resolution.resolved_at ? ` ${e.resolution.resolved_at.slice(0, 10)}` : ''}${e.resolution.resolved_by ? ` by ${e.resolution.resolved_by}` : ''}` : '';
+    const grade = e.grade ? `  grade ${e.grade.verdict} @ ${e.grade.confidence.toFixed(2)}${e.grade.applied ? ' applied' : ''}${e.grade.judge_measured ? '' : ' (judge not measured)'}` : '';
+    console.log(`\n[${e.state}] ${e.page_slug}#${e.row_num}  ${e.holder}${weight}  predicted ${predicted}  horizon ${horizon}${resolution}${grade}\n  ${e.claim}`);
+  }
+  if (journal.entries.length < (state ? t[state as 'resolved'] : t.predictions)) console.log(`\nShowing ${journal.entries.length}; the totals count every match.`);
 }

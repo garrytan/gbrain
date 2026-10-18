@@ -41,6 +41,28 @@ Each row's `score_details`:
 A stage the search did not run is reported as `not_run` or `skipped` with a
 reason, never as an invented value.
 
+## See where the time went
+
+Every `search` and `query` response carries its stage timings in
+`_meta.retrieval.timings` (MCP and thin clients; never in the result text),
+and `gbrain search --explain` / `gbrain query --explain` print them as the
+first header line, on empty and degraded responses too:
+
+```text
+timings: 74ms total — setup 1, lexical 12, relational 0, embed 0, vector 16, fuse 26, post_fusion 9, rerank 2, alias_fanout 0, anchoring 0, facts_arm 5, response 3, other 0 (overlapped: keyword_arm 12, title_arm 12)
+```
+
+**Say to your agent:** *"Why was that search slow? Show me where the time went."*
+
+| Field | Meaning |
+|---|---|
+| `total_ms` | Wall time of the whole operation, measured on its own clock after the response is assembled. |
+| `stages_ms` | Time the request spent blocked in each stage that ran: `setup` (scope, config, mode), `lexical`, `relational`, `expansion`, `embed`, `vector`, `fuse`, `post_fusion` (boosts, dedup, identity tiers, return sizing), `rerank`, `alias_fanout`, `anchoring`, `facts_arm` (query), `response` (evidence delivery, response metadata, redaction). A second search the operation runs (a retry, a CRAG re-run) adds to the same stages; the alias fan-out's keyword searches count under `alias_fanout`. |
+| `other_ms` | Time no stage claimed. `sum(stages_ms) + other_ms = total_ms`. |
+| `overlapped_ms` | Work that ran alongside a stage, so it is not added to the total: the keyword and title arms run in parallel inside `lexical` (`keyword_arm`, `title_arm`), `search`'s total-match count runs alongside the whole request (`keyword_count`), and the vector side (query expansion, the query embed and the vector search) starts with the lexical arms, so the part of `expansion`, `embed` and `vector` that finished while they ran is listed here under the stage's name. The rest of those stages, the part the request had to wait for, stays in `stages_ms`. |
+
+All values are integer milliseconds.
+
 ## Diagnose a missing page
 
 MCP:
@@ -60,7 +82,7 @@ the next step:
 | `target_dropped_return_sizing` | Autocut or adaptive return trimmed it. | `get_page`, or repeat with `autocut: false` (query). |
 | `target_dropped_token_budget` | The evidence budget filled first. | Repeat with a larger `token_budget`. |
 | `target_dropped_relaxed_keyword` | Only a loose keyword match found it. | `get_page`, or rephrase with the page's own terms. |
-| `target_not_retrieved` | No arm returned it for this query. | `query` (multi-query expansion) or rephrase. |
+| `target_not_retrieved` | No arm returned it for this query. | `query --expand` (`expand: true`; one call to the configured expansion model) or rephrase. |
 | `target_not_indexed` | The page has no indexed chunks. | `gbrain doctor --json` names the re-index command. |
 | `target_projection_stale` | The page changed and its searchable text is still being rebuilt. | Retry after `gbrain doctor` shows the backlog drained. |
 | `target_safe_chunks_uncertified` | Remote reads withhold pages indexed before the current safe-chunk format. | The brain host runs `gbrain repair safe-chunks`. |

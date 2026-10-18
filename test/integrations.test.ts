@@ -175,7 +175,7 @@ describe('CLI integration', () => {
   let tableSource: string;
 
   beforeAll(() => {
-    cliSource = surfaceFileSource('cli', 'src/cli.ts');
+    cliSource = surfaceFileSource('cli', 'src/cli/main.ts');
     // Refactor wave 1 (W4 cli): CLI_ONLY membership and dispatch phase live in
     // the command table; containment reads the whole cli surface.
     cliSurface = surfaceSource('cli');
@@ -198,7 +198,7 @@ describe('CLI integration', () => {
   });
 
   test('help text mentions integrations', () => {
-    expect(cliSource).toContain('integrations');
+    expect(surfaceFileSource('cli', 'src/cli/top-help.ts')).toContain('integrations');
   });
 });
 

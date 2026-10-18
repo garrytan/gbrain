@@ -404,11 +404,13 @@ describe('enrichEntity created stubs are retrieval-visible (#3994)', () => {
   });
 
   test('pipeline failure: stderr-warns the downgrade, then the unchunked fallback still lands the page', async () => {
-    // importFromContent runs inside engine.transaction; the fallback putPage
-    // does not. Breaking transaction() forces the fallback arm only.
+    // importFromContent runs inside engine.transaction. The fallback putPage
+    // runs in its own attributed transaction (#5575: write attribution and the
+    // derived trust tier), so only the import's transaction is broken.
+    let transactions = 0;
     const failingEngine = new Proxy(engine, {
       get(target, prop) {
-        if (prop === 'transaction') {
+        if (prop === 'transaction' && transactions++ === 0) {
           return async () => { throw new Error('simulated pipeline boom'); };
         }
         const v = Reflect.get(target, prop, target);

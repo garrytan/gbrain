@@ -22,6 +22,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runImport } from '../src/commands/import.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { loadSyncFailures } from '../src/core/sync-failure-ledger.ts';
+import { PAGE_MAX_BYTES } from '../src/core/page-size-policy.ts';
 
 let engine: PGLiteEngine;
 
@@ -59,10 +60,10 @@ describe('import bookkeeping records the resolved source (#3838)', () => {
     execSync('git commit -m seed', { cwd: repo, stdio: 'pipe' });
 
     // Deterministic soft-failure: import-file.ts rejects any file over
-    // MAX_FILE_SIZE (5_000_000 bytes) with a real `result.error`, which
+    // MAX_FILE_SIZE (the 24 MiB page ceiling) with a real `result.error`, which
     // runImport pushes into `failures[]` without needing a thrown
     // exception — the exact code path recordFailures reads from.
-    writeFileSync(join(repo, 'oversized.md'), '---\ntype: note\n---\n' + 'x'.repeat(5_000_001));
+    writeFileSync(join(repo, 'oversized.md'), '---\ntype: note\n---\n' + 'x'.repeat(PAGE_MAX_BYTES + 1));
 
     const gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-home-'));
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {

@@ -77,7 +77,8 @@ test('X1: an upgrade from v178 builds the request indexes; managed working-tree 
     await engine.executeRaw('DROP INDEX IF EXISTS persistence_requests_sync_run_committed');
     await engine.setConfig('version', '178');
     expect(await runMigrations(engine)).toEqual({ applied: LATEST_VERSION - 178, current: LATEST_VERSION });
-    expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid']);
+    // #6511/#6757: the online-built set is the checkpoint pair, the purge slug index and the request-id index.
+    expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid', 'valid', 'valid']);
     expect((await requestIndexesCheck(engine)).status).toBe('ok');
 
     const id = `x1-${randomUUID().slice(0, 8)}`, root = join(home, id);
@@ -91,7 +92,7 @@ test('X1: an upgrade from v178 builds the request indexes; managed working-tree 
       await importFromContent(engine, 'hand', legacy.toString('utf8'), { sourceId: id, noEmbed: true, sourcePath: 'hand.md' });
       await claimWorktree(engine, id, root);
     });
-    const opts = { sourceId: id, noPull: true, noEmbed: true, noExtract: true, workingTree: true, explicitProcessing: [] };
+    const opts = { sourceId: id, noPull: true, noEmbed: true, noExtract: true, workingTree: true };
     for (let run = 0; run < 3; run++) {
       const result = await performManagedSync(engine, opts);
       await disposePersistenceConsumer(engine);
@@ -211,7 +212,7 @@ test('X6: deactivate carries a held connector item into classic state (wave 5): 
 test('X11: the remediation run reaches every new repair kind, runs the free ones under --max-usd 0 and clears their doctor findings', async () => withEnv(env, async () => {
   for (const engine of engines) {
     expect(AUTO_REPAIR_REGISTRY.map(spec => spec.kind)).toEqual(['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints',
-      'request-indexes', 'connector-fences', 'take-supersession', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'fences']);
+      'request-indexes', 'connector-fences', 'take-supersession', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'fences', 'slug-conflicts']);
     // Pending work for Lane A (a dropped index) and Lane D (an orphan binding of a removed source).
     await engine.executeRaw('DROP INDEX IF EXISTS persistence_requests_sync_run_open');
     await withPersistenceOff(engine, async () => {
@@ -229,7 +230,7 @@ test('X11: the remediation run reaches every new repair kind, runs the free ones
     const byKind = Object.fromEntries(run.repairs.map((r: { kind: string }) => [r.kind, r]));
     expect(byKind['request-indexes']).toMatchObject({ status: 'completed' });
     expect(byKind['orphan-bindings']).toMatchObject({ status: 'completed' });
-    expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid']);
+    expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid', 'valid', 'valid']);
     expect(await engine.executeRaw("SELECT 1 FROM persistence_source_bindings WHERE source_id='x11-orphan'")).toEqual([]);
     const replanned = (await planRepairSteps(engine, { noEmbed: true })).map(step => step.kind);
     expect(replanned).not.toContain('request-indexes');

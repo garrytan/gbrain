@@ -12,7 +12,7 @@ import { parseMarkdown, serializePageToMarkdown } from '../src/core/markdown.ts'
 import { acceptWriterTransfer, acquireWorktree, claimWorktree, getWorktreeBinding, prepareWriterTransfer } from '../src/core/persistence/ownership.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration, type LocalRegistration } from '../src/core/persistence/identity.ts';
 import { runReconcileApply, runReconcileBackups, runReconcilePreview, assertReconcileOutputPath } from '../src/core/persistence/reconcile.ts';
-import { fileClaimCandidatesSql } from '../src/core/persistence/reconcile-state.ts';
+import { fileClaimCandidatesQuery } from '../src/core/persistence/reconcile-state.ts';
 import { prepareFileTarget } from '../src/core/persistence/page-prepare.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { admitWrite, claimNextWrite, compactWriteReceipts, getWriteRequest } from '../src/core/persistence/journal.ts';
@@ -30,6 +30,7 @@ import { operationsByName } from '../src/core/operations.ts';
 import { reconcileCanonical } from '../src/core/persistence/reconcile-merge.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { dropOriginIndex } from './helpers/origin-index.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-reconcile-'));
@@ -38,6 +39,8 @@ let closePostgres: (() => Promise<void>) | undefined;
 beforeAll(async () => {
   const engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); engines.push(engine);
   if (process.env.DATABASE_URL) { const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL); engines.push(pg.engine); closePostgres = pg.close; }
+  // Several tests seed legacy shared origins, which only a brain whose pages_live_origin_key index is pending holds (#6948).
+  for (const engine of engines) await dropOriginIndex(engine);
 }, 120_000);
 afterAll(async () => {
   await withEnv({ GBRAIN_HOME: home }, async () => {
@@ -460,8 +463,9 @@ test('public warn-mode put_page rejects reserved reconciliation fields for local
     }, { remote, sourceId: f.id, config: { engine: engine.kind }, auth: { token: 'fixture', clientId: 'fixture-client', scopes: ['read', 'write'], sourceId: f.id },
       logger: { info() {}, warn() {}, error() {} } }));
     expect(result.isError).toBe(true);
-    expect(JSON.parse((result.content[0] as { text: string }).text)).toMatchObject({ error: 'invalid_params' });
-    expect((result.content[0] as { text: string }).text).toContain('Reserved persistence fields');
+    // #5970: a write refuses every undeclared parameter at dispatch, in warn mode too, so the reserved field is
+    // named as unknown before admission's own reserved-field refusal would run; nothing is admitted either way.
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toMatchObject({ error: 'invalid_params', suggestion: `Unknown parameter "${Object.keys(extra)[0]}".` });
   }
   expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1', [f.id])).toHaveLength(0);
 }), 120_000);
@@ -567,7 +571,9 @@ test('historical basename origins in separate slug directories remain distinct c
     await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], async () => {
       await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2', [f.id, f.slug, 'example.md']);
       await tx.putPage(otherSlug, { type: 'note', title: 'Other example', compiled_truth: 'An independent historical basename page.',
-        frontmatter: { independent: true }, source_path: 'example.md' }, { sourceId: f.id });
+        frontmatter: { independent: true } }, { sourceId: f.id });
+      // #6948: two pages recording one basename are legacy data no writer creates now.
+      await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2', [f.id, otherSlug, 'example.md']);
     }, TEST_WRITE_ATTRIBUTION));
     const other = (await engine.readPageSnapshot(otherSlug, { sourceId: f.id }))!;
     writeFileSync(otherFile, serializePageToMarkdown(other.page, other.tags));
@@ -619,7 +625,9 @@ test('genuine shared-file origins through explicit paths or URI fallback still r
       const sourcePath = origin === 'uri' ? null : origin === 'dot-path' ? './notes/example.md'
         : origin === 'repeated-separators' ? 'notes//example.md' : 'notes/example.md';
       await tx.putPage('other/collision', { type: 'note', title: 'Collision', compiled_truth: 'Another page claiming the same file.',
-        frontmatter: {}, source_path: sourcePath, source_uri: origin === 'uri' ? uri : null }, { sourceId: f.id });
+        frontmatter: {}, source_uri: origin === 'uri' ? uri : null }, { sourceId: f.id });
+      // #6948: a second live claimant of a file is legacy data no writer creates now.
+      if (sourcePath) await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2', [f.id, 'other/collision', sourcePath]);
     }, TEST_WRITE_ATTRIBUTION));
     const snapshot = await engine.readPageSnapshot(f.slug, { sourceId: f.id });
     await local(engine, f.registration, async () => {
@@ -696,12 +704,26 @@ test('the file-claim census is served by the v219 name indexes on Postgres', asy
   await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.executeRaw(`INSERT INTO pages(source_id,slug,type,title,compiled_truth,frontmatter,source_path)
     SELECT $1,'bulk/p'||n,'note','Bulk '||n,'Bulk '||n,'{}'::jsonb,'bulk/p'||n||'.md' FROM generate_series(1,3000) n`, [f.id]), TEST_WRITE_ATTRIBUTION));
   await engine.executeRaw('ANALYZE pages');
-  const plan = (await engine.executeRaw<{ 'QUERY PLAN': string }>(`EXPLAIN ${fileClaimCandidatesSql('linux')}`,
-    [f.id, 0, 0, 2147483647, 'example.md', 'example.md', ['example.md']]))
+  const census = fileClaimCandidatesQuery({ sourceId: f.id, pageId: 0, afterId: 0, maxId: 2147483647, fileName: 'example.md', uriNames: ['example.md'] }, 'linux');
+  const plan = (await engine.executeRaw<{ 'QUERY PLAN': string }>(`EXPLAIN ${census.sql}`, census.params))
     .map(row => row['QUERY PLAN']).join('\n');
   expect(plan).toContain('pages_source_path_name_idx');
   expect(plan).toContain('pages_file_uri_name_idx');
 }), 120_000);
+
+// #6659: the Windows census bound a POSIX-only name it never referenced; Postgres and PGLite refuse an untyped
+// unreferenced bind with 42P18, which failed every coordinated delete_page on a Windows host.
+test.each(['win32', 'linux'] as const)('the %s file-claim census runs with its own binds and finds same-name pages', platform =>
+  isolated(async engine => {
+    const f = await fixture(engine);
+    await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.executeRaw(`INSERT INTO pages(source_id,slug,type,title,compiled_truth,frontmatter,source_path,source_uri)
+      VALUES ($1,'twins/by-path','note','Path twin','x','{}'::jsonb,'other/claimed.md',NULL),
+             ($1,'twins/by-uri','note','URI twin','x','{}'::jsonb,NULL,'file:///repo/other/claimed.md'),
+             ($1,'twins/unrelated','note','Unrelated','x','{}'::jsonb,'other/unrelated.md',NULL)`, [f.id]), TEST_WRITE_ATTRIBUTION));
+    const census = fileClaimCandidatesQuery({ sourceId: f.id, pageId: 0, afterId: 0, maxId: 2147483647, fileName: 'claimed.md', uriNames: ['claimed.md'] }, platform);
+    const rows = await engine.executeRaw<{ slug: string }>(census.sql, census.params);
+    expect(rows.map(row => row.slug).sort()).toEqual(['twins/by-path', 'twins/by-uri']);
+  }), 120_000);
 
 // The parser must not normalize an already-resolved identity a second time.
 // Existing reconcile cases only covered extension-free page keys.
@@ -748,6 +770,37 @@ test('a fact withdrawn between reconciliation preparation and publication leaves
       expect(boundaries).not.toContain('before_file');
       expect(readFileSync(f.file)).toEqual(originalBytes);
       expect((await engine.readPageSnapshot(f.slug, { sourceId: f.id }))?.revision).toBe(f.snapshot.revision);
+    });
+  }
+}), 120_000);
+
+// Subject-'*' purges ride the preview as a count/latest marker (page-state/types.ts GlobalPurgeMarker), not a list:
+// a '*' tombstone added after the preview, for a claim in the page or any other, makes the preview stale; an artifact
+// written before the marker existed reads stale too, never trusted.
+test("a subject-'*' purge recorded after the preview makes it stale; an artifact without the purge marker is stale", async () => isolated(async engine => {
+  const claim = 'purged after the reconciliation preview';
+  const fence = renderFactsTable([{ rowNum: 1, claim, kind: 'fact', confidence: 1, visibility: 'world', notability: 'medium', active: true, context: 'test evidence' }]);
+  const purgeAll = (sourceId: string, text: string) => engine.executeRaw(
+    "INSERT INTO fact_purges(source_id,visibility,subject,fact_hash) VALUES($1,'world','*',gbrain_fact_fingerprint($2))", [sourceId, text]);
+  for (const target of [claim, 'an unrelated claim purged everywhere']) {
+    const f = await fixture(engine, false, `Facts: ${fence}`), originalBytes = readFileSync(f.file);
+    await local(engine, f.registration, async () => {
+      const { preview } = await runReconcilePreview(engine, { source_id: f.id, slug: f.slug });
+      expect(preview.preimages.database).not.toHaveProperty('globalPurges');
+      await purgeAll(f.id, target);
+      await expect(runReconcileApply(engine, { source_id: f.id, slug: f.slug, preview, request_id: randomUUID() })).rejects.toMatchObject({ code: 'source_changed' });
+      expect(readFileSync(f.file)).toEqual(originalBytes);
+      expect((await engine.readPageSnapshot(f.slug, { sourceId: f.id }))?.revision).toBe(f.snapshot.revision);
+      const fresh = (await runReconcilePreview(engine, { source_id: f.id, slug: f.slug })).preview;
+      expect(fresh.preimages.database.globalPurges).toMatchObject({ count: 1 });
+      // The purged row is still in the file but no longer in the database view, so that preview needs a decision.
+      if (target === claim) { expect(fresh.status).toBe('needs_resolution'); return; }
+      expect(fresh.status).toBe('ready');
+      const { globalPurges: _marker, ...legacyDatabase } = fresh.preimages.database;
+      const legacy = { ...fresh, preimages: { ...fresh.preimages, database: legacyDatabase } };
+      await expect(runReconcileApply(engine, { source_id: f.id, slug: f.slug, preview: legacy as typeof fresh, request_id: randomUUID() }))
+        .rejects.toMatchObject({ code: 'source_changed' });
+      expect(readFileSync(f.file)).toEqual(originalBytes);
     });
   }
 }), 120_000);

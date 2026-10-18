@@ -66,6 +66,10 @@ export const zhipu: Recipe = {
     },
     embedding: {
       models: ['embedding-3', 'embedding-2'],
+      // [R13] audit: BigModel's documented per-INPUT caps (text-embedding API
+      // reference, read 2026-10-11): embedding-2 takes 512 tokens per string,
+      // embedding-3 takes 3,072.
+      max_input_tokens: { 'embedding-3': 3072, 'embedding-2': 512 },
       default_dims: 1024,
       // 2048 exposed but breaks HNSW (exact-scan fallback). 1024/512/256
       // stay HNSW-compatible.

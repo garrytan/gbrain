@@ -6,6 +6,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { scrubPii } from '../src/core/eval-capture-scrub.ts';
+import { cpuMs } from './helpers/cpu-time.ts';
 
 describe('scrubPii', () => {
   test('passes empty input through unchanged', () => {
@@ -94,9 +95,8 @@ describe('scrubPii', () => {
     // stay linear-time on all input. 10k char limit is well under the
     // CHECK-constrained 50KB cap enforced at DB level.
     const adversarial = 'a'.repeat(10000) + '!';
-    const start = Date.now();
-    const out = scrubPii(adversarial);
-    const elapsed = Date.now() - start;
+    let out = '';
+    const elapsed = cpuMs(() => { out = scrubPii(adversarial); });
     expect(elapsed).toBeLessThan(1000); // generous cap, realistic target <50ms
     expect(out).toContain('a'.repeat(100)); // output still visible
   });

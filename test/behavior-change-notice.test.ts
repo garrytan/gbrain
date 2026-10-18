@@ -51,8 +51,10 @@ const NEXT_PATCH = NEWEST.replace(/^(\d+\.\d+\.)(\d+)(.*)$/, (_m, a: string, b: 
 const NEWEST_TEXT = (BEHAVIOR_CHANGES.find(c => c.since === NEWEST && typeof c.text === 'string')!.text as string).slice(0, 48);
 function noticeHeader(after: string, withChain = false): string {
   const rows = BEHAVIOR_CHANGES.filter(c => compareReleases(c.since, after) > 0 && (withChain || typeof c.text === 'string'));
-  const releases = [...new Set(rows.map(c => `v${c.since}`))];
-  const list = releases.length > 1 ? `${releases.slice(0, -1).join(', ')} and ${releases.at(-1)}` : releases[0];
+  const releases = [...new Set(rows.map(c => c.since))];
+  const list = releases.length > 4
+    ? `v${[...releases].sort(compareReleases)[0]} through v${[...releases].sort(compareReleases).at(-1)} (${releases.length} releases)`
+    : releases.length > 1 ? `${releases.slice(0, -1).map(v => `v${v}`).join(', ')} and v${releases.at(-1)}` : `v${releases[0]}`;
   return `gbrain ${list} changed ${rows.length} behavior${rows.length === 1 ? '' : 's'}`;
 }
 import { NoticeLedger, __resetProcessNoticeLedgerForTests } from '../src/core/notice-ledger.ts';

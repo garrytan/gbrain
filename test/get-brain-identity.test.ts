@@ -106,6 +106,7 @@ describe('get_brain_identity op', () => {
     const result = (await op.handler(buildCtx(), {})) as Record<string, unknown>;
     const keys = Object.keys(result).sort();
     expect(keys).toEqual([
+      'capabilities',
       'chunk_count',
       'engine',
       'last_sync_iso',
@@ -114,6 +115,7 @@ describe('get_brain_identity op', () => {
       'update_available',
       'version',
     ]);
+    expect(result.capabilities).toEqual(['large_pages_v1']);
   });
 
   test('last_sync_iso is null in v0.31.1 (deferred to v0.31.x — see plan)', async () => {

@@ -180,9 +180,10 @@ describe('@effective qualifier', () => {
 test('adversarial input stays linear (bounded child process)', () => {
   const script = `
     const { parseLineGrammar } = await import(${JSON.stringify(new URL('../src/core/line-grammar.ts', import.meta.url).pathname)});
+    const { cpuMs } = await import(${JSON.stringify(new URL('./helpers/cpu-time.ts', import.meta.url).pathname)});
     const evil = ['- ' + '['.repeat(20000) + 'x', '- works_at ' + '('.repeat(20000), '- [a] ' + '(('.repeat(10000) + ')',
       '- t ' + '[[a]] '.repeat(5000), '- [idea] @effective[' + ','.repeat(20000)].join('\\n');
-    const t = performance.now(); parseLineGrammar(evil.repeat(5)); console.log(Math.round(performance.now() - t));`;
+    console.log(Math.round(cpuMs(() => parseLineGrammar(evil.repeat(5)))));`;
   const run = spawnSync(process.execPath, ['-e', script], { timeout: 20_000, encoding: 'utf-8' });
   expect(run.status, run.stderr).toBe(0);
   expect(Number(run.stdout.trim())).toBeLessThan(5_000);
@@ -193,10 +194,13 @@ test('long comma, bracket and space runs are parsed in linear time (#6186)', () 
     const { parseLineGrammar } = await import(${JSON.stringify(new URL('../src/core/line-grammar.ts', import.meta.url).pathname)});
     const lines = (n) => ['- [idea] @effective[' + ','.repeat(n), '- t ' + '[['.repeat(n / 2), '- t ' + '[x]('.repeat(n / 4),
       '- [idea] a' + ' '.repeat(n) + 'b', '- [idea] a [Source:' + ' '.repeat(n) + 'b'].join('\\n');
-    const time = (n) => { const text = lines(n); const t = performance.now(); parseLineGrammar(text); return performance.now() - t; };
+    // Process CPU, not cpuMs: thread CPU advances in ~4 ms steps here (small side read 4.0 or 8.0 ms, ratio 3.0-7.0 over 10 idle runs;
+    // process CPU 6.5 ms vs 27.6 ms, ratio 4.2-4.8), and 8 parses per window to clear 40 ms overran the 5 s child timeout under load.
+    const processCpuMs = (fn) => { const s = process.cpuUsage(); fn(); const u = process.cpuUsage(s); return (u.user + u.system) / 1000; };
+    const time = (n) => { const text = lines(n); return processCpuMs(() => parseLineGrammar(text)); };
     time(1000);
     // Interleaved samples so CPU contention hits both sizes alike; n vs 4n so linear (x4) and quadratic (x16)
-    // sit a factor of 2 either side of the bound.
+    // sit a factor of 2 either side of the bound. CPU time measures the work rather than how long the scheduler made it wait.
     const smalls = [], larges = [];
     for (let i = 0; i < 5; i++) { smalls.push(time(50_000)); larges.push(time(200_000)); }
     console.log(JSON.stringify({ small: Math.min(...smalls), large: Math.min(...larges) }));`;

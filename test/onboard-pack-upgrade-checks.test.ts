@@ -151,6 +151,54 @@ describe('checkTypeProliferation (D16 pack-aware ratio)', () => {
   });
 });
 
+describe('checkTypeProliferation per-source packs (#6289)', () => {
+  async function seedSource(sourceId: string, types: string[]) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1) ON CONFLICT DO NOTHING', [sourceId]);
+    for (const [i, type] of types.entries()) {
+      await engine.putPage(`${sourceId}-p${i}`, { title: `${sourceId}-p${i}`, type: type as never, compiled_truth: 'body', timeline: '', frontmatter: {} }, { sourceId });
+    }
+  }
+  const env = { GBRAIN_HOME: emptyHome(), GBRAIN_SCHEMA_PACK: undefined };
+
+  it('grades each source against its own pack', async () => {
+    await engine.setConfig('schema_pack', 'gbrain-base-v2');
+    await engine.setConfig('schema_pack.source.side-example', 'gbrain-everything');
+    await withEnv(env, async () => {
+      const { loadActivePack } = await import('../src/core/schema-pack/load-active.ts');
+      const everything = await loadActivePack({ cfg: null, remote: false, dbConfig: 'gbrain-everything' });
+      await seedPages(['note']);
+      await seedSource('side-example', everything.manifest.page_types.map(t => t.name));
+      const result = await checkTypeProliferation(engine);
+      expect(result.check.status).toBe('ok');
+    });
+  });
+
+  it('a source over its pack threshold warns naming the source, pack and undeclared labels', async () => {
+    await engine.setConfig('schema_pack', 'gbrain-base-v2');
+    await withEnv(env, async () => {
+      const { loadActivePack } = await import('../src/core/schema-pack/load-active.ts');
+      const declared = (await loadActivePack({ cfg: null, remote: false, dbConfig: 'gbrain-base-v2' })).manifest.page_types.length;
+      await seedSource('side-example', Array.from({ length: declared + 6 }, (_, i) => `custom-type-${String(i).padStart(2, '0')}`));
+      const result = await checkTypeProliferation(engine);
+      expect(result.check.status).toBe('warn');
+      expect(result.check.message).toContain('source side-example');
+      expect(result.check.message).toContain('pack gbrain-base-v2');
+      expect(result.check.message).toContain('undeclared: custom-type-00');
+    });
+  });
+
+  it('a source whose pack does not resolve warns "not verified", never ok', async () => {
+    await engine.setConfig('schema_pack.source.side-example', 'no-such-pack-example');
+    await withEnv(env, async () => {
+      await seedSource('side-example', ['note']);
+      const result = await checkTypeProliferation(engine);
+      expect(result.check.status).toBe('warn');
+      expect(result.check.message).toContain('Not verified');
+      expect(result.check.message).toContain('side-example');
+    });
+  });
+});
+
 describe('checkDanglingAliases (F12 source-scoped JOIN)', () => {
   it('returns ok when no aliases exist', async () => {
     const result = await checkDanglingAliases(engine);

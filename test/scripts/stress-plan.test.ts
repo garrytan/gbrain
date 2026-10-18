@@ -10,8 +10,8 @@ import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { load } from 'js-yaml';
 import {
-  HELPER_FAN_IN_LIMIT, SPECIAL_FILES, allTestFiles, changedFiles, defaultSeed, directImporters, expandHelper,
-  notStressedReason, parseFileList, planShards, profileFor, redact, reproduceLine, seededSample, validRef,
+  HELPER_FAN_IN_LIMIT, SPECIAL_FILES, allTestFiles, changedFiles, defaultSeed, directImporters, expandHelper, iterationEstimateMs,
+  mineStressIterations, notStressedReason, parseFileList, planShards, profileFor, redact, reproduceLine, seededSample, validRef,
 } from '../../scripts/stress/plan.ts';
 
 const REPO = join(import.meta.dir, '..', '..');
@@ -171,5 +171,26 @@ describe('shards', () => {
   test('a single iteration longer than the budget still gets its own shard', () => {
     const shards = planShards([{ file: 'test/giant.slow.test.ts', perIterationMs: 40 * 60_000 }], 2, 25 * 60_000);
     expect(shards).toHaveLength(2);
+  });
+
+  test('a measured stress iteration outranks the lane weight, so a file slower under stress than in its lane splits', () => {
+    // #6963: recovery-budget-ceiling weighs ~150 s in its arms lane but runs ~228 s a stress iteration; nine packed
+    // into one 25-minute shard ran past the 35-minute job timeout.
+    const log = [
+      '2026-10-18T05:23:43.7Z   ✓ test/large-pages/x.slow.test.ts iteration 1 (seed 43165) 239.1s, 2 executed',
+      '2026-10-18T05:27:44.2Z   ✓ test/large-pages/x.slow.test.ts iteration 2 (seed 43166) 227.5s, 2 executed',
+      '2026-10-18T05:31:01.0Z   ✗ test/large-pages/x.slow.test.ts iteration 3 (seed 43167) 199.8s, 2 executed',
+      '2026-10-18T05:31:02.0Z   ✓ test/large-pages/y.test.ts iteration 1 (seed 1) 5.0s, 1 executed',
+    ].join('\n');
+    const mined = mineStressIterations([log]);
+    expect(Object.fromEntries(mined)).toEqual({ 'test/large-pages/x.slow.test.ts': 227_500, 'test/large-pages/y.test.ts': 5_000 });
+    const lane = { unit: new Map(), serialSeconds: new Map(), e2e: new Map(), arms: new Map([['test/large-pages/x.slow.test.ts', 150_000]]) };
+    expect(iterationEstimateMs('test/large-pages/x.slow.test.ts', 'postgres-arm', lane)).toBe(150_000);
+    const measured = { ...lane, stress: mined };
+    const per = iterationEstimateMs('test/large-pages/x.slow.test.ts', 'postgres-arm', measured);
+    expect(per).toBe(227_500);
+    const shards = planShards([{ file: 'test/large-pages/x.slow.test.ts', perIterationMs: per }], 10, 25 * 60_000);
+    expect(shards.map(s => s.items.reduce((n, i) => n + i.count, 0))).toEqual([6, 4]);
+    expect(iterationEstimateMs('test/other.test.ts', 'postgres-arm', measured)).toBe(150_000);
   });
 });

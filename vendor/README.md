@@ -36,6 +36,37 @@ the `onpoisoned(status)` option (#5730). Cancellation
 must settle or retire the connection before another query can own it. This
 is necessary for worker admission, query timeout and lease-release safety.
 See issues #5466 and #5560 and `test/e2e/persistence-chaos.test.ts`.
+Reserved and transaction owners also expose `cancelAndDiscard({ timeout })`
+(#6598): a Terminate cannot interrupt the statement already running on a busy
+socket, so it sends the fenced statement's CancelRequest first, refuses new and
+queued statements while it waits for that statement to settle, then discards.
+It rejects `CANCEL_UNCONFIRMED` when the statement does not settle within
+`timeout` (default 2000 ms) or was not fenced, so a socket close is never
+reported as a confirmed server stop
+(`test/postgres-transaction-cancel-order.test.ts`,
+`test/e2e/transaction-cancel-held-lock.test.ts`).
+
+A statement that fails to build is answered in its place in the pipeline
+(#6383; the approach of upstream PR porsager/postgres#1236, which fixes
+porsager/postgres#1082, so this hunk drops when that merges). A statement joins
+a connection's queue before it is built, so when `build` throws
+(`UNDEFINED_VALUE`, `MAX_PARAMETERS_EXCEEDED`) behind an in-flight statement,
+stock postgres.js rejects that head statement with its error, leaves the
+culprit queued with nothing on the wire, and delivers every later reply on the
+socket one statement late until the process restarts. With the patch a query
+the server is certain to refuse goes out in the culprit's place: only the
+culprit rejects, with its own error, a transaction it was part of is aborted
+rather than committed without it, and the pool reports the failure through
+`onbuilderror(code, statement)` (template text with `$n` placeholders, no
+values). The same patch adds the in-flight watchdog: `inflight_timeout`
+(seconds) bounds how long a head statement may wait with nothing coming back;
+past it the statement and its queued followers reject with `CONNECTION_STUCK`,
+the pool parks the connection out of rotation, reports `onstuck({ age_ms,
+queued, statement })` and reconnects. `sql.pool` is a live property getter
+(stock `Object.assign` froze the #6317 numbers at construction) and carries
+`inflight_oldest_ms` and `completed`. Tests:
+`test/e2e/postgres-pipelined-build-failure-postgres.test.ts`,
+`test/e2e/postgres-stuck-connection-postgres.test.ts`.
 
 The patch also lets a pool share the parameter types of a described statement
 across its connections (`shared_types`, on by default; GBrain turns it off with
@@ -47,7 +78,17 @@ parsed, described and executed in one message group. Only built-in types (oid
 below 16384) are shared, since a database's own types (pgvector) can be
 recreated under a new oid; a statement that fails forgets its shared types, and
 `PostgresEngine.initSchema` clears them after applying migrations (#5984,
-`test/e2e/postgres-shared-types.test.ts`).
+`test/e2e/postgres-shared-types.test.ts`). `shared_types` also accepts the Map
+to share types in: GBrain passes one per database target, so every pool in a
+process that reaches one database shares it, and `src/core/pg-type-cache.ts`
+saves it for the next process.
+
+Each statement's row count resets at its ReadyForQuery. Stock postgres.js
+resets it only at CommandComplete. A statement that streams rows and then fails
+never gets there: a runtime error after its first rows, or a cancel or timeout
+while it is still producing them. The next statement on that connection then
+stored its rows after that many empty slots, so a one-row read came back as
+`[empty, row]` (`test/e2e/postgres-driver-row-count-postgres.test.ts`).
 
 ## Reproduce and update
 

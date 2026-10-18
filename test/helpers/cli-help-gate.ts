@@ -45,7 +45,7 @@ export interface GateCase {
 const ROUTER_USAGE: Record<string, string> = {
   pages: 'gbrain pages —', cache: 'gbrain cache —', integrity: 'Usage: gbrain integrity', hook: 'Usage: gbrain hook',
   search: 'Usage: gbrain search <modes', 'edge-proposals': 'Usage: gbrain edge-proposals', schema: 'gbrain schema —',
-  config: 'Usage: gbrain config',
+  config: 'Usage: gbrain config', core: 'Usage: gbrain core', loops: 'gbrain loops —',
 };
 
 /** Every case, in a stable order. */

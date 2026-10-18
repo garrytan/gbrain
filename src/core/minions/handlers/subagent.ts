@@ -57,6 +57,7 @@ import { toolLoop as gatewayToolLoop, isThinkingModel, THINKING_MODEL_MAX_OUTPUT
 import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler } from '../../ai/gateway.ts';
 import { classifyCapabilities } from '../../ai/capabilities.ts';
 import { runSubagentOneshot, ONESHOT_TOOL_USE_ID_PREFIX } from './subagent-oneshot.ts';
+import { directStopReason, gatewayStopReason, replayTerminalStopReason } from '../subagent-stop-reason.ts';
 import type { OneshotFallbackReason } from '../types.ts';
 import {
   loadPriorMessages,
@@ -192,14 +193,16 @@ export interface SubagentDeps {
 
 /**
  * F1 (adversarial review): a replayed terminal assistant turn that hit the
- * output cap must NOT launder into 'end_turn'. The zero-attempt honesty gate
- * (finalizeWriteAccounting) keys on stop_reason, and a truncated zero-write
- * run replaying as a clean finish would consume the transcript's idempotency
- * key with zero pages written — the exact silent-loss class #4217 kills. The
- * live stop reason is not persisted; `tokens_out >= cap` recovers it (a
- * length stop reports the capped count). A clean turn producing EXACTLY cap
- * tokens is a theoretical false positive; its consequence is dead-letter +
- * key release + nightly retry — self-healing, never silent loss.
+ * output cap must NOT launder into 'end_turn' (replayTerminalStopReason in
+ * ../subagent-stop-reason.ts, which also maps an empty persisted turn to
+ * 'error', #6448). The zero-attempt honesty gate (finalizeWriteAccounting)
+ * keys on stop_reason, and a truncated zero-write run replaying as a clean
+ * finish would consume the transcript's idempotency key with zero pages
+ * written — the exact silent-loss class #4217 kills. The live stop reason is
+ * not persisted; `tokens_out >= cap` recovers it (a length stop reports the
+ * capped count). A clean turn producing EXACTLY cap tokens is a theoretical
+ * false positive; its consequence is dead-letter + key release + nightly
+ * retry — self-healing, never silent loss.
  */
 /**
  * Convert a lease-lost abort into the lease-full requeue vocabulary. When
@@ -243,13 +246,6 @@ async function runLoopConvertingLeaseLoss<T>(
     if (detail !== null) throw new UnrecoverableError(`prompt_too_long: ${detail}`);
     throw e;
   }
-}
-
-function replayTerminalStopReason(
-  tokensOut: number | null | undefined,
-  maxOutputTokens: number,
-): SubagentStopReason {
-  return tokensOut != null && tokensOut >= maxOutputTokens ? 'max_tokens' : 'end_turn';
 }
 
 export function makeSubagentHandler(deps: SubagentDeps) {
@@ -381,8 +377,9 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         : null;
       // Terminal = assistant turn with NO pending tool dispatch in EITHER
       // block vocabulary (legacy Anthropic `tool_use`, gateway `tool-call`)
-      // AND actual text (the gateway terminal rule) — a pending-tool replay
-      // must still pass the gate before the loop resumes on the provider.
+      // AND actual text — stricter than the replay rule (#6448: an empty
+      // tail replays as 'error' with no provider call), because an empty
+      // tail holds no completed work for this exception to protect.
       const alreadyTerminal = lastRow?.role === 'assistant'
         && Array.isArray(lastBlocks)
         && !lastBlocks.some(b => b?.type === 'tool_use' || b?.type === 'tool-call')
@@ -475,7 +472,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       brainId: data.brain_id,
       allowedSlugPrefixes: data.allowed_slug_prefixes,
       // #1586: cycle-resolved source scope for tool-call OperationContexts.
-      sourceId: data.source_id,
+      sourceId: data.source_id, readBudgetBytes: data.read_budget_bytes,
     });
     const selectedTools = selectAllowedTools(registry, data.allowed_tools);
     const guardTools = (tools: ToolDef[], deferEmbeds = false) => guardDelegatedTools(engine, config, submitted, ctx.id, tools, deps.toolRegistry !== undefined, deferEmbeds);
@@ -541,7 +538,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           brainId: data.brain_id,
           allowedSlugPrefixes: data.allowed_slug_prefixes,
           sourceId: data.source_id,
-          deferEmbeds: true,
+          deferEmbeds: true, readBudgetBytes: data.read_budget_bytes,
         });
         // Honor allowed_tools EXACTLY like the loop registry — a submitter
         // that scoped its job read-only must not gain write capability by
@@ -662,7 +659,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         return {
           result: finalText,
           turns_count: assistantTurns,
-          stop_reason: replayTerminalStopReason(last.tokens_out, maxOutputTokens),
+          stop_reason: replayTerminalStopReason(last.tokens_out, maxOutputTokens, finalText),
           tokens: tokenTotals,
         };
       }
@@ -976,15 +973,16 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           b.type === 'tool_use',
       );
       if (toolUses.length === 0) {
-        // #2778: an output-cap hit is NOT end_turn — the text (and possibly a
-        // dropped trailing tool_use block) is truncated. Surface it as its own
-        // stop_reason instead of silently reporting a clean end_turn.
-        stopReason = assistantMsg.stop_reason === 'max_tokens' ? 'max_tokens' : 'end_turn';
         // Concatenate text blocks as the final answer.
         finalText = blocks
           .filter(b => b.type === 'text' && typeof b.text === 'string')
           .map(b => b.text as string)
           .join('\n');
+        // #2778: an output-cap hit is NOT end_turn — the text (and possibly a
+        // dropped trailing tool_use block) is truncated. #6448: a refusal is
+        // 'refusal' and an empty body on a clean stop is 'error', never a
+        // silently reported clean end_turn.
+        stopReason = directStopReason(assistantMsg.stop_reason, finalText);
         break;
       }
 
@@ -1261,7 +1259,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     return {
       result: terminalText,
       turns_count: priorChatMessages.filter(m => m.role === 'assistant').length,
-      stop_reason: replayTerminalStopReason(lastAssistant?.tokens_out, maxOutputTokens),
+      stop_reason: replayTerminalStopReason(lastAssistant?.tokens_out, maxOutputTokens, terminalText),
       tokens: priorTokens,
     };
   }
@@ -1478,23 +1476,10 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     maxConcurrent,
   );
 
-  // Map gateway stop reason to SubagentStopReason. 'length' (output-cap hit)
-  // maps to 'max_tokens' — the #2778 honesty vocabulary the direct Anthropic
-  // path already uses — NOT 'end_turn' (#4088: truncation is not a clean
-  // finish). aborted maps to error.
-  const stopReason: SubagentStopReason = result.stopReason === 'end'
-    ? 'end_turn'
-    : result.stopReason === 'length'
-      ? 'max_tokens'
-      : result.stopReason === 'max_turns'
-        ? 'max_turns'
-        : result.stopReason === 'refusal'
-          ? 'refusal'
-          : result.stopReason === 'content_filter'
-            ? 'refusal'
-            : result.stopReason === 'aborted'
-              ? 'error'
-              : 'end_turn';
+  // Map gateway stop reason to SubagentStopReason (../subagent-stop-reason.ts):
+  // 'length' is 'max_tokens' (#2778/#4088: truncation is not a clean finish);
+  // empty_response, aborted and unrecoverable are 'error' (#6448).
+  const stopReason: SubagentStopReason = gatewayStopReason(result.stopReason);
 
   return {
     result: result.finalText,
@@ -1680,20 +1665,19 @@ async function reconcileGatewayReplay(args: ReconcileArgs): Promise<ReconcileRes
 
   const chatMessages: ChatMessage[] = work.map(w => ({ role: w.role, content: w.blocks }));
 
-  // Terminal case: the transcript already ends on an assistant turn that
-  // carried real text and made no tool calls (prior run reached end_turn).
-  // Surface its text; skip the loop. An assistant turn whose blocks are all
-  // empty (e.g. a reasoning-only/null-text turn that adaptation dropped) is NOT
-  // terminal — falling through lets the loop re-issue the call rather than
-  // returning an empty result.
+  // Terminal case: the transcript already ends on an assistant turn that made
+  // no tool calls (the prior run reached its last turn). Surface its text and
+  // skip the loop. #6448: ANY such tail is terminal, text or not — a
+  // reasoning-only / blank turn re-issued to the provider would end the
+  // request on an assistant message (a prefill Haiku 5.5 rejects with HTTP
+  // 400); the caller maps the empty text to stop_reason 'error' instead.
   const lastMsg = work[work.length - 1];
   let terminalText: string | null = null;
   if (lastMsg && lastMsg.role === 'assistant' && !lastMsg.blocks.some(b => b.type === 'tool-call')) {
-    const text = lastMsg.blocks
+    terminalText = lastMsg.blocks
       .filter((b): b is Extract<ChatBlock, { type: 'text' }> => b.type === 'text')
       .map(b => b.text)
       .join('\n');
-    if (text.trim() !== '') terminalText = text;
   }
 
   return { chatMessages, nextMessageIdx: maxIdx + 1, terminalText };

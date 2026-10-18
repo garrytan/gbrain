@@ -37,6 +37,9 @@ describe('classifyConnectorError (the one classification table)', () => {
       [new OperationError('writer_coordinator_required', 'x'), 'writer_coordinator_required', 'source'],
       [new OperationError('owner_unavailable', 'x'), 'owner_unavailable', 'source'],
       [new OperationError('queue_capacity', 'x'), 'queue_capacity', 'source'],
+      // #6696 (A5/A6): the cumulative wall and the background pause hold the source, never the item.
+      [new OperationError('write_quota_exhausted', 'x'), 'write_quota_exhausted', 'source'],
+      [new OperationError('write_capacity_backpressure', 'x'), 'write_capacity_backpressure', 'source'],
       [new OperationError('write_pending', 'x'), 'write_pending', 'source'],
       [new OperationError('connector_account_changed', 'x'), 'connector_account_changed', 'source'],
       [new LockStolenError('lock'), 'lock_stolen', 'source'],

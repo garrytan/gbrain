@@ -35,6 +35,12 @@ export interface OpenLoopUpsert {
   dedupKey: string;
   loopType: LoopType;
   counterpartySlug?: string | null;
+  /**
+   * Source of the page `counterpartySlug` names (#5504). Omitted or null
+   * means the loop's own source, which is how every reader treats a NULL
+   * column (rows written before v236).
+   */
+  counterpartySourceId?: string | null;
   counterpartyEmail?: string | null;
   summary: string;
   evidence: LoopEvidence[];
@@ -60,6 +66,8 @@ export interface OpenLoopRow {
   dedup_key: string;
   loop_type: LoopType;
   counterparty_slug: string | null;
+  /** Source of the counterparty page; NULL on pre-v236 rows (read as `source_id`). */
+  counterparty_source_id: string | null;
   counterparty_email: string | null;
   summary: string;
   evidence: LoopEvidence[];
@@ -94,6 +102,7 @@ function normalizeRow(r: Record<string, unknown>): OpenLoopRow {
     // returns numbers — without coercion, id equality (`loops show <id>`,
     // close-by-id checks) silently fails on real Postgres only.
     id: Number(r.id),
+    counterparty_source_id: typeof r.counterparty_source_id === 'string' ? r.counterparty_source_id : null,
     fact_id: r.fact_id === null || r.fact_id === undefined ? null : Number(r.fact_id),
     confidence: Number(r.confidence ?? 1),
     evidence:
@@ -117,10 +126,10 @@ export async function upsertOpenLoop(
     `INSERT INTO open_loops (
        source_id, dedup_key, loop_type, counterparty_slug, counterparty_email,
        summary, evidence, thread_id, page_slug, due_at, detector, confidence,
-       fact_id, last_activity_at, opened_at
+       fact_id, last_activity_at, opened_at, counterparty_source_id
      ) VALUES (
        $1, $2, $3, $4, $5, $6, $7::text::jsonb, $8, $9, $10::timestamptz, $11, $12,
-       $13, COALESCE($14::timestamptz, now()), COALESCE($15::timestamptz, now())
+       $13, COALESCE($14::timestamptz, now()), COALESCE($15::timestamptz, now()), $16
      )
      ON CONFLICT (source_id, dedup_key) DO UPDATE SET
        opened_at = CASE WHEN open_loops.status = 'open'
@@ -129,6 +138,9 @@ export async function upsertOpenLoop(
        status = 'open',
        loop_type = EXCLUDED.loop_type,
        counterparty_slug = COALESCE(EXCLUDED.counterparty_slug, open_loops.counterparty_slug),
+       counterparty_source_id = CASE WHEN EXCLUDED.counterparty_slug IS NULL
+                                     THEN open_loops.counterparty_source_id
+                                     ELSE EXCLUDED.counterparty_source_id END,
        counterparty_email = COALESCE(EXCLUDED.counterparty_email, open_loops.counterparty_email),
        summary = EXCLUDED.summary,
        evidence = EXCLUDED.evidence,
@@ -140,8 +152,11 @@ export async function upsertOpenLoop(
        closed_at = NULL,
        closed_by = NULL,
        updated_at = now()
-     WHERE open_loops.status = 'open'
-        OR EXCLUDED.last_activity_at > open_loops.last_activity_at
+     WHERE (open_loops.status = 'open'
+            OR EXCLUDED.last_activity_at > open_loops.last_activity_at
+            OR open_loops.closed_by = '${MUTE_RECHECK}')
+       AND (open_loops.closed_by IS DISTINCT FROM '${MUTED}'
+            OR open_loops.counterparty_email IS DISTINCT FROM EXCLUDED.counterparty_email)
      RETURNING id, (xmax = 0) AS created`,
     [
       loop.sourceId,
@@ -159,12 +174,15 @@ export async function upsertOpenLoop(
       loop.factId ?? null,
       loop.lastActivityAt ?? null,
       loop.openedAt ?? null,
+      loop.counterpartySlug ? (loop.counterpartySourceId ?? null) : null,
     ],
   );
   // The DO UPDATE's WHERE is the manual-close guard: a closed (done/dropped/
   // stale) row only reopens on GENUINELY newer activity. Without it, any
   // re-render of an unchanged thread (label-only history touch, re-extraction
-  // of the same content) would silently revert `gbrain loops done`.
+  // of the same content) would silently revert `gbrain loops done`. #5012: a
+  // loop a mute closed never reopens for the same counterparty while muted,
+  // and one an unmute queued for re-check reopens on the re-check's verdict.
   if (rows.length > 0) {
     return { id: Number(rows[0].id), created: Boolean(rows[0].created), applied: true };
   }
@@ -193,7 +211,11 @@ export async function closeOpenLoop(
   return rows.length > 0 ? normalizeRow(rows[0]) : null;
 }
 
-/** Close every open thread-detector loop for a thread (reply auto-close). */
+/**
+ * Close every open thread-detector loop for a thread (reply auto-close). A
+ * loop an unmute queued for re-check closes the same way: the thread's turn
+ * flipped, so the owner answered it.
+ */
 export async function closeThreadLoops(
   engine: BrainEngine,
   sourceId: string,
@@ -204,7 +226,7 @@ export async function closeThreadLoops(
   const rows = await engine.executeRaw<{ id: number }>(
     `UPDATE open_loops
        SET status = 'done', closed_at = now(), closed_by = $1, updated_at = now()
-     WHERE source_id = $2 AND thread_id = $3 AND status = 'open'
+     WHERE source_id = $2 AND thread_id = $3 AND (status = 'open' OR closed_by = '${MUTE_RECHECK}')
        AND detector = 'deterministic_thread'
        AND ($4::text IS NULL OR loop_type = ANY(string_to_array($4, ',')))
      RETURNING id`,
@@ -218,6 +240,12 @@ export interface ListLoopsOpts {
   status?: LoopStatus;
   loopType?: LoopType;
   counterparty?: string;
+  /**
+   * With `counterparty`, the source the counterparty page lives in (#5504):
+   * a slug match counts only when the loop's counterparty source (its own
+   * source for a pre-v236 row) is this one. An email match is unaffected.
+   */
+  counterpartySourceId?: string;
   /**
    * Restrict the read to the loop with this primary key. It is ANDed with
    * every other filter, so the source scope above still bounds the result.
@@ -236,7 +264,9 @@ export async function listOpenLoops(
      WHERE ($1::text IS NULL OR source_id = ANY(string_to_array($1, ',')))
        AND ($2::text IS NULL OR status = $2)
        AND ($3::text IS NULL OR loop_type = $3)
-       AND ($4::text IS NULL OR counterparty_slug = $4 OR counterparty_email = $4)
+       AND ($4::text IS NULL
+            OR (counterparty_slug = $4 AND ($6::text IS NULL OR COALESCE(counterparty_source_id, source_id) = $6))
+            OR counterparty_email = $4)
        AND ($5::bigint IS NULL OR id = $5::bigint)
      ORDER BY last_activity_at DESC, id DESC
      LIMIT ${limit}`,
@@ -246,6 +276,7 @@ export async function listOpenLoops(
       opts.loopType ?? null,
       opts.counterparty ?? null,
       opts.loopId === undefined ? null : opts.loopId,
+      opts.counterpartySourceId ?? null,
     ],
   );
   return rows.map(normalizeRow);
@@ -275,6 +306,106 @@ export async function markStaleLoops(engine: BrainEngine, sourceId: string): Pro
 }
 
 // ── Suppressions (`gbrain loops mute`) ───────────────────────────────────────
+
+/** #5012: `closed_by` of a reply-owed loop a mute closed (status `dropped`). */
+export const MUTED = 'muted';
+/** #5012: `closed_by` of a muted loop an unmute queued for re-check on the next Gmail sweep. */
+export const MUTE_RECHECK = 'mute_recheck';
+/** #5012: `closed_by` of a muted loop whose re-check found nothing owed, or that has no thread to re-check. */
+export const UNMUTED = 'unmuted';
+
+function suppressionMatch(kind: 'sender' | 'thread', param: string, alias = ''): string {
+  return kind === 'sender' ? `${alias}counterparty_email = ${param}` : `lower(${alias}thread_id) = ${param}`;
+}
+
+/**
+ * #5012: the reply-owed loops a sender or thread mute covers: open
+ * `unanswered_inbound` loops (and ones still queued from an earlier unmute).
+ * `apply` closes them as `dropped` / `muted`; otherwise they are only listed.
+ */
+export async function closeMutedLoops(
+  engine: BrainEngine,
+  sourceId: string,
+  kind: 'sender' | 'thread',
+  value: string,
+  apply: boolean,
+): Promise<number[]> {
+  const where = `source_id = $1 AND loop_type = 'unanswered_inbound' AND ${suppressionMatch(kind, '$2')}
+       AND (status = 'open' OR closed_by = '${MUTE_RECHECK}')`;
+  const rows = apply
+    ? await engine.executeRaw<{ id: number }>(
+      `UPDATE open_loops SET status = 'dropped', closed_at = now(), closed_by = '${MUTED}', updated_at = now()
+        WHERE ${where} RETURNING id`, [sourceId, value.toLowerCase()])
+    : await engine.executeRaw<{ id: number }>(`SELECT id FROM open_loops WHERE ${where} ORDER BY id`, [sourceId, value.toLowerCase()]);
+  return rows.map((r) => Number(r.id)).sort((a, b) => a - b);
+}
+
+/**
+ * #5012: the loops an unmute hands back to detection: those this mute closed
+ * that no remaining suppression still covers. Loops on a thread are queued
+ * for re-check (`mute_recheck`): the next Gmail sweep re-fetches the thread
+ * and reopens a loop only when nothing answered it since. A loop without a
+ * thread cannot be re-checked and stays closed (`unmuted`). Manual closes are
+ * never touched. Without `apply` the loops are only listed.
+ */
+export async function requeueMutedLoops(
+  engine: BrainEngine,
+  sourceId: string,
+  kind: 'sender' | 'thread',
+  value: string,
+  apply: boolean,
+): Promise<{ requeued: number[]; unverifiable: number[] }> {
+  const rows = await engine.executeRaw<{ id: number; thread_id: string | null }>(
+    `${apply ? `UPDATE open_loops l SET closed_by = CASE WHEN l.thread_id IS NULL THEN '${UNMUTED}' ELSE '${MUTE_RECHECK}' END, updated_at = now()`
+      : 'SELECT l.id, l.thread_id FROM open_loops l'}
+      WHERE l.source_id = $1 AND l.closed_by = '${MUTED}' AND ${suppressionMatch(kind, '$3', 'l.')}
+        AND NOT EXISTS (SELECT 1 FROM loop_suppressions s
+                         WHERE s.source_id = l.source_id AND NOT (s.kind = $2 AND s.value = $3)
+                           AND ((s.kind = 'thread' AND s.value = lower(l.thread_id))
+                             OR (s.kind = 'sender' AND s.value = l.counterparty_email)))
+      ${apply ? 'RETURNING l.id, l.thread_id' : ''}`,
+    [sourceId, kind, value.toLowerCase()],
+  );
+  const ids = (pick: (r: { thread_id: string | null }) => boolean) =>
+    rows.filter(pick).map((r) => Number(r.id)).sort((a, b) => a - b);
+  return { requeued: ids((r) => r.thread_id !== null), unverifiable: ids((r) => r.thread_id === null) };
+}
+
+/** #5012: every open reply-owed loop from one sender (`gbrain loops drop sender`), oldest id first. */
+export async function listSenderInboundLoops(
+  engine: BrainEngine,
+  email: string,
+  sourceIds: string[] | null,
+): Promise<Array<{ id: number; source_id: string }>> {
+  const rows = await engine.executeRaw<{ id: number; source_id: string }>(
+    `SELECT id, source_id FROM open_loops
+      WHERE status = 'open' AND loop_type = 'unanswered_inbound' AND counterparty_email = $1
+        AND ($2::text IS NULL OR source_id = ANY(string_to_array($2, ',')))
+      ORDER BY id`,
+    [email.toLowerCase(), sourceIds && sourceIds.length > 0 ? sourceIds.join(',') : null],
+  );
+  return rows.map((r) => ({ id: Number(r.id), source_id: r.source_id }));
+}
+
+/** #5012: a re-checked thread whose verdict neither reopened nor answered its queued loops: they stay closed. */
+export async function settleMuteRecheck(engine: BrainEngine, sourceId: string, threadId: string): Promise<number> {
+  const rows = await engine.executeRaw<{ id: number }>(
+    `UPDATE open_loops SET closed_by = '${UNMUTED}', updated_at = now()
+      WHERE source_id = $1 AND thread_id = $2 AND closed_by = '${MUTE_RECHECK}' RETURNING id`,
+    [sourceId, threadId],
+  );
+  return rows.length;
+}
+
+/** #5012: threads with loops an unmute queued for re-check (the sweep re-fetches each). */
+export async function muteRecheckThreads(engine: BrainEngine, sourceId: string): Promise<Array<{ thread_id: string; page_slug: string | null }>> {
+  return engine.executeRaw<{ thread_id: string; page_slug: string | null }>(
+    `SELECT thread_id, max(page_slug) AS page_slug FROM open_loops
+      WHERE source_id = $1 AND closed_by = '${MUTE_RECHECK}' AND thread_id IS NOT NULL
+      GROUP BY thread_id ORDER BY thread_id`,
+    [sourceId],
+  );
+}
 
 export async function addSuppression(
   engine: BrainEngine,
@@ -321,6 +452,8 @@ export async function removeSuppression(
 export interface SuppressionSet {
   senders: Set<string>;
   threads: Set<string>;
+  /** #5012: threads with loops an unmute queued for re-check. */
+  recheckThreads?: Set<string>;
 }
 
 export async function loadSuppressions(
@@ -337,5 +470,6 @@ export async function loadSuppressions(
     if (r.kind === 'sender') senders.add(r.value);
     else threads.add(r.value);
   }
-  return { senders, threads };
+  const recheckThreads = new Set((await muteRecheckThreads(engine, sourceId)).map((r) => r.thread_id));
+  return { senders, threads, recheckThreads };
 }

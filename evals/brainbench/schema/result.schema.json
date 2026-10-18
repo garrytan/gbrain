@@ -29,7 +29,7 @@
         "additionalProperties": false,
         "required": ["suite", "harness", "seam", "gold_total", "gold_failed", "metrics", "fixtures"],
         "properties": {
-          "suite": { "enum": ["know-to-ask", "push", "write-back", "continuity"] },
+          "suite": { "enum": ["know-to-ask", "push", "write-back", "continuity", "trust", "state-resolution", "poisoning", "deletion"] },
           "harness": { "enum": ["openclaw", "claude-code", "codex"] },
           "seam": { "enum": ["production", "contract"] },
           "gold_total": { "type": "integer", "minimum": 0 },
@@ -49,7 +49,7 @@
           "fixture_id": { "type": "string" },
           "turn_id": { "type": "integer" },
           "harness": { "enum": ["openclaw", "claude-code", "codex"] },
-          "suite": { "enum": ["know-to-ask", "push", "write-back", "continuity"] },
+          "suite": { "enum": ["know-to-ask", "push", "write-back", "continuity", "trust", "state-resolution", "poisoning", "deletion"] },
           "injected_slugs": { "type": "array", "items": { "type": "string" } },
           "injected_tokens": { "type": "number" },
           "gold": { "type": ["object", "null"] },

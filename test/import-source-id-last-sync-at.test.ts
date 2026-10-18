@@ -24,6 +24,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runImport } from '../src/commands/import.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { PAGE_MAX_BYTES } from '../src/core/page-size-policy.ts';
 
 let engine: PGLiteEngine;
 
@@ -299,9 +300,9 @@ describe('import stamps sources.last_sync_at for a local_path-registered source 
     writeFileSync(join(repo, 'seed.md'), '---\ntype: note\n---\n# Seed\n\nbody\n');
     // Deterministic soft-failure, same technique as
     // import-source-id-bookkeeping.test.ts: import-file.ts rejects any file
-    // over MAX_FILE_SIZE (5_000_000 bytes) with a real result.error, which
+    // over MAX_FILE_SIZE (the 24 MiB page ceiling) with a real result.error, which
     // runImport pushes into failures[] without needing a thrown exception.
-    writeFileSync(join(repo, 'oversized.md'), '---\ntype: note\n---\n' + 'x'.repeat(5_000_001));
+    writeFileSync(join(repo, 'oversized.md'), '---\ntype: note\n---\n' + 'x'.repeat(PAGE_MAX_BYTES + 1));
 
     await engine.executeRaw(
       `INSERT INTO sources (id, name, local_path) VALUES ('dept-x', 'dept-x', $1)`,

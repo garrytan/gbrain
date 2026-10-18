@@ -590,6 +590,14 @@ export interface SubagentHandlerData {
    */
   allow_clean_zero_writes?: boolean;
   /**
+   * #6297 — byte budget on this job's `get_page` results (the dream patterns
+   * child, `dream.patterns.child_read_budget_kb`). Past it a read returns a
+   * short summary instead of the page, so the replayed transcript stays
+   * bounded. Counted from the job's own tool-execution ledger, so a crash
+   * replay keeps the budget. Trusted field (PROTECTED_JOB_NAMES); unset = no budget.
+   */
+  read_budget_bytes?: number;
+  /**
    * #4216 — synthesis execution mode. 'oneshot' = single structured
    * completion + programmatic validated writes, falling back to the agentic
    * loop in the SAME job when the output fails validation. Unset/'agentic'

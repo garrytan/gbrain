@@ -45,18 +45,26 @@ import { isFactsBackstopEligible } from './eligibility.ts';
 import type { PageType } from '../types.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
+import type { ManagedFactsRefusal } from '../persistence/facts-maintenance.ts';
 import type { GBrainConfig } from '../config.ts';
 import { isAvailable } from '../ai/gateway.ts';
 import { withAIInvocationPreflight } from '../ai/invocation-guard.ts';
 import { decideSingleFact } from './single-prepare.ts';
 import { classifyAgainstCandidates, cosineSimilarity } from './classify.ts';
 import type { ExtractedFact } from './extract.ts';
-import { cosineVerdict, dedupCapturedFacts, EXPLICIT_DUPLICATE_THRESHOLD, isCaptureLane, withCaptureDrops } from './capture-dedup.ts';
+import { cosineVerdict, dedupCapturedFacts, isCaptureLane, withCaptureDrops, wouldDedupSamePage } from './capture-dedup.ts';
+import { warnSamePageShadow } from './same-page-shadow.ts';
+import { readSupersessionThreshold } from './supersession-threshold.ts';
 import { assertAmbientCaptureAdmissible, type FactsBackstopSource } from './capture-sources.ts';
 import { appendContextNote, type InferredVia } from './subject-infer.ts';
 import { inferenceNote, inferMissingSubjects } from './subject-infer-write.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import type { FactNotabilityFilter } from './notability-filter.ts';
+import { intentContentOrigin } from '../trust/channel.ts';
+import { readTaintInputs, derivedWriteTrust, recordTaintEdges } from '../trust/taint.ts';
+import { applyGateDecision, derivedGateConfig, derivedGateInput, emptyGateTally, type GateTally } from '../trust/derived-gate.ts';
+import { decideFactWrite } from '../write-gate-store.ts';
+import { commitExtractionPlan, planExtraction, planSegmentedExtraction, readPageWatermark, type InputTruncated } from '../extraction-watermark.ts';
 
 // The notability-filter vocabulary lives in notability-filter.ts; re-exported for existing importers.
 export { NOTABILITY_FILTERS, coerceNotabilityFilter, type FactNotabilityFilter } from './notability-filter.ts';
@@ -112,6 +120,13 @@ export interface FactsBackstopCtx {
   notabilityFilter?: FactNotabilityFilter;
   /** Abort signal for shutdown propagation. */
   abortSignal?: AbortSignal;
+  /**
+   * #6778: the durable job's deadline (MinionJobContext.deadlineAtMs). A managed
+   * facts publish waits for its accepted write up to the job-bounded
+   * MaintenanceWriteWait (persistence/maintenance-wait.ts); without a job the
+   * wait is the 30 s base.
+   */
+  deadlineAtMs?: number | null;
   /** Mirrors OperationContext.remote for trust-aware logging paths. */
   remote?: boolean;
   /** Optional entity hints (extract_facts MCP op forwards these). */
@@ -164,11 +179,25 @@ export type FactsBackstopResult =
       skipped?: 'extraction_disabled' | 'extraction_unavailable' | `eligibility_failed:${string}`;
       /** Set when the LLM extraction step failed non-transport-fatally (see runPipelineWithBody). */
       skipped_reason?: import('./extract.ts').ExtractFailureReason;
+      /** #5575 B3: rows the write gate flagged, held or rejected (unmanaged path). */
+      write_gate?: GateTally;
+      /** Entity groups held because the page's facts fence does not parse cleanly (nothing written). */
+      fence_refused?: number;
+      /** #6333 shadow (never a drop): facts the same-page rewording rule would have treated as duplicates. */
+      would_dedup_same_page?: number;
+      /** #6506: candidates skipped because the exact claim was forgotten in this source and visibility. */
+      withdrawn_skipped?: number;
+      /** GBRA-130 A-36 (managed): entity requests refused for their own page; the other entities' facts committed. */
+      refused?: ManagedFactsRefusal[];
+      /** Large pages A7: the extractor read only part of the page (also stored in page_extraction_state). */
+      input_truncated?: InputTruncated;
     };
 
 /** One pipeline run's input: the turn text plus its page provenance and observation date. */
 interface PipelineInput {
   turnText: string;
+  /** What the extractor reads when it is not `turnText`: the appended tail or a bounded window (extraction-watermark.ts). */
+  extractText?: string;
   isDreamGenerated: boolean;
   ref?: string;
   pageSlug?: string;
@@ -176,11 +205,16 @@ interface PipelineInput {
   observationDate?: ObservationDate | null;
 }
 
+/** One page or turn pipeline run's counts (runPipelineWithBody). */
+interface PipelineResult { inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; skipped_reason?: import('./extract.ts').ExtractFailureReason; write_gate?: GateTally; fence_refused?: number; would_dedup_same_page?: number; withdrawn_skipped?: number; refused?: ManagedFactsRefusal[] }
+
 interface ParsedPageInput {
   slug: string;
   type: PageType;
+  /** A segmented page's (`segmentedPageId`) lead: what eligibility reads; the extraction plan reads its segments. */
   compiled_truth: string;
   frontmatter: Record<string, unknown>;
+  segmentedPageId?: number;
 }
 
 /** k for findCandidateDuplicates — ceiling on candidates considered. */
@@ -189,31 +223,15 @@ const DEDUP_CANDIDATE_LIMIT = 5;
 /** Lowest top-candidate cosine that asks the classifier; the consolidate phase's default cluster threshold. */
 const CLASSIFY_FLOOR = 0.85;
 
-/** Id of the active fact on `entitySlug` that `f` restates by cosine (cosineVerdict), or null. */
-async function findDuplicateByEmbedding(
-  ctx: FactsBackstopCtx,
-  entitySlug: string,
-  f: Pick<ExtractedFact, 'fact' | 'embedding_model' | 'attributed_to'> & { embedding: Float32Array },
-): Promise<number | null> {
-  const candidates = await ctx.engine.findCandidateDuplicates(ctx.sourceId, entitySlug, f.fact,
-    { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null });
-  let top: { id: number; score: number; fact: string } | null = null;
-  for (const c of candidates) {
-    if (!c.embedding) continue;
-    const s = cosineSimilarity(f.embedding, c.embedding);
-    if (!top || s > top.score) top = { id: c.id, score: s, fact: c.fact };
-  }
-  return top && cosineVerdict(ctx.source, top.score, f.fact, top.fact) === 'duplicate' ? top.id : null;
-}
-
 /**
  * #6333: re-extracting an edited page rewords its claims, and the rewordings
- * score between CLASSIFY_FLOOR and the 0.95 cosine rule. On explicit lanes the
+ * score between CLASSIFY_FLOOR and the writer's cosine threshold (no upper
+ * bound for an uncalibrated embedding model). On explicit lanes the
  * classifier decides that band before either writer runs: a "duplicate"
  * verdict drops the fact and returns the matched id, like the capture-lane
- * drops. Any other verdict, or a failed classifier call (which keeps the 0.95
- * rule), leaves the fact to the writer's own dedup. Only same-visibility
- * candidates count; inferred subjects and capture lanes are skipped.
+ * drops. Any other verdict, or a failed classifier call, leaves the fact to
+ * the writer's own dedup. Only same-visibility candidates count; inferred
+ * subjects and capture lanes are skipped.
  */
 async function dropRewordedDuplicates<T extends ExtractedFact & { entity_inferred?: unknown }>(
   ctx: FactsBackstopCtx, facts: T[], visibility: 'private' | 'world',
@@ -231,9 +249,10 @@ async function dropRewordedDuplicates<T extends ExtractedFact & { entity_inferre
       { embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null }))
       .filter(c => c.visibility === visibility);
     const top = Math.max(-1, ...candidates.map(c => (c.embedding ? cosineSimilarity(embedding, c.embedding) : -1)));
-    const verdict = top >= CLASSIFY_FLOOR && top < EXPLICIT_DUPLICATE_THRESHOLD
+    const { threshold } = await readSupersessionThreshold(ctx.engine, f.embedding_model, embedding.length);
+    const verdict = top >= CLASSIFY_FLOOR && (threshold === null || top < threshold)
       ? await classifyAgainstCandidates({ fact: f.fact, kind: f.kind ?? 'fact', embedding }, candidates,
-        { model: ctx.model, fallbackThreshold: EXPLICIT_DUPLICATE_THRESHOLD, abortSignal })
+        { model: ctx.model, embeddingModel: f.embedding_model, abortSignal })
       : null;
     if (verdict?.decision === 'duplicate') dropped.push(verdict.matched_id);
     else kept.push(f);
@@ -247,12 +266,30 @@ async function dropRewordedDuplicates<T extends ExtractedFact & { entity_inferre
  * on every put_page in a long-running brain.
  */
 const _warnedKeys = new Set<string>();
+
+/**
+ * #5575 I2: the extractor's context is the source page (or the page a turn
+ * came from) plus the caller's turn text, so the facts' tier is the page's
+ * stored tier capped at agent_written, lowered by the caller's content
+ * origin. The facts-absorb job carries the page tier, never its runner's
+ * identity. A `sourceSlug` that names no page adds no input.
+ */
+async function factsDerivation(ctx: FactsBackstopCtx, input: PipelineInput) {
+  const inputs = (await readTaintInputs(ctx.engine, [...new Set([input.pageSlug, ctx.sourceSlug].filter((s): s is string => !!s))]
+    .map(slug => ({ table: 'pages' as const, sourceId: ctx.sourceId, slug }))))
+    .filter(i => typeof i.id === 'number' || i.id === `${ctx.sourceId}:${input.pageSlug}`);
+  const lowered = intentContentOrigin(ctx.requestIntent);
+  const trust = derivedWriteTrust({ channel: input.pageSlug ? 'derive:facts_backstop' : 'derive:extract_facts', inputs,
+    lowerTo: lowered ? [lowered] : [], requestId: ctx.persistenceRequestId ?? null });
+  return { trust, inputs };
+}
 function warnOnce(key: string, msg: string): void {
   if (_warnedKeys.has(key)) return;
   _warnedKeys.add(key);
   // eslint-disable-next-line no-console
   console.warn(msg);
 }
+/** #6333 [UC2] shadow only: name the pair the same-page rewording rule would have deduplicated; the fact is inserted as today. */
 /** Test-only: reset the once-per-process warning memo. */
 export function __resetBackstopWarningsForTests(): void {
   _warnedKeys.clear();
@@ -561,6 +598,16 @@ export async function runFactsPipeline(
   /** Set when the LLM extraction step failed non-transport-fatally (see runPipelineWithBody). */
   skipped_reason?: import('./extract.ts').ExtractFailureReason;
   write_requests?: WriteReceipt[];
+  /** #5575 B3: rows the write gate flagged, held or rejected (unmanaged path). */
+  write_gate?: GateTally;
+  /** Entity groups held because the page's facts fence does not parse cleanly (nothing written). */
+  fence_refused?: number;
+  /** #6333 shadow (never a drop): facts the same-page rewording rule would have treated as duplicates. */
+  would_dedup_same_page?: number;
+  /** #6506: candidates skipped because the exact claim was forgotten in this source and visibility. */
+  withdrawn_skipped?: number;
+  /** GBRA-130 A-36 (managed): entity requests refused for their own page; the other entities' facts committed. */
+  refused?: ManagedFactsRefusal[];
 }> {
   return runPipelineWithBody({
     turnText,
@@ -582,10 +629,21 @@ async function runPipeline(
   parsedPage: ParsedPageInput,
   ctx: FactsBackstopCtx,
   abortSignal?: AbortSignal,
-): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; skipped_reason?: import('./extract.ts').ExtractFailureReason }> {
-  return runPipelineWithBody(
+): Promise<PipelineResult & { input_truncated?: InputTruncated }> {
+  // Large pages A7: past the watermark the extractor reads only the appended
+  // tail; without a usable one it reads the head and the receipt says so.
+  const { MAX_TURN_TEXT_CHARS } = await import('./extract.ts');
+  const { pageId, stored } = await readPageWatermark(ctx.engine, ctx.sourceId, parsedPage.slug, 'facts_backstop');
+  // A segmented page is planned over its segments; its whole body is never one string, so the turn text is the plan's.
+  const planOpts = { cap: MAX_TURN_TEXT_CHARS, pipeline: 'facts_backstop', emptyTail: 'skip' } as const;
+  const plan = parsedPage.segmentedPageId !== undefined
+    ? await planSegmentedExtraction(ctx.engine, parsedPage.segmentedPageId, stored, planOpts)
+    : planExtraction(parsedPage.compiled_truth, stored, planOpts);
+  if (!plan.text) return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], entity_slugs: [] };
+  const result = await runPipelineWithBody(
     {
-      turnText: parsedPage.compiled_truth,
+      turnText: parsedPage.segmentedPageId !== undefined ? plan.text : parsedPage.compiled_truth,
+      ...(plan.mode === 'full' ? {} : { extractText: plan.text }),
       isDreamGenerated: false,  // eligibility check already rejected dream pages
       ref: parsedPage.slug,
       // #4819: page provenance for DB-only rows. The turn-path entry
@@ -596,6 +654,8 @@ async function runPipeline(
     ctx,
     abortSignal,
   );
+  if (pageId !== null && !result.skipped_reason && !abortSignal?.aborted) await commitExtractionPlan(ctx.engine, pageId, plan);
+  return plan.truncated ? { ...result, input_truncated: plan.truncated } : result;
 }
 
 /**
@@ -629,7 +689,7 @@ async function runPipelineWithBody(
   input: PipelineInput,
   ctx: FactsBackstopCtx,
   abortSignal?: AbortSignal,
-): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; skipped_reason?: import('./extract.ts').ExtractFailureReason }> {
+): Promise<PipelineResult> {
   // #4210: outside a withBudgetTracker scope (extract_facts op, sweep,
   // put_page backstop, checkpoint harvest, file/code import) the gateway's
   // chat/embed calls were budget no-ops — real spend, zero audit rows.
@@ -651,12 +711,56 @@ async function runPipelineWithBody(
   return runPipelineBodyInner(input, ctx, abortSignal);
 }
 
+/** The unmanaged pipeline's running counters; `withdrawn_skipped` rides along only once a forgotten claim was skipped. */
+interface PipelineCounts { inserted: number; duplicate: number; superseded: number; fact_ids: number[]; withdrawn_skipped?: number }
+
+/** #6506: the unmanaged pipeline counts a skipped forgotten claim the way the managed publisher does (B-10 kept it silent). */
+function countWithdrawnSkip(counts: PipelineCounts): void {
+  counts.withdrawn_skipped = (counts.withdrawn_skipped ?? 0) + 1;
+}
+
+/**
+ * #5575 B3: the unmanaged pipeline's gated writers. Every row passes the write
+ * gate at the extraction's declared tier (ENG-18); the extractor rewrites
+ * strict injection hits to [redacted], so such a row is also gated on the
+ * source text. `counts` accumulates the run's insert counters.
+ */
+async function derivedFactWriter(ctx: FactsBackstopCtx, input: PipelineInput, derivation: Awaited<ReturnType<typeof factsDerivation>>,
+  counts: { inserted: number; duplicate: number; superseded: number; fact_ids: number[] }) {
+  const gateCfg = await derivedGateConfig(ctx.engine);
+  const gateInput = derivedGateInput(derivation.trust, ctx.persistenceRequestId);
+  const write_gate = emptyGateTally();
+  const decideFact = (row: { fact: string; context?: string | null; source?: string | null }, slug: string | null, payload: Record<string, unknown>) =>
+    decideFactWrite({ ...row, source_text: row.fact.includes('[redacted]') ? input.turnText : null },
+      { sourceId: ctx.sourceId, slug, payload: { ...payload, embedding: null }, input: gateInput, cfg: gateCfg });
+  /** A DB-only insert: one attributed transaction at the derived tier, gated, with input edges for a new row. */
+  const insertDerivedFact = (newFact: NewFact) => maintenanceTransaction(ctx.engine, tx =>
+    applyGateDecision(tx, decideFact(newFact, newFact.entity_slug ?? null, { ...newFact }), { table: 'facts', sourceId: ctx.sourceId }, async () => {
+      const result = await tx.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: the facts backstop's DB-only fallbacks (unparented / thin-client facts, stub-guard or unresolvable targets, a declined fence lane)
+      counts.fact_ids.push(result.id);
+      if (result.status === 'inserted') counts.inserted += 1;
+      else if ((result.status as FactInsertStatus) === 'duplicate') { counts.duplicate += 1; return null; }
+      else counts.superseded += 1;
+      await recordTaintEdges(tx, { table: 'facts', id: result.id, sourceId: ctx.sourceId }, derivation.inputs);
+      return result.id;
+    }, write_gate), derivation.trust);
+  /** Gates one entity group before its fence write: held and rejected rows are recorded; the rest carry their decision. */
+  const gateGroup = async <F extends { fact: string; context?: string | null; source?: string | null }>(facts: F[], slug: string) => {
+    const decisions = facts.map(fact => decideFact(fact, slug, { ...fact }));
+    if (decisions.some(d => d.action !== 'insert')) await maintenanceTransaction(ctx.engine, async tx => {
+      for (const d of decisions) if (d.action !== 'insert') await applyGateDecision(tx, d, { table: 'facts', sourceId: ctx.sourceId }, async () => null, write_gate);
+    });
+    return { keep: decisions.map(d => d.action === 'insert'), keptFacts: facts.flatMap((fact, i) => decisions[i].action === 'insert' ? [{ ...fact, gate: decisions[i] }] : []) };
+  };
+  return { insertDerivedFact, gateGroup, write_gate };
+}
+
 /** The actual pipeline body — always runs inside a BudgetTracker scope (#4210). */
 async function runPipelineBodyInner(
   input: PipelineInput,
   ctx: FactsBackstopCtx,
   abortSignal?: AbortSignal,
-): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; skipped_reason?: import('./extract.ts').ExtractFailureReason }> {
+): Promise<PipelineResult> {
   const { extractFactsFromTurnWithOutcome, FactsExtractionError } = await import('./extract.ts');
   const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
@@ -667,8 +771,10 @@ async function runPipelineBodyInner(
   }
   const { prepareManagedFactsSession, resumeManagedFacts, publishManagedFacts, resolveManagedFactsEmbedding,
     assertManagedFactsEmbedding } = await import('../persistence/facts-maintenance.ts');
-  const managed = await prepareManagedFactsSession(ctx, input);
+  const derivation = await factsDerivation(ctx, input);
+  const managed = await prepareManagedFactsSession(ctx, input, derivation);
   if (managed) {
+    managed.reportRefusals = true;
     const replay = await resumeManagedFacts(ctx.engine, managed);
     if (replay) return replay;
     const embedding = await resolveManagedFactsEmbedding(ctx.engine, managed.config);
@@ -689,7 +795,7 @@ async function runPipelineBodyInner(
       ? { allowed: ['high', 'medium'] as const, invalid: 'drop' as const }
       : undefined;
   const extract = () => extractFactsFromTurnWithOutcome({
-    turnText: input.turnText,
+    turnText: input.extractText ?? input.turnText,
     sessionId: ctx.sessionId,
     entityHints: ctx.entityHints,
     source: ctx.source,
@@ -738,14 +844,15 @@ async function runPipelineBodyInner(
   const { facts, dropped: reworded } = await dropRewordedDuplicates(ctx, captured.facts, visibility, resolveEntitySlugWithSource, abortSignal);
   const dropped = [...captured.dropped, ...reworded];
   if (!managed) await assertAmbientCaptureAdmissible(ctx.engine, ctx.source);
-  if (managed) return withCaptureDrops(dropped, facts.length || !dropped.length ? await publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, input.pageSlug) : null);
+  if (managed) return withCaptureDrops(dropped, facts.length || !dropped.length ? await publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, input.pageSlug, { withdrawn: 'skip' }) : null);
 
-  let inserted = 0;
-  let duplicate = dropped.length;
-  let superseded = 0;
-  const fact_ids: number[] = [...dropped];
+  const counts: PipelineCounts = { inserted: 0, duplicate: dropped.length, superseded: 0, fact_ids: [...dropped] };
+  let wouldDedupSamePageCount = 0;
+  const writer = await derivedFactWriter(ctx, input, derivation, counts);
+  const { insertDerivedFact, write_gate } = writer;
   // Cathedral 5: slugs whose fence-write actually inserted a fact this run.
   const fencedSlugs = new Set<string>();
+  let fenceRefused = 0;
 
   // Phase 1: per-fact filter + dedup. Surviving facts (no dedup hit)
   // get grouped by entity_slug for the fence-write phase below.
@@ -771,28 +878,45 @@ async function runPipelineBodyInner(
 
     // B-10: a withdrawn claim for this entity is never re-written; the
     // fence writer rechecks under its page lock.
-    if (await isFactWithdrawn(ctx.engine, ctx.sourceId, visibility, f.fact, resolvedSlug)) continue;
+    if (await isFactWithdrawn(ctx.engine, ctx.sourceId, visibility, f.fact, resolvedSlug)) { countWithdrawnSkip(counts); continue; }
 
     // Dedup against DB candidates (correct per Codex Q7: fence rows
     // have no embeddings; FS lock + sync invariant means DB == fence
-    // at write time). cosineVerdict: 0.95 for explicit lanes; capture lanes never drop by cosine (#5888).
-    const exact = resolvedSlug ? await decideSingleFact(ctx.engine, ctx.sourceId, { entity_slug: resolvedSlug, fact: f.fact, kind: f.kind ?? 'fact', visibility, attributed_to: f.attributed_to ?? null }, null) : null;
+    // at write time). cosineVerdict: the model's calibrated threshold for explicit lanes; capture lanes never drop by cosine (#5888).
+    const exact = await decideSingleFact(ctx.engine, ctx.sourceId, { entity_slug: resolvedSlug, fact: f.fact, kind: f.kind ?? 'fact', visibility, attributed_to: f.attributed_to ?? null }, null);
     let matchedExistingId: number | null = exact?.candidate?.id ?? null;
     if (matchedExistingId === null && resolvedSlug && f.embedding && !f.entity_inferred) {
-      matchedExistingId = await findDuplicateByEmbedding(ctx, resolvedSlug, { ...f, embedding: f.embedding });
+      const candidates = await ctx.engine.findCandidateDuplicates(
+        ctx.sourceId,
+        resolvedSlug,
+        f.fact,
+        { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null },
+      );
+      let top: { row: typeof candidates[number]; score: number } | null = null;
+      for (const c of candidates) {
+        if (!c.embedding) continue;
+        const s = cosineSimilarity(f.embedding, c.embedding);
+        if (!top || s > top.score) top = { row: c, score: s };
+      }
+      if (top && cosineVerdict(ctx.source, top.score, f.fact, top.row.fact, (await readSupersessionThreshold(ctx.engine, f.embedding_model, f.embedding.length)).threshold) === 'duplicate') {
+        matchedExistingId = top.row.id;
+      } else if (top && wouldDedupSamePage({ source: ctx.source, sessionId: ctx.sessionId, visibility }, top.row, top.score, f.fact)) {
+        wouldDedupSamePageCount++; warnSamePageShadow(ctx.sessionId, top.row.id, top.score);
+      }
     }
 
     if (matchedExistingId !== null) {
-      duplicate += 1;
-      fact_ids.push(matchedExistingId);
+      counts.duplicate += 1;
+      counts.fact_ids.push(matchedExistingId);
       continue;
     }
 
     survived.push({ f, resolvedSlug, resolutionSource });
   }
 
+  const shadow = wouldDedupSamePageCount ? { would_dedup_same_page: wouldDedupSamePageCount } : {};
   if (survived.length === 0) {
-    return { inserted, duplicate, superseded, fact_ids, entity_slugs: [] };
+    return { ...counts, entity_slugs: [], write_gate, ...shadow };
   }
 
   // Phase 2: group survived facts by resolved entity_slug. Facts with
@@ -861,17 +985,13 @@ async function runPipelineBodyInner(
       valid_from: factEventTime(f, ctx),
       context: annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, resolutionSource, f.entity_inferred),
     };
-    const result = await maintenanceTransaction(ctx.engine, tx => tx.insertFact(newFact, { source_id: ctx.sourceId })); // gbrain-allow-direct-insert: legacy DB-only fallback for unparented / thin-client facts (no entity page to fence onto)
-    fact_ids.push(result.id);
-    if (result.status === 'inserted') inserted += 1;
-    else if ((result.status as FactInsertStatus) === 'duplicate') duplicate += 1;
-    else superseded += 1;
+    await insertDerivedFact(newFact); // legacy DB-only fallback for unparented / thin-client facts (no entity page to fence onto)
   }
 
   if (localPath === null) {
     // All went through legacy bucket; nothing left to fence — DB-only
     // inserts have no fence-written page, so entity_slugs stays empty.
-    return { inserted, duplicate, superseded, fact_ids, entity_slugs: [] };
+    return { ...counts, entity_slugs: [], write_gate, ...shadow };
   }
 
   // Phase 5: fence-write per entity. writeFactsToFence handles the
@@ -897,6 +1017,10 @@ async function runPipelineBodyInner(
       embedding_model: f.embedding_model ?? null, attributedTo: f.attributed_to ?? undefined,
       sessionId: f.source_session ?? null,
     }));
+    // #5575 B3: gate before the fence write; a held or rejected row reaches neither the fence nor a fallback below.
+    const { keptFacts, keep } = await writer.gateGroup(inputFacts, slug);
+    const kept = group.filter((_, i) => keep[i]);
+    if (!keptFacts.length) continue;
 
     // #4108 fail-closed on mixed provenance: one fallback-minted ref in the
     // group means the slug's existence is unproven — block the whole group.
@@ -910,7 +1034,8 @@ async function runPipelineBodyInner(
     const result = await writeFactsToFence(
       ctx.engine,
       { sourceId: ctx.sourceId, localPath, slug, resolutionSource: groupResolutionSource },
-      inputFacts,
+      keptFacts,
+      derivation,
     );
 
     if (result.fenceWriteFailed) {
@@ -919,6 +1044,7 @@ async function runPipelineBodyInner(
       // every fact in this entity group as not-inserted (no fact_id
       // returned). Do NOT fall through to legacy DB-only — that
       // would write rows to a DB index whose fence is broken.
+      if (result.fenceRefusal) fenceRefused++;
       continue;
     }
     if (result.stubGuardBlocked || result.targetUnresolvable) {
@@ -932,7 +1058,7 @@ async function runPipelineBodyInner(
       // file is created. This also keeps blocked slugs out of
       // fencedSlugs, so fallback-minted slugs never reach the
       // entity_slugs checkpoint/link manifests downstream.
-      for (const { f } of group) {
+      for (const { f } of kept) {
         const newFact: NewFact = {
           fact: f.fact,
           kind: f.kind,
@@ -948,11 +1074,7 @@ async function runPipelineBodyInner(
           valid_from: factEventTime(f, ctx),
           context: ctx.sourceSlug ?? input.pageSlug ?? null,
         };
-        const legacyResult = await maintenanceTransaction(ctx.engine, tx => tx.insertFact(newFact, { source_id: ctx.sourceId })); // gbrain-allow-direct-insert: stub-guard / unresolvable-target fallback for unprefixed or fallback-resolved entity slugs (no fenceable page or usable tree)
-        fact_ids.push(legacyResult.id);
-        if (legacyResult.status === 'inserted') inserted += 1;
-        else if ((legacyResult.status as FactInsertStatus) === 'duplicate') duplicate += 1;
-        else superseded += 1;
+        await insertDerivedFact(newFact); // stub-guard / unresolvable-target fallback for unprefixed or fallback-resolved entity slugs (no fenceable page or usable tree)
       }
       continue;
     }
@@ -961,11 +1083,11 @@ async function runPipelineBodyInner(
       // didn't (null-localPath echo, or the write_through flag flipped
       // mid-pipeline across the config-cache TTL). Route the group to the
       // legacy DB-only path — never drop facts.
-      warnOnce(
+      if (result.databaseOnlyReason !== 'url_clone') warnOnce(
         'facts:fence-write-unexpected-fallback',
         `[facts] writeFactsToFence returned legacyFallback for slug=${slug} despite localPath being set — routing to DB-only inserts.`,
       );
-      for (const { f } of group) {
+      for (const { f } of kept) {
         const newFact: NewFact = {
           fact: f.fact,
           kind: f.kind,
@@ -981,19 +1103,15 @@ async function runPipelineBodyInner(
           valid_from: factEventTime(f, ctx),
           context: ctx.sourceSlug ?? input.pageSlug ?? null,
         };
-        const legacyResult = await maintenanceTransaction(ctx.engine, tx => tx.insertFact(newFact, { source_id: ctx.sourceId })); // gbrain-allow-direct-insert: DB-only fallback when the fence lane declined the write (write_through opt-out race / localPath echo)
-        fact_ids.push(legacyResult.id);
-        if (legacyResult.status === 'inserted') inserted += 1;
-        else if ((legacyResult.status as FactInsertStatus) === 'duplicate') duplicate += 1;
-        else superseded += 1;
+        await insertDerivedFact(newFact); // DB-only fallback when the fence lane declined the write (write_through opt-out race / localPath echo)
       }
       continue;
     }
 
-    inserted += result.inserted;
-    fact_ids.push(...result.ids);
+    counts.inserted += result.inserted;
+    counts.fact_ids.push(...result.ids);
     if (result.inserted > 0) fencedSlugs.add(slug);
   }
 
-  return { inserted, duplicate, superseded, fact_ids, entity_slugs: [...fencedSlugs] };
+  return { ...counts, entity_slugs: [...fencedSlugs], write_gate, ...(fenceRefused ? { fence_refused: fenceRefused } : {}), ...shadow };
 }

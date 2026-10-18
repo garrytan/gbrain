@@ -10,6 +10,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { scanFencedBlocks } from '../src/core/fence-scan.ts';
+import { cpuMs } from './helpers/cpu-time.ts';
 
 describe('Layer 8 D2 — markdown fence extraction', () => {
   let engine: PGLiteEngine;
@@ -183,9 +184,10 @@ echo hi
     // ~1000x headroom for a pure O(lines) pass even on a heavily loaded box
     // (an end-to-end import timing assertion proved too load-sensitive:
     // chunking + PGLite inserts dominate and vary wildly under parallel CI).
-    const t0 = Date.now();
-    const { fences } = scanFencedBlocks(md);
-    expect(Date.now() - t0).toBeLessThan(2_000);
+    // CPU time measures the scan's work rather than how long the scheduler made it wait.
+    let fences!: ReturnType<typeof scanFencedBlocks>['fences'];
+    const ms = cpuMs(() => { ({ fences } = scanFencedBlocks(md)); });
+    expect(ms).toBeLessThan(2_000);
     expect(fences.length).toBe(1);
     // End-to-end: the fence still lands as a fenced_code chunk.
     await importFromContent(engine, 'guides/fence-autolink-flood', md, { noEmbed: true });

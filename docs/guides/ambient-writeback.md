@@ -203,6 +203,19 @@ the file's claim and before any provider call:
    `dream.synthesize.corpus_retention_days` (90 days by default), and
    `gbrain doctor` warns in `memory_writeback` once one is past plain
    retention. `GBRAIN_SWEEP=0` turns every serve sweep and drain off.
+   The drain writes its skip reasons and failures to serve's stderr.
+
+   **Extraction that keeps failing stops costing money.** When a window's
+   extraction fails after the model call (for example the fact write is
+   refused), the sweep retries it on the next pass, then after 10, 20 and
+   40 minutes, and then stops paying for it (`corpus_window_dead_lettered`).
+   Changing the extraction model or provider retries it once more. Fix the
+   cause, then run `gbrain sweep --retry-failed` to see the stopped files
+   and `gbrain sweep --retry-failed --apply` to retry them (paid). A source
+   whose canonical worktree is claimed but not activated is held before any
+   model call; `gbrain sources writer status <source>` says what to do.
+   With no usable extraction model, files stay pending instead of being
+   marked done with zero facts.
 
    **Say to your agent:** *"Make sure the turns my brain could not extract
    are swept."* (the agent runs `gbrain sweep --once --budget-ms 600000` on

@@ -23,7 +23,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult } from '../types.ts';
-import { currentTextProjectionFilter } from './safe-chunks.ts';
+import { chunkVisibleFilter } from './safe-chunks.ts';
 import { readEdgeResolution } from '../chunkers/symbol-resolver.ts';
 
 const MAX_WALK_DEPTH = 2;
@@ -87,6 +87,7 @@ export async function expandAnchors(
     try {
       const rows = opts.sourceId
         ? await engine.executeRaw<{ id: number }>(
+            // chunk-visibility-ok: code symbol anchors: code pages are never segmented (chooseBodyStorage)
             `SELECT cc.id FROM content_chunks cc
              JOIN pages p ON p.id = cc.page_id
              WHERE cc.symbol_name_qualified = $1 AND p.source_id = $2
@@ -94,6 +95,7 @@ export async function expandAnchors(
             [opts.nearSymbol, opts.sourceId],
           )
         : await engine.executeRaw<{ id: number }>(
+            // chunk-visibility-ok: code symbol anchors: code pages are never segmented (chooseBodyStorage)
             `SELECT id FROM content_chunks WHERE symbol_name_qualified = $1 LIMIT 50`,
             [opts.nearSymbol],
           );
@@ -161,6 +163,7 @@ export async function expandAnchors(
         try {
           const resolved = opts.sourceId
             ? await engine.executeRaw<{ id: number }>(
+                // chunk-visibility-ok: code symbol targets: code pages are never segmented (chooseBodyStorage)
                 `SELECT cc.id FROM content_chunks cc
                  JOIN pages p ON p.id = cc.page_id
                  WHERE cc.symbol_name_qualified = ANY($1::text[])
@@ -169,6 +172,7 @@ export async function expandAnchors(
                 [unresolvedTargets, opts.sourceId],
               )
             : await engine.executeRaw<{ id: number }>(
+                // chunk-visibility-ok: code symbol targets: code pages are never segmented (chooseBodyStorage)
                 `SELECT id FROM content_chunks WHERE symbol_name_qualified = ANY($1::text[]) LIMIT ${NEIGHBOR_CAP_PER_HOP}`,
                 [unresolvedTargets],
               );
@@ -211,7 +215,7 @@ export async function hydrateChunks(
             cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source
        FROM content_chunks cc
        JOIN pages p ON p.id = cc.page_id
-       WHERE cc.id = ANY($1::int[]) AND ${currentTextProjectionFilter('p')}`,
+       WHERE cc.id = ANY($1::int[]) AND ${chunkVisibleFilter('p', 'cc')}`,
     [chunkIds],
   );
   return rows.map((r) => ({

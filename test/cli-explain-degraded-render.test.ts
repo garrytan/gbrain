@@ -6,7 +6,7 @@
  * unreachable from the CLI (the formatter was only ever tested directly).
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { formatResult, captureRetrievalMeta, resetRetrievalMetaForTests } from '../src/cli.ts';
+import { formatResult, captureRetrievalMeta, resetRetrievalMetaForTests } from '../src/cli/main.ts';
 import { getCliOptions, setCliOptions, _resetCliOptionsForTest } from '../src/core/cli-options.ts';
 import type { SearchResult } from '../src/core/types.ts';
 
@@ -45,5 +45,29 @@ describe('formatResult --explain threads the captured retrieval meta', () => {
     const out = formatResult('search', [r('alice-foo', 1.5)], {});
     expect(out).toContain('alice-foo');
     expect(out).not.toContain('degraded:');
+  });
+});
+
+describe('formatResult --explain prints the stage timings', () => {
+  const timings = { total_ms: 40, stages_ms: { setup: 2, lexical: 10, response: 3 }, other_ms: 25 };
+  const line = 'timings: 40ms total — setup 2, lexical 10, response 3, other 25';
+
+  test('a result list gets the timings header line', () => {
+    setCliOptions({ ...getCliOptions(), explain: true });
+    captureRetrievalMeta('retrieval', { returned_count: 1, retrieved_count: 1, degraded: [], timings });
+    expect(formatResult('search', [r('alice-foo', 1.5)], {}).startsWith(`${line}\n\n1. alice-foo`)).toBe(true);
+  });
+
+  test('an empty result names its cause, then the timings', () => {
+    setCliOptions({ ...getCliOptions(), explain: true });
+    captureRetrievalMeta('retrieval', { returned_count: 0, retrieved_count: 0, degraded: [], timings });
+    expect(formatResult('query', [], {})).toBe(`No results. (clean miss — no retrieval degradation)\n${line}\n`);
+  });
+
+  test('without --explain no timings are printed', () => {
+    captureRetrievalMeta('retrieval', { returned_count: 0, retrieved_count: 0, degraded: [], timings });
+    expect(formatResult('search', [], {})).not.toContain('timings');
+    captureRetrievalMeta('retrieval', { returned_count: 1, retrieved_count: 1, degraded: [], timings });
+    expect(formatResult('search', [r('alice-foo', 1.5)], {})).not.toContain('timings');
   });
 });

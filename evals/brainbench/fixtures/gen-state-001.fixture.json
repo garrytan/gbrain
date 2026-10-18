@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-state-001",
+  "suites": [
+    "state-resolution"
+  ],
+  "category": "state-resolution",
+  "trust_steps": [
+    {
+      "step_id": "s1",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Freya Emberlyn is the CTO of Russetvane Systems",
+      "entity": "people/freya-emberlyn"
+    },
+    {
+      "step_id": "s2",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Freya Emberlyn is the head of product of Russetvane Systems",
+      "entity": "people/freya-emberlyn",
+      "target": "s1"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Where is Freya Emberlyn now and what is their role?"
+    }
+  ]
+}

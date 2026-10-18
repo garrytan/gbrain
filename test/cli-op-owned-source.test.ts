@@ -19,7 +19,7 @@ import { acquireLock, releaseLock } from '../src/core/pglite-lock.ts';
 import { maybeDelegateLocalOperation } from '../src/core/persistence/local-client.ts';
 import { startPersistenceIpcServer, persistenceSocketPathForConfig, type PersistenceIpcRequest } from '../src/core/persistence/ipc.ts';
 import { operations } from '../src/core/operations.ts';
-import { applyThinClientSourceScope } from '../src/cli.ts';
+import { applyThinClientSourceScope } from '../src/cli/main.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const CLI = join(import.meta.dir, '../src/cli.ts');

@@ -39,6 +39,8 @@ import { dirname, join } from 'node:path';
 import { ensureGbrainHome } from './gbrain-home.ts';
 import { durableSsrfFlags } from './git-remote.ts';
 import { isCredentialInjectingProxy } from './execution-env.ts';
+import { gitChildEnv } from './git-env.ts';
+import { bunSpawn } from './spawn.ts';
 
 // ── Subprocess seam (canonical home; bootstrap/repo.ts re-exports) ─────────
 
@@ -51,15 +53,15 @@ export interface ExecResult {
 /** Injectable subprocess seam. argv[0] is the binary; never a shell string. */
 export type ExecRunner = (argv: string[]) => Promise<ExecResult>;
 
-/** Default runner: Bun.spawn, both streams piped, spawn failure → code 127.
+/** Default runner: bunSpawn (src/core/spawn.ts), both streams piped, spawn failure → code 127.
  * GIT_TERMINAL_PROMPT=0 so an unauthenticated git can never hang on a prompt. */
 export const defaultRunner: ExecRunner = async (argv: string[]): Promise<ExecResult> => {
   try {
-    const proc = Bun.spawn(argv, {
+    const proc = bunSpawn(argv, {
       stdout: 'pipe',
       stderr: 'pipe',
       stdin: 'ignore',
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: gitChildEnv({ GIT_TERMINAL_PROMPT: '0' }),
     });
     const [stdout, stderr, code] = await Promise.all([
       new Response(proc.stdout).text(),

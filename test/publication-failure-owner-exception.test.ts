@@ -20,6 +20,9 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { publicFailureDetail, OWNER_EXCEPTION_MESSAGE } from '../src/core/persistence/publication-failure.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { readWriterDiagnostics } from '../src/core/persistence/diagnostics.ts';
+import { DATABASE_REFUSAL_HINT, DATABASE_TRIGGER_HINT } from '../src/core/persistence/connector-errors.ts';
+import { readTerminalFailureSummary } from '../src/core/persistence/terminal-failures.ts';
 import { VERSION } from '../src/version.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -108,3 +111,54 @@ describe('#5929 owner exceptions keep a bounded identity', () => {
     expect(receipt.owner_build.fix).toMatchObject({ actor: 'user', verify: { argv: ['gbrain', 'doctor', '--only', 'writer_version', '--json'] } });
   });
 });
+
+describe('#6719 owner_exception diagnostics', () => {
+  test('writer status recent_failures gives an owner exception its own next_action, never the database-trigger hint', async () => {
+    const { row } = await failingWrite(Object.assign(new Error('cached plan must not change result type'), { code: '0A000' }));
+    expect(row.error_detail).toMatchObject({ origin: 'owner_exception', errno: '0A000' });
+    const status = await withEnv({ GBRAIN_HOME: join(dir, 'home') }, () => readWriterDiagnostics(engine));
+    const failure = status.recent_failures.find(f => f.request_id === row.request_id)!;
+    expect(failure.next_action).not.toContain('database trigger');
+    expect(failure.next_action).toContain('owner exception');
+    expect(failure.next_action).toContain(`gbrain write-request ${row.request_id} --json`);
+  });
+
+  test('an origin that names no database refusal stays unknown instead of guessing a trigger; trigger and guard origins keep their hints', async () => {
+    const { row } = await failingWrite(new RangeError('bad offset'));
+    const failureFor = async (origin: string) => {
+      await engine.executeRaw(`UPDATE persistence_requests SET error_detail=jsonb_set(error_detail,'{origin}',to_jsonb($2::text)) WHERE id=$1::uuid`, [row.id, origin]);
+      const status = await withEnv({ GBRAIN_HOME: join(dir, 'home') }, () => readWriterDiagnostics(engine));
+      return status.recent_failures.find(f => f.request_id === row.request_id)!.next_action;
+    };
+    const unknown = await failureFor('pending_import');
+    expect(unknown).not.toContain('database trigger');
+    expect(unknown).toContain('not established');
+    expect(unknown).toContain(`gbrain write-request ${row.request_id} --json`);
+    expect(await failureFor('database_trigger')).toBe(DATABASE_TRIGGER_HINT);
+    expect(await failureFor('database_guard')).toBe(DATABASE_REFUSAL_HINT);
+  });
+
+  test('a failed checkpoint receipt is historical once a later checkpoint of the source commits (already on master via #6834)', async () => {
+    const receipt = async (state: 'failed' | 'committed') => {
+      await engine.executeRaw(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,source_incarnation,slug,digest,authority,intent_bytes,terminal_reservation,
+          state,error_code,error_message,error_detail,intent,completed_at,updated_at,admitter_version)
+        VALUES('local_cli','fixture',$1::uuid,'submit_job',$2,(SELECT incarnation FROM sources WHERE id=$2),'__managed_sync_checkpoint__',$3,'{}'::jsonb,0,0,
+          $4,$5,$6,$7::text::jsonb,'{"kind":"managed_sync_checkpoint"}'::jsonb,now(),now(),$8)`,
+      [randomUUID(), sourceId, randomUUID(), state, state === 'failed' ? 'storage_error' : null, state === 'failed' ? OWNER_EXCEPTION_MESSAGE : null,
+        state === 'failed' ? JSON.stringify({ origin: 'owner_exception', error_class: 'PostgresError', errno: '0A000' }) : null, VERSION]);
+    };
+    const checkpointRows = async () => {
+      const summary = await readTerminalFailureSummary(engine, { sourceIds: [sourceId] });
+      if (summary.status !== 'ok') throw new Error('summary unknown');
+      return summary.sources[0]!.categories.find(c => c.category === 'owner_exception' && c.code === 'storage_error')!;
+    };
+    await receipt('failed');
+    const before = await checkpointRows();
+    expect(before.unresolved).toBeGreaterThanOrEqual(1);
+    await receipt('committed');
+    const after = await checkpointRows();
+    expect(after.unresolved).toBe(before.unresolved - 1);
+    expect(after.historical).toBe(before.historical + 1);
+  });
+});
+

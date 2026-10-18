@@ -31,7 +31,7 @@
       "credential": null,
       "enabled": false,
       "jev_called": "no",
-      "model": "voyage:rerank-2.5",
+      "model": "voyage:rerank-3-lite",
       "search_mode": "conservative"
     },
     "slots": [

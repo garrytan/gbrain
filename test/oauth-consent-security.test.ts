@@ -11,6 +11,7 @@ import type { SqlQuery } from '../src/core/sql-query.ts';
 import { PGLITE_SCHEMA_SQL } from '../src/core/pglite-schema.ts';
 import { mountConfidentialOAuth, mountOAuthConsent } from '../src/commands/serve-http-oauth.ts';
 import { hashToken } from '../src/core/utils.ts';
+import { MIGRATIONS } from '../src/core/migrate.ts';
 import { pgliteOAuthTransaction, TEST_PKCE_CHALLENGE, TEST_PKCE_VERIFIER } from './helpers/oauth.ts';
 
 let db: PGlite;
@@ -305,6 +306,41 @@ describe('dynamically registered public clients', () => {
     expect(location.searchParams.get('state')).toBe('attacker-state');
     expect(location.searchParams.has('code')).toBe(false);
     expect(await sql`SELECT * FROM oauth_codes WHERE client_id = ${client.client_id}`).toHaveLength(0);
+  });
+
+  test('#6202: source_id is accepted only on an approval, as a string, for an eligible request', async () => {
+    await sql`INSERT INTO sources (id, name) VALUES ('wiki-example', 'wiki-example') ON CONFLICT (id) DO NOTHING`;
+    // This suite boots the bare schema blob; the marker column arrives by migration.
+    await db.exec(MIGRATIONS.find(m => m.name === 'oauth_client_registered_via')!.sql);
+    const client = await registerDcr();
+    const id = await expectPending(client.client_id, 'read');
+    const request = await details(id);
+    expect(request.sourceChoice.editable).toBe(true);
+    expect(request.sourceChoice.options.map((o: { id: string }) => o.id)).toContain('wiki-example');
+    for (const extra of [{ source_id: 'wiki-example', decision: 'deny' }, { source_id: 42 }, { source_id: null }, { source_id: ['wiki-example'] }, { source: 'wiki-example' }]) {
+      const { decision = 'approve', ...rest } = extra as Record<string, unknown>;
+      const response = await decide(id, request.csrf, decision as string, OWNER, rest);
+      expect(response.status).toBe(403);
+      expect((await response.json() as any).error).toBe('invalid_consent');
+    }
+    expect((await decide(id, request.csrf, 'approve', OWNER, { source_id: 'not-offered-example' })).status).toBe(403);
+    expect((await decide(id, request.csrf, 'approve', OTHER_SESSION, { source_id: 'wiki-example' })).status).toBe(403);
+    expect(await sql`SELECT * FROM oauth_codes WHERE client_id = ${client.client_id}`).toHaveLength(0);
+    const response = await decide(id, request.csrf, 'approve', OWNER, { source_id: 'wiki-example' });
+    expect(response.status).toBe(200);
+    expect(new URL((await response.json() as any).redirectUrl).searchParams.get('code')).toStartWith('gbrain_code_');
+    const [row] = await sql`SELECT source_id, federated_read, grant_revision FROM oauth_clients WHERE client_id = ${client.client_id}`;
+    expect(row).toMatchObject({ source_id: 'wiki-example', federated_read: ['wiki-example'], grant_revision: 1 });
+    expect(await sql`SELECT actor, action FROM oauth_grant_audit WHERE client_id = ${client.client_id}`).toEqual([{ actor: 'owner', action: 'consent' }]);
+  });
+
+  test('#6202: an operator-registered client gets no source choice and a posted source_id is refused', async () => {
+    const { clientId } = await register();
+    const id = await begin(clientId);
+    const request = await details(id);
+    expect(request.sourceChoice).toEqual({ editable: false, options: [] });
+    expect((await decide(id, request.csrf, 'approve', OWNER, { source_id: 'default' })).status).toBe(403);
+    expect(await sql`SELECT * FROM oauth_codes WHERE client_id = ${clientId}`).toHaveLength(0);
   });
 
   test('a revoked self-registered client is rejected before any consent request is created', async () => {

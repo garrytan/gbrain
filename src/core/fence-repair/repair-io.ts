@@ -26,7 +26,7 @@
  */
 import { copyFileSync, existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../spawn.ts';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { gbrainPath } from '../config.ts';
@@ -51,6 +51,8 @@ import { clearCandidateParts } from './census-store.ts';
 import { legacyCommitStep, recordUncommittedFenceRepair } from './uncommitted.ts';
 import type { FenceRepairReceipt } from './receipt.ts';
 import type { FenceCtx, FencePage } from './types.ts';
+import { gitChildEnv } from '../git-env.ts';
+import { canonicalOriginPage, originConflictMessage } from '../persistence/origin-guard.ts';
 
 export type FenceRepairMode = 'managed' | 'legacy' | 'db' | 'mirror';
 
@@ -69,14 +71,15 @@ export interface FenceSource {
 }
 
 function inGit(root: string): boolean {
-  try { execFileSync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'], { stdio: 'ignore' }); return true; } catch { return false; }
+  try { execFileSync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'], { env: gitChildEnv(), stdio: 'ignore' }); return true; } catch { return false; }
 }
 
 /**
- * This host's view of one source for fence repair; null when the source is gone or archived. `remote` (default
- * true, the fail-closed reading of an unknown caller) keeps local paths out of the owner refusal's text.
+ * This host's view of one source for fence repair (and, with `work`, the content repair that shares this loader);
+ * null when the source is gone or archived. `remote` (default true, the fail-closed reading of an unknown caller)
+ * keeps local paths out of the owner refusal's text.
  */
-export async function loadFenceSource(engine: BrainEngine, sourceId: string, opts: { remote?: boolean } = {}): Promise<FenceSource | null> {
+export async function loadFenceSource(engine: BrainEngine, sourceId: string, opts: { remote?: boolean; work?: string } = {}): Promise<FenceSource | null> {
   const [row] = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>(
     'SELECT id, incarnation::text AS incarnation, local_path FROM sources WHERE id=$1 AND archived IS NOT TRUE', [sourceId]);
   if (!row) return null;
@@ -90,7 +93,7 @@ export async function loadFenceSource(engine: BrainEngine, sourceId: string, opt
     if (binding) {
       const hostId = localHostId();
       const checked = checkOwner(binding, row.incarnation, hostId);
-      if (checked.reason) owner = ownerRefusal({ sourceId, reason: checked.reason, binding, incarnation: row.incarnation, hostId, remote: opts.remote !== false, work: 'fence repair' });
+      if (checked.reason) owner = ownerRefusal({ sourceId, reason: checked.reason, binding, incarnation: row.incarnation, hostId, remote: opts.remote !== false, work: opts.work ?? 'fence repair' });
       else root = join(checked.binding.local_path, checked.binding.relative_path);
     }
   } else {
@@ -126,7 +129,7 @@ export function pageSha(page: FencePage): string {
   return sha256(`${page.compiled_truth ?? ''}\u0000${page.timeline ?? ''}`);
 }
 
-export type TargetRead = { ok: true; target: FenceTarget } | { ok: false; reason: 'gone' | 'not_utf8' | 'unsafe_path' };
+export type TargetRead = { ok: true; target: FenceTarget } | { ok: false; reason: 'gone' | 'not_utf8' | 'unsafe_path' } | { ok: false; reason: 'origin_conflict'; message: string };
 
 /** Reads a candidate as it is now. A held or walked file is read from the checkout; anything else is read from the page store. */
 export async function readFenceTarget(engine: BrainEngine, src: FenceSource, cand: { key: string; path: string | null }): Promise<TargetRead> {
@@ -143,7 +146,8 @@ export async function readFenceTarget(engine: BrainEngine, src: FenceSource, can
       const content = bytes.toString('utf8');
       if (!Buffer.from(content, 'utf8').equals(bytes)) return { ok: false, reason: 'not_utf8' };
       const sourcePath = hold?.source_path ?? cand.path;
-      const [byOrigin] = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND source_path=$2 AND deleted_at IS NULL LIMIT 1', [src.id, sourcePath]);
+      const byOrigin = await canonicalOriginPage(engine, src.id, sourcePath);
+      if (byOrigin && 'ambiguous' in byOrigin) return { ok: false, reason: 'origin_conflict', message: originConflictMessage(src.id, sourcePath, byOrigin.ambiguous) };
       const slug = byOrigin?.slug ?? holdSlug ?? resolveSlugForPath(sourcePath);
       const dbOnly = src.managed && isSourceDbOnlySlug(src.root, slug, 'not_db_only');
       if (!dbOnly) {
@@ -274,7 +278,7 @@ export async function writeFenceRepair(ctx: OperationContext, src: FenceSource, 
     }
     if (target.hold) await clearGitHold(engine, { sourceId: src.id, incarnation: src.incarnation, path: target.path!, observedAt: new Date().toISOString() });
     await clearCensus();
-    const commitStep = inGit(root) ? legacyCommitStep(root, target.path!, receipt.classes) : null;
+    const commitStep = inGit(root) ? legacyCommitStep(root, target.path!, receipt.classes, receipt.tier) : null;
     if (commitStep) await recordUncommittedFenceRepair(engine, { source_id: src.id, incarnation: src.incarnation, path: target.path!, root, repaired_at: new Date().toISOString(),
       backup, commit_step: commitStep, receipt });
     return { ok: true, after_sha256: receipt.after_sha256, detail: { mode: 'legacy', path: target.path, backup, imported: imported.status, fence_repair: receipt,

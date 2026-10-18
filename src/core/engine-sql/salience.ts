@@ -22,6 +22,7 @@ import { computeAnomaliesFromBuckets } from '../cycle/anomaly.ts';
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
+import { rankingLinkSql } from '../link-ranking-policy.ts';
 
 export async function batchLoadEmotionalInputs(exec: LegacyUnscopedRead, slugs?: string[]): Promise<EmotionalWeightInputRow[]> {
     // Two CTEs avoid the N×M cartesian product (codex C4#4): a page with N tags
@@ -226,6 +227,7 @@ export async function listEnrichCandidates(exec: LegacyUnscopedRead, opts: Enric
             FROM links l
            WHERE l.to_page_id = p.id
              AND l.link_source IS DISTINCT FROM 'mentions'
+             AND ${trustedSql(rankingLinkSql('l'))}
         ), 0)::int AS inbound_count
       FROM pages p
       WHERE p.deleted_at IS NULL

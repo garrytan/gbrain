@@ -22,6 +22,9 @@ beforeAll(async () => { if (RUN) await setupLegacyEmbeddingDB(); });
 afterAll(async () => { if (RUN) await teardownDB(); });
 
 const oldDate = () => new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
+// #6023: untyped facts that differ in a number token no longer cluster, so
+// fixtures that should share a take vary by a plain word instead of a digit.
+const WORDS = ['alpha', 'beta', 'gamma', 'delta', 'epsilon'] as const;
 function unitVec(): string {
   const a = new Float32Array(1536);
   a[0] = 1.0;
@@ -44,7 +47,7 @@ d('cycle consolidate phase (Postgres)', () => {
       await engine.executeRaw(
         `INSERT INTO facts (source_id, entity_slug, fact, kind, source, confidence, valid_from, embedding, embedded_at, embedding_model, embedded_text_hash)
          VALUES ('default', 'people/post-cons-alice', $1, 'fact', 'test', 0.9, $2::timestamptz, $3::vector, $2::timestamptz, 'openai:text-embedding-3-large', md5($1))`,
-        [`postgres consolidate fact ${i}`, oldDate(), unitVec()],
+        [`postgres consolidate fact ${WORDS[i]}`, oldDate(), unitVec()],
       );
     }
 
@@ -89,7 +92,7 @@ d('cycle consolidate phase (Postgres)', () => {
       await engine.executeRaw(
         `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at, embedding_model, embedded_text_hash)
          VALUES ('default', 'cons-recent', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz, 'openai:text-embedding-3-large', md5($1))`,
-        [`recent fact ${i}`, recent, unitVec()],
+        [`recent fact ${WORDS[i]}`, recent, unitVec()],
       );
     }
     const result = await runPhaseConsolidate(engine, {});
@@ -110,7 +113,7 @@ d('cycle consolidate phase (Postgres)', () => {
       await engine.executeRaw(
         `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at, embedding_model, embedded_text_hash)
          VALUES ('default', 'cons-dryrun-pg', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz, 'openai:text-embedding-3-large', md5($1))`,
-        [`dryrun fact ${i}`, oldDate(), unitVec()],
+        [`dryrun fact ${WORDS[i]}`, oldDate(), unitVec()],
       );
     }
     const before = await engine.executeRaw<{ count: number }>(

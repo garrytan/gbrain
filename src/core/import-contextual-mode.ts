@@ -14,7 +14,7 @@
 import type { BrainEngine } from './engine.ts';
 import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
-import { isUndefinedTableError } from './utils.ts';
+import { isMissingSchemaObject } from './utils.ts';
 import { computeCorpusGeneration, loadSourceRow, SourceRowNotFoundError } from './contextual-retrieval-service.ts';
 import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';
 
@@ -27,7 +27,7 @@ export async function resolveImportContextualMode(engine: BrainEngine, sourceId:
     const row = await loadSourceRow(engine, sourceId);
     source = { id: row.id, contextual_retrieval_mode: row.contextual_retrieval_mode ?? null, trust_frontmatter_overrides: row.trust_frontmatter_overrides === true };
   } catch (error) {
-    if (strict || !(error instanceof SourceRowNotFoundError || isUndefinedTableError(error))) throw error;
+    if (strict || !(error instanceof SourceRowNotFoundError || isMissingSchemaObject(error, 'table', 'sources'))) throw error;
   }
   const resolution = resolveContextualRetrievalMode({ pageFrontmatter: frontmatter ?? {}, source,
     globalMode: knobs.contextual_retrieval, killSwitchDisabled: knobs.contextual_retrieval_disabled });

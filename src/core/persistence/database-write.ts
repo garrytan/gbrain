@@ -1,4 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import { withBeliefBatch } from '../belief/ledger.ts';
+import { markBeliefCommits } from '../belief/append.ts';
 import { opError, type OperationContext } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { assertPersistenceAccepting } from './service.ts';
@@ -7,6 +10,7 @@ import { managedPersistenceEnabled } from './ownership.ts';
 import { initializeLocalPersistence } from './page-mutations.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { principalAttribution } from './attribution.ts';
+import type { WriteTrust } from '../trust/tier.ts';
 
 /**
  * A coordinated, database-only write on a managed brain: rows with no
@@ -18,7 +22,7 @@ import { principalAttribution } from './attribution.ts';
  * brain; the caller keeps its legacy path.
  */
 export async function coordinatedDatabaseWrite<T>(ctx: OperationContext, operation: string, authoritySlug: string,
-  lockSlugs: readonly string[], write: (engine: BrainEngine, sourceId: string) => Promise<T>): Promise<{ value: T } | null> {
+  lockSlugs: readonly string[], write: (engine: BrainEngine, sourceId: string) => Promise<T>, trust?: WriteTrust): Promise<{ value: T } | null> {
   if (!await managedPersistenceEnabled(ctx.engine)) return null;
   assertPersistenceAccepting(ctx.engine);
   const sourceId = ctx.sourceId ?? 'default';
@@ -31,6 +35,8 @@ export async function coordinatedDatabaseWrite<T>(ctx: OperationContext, operati
   }
   await initializeLocalPersistence(ctx);
   const authority = await submissionAuthority(ctx, operation, sourceId, source.incarnation, authoritySlug);
+  const publicationId = randomUUID();
+  const report = { appended: 0 };
   const value = await ctx.engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], async () => {
     const [current] = await tx.executeRaw<{ incarnation: string; archived: boolean }>(
       'SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE', [sourceId]);
@@ -41,7 +47,9 @@ export async function coordinatedDatabaseWrite<T>(ctx: OperationContext, operati
     }
     await authorizeWrite(tx, authority, operation, authoritySlug, true);
     await tx.lockPageKeys(lockSlugs.map(slug => ({ sourceId, slug })));
-    return write(tx, sourceId);
-  }, principalAttribution(authority.principal)));
+    // W1 finalization contract (docs/designs/BELIEF_LEDGER.md 5.1): the database-only rows this write changes are recorded under the keys it holds.
+    return withBeliefBatch(tx, { sourceId, slugs: lockSlugs, publicationId, op: operation, remote: ctx.remote !== false, report }, () => write(tx, sourceId));
+  }, { ...principalAttribution(authority.principal), ...(trust ? { trust } : {}) }));
+  if (report.appended) await markBeliefCommits(ctx.engine, [publicationId]).catch(() => undefined);
   return { value };
 }

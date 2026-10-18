@@ -110,3 +110,28 @@ run('a parameter of a database-defined type (pgvector) is never shared', async (
   });
   expect(trace.on(1, text)).toEqual(['describe', 'execute']);
 });
+
+run('a new process with the saved types for this database runs its first statements without describe round trips', async () => {
+  const { _resetSharedParameterTypesForTests, loadSharedParameterTypes, sharedParameterTypes } = await import('../../src/core/pg-type-cache.ts');
+  const text = `SELECT count(*)::int AS n FROM ${table} WHERE c::text = $1 AND $2::bigint > 0`;
+  const scope = `e2e-${randomUUID()}`;
+  const runAs = async (persist: string | undefined) => {
+    _resetSharedParameterTypesForTests();
+    return await withEnv({ GBRAIN_HOME: dir, GBRAIN_PG_TYPE_CACHE_PERSIST: persist }, async () => {
+      const store = sharedParameterTypes(url!);
+      loadSharedParameterTypes(url!, '0', scope);
+      const trace = await traced({ shared_types: store }, async (a) => {
+        expect(rowsOf(await a.unsafe(text, ['1', '1'] as never[]))).toEqual([{ n: 1 }]);
+      });
+      (store as unknown as { save(): void }).save();
+      return trace.on(0, text);
+    });
+  };
+  try {
+    expect(await runAs(undefined)).toEqual(['describe', 'execute']);
+    expect(await runAs(undefined)).toEqual(['execute']);
+    expect(await runAs('0')).toEqual(['describe', 'execute']);
+  } finally {
+    _resetSharedParameterTypesForTests();
+  }
+});

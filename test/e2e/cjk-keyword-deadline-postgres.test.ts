@@ -5,7 +5,11 @@
  * engine serves the next query normally. The rollback case pins the full
  * attempt's budget (150 ms, far below the >1 s full scoring of this corpus)
  * and gives the capped retry ample time, so its outcome does not depend on
- * load; the default-split case asserts only what holds under any load.
+ * load. The default-split cases assert the budgets the arm hands Postgres,
+ * on the arm's own clock, never elapsed wall time: a stall of the test
+ * process or the VM lengthens the wall time of a correct arm (a loaded gate
+ * once measured 4.6 s against the 1.5 s deadline), so the stall case below
+ * injects one and checks the arm starts nothing past its deadline.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
@@ -14,6 +18,18 @@ import type { CjkKeywordMeta } from '../../src/core/engine-sql/cjk-search.ts';
 
 const RUN = hasDatabase();
 let engine: PostgresEngine;
+
+type Budget = { timeoutMs: number; armMs: number };
+
+/** The full scoring's statements end inside its default 2/3 share and every statement inside the deadline, on the arm's clock. */
+function expectBudgetedWithin(budgets: Budget[], deadlineMs: number): void {
+  expect(budgets.length).toBeGreaterThan(0);
+  expect(budgets[0]!.armMs + budgets[0]!.timeoutMs).toBeLessThanOrEqual((deadlineMs * 2) / 3);
+  for (const b of budgets) {
+    expect(b.timeoutMs).toBeGreaterThanOrEqual(1);
+    expect(b.armMs + b.timeoutMs).toBeLessThanOrEqual(deadlineMs);
+  }
+}
 
 async function seed(source: string, slugPrefix: string, pages: number, chunksPerPage: number, body: string): Promise<void> {
   await engine.executeRaw(`INSERT INTO pages (slug, source_id, type, title, compiled_truth, knowledge_revision, text_projection_revision, chunker_version)
@@ -33,7 +49,13 @@ describe.skipIf(!RUN)('CJK keyword arm on Postgres', () => {
     await seed('cjk-a', 'cjka/p-', 20_000, 8, `${'팀 좌석을 업그레이드하는 방법과 좌석 수 관리, '.repeat(40)}`);
     await engine.executeRaw('ANALYZE content_chunks');
   }, 600_000);
-  afterAll(async () => { await teardownDB(); }, 120_000);
+  // The 160,002 seeded chunks carry no embedding: left in the shared slot database they fill every later file's
+  // stale-chunk scans (listStaleChunks batches by page id, so a later page lands past the batch).
+  afterAll(async () => {
+    await engine.executeRaw(`DELETE FROM pages WHERE source_id IN ('cjk-a', 'cjk-b')`);
+    await engine.executeRaw(`DELETE FROM sources WHERE id IN ('cjk-a', 'cjk-b')`);
+    await teardownDB();
+  }, 120_000);
 
   test('OR fallback: terms in different documents found only with the hybrid flag; direct callers keep strict AND', async () => {
     expect(await engine.searchKeyword('席位 升级', { sourceId: 'cjk-b' })).toEqual([]);
@@ -54,13 +76,28 @@ describe.skipIf(!RUN)('CJK keyword arm on Postgres', () => {
     expect(after.map((r) => r.slug)).toEqual(['cjkb/seats-1']);
   }, 60_000);
 
-  test('with the default split the arm ends near its deadline and reports honestly either way', async () => {
+  test('with the default split the arm budgets every statement inside its deadline and reports honestly either way', async () => {
     const metas: CjkKeywordMeta[] = [];
-    const started = performance.now();
+    const budgets: Budget[] = [];
     const rows = await engine.searchKeyword('좌석 업그레이드', { sourceId: 'cjk-a', orFallback: true, limit: 20,
-      cjkKeyword: { deadlineMs: 1500, onMeta: (m) => metas.push(m) } });
-    expect(performance.now() - started).toBeLessThan(1500 + 2_000);
+      cjkKeyword: { deadlineMs: 1500, onMeta: (m) => metas.push(m), onStatementBudget: (b) => budgets.push(b) } });
     expect(metas[0]?.incomplete).toBe(true);
+    expectBudgetedWithin(budgets, 1500);
+    expect(rows.every((r) => r.source_id === 'cjk-a')).toBe(true);
+  }, 60_000);
+
+  test('a stall of the test process past the deadline lengthens only wall time: the arm starts nothing after its deadline', async () => {
+    const metas: CjkKeywordMeta[] = [];
+    const budgets: Budget[] = [];
+    const started = performance.now();
+    // The full scoring's statement is on the server by 300 ms; Postgres cuts it at its share while this thread sleeps.
+    const stall = setTimeout(() => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3_500), 300);
+    const rows = await engine.searchKeyword('좌석 업그레이드', { sourceId: 'cjk-a', orFallback: true, limit: 20,
+      cjkKeyword: { deadlineMs: 1500, onMeta: (m) => metas.push(m), onStatementBudget: (b) => budgets.push(b) } });
+    clearTimeout(stall);
+    expect(performance.now() - started).toBeGreaterThanOrEqual(3_500);
+    expect(metas[0]?.incomplete).toBe(true);
+    expectBudgetedWithin(budgets, 1500);
     expect(rows.every((r) => r.source_id === 'cjk-a')).toBe(true);
   }, 60_000);
 

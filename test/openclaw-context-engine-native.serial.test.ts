@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import postgres from '#postgres'
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { assertSafeE2eDatabaseUrl } from './helpers/db-guard.ts';
+import { pumpText, waitForText } from './helpers/stream-text.ts';
 
 const host = process.env.GBRAIN_TEST_OPENCLAW_BIN;
 const root = resolve(import.meta.dir, '..');
@@ -82,6 +83,10 @@ describe.skipIf(!host)('pinned OpenClaw native context-engine startup', () => {
         retrieval_reflex: true, retrieval_reflex_window_turns: 1, retrieval_reflex_volunteer: false,
       }));
       const manifest = JSON.parse(readFileSync(join(root, 'openclaw.plugin.json'), 'utf8'));
+      const modelsConfig = { mode: 'replace', providers: { fixture: {
+        baseUrl: `http://127.0.0.1:${address.port}/v1`, api: 'openai-completions', apiKey: 'local-fixture',
+        models: [{ id: 'fixture', name: 'Fixture', contextWindow: 32768, maxTokens: 512, reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
+      } } };
       writeFileSync(configPath, JSON.stringify({
         plugins: {
           allow: [manifest.id], load: { paths: [root] },
@@ -95,11 +100,11 @@ describe.skipIf(!host)('pinned OpenClaw native context-engine startup', () => {
         },
         tools: { deny: ['*'] },
         mcp: { servers: { gbrain: { enabled: false } } },
-        models: { mode: 'replace', providers: { fixture: {
-          baseUrl: `http://127.0.0.1:${address.port}/v1`, api: 'openai-completions', apiKey: 'local-fixture',
-          models: [{ id: 'fixture', name: 'Fixture', contextWindow: 32768, maxTokens: 512, reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
-        } } },
         gateway: { mode: 'local' },
+        // No network at startup: the pinned gateway otherwise checks telemetry.openclaw.ai for a newer
+        // release and downloads the hosted model catalog from catalog.openclaw.ai on every start.
+        update: { checkOnStart: false },
+        models: { ...modelsConfig, catalogRefresh: { enabled: false } },
       }));
       expect(await run(['--version'])).toContain('2026.9.4');
       const inspection = JSON.parse(await run(['plugins', 'inspect', manifest.id, '--runtime', '--json']));
@@ -142,6 +147,34 @@ describe.skipIf(!host)('pinned OpenClaw native context-engine startup', () => {
       expect(otherMessages).toContain('people/alice-example');
       expect(otherMessages).toContain('other-source-saved-page-canary');
       expect(otherMessages).not.toContain('main-source-saved-page-canary');
+
+      // #6316: a real host compaction (2026.9.x passes sessionTarget, no sessionFile) banks a segment.
+      const gatewayPort = 20_000 + Math.floor(Math.random() * 20_000);
+      const config = JSON.parse(readFileSync(configPath, 'utf8'));
+      writeFileSync(configPath, JSON.stringify({ ...config, gateway: { mode: 'local', port: gatewayPort, bind: 'loopback', auth: { mode: 'none' } } }));
+      const gateway = Bun.spawn([host!, 'gateway', 'run'], { env, cwd: otherWorkspace, stdout: 'pipe', stderr: 'pipe' });
+      const gatewayLog = pumpText(gateway.stdout);
+      const gatewayErrors = pumpText(gateway.stderr);
+      try {
+        await waitForText(gatewayLog, '[gateway] ready', 60_000);
+        expect({ stdout: gatewayLog.text, stderr: gatewayErrors.text }).toMatchObject({ stdout: expect.stringContaining('[gateway] ready') });
+        expect(gatewayLog.text).not.toContain('update available');
+        expect(gatewayLog.text).not.toContain('remote model catalog');
+        const compacted = JSON.parse(await run(['sessions', 'compact', 'agent:main:fresh-conversation-one', '--agent', 'main', '--json', '--timeout', '60000']));
+        expect(compacted).toMatchObject({ ok: true, compacted: true });
+      } finally {
+        gateway.kill();
+        await gateway.exited;
+      }
+      const spool = join(dir, '.gbrain', 'transcripts', 'corpus', 'sourced');
+      const segments = (existsSync(spool) ? readdirSync(spool) : []).filter((name) => name.includes('.seg-') && name.endsWith('.txt'));
+      expect(segments).toHaveLength(1);
+      expect(readFileSync(join(spool, segments[0]!), 'utf8')).toContain('Tell me about Alice Example.');
+      const heartbeat = join(dir, '.gbrain', 'integrations', 'hooks', 'heartbeat.jsonl');
+      const checkpoints = (existsSync(heartbeat) ? readFileSync(heartbeat, 'utf8').trim().split('\n') : [])
+        .map((line) => JSON.parse(line)).filter((entry) => entry.event === 'openclaw-compact');
+      expect(checkpoints).toHaveLength(1);
+      expect(checkpoints[0].segment).not.toBe('skipped');
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
       rmSync(dir, { recursive: true, force: true });

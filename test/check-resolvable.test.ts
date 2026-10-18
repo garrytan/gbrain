@@ -352,6 +352,21 @@ describe("extractDelegationTargets", () => {
     expect(refs).toEqual([{ convention: "conventions/quality.md", line: 2 }]);
   });
 
+  test("accepts a #anchor after .md and drops it from the path (#6704)", () => {
+    const refs = extractDelegationTargets(
+      "See `skills/conventions/quality.md#citations` and `skills/_brain-filing-rules.md#the-rule`.\n"
+    );
+    expect(refs).toEqual([
+      { convention: "conventions/quality.md", line: 1 },
+      { convention: "_brain-filing-rules.md", line: 1 },
+    ]);
+  });
+
+  test("accepts an anchor with dots and non-ASCII letters (#6704)", () => {
+    const refs = extractDelegationTargets("See `skills/conventions/quality.md#v1.2-引用`.\n");
+    expect(refs).toEqual([{ convention: "conventions/quality.md", line: 1 }]);
+  });
+
   test("ignores backticks pointing outside known delegation targets", () => {
     const refs = extractDelegationTargets(
       "See `skills/random/README.md` for unrelated notes.\n"

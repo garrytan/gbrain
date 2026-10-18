@@ -150,13 +150,38 @@ describe('close_fence and the protection boundary', () => {
     expect(r.page.compiled_truth).toBe(body);
   });
 
-  test('prose after the table keeps the fence open (manual) so the boundary never shows it', () => {
+  test('prose after the table on a world page keeps the fence open (tail_exposure_approval) so the boundary never shows it unasked (#6377)', () => {
     const body = [FB, FH, FS, factsRow(1, 'Psi claim'), '', 'TRAILING-PROSE-CANARY stays hidden'].join('\n');
-    const r = run(body);
-    expect(reasons(r)).toEqual(['unclosed_trailing_content']);
+    const r = run(body, WORLD);
+    expect(reasons(r)).toEqual(['tail_exposure_approval']);
     expect(r.page.compiled_truth).toBe(body);
     expect(sanitizeRemoteBody(r.page.compiled_truth)).not.toContain('TRAILING-PROSE-CANARY');
-    expect(FENCE_REASONS.unclosed_trailing_content.manualOnly).toBe(true);
+    expect(FENCE_REASONS.tail_exposure_approval.autoRetry).toBe(false);
+    expect(FENCE_REASONS.tail_exposure_approval.actor).toBe('user');
+  });
+
+  test('prose after the table closes the fence on a private page, or on a world page under the user\'s approval (close_fence_trailing, #6377)', () => {
+    const body = [FB, FH, FS, factsRow(1, 'Psi claim'), '', 'TRAILING-PROSE-CANARY becomes visible'].join('\n');
+    for (const ctx of [PRIVATE, { ...WORLD, approveTailExposure: true }]) {
+      const r = run(body, ctx);
+      expect(r.fixes.map(f => f.class)).toEqual(['close_fence_trailing']);
+      expect(r.residual).toEqual([]);
+      expect(r.page.compiled_truth).toBe([FB, FH, FS, factsRow(1, 'Psi claim'), FE, '', 'TRAILING-PROSE-CANARY becomes visible'].join('\n'));
+      expect(sanitizeRemoteBody(r.page.compiled_truth)).toContain('TRAILING-PROSE-CANARY');
+      expectRepaired(r, ctx);
+    }
+  });
+
+  test('a trailing line with a pipe waits for the tail classifier; a marker mention is manual (#6377)', () => {
+    const piped = [FB, FH, FS, factsRow(1, 'Psi claim'), '', 'a note with a | in it'].join('\n');
+    expect(reasons(run(piped))).toEqual(['unclosed_trailing_content']);
+    expect(FENCE_REASONS.unclosed_trailing_content.tier).toBe('llm');
+    const judged = run(piped, { ...PRIVATE, tailProse: new Set(['body:facts']) });
+    expect(judged.fixes.map(f => f.class)).toEqual(['close_fence_trailing']);
+    expect(judged.page.compiled_truth).toContain(`${FE}\n\na note with a | in it`);
+    expect(reasons(run(piped, { ...WORLD, tailProse: new Set(['*']) }))).toEqual(['tail_exposure_approval']);
+    const mention = [FB, FH, FS, factsRow(1, 'Psi claim'), '', 'the marker gbrain:facts:end is only mentioned here'].join('\n');
+    expect(reasons(run(mention))).toEqual(['unclosed_ambiguous_tail']);
   });
 
   test('an end marker with no begin is never guessed', () => {
@@ -166,8 +191,8 @@ describe('close_fence and the protection boundary', () => {
     expect(r.page.compiled_truth).toBe(body);
   });
 
-  test('a repeated marker is manual and nothing changes', () => {
-    const body = [facts(factsRow(1, 'Alpha two', { kind: 'signal' })), facts(factsRow(2, 'Beta two'))].join('\n');
+  test('a repeated marker that merge_fences cannot merge (text inside the repeat) is manual and nothing changes', () => {
+    const body = [facts(factsRow(1, 'Alpha two', { kind: 'signal' })), facts(factsRow(2, 'Beta two'), 'A note inside the fence.')].join('\n');
     const r = run(body);
     expect(reasons(r)).toContain('repeated_marker');
     expect(r.page.compiled_truth).toBe(body);
@@ -273,6 +298,27 @@ describe('header rules', () => {
     expect(classes(r)).toEqual(['header_alias']);
     expect(r.page.compiled_truth).toContain('| 1 | Kappa two | fact | 0.9 | private | high | 2026-04-29T18:30:00Z |  | call |  |');
     expectRepaired(r);
+  });
+
+  test('#6385: a reordered, respelled 15-column header with attributed_to is rewritten to the attributed header, every cell kept', () => {
+    const body = [FB, '| Claim | # | Kind | Confidence | Visibility | Notability | Valid From | Valid Until | Source | Context | Claim Metric | Claim Value | Claim Unit | Claim Period | Attributed To |',
+      '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|',
+      '| Xi said | 3 | fact | 0.7 | private | low | 2026-05-01 |  | chat | ctx | mrr | 50k | USD | monthly | user |',
+      '| Xi plain | 4 | event | 1.0 | world | high | 2026-05-02 |  | call |  |  |  |  |  |  |', FE].join('\n');
+    const r = run(body);
+    expect(classes(r)).toEqual(['header_alias']);
+    expect(r.page.compiled_truth).toContain('| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context | claim_metric | claim_value | claim_unit | claim_period | attributed_to |');
+    expect(r.page.compiled_truth).toContain('| 3 | Xi said | fact | 0.7 | private | low | 2026-05-01 |  | chat | ctx | mrr | 50k | USD | monthly | user |');
+    const parsed = parseFactsFence(r.page.compiled_truth);
+    expect(parsed.facts.map(f => [f.rowNum, f.claim, f.attributedTo, f.claimValue])).toEqual([[3, 'Xi said', 'user', 50_000], [4, 'Xi plain', undefined, undefined]]);
+    expectRepaired(r);
+  });
+
+  test('#6385: an `event_type` column is never mapped to attributed_to; it stays header_unmapped', () => {
+    const header = '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context | claim_metric | claim_value | claim_unit | claim_period | event_type |';
+    const r = run([FB, header, '| 1 | Omicron launch | event | 1.0 | private | high | 2026-01-01 |  | fixture |  |  |  |  |  | user |', FE].join('\n'));
+    expect(reasons(r)).toEqual(['header_unmapped']);
+    expect(r.page.compiled_truth).toContain(header);
   });
 
   test('column_default fills required facts columns absent from the whole header', () => {

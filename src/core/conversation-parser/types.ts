@@ -288,8 +288,10 @@ export interface ParseConversationOpts {
 export interface DateContext {
   /** ISO YYYY-MM-DD string. */
   fallbackDate: string;
-  /** IANA timezone (e.g. 'America/Los_Angeles') or undefined. */
+  /** Valid IANA timezone (e.g. 'America/Los_Angeles') or undefined. */
   timezone?: string;
+  /** #5430: a declared `frontmatter.timezone` that is not a valid IANA zone; timestamps stay UTC and the warning names it. */
+  invalid_timezone?: string;
   /** Which step of the derivation chain won (for debug). */
   source: 'frontmatter_date' | 'effective_date' | 'explicit' | 'epoch_default';
 }

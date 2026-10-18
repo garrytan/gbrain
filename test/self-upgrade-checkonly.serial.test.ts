@@ -31,7 +31,7 @@ function microBump(): string {
 function stub(tag: string | null, changelog: string): void {
   globalThis.fetch = (async (url: any) => {
     const u = String(url);
-    if (u.includes('/gbrain/master/VERSION')) {
+    if (u.includes('/gbrain/latest-stable/VERSION')) {
       if (tag === null) throw new Error('network down');
       return new Response(tag + '\n', { status: 200 });
     }
@@ -65,7 +65,7 @@ describe('self-upgrade --check-only surfaces what you get', () => {
     const out = JSON.parse(captured.join('\n'));
     expect(out.update_available).toBe(true);
     expect(out.latest_version).toBe(latest);
-    expect(out.release_url).toBe('https://github.com/garrytan/gbrain/blob/master/CHANGELOG.md');
+    expect(out.release_url).toBe('https://github.com/garrytan/gbrain/blob/latest-stable/CHANGELOG.md');
     expect(out.changelog_diff).toContain('Shiny new thing');
   });
 

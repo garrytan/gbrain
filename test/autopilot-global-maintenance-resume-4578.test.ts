@@ -122,4 +122,37 @@ describe('global_maintenance_timeouts doctor check (#4578)', () => {
     await engine.executeRaw(`UPDATE minion_jobs SET status = 'completed', finished_at = now() + interval '1 hour' WHERE id = $1`, [job.id]);
     expect((await globalMaintenanceTimeoutsCheck(engine)).status).toBe('ok');
   });
+  test('#6303: three dead patterns children at their own timeout warn while the jobs complete', async () => {
+    const queue = new MinionQueue(engine);
+    const job = await queue.add('autopilot-global-maintenance', {}, { idempotency_key: 'completed-partial' });
+    await engine.executeRaw(`UPDATE minion_jobs SET status = 'completed', finished_at = now() WHERE id = $1`, [job.id]);
+    const child = async (i: number, error: string, key = `dream:patterns:k${i}`) => {
+      const sub = await queue.add('subagent', {}, { idempotency_key: key }, { allowProtectedSubmit: true });
+      await engine.executeRaw(`UPDATE minion_jobs SET status = 'dead', error_text = $2, finished_at = now() + ($1 || ' seconds')::interval WHERE id = $3`,
+        [String(i), error, sub.id]);
+    };
+    await child(0, 'timeout exceeded');
+    await child(1, 'wall-clock timeout exceeded');
+    expect((await globalMaintenanceTimeoutsCheck(engine)).status).toBe('ok');
+    await child(2, 'timeout exceeded');
+    await child(3, 'prompt_too_long: 1', 'dream:synth-v2:default:filename:a.md:0123456789abcdef');
+    const check = await globalMaintenanceTimeoutsCheck(engine);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('dream.patterns.subagent_timeout_ms');
+    expect(check.message).toContain('autopilot.global_maintenance_timeout_ms');
+    expect(check.message).toContain('gbrain dream --phase patterns');
+    expect(check.message).toContain('paid');
+    expect(check.details).toMatchObject({ child_timeouts: [{ phase: 'patterns', consecutive_deaths: 3 }] });
+    expect(check.message).not.toContain('synthesize');
+  });
+
+  test('#6303: a completed patterns child after timeouts clears the child warning', async () => {
+    const queue = new MinionQueue(engine);
+    for (let i = 0; i < 4; i++) {
+      const sub = await queue.add('subagent', {}, { idempotency_key: `dream:patterns:c${i}` }, { allowProtectedSubmit: true });
+      await engine.executeRaw(`UPDATE minion_jobs SET status = $4, error_text = $2, finished_at = now() + ($1 || ' seconds')::interval WHERE id = $3`,
+        [String(i), i < 3 ? 'timeout exceeded' : null, sub.id, i < 3 ? 'dead' : 'completed']);
+    }
+    expect((await globalMaintenanceTimeoutsCheck(engine)).status).toBe('ok');
+  });
 });

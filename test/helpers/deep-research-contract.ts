@@ -215,7 +215,7 @@ export function deepResearchContract(getEngine: () => BrainEngine): void {
 
     for (const transport of ['stdio', 'http'] as const) {
       test(`${transport} MCP dispatch round-trips search/fetch and rechecks changed grants`, async () => {
-        const opts = { sourceId: 'default', remote: true, transport, auth: { allowedSources: ['default', 'beta'] } as any };
+        const opts = { sourceId: 'default', remote: true, transport, auth: { scopes: ['read'], allowedSources: ['default', 'beta'] } as any };
         const searched = await dispatchToolCall(getEngine(), 'search', { query: 'Zirconiumneedle' }, opts);
         expect(searched.isError).not.toBe(true);
         const hits = JSON.parse(searched.content[0].text);
@@ -224,7 +224,7 @@ export function deepResearchContract(getEngine: () => BrainEngine): void {
         const page = JSON.parse(result.content[0].text);
         expect(page.id).toBe(hits[0].id);
         expect(page.metadata.source_id).toBe('beta');
-        const refused = await dispatchToolCall(getEngine(), 'fetch', { id: hits[0].id }, { ...opts, auth: { allowedSources: ['default'] } as any });
+        const refused = await dispatchToolCall(getEngine(), 'fetch', { id: hits[0].id }, { ...opts, auth: { scopes: ['read'], allowedSources: ['default'] } as any });
         expect(refused.isError).toBe(true);
         expect(refused.content[0].text).not.toContain('beta');
         expect(refused.content[0].text).not.toContain('Zirconiumneedle');

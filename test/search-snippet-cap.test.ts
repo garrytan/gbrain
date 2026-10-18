@@ -141,3 +141,15 @@ describe('query op snippet cap (#3800)', () => {
     });
   });
 });
+
+describe('large pages: a deep hit points at its own window', () => {
+  test('a truncated hit past the first chunk names get_page around_chunk_id; chunk 0 keeps the page pointer', () => {
+    const long = 'x'.repeat(500);
+    const [deep, first] = applySnippetCap([
+      { slug: 'chat/log-example', chunk_text: long, chunk_id: 42, chunk_index: 7 },
+      { slug: 'chat/log-example', chunk_text: long, chunk_id: 41, chunk_index: 0 },
+    ], 100);
+    expect(deep.chunk_text).toContain('get_page chat/log-example around_chunk_id=42]');
+    expect(first.chunk_text).toContain('get_page chat/log-example for full text');
+  });
+});

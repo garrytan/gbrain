@@ -75,6 +75,8 @@ export const CHRONICLE_REASONS = {
     meaning: () => 'The page body is under 80 characters, too short to hold events.' },
   dream_generated: { stage: 'decision',
     meaning: () => 'Dream-generated pages are never mined for events.' },
+  page_body_segmented: { stage: 'decision',
+    meaning: () => 'An earlier release skipped this page: its body is over the 24 MiB single-string ceiling and is stored in segments. This release reads segmented pages, so the next revision or a backfill extracts it.' },
   no_write_decision: { stage: 'discovery',
     meaning: () => 'This revision has no recorded write decision (written by an older binary or before this release activated), so only a trusted backfill extracts it.',
     fix: backfill('agent', FIX_BY_BACKFILL) },

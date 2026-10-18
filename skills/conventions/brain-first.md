@@ -12,7 +12,7 @@ Your tool inventory includes these (prefixed `gbrain__` in OpenClaw):
 | Tool | Use for |
 |------|---------|
 | `gbrain__search` / `search` | Exact tokens / known names — cheap hybrid, no expansion |
-| `gbrain__query` / `query` | Concept / landscape questions — hybrid + LLM expansion |
+| `gbrain__query` / `query` | Concept / landscape questions — hybrid; `expand: true` adds LLM expansion |
 | `gbrain__get_page` / `get_page` | Direct page read when you know the slug |
 | `gbrain__get_links` / `get_links` | Outgoing links from a page |
 | `gbrain__get_backlinks` / `get_backlinks` | Who references this entity |
@@ -33,9 +33,9 @@ Route by the SHAPE of the question, then escalate:
 1. **Exact known token / name / structured field** → **`search`** — cheap
    hybrid (vector + keyword, no expansion; embedding-only cost).
 2. **Concept / landscape / synonym-phrased question** ("all the X that do Y",
-   "the landscape of Z") → **`query`** FIRST — multi-query expansion recovers
-   phrasings `search` misses. Costs one extra LLM expansion call; worth it
-   for these.
+   "the landscape of Z") → **`query`** FIRST — meaning-match and reranking recover
+   phrasings `search` misses. `expand: true` adds one LLM expansion call
+   when the results look thin.
 3. **`get_page`** if you found a slug — read the full compiled truth.
 4. **External APIs only after steps 1-2 return nothing useful.**
 

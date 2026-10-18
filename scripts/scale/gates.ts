@@ -95,10 +95,14 @@ export const PLANNER_STATS_MIN_ROWS = PLANNER_STATS_MIN_PENDING;
 /** The plans the planner-health gate inspects (every captured read statement of these ops). */
 export const KEY_PLAN_OPS = ['get_backlinks', 'search (MCP path, remote)', 'get_health', 'find_orphans'] as const;
 export const HEADLINE_OP = 'search (MCP path, remote)';
-/** Interactive ceilings (p50 ms), defined at 10k pages; report-only until trend.ts says stable. */
+/**
+ * Interactive ceilings (p50 ms), defined up to 20k pages; report-only until trend.ts says stable. 20k joined
+ * once the Postgres MCP search slowdown between 10k and 20k stopped reproducing (nightly 2026-10-15, run
+ * 38708604843, at 20k: MCP search 36.3 ms Postgres / 71.1 ms PGLite, get_health 246 / 585 ms).
+ */
 export const CEILINGS_MS: Record<string, number> = { 'search (MCP path, remote)': 500, get_health: 1000 };
-export const CEILING_PAGES = 10_000;
-/** The interactive ceilings that apply at a brain size: defined at 10k, so they bind brains up to 10k pages. */
+export const CEILING_PAGES = 20_000;
+/** The interactive ceilings that apply at a brain size: they bind brains up to 20k pages (both nightly tiers). */
 export function ceilingsFor(pages: number): Record<string, number> {
   return pages <= CEILING_PAGES ? CEILINGS_MS : {};
 }

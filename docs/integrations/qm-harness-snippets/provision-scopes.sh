@@ -90,7 +90,7 @@ STATE_FILE="${STATE_FILE:-${ROSTER}.state.tsv}"
 SECRETS_OUT="${SECRETS_OUT:-${ROSTER}.new-credentials.tsv}"
 
 # The roster usually lives in the deployment repo, so the default secrets and
-# state paths land there too — one `git add -A` from committing live
+# state paths land there too — one `git add -A` from committing live  # gbrain-allow-shared-tree-git: warning, not an instruction
 # credentials. The STATE file matters as much as the secrets file: it maps
 # employee -> client_id, and this script feeds that id straight to
 # `rescope-client`, so whoever can write it decides which client receives a

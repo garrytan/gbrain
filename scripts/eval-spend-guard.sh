@@ -31,6 +31,10 @@
 #     {"ts":"<UTC ISO>","run_id":"<id>","status":"running","estimate_usd":E,"cost_usd":E,"exit_code":null,"command":"..."}
 #   reconciliation — appended after it exits, supersedes the reservation:
 #     {"ts":"<UTC ISO>","run_id":"<id>","status":"done","estimate_usd":E,"cost_usd":C,"exit_code":N,"command":"..."}
+#   stale run — a later guard's report of a SIGKILLed guard's group that may
+#   still run (see "Stale run leases" below); cost 0, no run_id, so the stale
+#   reservation stays counted:
+#     {"ts":"<UTC ISO>","status":"unknown","stale_run_id":"<id>","pgid":P,"lease":"<path>","reason":"guard_gone_group_may_run","cost_usd":0}
 # Ledger total = every row that is not a reservation + every reservation whose
 # run_id has no reconciliation (a run still in flight, or one whose guard died
 # before it could reconcile). Rows without run_id/status (older ledgers) are
@@ -52,6 +56,17 @@
 # the reconciliation append itself fails the guard says so and exits 3; the
 # reservation stays on the books. Where `flock` exists, audit → cap check →
 # reservation is serialized across concurrent guards via <ledger>.lock.
+#
+# Process groups (#6776): the command runs as a monitor-mode job (`set -m`),
+# so it gets its own process group and every stop (a trapped signal, the kill
+# grace, a normal exit that left helpers behind) signals the whole group, not
+# just its leader; a grandchild that ignores SIGTERM is SIGKILLed with the rest.
+# A background group cannot read the controlling terminal (SIGTTIN would stop
+# it with the reservation open), so a TERMINAL stdin is replaced with EOF
+# (/dev/null) and the guard says so; piped or file stdin is passed through
+# unchanged. Interactive commands are not supported: pipe or redirect their
+# input. (A terminal set to `stty tostop` also stops a background group that
+# writes to it; redirect the command's output there.)
 #
 # The audit itself is fail-closed: a ledger that exists but cannot be read, an
 # awk that exits non-zero, or an audit line that is not `<int> <int> <decimal>
@@ -152,6 +167,81 @@ refuse_unparseable() {
   exit 3
 }
 
+# JSON-escape the command (backslash, quote, EVERY control char) without jq —
+# a character walk in awk under LC_ALL=C, so it is byte-exact and portable
+# (GNU sed's `\t` is not: BSD/macOS sed would have matched a literal `t`).
+# Tabs / CR / LF get their short escapes, other controls `\u00XX`; multi-byte
+# UTF-8 passes through untouched.
+json_escape() {
+  printf '%s' "$1" | LC_ALL=C awk '
+    BEGIN { for (i = 1; i < 32; i++) ctl[sprintf("%c", i)] = i; u = "\\" "u%04x" }
+    {
+      if (NR > 1) printf "\\n"
+      n = length($0)
+      for (i = 1; i <= n; i++) {
+        c = substr($0, i, 1)
+        if (c == "\\") printf "\\\\"
+        else if (c == "\"") printf "\\\""
+        else if (c == "\t") printf "\\t"
+        else if (c == "\r") printf "\\r"
+        else if (c in ctl) printf u, ctl[c]
+        else printf "%s", c
+      }
+    }'
+}
+group_alive() {  # <pgid>; falls back to kill -0 where ps cannot list processes
+  local all
+  all="$(ps -A -o pid=,pgid=,stat= 2>/dev/null)" || { kill -0 -- "-$1" 2>/dev/null; return; }
+  printf '%s\n' "$all" | awk -v g="$1" '$2 == g && $3 !~ /^Z/ { f = 1 } END { exit !f }'
+}
+
+# Stale run leases (r3-d1). While its command runs, a guard records
+# <ledger>.leases/<run_id>.lease (run id, guard pid, process group id, host,
+# boot id) and removes it once the run is reconciled. A guard that was
+# SIGKILLed cannot remove it. Each start looks at the leases this host left:
+# when the guard is gone but its process group may still run (same boot, or a
+# boot id that cannot be read, and the group still has members), it reports
+# the lease path, the pgid and the exact inspect/stop commands, appends a
+# cost-0 status "unknown" row (no run_id, so the stale reservation stays
+# counted at its estimate) and renames the lease to .reported, which a later
+# start removes once the group is gone (or the host rebooted). It never
+# signals anything: whether those processes are still that run's is the
+# operator's call. A lease whose group is gone (or whose host rebooted) is
+# removed; another host's lease is left alone.
+LEASES="$LEDGER.leases"
+LEASE=""
+GUARD_HOST="$(hostname 2>/dev/null || uname -n 2>/dev/null || echo unknown)"
+BOOT_ID="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || sysctl -n kern.boottime 2>/dev/null | sed -E 's/^\{ sec = ([0-9]+).*/\1/' || true)"
+[ -n "$BOOT_ID" ] || BOOT_ID=unknown
+report_stale_leases() {
+  local f k v run pid pgid host boot
+  [ -d "$LEASES" ] || return 0
+  for f in "$LEASES"/*.lease "$LEASES"/*.lease.reported; do
+    [ -f "$f" ] || continue
+    run=""; pid=""; pgid=""; host=""; boot=""
+    while IFS='=' read -r k v; do
+      case "$k" in
+        run_id) run="$v" ;; guard_pid) pid="$v" ;; pgid) pgid="$v" ;; host) host="$v" ;; boot_id) boot="$v" ;;
+      esac
+    done < "$f"
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    case "$pgid" in ''|*[!0-9]*) continue ;; esac
+    [ "$host" = "$GUARD_HOST" ] || continue
+    case "$f" in *.reported) ;; *) kill -0 "$pid" 2>/dev/null && continue ;; esac
+    if [ "$boot" != "$BOOT_ID" ] && [ "$boot" != unknown ] && [ "$BOOT_ID" != unknown ]; then rm -f "$f"; continue; fi
+    if ! group_alive "$pgid"; then rm -f "$f"; continue; fi
+    case "$f" in *.reported) continue ;; esac
+    echo "eval-spend-guard: STALE RUN $run: its guard (pid $pid) is gone but its process group $pgid may still be running; nothing was stopped. Lease: $f" >&2
+    echo "eval-spend-guard:   inspect: ps -o pid,pgid,cmd -g $pgid" >&2
+    echo "eval-spend-guard:   stop it, only if those processes are that run's: kill -TERM -- -$pgid" >&2
+    echo "eval-spend-guard:   the lease is kept as $f.reported and retired automatically once the group exits (or now: rm $f.reported)" >&2
+    printf '{"ts":"%s","status":"unknown","stale_run_id":"%s","pgid":%s,"lease":"%s","reason":"guard_gone_group_may_run","cost_usd":0}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(json_escape "$run")" "$pgid" "$(json_escape "$f")" >> "$LEDGER" \
+      || echo "eval-spend-guard: could not record the stale run in $LEDGER" >&2
+    mv -f "$f" "$f.reported" 2>/dev/null || true
+  done
+}
+
 # Serialize audit → cap check → reservation across concurrent guards where
 # flock exists; elsewhere the reservation row still shrinks the race from the
 # command's whole runtime to the instant between the read and the append.
@@ -159,6 +249,7 @@ LOCK="$LEDGER.lock"
 if command -v flock >/dev/null 2>&1 && ( : >> "$LOCK" ) 2>/dev/null && exec 9>>"$LOCK"; then
   flock -w 60 9 || { echo "eval-spend-guard: REFUSED — could not lock $LOCK within 60s (another guard holds it); command NOT run: $*" >&2; exit 3; }
 fi
+[ -r "$LEDGER" ] && [ -w "$LEDGER" ] && report_stale_leases
 
 # An audit the guard cannot trust is a refusal, never a $0 ledger: gawk exits 0
 # with an all-zero END line on a file it could not open, so the read check, the
@@ -195,28 +286,6 @@ fi
 echo "eval-spend-guard: ledger \$${TOTAL} ($LINES row(s)) + estimate \$${EST} = \$${PROJECTED} <= cap \$${CAP}; launching" >&2
 [ "$OPEN" != "0" ] && echo "eval-spend-guard: $OPEN in-flight reservation(s) counted at their estimate" >&2
 
-# JSON-escape the command (backslash, quote, EVERY control char) without jq —
-# a character walk in awk under LC_ALL=C, so it is byte-exact and portable
-# (GNU sed's `\t` is not: BSD/macOS sed would have matched a literal `t`).
-# Tabs / CR / LF get their short escapes, other controls `\u00XX`; multi-byte
-# UTF-8 passes through untouched.
-json_escape() {
-  printf '%s' "$1" | LC_ALL=C awk '
-    BEGIN { for (i = 1; i < 32; i++) ctl[sprintf("%c", i)] = i; u = "\\" "u%04x" }
-    {
-      if (NR > 1) printf "\\n"
-      n = length($0)
-      for (i = 1; i <= n; i++) {
-        c = substr($0, i, 1)
-        if (c == "\\") printf "\\\\"
-        else if (c == "\"") printf "\\\""
-        else if (c == "\t") printf "\\t"
-        else if (c == "\r") printf "\\r"
-        else if (c in ctl) printf u, ctl[c]
-        else printf "%s", c
-      }
-    }'
-}
 CMD_JSON="$(json_escape "$*")"
 RUN_ID="$(uuidgen 2>/dev/null || printf '%s-%s-%s' "$(date -u +%Y%m%dT%H%M%SZ)" "$$" "$RANDOM$RANDOM")"
 
@@ -242,6 +311,7 @@ reconcile() {  # <cost> <exit_code>; returns 1 when the ledger append fails
   [ "$RECONCILED" = "1" ] && return 0
   RECONCILED=1
   [ "$CLEANUP_COST_FILE" = "1" ] && rm -f "$GBRAIN_EVAL_ACTUAL_COST_FILE"
+  [ -n "$LEASE" ] && rm -f "$LEASE"
   if ! append_row done "$1" "$2"; then
     echo "eval-spend-guard: FAILED to append the reconciliation row to $LEDGER — the \$${EST} reservation for run $RUN_ID stays on the books" >&2
     return 1
@@ -252,26 +322,30 @@ reconcile() {  # <cost> <exit_code>; returns 1 when the ledger append fails
   echo "eval-spend-guard: recorded cost \$${1} (exit $2); ledger now ${AFTER}" >&2
 }
 
-# Stop the command: SIGTERM, then up to KILL_GRACE seconds (10 by default;
-# GBRAIN_EVAL_SPEND_GUARD_KILL_GRACE_SECONDS overrides) before SIGKILL, so a
-# command that ignores SIGTERM cannot keep the guard — and its reservation —
-# hanging forever. Polled in 0.1 s steps; `wait` reaps it either way.
+# Stop the command's process group: SIGTERM, then up to KILL_GRACE seconds (10
+# by default; GBRAIN_EVAL_SPEND_GUARD_KILL_GRACE_SECONDS overrides) before
+# SIGKILL, so a command (or a grandchild) that ignores SIGTERM cannot keep the
+# guard — and its reservation — hanging forever, nor outlive it. Polled in
+# 0.1 s steps; `wait` reaps the leader either way.
 KILL_GRACE="${GBRAIN_EVAL_SPEND_GUARD_KILL_GRACE_SECONDS:-10}"
 case "$KILL_GRACE" in ''|*[!0-9]*) KILL_GRACE=10 ;; esac
 CHILD=""
 stop_child() {
+  local i=0
   [ -n "$CHILD" ] || return 0
-  kill -TERM "$CHILD" 2>/dev/null
-  i=0
-  while [ "$i" -lt "$((KILL_GRACE * 10))" ] && kill -0 "$CHILD" 2>/dev/null; do
-    sleep 0.1
-    i=$((i + 1))
-  done
-  if kill -0 "$CHILD" 2>/dev/null; then
-    echo "eval-spend-guard: command did not exit within ${KILL_GRACE}s of SIGTERM — sending SIGKILL" >&2
-    kill -KILL "$CHILD" 2>/dev/null
+  if group_alive "$CHILD"; then
+    kill -TERM -- "-$CHILD" 2>/dev/null || kill -TERM "$CHILD" 2>/dev/null
+    while [ "$i" -lt "$((KILL_GRACE * 10))" ] && group_alive "$CHILD"; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+    if group_alive "$CHILD"; then
+      echo "eval-spend-guard: command did not exit within ${KILL_GRACE}s of SIGTERM — sending SIGKILL" >&2
+      kill -KILL -- "-$CHILD" 2>/dev/null || kill -KILL "$CHILD" 2>/dev/null
+    fi
   fi
   wait "$CHILD" 2>/dev/null
+  CHILD=""
 }
 on_signal() {  # <signal number>
   trap - INT TERM HUP
@@ -282,6 +356,7 @@ on_signal() {  # <signal number>
 }
 on_exit() {  # <exit status>
   [ "$RESERVED" = "1" ] || return 0
+  stop_child
   reconcile "$EST" "$1" || exit 3
 }
 # Traps BEFORE the reservation: a signal in the append→launch window must
@@ -305,12 +380,36 @@ fi
 exec 9>&-   # release the lock (if held) before the command starts
 echo "eval-spend-guard: reserved \$${EST} (run $RUN_ID)" >&2
 
+# A background process group cannot read the controlling terminal (SIGTTIN
+# would stop it with the reservation open), so a terminal stdin becomes EOF.
+# Piped and file stdin pass through.
+if [ -t 0 ]; then
+  echo "eval-spend-guard: stdin is a terminal, which the command's own process group cannot read; its stdin is EOF (/dev/null). Pipe or redirect input if it needs any." >&2
+  exec </dev/null
+fi
+
 # Run the command as a job so a trapped signal interrupts `wait` (a foreground
 # child would defer the trap until it exited). `<&0` keeps the child's stdin.
+# Monitor mode gives the job its own process group (pgid = its pid) without an
+# external setsid, which macOS does not ship.
+set -m
 "$@" <&0 &
 CHILD=$!
+set +m
+if mkdir -p "$LEASES" 2>/dev/null && printf 'run_id=%s\nguard_pid=%s\npgid=%s\nhost=%s\nboot_id=%s\nstarted=%s\n' \
+    "$RUN_ID" "$$" "$CHILD" "$GUARD_HOST" "$BOOT_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$LEASES/$RUN_ID.lease" 2>/dev/null; then
+  LEASE="$LEASES/$RUN_ID.lease"
+else
+  echo "eval-spend-guard: could not write the run lease under $LEASES; a later guard cannot report this run if the guard is SIGKILLed" >&2
+fi
 wait "$CHILD"
 CODE=$?
+# Settle: anything the command left running in its group is stopped too.
+if group_alive "$CHILD"; then
+  echo "eval-spend-guard: the command exited but left processes in its process group; stopping them" >&2
+  stop_child
+fi
+CHILD=""
 trap - INT TERM HUP
 
 # Actual cost: bare unsigned number or JSON with unsigned cost_usd, and it

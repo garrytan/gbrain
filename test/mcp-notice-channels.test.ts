@@ -17,6 +17,8 @@ import {
   chatKeyFix, keylessThinkNotice, thinkNotSavedNotice, degradedDedupNotice,
 } from '../src/core/interop-notices.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { importFromContent } from '../src/core/import-file.ts';
+import { serializeMarkdown } from '../src/core/markdown.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 
 let engine: PGLiteEngine;
@@ -92,10 +94,34 @@ describe('degraded recall over MCP dispatch (keyless PGLite)', () => {
   async function seedPage() {
     await engine.putPage('notes/alpha', { type: 'note', title: 'Alpha', compiled_truth: 'Alpha body about widgets.', timeline: '', frontmatter: {} }, { sourceId: 'default' });
   }
+  /** A page that is indexed and safety-checked, so a keyless search's only degradation is the configuration-persistent embed_unavailable. */
+  async function importPage() {
+    await importFromContent(engine, 'notes/alpha', serializeMarkdown({}, 'Alpha body about widgets.', '', { type: 'note', title: 'Alpha', tags: [] }), { noEmbed: true, forceRechunk: true });
+  }
+  const noticeBlocks = (res: { content: Array<{ text: string }> }) => res.content.filter(c => c.text.startsWith('[gbrain notice degraded_recall'));
+
+  test('stdio: two keyless searches show one degraded_recall notice; a transient stage on the same search rides every call', async () => {
+    await withEnv(NO_KEYS, async () => {
+      await importPage();
+      const opts = { remote: true, transport: 'stdio' as const, sourceId: 'default', config: keylessUnchosen, noticeLedger: new (await import('../src/core/notice-ledger.ts')).NoticeLedger() };
+      const first = await dispatchToolCall(engine as any, 'search', { query: 'widgets' }, opts);
+      const degraded = (first._meta?.retrieval as { degraded?: Array<{ stage: string; reason?: string }> }).degraded;
+      expect(degraded).toEqual([{ stage: 'embed_unavailable', reason: 'no_provider' }]);
+      expect(JSON.parse(first.content[0].text).length).toBeGreaterThan(0);
+      expect(noticeBlocks(first)).toHaveLength(1);
+      const second = await dispatchToolCall(engine as any, 'search', { query: 'widgets' }, opts);
+      expect(noticeBlocks(second)).toHaveLength(0);
+      // keyword_zero (no match for these terms) is this call's own state: the notice rides each such call.
+      for (let i = 0; i < 2; i++) {
+        const miss = await dispatchToolCall(engine as any, 'search', { query: 'zeppelin' }, opts);
+        expect(noticeBlocks(miss)[0]?.text).toContain('keyword_zero');
+      }
+    });
+  }, 60_000);
 
   test('stdio: content[0] unchanged, a prefixed degraded block + _meta.gbrain_notices, once per session', async () => {
     await withEnv(NO_KEYS, async () => {
-      await seedPage();
+      await importPage();
       const opts = { remote: true, transport: 'stdio' as const, sourceId: 'default', config: keylessUnchosen };
       const first = await dispatchToolCall(engine as any, 'search', { query: 'widgets' }, opts);
       expect(first.isError).toBeUndefined();

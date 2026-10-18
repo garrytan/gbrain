@@ -37,7 +37,19 @@ function namedTools(text: string): string[] {
 const PRE_F1_BYTES = 4042;
 /** #6007: the issue's acceptance criteria require write guidance (put_pages, wait_ms) in initialize. */
 const WRITING_CLAUSE_BYTES = 240;
-const LANE_I_CEILING = Math.floor(PRE_F1_BYTES * 1.15) + WRITING_CLAUSE_BYTES;
+/**
+ * Cat 40 Hard round 4 (fa520b72b): instruction 7's batching clause (resolve many
+ * names or codes in one call, issue independent calls together) added 194 bytes
+ * on every surface serving `entity` and `search`; measured in DEV-RECORD.md on
+ * gbrain-evals#93 (round 4, pooled +4.9 points over fs).
+ */
+const BATCHING_CLAUSE_BYTES = 200;
+/**
+ * d5b (Cat 40 next wave): the brief clause says the walk is on the single-name card and names the fields compact
+ * `entity names` rows carry on this brain (`next`, and `records` when record types are enrolled); 70 bytes at most.
+ */
+const NAMES_ROW_REFERENCES_BYTES = 70;
+const LANE_I_CEILING = Math.floor(PRE_F1_BYTES * 1.15) + WRITING_CLAUSE_BYTES + BATCHING_CLAUSE_BYTES + NAMES_ROW_REFERENCES_BYTES;
 /** Claude Code reads only the first 2,048 characters of a server's initialize instructions. */
 const HARNESS_READ_LIMIT = 2_048;
 
@@ -68,12 +80,14 @@ describe('F1 generated instructions', () => {
   });
 
   test('entity recall brief: on every surface serving entity; get_backlinks named only where callable', () => {
-    const brief = 'For a brief on an account, person or company, call `entity`, then walk `referenced_by`';
+    // d5b: the walk is on the single-name card; a `names` row carries no `referenced_by`.
+    const brief = "For a brief on an account, person or company, walk the `entity` card's `referenced_by`";
     for (const surface of SURFACES) {
       const listed = new Set(filterOpsForSurface(operations, surface).map(o => o.name));
       const text = buildMcpInstructions({ tools: { callable: n => listed.has(n) } });
       expect({ surface, brief: text.includes(brief) }).toEqual({ surface, brief: listed.has('entity') });
-      expect({ surface, backlinks: text.includes('or `get_backlinks` by type.') }).toEqual({ surface, backlinks: listed.has('entity') && listed.has('get_backlinks') });
+      expect(text).not.toContain('call `entity`, then walk');
+      expect({ surface, backlinks: text.includes('or `get_backlinks` by type') }).toEqual({ surface, backlinks: listed.has('entity') && listed.has('get_backlinks') });
       expect(text).not.toContain('appear under several names');
     }
     const noEntity = buildMcpInstructions({ tools: { callable: n => n !== 'entity' } });
@@ -84,11 +98,18 @@ describe('F1 generated instructions', () => {
   test('recorded tail-free instruction sizes per surface', () => {
     // #6007: starter +140 and full +230 for the write guidance (wait_ms; put_pages where it is served), within WRITING_CLAUSE_BYTES.
     // #6170: the error clause was shortened and the forget caveat moved; every surface shrank (2_243 / 4_686 / 4_837 before).
-    const recorded = { verbs: 2_186, starter: 4_630, full: 4_781 };
+    // Cat 40 Hard round 4: instruction 7's batching clause (BATCHING_CLAUSE_BYTES); starter 4_630 -> 4_824 and full 4_781 -> 4_975.
+    // d5b: the brief names the fields compact `entity names` rows carry (NAMES_ROW_REFERENCES_BYTES): +39 at the default
+    // (names-row references on, no records) on every surface serving entity; +70 with records enrolled (maximal).
+    // F4: instruction 7's governing rule (in effect on the date asked about), +63 on starter and full; verbs serves no clause 7.
+    const recorded = { verbs: 2_225, starter: 4_926, full: 5_077 };
+    const maximal = { verbs: 2_256, starter: 4_957, full: 5_108 };
     for (const surface of SURFACES) {
       const listed = new Set(filterOpsForSurface(operations, surface).map(o => o.name));
       const size = buildMcpInstructions({ tools: { callable: n => listed.has(n) } }).length;
       expect({ surface, fits: size <= recorded[surface] }).toEqual({ surface, fits: true });
+      const max = buildMcpInstructions({ tools: { callable: n => listed.has(n) }, references: { namesRow: true, records: true } }).length;
+      expect({ surface, fits: max <= maximal[surface] }).toEqual({ surface, fits: true });
     }
   });
 
@@ -113,6 +134,7 @@ describe('F1 generated instructions', () => {
     test(`${surface}: tail-free contract stays within +15% of the pre-F1 contract`, () => {
       const listed = new Set(filterOpsForSurface(operations, surface).map(o => o.name));
       expect(Buffer.byteLength(buildMcpInstructions({ tools: { callable: n => listed.has(n) } }))).toBeLessThanOrEqual(LANE_I_CEILING);
+      expect(Buffer.byteLength(buildMcpInstructions({ tools: { callable: n => listed.has(n) }, references: { namesRow: true, records: true } }))).toBeLessThanOrEqual(LANE_I_CEILING);
     });
   }
 

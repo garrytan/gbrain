@@ -6,21 +6,27 @@
  * + missing-context bugs; this module exists to prevent that recurring.
  */
 
+import { writeReceiptCapacityNotices } from '../core/persistence/capacity-snapshot.ts';
 import { affectsRecall } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, enforceBoundClientOpAllowList, opError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
+import type { OperationMeta } from '../core/ops/contract.ts';
 import { loadConfig } from '../core/config.ts';
+import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
 import { cliRenderContext, orderNotices, redactForTransport, renderNotice, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
 import { cliOnlyRefusal, isCallable } from '../core/ops/callable.ts';
 import { hostFix, scopeDeniedError } from '../core/ops/op-fix.ts';
-import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger } from '../core/notice-ledger.ts';
-import { logVerbUsage } from '../core/verbs/usage-log.ts';
-import { localTranscriptsNotice, recallInteropNotices, wantsTranscriptHint } from '../core/interop-notices.ts';
-import { hiddenToolHint } from './hidden-tool-hint.ts';
+import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger, type NoticeAudience } from '../core/notice-ledger.ts';
+import { logVerbUsage, recordsFiring, type RecordsFiring } from '../core/verbs/usage-log.ts';
+import { searchCountLine } from '../core/search/keyword-paging.ts';
+import { dateLabelLine } from '../core/search/date-labels.ts';
+import { hiddenTakesNotice, localTranscriptsNotice, recallInteropNotices, wantsTranscriptHint } from '../core/interop-notices.ts';
+import { hiddenToolHint, hiddenToolNext, hiddenToolRoute, type ToolConnection } from './hidden-tool-hint.ts';
+import { opAllowedForBoundClient } from '../core/ops/context.ts';
 import { takePostUpgradeMcpNotice } from '../core/post-upgrade-notice.ts';
 import { takeHttpBehaviorNotice, takeLocalBehaviorNotice } from '../core/behavior-change-notice.ts';
 import { takeChatFallbackHopNotices } from '../core/ai/fallback-hop-queue.ts';
@@ -39,9 +45,11 @@ import {
 import { backupCheckDisabled, backupNagGate, backupNoticeText, loadBackupStatus } from '../core/backup/status-file.ts';
 import { maybeRefreshBackupStatusInProcess } from '../core/backup/coverage.ts';
 import { operationScopesAllowed } from '../core/scope.ts';
+import { enforceReadTrustFloor } from '../core/eligibility/registry.ts';
 import { invalidateHotMemoryForEngine } from '../core/facts/meta-hook.ts';
 import { admittedPendingReceipt, type WriteReceipt } from '../core/persistence/types.ts';
 import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, withVerifiedLocalRegistration } from '../core/persistence/identity.ts';
+import { frameOverCap, resultTooLargeError } from '../core/egress-budget.ts';
 
 // WP3: normalization + validation moved to validate-params.ts (direct unit
 // surface). Re-exported here so existing imports/tests keep working.
@@ -153,6 +161,8 @@ export interface ToolResult {
 }
 
 export interface DispatchOpts {
+  /** #6696 (A5): set by the trusted transport for the user's own agent calls; never from wire params. */
+  admissionOrigin?: OperationContext['admissionOrigin'];
   /** Configuration selected by the resident transport, never populated from wire params. */
   config?: OperationContext['config'];
   /** Defaults to true (remote/untrusted). Local CLI callers (`gbrain call`) pass false. */
@@ -266,8 +276,16 @@ export interface DispatchOpts {
   stdioSurface?: OperationContext['stdioSurface'];
   /** Threaded into OperationContext.revealTools (stdio session tool reveal). */
   revealTools?: (names: string[]) => void;
+  /**
+   * D2: whether this connection's tools/list shows a callable tool (the
+   * advertised surface can list fewer tools than the callable set). Unset =
+   * every callable tool counts as listed.
+   */
+  isListed?: (op: OperationMeta) => Promise<boolean>;
   /** #5232: commit wait for coordinated writes (OperationContext.writeWaitMs); unset = agent default. */
   writeWaitMs?: number;
+  /** Large pages: the caller sent X-Gbrain-Client (OperationContext.thinClient). Shape only, never authority. */
+  thinClient?: boolean;
   /** C1: search/query row shape chosen by the transport (OperationContext.resultRows); unset = lean for remote callers. */
   resultRows?: OperationContext['resultRows'];
 }
@@ -370,7 +388,7 @@ export function summarizeMcpParams(opName: string, params: unknown): ParamSummar
 /**
  * Model-visible notices the search/query ops attach to `_meta.retrieval`: the
  * D8 empty-retrieval diagnosis, a reconciled type filter, other names declared in the evidence, and saved
- * facts that match the query. Each rides as its own text block after the
+ * facts that match the query, search's keyword count line and the row-date label. Each rides as its own text block after the
  * results (content[0] stays the bare result array for thin clients).
  */
 export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): string[] {
@@ -379,7 +397,7 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
   const r = retrieval as {
     type_filter_notice?: unknown;
     other_names?: Array<{ name: string; alias: string; slug: string }>;
-    saved_facts?: Array<{ fact: string; entity_slug: string | null; valid_from: string; source: string }>;
+    saved_facts?: Array<{ fact: string; entity_slug: string | null; valid_from: string; source: string; linked_from?: string }>;
     answer_id?: unknown;
     feedback?: { rateable?: boolean; how_to_rate?: string };
   };
@@ -391,11 +409,17 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
     blocks.push(`${text}${more ? ` (+${more} more)` : ''}.`);
   }
   if (r.saved_facts?.length) {
-    const { text, more } = wholeItemsWithin('Saved facts (remember) matching this query, newest first; recall returns more:\n',
-      r.saved_facts.map(f => `- ${f.fact} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}]`),
+    const { text, more } = wholeItemsWithin('Saved facts (remember): about the entity this query names (newest first), then facts those point to, then matches for its words; recall returns more:\n',
+      r.saved_facts.map(f => `- ${f.fact} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}${f.linked_from ? `; named in a saved fact about ${f.linked_from}` : ''}]`),
       '\n', SAVED_FACTS_NOTICE_MAX_CHARS);
     blocks.push(more ? `${text}\n(+${more} more; recall returns them)` : text);
   }
+  // F2: which set the rows are and which set the keyword count covers, on every search call.
+  const countLine = searchCountLine(result, retrieval);
+  if (countLine) blocks.push(countLine);
+  // F4: what each row's effective_date is (document, event or fallback date), never contractual validity.
+  const dateLine = dateLabelLine(result);
+  if (dateLine) blocks.push(dateLine);
   if (typeof r.answer_id === 'string' && r.feedback?.rateable === true) blocks.push(rateLine(r.answer_id, typeof r.feedback.how_to_rate === 'string'));
   return blocks;
 }
@@ -531,18 +555,18 @@ export function requestLogStatusForResult(result: ToolResult): RequestLogStatus 
  * gate state is unknown here, and a suggestion naming a hidden/gated op
  * would be the exact existence oracle this envelope exists to prevent.
  */
-export function unknownToolEnvelope(name: string, opts: DispatchOpts, legacyError?: 'unknown_operation'): ToolResult {
+export function unknownToolEnvelope(name: string, opts: DispatchOpts, legacyError?: 'unknown_operation', notices: Notice[] = []): ToolResult {
   const allowedOps = opts.allowedOps;
   const candidates = operations
     .filter(op => !op.localOnly && !op.publishGateKey && (allowedOps ? allowedOps.has(op.name) : true))
     .map(op => op.name);
   const nearest = suggestNearest(name, candidates);
-  const hint = hiddenToolHint(operations.find(o => o.name === name), opts, dispatchRenderContext(opts).isCallable('request_tools') && opts.stdioSurface?.widenAllowed !== false); // F6: owner's stdio pipe only
+  const hint = hiddenToolHint(operations.find(o => o.name === name), { ...opts, readOnly: opts.stdioSurface?.readOnly }, toolConnection(opts).canWiden); // F6: owner's stdio pipe only
   const suggestion = hint?.suggestion ?? (nearest
     ? `Did you mean "${nearest}"?`
     : 'List the tools this connection can call (tools/list) and use one of those names.');
   return errorResult(opError('unknown_tool', legacyError ? `Unknown: ${name}` : `Unknown tool: ${name}`, suggestion,
-    { ...(legacyError ? { legacy_error: legacyError } : {}), ...(hint ? { fix: hint.fix } : {}) }), opts);
+    { ...(legacyError ? { legacy_error: legacyError } : {}), ...(hint ? { fix: hint.fix } : {}) }), opts, { notices: admitNotices(notices, opts) });
 }
 
 /**
@@ -565,7 +589,7 @@ export function dispatchRenderContext(opts: DispatchOpts): RenderContext {
       const op = byName.get(opName);
       return !!op && isCallable(op, {
         transport, surface, scopes: opts.auth?.scopes ?? [], publishGates: {}, allowedOps: opts.allowedOps,
-      });
+      }) && (transport === 'cli' || opAllowedForBoundClient(opts.auth, op));
     },
     preapproved: () => false,
     ...(opts.auth?.clientId ? { principal: opts.auth.clientId } : {}),
@@ -587,15 +611,135 @@ export function localCallErrorEnvelope(tool: string, e: unknown) {
  * ServeHttpContext ledger. Session identity is the transport-resolved id only.
  * Fail-open: a ledger fault delivers every notice.
  */
-function admitNotices(notices: Notice[], opts: DispatchOpts): Notice[] {
+function noticeAudience(opts: DispatchOpts): NoticeAudience {
+  return { transport: opts.transport === 'stdio' ? 'stdio' : opts.remote === false ? 'cli' : 'http', principal: opts.auth?.clientId, sessionId: opts.sessionId };
+}
+
+export function admitNotices(notices: Notice[], opts: DispatchOpts): Notice[] {
   if (notices.length === 0) return notices;
   try {
-    const principal = opts.auth?.clientId;
-    const transport = opts.transport === 'stdio' ? 'stdio' : opts.remote === false ? 'cli' : 'http';
-    return (opts.noticeLedger ?? processNoticeLedger()).admit(notices,
-      { transport, principal, sessionId: opts.sessionId }, mutedNoticeCodes(principal ?? (transport === 'stdio' ? 'stdio' : undefined)));
+    const audience = noticeAudience(opts);
+    return (opts.noticeLedger ?? processNoticeLedger()).admit(notices, audience,
+      mutedNoticeCodes(audience.principal ?? (audience.transport === 'stdio' ? 'stdio' : undefined)));
   } catch {
     return notices;
+  }
+}
+
+/**
+ * The hidden-tool route inputs for one dispatch caller (F6 and D2 share
+ * them): stdio widens its own session when widening is on; an HTTP OAuth
+ * client widens its own surface up to the server ceiling unless the brain
+ * owner pinned it; the grant (scopes, snapshot, fence) bounds both.
+ */
+export function toolConnection(opts: DispatchOpts): ToolConnection {
+  const render = dispatchRenderContext(opts);
+  const http = render.transport === 'http';
+  const auth = opts.auth;
+  return {
+    transport: render.transport,
+    surface: opts.surface ?? 'full',
+    readOnly: opts.stdioSurface?.readOnly,
+    ceiling: http ? opts.surfaceCeiling ?? opts.surface ?? 'full' : 'full',
+    canWiden: render.isCallable('request_tools') && (http
+      ? auth?.principal?.kind === 'oauth_client' && auth.surfaceSetBy !== 'operator'
+      : opts.stdioSurface?.widenAllowed !== false),
+    isCallable: render.isCallable,
+    grantAllows: op => opAllowedForBoundClient(auth, op) && (!http || operationScopesAllowed(auth?.scopes ?? [], op)),
+  };
+}
+
+/** Reads whose result never shows the takes table to an agent-facing reader. */
+const HIDDEN_TAKES_OPS: ReadonlySet<string> = new Set(['get_page', 'search', 'query']);
+
+/**
+ * D2 `hidden_tool_content`: a page read or search that left out takes says
+ * so, with the next step this connection can actually take (the
+ * hidden-tool route): call takes_list (stdio also lists it), widen with
+ * request_tools, or the brain owner's repair. Silent when takes_list is
+ * already in this connection's tool list. Never throws.
+ */
+async function hiddenContentNotices(engine: BrainEngine, name: string, result: unknown, ctx: OperationContext, opts: DispatchOpts): Promise<Notice[]> {
+  if (opts.remote === false || !HIDDEN_TAKES_OPS.has(name)) return [];
+  try {
+    const op = operations.find(o => o.name === 'takes_list');
+    const conn = toolConnection(opts);
+    const route = hiddenToolRoute(op, conn);
+    if (!op || !route) return [];
+    if (route.kind === 'callable' && (!opts.isListed || await opts.isListed(op))) return [];
+    const { takesHiddenFromResult } = await import('../core/ops/takes.ts');
+    const hidden = await takesHiddenFromResult(ctx, name, result);
+    if (!hidden) return [];
+    const host = route.kind === 'host' && conn.transport === 'http' && opts.auth
+      ? (await import('../core/harness/capabilities.ts')).grantRepairAction(await sessionGrantDiagnosis(engine, opts)) : null;
+    const what = `the takes on ${hidden.pages[0]}`;
+    const fix = hiddenToolNext(op, { tool: op.name, arguments: { page_slug: hidden.pages[0] } }, route, conn, what, host);
+    if (route.kind === 'callable') opts.revealTools?.([op.name]);
+    return [hiddenTakesNotice(hidden, route.kind, fix)];
+  } catch {
+    return [];
+  }
+}
+
+/** A refusal a grant explains: a missing scope or an operation outside the grant's snapshot or fence. */
+function refusedByGrant(e: unknown): boolean {
+  return e instanceof OperationError && (e.code === 'insufficient_scope' || e.code === 'permission_denied');
+}
+
+/**
+ * D4 `grant_blocked_operations` on the connection's own authenticated path:
+ * the shared capabilities resolver diagnoses the verifier's principal
+ * (never a display name) and the notice reaches it once per (principal,
+ * transport session); a stateless call with no session id counts once per
+ * (principal, grant revision), so three stateless calls get one notice and a
+ * rescoped grant is diagnosed afresh. A missing scope is reported only on a
+ * refused call. Never throws; a failure delivers nothing.
+ */
+export async function grantBlockedNotices(engine: BrainEngine, opts: DispatchOpts, refused: boolean): Promise<Notice[]> {
+  const auth = opts.auth;
+  const principal = auth?.principal;
+  if (!auth || !principal || opts.remote === false) return [];
+  try {
+    const { grantBlockedNotice } = await import('../core/harness/capabilities.ts');
+    const notice = grantBlockedNotice(await sessionGrantDiagnosis(engine, opts), { refused });
+    return notice && (opts.noticeLedger ?? processNoticeLedger()).claim(`grant_blocked_operations|${grantSessionKey(auth, principal, opts.sessionId)}`) ? [notice] : [];
+  } catch {
+    return [];
+  }
+}
+
+/** The D4 session: (principal, transport session), or (principal, grant revision) for a stateless call. */
+function grantSessionKey(auth: AuthInfo, principal: NonNullable<AuthInfo['principal']>, sessionId: string | undefined): string {
+  const revision = Number.isSafeInteger(auth.grantRevision) ? String(auth.grantRevision) : 'none';
+  return `${principal.kind}:${principal.id}|${sessionId ? `session:${sessionId.slice(0, SESSION_ID_MAX_CHARS)}` : `revision:${revision}`}`;
+}
+
+/** The shared capabilities resolver's diagnosis for this caller, computed once per D4 session and grant revision. */
+async function sessionGrantDiagnosis(engine: BrainEngine, opts: DispatchOpts) {
+  const auth = opts.auth!;
+  const { resolveGrantDiagnosis } = await import('../core/harness/capabilities.ts');
+  const revision = Number.isSafeInteger(auth.grantRevision) ? String(auth.grantRevision) : 'none';
+  const compute = () => resolveGrantDiagnosis(auth, engine, opts.config ?? loadConfig() ?? { engine: 'postgres' }, { surfaceCeiling: opts.surfaceCeiling });
+  if (!auth.principal) return compute();
+  return (opts.noticeLedger ?? processNoticeLedger()).memoize(`grant_diagnosis|${grantSessionKey(auth, auth.principal, opts.sessionId)}|${revision}`, compute);
+}
+
+/**
+ * Cat 40 R0: a search/query whose reranker failed counts toward this
+ * session's reranker-degraded calls, and its own `_meta.retrieval` records
+ * the reason, the fallback and that count (no `fields: "full"` needed).
+ * Returns the session count, or undefined when the reranker did not fail.
+ */
+function recordRerankDegradation(responseMeta: Record<string, unknown>, opts: DispatchOpts): number | undefined {
+  try {
+    const retrieval = responseMeta.retrieval as { degraded?: Array<{ stage?: string; reason?: string }> } | undefined;
+    const failed = retrieval?.degraded?.find(d => d.stage === 'rerank_failed');
+    if (!retrieval || !failed) return undefined;
+    const calls = (opts.noticeLedger ?? processNoticeLedger()).tally(noticeAudience(opts), 'rerank_failed');
+    responseMeta.retrieval = { ...retrieval, rerank_degraded: { reason: failed.reason ?? 'provider_error', fallback: 'fused_order', calls_this_session: calls } };
+    return calls;
+  } catch {
+    return undefined;
   }
 }
 
@@ -682,6 +826,7 @@ export function buildOperationContext(
     (typeof opts.sessionId === 'string' && opts.sessionId.length > 0
       ? opts.sessionId.slice(0, SESSION_ID_MAX_CHARS)
       : undefined) ?? metaSessionIdFrom(params);
+  let render: RenderContext | undefined;
   return {
     engine,
     config: opts.config ?? loadConfig() ?? { engine: 'postgres' },
@@ -702,7 +847,10 @@ export function buildOperationContext(
     ...(opts.stdioSurface ? { stdioSurface: opts.stdioSurface } : {}),
     ...(opts.revealTools ? { revealTools: opts.revealTools } : {}),
     ...(opts.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
+    ...(opts.admissionOrigin ? { admissionOrigin: opts.admissionOrigin } : {}),
     ...(opts.resultRows ? { resultRows: opts.resultRows } : {}),
+    ...(opts.thinClient ? { thinClient: true } : {}),
+    isCallable: (opName: string) => (render ??= dispatchRenderContext(opts)).isCallable(opName),
     auth: opts.auth,
   };
 }
@@ -719,11 +867,25 @@ export async function dispatchToolCall(
   params: Record<string, unknown> | undefined,
   opts: DispatchOpts = {},
 ): Promise<ToolResult> {
+  // #6721: a read op answers every config read from one snapshot of the table
+  // (config-snapshot.ts); a write reads config live, so it sees its own writes.
+  const run = () => dispatchResolvedCall(engine, name, params, opts);
+  return operations.find(o => o.name === name)?.mutating === false
+    ? withRequestConfigSnapshot(engine, run)
+    : withoutRequestConfigSnapshot(run);
+}
+
+async function dispatchResolvedCall(
+  engine: BrainEngine,
+  name: string,
+  params: Record<string, unknown> | undefined,
+  opts: DispatchOpts,
+): Promise<ToolResult> {
   const startedMs = Date.now();
   const isVerb = VERB_NAME_SET.has(name);
   // [c11] dispatch-layer usage sidecar for the five verbs — counts validation
   // failures too. Fire-and-forget; never awaited, never throws.
-  const logVerb = (ok: boolean, extra?: { budget_dropped?: number; entity_found?: boolean; remember_status?: string }) => {
+  const logVerb = (ok: boolean, extra?: { budget_dropped?: number; entity_found?: boolean; remember_status?: string; records_firing?: RecordsFiring }) => {
     if (!isVerb) return;
     logVerbUsage({
       verb: name,
@@ -740,7 +902,7 @@ export async function dispatchToolCall(
   // on every transport, not just unlisted. Same envelope as unknown ops so
   // the surface doesn't leak which names exist.
   if (opts.allowedOps && !opts.allowedOps.has(name)) {
-    return unknownToolEnvelope(name, opts);
+    return unknownToolEnvelope(name, opts, undefined, await grantBlockedNotices(engine, opts, true));
   }
 
   const op = operations.find(o => o.name === name);
@@ -750,7 +912,7 @@ export async function dispatchToolCall(
     // plain `Error: ...` string here breaks the contract on every
     // unknown-op path and the resulting test failure looked like a
     // transport bug.
-    return unknownToolEnvelope(name, opts);
+    return unknownToolEnvelope(name, opts, undefined, await grantBlockedNotices(engine, opts, true));
   }
 
   // localOnly backstop at the SHARED layer (WP1/D7): localOnly ops reach the
@@ -761,7 +923,7 @@ export async function dispatchToolCall(
   // serve-http path also filters these at list time; the legacy bearer
   // transport at surface 'full' had no gate at all before this line.
   if (op.localOnly && opts.transport !== 'stdio') {
-    return unknownToolEnvelope(name, opts);
+    return unknownToolEnvelope(name, opts, undefined, await grantBlockedNotices(engine, opts, true));
   }
   // F5: an owner-only op is never listed on MCP; a call gets the exact CLI command.
   if (op.cliOnly && opts.remote !== false) return errorResult(cliOnlyRefusal(op), opts, { op: name });
@@ -809,10 +971,11 @@ export async function dispatchToolCall(
   // `dry_run` are allowlisted inside findUnknownParams. The mode resolves
   // dual-plane (DB > file > 'warn') once per dispatch, and only when an
   // unknown key actually exists — the all-declared common case pays no
-  // config read.
+  // config read. #5970: a write (`op.mutating`) rejects in every mode; the
+  // warn grace period would commit a row with the misnamed field dropped.
   const unknownParamWarnings = findUnknownParams(op, safeParams);
   if (unknownParamWarnings.length > 0) {
-    const strictMode = await resolveStrictParamsMode(engine, opts.config ?? loadConfig());
+    const strictMode = op.mutating === true ? 'reject' : await resolveStrictParamsMode(engine, opts.config ?? loadConfig());
     if (strictMode === 'reject') {
       logVerb(false);
       // Privacy (amendment 11): the raw unknown key rides `suggestion` ONLY.
@@ -826,7 +989,7 @@ export async function dispatchToolCall(
           : `Unknown parameter "${w.param}".`)
         .join(' ');
       const strict = new OperationError('invalid_params',
-        `${n} unknown parameter${n === 1 ? '' : 's'} not declared in the ${name} tool schema (mcp.strict_params=reject). See suggestion for the submitted name${n === 1 ? '' : 's'}.`,
+        `${n} unknown parameter${n === 1 ? '' : 's'} not declared in the ${name} tool schema (${op.mutating === true ? 'write operations always reject unknown parameters; nothing was written' : 'mcp.strict_params=reject'}). See suggestion for the submitted name${n === 1 ? '' : 's'}.`,
         suggestion);
       if (isVerb) strict.protocolVersion = MEMORY_VERBS_VERSION;
       return errorResult(strict, opts, { op: name });
@@ -895,6 +1058,8 @@ export async function dispatchToolCall(
     // run inside the handlers; this stops an unfenced write op from being
     // a silent hole. See CLIENT_FENCED_WRITE_OPS in operations.ts.
     enforceBoundClientOpAllowList(ctx.auth, op);
+    // #5575 CEO-18: a floored connection only reaches read ops that enforce its floor.
+    enforceReadTrustFloor(ctx.auth, op);
     const sharedStdio = ctx.transport === 'stdio' && !ctx.auth &&
       (op.requiredScopes?.length || ['list_skills', 'get_skill', 'get_skill_asset', 'list_brain_skillpack'].includes(name));
     let registration: Awaited<ReturnType<typeof readLocalWriter>> | undefined;
@@ -913,18 +1078,19 @@ export async function dispatchToolCall(
         return op.handler(ctx, safeParams);
       })
       : await op.handler(ctx, safeParams);
-    // Hot memory built before a write (forget, remember, …) is never served after it, on every transport.
-    if (op.mutating) invalidateHotMemoryForEngine(engine);
+    // Hot memory built before a write (forget, remember, …) is never served after it, on every transport;
+    // #6696 (A4): the write's receipt carries the capacity notices (60 s snapshot, at most hourly per scope).
+    if (op.mutating) { invalidateHotMemoryForEngine(engine); notices.push(...await writeReceiptCapacityNotices(engine, ctx)); }
     // [E4] verb success metrics: budget drops + entity hit/miss when present.
     {
       const r = result as { dropped_count?: number; found?: boolean; status?: string } | null;
       logVerb(true, {
         ...(typeof r?.dropped_count === 'number' ? { budget_dropped: r.dropped_count } : {}),
         ...(name === 'entity' && typeof r?.found === 'boolean' ? { entity_found: r.found } : {}),
-        // remember's frozen status enum (inserted|duplicate|superseded) —
-        // the memory_writeback doctor counters read this (all-MCP-callers
-        // semantics, labeled honestly there; OV-A11).
+        // remember's frozen status enum (inserted|duplicate|superseded) — the memory_writeback
+        // doctor counters read this (all-MCP-callers semantics, labeled honestly there; OV-A11).
         ...(name === 'remember' && typeof r?.status === 'string' ? { remember_status: r.status } : {}),
+        ...((name === 'entity' || name === 'context_pack') && recordsFiring(result) ? { records_firing: recordsFiring(result)! } : {}),
       });
     }
     // D8: model-visible loudness for empty retrievals. The body stays a bare
@@ -944,8 +1110,10 @@ export async function dispatchToolCall(
       notices.push({ code: 'unknown_param', kind: 'info', why: buildUnknownParamWarnBlock([w]) });
     }
     // Lane F (F3): degraded recall and a source binding that narrowed an empty read.
+    const rerankDegradedCalls = recordRerankDegradation(responseMeta, opts);
     notices.push(...recallInteropNotices(name, result, responseMeta, safeParams,
-      { config: ctx.config, transport: dispatchRenderContext(opts).transport, binding: ctx.explicitReadBinding }));
+      { config: ctx.config, transport: dispatchRenderContext(opts).transport, binding: ctx.explicitReadBinding, rerankDegradedCalls }));
+    notices.push(...await hiddenContentNotices(engine, name, result, ctx, opts));
     // Monthly backup-coverage: one AGGREGATE notice per process (counts only —
     // never a local path or source id). The refresher runs on the stdio
     // transport ONLY — the WP1/D7 locality axis localOnly ops use; 'http' or
@@ -964,6 +1132,7 @@ export async function dispatchToolCall(
     if (opts.transport === 'stdio' && opts.remote !== false) notices.push(...await mcpOnboardingNotices({ engine, op: name, result, meta: responseMeta, config: ctx.config, render: dispatchRenderContext(opts) }));
     if (opts.transport === 'stdio' && opts.remote !== false) { const drain = takeFactsDrainNotice(); if (drain) notices.push(drain); } // Lane D facts drain
     notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
+    notices.push(...await grantBlockedNotices(engine, opts, false));
     const out: ToolResult = toolResultWithNotices(result, admitNotices(notices, opts), dispatchRenderContext(opts));
     if (evidenceBlocks.length > 0) out.content.splice(1, 0, ...evidenceBlocks.map(text => ({ type: 'text' as const, text })));
     if (opts.transport === 'stdio') {
@@ -990,6 +1159,9 @@ export async function dispatchToolCall(
         ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${msg}; degrading to no hook keys`);
       }
     }
+    // Large pages: the egress backstop measures the final frame; a read over the connection's cap is refused whole, never cut.
+    const over = op.mutating ? null : await frameOverCap(out, { remote: ctx.remote, transport: ctx.transport, engine, config: ctx.config });
+    if (over) return errorResult(resultTooLargeError(name, safeParams, over), opts, { op: name, mutating: false, idempotent: op.idempotent === true });
     return out;
   } catch (e: unknown) {
     logVerb(false);
@@ -999,6 +1171,7 @@ export async function dispatchToolCall(
     // which redacts raw messages, keeps verbs on their frozen v1 codes, and
     // never tells a mutating op with an unknown outcome to retry.
     notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
+    notices.push(...await grantBlockedNotices(engine, opts, refusedByGrant(e)));
     return errorResult(e, opts, { op: name, mutating: op.mutating === true, idempotent: op.idempotent === true, notices: admitNotices(notices, opts) });
   }
 }

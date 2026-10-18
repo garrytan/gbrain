@@ -58,6 +58,8 @@ const cli = { transport: 'cli' as const, isCallable: () => false, preapproved: (
 const http = { transport: 'http' as const, isCallable: () => false, preapproved: () => false, routing: {} } as never;
 const next = (fix: Action, ctx: never) => renderAction(fix, ctx).next;
 const preview = (path?: string) => ['gbrain', 'repair', 'fences', '--source', 'notes-example', ...(path ? ['--only', path] : [])];
+// #6377: the source-level route names the content-repair lane; one hold's own fix stays that file's fence preview.
+const lane = ['gbrain', 'repair', 'content', '--source', 'notes-example'];
 
 describe('one fence hold: the fix by state (D17, E35)', () => {
   test('auto-repair pending with an active maintenance run: no action needed, the read-only preview of that file', () => {
@@ -168,16 +170,20 @@ describe('structured location (D16)', () => {
 describe('source-level routing on every surface (D6)', () => {
   test('fence-only, frontmatter-only and mixed sources name the right repair commands', () => {
     const fences = holdRepairSteps('notes-example', { fences: 2, others: 0 });
-    expect(fences.argv).toEqual(preview());
-    expect(fences.commands).toEqual(['gbrain repair fences --source notes-example']);
+    expect(fences.argv).toEqual(lane);
+    expect(fences.commands).toEqual(['gbrain repair content --source notes-example']);
     expect(fences.text).not.toContain('frontmatter');
     const frontmatter = holdRepairSteps('notes-example', { fences: 0, others: 2 });
     expect(frontmatter.argv).toEqual(['gbrain', 'repair', 'frontmatter', '--source', 'notes-example']);
     expect(frontmatter.text).not.toContain('fence');
     const mixed = holdRepairSteps('notes-example', { fences: 1, others: 1 });
-    expect(mixed.commands).toEqual(['gbrain repair frontmatter --source notes-example', 'gbrain repair fences --source notes-example']);
-    expect(holdRepairSteps('notes-example', { fences: 1, others: 0 }, ACTIVE).text).toContain('the next maintenance run repairs the fence holds it can by itself');
-    expect(holdRepairSteps('notes-example', { fences: 1, others: 0 }, INACTIVE).text).toContain('nothing repairs the fence holds by itself (no maintenance run is active)');
+    expect(mixed.commands).toEqual(['gbrain repair frontmatter --source notes-example', 'gbrain repair content --source notes-example']);
+    // #6377: slug-conflict holds take the same lane route as fence holds.
+    const slugs = holdRepairSteps('notes-example', { fences: 0, others: 0, slug_conflicts: 1 });
+    expect(slugs.argv).toEqual(lane);
+    expect(slugs.text).not.toContain('frontmatter');
+    expect(holdRepairSteps('notes-example', { fences: 1, others: 0 }, ACTIVE).text).toContain('the next maintenance run repairs the fence and slug-conflict holds it can by itself');
+    expect(holdRepairSteps('notes-example', { fences: 1, others: 0 }, INACTIVE).text).toContain('nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active)');
     expect(holdRepairSteps('notes-example', { fences: 1, others: 0 }, INACTIVE).text).toContain('then run the apply command it prints');
   });
 
@@ -185,21 +191,23 @@ describe('source-level routing on every surface (D6)', () => {
     const fenceOnly = [{ source_id: 'notes-example', missing: 0, stale: 2, fences: 2 }];
     expect(coverageRoute(fenceOnly[0]!)).toEqual({ fences: 2, others: 0 });
     const local = heldFilesNotice(fenceOnly, false)!;
-    expect(local.fix!.argv).toEqual(preview());
+    expect(local.fix!.argv).toEqual(lane);
     expect(local.fix!.why).not.toContain('frontmatter');
     const remote = heldFilesNotice(fenceOnly, true)!;
-    expect(remote.fix).toMatchObject({ actor: 'host_admin', argv: preview() });
-    expect(remote.fix!.user_message).toContain("'gbrain repair fences --source notes-example'");
+    expect(remote.fix).toMatchObject({ actor: 'host_admin', argv: lane });
+    expect(remote.fix!.user_message).toContain("'gbrain repair content --source notes-example'");
     expect(remote.fix!.user_message).not.toContain('frontmatter');
     expect(deriveNext(remote.fix!, http)).toBe('tell_user_to_run');
     expect(heldFilesNotice([{ source_id: 'notes-example', missing: 1, stale: 0 }], false)!.fix!.argv).toEqual(['gbrain', 'repair', 'frontmatter', '--source', 'notes-example']);
     const mixed = hostOperatorFix([{ source_id: 'notes-example', route: { fences: 1, others: 1 } }], 'Held.');
     expect(mixed.user_message).toContain("'gbrain repair frontmatter --source notes-example'");
-    expect(mixed.user_message).toContain("'gbrain repair fences --source notes-example'");
+    expect(mixed.user_message).toContain("'gbrain repair content --source notes-example'");
     const frontmatter = hostOperatorFix([{ source_id: 'notes-example' }], 'Held.');
     expect(frontmatter.user_message).toContain("'gbrain repair frontmatter --source notes-example' on the brain host");
-    expect(frontmatter.user_message).not.toContain('repair fences');
+    expect(frontmatter.user_message).not.toContain('repair content');
     expect(recordRoute(fenceHold())).toEqual({ fences: 1, others: 0 });
+    expect(recordRoute({ code: 'frontmatter_slug_conflict' })).toEqual({ fences: 0, others: 0, slug_conflicts: 1 });
+    expect(hostOperatorFix([{ source_id: 'notes-example', route: recordRoute({ code: 'frontmatter_slug_conflict' }) }], 'Held.').user_message).toContain("'gbrain repair content --source notes-example'");
   });
 
   test('get_page file_held: the local fix is that file\'s preview; the remote read gets tell_user_to_run saying whether it clears by itself (Codex CEO #7)', () => {

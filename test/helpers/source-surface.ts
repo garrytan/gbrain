@@ -95,6 +95,8 @@ export const SOURCE_SURFACES = {
       'src/commands/autopilot-daemon.ts',
       'src/commands/autopilot-dispatch.ts',
       'src/commands/autopilot-probes.ts',
+      // #6828: the self-upgrade swap's outcome handling, moved into core.
+      'src/core/self-upgrade-swap.ts',
     ],
     dirs: ['src/commands/autopilot'],
   },

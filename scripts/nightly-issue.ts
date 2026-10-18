@@ -25,7 +25,10 @@
  *
  * --dry-run reads only and prints the action and the issue body it would
  * write. Exit 0 on any verdict; 1 when the run or the TSV cannot be read
- * (the error says why and how to fix it); 2 usage error.
+ * (the error says why and how to fix it); 2 usage error. A GET that fails
+ * with a 5xx is retried (restClient); an older push run whose evidence still
+ * fails with a 5xx is skipped with a ::warning:: naming its run id and
+ * attempt, so one poison run never fails the whole watch.
  */
 import { readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';

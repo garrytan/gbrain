@@ -37,6 +37,8 @@ beforeEach(async () => {
   brainDir = mkdtempSync(join(tmpdir(), 'supersede-'));
   await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [brainDir]);
   configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: DIM, env: { OPENAI_API_KEY: 'sk-test-deterministic' } });
+  // Calibrate the deterministic test embedder: an uncalibrated model never supersedes by cosine (supersession-threshold.ts).
+  await engine.setConfig('facts.supersession_thresholds', JSON.stringify({ [`openai:text-embedding-3-small@${DIM}`]: 0.95 }));
   __setEmbedTransportForTests((async (opts: { values: string[] }) => ({
     embeddings: opts.values.map(t => {
       const v = new Array(DIM).fill(0);

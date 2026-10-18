@@ -515,3 +515,46 @@ describe('Unicode slug shape (#5421)', () => {
       .toEqual({ slug: 'people/다른-예시', source: 'exact_page' });
   });
 });
+
+describe('non-Latin fallback slugs (#6691)', () => {
+  let e: PGLiteEngine;
+  beforeAll(async () => {
+    e = new PGLiteEngine();
+    await e.connect({ database_url: '' });
+    await e.initSchema();
+  });
+  afterAll(async () => { await e.disconnect(); });
+  const resolve = (raw: string) => resolveEntitySlug(e as unknown as BrainEngine, 'default', raw);
+
+  it('a non-Latin name with no page mints the slug sync would mint, never an empty slug', async () => {
+    expect(await resolve('Мария')).toBe('мария');
+    expect(await resolve('Иван Петров')).toBe('иван-петров');
+    expect(await resolve('席位')).toBe('席位');
+    expect(await resolveEntitySlugWithSource(e as unknown as BrainEngine, 'default', 'Мария'))
+      .toEqual({ slug: 'мария', source: 'fallback_slugify' });
+  });
+
+  it('a path-shaped non-Latin ref keeps every segment', async () => {
+    expect(await resolve('people/Мария Example')).toBe('people/мария-example');
+  });
+
+  it('input with no letters or numbers resolves to null instead of an empty slug', async () => {
+    expect(await resolve('!!!')).toBeNull();
+    expect(await resolveEntitySlugWithSource(e as unknown as BrainEngine, 'default', '—')).toBeNull();
+  });
+
+  it('Latin names keep their ASCII fallback slugs', async () => {
+    expect(await resolve("O'Brien Example")).toBe('o-brien-example');
+    expect(await resolve('AT&T')).toBe('at-t');
+    expect(await resolve('Søren Example')).toBe('soren-example');
+    expect(await resolve('Đăng Example')).toBe('dang-example');
+    expect(await resolve('José García')).toBe('jose-garcia');
+  });
+
+  it('an empty entity slug filters listFactsSince to nothing, never to every entity', async () => {
+    await e.insertFact({ fact: 'Alice ships weekly', entity_slug: 'people/alice-example', source: 'test', visibility: 'world' }, { source_id: 'default' });
+    const since = new Date(Date.now() - 60_000);
+    expect((await e.listFactsSince('default', since, { entitySlug: 'people/alice-example' })).length).toBe(1);
+    expect(await e.listFactsSince('default', since, { entitySlug: '' })).toEqual([]);
+  });
+});

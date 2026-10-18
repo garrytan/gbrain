@@ -103,6 +103,33 @@ for (const kind of ['public-pkce', 'confidential-pkce'] as const) {
   });
 }
 
+test('a self-registered client\'s first consent offers a source picker and posts the chosen source (#6202)', async ({ page, brain }) => {
+  const callback = `${brain.url}/browser-test-callback`;
+  const registered = await fetch(`${brain.url}/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client_name: `browser-dcr-${randomBytes(4).toString('hex')}`, redirect_uris: [callback], grant_types: ['authorization_code'],
+      response_types: ['code'], scope: 'read', token_endpoint_auth_method: 'none' }) });
+  expect(registered.status).toBe(201);
+  const clientId = (await registered.json() as { client_id: string }).client_id;
+  const verifier = randomBytes(32).toString('base64url');
+  const authorization = new URLSearchParams({ client_id: clientId, redirect_uri: callback, response_type: 'code', scope: 'read',
+    code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', state: 'picker-state' });
+  const response = await fetch(`${brain.url}/authorize?${authorization}`, { redirect: 'manual' });
+  expect(response.status).toBe(302);
+  const pending = new URL(response.headers.get('location')!, brain.url).searchParams.get('oauth_request')!;
+  await page.goto(await brain.loginLink(pending));
+  const picker = page.getByLabel('Write source', { exact: true });
+  await expect(picker).toHaveValue('default');
+  await expect(page.getByText('This client reads and writes only this source.', { exact: false })).toBeVisible();
+  await picker.selectOption('wiki-example');
+  const posted = page.waitForRequest(request => request.method() === 'POST' && request.url().includes('/admin/api/oauth-requests/'));
+  await page.getByRole('button', { name: 'Approve access', exact: true }).click();
+  expect(JSON.parse((await posted).postData()!)).toMatchObject({ decision: 'approve', source_id: 'wiki-example' });
+  await page.waitForURL(url => url.pathname === '/browser-test-callback' && url.searchParams.has('code'));
+  const detail = await page.request.get(`${brain.url}/admin/api/clients/${clientId}`);
+  expect(detail.ok()).toBe(true);
+  expect(JSON.stringify(await detail.json())).toContain('wiki-example');
+});
+
 test('owner can edit access, invalidate tokens, revoke and delete through reviewed controls', async ({ page, brain }) => {
   await openOwnerClients(page, brain);
   const { artifact, name, id } = await register(page, 'machine', undefined, 'memory-writer');

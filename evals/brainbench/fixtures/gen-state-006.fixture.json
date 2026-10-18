@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-state-006",
+  "suites": [
+    "state-resolution"
+  ],
+  "category": "state-resolution",
+  "trust_steps": [
+    {
+      "step_id": "s1",
+      "actor": "owner",
+      "op": "write_file",
+      "slug": "people/petra-moonstead",
+      "content": "---\ntitle: Petra Moonstead\ntype: person\naliases: [petra]\n---\n\n# Petra Moonstead\n\nPetra Moonstead is the founder of Bramblevolt Co.\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|\n| 1 | Petra Moonstead lives in Kyoto | fact | 1.0 | world | medium | 2026-01-01 |  | owner |  |\n<!--- gbrain:facts:end -->\n"
+    },
+    {
+      "step_id": "s2",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Petra Moonstead lives in Lisbon",
+      "entity": "people/petra-moonstead",
+      "target": "s1",
+      "target_claim": "Petra Moonstead lives in Kyoto"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Where is Petra Moonstead now and what is their role?"
+    }
+  ]
+}

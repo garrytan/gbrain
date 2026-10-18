@@ -18,7 +18,8 @@ import { tmpdir } from 'node:os';
 
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runMaintenanceSweep, CORPUS_INGESTED_SUFFIX } from '../src/core/sweep.ts';
-import { bankWritebackTurn } from '../src/core/context/corpus-segments.ts';
+import { bankWritebackTurn, corpusSpoolDir, ensureCorpusSpoolDir } from '../src/core/context/corpus-segments.ts';
+import { spoolPath } from './helpers/corpus-spool.ts';
 import { gateWritebackTurn } from '../src/core/facts/writeback-gate.ts';
 import { __setChatTransportForTests, configureGateway, isAvailable, resetGateway, type ChatResult } from '../src/core/ai/gateway.ts';
 import type { CapabilityReport } from '../src/core/capability.ts';
@@ -66,7 +67,7 @@ afterEach(async () => {
 async function bankWb(sessionId: string, turn: string): Promise<string> {
   const gated = gateWritebackTurn(turn);
   if (!gated.ok) throw new Error(`fixture turn gated: ${gated.reason}`);
-  const banked = await bankWritebackTurn(corpusDir, sessionId, gated.normalized, gated.hash24);
+  const banked = await bankWritebackTurn(ensureCorpusSpoolDir(corpusDir), sessionId, gated.normalized, gated.hash24, 'default');
   if (!banked.flushCorpusFile) throw new Error(`bank failed: ${banked.status}`);
   return banked.flushCorpusFile;
 }
@@ -91,7 +92,7 @@ describe('runMaintenanceSweep — ambient-writeback turn files (OV2-11)', () => 
         const file = await bankWb('sess-local-sweep', 'I prefer a local model for my private notes from now on.');
         const result = await runMaintenanceSweep(engine, { sourceId: 'default' });
         expect(result.corpusIngested).toBe(1);
-        expect(existsSync(join(corpusDir, file + CORPUS_INGESTED_SUFFIX))).toBe(true);
+        expect(existsSync(join(corpusSpoolDir(corpusDir), file + CORPUS_INGESTED_SUFFIX))).toBe(true);
       });
     } finally {
       await engine.unsetConfig('facts.extraction_model');
@@ -110,7 +111,7 @@ describe('runMaintenanceSweep — ambient-writeback turn files (OV2-11)', () => 
     expect(r.corpusIngested).toBe(0);
     expect(r.skipped).toContainEqual({ reason: 'writeback_off', count: 1 });
     expect(chatCalls).toBe(0);
-    const sidecar = JSON.parse(readFileSync(join(corpusDir, file + CORPUS_INGESTED_SUFFIX), 'utf8'));
+    const sidecar = JSON.parse(readFileSync(join(corpusSpoolDir(corpusDir), file + CORPUS_INGESTED_SUFFIX), 'utf8'));
     expect(sidecar.skipped).toBe('writeback_off');
     const rows = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source = 'hook:writeback'`);
     expect(rows.length).toBe(0);
@@ -140,7 +141,7 @@ describe('runMaintenanceSweep — ambient-writeback turn files (OV2-11)', () => 
     const r1 = await runMaintenanceSweep(engine, { sourceId: 'default', capabilities: KEYED });
     expect(r1.corpusIngested).toBe(1);
     expect(chatCalls).toBe(1);
-    expect(existsSync(join(corpusDir, file + CORPUS_INGESTED_SUFFIX))).toBe(true);
+    expect(existsSync(join(corpusSpoolDir(corpusDir), file + CORPUS_INGESTED_SUFFIX))).toBe(true);
 
     const rows = await engine.executeRaw<{ fact: string; source: string; source_session: string }>(
       `SELECT fact, source, source_session FROM facts WHERE source = 'hook:writeback'`,
@@ -175,7 +176,7 @@ describe('runMaintenanceSweep — ambient-writeback turn files (OV2-11)', () => 
     const file = await bankWb('sess-swpoffkeyless', 'I moved the standing desk into the garden office yesterday.');
     const r = await runMaintenanceSweep(engine, { sourceId: 'default', capabilities: keyless });
     expect(r.skipped).toContainEqual({ reason: 'writeback_off', count: 1 });
-    const sidecar = JSON.parse(readFileSync(join(corpusDir, file + CORPUS_INGESTED_SUFFIX), 'utf8'));
+    const sidecar = JSON.parse(readFileSync(join(corpusSpoolDir(corpusDir), file + CORPUS_INGESTED_SUFFIX), 'utf8'));
     expect(sidecar.skipped).toBe('writeback_off');
   });
 
@@ -233,8 +234,8 @@ describe('runMaintenanceSweep — ambient-writeback turn files (OV2-11)', () => 
       expect(r.corpusIngested).toBe(0);
       expect(r.skipped).toContainEqual({ reason: 'writeback_plane_drift', count: 1 });
       expect(chatCalls).toBe(0);
-      expect(existsSync(join(corpusDir, file + CORPUS_INGESTED_SUFFIX))).toBe(false); // NOT terminal
-      expect(existsSync(join(corpusDir, file))).toBe(true); // survives for re-sync
+      expect(existsSync(join(corpusSpoolDir(corpusDir), file + CORPUS_INGESTED_SUFFIX))).toBe(false); // NOT terminal
+      expect(existsSync(join(corpusSpoolDir(corpusDir), file))).toBe(true); // survives for re-sync
     } finally {
       if (prior !== null) writeFileSync(cfgPath, prior);
       else rmFile(cfgPath, { force: true });
@@ -254,7 +255,7 @@ describe('runMaintenanceSweep — ambient-writeback turn files (OV2-11)', () => 
     const file = await bankWb('sess-skip', 'I switched my primary editor theme to solarized light last week.');
     const r = await runMaintenanceSweep(engine, { sourceId: 'default', capabilities: KEYED });
     expect(r.corpusIngested).toBe(1);
-    const sidecar = JSON.parse(readFileSync(join(corpusDir, file + CORPUS_INGESTED_SUFFIX), 'utf8'));
+    const sidecar = JSON.parse(readFileSync(join(corpusSpoolDir(corpusDir), file + CORPUS_INGESTED_SUFFIX), 'utf8'));
     expect(sidecar.facts_inserted).toBe(0);
     expect(typeof sidecar.skipped).toBe('string'); // malformed_output/refusal class — recorded, never a silent zero
   });
@@ -275,7 +276,7 @@ describe('runMaintenanceSweep — pasted content never reaches the extractor (#5
     const parsed = parseTranscript(join(import.meta.dir, 'fixtures', 'claude-code-paste', 'session.jsonl'));
     const corpus = toCorpusText(parsed.turns);
     expect(corpus).toContain('pasted third-party email');
-    writeFileSync(join(corpusDir, 'sess-paste.txt'), corpus);
+    writeFileSync(spoolPath(corpusDir, 'sess-paste.txt'), corpus);
 
     const r = await runMaintenanceSweep(engine, { sourceId: 'default', capabilities: KEYED });
     expect(r.corpusIngested).toBe(1);
@@ -284,6 +285,6 @@ describe('runMaintenanceSweep — pasted content never reaches the extractor (#5
     expect(seen).not.toContain('pasted third-party email');
     expect(seen).not.toContain('pasted_content');
     expect(seen).toContain('I prefer dark roast coffee');
-    expect(readFileSync(join(corpusDir, 'sess-paste.txt'), 'utf8')).toBe(corpus);
+    expect(readFileSync(spoolPath(corpusDir, 'sess-paste.txt'), 'utf8')).toBe(corpus);
   });
 });

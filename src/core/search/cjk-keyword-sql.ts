@@ -22,7 +22,7 @@
  */
 import type { SearchOpts } from '../types.ts';
 import { buildBestPerPagePoolCte } from './sql-ranking.ts';
-import { escapeLikePattern, splitCJKQueryTerms } from '../cjk.ts';
+import { escapeLikePattern, cjkMatchTerms } from '../cjk.ts';
 
 /** Query-shape context shared by both engines' CJK fallback call sites. */
 export interface CjkKeywordCtx {
@@ -63,7 +63,7 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
   const { limit, offset, innerLimit, sourceFactorCase, hardExcludeClause, visibilityClause, detailFilter, opts, dedup } = ctx;
   const qRaw = query;
   if (qRaw.length === 0) return null;
-  const terms = splitCJKQueryTerms(qRaw);
+  const terms = cjkMatchTerms(qRaw);
   if (terms.length === 0) return null;
   const any = variant.match === 'any' && terms.length > 1;
 
@@ -110,6 +110,7 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
   let fromClause = 'content_chunks cc';
   if (variant.candidateIds) {
     params.push(variant.candidateIds);
+    // chunk-visibility-ok: ctx.visibilityClause is buildVisibilityClause(..., { chunkAlias: 'cc' }) (engine searchKeywordCJK)
     fromClause = `unnest($${params.length}::bigint[]) AS cand(id) JOIN content_chunks cc ON cc.id = cand.id`;
   }
   const { whereLikeClause, matchedExpr } = likeClauses(terms, likeParamIndices, any);
@@ -152,7 +153,7 @@ export function buildCJKCandidateSql(
   ctx: CjkKeywordCtx,
   stage: { match: 'all' | 'any'; cap: number; excludeIds?: number[] },
 ): CjkKeywordSql | null {
-  const terms = splitCJKQueryTerms(query);
+  const terms = cjkMatchTerms(query);
   if (query.length === 0 || terms.length === 0) return null;
   const params: unknown[] = [];
   const likeParamIndices = terms.map(term => { params.push(`%${escapeLikePattern(term)}%`); return params.length; });
@@ -165,6 +166,7 @@ export function buildCJKCandidateSql(
   const capIndex = params.length;
   const { whereLikeClause } = likeClauses(terms, likeParamIndices, stage.match === 'any' && terms.length > 1);
   return {
+    // chunk-visibility-ok: ctx.visibilityClause is buildVisibilityClause(..., { chunkAlias: 'cc' }) (engine searchKeywordCJK)
     sql: `SELECT cc.id AS chunk_id
           FROM content_chunks cc
           JOIN pages p ON p.id = cc.page_id

@@ -56,7 +56,12 @@ canonical-owner binding.
 The source must have no Git sync commit, external repository, connector, or
 company-ingestion policy. Existing external roots and incomplete or mismatched
 receipts retain the ordinary never-synced/stale checks; managed persistence alone
-does not exempt a source. No `last_sync_at` timestamp is fabricated. The separate
+does not exempt a source. No `last_sync_at` timestamp is fabricated. A dedicated
+skills source is the other exemption: a source holding an adopted skill pack
+(live heads on its current incarnation) whose content is a read-only catalog, with
+no Git commit recorded and, when doctor may read the checkout, no `.git` under
+its root, counts as `read_only_pack_count` in `sync_freshness`. A git-backed pack
+is still judged stale. The separate
 `canonical_content_writes` check reports queued publication and required recovery
 for these roots. Both checks classify ownership from database records; remote
 doctor does not inspect or execute commands against stored filesystem paths.
@@ -386,6 +391,34 @@ with `joined`, `refresh_pending`, `delivery_reported`, `source_changed`, or
 delivery only; every row remains native-unverified. Unknown or disconnected
 installations are not proven migrated by that inventory.
 
+### Decline the migration for the whole brain
+
+**Say to your agent:** *"We are not adopting shared skills on this brain; stop
+the v0.53.0 migration from running on every upgrade."* The agent runs
+
+```bash
+gbrain config set shared_skills.migration.enabled false
+```
+
+The key is brain-level database config, so it applies to every machine that
+uses that database. From then on `gbrain apply-migrations` (including the
+`bun install` postinstall, `gbrain upgrade` and `gbrain post-upgrade`) skips
+v0.53.0 entirely: no inventory, no `shared_skills.migration.v1*` config
+writes, and the applied-migration re-check does not run. `gbrain
+apply-migrations --list` and `--dry-run` show it as `declined` with the key,
+`gbrain doctor` reports `minions_migration` ok with `declined: ['0.53.0']`,
+and `get_health.migrations.declined` lists it. An explicit `gbrain
+apply-migrations --migration 0.53.0` refuses with `migration_declined` (exit
+3) and the command that turns it back on instead of overriding the owner's
+choice from one machine. To adopt shared skills later:
+
+```bash
+gbrain config set shared_skills.migration.enabled true
+gbrain apply-migrations --yes
+```
+
+Per-source opt-outs (next section) still apply once the migration runs.
+
 ## Choose which sources adopt shared skills
 
 **Say to your agent:** *"Stop the shared-skills migration from touching the
@@ -551,7 +584,11 @@ erasure of source material, history, or backups.
 
 Managed removal disables local following and attempts owned-file cleanup even
 when offline or already revoked. `remote_membership_pending: true` means the
-host has not acknowledged leave; retry remote cleanup when possible. Do not
+host has not acknowledged leave; retry remote cleanup when possible. A
+bootstrap-managed enrollment whose credential is already revoked cannot leave
+remotely; `gbrain bootstrap harness` finishes its local cleanup and records it
+as left with reason `credential_revoked`, because a revoked principal's
+membership is inert ([cleanup pending](bootstrap.md#cleanup-pending)). Do not
 claim a server-side departure from successful local deletion, or delete edited
 files to make the status look complete.
 

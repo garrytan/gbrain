@@ -48,12 +48,13 @@ describe('shared test-bootstrap audit isolation (#2823)', () => {
     const realAuditFile = join(realAuditDir, computeContentSanityAuditFilename());
 
     // Reproduce the exact disposition the leaking fixture hits: body bytes
-    // over DEFAULT_BYTES_BLOCK (500_000) with no junk pattern match →
+    // over the block threshold (an operator's 500_000) with no junk pattern match →
     // shouldSkipEmbed=true, no shouldQuarantine → classified 'soft_block'.
     const result = assessContentSanity({
       compiled_truth: 'x'.repeat(600_000),
       timeline: '',
       title: 'Borderline',
+      bytes_block: 500_000,
     });
     expect(result.shouldSkipEmbed).toBe(true);
     expect(result.shouldQuarantine).toBe(false);

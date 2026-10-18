@@ -22,6 +22,8 @@ import { isCrossSourceLinksEnabled } from './link-extraction.ts';
 import { inferLinkTypeFromPack } from './schema-pack/link-inference.ts';
 import { loadActivePackForLocalEngine, packSupportsNerInference } from './schema-pack/best-effort.ts';
 import { isQuarantined } from './quarantine.ts';
+import { renderFragment, sqlFragment } from './engine-sql/fragment.ts';
+import { entityTypePredicateSql, resolveEntityTypes } from './schema-pack/entity-types.ts';
 
 export interface ExtractNerOpts {
   /** When true: enumerate but don't write. */
@@ -46,7 +48,7 @@ export interface ExtractNerResult {
   pages: number;
   /** Typed-NER links created (or would-have-created in dry-run). */
   created: number;
-  /** Pages where the active schema pack had no link_types at all. */
+  /** The active schema pack had no NER inference rules, or a pack in scope did not load (entity types unknown). */
   pack_unavailable: boolean;
 }
 
@@ -131,6 +133,7 @@ export async function extractNerLinks(
   // without an N+1 getPage round-trip. Pulls the slug→type map from
   // listAllPageRefs + a single listPages projection.
   const targetTypeMap = await buildTargetTypeMap(engine);
+  if (!targetTypeMap) return { pages: 0, created: 0, pack_unavailable: true };
 
   const allRefs = opts.sourceIdFilter
     ? (await engine.listAllPageRefs()).filter((r) => r.source_id === opts.sourceIdFilter)
@@ -202,23 +205,17 @@ export async function extractNerLinks(
 }
 
 /**
- * Helper: build a Map<sourceId::slug → type> for all entity-typed pages.
- * One round-trip via listPages. Targets cached at extraction-start so
- * inferNerLinkType doesn't pay an N+1 cost per mention.
+ * Helper: build a Map<sourceId::slug → type> for the entity-typed pages, by
+ * the active pack(s) per source (#4772, the get_health predicate bound in
+ * SQL). One round-trip; targets cached at extraction-start so
+ * inferNerLinkType doesn't pay an N+1 cost per mention. Null when a pack in
+ * scope did not load (entity types unknown); an engine error throws.
  */
-async function buildTargetTypeMap(engine: BrainEngine): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  try {
-    const result = await engine.executeRaw<{ slug: string; source_id: string; type: string }>(
-      `SELECT slug, source_id, type FROM pages
-         WHERE type IN ('person', 'company', 'organization', 'entity')
-           AND deleted_at IS NULL`,
-    );
-    for (const row of result) {
-      map.set(`${row.source_id}::${row.slug}`, row.type);
-    }
-  } catch {
-    // Engine error → empty map; inferNerLinkType returns null for unknown types.
-  }
-  return map;
+async function buildTargetTypeMap(engine: BrainEngine): Promise<Map<string, string> | null> {
+  const entityTypes = await resolveEntityTypes(engine, null);
+  if (entityTypes.status === 'pack_unavailable') return null;
+  const sql = renderFragment(sqlFragment`SELECT p.slug, p.source_id, p.type FROM pages p
+    WHERE ${entityTypePredicateSql('p', entityTypes.filter)} AND p.deleted_at IS NULL`);
+  const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string }>(sql.text, sql.params);
+  return new Map(rows.map((row) => [`${row.source_id}::${row.slug}`, row.type]));
 }

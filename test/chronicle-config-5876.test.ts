@@ -54,7 +54,7 @@ describe('auto_chronicle parsing', () => {
 
   test('chronicle.* rails: defaults, explicit budget flag, malformed rows fall back', async () => {
     expect(await chronicleSettings(engine)).toMatchObject({ jobBudgetUsd: 0.25, explicitBudget: false, dailyLimit: 200,
-      recentDays: 30, settleSeconds: 180, judgeMaxTokens: 4000, invalid: [] });
+      recentDays: 30, settleSeconds: 180, judgeMaxTokens: 4000, maxEventsPerPage: 25, invalid: [] });
     await engine.setConfig('chronicle.job_budget_usd', '0.4');
     await engine.setConfig('chronicle.auto_daily_limit', 'lots');
     const s = await chronicleSettings(engine);

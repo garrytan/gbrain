@@ -11,11 +11,12 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import { gbrainPath } from '../../../core/config.ts';
 import { LATEST_VERSION } from '../../../core/migrate.ts';
 import { MINIMUM_BUN_VERSION, unsupportedBunMessage } from '../../../core/runtime-version.ts';
-import { isNewerVersion } from '../../../core/semver.ts';
+import { isNewerVersion, isValidVersionString } from '../../../core/semver.ts';
 import type { SelfUpgradeAction } from '../../../core/self-upgrade.ts';
 import type { SelfUpgradeAuditEvent } from '../../../core/audit/self-upgrade-audit.ts';
 import { VERSION as GBRAIN_BINARY_VERSION } from '../../../version.ts';
 import type { Check } from '../../doctor.ts';
+import { agentFix } from '../check-fix.ts';
 
 /**
  * #4517: is the latest upgrade-errors.jsonl record superseded? True when the
@@ -24,15 +25,22 @@ import type { Check } from '../../doctor.ts';
  * (or retried) upgrade demonstrably finished the job. Pure + exported for
  * tests. Compares ALL dot-segments (the canonical `compareVersions` stops at
  * 3, which would treat 0.31.4.1 == 0.31.4.0); a malformed version fails
- * closed (keeps warning).
+ * closed (keeps warning), except a non-version target with a `from` version.
  */
 export function upgradeErrorResolved(
   failedToVersion: string,
   binaryVersion: string,
   schemaCurrent: boolean,
+  failedFromVersion?: string,
 ): boolean {
   if (!schemaCurrent) return false;
   if (typeof failedToVersion !== 'string' || typeof binaryVersion !== 'string') return false;
+  // #6718: a record with no installable target (`latest` from a pinned install
+  // with no newer published tag, `unknown` from a binary swap) can never be
+  // reached; the binary moving past the version it failed FROM supersedes it.
+  if (!isValidVersionString(failedToVersion) && typeof failedFromVersion === 'string') {
+    return isNewerVersion(failedFromVersion, binaryVersion);
+  }
   const a = binaryVersion.replace(/^v/, '').split('.');
   const b = failedToVersion.replace(/^v/, '').split('.');
   if (a.length === 0 || b.length === 0) return false;
@@ -95,6 +103,29 @@ export function checkSelfUpgradeHealth(): Check {
     const failedVersions: string[] = cfg?.self_upgrade?.failed_versions ?? [];
     if (failedVersions.length > 0) {
       parts.push(`skipping known-bad: ${failedVersions.join(', ')}`);
+    }
+
+    // #6828: a known-bad entry the audit proves was never installed blocks
+    // that release forever; the fix is the preview of the clearing step.
+    if (failedVersions.length > 0) {
+      const { findNeverInstalledFailures, CLEAR_NEVER_INSTALLED_PREVIEW, CLEAR_NEVER_INSTALLED_APPLY } = require('../../../core/self-upgrade-recovery.ts');
+      const { clearable } = findNeverInstalledFailures() as { clearable: Array<{ version: string; running: string }> };
+      if (clearable.length > 0) {
+        const versions = clearable.map((e) => e.version).join(', ');
+        return {
+          name: 'self_upgrade_health',
+          status: 'warn',
+          message: `Auto-upgrade skips ${versions} as known-bad, but ${clearable.length === 1 ? 'it was' : 'they were'} never installed: a swap that installed nothing was reported as swapped (#6828) (${parts.join('; ')}).`,
+          fix: agentFix([...CLEAR_NEVER_INSTALLED_PREVIEW, '--json'],
+            'The preview lists each entry with the swap that recorded it and changes nothing; its --apply removes exactly those entries.',
+            'self_upgrade_health', {
+              docs: 'docs/guides/upgrades-auto-update.md#known-bad-never-installed',
+              then: agentFix([...CLEAR_NEVER_INSTALLED_APPLY],
+                'Removes exactly the entries the preview proved were never installed; gbrain config set self_upgrade.failed_versions puts one back.',
+                'self_upgrade_health'),
+            }),
+        };
+      }
     }
 
     // readRecent lists the current week before the previous one; order by ts.
@@ -171,7 +202,7 @@ export async function checkUpgradeErrors(
         schemaCurrent = v >= LATEST_VERSION;
       } catch { /* unverifiable → keep warning */ }
     }
-    if (upgradeErrorResolved(latest.to_version, GBRAIN_BINARY_VERSION, schemaCurrent)) {
+    if (upgradeErrorResolved(latest.to_version, GBRAIN_BINARY_VERSION, schemaCurrent, latest.from_version)) {
       return {
         name: 'upgrade_errors',
         status: 'ok',

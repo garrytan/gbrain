@@ -201,6 +201,8 @@ describe('#4888: sync --json keeps stdout pure JSON', () => {
       execSync('git add -A && git commit -q -m diagnostic-fixture', { cwd: repoPath, stdio: 'pipe' });
       writeFileSync(join(repoPath, 'topics/foo.md'), FOO('PRIVATE_DIAGNOSTIC_CONTENT_CANARY'));
       rmSync(join(home, 'sync-failures.jsonl'), { force: true });
+      // #6340 holds this refusal when holds are on; `sync.holds=fail` keeps the failure receipt whose JSON this test is about.
+      await engine.setConfig('sync.holds', 'fail');
       const { stdout, stderr } = await run(['--retry-failed', '--no-pull', '--no-embed', '--json']);
       const out = lines(stdout);
       expect(out).toHaveLength(1);
@@ -224,6 +226,7 @@ describe('#4888: sync --json keeps stdout pure JSON', () => {
     } finally {
       _resetCliExitVerdictForTests(); process.exitCode = 0;
       await withEnv({ GBRAIN_HOME: home }, () => disposePersistenceConsumer(engine));
+      await engine.executeRaw("DELETE FROM config WHERE key='sync.holds'");
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     }
   }, 60_000);

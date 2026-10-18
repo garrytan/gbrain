@@ -114,6 +114,23 @@ describe('#3037 — one bad chunk no longer darkens its page', () => {
     expect(stamps).toHaveLength(0);
   });
 
+  test('#6772: a context overflow reported as a 500 is isolated: siblings embed, only the bad chunk fails', async () => {
+    embedBatchBehavior = async (texts: string[]) => {
+      if (texts.length > 1 || texts[0] === 'BAD') throw new AITransientError('embedding request failed', Object.assign(new Error('input (1234 tokens) is larger than the max context size (512 tokens)'), { status: 500 }));
+      return texts.map(() => new Float32Array(1536));
+    };
+    const stale = THREE_CHUNKS.map(c => ({
+      slug: 'overflow-500-page', chunk_index: c.chunk_index, chunk_text: c.chunk_text,
+      chunk_source: c.chunk_source, model: null, token_count: 1, source_id: 'default', page_id: 1,
+    }));
+    const engine = mockEngine({ countStaleChunks: async () => 3, listStaleChunks: async () => stale, getChunks: async () => THREE_CHUNKS, upsertChunks: async () => {} });
+    const result = await runEmbedCore(engine, { stale: true });
+    expect(embedCalls.map(c => c.length)).toEqual([3, 1, 1, 1]);
+    expect(result.embedded).toBe(2);
+    expect(result.failures).toBe(1);
+    expect(embeddingUpdates(engine)).toHaveLength(2);
+  });
+
   test('--all: same isolation on the listPages path', async () => {
     oneBadChunkBehavior();
     const engine = mockEngine({

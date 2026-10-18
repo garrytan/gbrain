@@ -22,12 +22,13 @@ export type { RecommendationContext };
  */
 export async function staleExtractionBlocked(engine: BrainEngine, sourceId?: string): Promise<string | undefined> {
   const { loadActivePackForLocalEngine } = await import('../schema-pack/best-effort.ts');
-  const { LINK_EXTRACTOR_VERSION_TS } = await import('../link-extraction.ts');
+  const { effectiveLinkExtractorWatermark } = await import('../link-extraction-watermark.ts');
+  const watermark = await effectiveLinkExtractorWatermark(engine);
   const sourceIds = sourceId ? [sourceId]
     : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id')).map(row => row.id);
   for (const id of sourceIds) {
     if (await loadActivePackForLocalEngine(engine, { sourceId: id })) continue;
-    if (!sourceId && !await engine.countStalePagesForExtraction({ sourceId: id, versionTs: LINK_EXTRACTOR_VERSION_TS })) continue;
+    if (!sourceId && !await engine.countStalePagesForExtraction({ sourceId: id, versionTs: watermark })) continue;
     return `active schema pack is unavailable for source ${id}; extract --stale cannot run until \`gbrain doctor\` schema-pack checks pass`;
   }
   return undefined;

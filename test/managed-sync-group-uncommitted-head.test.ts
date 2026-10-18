@@ -1,9 +1,10 @@
 /**
  * #6252: a bulk managed-sync group whose head ends without committing while
  * its members are still queued (the head cancelled with cancel_write_request,
- * or settled on its own before its followers published). The members after it
- * never publish ahead of it: they are cancelled, the run reports the head, and
- * the pages are imported once the head is resolved. Runs on PGLite (bulk
+ * or settled on its own before its followers published). #6712 (one page, one
+ * fate): the members after it are never cancelled for it; each publishes on its
+ * own, the run reports the head, and the head's page is imported once it is
+ * resolved. Runs on PGLite (bulk
  * forced) and, with DATABASE_URL, on Postgres. Synthetic content only.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
@@ -18,6 +19,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { waitFor } from './helpers/wait-for.ts';
 import { cancelWriteRequest } from '../src/core/persistence/control.ts';
 import { requestPrincipal, type WriteRequest } from '../src/core/persistence/model.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -55,7 +57,7 @@ async function source(engine: BrainEngine, slugs: string[]) {
 }
 
 test.each([['one group', false], ['a group admitted ahead in a drain', true]] as const)(
-  'a group head cancelled while queued (%s): nothing after it publishes, and the retry imports every page once', (_label, drain) => withEnv(env, async () => {
+  'a group head cancelled while queued (%s): the members after it publish on their own fate, and the retry imports the head', (_label, drain) => withEnv(env, async () => {
     for (const engine of engines) {
       try {
         const slugs = Array.from({ length: drain ? 8 : 4 }, (_, i) => `notes/n${i}`);
@@ -72,11 +74,14 @@ test.each([['one group', false], ['a group admitted ahead in a drain', true]] as
         expect(await cancelWriteRequest(engine, requestPrincipal(members[0]!), members[0]!.request_id)).toMatchObject({ state: 'cancelled' });
         const blocked = await s.sync({ bulk: BULK });
         expect(blocked).toMatchObject({ status: 'blocked_by_failures', added: 0, managedWrite: { slug: 'notes/n0' } });
-        const after = await engine.executeRaw<{ slug: string; state: string }>('SELECT slug,state FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY sequence', [members.map(member => member.id)]);
-        expect(after.filter(row => row.state !== 'cancelled').map(row => `${row.slug} ${row.state}`)).toEqual([]);
-        for (const member of members) expect(await engine.getPage(member.slug, { sourceId: s.id })).toBeNull();
-        const retried = await s.sync({ bulk: BULK, retryFailed: true });
-        expect(retried.added).toBeGreaterThanOrEqual(members.length);
+        const states = () => engine.executeRaw<{ slug: string; state: string }>('SELECT slug,state FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY sequence', [members.map(member => member.id)]);
+        await waitFor(async () => (await states()).every(row => !['queued', 'running'].includes(row.state)), { timeoutMs: 30_000, label: 'the members settle' });
+        const after = await states();
+        expect(after[0]).toMatchObject({ slug: 'notes/n0', state: 'cancelled' });
+        expect(after.slice(1).filter(row => row.state !== 'committed').map(row => `${row.slug} ${row.state}`)).toEqual([]);
+        expect(await engine.getPage('notes/n0', { sourceId: s.id })).toBeNull();
+        for (const member of members.slice(1)) expect(await engine.getPage(member.slug, { sourceId: s.id })).not.toBeNull();
+        await s.sync({ bulk: BULK, retryFailed: true });
         for (const slug of slugs) expect(await engine.getPage(slug, { sourceId: s.id })).not.toBeNull();
       } finally { await disposePersistenceConsumer(engine); }
     }

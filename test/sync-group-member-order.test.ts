@@ -1,11 +1,9 @@
 /**
- * #6153 class (wave 11, PR #6263 CI): a bulk-sync group member released back to the queue mid-group (its group
- * fell back to the single path and an earlier member went back to the queue with `writer_busy`) was later
- * claimed on its own and published, although the member before it in its group then failed. Its `after` names
- * only the previous group, so the window checks (`cancelOrphanedWindowGroup`, the lane claim, the drain's
- * `cancelOrphanedLaneRows`) let it through and a page after a failed page published. A group member's
- * predecessor is the member before it: a member whose predecessor ended without committing is cancelled, and
- * under lanes a member whose predecessor is still unfinished waits. Postgres only (bulk groups and lanes).
+ * #6153 class (wave 11, PR #6263 CI) and #6712 (one page, one fate): a bulk-sync group member's predecessor is the
+ * member before it in its group (its `after` names only the previous group). Under lanes a member whose predecessor
+ * is still unfinished releases its claim and waits, so lane commits stay in manifest order. Since #6712 a member whose
+ * predecessor ended without committing publishes on its own: the members of a sync group share a transaction budget,
+ * never a fate (dependency edges keep two changes of one page out of the same group). Postgres only (bulk groups and lanes).
  */
 import { describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -16,7 +14,6 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PersistenceConsumer } from '../src/core/persistence/consumer.ts';
 import { admitWrite, getWriteRequestById } from '../src/core/persistence/journal.ts';
 import { cancelWriteRequest } from '../src/core/persistence/control.ts';
-import { cancelOrphanedLaneRows, WINDOW_CANCEL_MESSAGE } from '../src/core/persistence/sync-window.ts';
 import { closeLaneRun, openLanes } from '../src/core/persistence/sync-lanes.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { admission, fixtures, initializeFixtures, prepared, selectFixtureHost, type FixtureSource, type HarnessConfig } from '../scripts/persistence/harness.ts';
@@ -58,8 +55,8 @@ function consumer(engine: BrainEngine, config: HarnessConfig, sources: FixtureSo
 const state = async (engine: BrainEngine, row: WriteRequest) => (await getWriteRequestById(engine, row.id))!;
 const pageOf = async (engine: BrainEngine, source: FixtureSource, slug: string) => engine.getPage(slug, { sourceId: source.id });
 
-describe.skipIf(!process.env.DATABASE_URL)('a bulk group member never publishes after the member before it ended without committing', () => {
-  test('FIFO claim: the member is cancelled, not published', () => withBrain(async ({ engine, config, sources }) => {
+describe.skipIf(!process.env.DATABASE_URL)('a bulk group member has its own fate: it publishes after the member before it ended, committed or not', () => {
+  test('FIFO claim: a member whose predecessor was cancelled publishes on its own', () => withBrain(async ({ engine, config, sources }) => {
     const { b, c } = await group(engine, config, sources[0]!, null);
     await cancelWriteRequest(engine, { kind: 'local_cli', id: b.principal_id }, b.request_id);
     const { instance } = consumer(engine, config, sources);
@@ -67,11 +64,12 @@ describe.skipIf(!process.env.DATABASE_URL)('a bulk group member never publishes 
       instance.start();
       await waitFor(async () => !['queued', 'running'].includes((await state(engine, c)).state), { timeoutMs: 15_000, label: 'the member settles' });
     } finally { await instance.stop(); }
-    expect(await state(engine, c)).toMatchObject({ state: 'cancelled', error_message: WINDOW_CANCEL_MESSAGE });
-    expect(await pageOf(engine, sources[0]!, 'order/c')).toBeNull();
+    expect(await state(engine, c)).toMatchObject({ state: 'committed' });
+    expect(await pageOf(engine, sources[0]!, 'order/c')).not.toBeNull();
+    expect(await pageOf(engine, sources[0]!, 'order/b')).toBeNull();
   }), 120_000);
 
-  test('lane claim: the member is cancelled, not published', () => withBrain(async ({ engine, config, sources }) => {
+  test('lane claim: a member whose predecessor was cancelled publishes on its own', () => withBrain(async ({ engine, config, sources }) => {
     const run = randomUUID();
     const { b, c } = await group(engine, config, sources[0]!, run);
     await cancelWriteRequest(engine, { kind: 'local_cli', id: b.principal_id }, b.request_id);
@@ -81,19 +79,11 @@ describe.skipIf(!process.env.DATABASE_URL)('a bulk group member never publishes 
       instance.start();
       await waitFor(async () => !['queued', 'running'].includes((await state(engine, c)).state), { timeoutMs: 15_000, label: 'the member settles' });
     } finally { await instance.stop(); await closeLaneRun(run, 5_000); }
-    expect(await state(engine, c)).toMatchObject({ state: 'cancelled', error_message: WINDOW_CANCEL_MESSAGE });
-    expect(await pageOf(engine, sources[0]!, 'order/c')).toBeNull();
+    expect(await state(engine, c)).toMatchObject({ state: 'committed' });
+    expect(await pageOf(engine, sources[0]!, 'order/c')).not.toBeNull();
   }), 120_000);
 
-  test('the drain-end sweep cancels a queued member whose predecessor failed', () => withBrain(async ({ engine, config, sources }) => {
-    const run = randomUUID();
-    const { b, c } = await group(engine, config, sources[0]!, run);
-    await cancelWriteRequest(engine, { kind: 'local_cli', id: b.principal_id }, b.request_id);
-    await cancelOrphanedLaneRows(engine, run);
-    expect(await state(engine, c)).toMatchObject({ state: 'cancelled', error_message: WINDOW_CANCEL_MESSAGE });
-  }), 120_000);
-
-  test('a member whose predecessor committed still publishes', () => withBrain(async ({ engine, config, sources }) => {
+  test('a member whose predecessor committed still publishes, after it', () => withBrain(async ({ engine, config, sources }) => {
     const run = randomUUID();
     const { c } = await group(engine, config, sources[0]!, run);
     openLanes(sources[0]!.binding.worktree_id, run, 4, null);
@@ -102,8 +92,30 @@ describe.skipIf(!process.env.DATABASE_URL)('a bulk group member never publishes 
       instance.start();
       await waitFor(async () => (await state(engine, c)).state === 'committed', { timeoutMs: 15_000, label: 'both pages commit' });
     } finally { await instance.stop(); await closeLaneRun(run, 5_000); }
-    const rows = await engine.executeRaw<{ slug: string; state: string }>(`SELECT slug,state FROM persistence_requests WHERE source_id=$1 ORDER BY sequence`, [sources[0]!.id]);
+    const rows = await engine.executeRaw<{ slug: string; state: string }>(`SELECT slug,state FROM persistence_requests WHERE source_id=$1 ORDER BY completed_at, sequence`, [sources[0]!.id]);
     expect(rows).toEqual([{ slug: 'order/b', state: 'committed' }, { slug: 'order/c', state: 'committed' }]);
   }), 120_000);
-});
 
+  test('#6712 (Eng 2): a sync group keeps its claim size and its preparation width of four; only its fate changed', () => withBrain(async ({ engine, config, sources }) => {
+    const headId = randomUUID();
+    const slugs = Array.from({ length: 12 }, (_, i) => `order/m${i}`);
+    for (const [i, slug] of slugs.entries()) {
+      const intent = { content: `${slug} body`, group: headId };
+      await admitWrite(engine, admission(config, sources[0]!, slug, '', 0, { requestId: i === 0 ? headId : randomUUID(), callerIntent: intent, intent }));
+    }
+    let inFlight = 0, widest = 0;
+    const groups = new Set<unknown>();
+    const instance = new PersistenceConsumer(engine, { engine: 'postgres' }, async (reads, row) => {
+      groups.add(reads); widest = Math.max(widest, ++inFlight);
+      try { await new Promise(resolve => setTimeout(resolve, 50)); return prepared(row, sources); } finally { inFlight--; }
+    }, { hostId: config.hostId, concurrency: 1, pollMs: 20 });
+    try {
+      instance.start();
+      await waitFor(async () => (await engine.executeRaw("SELECT 1 FROM persistence_requests WHERE source_id=$1 AND state<>'committed'", [sources[0]!.id])).length === 0,
+        { timeoutMs: 30_000, label: 'every member commits' });
+    } finally { await instance.stop(); }
+    // One claim took all twelve members (a batch group would stop at PAGE_BATCH_GROUP_MAX), prepared four at a time.
+    expect(groups.size).toBe(1);
+    expect(widest).toBe(4);
+  }), 120_000);
+});

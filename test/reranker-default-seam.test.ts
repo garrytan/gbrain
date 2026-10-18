@@ -16,7 +16,7 @@ describe('DEFAULT_RERANKER_MODEL seam (#3657, flipped v0.48.2)', () => {
 
   test('the default IS the recommended new-install reranker (voyage)', () => {
     expect(DEFAULT_RERANKER_MODEL).toBe(NEW_INSTALL_DEFAULT_RERANKER_MODEL);
-    expect(DEFAULT_RERANKER_MODEL).toBe('voyage:rerank-2.5');
+    expect(DEFAULT_RERANKER_MODEL).toBe('voyage:rerank-3-lite');
   });
 
   test('gateway imports DEFAULT_RERANKER_MODEL from defaults.ts — no local alias, no literal', () => {

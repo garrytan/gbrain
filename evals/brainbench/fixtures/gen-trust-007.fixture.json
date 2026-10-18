@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-trust-007",
+  "suites": [
+    "trust"
+  ],
+  "category": "trust",
+  "trust_steps": [
+    {
+      "step_id": "s1",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Freya Emberlyn closed the Russetvane Systems seed round",
+      "entity": "people/freya-emberlyn"
+    },
+    {
+      "step_id": "s2",
+      "actor": "remote_agent",
+      "op": "confirm",
+      "target": "s1"
+    },
+    {
+      "step_id": "s3",
+      "actor": "local_agent",
+      "op": "confirm",
+      "target": "s1"
+    },
+    {
+      "step_id": "s4",
+      "actor": "raw",
+      "op": "raise_tier",
+      "target": "s1"
+    },
+    {
+      "step_id": "s5",
+      "actor": "remote_agent",
+      "op": "put_page",
+      "slug": "notes/freya-board-007",
+      "content": "---\ntitle: Freya board prep 007\ntype: note\n---\n\nFreya Emberlyn wants the board deck by Oslo time.\n"
+    },
+    {
+      "step_id": "s6",
+      "actor": "remote_agent",
+      "op": "confirm",
+      "target": "s5"
+    },
+    {
+      "step_id": "s7",
+      "actor": "raw",
+      "op": "raise_tier",
+      "target": "s5"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What do I know about Freya Emberlyn?"
+    }
+  ]
+}

@@ -21,6 +21,8 @@ export const ROUTER_MODULES: Readonly<Record<string, () => Promise<RouterModule>
   schema: () => import('../commands/schema.ts'),
   config: () => import('../commands/config.ts'),
   quarantine: () => import('../commands/quarantine.ts'),
+  core: () => import('../commands/core.ts'),
+  loops: () => import('../commands/loops.ts'),
 };
 
 /**

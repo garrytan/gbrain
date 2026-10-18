@@ -1,0 +1,14 @@
+{
+  "fixture_id": "gen-del-001",
+  "turns": {},
+  "trust": {
+    "items": [
+      {
+        "item_id": "i1",
+        "check": "purged",
+        "step": "s2",
+        "probe": "Tobias's door code is 9748-001"
+      }
+    ]
+  }
+}

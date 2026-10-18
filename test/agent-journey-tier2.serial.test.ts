@@ -1,6 +1,9 @@
 /**
  * Lane H1b (Tier 2): the rows of the agent journey that hold the whole wave's
- * contract up across surfaces. Real CLI subprocesses, real `gbrain serve`
+ * contract up across surfaces. Row 1's read-op sweep runs in
+ * test/agent-journey-tier2-json.serial.test.ts and rows 5–8 in
+ * test/agent-journey-recovery.serial.test.ts, so each serial file stays well
+ * under the pool's per-file wall clock. Real CLI subprocesses, real `gbrain serve`
  * sessions (stdio and HTTP), keyless PGLite in temp homes, hard timeouts.
  *
  *   1. Every `--json` stdout parses: the journey's commands, the doctor family,
@@ -16,7 +19,6 @@
  *   4. One embedding-enable command on every surface: init's hint, doctor's
  *      checks, `embed --all`, `whoami`, MCP whoami and gbrain://capabilities
  *      (behind the lock owner's two-step plan there).
- *   (rows 5–8 run in test/agent-journey-recovery.serial.test.ts)
  *   5. `--surface starter`: a subset of full, instructions name only listed
  *      tools, a listed tool answers, an unlisted one is a one-block error.
  *   6. Read-only grant over HTTP: only read tools listed; a write is refused
@@ -37,81 +39,12 @@
  * Serial: real subprocesses, PGLite locks, an HTTP port.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn, type ChildProcess } from 'node:child_process';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { operations } from '../src/core/operations.ts';
 import { shellQuote } from '../src/core/agent-output.ts';
-import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
-import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
-import {
-  REPO, body, call, expectOneBlockError, gb, journeyEnv, mcp, oneDocument, waitFor, type GbResult,
-} from './helpers/agent-journey.ts';
-
-const MARKER = 'wombat-tier2-marker';
-
-function writeNotes(dir: string, n: number, prefix = 'tier2-note'): string {
-  mkdirSync(dir, { recursive: true });
-  for (let i = 1; i <= n; i++) writeFileSync(join(dir, `${prefix}-${i}.md`), `---\ntitle: ${prefix} ${i}\n---\n\n# ${prefix} ${i}\n\nThe ${MARKER} ${i}.\n`);
-  return dir;
-}
-
-async function withBrain<T>(home: string, fn: (engine: PGLiteEngine) => Promise<T>): Promise<T> {
-  const engine = new PGLiteEngine();
-  await engine.connect({ engine: 'pglite', database_path: join(home, '.gbrain', 'brain.pglite') });
-  try { return await fn(engine); } finally { await engine.disconnect(); }
-}
-
-async function seedTimelineFinding(home: string, slug: string): Promise<void> {
-  await withBrain(home, engine => engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(
-    `INSERT INTO timeline_entries(page_id,date,source,summary,detail)
-       SELECT id,'2026-07-01','legacy','A database-only event','' FROM pages WHERE source_id='default' AND slug=$1`, [slug]),
-  TEST_WRITE_ATTRIBUTION)));
-}
-
-async function pagesOf(home: string): Promise<string[]> {
-  return withBrain(home, async engine => (await engine.executeRaw<{ s: string }>(
-    "SELECT source_id || ':' || slug AS s FROM pages WHERE deleted_at IS NULL ORDER BY 1")).map(r => r.s));
-}
-
-/** A `--json` invocation: one parseable document; a failure document names code + suggestion. */
-function expectJsonContract(r: GbResult, label: string): Record<string, any> {
-  const doc = oneDocument(r, label);
-  if (r.exitCode !== 0 && r.exitCode !== 3) {
-    expect(typeof doc.code, `${label}: failure document has code (exit ${r.exitCode})`).toBe('string');
-    expect(typeof doc.suggestion, `${label}: failure document has suggestion`).toBe('string');
-  }
-  return doc;
-}
-
-/** A directory with a `gbrain` that runs this checkout, so plan/fix command strings run as pasted. */
-function gbrainShim(root: string): string {
-  const bin = join(root, 'bin');
-  mkdirSync(bin, { recursive: true });
-  writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\nexec bun --no-env-file run ${JSON.stringify(join(REPO, 'src', 'cli.ts'))} "$@"\n`);
-  chmodSync(join(bin, 'gbrain'), 0o755);
-  return bin;
-}
-
-async function sh(home: string, command: string, bin: string, timeoutMs = 120_000): Promise<GbResult> {
-  const t0 = performance.now();
-  const env = journeyEnv(home, { PATH: `${bin}:${process.env.PATH ?? ''}` });
-  const proc = Bun.spawn(['sh', '-c', command], { cwd: home, env, stdin: Bun.file('/dev/null'), stdout: 'pipe', stderr: 'pipe' });
-  let killed = false;
-  const killer = setTimeout(() => { killed = true; try { proc.kill('SIGKILL'); } catch { /* gone */ } }, timeoutMs);
-  try {
-    const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-    expect(killed, `${command} hung`).toBe(false);
-    return { exitCode, stdout, stderr, ms: Math.round(performance.now() - t0), killed };
-  } finally { clearTimeout(killer); }
-}
-
-interface Check { name: string; status: string; message: string; fix?: Fix; fix_unavailable_reason?: string }
-interface Fix { argv?: string[]; command?: string; consent: string[]; actor: string; next: string; inputs?: unknown[]; verify?: { argv?: string[] }; then?: Fix; requires_exclusive?: boolean }
+import { body, call, gb, mcp } from './helpers/agent-journey.ts';
+import { expectJsonContract, gbrainShim, seedTimelineFinding, sh, writeNotes, type Check, type Fix } from './helpers/agent-journey-tier2.ts';
 
 describe('H1b: --json parses, every WARN has an executable fix, every plan command runs', () => {
   let home = '';
@@ -124,26 +57,6 @@ describe('H1b: --json parses, every WARN has an executable fix, every plan comma
     await seedTimelineFinding(home, 'tier2-note-1');
   }, 300_000);
   afterAll(() => { rmSync(home, { recursive: true, force: true }); });
-
-  test('every read op on the CLI and the doctor family: --json stdout is one document', async () => {
-    const readOps = operations
-      .filter(op => op.mutating === false && op.cliHints?.name && !Object.values(op.params).some(p => p.required))
-      .map(op => [op.cliHints!.name!]);
-    expect(readOps.length).toBeGreaterThan(20);
-    const commands = [
-      ...readOps,
-      ['doctor'], ['doctor', '--fast'], ['doctor', '--only', 'embeddings'], ['doctor', '--remediation-plan'],
-      ['search', MARKER], ['query', MARKER], ['get', 'tier2-note-1'], ['recall', MARKER], ['sources', 'list'],
-      ['jobs', 'list'], ['jobs', 'stats'], ['errors', 'invalid_params'], ['features'], ['status'], ['models'],
-      ['embed', '--stale'], ['import', join(home, 'notes')], ['transcripts'], ['whoknows'],
-    ];
-    const bad: string[] = [];
-    for (const args of commands) {
-      const r = await gb(home, [...args, '--json'], { timeoutMs: 90_000 });
-      try { expectJsonContract(r, `gbrain ${args.join(' ')} --json`); } catch (e) { bad.push(`${args.join(' ')} (exit ${r.exitCode}): ${String(e).slice(0, 300)}`); }
-    }
-    expect(bad).toEqual([]);
-  }, 900_000);
 
   test('every doctor WARN/FAIL carries an executable fix; agent-runnable fixes and every verify run', async () => {
     const report = expectJsonContract(await gb(home, ['doctor', '--json']), 'doctor --json');

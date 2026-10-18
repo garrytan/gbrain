@@ -34,7 +34,6 @@ const PRIVATE_FACT = 'PRIVATE_FACT_JOURNEY_CANARY';
 const PRIVATE_TAKE = 'PRIVATE_TAKE_JOURNEY_CANARY';
 const PRIVATE_REPORT = 'PRIVATE_QUERY_REPORT_JOURNEY_CANARY';
 const SHARED = 'notes/shared-privacy';
-const REPORT_NOTE = 'Stored contradiction reports are temporarily available only to trusted local callers without a source filter.';
 
 function cli(env: Record<string, string>, args: string[]): string {
   const result = spawnSync('bun', ['--no-env-file', 'run', 'src/cli.ts', ...args], {
@@ -234,7 +233,7 @@ for (const kind of ['stdio', 'http'] as const) {
 
     test('same-slug content readers and history retain public data and exclude private rows', async () => {
       for (const name of ['get_page', 'get_chunks', 'get_raw_data', 'get_timeline', 'get_versions']) {
-        const { result, body } = await call(name, { slug: SHARED });
+        const { result, body } = await call(name, { slug: SHARED, ...(name === 'get_versions' ? { include_body: true } : {}) });
         expect(JSON.stringify(body)).toContain(PUBLIC);
         for (const hidden of [PRIVATE, PRIVATE_FACT, PRIVATE_TAKE]) expect(JSON.stringify(result)).not.toContain(hidden);
         if (name === 'get_versions') {
@@ -256,9 +255,11 @@ for (const kind of ['stdio', 'http'] as const) {
         expect((result._meta?.retrieval as { cache?: string })?.cache).toBe('disabled');
       }
       expect((await call('cache_stats')).body.enabled).toBe(false);
-      const { body } = await call('find_contradictions');
-      expect(body).toEqual({ contradictions: [], note: REPORT_NOTE });
-      expect(JSON.stringify(body)).not.toContain(PRIVATE_REPORT);
+      // D9: the stored finding names no live chunk or take, so nothing resolves.
+      const { result, body } = await call('find_contradictions');
+      expect(body.contradictions).toEqual([]);
+      expect(body).not.toHaveProperty('total_in_run');
+      expect(JSON.stringify(result)).not.toContain(PRIVATE_REPORT);
     }, 45_000);
 
     test('page-visibility opt-out leaves historical Facts/Takes and report boundaries active', async () => {
@@ -266,11 +267,13 @@ for (const kind of ['stdio', 'http'] as const) {
       await openSession(true);
       const { body: privateChunks } = await call('get_chunks', { slug: 'notes/private-only' });
       expect(JSON.stringify(privateChunks)).toContain(PRIVATE);
-      const { result, body } = await call('get_versions', { slug: SHARED });
+      const { result, body } = await call('get_versions', { slug: SHARED, include_body: true });
       expect(JSON.stringify(body)).toContain(PUBLIC);
       expect(JSON.stringify(result)).not.toContain(PRIVATE_FACT);
       expect(JSON.stringify(result)).not.toContain(PRIVATE_TAKE);
-      expect((await call('find_contradictions')).body).toEqual({ contradictions: [], note: REPORT_NOTE });
+      const report = await call('find_contradictions');
+      expect(report.body.contradictions).toEqual([]);
+      expect(JSON.stringify(report.result)).not.toContain(PRIVATE_REPORT);
     }, 60_000);
   });
 }

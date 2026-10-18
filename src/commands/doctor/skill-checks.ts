@@ -4,6 +4,7 @@
  * symbol (tests and scripts/live-brain-first-check.ts import them from
  * doctor.ts) and buildChecks consumes them.
  */
+import { isManagedFilesystemPath } from '../../core/persistence/filesystem-guard.ts';
 import { join, resolve as resolvePath } from 'path';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import type { BrainEngine } from '../../core/engine.ts';
@@ -173,7 +174,10 @@ export function skillCurrencyCheck(skillsDir: string): Check {
     status: 'warn',
     message:
       `${counts.new} new built-in skill(s) available that this workspace hasn't installed: ${sample('new')}. ` +
-      `Add them with \`gbrain skillpack sync\`.` +
+      (isManagedFilesystemPath(skillsDir)
+        // #5606: on a managed canonical worktree skillpack sync is refused; name the route that works there.
+        ? 'This is a managed canonical worktree, where `gbrain skillpack sync` is refused: publish each reviewed bundle through `gbrain call --source <source> import_skill_proposal` (docs/guides/shared-brain-skills.md#publish-reviewed-filesystem-edits).'
+        : `Add them with \`gbrain skillpack sync\`.`) +
       (counts.drifted > 0 ? ` (${counts.drifted} drifted from the bundle — local edits are fine.)` : ''),
     details: {
       new: skills.filter(k => k.status === 'new').map(k => k.slug),

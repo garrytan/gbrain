@@ -53,7 +53,7 @@ for (const kind of testBackends()) {
       const { prepared, chunks } = await capture();
       expect(chunks.length).toBeGreaterThanOrEqual(2);
       const before = await rows();
-      expect(await installPageEmbeddings(engine, prepared, chunks.map((c, i) => i === 0 ? { ...c, embedding: vector(0.25) } : c))).toBe(true);
+      expect((await installPageEmbeddings(engine, prepared, chunks.map((c, i) => i === 0 ? { ...c, embedding: vector(0.25) } : c))).complete).toBe(true);
       const after = await rows();
       expect(after[0]!.embedding).toBe(text(vector(0.25)));
       expect(after[0]!.embedded_text_hash).toBe(after[0]!.text_md5);
@@ -65,10 +65,10 @@ for (const kind of testBackends()) {
 
     test('an image-only chunk keeps its text vector, input hash and model and gains the image and stamps', async () => {
       const { prepared, chunks } = await capture();
-      expect(await installPageEmbeddings(engine, prepared, chunks.map(c => ({ ...c, embedding: vector(0.5), model: 'test:text-model' })))).toBe(true);
+      expect((await installPageEmbeddings(engine, prepared, chunks.map(c => ({ ...c, embedding: vector(0.5), model: 'test:text-model' })))).complete).toBe(true);
       const withText = await rows();
       const again = await capture();
-      expect(await installPageEmbeddings(engine, again.prepared, again.chunks.map((c, i) => i === 1 ? { ...c, embedding_image: image } : c))).toBe(true);
+      expect((await installPageEmbeddings(engine, again.prepared, again.chunks.map((c, i) => i === 1 ? { ...c, embedding_image: image } : c))).complete).toBe(true);
       const after = await rows();
       expect(after[0]).toEqual(withText[0]!);
       expect(after[1]!.embedding).toBe(withText[1]!.embedding);
@@ -80,7 +80,7 @@ for (const kind of testBackends()) {
 
     test('every chunk in one call gets its own vector, model and input hash', async () => {
       const { prepared, chunks } = await capture();
-      expect(await installPageEmbeddings(engine, prepared, chunks.map((c, i) => ({ ...c, embedding: vector(0.125 * (i + 1)), model: `test:model-${i}` })))).toBe(true);
+      expect((await installPageEmbeddings(engine, prepared, chunks.map((c, i) => ({ ...c, embedding: vector(0.125 * (i + 1)), model: `test:model-${i}` })))).complete).toBe(true);
       const after = await rows();
       expect(after.map(r => r.embedding)).toEqual(chunks.map((_, i) => text(vector(0.125 * (i + 1)))));
       expect(after.map(r => r.model)).toEqual(chunks.map((_, i) => `test:model-${i}`));
@@ -88,14 +88,25 @@ for (const kind of testBackends()) {
       for (const row of after) expect(row.embedded_text_hash).toBe(row.text_md5);
     });
 
-    test('a delayed install against a changed page writes nothing', async () => {
+    test('a delayed install against a changed page writes only the chunks the page still holds unchanged (A4)', async () => {
       const { prepared, chunks } = await capture();
       await engine.putPage(slug, { type: 'note', title: 'Batch fixture', compiled_truth: 'A newer body replaced the captured one.',
         timeline: '2026-01-02: Synthetic event.', frontmatter: {} }, { sourceId });
       await seal();
       const before = await rows();
-      expect(await installPageEmbeddings(engine, prepared, chunks.map(c => ({ ...c, embedding: vector(0.9) })))).toBe(false);
-      expect(await rows()).toEqual(before);
+      const captured = new Set(chunks.map(c => c.chunk_text));
+      const unchanged = before.filter(r => captured.has(r.chunk_text));
+      expect(unchanged.length).toBeGreaterThan(0);
+      expect(unchanged.length).toBeLessThan(before.length);
+      expect(await installPageEmbeddings(engine, prepared, chunks.map(c => ({ ...c, embedding: vector(0.75) }))))
+        .toEqual({ installed: chunks.filter(c => before.some(r => r.chunk_text === c.chunk_text)).length, complete: false });
+      const after = await rows();
+      after.forEach((row, i) => {
+        if (!captured.has(row.chunk_text)) return expect(row).toEqual(before[i]!);
+        expect(row.embedding).toBe(text(vector(0.75)));
+        expect(row.embedded_text_hash).toBe(row.text_md5);
+        expect(row.embedding_input_hash).not.toBeNull();
+      });
     });
   });
 }

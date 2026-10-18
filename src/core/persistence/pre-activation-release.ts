@@ -17,7 +17,7 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { acquireWorktree, getWorktreeBinding } from './ownership.ts';
+import { acquireWorktree, getWorktreeBinding, readPersistenceBrain } from './ownership.ts';
 import { currentVerifiedLocalWriter, existingLocalHostId, registerLocalWriter } from './identity.ts';
 import type { NativeLockHandle } from './native-lock.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
@@ -62,17 +62,18 @@ export async function releasePreActivationClaims(engine: BrainEngine, opts: { ex
       const binding = await getWorktreeBinding(engine, claim.source_id, hostId);
       if (!binding || binding.owner_host_id !== hostId || !binding.local_path || locked.has(binding.worktree_id)) continue;
       locked.add(binding.worktree_id);
-      const lock = await acquireWorktree(binding, 0, undefined, undefined, { yieldLanes: true });
+      // #5914: the release publishes nothing, so it needs the native lock and the reservation's worktree id and token, not the inode of a recreated directory.
+      const lock = await acquireWorktree(binding, 0, undefined, undefined, { yieldLanes: true, identity: 'reservation' });
       if (!lock) throw new OperationError('writer_lock_unavailable', `A local process holds the worktree lock of claimed source '${claim.source_id}'.`,
         'Stop the gbrain process on this host that holds it (gbrain serve or autopilot), then rerun deactivate.');
       locks.push(lock);
     }
     return await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('lock_timeout','5000ms',true),set_config('synchronous_commit','on',true)");
-      const [brain] = await tx.executeRaw<{ brain_id: string; enabled: boolean; mode_epoch: string }>('SELECT brain_id, enabled, mode_epoch::text FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+      const brain = await readPersistenceBrain(tx, { lock: 'update' });
       await assertWriterAdminState(tx, opts.expectedState);
       await assertWriterAdminUnlocked(tx);
-      if (!brain || brain.enabled) throw opError('writer_admin_state_changed', 'Managed persistence was activated concurrently; no claim was released.',
+      if (brain.enabled) throw opError('writer_admin_state_changed', 'Managed persistence was activated concurrently; no claim was released.',
         'Another process activated managed persistence while this release ran, so the claims now belong to the managed writer. Review the brain-wide deactivation preview before deciding anything else.',
         { fix: readFix('Previews the brain-wide deactivation and its blockers; changes nothing.', { argv: ['gbrain', 'sources', 'writer', 'deactivate', '--dry-run', '--json'] }) });
       await tx.executeRaw('SELECT id FROM persistence_worktrees ORDER BY id FOR UPDATE');

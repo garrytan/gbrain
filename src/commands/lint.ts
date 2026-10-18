@@ -22,6 +22,7 @@ import { readdirSync, statSync, lstatSync, existsSync } from 'fs';
 import { join, relative, dirname } from 'path';
 import { isAborted } from '../core/abort-check.ts';
 import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
+import { parseDateLoose } from '../core/effective-date.ts';
 import {
   assessContentSanity,
   type OperatorLiteral,
@@ -40,6 +41,7 @@ import { pathToSlug } from '../core/sync.ts';
 import { isManagedBrain } from '../core/cycle/phase-table.ts';
 import { maintenancePreflight, publishMaintenancePage, type MaintenanceAuthority } from '../core/persistence/prepared-maintenance.ts';
 import { fileMatchesSnapshot, prepareFileTarget } from '../core/persistence/page-prepare.ts';
+import { scannerSlugRootMode, scannerSourcePath } from '../core/write-through.ts';
 import { heldFileDiagnostic, writeFailureDiagnostic } from '../core/persistence/verb-errors.ts';
 import { loadActivePackForEngine } from '../core/schema-pack/engine-resolution.ts';
 import { OperationError, opError } from '../core/ops/contract.ts';
@@ -125,6 +127,13 @@ function findLeadingPreamble(content: string): { start: number; end: number } | 
 // ── Rules ──────────────────────────────────────────────────────────
 
 /**
+ * #5433: frontmatter keys that count as temporal provenance for the
+ * `missing-created` rule. `created` first for the legacy name; the rest are
+ * what effective-date resolution and the native serializer actually write.
+ */
+const TEMPORAL_KEYS = ['created', 'event_date', 'date', 'published', 'captured_at', 'ingested_at'] as const;
+
+/**
  * Per-call options for `lintContent`. Tests pass content-sanity opts
  * directly so the linter can be exercised without an engine.
  * Production callers (`runLintCore`) resolve effective config first
@@ -176,9 +185,13 @@ export function lintContent(content: string, filePath: string, opts: LintContent
   }
 
   // Rule: line-grammar near-misses (a relation or fact line that will not be
-  // read as written). Read-only; the fix is in each message.
+  // read as written). Read-only; the fix is in each message. Syntax-only: a
+  // file check reads no brain settings or schema pack, so it never implies an
+  // edge will be stored; `gbrain get <slug> --grammar-diagnostics` is the
+  // effective check against the brain.
   for (const d of parseLineGrammar(content).diagnostics) {
-    issues.push({ file: filePath, line: d.line, rule: 'line-grammar', message: `${d.message} (${d.reason})`, fixable: false });
+    issues.push({ file: filePath, line: d.line, rule: 'line-grammar',
+      message: `${d.message} (${d.reason}; syntax-only check: run \`gbrain get <slug> --grammar-diagnostics\` for what the brain reads)`, fixable: false });
   }
 
   // Rule: LLM preamble artifacts (only a leading run; see findLeadingPreamble)
@@ -209,9 +222,13 @@ export function lintContent(content: string, filePath: string, opts: LintContent
   // DOCUMENTING date formats (```\ncreated: YYYY-MM-DD\n``` or `YYYY-MM-DD`)
   // is not a page with an unfilled one. stripCodeBlocks masks fenced blocks
   // and inline spans in place, so line numbers stay exact.
+  // #6538: in the body, a YYYY-MM-DD token followed by `-word`, `.ext` or `/` is a filename/path template
+  // (`YYYY-MM-DD-topic.md`), not an unfilled date; frontmatter stays strict.
   const prose = stripCodeBlocks(content).split('\n');
+  const frontmatterLines = content.startsWith('---') ? lines.indexOf('---', 1) : -1;
   for (let i = 0; i < lines.length; i++) {
-    if (prose[i].match(/\bYYYY-MM-DD\b/) || prose[i].match(/\bXX-XX\b/) || prose[i].match(/\b\d{4}-XX-XX\b/)) {
+    const datePlaceholder = i <= frontmatterLines ? /\bYYYY-MM-DD\b/ : /\bYYYY-MM-DD\b(?![-./][A-Za-z0-9]|\/)/;
+    if (prose[i].match(datePlaceholder) || prose[i].match(/\bXX-XX\b/) || prose[i].match(/\b\d{4}-XX-XX\b/)) {
       issues.push({
         file: filePath, line: i + 1, rule: 'placeholder-date',
         message: `Placeholder date found: ${lines[i].trim().slice(0, 60)}`,
@@ -250,17 +267,17 @@ export function lintContent(content: string, filePath: string, opts: LintContent
           fixable: false,
         });
       }
-      if (!fm.match(/^created:/m)) {
-        // #3958: when the page's own frontmatter carries a capture timestamp
-        // (captured_at / ingested_at), `--fix` can promote it to `created` —
-        // mark the finding fixable so the operator knows --fix will heal it.
-        const promotable = /^(?:captured_at|ingested_at):/m.test(fm);
+      // #5433: the native serializer never writes `created` and effective-date
+      // resolution reads event_date / date / published, so any parseable
+      // temporal key is provenance enough. The rule name stays for consumers;
+      // it is never fixable (ingest time is not creation time, see #3958).
+      // A block YAML could not read is already a frontmatter-yaml-parse finding.
+      const yamlUnreadable = parsed.errors?.some(e => e.code === 'YAML_PARSE') ?? false;
+      if (!yamlUnreadable && !TEMPORAL_KEYS.some(key => parseDateLoose(parsed.frontmatter[key]) !== null)) {
         issues.push({
           file: filePath, line: 1, rule: 'missing-created',
-          message: promotable
-            ? 'Frontmatter missing required field: created (promotable from captured_at/ingested_at)'
-            : 'Frontmatter missing required field: created',
-          fixable: promotable,
+          message: `Frontmatter has no parseable date under any of: ${TEMPORAL_KEYS.join(', ')}`,
+          fixable: false,
         });
       }
     }
@@ -384,11 +401,16 @@ export function lintContent(content: string, filePath: string, opts: LintContent
 }
 
 /**
- * #3958: promote `captured_at:` (preferred) or `ingested_at:` to `created:`
- * when the frontmatter has no `created:` of its own. The value is copied
- * verbatim (quoting preserved) and inserted directly below the source line.
- * No-op when there is no frontmatter, `created:` already exists, or neither
- * capture field is present. Pure + exported for tests.
+ * @deprecated #5433: no longer part of `fixContent`. Ingest time is when a
+ * file entered the brain, not when its content was created, and the cycle's
+ * lint phase ran this on every native page, diverging the file from the DB
+ * row that serialized it. Kept for callers who promote explicitly.
+ *
+ * Promotes `captured_at:` (preferred) or `ingested_at:` to `created:` when
+ * the frontmatter has no `created:` of its own. The value is copied verbatim
+ * (quoting preserved) and inserted directly below the source line. No-op
+ * when there is no frontmatter, `created:` already exists, or neither
+ * capture field is present.
  */
 export function promoteCreatedFromCapture(content: string): string {
   if (!content.startsWith('---')) return content;
@@ -413,11 +435,6 @@ export function fixContent(content: string): string {
   // Fix wrapping code fences
   fixed = fixed.replace(/^```(?:markdown|md)\s*\n/, '');
   fixed = fixed.replace(/\n```\s*$/, '');
-
-  // #3958: missing-created is fixable when the page's own frontmatter
-  // carries a capture timestamp. Runs after the fence unwrap so a wrapped
-  // page's frontmatter is visible to the promotion.
-  fixed = promoteCreatedFromCapture(fixed);
 
   // Clean up excessive blank lines left by fixes
   fixed = fixed.replace(/\n{3,}/g, '\n\n');
@@ -713,7 +730,8 @@ async function publishLintFix(engine: BrainEngine, authority: MaintenanceAuthori
   const scanned = existsSync(page) ? readSourceFileSync(page, 'utf-8') : null;
   const fixed = scanned === null ? null : fixContent(scanned);
   if (scanned === null ? !authority.binding : fixed === scanned) return null;
-  if (authority.binding && (scanned === null || !await fileMatchesSnapshot(engine, slug, scanned, snapshot, activePack))) {
+  const importPath = async () => scannerSourcePath(root, page, await scannerSlugRootMode(engine, sourceId, root));
+  if (authority.binding && (scanned === null || !await fileMatchesSnapshot(engine, slug, scanned, snapshot, importPath, activePack))) {
     const current = await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
     if (current?.revision !== snapshot.revision) return pendingIssue(relPath, slug, 'revision_changed', changedWhileLinting(sourceId, slug));
     try {

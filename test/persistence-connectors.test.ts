@@ -23,7 +23,7 @@ import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { claimNextWrite } from '../src/core/persistence/journal.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
-import { createConnectorFixture, options, json, googleConfig, githubConfig, contact, issueFixture, githubFetch, sourceCheckpoint, connectorPendingSet } from './helpers/connector-fixture.ts';
+import { createConnectorFixture, options, json, googleConfig, githubConfig, contact, issueFixture, githubFetch, sourceCheckpoint, connectorPendingSet, withPausedOwnerBudget } from './helpers/connector-fixture.ts';
 
 const { home, engines, env, source, boundSource, setup, teardown } = createConnectorFixture();
 beforeAll(setup, 120_000);
@@ -260,9 +260,9 @@ test('paused connector owner returns one stable receipt and resident restart con
     const cfg = parseGitHubSourceConfig(githubConfig, f.dir);
     const run = () => runGitHubSync(engine, f.id, cfg, options, githubFetch());
     // #5600: an accepted pending write is progress; the run ends partial with the receipt in its pending set.
-    expect(await run()).toMatchObject({ status: 'partial', reason: 'writer_pending' });
+    expect(await withPausedOwnerBudget(() => run())).toMatchObject({ status: 'partial', reason: 'writer_pending' });
     const [pending] = await connectorPendingSet(engine, f.id);
-    expect(await run()).toMatchObject({ status: 'partial', reason: 'writer_pending' });
+    expect(await withPausedOwnerBudget(() => run())).toMatchObject({ status: 'partial', reason: 'writer_pending' });
     expect((await connectorPendingSet(engine, f.id)).map(entry => entry.requestId)).toEqual([pending.requestId]);
     const rows = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1', [f.id]);
     expect(rows).toHaveLength(1);
@@ -388,7 +388,7 @@ test('a file edit after bound connector admission survives resident replay and p
     const checkpoint = await sourceCheckpoint(engine, f.id);
     await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [f.binding.worktree_id]);
     body = 'New API body';
-    expect(await run()).toMatchObject({ status: 'partial', reason: 'writer_pending' });
+    expect(await withPausedOwnerBudget(() => run())).toMatchObject({ status: 'partial', reason: 'writer_pending' });
     const [accepted] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND state='queued' ORDER BY sequence LIMIT 1", [f.id]);
     await disposePersistenceConsumer(engine);
     const path = join(f.dir, 'gh/acme-example/app/1.md');
@@ -441,7 +441,7 @@ test('resident publication revalidates accepted connector revisions, incarnation
     const binding = await claimWorktree(engine, f.id, f.dir);
     await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [binding.worktree_id]);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-    expect(await runGitHubSync(engine, f.id, parseGitHubSourceConfig(githubConfig, f.dir), options, githubFetch())).toMatchObject({ status: 'partial', reason: 'writer_pending' });
+    expect(await withPausedOwnerBudget(() => runGitHubSync(engine, f.id, parseGitHubSourceConfig(githubConfig, f.dir), options, githubFetch()))).toMatchObject({ status: 'partial', reason: 'writer_pending' });
     const [accepted] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1', [f.id]);
     await disposePersistenceConsumer(engine);
     const [writer] = await engine.executeRaw<{ grant_ceiling: unknown }>('SELECT grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid', [accepted.principal_id]);
@@ -520,7 +520,7 @@ test('a fact withdrawn between bound connector preparation and publication leave
     const original = readFileSync(path, 'utf8'), before = (await engine.readPageSnapshot(slug, { sourceId: f.id }))!;
     await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [f.binding.worktree_id]);
     body = `Facts: ${renderFactsTable([{ rowNum: 1, claim, kind: 'fact', confidence: 1, visibility: 'world', notability: 'medium', active: true, context: 'test evidence' }])}`;
-    expect(await run()).toMatchObject({ status: 'partial', reason: 'writer_pending' });
+    expect(await withPausedOwnerBudget(() => run())).toMatchObject({ status: 'partial', reason: 'writer_pending' });
     await disposePersistenceConsumer(engine);
     await engine.executeRaw("UPDATE persistence_worktrees SET state='active' WHERE id=$1::uuid", [f.binding.worktree_id]);
     const claimed = (await claimNextWrite(engine, localHostId()))!;

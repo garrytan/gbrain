@@ -42,8 +42,9 @@ export async function publishExport(stage: ExportStage, destination: string, tic
   }
   const handle = publisher.beginExport(root);
   try {
-    for (const row of stage.db.query<{ path: string; payload: string }, []>("SELECT path, payload FROM paths WHERE kind='file' ORDER BY path").iterate()) {
-      publisher.publishExportFile(handle, row.path, Buffer.from(row.payload));
+    for (const row of stage.db.query<{ path: string; payload: string; file: string | null }, []>("SELECT path, payload, file FROM paths WHERE kind='file' ORDER BY path").iterate()) {
+      if (row.file !== null) publisher.publishExportFileFrom(handle, row.path, stage.filePath(row.file));
+      else publisher.publishExportFile(handle, row.path, Buffer.from(row.payload));
       await tick(row.path);
     }
     publisher.completeExport(handle);

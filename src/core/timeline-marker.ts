@@ -57,3 +57,9 @@ export function firstMaterializedMarkerIndex(text: string): number {
 export function stripMaterializedMarkers(text: string): string {
   return text.includes('gbrain:materialized') ? text.replace(MARKER_LINES, '') : text;
 }
+
+/** The `[start, end)` UTF-16 spans `stripMaterializedMarkers` removes from `text`, in order. */
+export function materializedMarkerSpans(text: string): Array<[number, number]> {
+  if (!text.includes('gbrain:materialized')) return [];
+  return [...text.matchAll(MARKER_LINES)].map(m => [m.index, m.index + m[0].length]);
+}

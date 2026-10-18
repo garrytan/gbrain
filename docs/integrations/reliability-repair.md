@@ -33,7 +33,9 @@ Reports two checks:
 - `jsonb_integrity` — counts double-encoded rows per table and points you
   at `gbrain repair-jsonb`.
 - `markdown_body_completeness` — heuristic for pages whose `compiled_truth`
-  is suspiciously short compared to `raw_data.data ->> 'content'`.
+  is suspiciously short compared to `raw_data.data ->> 'content'`. A page
+  stored in segments has no `compiled_truth` column to compare, so it is not
+  checked; the check reports how many with `skipped_segmented: N`.
 
 ## Repair
 

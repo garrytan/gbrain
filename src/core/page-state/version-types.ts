@@ -11,6 +11,13 @@ export interface PageVersion {
   tags?: string[] | null;
   /** The page's recorded canonical file when the version was taken; NULL on file-less pages and legacy versions. */
   source_path?: string | null;
+  /** Wave B: present only on a segmented version, whose compiled_truth and timeline are NULL (the body lives in segments). */
+  body_storage?: 'segmented';
+  /** Segmented versions: the body generation the version references. */
+  body_generation?: number;
+  /** Segmented versions: the referenced body's UTF-8 bytes. */
+  body_bytes?: number;
+  content_hash?: string | null;
   id: number;
   page_id: number;
   compiled_truth: string;

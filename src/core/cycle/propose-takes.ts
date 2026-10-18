@@ -45,16 +45,20 @@ import { defaultTimeoutMsFor } from '../minions/handler-timeouts.ts';
 import {
   PROPOSE_TAKES_CALL_TIMEOUT_KEY, PROPOSE_TAKES_CALL_TIMEOUT_MAX_MS, PROPOSE_TAKES_CALL_TIMEOUT_MIN_MS, readPhaseConfigNumber,
 } from './phase-config-values.ts';
-import { chat as gatewayChat, getChatModel, probeChatModel } from '../ai/gateway.ts';
+import { chat as gatewayChat, getChatModel } from '../ai/gateway.ts';
+import { probeChatModelWithKey } from '../ai/chat-key-probe.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
-import { upsertExtractRollup, classifyRunStop } from '../extract/rollup-writer.ts';
+import { upsertExtractRollup, classifyRunStop, providerHaltReason } from '../extract/rollup-writer.ts';
 import { GBrainError } from '../types.ts';
 import { isConfigTruthy } from '../config.ts';
 import { matchingCloseBracket } from '../llm-json.ts';
 import { TAKE_KIND_VALUES } from '../takes-fence.ts';
+import { attributionChecksEnabled } from './attribution-checks.ts';
+import { downgradeAssistantOnlyHolders } from './propose-takes-attribution.ts';
+import { ProposeTakesFailures, PROPOSE_TAKES_HOLD_RUNS, type FailedPage } from './propose-takes-failures.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
@@ -268,6 +272,12 @@ export interface ProposeTakesResult {
   llm_calls_succeeded: number;
   /** Extractor calls that threw (global or per-page alike). */
   llm_calls_failed: number;
+  /** GBRA-130 A-25: every page whose extractor call failed this run, with its counted attempts; a `held` page got a failure tombstone. */
+  failed_pages: FailedPage[];
+  /** Failure tombstones written this run (pages held after PROPOSE_TAKES_HOLD_RUNS counted runs failing the same way). */
+  failure_tombstones_written: number;
+  /** Set when most fresh pages failed (item_failures_systemic): this run's failures were recorded but not counted. */
+  systemic?: { code: string; message: string };
   warnings: string[];
 }
 
@@ -292,10 +302,17 @@ async function listCandidatePages(
   engine: BrainEngine,
   scope: ScopedReadOpts,
   limit: number,
+  types: string[] | null = null,
 ): Promise<ProposeTakesPageRow[]> {
   const where = [
     'deleted_at IS NULL',
     "type IS DISTINCT FROM 'extract_receipt'",
+    // #5211: an atom is a fragment of a page that is itself a candidate; a legacy atom carries no writer stamp.
+    "type IS DISTINCT FROM 'atom'",
+    // #5212: never propose takes from the dream cycle's own output.
+    "COALESCE(frontmatter->>'dream_generated', '') <> 'true'",
+    "COALESCE(frontmatter->>'extracted_by', '') NOT LIKE 'extract_atoms%'",
+    "COALESCE(frontmatter->>'synthesized_by', '') NOT LIKE 'synthesize_concepts%'",
   ];
   const params: unknown[] = [];
   if (scope.sourceIds && scope.sourceIds.length > 0) {
@@ -304,6 +321,11 @@ async function listCandidatePages(
   } else if (scope.sourceId) {
     params.push(scope.sourceId);
     where.push(`source_id = $${params.length}`);
+  }
+  // #5213: `cycle.propose_takes.types` narrows candidates to listed page types.
+  if (types) {
+    params.push(types);
+    where.push(`type = ANY($${params.length}::text[])`);
   }
   params.push(limit);
   return engine.executeRaw<ProposeTakesPageRow>(
@@ -314,6 +336,30 @@ async function listCandidatePages(
       LIMIT $${params.length}`,
     params,
   );
+}
+
+export const PROPOSE_TAKES_TYPES_KEY = 'cycle.propose_takes.types';
+
+/**
+ * #5213: the page types propose_takes may scan, from `cycle.propose_takes.types`
+ * (a JSON array of type names, the `cycle.enrich_thin.types` shape). Unset,
+ * empty, unreadable or malformed means every type stays a candidate; a
+ * malformed value also prints one stderr line so a typo is visible.
+ */
+export async function proposeTakesTypes(engine: BrainEngine): Promise<string[] | null> {
+  const raw = await engine.getConfig?.(PROPOSE_TAKES_TYPES_KEY).catch(() => null) ?? null;
+  if (raw == null || raw.trim() === '') return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const types = parsed.filter((t): t is string => typeof t === 'string' && t.trim().length > 0).map(t => t.trim());
+      if (types.length > 0) return types;
+    }
+  } catch {
+    // reported below
+  }
+  process.stderr.write(`[propose_takes] ignoring ${PROPOSE_TAKES_TYPES_KEY}: expected a JSON array of page types, e.g. gbrain config set ${PROPOSE_TAKES_TYPES_KEY} '["meeting","note"]'\n`);
+  return null;
 }
 
 /**
@@ -524,53 +570,22 @@ export async function defaultExtractor(
     }
   }
 
-  // ChatResult.text is already the concatenated text content.
-  const takes = parseExtractorOutput(result.text);
-  // A parse-level `[]` is AMBIGUOUS: it means either "the model genuinely
-  // found no gradeable claims" OR "the model returned malformed/prose/
-  // truncated output we couldn't parse." The caller memoizes empty
-  // extractions with a tombstone, so a transient parse failure would
-  // PERMANENTLY suppress a page that actually has claims. Only a cleanly
-  // parsed empty array is a real "no claims" result worth memoizing; treat
-  // anything else as a transient error and throw, so the phase's catch
-  // retries the page next cycle (writing no tombstone).
-  if (takes.length === 0 && !isWellFormedEmptyExtraction(result.text)) {
+  // ChatResult.text is already the concatenated text content. The caller
+  // memoizes an empty extraction with a tombstone, so only a reply whose first
+  // JSON value is a complete empty array (and that carries no takes after it)
+  // counts as "no claims"; anything unparseable is transient and throws, so the
+  // phase retries the page next cycle (writing no tombstone).
+  const outcome = extractorOutcome(result.text);
+  if (outcome.kind === 'invalid') {
     throw new Error('propose_takes extractor: no parseable takes JSON (transient — retry)');
   }
+  const takes = outcome.kind === 'valid_nonempty' ? outcome.takes : [];
   // #4737: model_id provenance comes from the RESPONSE, not the request —
   // ChatResult.model is the 'provider:modelId' that actually answered.
   const servedModel =
     typeof result.model === 'string' && result.model.trim() !== '' ? result.model : undefined;
   return servedModel ? takes.map((t) => ({ ...t, served_model: servedModel })) : takes;
 }
-
-/**
- * True only when `raw` is a cleanly-parseable EMPTY JSON array — the
- * well-behaved "no gradeable claims" response (the prompt instructs the model
- * to return `[]`). Distinguishes a genuine empty extraction (safe to memoize
- * via a tombstone) from malformed / prose / truncated output (transient —
- * must be retried, never tombstoned). Mirrors parseExtractorOutput's
- * think-strip + fence-strip + first-array handling so both agree on what
- * "the model returned []" means.
- */
-export function isWellFormedEmptyExtraction(raw: string): boolean {
-  if (!raw || raw.trim().length === 0) return false;
-  let text = raw.trim();
-  // Strip <think>...</think> reasoning tags (MiniMax-M3, DeepSeek-R1, etc.),
-  // same as parseExtractorOutput (#2559).
-  text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-  const fenced = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
-  if (fenced) text = (fenced[1] ?? '').trim();
-  const arrStart = text.indexOf('[');
-  if (arrStart === -1) return false;
-  try {
-    const parsed = JSON.parse(text.slice(arrStart));
-    return Array.isArray(parsed) && parsed.length === 0;
-  } catch {
-    return false;
-  }
-}
-
 
 /**
  * #4736: kinds the pre-fix EXTRACT_TAKES_PROMPT asked for. Cached and
@@ -584,40 +599,81 @@ const LEGACY_EXTRACTOR_KIND_MAP: Record<string, ProposedTake['kind']> = {
 };
 
 /**
- * Parse extractor output into ProposedTake[]. Handles common LLM output
- * sins (markdown fence wrapping, leading/trailing prose, single-object
- * instead of array). Returns [] on any unrecoverable parse error rather
- * than throwing. Kind tokens are case/whitespace-normalized, matched
- * against the fence vocabulary (with the #4736 legacy mapping), and
- * anything else coerces to 'take'.
+ * #6782: what one extractor reply holds. `valid_empty` only when the reply's
+ * first JSON value is a complete empty array and no JSON object, and no array
+ * holding a take-shaped object, follows it (a later `[1]` citation does not
+ * count); `valid_nonempty` when the first value (an array, or a lone object)
+ * yields at least one take; `invalid` for everything else (prose only,
+ * truncated or malformed JSON, a claim-less value, or an empty array followed
+ * by takes), which the caller retries and never tombstones.
+ */
+export type ExtractorOutcome = { kind: 'valid_empty' } | { kind: 'valid_nonempty'; takes: ProposedTake[] } | { kind: 'invalid' };
+
+export function extractorOutcome(raw: string): ExtractorOutcome {
+  const located = locateFirstJsonValue(raw);
+  if (!located) return { kind: 'invalid' };
+  if (Array.isArray(located.value) && located.value.length === 0) {
+    return carriesLaterTakes(located.rest) ? { kind: 'invalid' } : { kind: 'valid_empty' };
+  }
+  const takes = takesOf(located.value);
+  return takes.length ? { kind: 'valid_nonempty', takes } : { kind: 'invalid' };
+}
+
+/**
+ * Parse extractor output into ProposedTake[] (the takes of a `valid_nonempty`
+ * outcome, else none). Handles common LLM output sins (markdown fence
+ * wrapping, leading/trailing prose, single-object instead of array). Kind
+ * tokens are case/whitespace-normalized, matched against the fence vocabulary
+ * (with the #4736 legacy mapping), and anything else coerces to 'take'.
  */
 export function parseExtractorOutput(raw: string): ProposedTake[] {
-  if (!raw || raw.trim().length === 0) return [];
-  let text = raw.trim();
-  // Strip <think>...</think> reasoning tags (MiniMax-M3, DeepSeek-R1, etc.).
-  text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-  // Strip markdown code fence wrapper.
+  const outcome = extractorOutcome(raw);
+  return outcome.kind === 'valid_nonempty' ? outcome.takes : [];
+}
+
+/**
+ * The reply's first JSON array or object after stripping `<think>` reasoning
+ * (#2559) and a whole-reply code fence: the whole remainder when it parses,
+ * else only up to the value's own closing bracket (#5209), with the text after it.
+ */
+function locateFirstJsonValue(raw: string): { value: unknown; rest: string } | null {
+  if (!raw || raw.trim().length === 0) return null;
+  let text = raw.trim().replace(/<think>[\s\S]*?<\/think>/g, '').trim();
   const fenced = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
   if (fenced) text = (fenced[1] ?? '').trim();
-  // First-array-or-object substring extraction (defends against leading prose).
   const firstArr = text.indexOf('[');
   const firstObj = text.indexOf('{');
-  if (firstArr === -1 && firstObj === -1) return [];
+  if (firstArr === -1 && firstObj === -1) return null;
   const start = firstArr !== -1 && (firstObj === -1 || firstArr < firstObj) ? firstArr : firstObj;
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(text.slice(start));
+    return { value: JSON.parse(text.slice(start)), rest: '' };
   } catch {
-    // Trailing noise (a leftover fence, a `[Source: X]` citation): parse only
-    // up to the value's own closing bracket, never the last bracket in the text.
     const end = matchingCloseBracket(text, start);
-    if (end === -1) return [];
+    if (end === -1) return null;
     try {
-      parsed = JSON.parse(text.slice(start, end + 1));
+      return { value: JSON.parse(text.slice(start, end + 1)), rest: text.slice(end + 1) };
     } catch {
-      return [];
+      return null;
     }
   }
+}
+
+/** True when `text` holds a parseable JSON object, or an array holding a take-shaped object. */
+function carriesLaterTakes(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== '[' && text[i] !== '{') continue;
+    const end = matchingCloseBracket(text, i);
+    if (end === -1) continue;
+    let value: unknown;
+    try { value = JSON.parse(text.slice(i, end + 1)); } catch { continue; }
+    if (!Array.isArray(value) && value !== null && typeof value === 'object') return true;
+    if (Array.isArray(value) && value.some(v => v !== null && typeof v === 'object' && typeof (v as Record<string, unknown>).claim_text === 'string')) return true;
+    i = end;
+  }
+  return false;
+}
+
+function takesOf(parsed: unknown): ProposedTake[] {
   const arr = Array.isArray(parsed) ? parsed : [parsed];
   const out: ProposedTake[] = [];
   for (const raw of arr) {
@@ -752,7 +808,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
     }
 
     const extractor = opts.extractor ?? defaultExtractor;
-    const { attributionRules, dateGrounding } = await takesPromptFlags(engine);
+    const [{ attributionRules, dateGrounding }, attributionChecks] = await Promise.all([takesPromptFlags(engine), attributionChecksEnabled(engine)]);
     const promptVersion = opts.promptVersion ?? `${PROPOSE_TAKES_PROMPT_VERSION}${attributionRules ? PROPOSE_TAKES_ATTRIBUTION_PROMPT_SUFFIX : ''}`;
     const pageLimit = opts.pageLimit ?? 100;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
@@ -794,13 +850,12 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const callTimeout = await readPhaseConfigNumber(engine, PROPOSE_TAKES_CALL_TIMEOUT_KEY); // #5874
 
     // With the default (gateway) extractor, skip cheaply when the resolved
-    // model's provider can't run — same probe semantics as patterns.ts /
-    // think/index.ts: unknown provider/model or Anthropic-without-key skips;
-    // other providers' auth surfaces lazily at chat() time. An injected
+    // model's provider can't run: unknown provider/model, or any keyed provider
+    // without its key (#6705; same probe as patterns.ts). An injected
     // extractor bypasses the gateway, so it is never gated. (Takeover of
     // PR #1979's intent by @shawnduggan.)
     if (!opts.extractor) {
-      const probe = probeChatModel(normalizeModelId(modelId));
+      const probe = probeChatModelWithKey(normalizeModelId(modelId));
       if (!probe.ok) {
         return {
           summary: `propose_takes skipped: ${probe.detail}`,
@@ -861,6 +916,8 @@ class ProposeTakesPhase extends BaseCyclePhase {
       budget_exhausted: false,
       llm_calls_succeeded: 0,
       llm_calls_failed: 0,
+      failed_pages: [],
+      failure_tombstones_written: 0,
       warnings: callTimeout.warning ? [callTimeout.warning] : [],
       deadline_hit: false,
     };
@@ -878,8 +935,13 @@ class ProposeTakesPhase extends BaseCyclePhase {
       };
     }
 
-    // Load pages eligible for proposal. Source-scoped per BaseCyclePhase.
-    const pages = await listCandidatePages(engine, scope, pageLimit);
+    // Load pages eligible for proposal. Source-scoped per BaseCyclePhase; #5213 types narrow it.
+    // GBRA-130 A-25: a page that failed before at this content hash and prompt
+    // version is retried after the fresh pages, so failing pages at the head of
+    // the list cannot halt the run before the rest are tried.
+    const listed = await listCandidatePages(engine, scope, pageLimit, await proposeTakesTypes(engine));
+    const failures = await ProposeTakesFailures.load(engine, listed.map(page => page.source_id ?? scope.sourceId ?? 'default'), promptVersion);
+    const pages = failures.order(listed, page => [page.source_id ?? scope.sourceId ?? 'default', contentHash(page.compiled_truth ?? '')]);
 
     if (opts.reporter) {
       opts.reporter.start('propose_takes.pages' as never, pages.length);
@@ -963,6 +1025,10 @@ class ProposeTakesPhase extends BaseCyclePhase {
           attributionRules, dateGrounding,
         });
       } catch (err) {
+        // GBRA-130: a run-scoped error (abort, lost connection, failed
+        // transaction) stops the phase and records nothing. Every failure feeds
+        // the breaker except a recorded page repeating its content-class code.
+        failures.fail(sourceId, page.slug, ch, err);
         result.llm_calls_failed += 1;
         const msg = err instanceof Error ? err.message : String(err);
         const detail = `extractor failed on ${page.slug}: ${msg}`;
@@ -980,9 +1046,12 @@ class ProposeTakesPhase extends BaseCyclePhase {
         // Halt instead of spending an LLM call on every remaining page. A
         // single success anywhere in the run keeps llm_calls_succeeded > 0
         // and permanently disarms this halt (mixed runs are per-page noise).
+        // GBRA-130 A-25: a recorded page repeating its content-class code is the
+        // expected outcome and does not count; a transient or provider failure
+        // always does, so an outage halts even on pages that failed before.
         if (
           result.llm_calls_succeeded === 0 &&
-          result.llm_calls_failed >= EXTRACTOR_FAILURE_HALT_STREAK
+          failures.freshFailures >= EXTRACTOR_FAILURE_HALT_STREAK
         ) {
           result.aborted_failure_streak = true;
           result.warnings.push(
@@ -995,7 +1064,9 @@ class ProposeTakesPhase extends BaseCyclePhase {
         continue;
       }
       result.llm_calls_succeeded += 1;
+      failures.succeed(sourceId, page.slug, ch);
       llmHalt.reset();
+      if (attributionChecks) proposals = downgradeAssistantOnlyHolders(proposals, body);
 
       // Write proposals to take_proposals. #2138: the idempotency key is
       // per-CLAIM — take_proposals_idempotency_idx folds md5(claim_text) into
@@ -1068,53 +1139,17 @@ class ProposeTakesPhase extends BaseCyclePhase {
 
     if (opts.reporter) opts.reporter.finish();
 
-    // v0.42 Wave B3: receipt + rollup for propose_takes. Source-scoped
-    // via the read scope. Receipt only when proposals actually written.
-    const sourceIdForReceipt = scope.sourceId ?? 'default';
-    // Managed brains skip the receipt page (a legacy putPage the coordinator
-    // refuses), like extract_atoms and synthesize_concepts; the rollup stays.
-    if (result.proposals_inserted > 0 && !await managedPersistenceEnabled(engine)) {
-      try {
-        await writeReceipt(engine, {
-          kind: 'takes.proposed',
-          source_id: sourceIdForReceipt,
-          run_id: proposalRunId,
-          round: 'single',
-          extracted_at: new Date().toISOString(),
-          total_rows: result.proposals_inserted,
-          cost_usd: 0, // tracker isn't exposed at this layer; cost tracked centrally
-          summary:
-            `Proposed ${result.proposals_inserted} new takes from ${result.pages_scanned} pages ` +
-            `(${result.cache_hits} cached).`,
-        });
-      } catch (err) {
-        console.error(`[propose_takes] receipt write failed: ${(err as Error).message}`);
-      }
-    }
-    // #4482: three-way stop classification. A budget/deadline cap is the
-    // extractor working as designed (partial progress banked; the rest
-    // drains over future runs) — recorded as expected_limit_delta, a
-    // capacity signal doctor's failure rate excludes. A global-error abort
-    // (#3044) or an all-failures streak (#3763) is a REAL halt, unchanged
-    // from today. An error alongside a cap counts as the error.
-    // `halted` (any incomplete round, caps included) is kept for the phase
-    // result's status/details below — the diagnostic split is rollup-only.
-    const halted =
-      result.budget_exhausted ||
-      result.deadline_hit === true ||
-      result.aborted_global_error !== undefined ||
-      result.aborted_failure_streak === true;
-    await upsertExtractRollup(engine, {
-      kind: 'takes.proposed',
-      source_id: sourceIdForReceipt,
-      ...classifyRunStop({
-        budget_exhausted: result.budget_exhausted === true,
-        deadline_hit: result.deadline_hit === true,
-        error:
-          result.aborted_global_error !== undefined ||
-          result.aborted_failure_streak === true,
-      }),
-    });
+    // GBRA-130 A-25: fold this run into the failure ledgers. A page failing the
+    // same content-class way in PROPOSE_TAKES_HOLD_RUNS counted runs gets a
+    // failure tombstone (the idempotency check then skips it until its content
+    // or the prompt version changes); a systemic run or a whole-run LLM halt
+    // counts nothing.
+    const settled = await failures.settle(engine, { counted: result.aborted_global_error === undefined, proposalRunId, modelId });
+    result.failed_pages = settled.failed;
+    result.failure_tombstones_written = settled.tombstones;
+    if (settled.systemic) result.systemic = settled.systemic;
+
+    const halted = await recordProposeTakesRun(engine, result, scope.sourceId ?? 'default', proposalRunId);
 
     // Status folds warnings in (the extract_facts precedent from #1928): a
     // run with swallowed per-page failures must not read as a clean 'ok'.
@@ -1132,6 +1167,9 @@ class ProposeTakesPhase extends BaseCyclePhase {
     return {
       summary:
         `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals, ${result.tombstones_written} empty (run ${proposalRunId})` +
+        (result.failure_tombstones_written > 0
+          ? `; ${result.failure_tombstones_written} page(s) held after ${PROPOSE_TAKES_HOLD_RUNS} failed runs (gbrain takes propose --failed)`
+          : '') +
         (result.aborted_global_error
           ? `; aborted on ${result.aborted_global_error} error after ${result.pages_scanned} page(s)`
           : '') +
@@ -1143,6 +1181,57 @@ class ProposeTakesPhase extends BaseCyclePhase {
       status: phaseFailed ? 'fail' : halted || warningCount > 0 ? 'warn' : 'ok',
     };
   }
+}
+
+/** The takes.proposed receipt and rollup of one run; returns whether the run halted (any cap or halt). */
+async function recordProposeTakesRun(engine: BrainEngine, result: ProposeTakesResult, sourceIdForReceipt: string, proposalRunId: string): Promise<boolean> {
+  // v0.42 Wave B3: receipt + rollup for propose_takes. Source-scoped
+  // via the read scope. Receipt only when proposals actually written.
+  // Managed brains skip the receipt page (a legacy putPage the coordinator
+  // refuses), like extract_atoms and synthesize_concepts; the rollup stays.
+  if (result.proposals_inserted > 0 && !await managedPersistenceEnabled(engine)) {
+    try {
+      await writeReceipt(engine, {
+        kind: 'takes.proposed',
+        source_id: sourceIdForReceipt,
+        run_id: proposalRunId,
+        round: 'single',
+        extracted_at: new Date().toISOString(),
+        total_rows: result.proposals_inserted,
+        cost_usd: 0, // tracker isn't exposed at this layer; cost tracked centrally
+        summary:
+          `Proposed ${result.proposals_inserted} new takes from ${result.pages_scanned} pages ` +
+          `(${result.cache_hits} cached).`,
+      });
+    } catch (err) {
+      console.error(`[propose_takes] receipt write failed: ${(err as Error).message}`);
+    }
+  }
+  // #4482: three-way stop classification. A budget/deadline cap is the
+  // extractor working as designed (partial progress banked; the rest
+  // drains over future runs) — recorded as expected_limit_delta, a
+  // capacity signal doctor's failure rate excludes. A global-error abort
+  // (#3044) or an all-failures streak (#3763) is a REAL halt, unchanged
+  // from today. An error alongside a cap counts as the error.
+  // `halted` (any incomplete round, caps included) is kept for the phase
+  // result's status/details below — the diagnostic split is rollup-only.
+  const halted =
+    result.budget_exhausted ||
+    result.deadline_hit === true ||
+    result.aborted_global_error !== undefined ||
+    result.aborted_failure_streak === true;
+  await upsertExtractRollup(engine, {
+    kind: 'takes.proposed',
+    source_id: sourceIdForReceipt,
+    ...classifyRunStop({
+      budget_exhausted: result.budget_exhausted === true,
+      deadline_hit: result.deadline_hit === true,
+      error:
+        result.aborted_global_error !== undefined ? providerHaltReason(result.aborted_global_error) ?? 'item_error'
+          : result.aborted_failure_streak === true ? 'item_error' : false,
+    }),
+  });
+  return halted;
 }
 
 /**

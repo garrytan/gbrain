@@ -308,7 +308,7 @@ export async function inspectCompanyBrain(options: InspectCompanyBrainOptions): 
         finding(plan, include.length ? 'error' : 'warning', 'unsupported_file', 'Only committed Markdown is supported; this file is not selected for import.', item.path);
       } else if (item.bytes === null || item.bytes > limits.maxFileBytes) {
         entry.disposition = 'unsupported'; entry.reason = 'file_too_large';
-        finding(plan, 'error', 'request_too_large', 'Markdown exceeds the import file limit; split it into smaller files.', item.path);
+        finding(plan, 'error', 'request_too_large', `Markdown exceeds the company-brain file limit (${limits.maxFileBytes} bytes, separate from the 24 MiB page limit); split it into smaller files.`, item.path);
       } else {
         try {
           const bytes = await readCommittedBlob(plan.revision, item, limits);

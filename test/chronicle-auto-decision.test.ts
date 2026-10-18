@@ -29,7 +29,8 @@ import { requirePostgresTestDatabase } from './helpers/test-backends.ts';
 const databaseUrl = process.env.GBRAIN_TEST_BACKEND === 'postgres' ? requirePostgresTestDatabase() : undefined;
 const brain = (run: (b: ManagedBrain) => Promise<void>) => managedBrain(run, { databaseUrl });
 
-const today = new Date().toISOString().slice(0, 10);
+const utcDay = () => new Date().toISOString().slice(0, 10);
+const today = utcDay();
 const lastYear = new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10);
 const BODY = 'Alice and Bob reviewed the launch plan and agreed on the next steps for the beta. '.repeat(3);
 const meeting = (extra = `date: ${today}\n`) => `---\ntype: meeting\ntitle: Sync\n${extra}---\n\n${BODY}`;
@@ -77,10 +78,16 @@ describe('managed put_page', () => {
   }), 120_000);
 
   test('a page dated last year skips history with a scoped backfill command', () => brain(async ({ ctx }) => {
+    // The receipt is dated when the decision runs; a run that crosses 00:00 UTC sees one of the two days.
+    const before = utcDay();
     const receipt = await put(ctx, 'meetings/old', meeting(`date: ${lastYear}\n`));
+    const after = utcDay();
+    const argv = (receipt.chronicle_backstop as { fix?: { argv?: string[] } } | undefined)?.fix?.argv ?? [];
+    const since = argv[argv.indexOf('--since') + 1];
+    expect([before, after]).toContain(since);
     expect(receipt.chronicle_backstop).toMatchObject({ skipped: 'history', stage: 'decision', fix: {
-      preview_argv: chronicleBackfillArgv({ sourceId: 'default', since: today, dryRun: true }),
-      argv: chronicleBackfillArgv({ sourceId: 'default', since: today, dryRun: false }), consent: ['paid'] } });
+      preview_argv: chronicleBackfillArgv({ sourceId: 'default', since, dryRun: true }),
+      argv: chronicleBackfillArgv({ sourceId: 'default', since, dryRun: false }), consent: ['paid'] } });
   }), 120_000);
 
   test('a future invite is not_yet_happened and waits until its end', () => brain(async ({ engine, ctx }) => {

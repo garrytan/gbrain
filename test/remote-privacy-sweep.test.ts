@@ -172,7 +172,7 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   get_links: { slug: WORLD_PAGE_SLUG },
   get_backlinks: { slug: WORLD_PAGE_SLUG },
   traverse_graph: { slug: WORLD_PAGE_SLUG },
-  get_versions: { slug: WORLD_FENCE_SLUG },
+  get_versions: { slug: WORLD_FENCE_SLUG, include_body: true },
   get_write_attribution: { slug: WORLD_FENCE_SLUG, versions: true },
   get_chunks: { slug: WORLD_FENCE_SLUG },
   resolve_slugs: { partial: 'world-page' },
@@ -304,6 +304,7 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   list_jobs: 'ok', // base unused — per-shape override in EXPECTED_BY_SHAPE (above)
   quarantine_list: 'ok',
   run_doctor: 'ok',
+  get_brain_health: 'ok', // bands only: counts as ranges, no slugs or stored text
   get_ingest_log: 'ok',
   code_callers: 'error',
   code_callees: 'error',
@@ -336,6 +337,11 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   // mutating ops (fresh-slug targets; envelope-echo checks only)
   remember: 'ok',
   forget: 'error',
+  purge_fact: 'error',
+  list_page_purges: 'error',
+  unpurge_page: 'error',
+  // Owner confirmation needs a memory_confirm grant; the sweep's connection has none (refused before any read).
+  confirm_memory: 'error',
   // rate_answer with no answer_id is a validation error; a real answer id only
   // ever names pages that answer returned to the same client.
   rate_answer: 'error',
@@ -351,6 +357,7 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   add_timeline_entry: 'ok',
   get_write_request: 'error',
   list_write_requests: 'ok',
+  list_write_conflicts: 'ok',
   cancel_write_request: 'error',
   revert_version: 'error',
   edit_page: 'error',
@@ -378,6 +385,14 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   loops_unmute: 'error',
   // agent contract v1 A6: the generic invocation omits the required `code` → validation error.
   mute_notice: 'error',
+  // C4 pinned questions are owner-private: a sweep caller cannot read private
+  // pages, so every questions_* op refuses with question_owner_only (leakage
+  // matrix: test/helpers/pinned-questions-scenarios.ts).
+  questions_pin: 'error',
+  questions_list: 'error',
+  questions_status: 'error',
+  questions_refresh: 'error',
+  questions_unpin: 'error',
   sources_remove: 'error',
   submit_job: 'error',
   get_job: 'error',

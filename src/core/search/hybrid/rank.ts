@@ -6,7 +6,7 @@
 import type { ModalityMode } from '../query-intent.ts';
 import { type AdaptiveReturnDecision, adaptiveReturnFromConfig, applyAdaptiveReturn, resolveAdaptiveReturn } from '../return-policy.ts';
 import { type AutocutDecision, applyAutocut } from '../autocut.ts';
-import { type ExactLookupOpts, applyExactLookupTier } from '../exact-lookup.ts';
+import { type ExactLookupOpts, applyExactLookupHits, applyExactLookupTier } from '../exact-lookup.ts';
 import { type FusionListEntry, type VectorArm, composeFusionLists } from '../fusion-lists.ts';
 import { type HybridRequest, applyIdentityBoosts, emitHybridMeta } from './request.ts';
 import type { KeywordArmConfidenceDecision } from '../arm-confidence.ts';
@@ -15,12 +15,14 @@ import { type PostFusionOpts, RRF_K, cosineReScore, resolveWalkDedupCap, rrfFusi
 import { type RelationalEvidenceSlotDecision, ensureRelationalEvidenceSlot } from '../relational-recall.ts';
 import { type RelationalRerankPinDecision, pinRelationalRows } from '../relational-rerank-pin.ts';
 import { applyFeedbackStage } from '../feedback-boost.ts';
+import { capPerSession } from '../diverse-pool.ts';
 import { type RerankFailedReason, type RerankPassThroughReason, type RerankSkipReason, applyReranker } from '../rerank.ts';
 import type { RerankMeta } from '../../ai/gateway.ts';
 import { applyEvidenceGate, recordRerankReceipts, startRerankShadow } from '../decide-stage.ts';
 import { rerankEgressDenied } from '../decide-retrieval.ts';
 import type { SearchResult } from '../../types.ts';
-import { applyAliasHop } from '../alias-hop.ts';
+import { applyAliasHop, applyAliasHopLookup } from '../alias-hop.ts';
+import { type IdentityLookups, type RerankGateMeta, prepareRerankGate } from './rerank-gate.ts';
 import { effectiveRrfK } from '../intent-weights.ts';
 import { enforceTokenBudget } from '../token-budget.ts';
 import { expandAnchors, hydrateChunks } from '../two-pass.ts';
@@ -154,7 +156,7 @@ export async function fuseArms(
     fused = await cosineReScore(
       engine, fused, queryEmbedding, unifiedDone ? 'embedding_multimodal' : resolvedCol.name,
       imageQueryEmbedding && !unifiedDone ? { queryEmbedding: imageQueryEmbedding, column: 'embedding_image' } : undefined,
-      attribute,
+      attribute, () => { req.cosineRescore = 'js_fallback'; },
     );
   }
 
@@ -172,7 +174,7 @@ export async function fuseArms(
   // runPostFusionStages so all three early-return paths share the same
   // boost surface. Salience and recency are independent axes — either,
   // both, or neither fires depending on resolved modes.
-  if (fused.length > 0) {
+  if (fused.length > 0) await req.timer.stage('post_fusion', async () => {
     await runPostFusionStages(engine, fused, {
       ...postFusionOpts, skipMetadataBoosts: !metadataBoostGate.boosts_applied,
     });
@@ -180,7 +182,7 @@ export async function fuseArms(
     // No-op when boost factor is 1.0 (general intent or weighting disabled).
     await applyIdentityBoosts(req, fused);
     fused.sort((a, b) => b.score - a.score);
-  }
+  });
   trace?.observe('fused', fused);
   return { fused, relaxedDropped, keywordArmConfidence, metadataBoostGate };
 }
@@ -244,12 +246,18 @@ export async function expandStructuralNeighbors(req: HybridRequest, fused: Searc
   return dedupOpts;
 }
 
-/** Cross-encoder rerank (fail-open), then the relational-row pin. */
+/** Session-diverse pool (`search.diverse_pool_depth` > 0, diverse-pool.ts): one deduped row per session before the reranker. */
+export function capSessionPool(req: HybridRequest, deduped: SearchResult[]): SearchResult[] {
+  return req.resolvedMode.diverse_pool_depth > 0 ? capPerSession(deduped) : deduped;
+}
+
+/** Cross-encoder rerank (fail-open), then the relational-row pin; the W3 rerank gate grades the same candidates. */
 export async function rerankAndPin(
   req: HybridRequest,
   deduped: SearchResult[],
   relationalList: SearchResult[],
   effectiveModality: ModalityMode,
+  { exactLookupOpts, multimodal }: { exactLookupOpts: ExactLookupOpts; multimodal: boolean },
 ) {
   const { engine, query, opts, resolvedMode, degraded } = req;
   // v0.35.0.0+: cross-encoder reranker. Slots between dedup and slice so the
@@ -260,13 +268,16 @@ export async function rerankAndPin(
   // from the resolved mode bundle (tokenmax → enabled, others → disabled).
   // The resolved mode's fields already participate in knobsHash, so cache
   // rows naturally segregate by reranker config.
-  const rerankerOpts = opts?.reranker ?? {
+  const baseRerankerOpts = opts?.reranker ?? {
     enabled: resolvedMode.reranker_enabled,
     topNIn: resolvedMode.reranker_top_n_in,
     topNOut: resolvedMode.reranker_top_n_out,
     model: resolvedMode.reranker_model,
     timeoutMs: resolvedMode.reranker_timeout_ms,
   };
+  // Session-diverse pool (diverse-pool.ts): the reranker reads at least N rows.
+  const rerankerOpts = resolvedMode.diverse_pool_depth > baseRerankerOpts.topNIn
+    ? { ...baseRerankerOpts, topNIn: resolvedMode.diverse_pool_depth } : baseRerankerOpts;
 
   // is stamped `reranker_skipped` (ranking-only — never shortens the cache TTL
   // or turns an empty result into a degraded miss), and a success-shaped
@@ -284,6 +295,10 @@ export async function rerankAndPin(
   // decide.egress.deny_sources; such a query keeps fused order (egress_denied).
   const egressDenied = rerankerOpts.enabled && rerankEgressDenied(req.modeInput.decide, rerankerOpts.model ?? resolvedMode.reranker_model, deduped.slice(0, rerankerOpts.topNIn));
   if (egressDenied) { s1Failure = 'egress_denied'; pushDegraded(degraded, 'reranker_skipped', 'egress_denied'); }
+  // W3 rerank gate (no-op under `off`): grades a read-only view of `deduped`
+  // and reads the identity tiers without applying them, alongside the
+  // reranker call. The reranker's input is unchanged.
+  const gatePending = prepareRerankGate(req, { deduped, rerankerOpts, egressDenied, exactLookupOpts, multimodal });
   const reranked = rerankerOpts.enabled && !egressDenied
     ? await applyReranker(query, deduped, {
         ...(rerankerOpts as any),
@@ -298,6 +313,10 @@ export async function rerankAndPin(
         onMeta: (m: RerankMeta) => { s1Meta = m; req.rerankMeta = { model_resolved: m.model_resolved }; },
       })
     : deduped;
+  const gate = await gatePending;
+  const rerankGate: RerankGateMeta | undefined = gate.meta?.eligible
+    ? { ...gate.meta, provider_called: s1Failure !== 'no_key' }
+    : gate.meta;
   if (s1 && rerankerOpts.enabled) recordRerankReceipts(req.decide, query, reranked.slice(0, rerankerOpts.topNIn).filter((r) => s1Failure !== undefined || r.rerank_score !== undefined), s1Meta, s1Failure);
   if (s1Shadow) await s1Shadow(reranked);
   const ordered = await applyFeedbackStage(engine, reranked, { reranked: reranked !== deduped });
@@ -312,22 +331,26 @@ export async function rerankAndPin(
   const rerankPinned = reranked !== deduped && effectiveModality !== 'image'
     ? pinRelationalRows(ordered, relationalList, { max: resolvedMode.relational_rerank_pin, fusedOrder: deduped, onPin: (d) => { relationalRerankPin = d; } })
     : ordered;
-  return { rerankPinned, relationalRerankPin };
+  return { rerankPinned, relationalRerankPin, rerankGate, identityLookups: gate.lookups };
 }
 
 /** Alias hop + exact-lookup tier, evidence stamp, adaptive return, autocut and the relational evidence slot. */
 export async function sizeReturnPool(
   req: HybridRequest,
-  { rerankPinned, deduped, exactLookupOpts, relationalList, effectiveModality }: {
+  { rerankPinned, deduped, exactLookupOpts, relationalList, effectiveModality, identityLookups }: {
     rerankPinned: SearchResult[]; deduped: SearchResult[]; exactLookupOpts: ExactLookupOpts;
     relationalList: SearchResult[]; effectiveModality: ModalityMode;
+    /** Lookups the rerank gate already read (gate not `off`): applied here, never re-read. */
+    identityLookups?: IdentityLookups;
   },
 ) {
   const { engine, query, opts, resolvedMode, cfgForColumn, limit, offset, suggestions, aliasHopOpts } = req;
   // T3 — free-text alias hop. Runs AFTER rerank so a query that is a page's
   // declared chosen name reliably surfaces that page regardless of how the
   // reranker scored body chunks. Fail-open on pre-v110 brains.
-  const preExact = await applyAliasHop(engine, rerankPinned, query, aliasHopOpts);
+  const preExact = identityLookups
+    ? await applyAliasHopLookup(engine, rerankPinned, identityLookups.alias, aliasHopOpts)
+    : await applyAliasHop(engine, rerankPinned, query, aliasHopOpts);
 
   // #1663 — structural exact-lookup tier: a query that IS a page identity
   // (slug / exact normalized title) gets that page at rank-1 regardless of
@@ -335,7 +358,9 @@ export async function sizeReturnPool(
   // the already-fetched title arm (no extra queries); pure no-op for
   // non-lookup-shaped queries. Runs after the alias hop so all three
   // identity surfaces (alias, slug, title) share the same injection shape.
-  const aliasHopped = await applyExactLookupTier(engine, preExact, query, exactLookupOpts);
+  const aliasHopped = identityLookups
+    ? applyExactLookupHits(preExact, identityLookups.exactHits)
+    : await applyExactLookupTier(engine, preExact, query, exactLookupOpts);
 
   // T4 — stamp evidence + create_safety so the agent's don't-duplicate
   // decision keys off WHY a page matched, not a raw blended score. Stamp on
@@ -441,7 +466,7 @@ export async function sizeReturnPool(
 export async function finalizeHybridResults(
   req: HybridRequest,
   returnPool: SearchResult[],
-  { relaxedDropped, adaptiveDecision, autocutDecision, relationalSlotDecision, relationalRerankPin, keywordArmConfidence, metadataBoostGate }: {
+  { relaxedDropped, adaptiveDecision, autocutDecision, relationalSlotDecision, relationalRerankPin, keywordArmConfidence, metadataBoostGate, rerankGate }: {
     relaxedDropped: number;
     adaptiveDecision: AdaptiveReturnDecision | undefined;
     autocutDecision: AutocutDecision | undefined;
@@ -449,6 +474,7 @@ export async function finalizeHybridResults(
     relationalRerankPin: RelationalRerankPinDecision | undefined;
     keywordArmConfidence: KeywordArmConfidenceDecision | undefined;
     metadataBoostGate: MetadataBoostGateDecision;
+    rerankGate: RerankGateMeta | undefined;
   },
 ): Promise<SearchResult[]> {
   const { engine, opts, resolvedMode, resolvedCol, limit, offset, suggestions, detailResolved, degraded } = req;
@@ -484,6 +510,8 @@ export async function finalizeHybridResults(
     ...(relationalRerankPin ? { relational_rerank_pin: relationalRerankPin } : {}),
     ...(keywordArmConfidence ? { keyword_arm_confidence: keywordArmConfidence } : {}),
     metadata_boost_gate: metadataBoostGate,
+    ...(rerankGate ? { rerank_gate: rerankGate } : {}),
+    ...(req.cosineRescore ? { cosine_rescore: req.cosineRescore } : {}),
   });
   return budgeted;
 }

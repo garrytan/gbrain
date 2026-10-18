@@ -137,7 +137,7 @@ for (const connector of ['github', 'google'] as const) {
         await engine.executeRaw('DELETE FROM gbrain_cycle_locks WHERE id=$1', [syncLockId(f.id)]);
         await run(false);
         const checkpoint = await sourceCheckpoint(engine, f.id);
-        const receipts = await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1', [f.id]);
+        const receipts = await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1 ORDER BY id', [f.id]);
         released.resolve();
         const [result] = await Promise.allSettled([old]);
         const slug = connector === 'github' ? 'gh/acme-example/app/1' : 'people/first-example';
@@ -145,7 +145,7 @@ for (const connector of ['github', 'google'] as const) {
         if (bound) expect(readFileSync(join(f.dir, `${slug}.md`), 'utf8')).toContain('Newest response');
         expect(result).toMatchObject({ status: 'rejected', reason: { name: 'LockStolenError' } });
         expect(await sourceCheckpoint(engine, f.id)).toEqual(checkpoint);
-        expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1', [f.id])).toEqual(receipts);
+        expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1 ORDER BY id', [f.id])).toEqual(receipts);
         await disposePersistenceConsumer(engine);
         expect((await run(false)).status).not.toBe('partial');
       } finally { released.resolve(); await old.catch(() => {}); }

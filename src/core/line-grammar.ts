@@ -18,7 +18,12 @@
  * `[^1]`, `[ ]` and ids like `[D4]` never match), all-caps markers like
  * `[TODO]`, `[x]`/`[X]` task markers and a small stoplist are refused, and lines inside code, blockquotes, HTML
  * comments, the Facts/Takes fences and machine-written sections (Timeline,
- * See also, Related, Sources, ...) are never read.
+ * See also, Related, Sources, ...) are never read. Template and dictionary
+ * lines are refused too: a fact line whose text holds another bare `[Slot]`
+ * (`- [Time] - [Event]`), whose claim starts with a separator or is only a
+ * placeholder (`TBD`, `...`), or whose category is a lexicographic usage
+ * label (`[noun]`, `[informal]`). Every guard reads one line only, so a
+ * line's parse never depends on its neighbors.
  *
  * `@effective[start,end)` (alias `@valid`) is an inline validity range with
  * ISO dates (`YYYY`, `YYYY-MM`, `YYYY-MM-DD`, UTC); `[`/`]` are inclusive and
@@ -33,7 +38,11 @@ import { inSuppressedRange, rolePriorSuppressedRanges } from './machine-sections
 
 export type GrammarReason =
   | 'prose_tail' | 'two_links' | 'stoplist_type' | 'undeclared_type'
-  | 'unknown_qualifier' | 'invalid_range';
+  | 'unknown_qualifier' | 'invalid_range'
+  | 'template_slot' | 'separator_claim' | 'placeholder_claim' | 'usage_label' | 'type_punctuation';
+
+/** Guard refusals: reported only when the page also holds a grammar line, or when asked (`explainGuards`). */
+const GUARD_REASONS: ReadonlySet<GrammarReason> = new Set(['template_slot', 'separator_claim', 'placeholder_claim', 'usage_label']);
 
 export interface EffectiveRange {
   /** Inclusive start date `YYYY-MM-DD`, or null when open. */
@@ -82,6 +91,18 @@ const FACT_KINDS = new Set(['event', 'preference', 'commitment', 'belief', 'fact
 const CATEGORY_RE = /^[A-Za-z][A-Za-z_-]{0,31}$/;
 const TYPE_TOKEN_RE = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/;
 const CATEGORY_STOPLIST = new Set(['x', 'todo', 'done', 'wip']);
+/** Lexicographic labels (parts of speech, register and region) mark dictionary entries, not fact categories. */
+export const USAGE_LABELS: ReadonlySet<string> = new Set([
+  'noun', 'verb', 'adj', 'adjective', 'adv', 'adverb', 'pron', 'pronoun', 'prep', 'preposition', 'conj', 'interj',
+  'informal', 'formal', 'slang', 'colloquial', 'archaic', 'obsolete', 'dated', 'literary', 'figurative', 'vulgar',
+  'offensive', 'dialect', 'regional', 'plural', 'singular', 'transitive', 'intransitive', 'abbr',
+]);
+// A bare `[Slot]` of category shape: not a link label `[x](url)` or `[x][ref]`, not part of `[[x]]`, `![x]` or `\[x]`.
+const BARE_SLOT_RE = /(?<![[\\!\]])\[[A-Za-z][A-Za-z_-]{0,31}\](?![[(\]])/;
+// A claim that starts with a separator (`- [Time] - [Event]`, `[Day] | ...`); `-40 degrees` is still a claim.
+const SEPARATOR_CLAIM_RE = /^(?:[–—|=>]|[-/](?=\s|$))/;
+const PLACEHOLDER_CLAIM_RE = /^(?:\.{3,}|…|tbd|tba|tbc|x{3,}|_{3,}|<[^<>]*>|\?{2,})$/i;
+const DECORATED_TYPE_RE = /^(\*\*|__|`)?([A-Za-z][A-Za-z0-9_-]{0,39}?)(\*\*|__|`)?(:)?$/;
 const TYPE_STOPLIST = new Set(['see', 'also', 'cf', 'via', 'and', 'or', 'with', 'from', 're', 'by', 'to', 'per', 'and/or']);
 const LIST_ITEM_RE = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]+(.*)$/;
 // Neither date group may contain a comma: with n commas and no closer, a group
@@ -262,8 +283,9 @@ function lineText(line: string): string {
  * active schema pack's link verbs), gates relation types: an undeclared type
  * falls back to inference and is reported with the nearest declared verb.
  */
-export function parseLineGrammar(text: string, opts: { declaredTypes?: ReadonlySet<string> | null } = {}): LineGrammarResult {
+export function parseLineGrammar(text: string, opts: { declaredTypes?: ReadonlySet<string> | null; explainGuards?: boolean } = {}): LineGrammarResult {
   const result: LineGrammarResult = { facts: [], relations: [], diagnostics: [] };
+  const guarded: GrammarDiagnostic[] = [];
   if (!text.includes('- ') && !text.includes('* ') && !text.includes('+ ') && !/\d[.)] /.test(text)) return result;
   const masked = stripCodeBlocks(text, { onHtmlComment: () => {} });
   const excluded = excludedRanges(text);
@@ -282,27 +304,48 @@ export function parseLineGrammar(text: string, opts: { declaredTypes?: ReadonlyS
     // the original line; structure is read from the masked text (links inside
     // code are not links), the fact text from the original.
     const visibleContent = stripTrailingCitation(item[2]).trim();
-    const content = stripTrailingCitation(line.slice(line.length - item[2].length)).trim();
+    // Read from the original item: masking can widen the marker's whitespace when the item opens with inline code.
+    const content = stripTrailingCitation(LIST_ITEM_RE.exec(line)?.[2] ?? line.slice(line.length - item[2].length)).trim();
     if (!visibleContent || visibleContent.startsWith('\\')) continue;
-    const note = (reason: GrammarReason, message: string) => result.diagnostics.push({ line: lineNo, reason, text: lineText(line), message });
-    if (visibleContent.startsWith('[')) {
-      const fact = parseFactContent(content, note);
+    const note = (reason: GrammarReason, message: string) => (GUARD_REASONS.has(reason) ? guarded : result.diagnostics).push({ line: lineNo, reason, text: lineText(line), message });
+    if (visibleContent.startsWith('[') && content.startsWith('[')) {
+      const fact = parseFactContent(content, visibleContent, note);
       if (fact) result.facts.push({ line: lineNo, ...fact });
       continue;
     }
-    const relation = parseRelationContent(visibleContent, opts.declaredTypes ?? null, note);
+    const relation = parseRelationContent(visibleContent, content, opts.declaredTypes ?? null, note);
     if (relation) result.relations.push({ line: lineNo, start, end: start + line.length, ...relation });
+  }
+  if (guarded.length && (opts.explainGuards || result.facts.length || result.relations.length)) {
+    result.diagnostics.push(...guarded);
+    result.diagnostics.sort((a, b) => a.line - b.line);
   }
   return result;
 }
 
-function parseFactContent(content: string, note: (reason: GrammarReason, message: string) => void): Omit<GrammarFact, 'line'> | null {
+const FACT_FORM = 'To state a typed fact, write `- [category] claim` with a real category, for example `- [preference] Prefers tea`.';
+
+function parseFactContent(content: string, visibleContent: string, note: (reason: GrammarReason, message: string) => void): Omit<GrammarFact, 'line'> | null {
   const m = /^\[([^\][]*)\][ \t]+(\S.*)$/.exec(content);
   if (!m) return null;
   const category = m[1].trim();
   if (!CATEGORY_RE.test(category)) return null;
   // An all-caps token is a marker or acronym (`[TODO]`, `[WIP]`, `[NB]`), not a category.
   if (CATEGORY_STOPLIST.has(category.toLowerCase()) || (category.length > 1 && category === category.toUpperCase()) || /^[A-Z]{2,}[-_]/.test(category)) return null;
+  if (USAGE_LABELS.has(category.toLowerCase())) {
+    note('usage_label', `[${category}] is a dictionary usage label, so this line stays page text and is not read as a typed fact. ${FACT_FORM}`);
+    return null;
+  }
+  // Structure comes from the masked text (code is not a slot), so read the remainder there.
+  const visibleRest = /^\[[^\][]*\][ \t]+(\S.*)$/.exec(visibleContent)?.[1] ?? '';
+  if (BARE_SLOT_RE.test(visibleRest)) {
+    note('template_slot', `This line looks like an unfilled template ([${category}] followed by another [Slot]), so it stays page text and is not read as a typed fact. Leave templates as they are; ${FACT_FORM}`);
+    return null;
+  }
+  if (SEPARATOR_CLAIM_RE.test(m[2])) {
+    note('separator_claim', `The text after [${category}] starts with a separator, which marks a template or table row, so this line stays page text. ${FACT_FORM}`);
+    return null;
+  }
   let rest = m[2].trim();
   let effective: EffectiveRange | null = null;
   const q = parseEffectiveQualifier(rest);
@@ -314,17 +357,22 @@ function parseFactContent(content: string, note: (reason: GrammarReason, message
   const tags = [...rest.matchAll(/(?:^|\s)#([A-Za-z][\w/-]*)/g)].map(t => t[1]);
   const claim = rest.replace(/(?:^|\s)#[A-Za-z][\w/-]*/g, '').replace(/\s+/g, ' ').trim();
   if (!claim) return null;
+  if (PLACEHOLDER_CLAIM_RE.test(claim)) {
+    note('placeholder_claim', `The claim after [${category}] is only a placeholder, so this line stays page text. Leave it until there is a real claim; ${FACT_FORM}`);
+    return null;
+  }
   const lower = category.toLowerCase();
   return { category, kind: (FACT_KINDS.has(lower) ? lower : 'fact') as GrammarFact['kind'], claim, tags, context, effective };
 }
 
+/** The declared verb a typo most likely meant: within two edits and a third of the word, else none. */
 function nearest(type: string, declared: ReadonlySet<string>): string | null {
   let best: string | null = null; let bestScore = Infinity;
   for (const candidate of declared) {
     const d = levenshtein(type, candidate);
     if (d < bestScore) { bestScore = d; best = candidate; }
   }
-  return best;
+  return bestScore <= 2 && bestScore <= Math.floor(type.length / 3) ? best : null;
 }
 
 function levenshtein(a: string, b: string): number {
@@ -340,12 +388,22 @@ function levenshtein(a: string, b: string): number {
   return row[b.length];
 }
 
-function parseRelationContent(content: string, declared: ReadonlySet<string> | null,
+function parseRelationContent(content: string, original: string, declared: ReadonlySet<string> | null,
   note: (reason: GrammarReason, message: string) => void): Omit<GrammarRelation, 'line' | 'start' | 'end'> | null {
   const links = findLinks(content);
   if (!links.length) return null;
   const first = links[0];
   let prefix = content.slice(0, first.index).trim();
+  // Masking blanks inline code, so a backticked type is read from the original line at the same offsets.
+  const linkAt = original.indexOf(first.text);
+  const decorated = linkAt > 0 ? DECORATED_TYPE_RE.exec(original.slice(0, linkAt).trim()) : null;
+  if (decorated && (decorated[1] || decorated[3] || decorated[4]) && (decorated[1] ?? '') === (decorated[3] ?? '')) {
+    const type = normalizeRelationType(decorated[2]);
+    if (type.includes('_') || declared?.has(type)) {
+      note('type_punctuation', `"${type}" is wrapped in formatting or followed by a colon, so it is not read as a relation type and the link keeps its inferred type. Write it bare: \`- ${type} [[target]]\`.`);
+    }
+    return null;
+  }
   let effective: EffectiveRange | null = null;
   // A qualifier may sit between the type and the link.
   const qualifierAt = prefix.search(/\s@[A-Za-z]/);
@@ -387,27 +445,80 @@ function parseRelationContent(content: string, declared: ReadonlySet<string> | n
   }
   if (declared && declared.size && !declared.has(type)) {
     const near = nearest(type, declared);
-    note('undeclared_type', `"${type}" is not a link verb of the active schema pack, so the link keeps its inferred type.${near ? ` Did you mean ${near}?` : ''}`);
+    note('undeclared_type', near
+      ? `"${type}" is not a link verb of the active schema pack, so the link keeps its inferred type. Did you mean ${near}?`
+      : `"${type}" is not a link verb of the active schema pack, so the link keeps its inferred type. The pack has no verb for this relationship: declare one in the pack's link_types, or use add_link with a declared type.`);
     return null;
   }
   return { type, context, effective };
 }
 
+const TRUTHY = new Set(['true', '1', 'yes', 'on']);
 const FALSY = new Set(['false', '0', 'no', 'off']);
-const isTrue = (value: string | null) => value != null && ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase());
+/** A grammar boolean as written: true, false, null when unset, or 'invalid' for anything else. */
+export function parseGrammarBoolean(value: string | null | undefined): boolean | null | 'invalid' {
+  if (value == null) return null;
+  const v = value.trim().toLowerCase();
+  return TRUTHY.has(v) ? true : FALSY.has(v) ? false : 'invalid';
+}
 
-/** `line_grammar.enabled` (default off, held-out verdict H3) and `line_grammar.allow_undeclared_types` (default off). */
+/** Defaults of the line-grammar settings (held-out verdicts H3 and H7). */
+export const LINE_GRAMMAR_DEFAULTS = { enabled: false, allowUndeclaredTypes: false, effectiveRanges: true } as const;
+export const LINE_GRAMMAR_KEYS = ['line_grammar.enabled', 'line_grammar.allow_undeclared_types', 'line_grammar.effective_ranges'] as const;
+/**
+ * Internal config row: when the effective line-grammar behavior last changed.
+ * Link extraction treats pages extracted before it as stale (see
+ * core/link-extraction-watermark.ts). Not a user setting; `config unset`
+ * refuses `_internal.*` keys.
+ */
+export const LINK_EXTRACTION_GENERATION_KEY = '_internal.link_extraction_generation';
+
+export interface LineGrammarSettings {
+  enabled: boolean;
+  allowUndeclaredTypes: boolean;
+  /** Ranges are stored only while the grammar is on. */
+  effectiveRanges: boolean;
+  /** ISO time of the last effective change, or null when never changed. */
+  generation: string | null;
+}
+
+const resolveBoolean = (value: string | null, fallback: boolean) => { const v = parseGrammarBoolean(value); return typeof v === 'boolean' ? v : fallback; };
+
+/** Settings from raw config values (unset or unreadable spellings take the default). */
+export function lineGrammarSettingsFrom(raw: { enabled: string | null; allow: string | null; ranges: string | null; generation: string | null }): LineGrammarSettings {
+  const enabled = resolveBoolean(raw.enabled, LINE_GRAMMAR_DEFAULTS.enabled);
+  return { enabled, allowUndeclaredTypes: resolveBoolean(raw.allow, LINE_GRAMMAR_DEFAULTS.allowUndeclaredTypes),
+    effectiveRanges: enabled && resolveBoolean(raw.ranges, LINE_GRAMMAR_DEFAULTS.effectiveRanges), generation: raw.generation };
+}
+
+/**
+ * The line-grammar settings link extraction runs under, read once. Strict: a
+ * failed config read throws, so the caller leaves the page stale instead of
+ * extracting under defaults it did not mean.
+ */
+export async function readLineGrammarSettings(engine: { getConfig(key: string): Promise<string | null> }): Promise<LineGrammarSettings> {
+  const [enabled, allow, ranges, generation] = await Promise.all([...LINE_GRAMMAR_KEYS, LINK_EXTRACTION_GENERATION_KEY].map(key => engine.getConfig(key)));
+  return lineGrammarSettingsFrom({ enabled, allow, ranges, generation });
+}
+
+/** What extraction actually does under these settings; two settings with the same fingerprint extract identically. */
+export function lineGrammarFingerprint(s: Pick<LineGrammarSettings, 'enabled' | 'allowUndeclaredTypes' | 'effectiveRanges'>): string {
+  return s.enabled ? `on|undeclared:${s.allowUndeclaredTypes}|ranges:${s.effectiveRanges}` : 'off';
+}
+
+/** `line_grammar.enabled` and `line_grammar.allow_undeclared_types`, best-effort (read failures take the defaults); for advisories and lint. */
 export async function lineGrammarOptions(engine: { getConfig(key: string): Promise<string | null> }): Promise<{ enabled: boolean; allowUndeclaredTypes: boolean }> {
   const read = (key: string) => engine.getConfig(key).catch(() => null);
   const [enabled, allow] = await Promise.all([read('line_grammar.enabled'), read('line_grammar.allow_undeclared_types')]);
-  return { enabled: isTrue(enabled), allowUndeclaredTypes: isTrue(allow) };
+  const s = lineGrammarSettingsFrom({ enabled, allow, ranges: null, generation: null });
+  return { enabled: s.enabled, allowUndeclaredTypes: s.allowUndeclaredTypes };
 }
 
 /** `line_grammar.effective_ranges` (default on; applies only while `line_grammar.enabled` is on): store relation-line ranges on edges (core/link-effective.ts). */
 export async function effectiveRangesEnabled(engine: { getConfig(key: string): Promise<string | null> }): Promise<boolean> {
   const read = (key: string) => engine.getConfig(key).catch(() => null);
   const [ranges, enabled] = await Promise.all([read('line_grammar.effective_ranges'), read('line_grammar.enabled')]);
-  return (ranges == null || !FALSY.has(ranges.trim().toLowerCase())) && isTrue(enabled);
+  return lineGrammarSettingsFrom({ enabled, allow: null, ranges, generation: null }).effectiveRanges;
 }
 
 /**

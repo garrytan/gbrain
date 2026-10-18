@@ -31,8 +31,8 @@ import type {
   Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult,
 } from './types.ts';
 import type { BrainEngine } from '../../core/engine.ts';
-import { loadConfig, toEngineConfig, gbrainPath } from '../../core/config.ts';
-import { createEngine } from '../../core/engine-factory.ts';
+import { loadConfig, gbrainPath } from '../../core/config.ts';
+import { connectMigrationEngine } from './run-engine.ts';
 
 let testEngineOverride: BrainEngine | null = null;
 export function __setTestEngineOverride(engine: BrainEngine | null): void {
@@ -190,18 +190,13 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
 
   // Acquire engine for phases that need it. Skip cleanly when none configured.
   let engine: BrainEngine | null = null;
-  let ownsEngine = false;
+  let close: (() => Promise<void>) | null = null;
   try {
     if (testEngineOverride) {
       engine = testEngineOverride;
     } else {
       const config = loadConfig();
-      if (config) {
-        const engineConfig = toEngineConfig(config);
-        engine = await createEngine(engineConfig);
-        await engine.connect(engineConfig);
-        ownsEngine = true;
-      }
+      if (config) ({ engine, close } = await connectMigrationEngine(config));
     }
 
     phases.push(await phaseASchema(engine, opts));
@@ -212,8 +207,8 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
     phases.push(await phaseBBackfill(engine, opts));
     phases.push(phaseCRechunkTodo(opts));
   } finally {
-    if (ownsEngine && engine) {
-      try { await engine.disconnect(); } catch { /* ignore */ }
+    if (close) {
+      try { await close(); } catch { /* ignore */ }
     }
   }
 
@@ -239,6 +234,7 @@ export const v0_28_0: Migration = {
       'chunks where the per-token allow-list cannot reach) catches up on legacy pages.',
   },
   orchestrator,
+  sharesRunEngine: true,
 };
 
 /** Exported for unit tests. */

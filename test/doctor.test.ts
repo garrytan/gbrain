@@ -183,7 +183,7 @@ describe('doctor command', () => {
         });
         for (let i = 0; i < 3; i++) {
           logRerankFailure({
-            model: 'voyage:rerank-2.5', // the resolved default — rows for other models are filtered out
+            model: 'voyage:rerank-3-lite', // the resolved default — rows for other models are filtered out
             reason: 'unknown',
             query_hash: `unknown${i}`,
             doc_count: 30,
@@ -220,7 +220,7 @@ describe('doctor command', () => {
           env: { OPENAI_API_KEY: 'sk-test', VOYAGE_API_KEY: 'pa-test-voyage' },
         });
         logRerankFailure({
-          model: 'voyage:rerank-2.5', // rows are filtered to the resolved model
+          model: 'voyage:rerank-3-lite', // rows are filtered to the resolved model
           reason: 'budget',
           query_hash: 'budget01',
           doc_count: 30,
@@ -259,7 +259,7 @@ describe('doctor command', () => {
         const reasons = ['empty_result_set', 'malformed_shape', 'empty_result_set'] as const;
         reasons.forEach((reason, i) => {
           logRerankFailure({
-            model: 'voyage:rerank-2.5', // the resolved default — rows for other models are filtered out
+            model: 'voyage:rerank-3-lite', // the resolved default — rows for other models are filtered out
             reason,
             query_hash: `passthru${i}`,
             doc_count: 12,
@@ -295,7 +295,7 @@ describe('doctor command', () => {
         });
         for (const [i, reason] of (['empty_result_set', 'malformed_shape'] as const).entries()) {
           logRerankFailure({
-            model: 'voyage:rerank-2.5', // the resolved default — rows for other models are filtered out
+            model: 'voyage:rerank-3-lite', // the resolved default — rows for other models are filtered out
             reason,
             query_hash: `passthru-low${i}`,
             doc_count: 12,
@@ -825,7 +825,7 @@ describe('v0.32.4 — sync_freshness check', () => {
   // Stub engine: only checkSyncFreshness's executeRaw matters. Per-case rows
   // shape is `{id, name, local_path, last_sync_at}`.
   function makeStubEngine(rows: any[], managed = false): any {
-    return { executeRaw: async (sql: string) => (sql.includes('FROM persistence_brain') ? [{ enabled: managed }] : rows) };
+    return { executeRaw: async (sql: string) => (sql.includes('FROM persistence_brain') ? [{ enabled: managed }] : sql.includes('shared_skill_packs') ? [] : rows) };
   }
 
   function agoMs(ms: number): Date {
@@ -840,25 +840,25 @@ describe('v0.32.4 — sync_freshness check', () => {
     expect(result.message).toBe('No federated sources to sync');
   });
 
-  test('last_sync_at IS NULL → fail with "never been synced"', async () => {
+  test('last_sync_at IS NULL → fail with "no successful sync recorded" (#4960)', async () => {
     const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
     const result = await checkSyncFreshness(makeStubEngine([
       { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: null },
     ]));
     expect(result.status).toBe('fail');
-    expect(result.message).toContain('never been synced');
+    expect(result.message).toContain('no successful sync recorded');
     expect(result.message).toContain(`'wiki'`); // source.id embedded
-    expect(result.message).toContain('gbrain sync --source <id>');
+    expect(result.message).toContain('gbrain sync --source wiki');
   });
 
   test('#5477: a managed brain is told to sync with --no-pull; unmanaged wording is unchanged', async () => {
     const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
     const rows = [{ id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: null }];
     const unmanaged = await checkSyncFreshness(makeStubEngine(rows));
-    expect(unmanaged.message).toBe("Source 'wiki' has never been synced. Run `gbrain sync --source <id>` for each stale source");
+    expect(unmanaged.message).toBe("Source 'wiki': no successful sync recorded; no attempt recorded; run `gbrain sync --source wiki`");
     const managed = await checkSyncFreshness(makeStubEngine(rows, true));
     expect(managed.status).toBe('fail');
-    expect(managed.message).toBe("Source 'wiki' has never been synced. Run `gbrain sync --source <id> --no-pull` for each stale source");
+    expect(managed.message).toMatch(/^Source 'wiki': no successful sync recorded; .*run `gbrain sync --source wiki --no-pull`$/);
   });
 
   test('last_sync_at > 72h ago → fail with day-rounded "Nd ago"', async () => {
@@ -994,7 +994,7 @@ describe('v0.41.27.0 — sync_freshness git short-circuit', () => {
   // Reuse the stub-engine pattern from v0.32.4 describe above. Row shape now
   // includes last_commit + chunker_version (extended SELECT in v0.41.27.0).
   function makeStubEngine(rows: any[]): any {
-    return { executeRaw: async () => rows };
+    return { executeRaw: async (sql: string) => (sql.includes('shared_skill_packs') ? [] : rows) };
   }
   function agoMs(ms: number): Date {
     return new Date(Date.now() - ms);
@@ -1008,8 +1008,8 @@ describe('v0.41.27.0 — sync_freshness git short-circuit', () => {
   beforeEach(async () => {
     const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
       await import('../src/core/git-head.ts');
-    const { CHUNKER_VERSION } = await import('../src/core/chunkers/code.ts');
-    currentChunkerVersion = String(CHUNKER_VERSION);
+    const { chunkerStamp } = await import('../src/core/chunkers/code.ts');
+    currentChunkerVersion = chunkerStamp();
     _setGitHeadProbeForTests(null);
     _setGitCleanProbeForTests(null);
   });
@@ -1252,7 +1252,7 @@ describe('v0.41.27.0 — sync_freshness git short-circuit', () => {
 // ============================================================================
 describe('v0.41.32.0 — commit-relative staleness', () => {
   function makeStubEngine(rows: any[]): any {
-    return { executeRaw: async () => rows };
+    return { executeRaw: async (sql: string) => (sql.includes('shared_skill_packs') ? [] : rows) };
   }
   function agoMs(ms: number): Date { return new Date(Date.now() - ms); }
   let currentChunkerVersion: string;
@@ -1260,8 +1260,8 @@ describe('v0.41.32.0 — commit-relative staleness', () => {
   beforeEach(async () => {
     const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
       await import('../src/core/git-head.ts');
-    const { CHUNKER_VERSION } = await import('../src/core/chunkers/code.ts');
-    currentChunkerVersion = String(CHUNKER_VERSION);
+    const { chunkerStamp } = await import('../src/core/chunkers/code.ts');
+    currentChunkerVersion = chunkerStamp();
     _setGitHeadProbeForTests(null);
     _setGitCleanProbeForTests(null);
   });
@@ -1827,14 +1827,14 @@ describe('BUG 4 — in-progress sync via live lock, not stale freshness', () => 
     expect(result.message).toContain('pid 4242');
   });
 
-  test('never-synced source WITH a live lock → ok (initial sync in progress)', async () => {
+  test('never-synced source WITH a live lock → warn (#4960: a first sync running is not fresh)', async () => {
     const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
     await addSource('wiki', null);
     await holdLock('wiki', 30);
     const result = await checkSyncFreshness(engine);
-    expect(result.status).toBe('ok');
-    expect(result.details?.synced_recently_count).toBe(1);
-    expect(result.message).toContain('sync in progress');
+    expect(result.status).toBe('warn');
+    expect(result.details?.stale_count).toBe(1);
+    expect(result.message).toContain('first sync running (pid 4242 on testhost), no successful sync yet');
   });
 
   test('never-synced source with NO lock → fail (unchanged behavior)', async () => {
@@ -1842,7 +1842,7 @@ describe('BUG 4 — in-progress sync via live lock, not stale freshness', () => 
     await addSource('wiki', null);
     const result = await checkSyncFreshness(engine);
     expect(result.status).toBe('fail');
-    expect(result.message).toContain('never been synced');
+    expect(result.message).toContain('no successful sync recorded');
   });
 
   test('expired-TTL lock does NOT mask staleness (wedged-but-not-refreshing holder)', async () => {
@@ -1922,7 +1922,7 @@ describe('BUG 4 — in-progress sync via live lock, not stale freshness', () => 
 // ============================================================================
 describe('sync_freshness — clone-unavailable content-lag fallback', () => {
   function makeStubEngine(rows: any[]): any {
-    return { executeRaw: async () => rows };
+    return { executeRaw: async (sql: string) => (sql.includes('shared_skill_packs') ? [] : rows) };
   }
   function agoMs(ms: number): Date { return new Date(Date.now() - ms); }
   const HOURS = 60 * 60 * 1000;
@@ -1931,8 +1931,8 @@ describe('sync_freshness — clone-unavailable content-lag fallback', () => {
   beforeEach(async () => {
     const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
       await import('../src/core/git-head.ts');
-    const { CHUNKER_VERSION } = await import('../src/core/chunkers/code.ts');
-    currentChunkerVersion = String(CHUNKER_VERSION);
+    const { chunkerStamp } = await import('../src/core/chunkers/code.ts');
+    currentChunkerVersion = chunkerStamp();
     _setGitHeadProbeForTests(null);
     _setGitCleanProbeForTests(null);
   });

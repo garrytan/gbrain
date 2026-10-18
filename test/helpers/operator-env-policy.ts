@@ -22,6 +22,7 @@ export const KEEP_EXACT: ReadonlySet<string> = new Set([
   'GBRAIN_NO_SNAPSHOT', // cold-path opt-out must survive this preload and reach CLI children
   'GBRAIN_PGBOUNCER_URL', // explicit pooled test target supplied by ci-local
   'GBRAIN_PGBOUNCER_DIRECT_URL', // admin connection used to create the isolated pooler test DB
+  'GBRAIN_SUPAVISOR_URL', // explicit Supavisor transaction-mode test target (#6543 supavisor-read-pool E2E)
   'GBRAIN_COMPILED_BIN', // heavy-lane compile-once binary (agent-harness.ts ensureCompiledGbrain)
   'GBRAIN_AUDIT_DIR', // audit-dir-preload honors a wrapper pre-set (inspect audit output after a run)
   'GBRAIN_SYNC_FAILURES_DIR', // same wrapper pre-set contract in sync-failures-preload

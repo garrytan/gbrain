@@ -59,10 +59,14 @@ passed, 1 a failure, 2 a usage or setup error, 130/143 cancelled.
 
 Paid-provider files (`*.live.test.ts`, `test/live/`,
 `scripts/e2e-live-key-only.txt`) are listed as not stressed. A file whose
-every test skips on this platform, skips without an unavailable secret, or
+every test skips on this platform, skips without an unavailable secret
+(including a credentialed external-service URL no CI job holds, such as
+`GBRAIN_SUPAVISOR_URL`), or
 skips without a prerequisite its owning job in `heavy-tests.yml`,
-`native-locks.yml` or `macos-validation.yml` installs, is listed as not
-stressed with that reason; any other run with zero executed tests fails.
+`native-locks.yml` or `macos-validation.yml` installs, or skips without the
+PgBouncer fixture (`GBRAIN_PGBOUNCER_URL`) that a workflow step setting
+`GBRAIN_CI_REQUIRE_PGBOUNCER` runs it with, is listed as not stressed with that
+reason; any other run with zero executed tests fails.
 
 ## Isolation and receipts
 
@@ -98,7 +102,12 @@ shards.
   never sampled or skipped.
 - **Shards.** Work items (a file's iterations, split when ten exceed the
   budget) pack into the fewest shards whose measured estimates stay under 25
-  minutes. There is no shard-count cap; `max-parallel: 12` keeps a large PR
+  minutes. A file's estimate is its measured stress iteration
+  (`scripts/stress/iteration-weights.json`, mined from stress shard job logs
+  with `bun scripts/stress/gate.ts mine-iterations <log>…`, which merges into
+  the map), else its lane weight, else the lane's p75: a fresh database per
+  iteration can make a stress iteration slower than the file's lane run.
+  There is no shard-count cap; `max-parallel: 12` keeps a large PR
   from starving other jobs. Shard jobs record results and exit 0 on test
   failures; the result job decides, so a planned iteration without a receipt
   fails the check as incomplete.

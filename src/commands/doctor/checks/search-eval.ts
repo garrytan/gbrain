@@ -27,7 +27,7 @@ export async function checkSearchMode(engine: BrainEngine): Promise<Check> {
     const overrides = await engine.listConfigKeys('search.');
     // Exclude search.mode itself + the upgrade-notice state key from the
     // override roster — they aren't knobs.
-    const overrideKeys = overrides.filter(k => k !== 'search.mode' && k !== 'search.mode_upgrade_notice_shown');
+    const overrideKeys = overrides.filter(k => k !== 'search.mode' && k !== 'search.mode_upgrade_notice_shown' && k !== 'search.mode_source');
 
     const { loadSearchModeConfig, resolveSearchMode } = await import('../../../core/search/mode.ts');
     const loaded = await loadSearchModeConfig(engine);
@@ -42,10 +42,11 @@ export async function checkSearchMode(engine: BrainEngine): Promise<Check> {
       return { name: 'search_mode', status: 'ok', message: context };
     }
 
-    // v0.48.2: installs from v0.46.3–v0.47.10 carry an explicit
-    // `search.reranker.model voyage:rerank-2.5` row init wrote before the
-    // bundle default caught up. It is now redundant, but `--reset` would also
-    // wipe every OTHER tuned search.* knob — name the exact key instead.
+    // An explicit `search.reranker.model` equal to the bundle default is
+    // redundant, but `--reset` would also wipe every OTHER tuned search.*
+    // knob — name the exact key instead. (Installs from v0.46.3–v0.47.10
+    // carry an init-written `voyage:rerank-2.5` row; since the default moved
+    // to rerank-3-lite that row is a real pin and keeps them on rerank-2.5.)
     const redundant: string[] = [];
     if (resetReranker !== undefined) {
       const explicitModel = await engine.getConfig('search.reranker.model');

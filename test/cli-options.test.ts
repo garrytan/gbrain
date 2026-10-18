@@ -393,6 +393,49 @@ describe('--brain flag (brain axis routing)', () => {
   });
 });
 
+describe('--wait flag (#5232 write wait; #6625 movement owns its own)', () => {
+  test('a write command keeps the global write wait in seconds, either spelling', () => {
+    expect(parseGlobalFlags(['remember', 'a fact', '--wait', '45'])).toEqual({ cliOpts: { ...DEFAULT_CLI_OPTIONS, writeWaitMs: 45_000 }, rest: ['remember', 'a fact'] });
+    expect(parseGlobalFlags(['--wait=2.5', 'remember', 'a fact']).cliOpts.writeWaitMs).toBe(2_500);
+  });
+
+  test('a write command refuses a unit or an out-of-range value as invalid_params (exit 2), naming seconds with no units', () => {
+    for (const argv of [['remember', 'x', '--wait', '5m'], ['remember', 'x', '--wait=601'], ['remember', 'x', '--wait']]) {
+      let error: unknown;
+      try { parseGlobalFlags(argv); } catch (e) { error = e; }
+      expect(error).toMatchObject({ code: 'invalid_params', message: expect.stringContaining('seconds from 0 to 600, no units') });
+    }
+  });
+
+  test('sources writer movement gets --wait back unparsed, in both argument orders', () => {
+    for (const argv of [['sources', 'writer', 'movement', '--wait', '5m', '--json'], ['--wait', '5m', 'sources', 'writer', 'movement', '--json']]) {
+      const r = parseGlobalFlags(argv);
+      expect(r.cliOpts.writeWaitMs).toBeUndefined();
+      expect(r.rest).toEqual(['sources', 'writer', 'movement', '--json', '--wait', '5m']);
+    }
+  });
+
+  test('movement: a numeric value is not taken as a write wait, = is normalized, duplicates keep their order', () => {
+    const r = parseGlobalFlags(['sources', 'writer', 'movement', '--wait=300', 'src-a', '--wait', '1h']);
+    expect(r.cliOpts.writeWaitMs).toBeUndefined();
+    expect(r.rest).toEqual(['sources', 'writer', 'movement', 'src-a', '--wait', '300', '--wait', '1h']);
+  });
+
+  test('other sources subcommands keep the global write wait', () => {
+    expect(parseGlobalFlags(['sources', 'writer', 'status', '--wait', '10']).cliOpts.writeWaitMs).toBe(10_000);
+  });
+
+  test('CLI: a malformed write wait exits 2 with invalid_params; movement reads its own duration', () => {
+    const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
+    const write = spawnSync('bun', [CLI, 'remember', 'x', '--wait', '5m'], { encoding: 'utf-8', env: { ...process.env, NO_COLOR: '1' } });
+    expect(write.status).toBe(2);
+    expect(write.stderr).toContain('Error [invalid_params]: --wait requires a number of seconds from 0 to 600, no units (got "5m").');
+    const movement = spawnSync('bun', [CLI, 'sources', 'writer', 'movement', '--wait', '10x'], { encoding: 'utf-8', env: { ...process.env, NO_COLOR: '1' } });
+    expect(movement.stderr).toContain('--wait must be a positive integer with optional s/m/h suffix');
+    expect(movement.stderr).not.toContain('seconds from 0 to 600');
+  });
+});
+
 describe('childGlobalFlags propagates --brain', () => {
   test('explicit brain rides into child gbrain subprocess commands', async () => {
     const { childGlobalFlags } = await import('../src/core/cli-options.ts');

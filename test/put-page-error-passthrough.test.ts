@@ -7,11 +7,17 @@
  * pushing >5MB got bare `{ status: 'skipped', chunks: 0 }` and had no idea
  * why the page never appeared. The reason now rides the op response.
  * capture delegates to put_page, so it inherits the passthrough.
+ *
+ * Large pages (N14 baseline): a body over the page ceiling is refused as
+ * request_too_large (a caller error) before journal admission, so it never
+ * reserves intent bytes and never reads as retryable queue_capacity, even when
+ * it is also over the journal's intent-byte cap.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
+import { PAGE_MAX_BYTES } from '../src/core/page-size-policy.ts';
 
 let engine: PGLiteEngine;
 const put_page = operations.find(o => o.name === 'put_page')!;
@@ -43,14 +49,27 @@ beforeEach(async () => {
 }, 30_000);
 
 describe('put_page passes the skip/error reason through (#3984)', () => {
-  test('>5MB content returns a failed receipt with a bounded size diagnostic', async () => {
-    const big = '---\ntype: note\n---\n' + 'x'.repeat(5_000_001);
+  test('content over the page ceiling is refused before admission with a bounded size diagnostic', async () => {
+    const big = '---\ntype: note\n---\n' + 'x'.repeat(PAGE_MAX_BYTES);
     let failure: any;
     try { await put_page.handler(ctxOf(), { slug: 'notes/too-big', content: big }); } catch (error) { failure = error; }
     expect(failure.code).toBe('request_too_large');
-    expect(failure.message).toContain('max 5000000');
-    expect(failure.writeRequest.state).toBe('failed');
+    expect(failure.message).toContain(`max ${PAGE_MAX_BYTES}`);
+    expect(failure.message.length).toBeLessThan(400);
+    expect(failure.writeRequest).toBeUndefined();
     expect(await engine.getPage('notes/too-big')).toBeNull();
+    const [journal] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM persistence_requests');
+    expect(Number(journal.n)).toBe(0);
+  });
+
+  test('an over-ceiling body that is also over the intent-byte cap is a size refusal, never queue_capacity', async () => {
+    await engine.setConfig('persistence.limits.principal_intent_bytes', String(16 * 1024 * 1024));
+    const big = '---\ntype: note\n---\n' + 'x'.repeat(PAGE_MAX_BYTES);
+    let failure: any;
+    try { await put_page.handler(ctxOf(), { slug: 'notes/too-big-for-the-journal', content: big }); } catch (error) { failure = error; }
+    expect(failure.code).toBe('request_too_large');
+    const small = await put_page.handler(ctxOf(), { slug: 'notes/fits', content: '---\ntype: note\n---\nfits\n' }) as Record<string, unknown>;
+    expect(small.status).toBe('created_or_updated');
   });
 
   test('invalid YAML returns a failed receipt without copying submitted content', async () => {

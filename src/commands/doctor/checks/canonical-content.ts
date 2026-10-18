@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../../../core/engine.ts';
-import { ownedContentFreshness } from '../../../core/shared-skills/content-freshness.ts';
+import { isOwnedContentSchemaMissing, ownedContentFreshness } from '../../../core/shared-skills/content-freshness.ts';
 import type { Check } from '../../doctor.ts';
 
 export async function checkCanonicalContentWrites(engine: BrainEngine, sourceIds?: string[]): Promise<Check | null> {
@@ -14,7 +14,7 @@ export async function checkCanonicalContentWrites(engine: BrainEngine, sourceIds
           : `${sources.length} writer-owned content source(s); no pending canonical publication or recovery.`,
       details: { writer_owned_count: sources.length, pending_count: pending, recovering_count: recovering } };
   } catch (error) {
-    if (/does not exist|no such table/i.test(String(error))) return null;
+    if (isOwnedContentSchemaMissing(error)) return null;
     return { name: 'canonical_content_writes', status: 'warn', message: 'Canonical content publication status could not be verified; inspect sources writer status on the designated owner.' };
   }
 }

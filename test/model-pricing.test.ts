@@ -99,6 +99,30 @@ describe('CANONICAL_PRICING — table integrity', () => {
     }
   });
 
+  // #6448 item 1: a long-prompt tier is an UPPER tier (every rate at or above
+  // the base row) with a positive threshold, and an anthropic: tier derives
+  // its cache rates from ITS input rate with the same multipliers as the row.
+  test('every long_prompt tier is finite, above its base row, and derives its cache rates like the row', () => {
+    let tiers = 0;
+    for (const [key, p] of Object.entries(CANONICAL_PRICING)) {
+      const tier = p.long_prompt;
+      if (!tier) continue;
+      tiers++;
+      expect(Number.isFinite(tier.threshold_tokens) && tier.threshold_tokens > 0).toBe(true);
+      expect(tier.input).toBeGreaterThanOrEqual(p.input);
+      expect(tier.output).toBeGreaterThanOrEqual(p.output);
+      if (key.startsWith('anthropic:')) {
+        const mult = ANTHROPIC_CACHE_READ_MULT_OVERRIDES[key] ?? ANTHROPIC_CACHE_READ_MULT;
+        expect(tier.cache_read).toBeCloseTo(tier.input * mult, 10);
+        expect(tier.cache_write).toBeCloseTo(tier.input * ANTHROPIC_CACHE_WRITE_5M_MULT, 10);
+      } else {
+        expect(tier.cache_read).toBeUndefined();
+        expect(tier.cache_write).toBeUndefined();
+      }
+    }
+    expect(tiers).toBeGreaterThanOrEqual(1); // Haiku 5.5
+  });
+
   test('every cache-read multiplier override names a canonical row with matching cache_read', () => {
     for (const [key, mult] of Object.entries(ANTHROPIC_CACHE_READ_MULT_OVERRIDES)) {
       const p = CANONICAL_PRICING[key];

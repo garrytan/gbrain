@@ -172,7 +172,7 @@ describe('test-shard.sh — LPT balance contract', () => {
 
   // CI runs THIS many shards (test.yml matrix). The old version of this
   // test asserted 4- and 6-shard splits — configurations nothing runs.
-  const CI_SHARDS = 8;
+  const CI_SHARDS = 10;
 
   it('CI_SHARDS matches the test.yml matrix (parsed, not regexed)', () => {
     const fs = require('fs');

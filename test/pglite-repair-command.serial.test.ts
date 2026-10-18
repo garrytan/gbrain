@@ -146,7 +146,7 @@ describe('gbrain pglite-repair — dry-run is strictly read-only', () => {
     const parent = tmp('gbrain-repair-dry-');
     const dir = join(parent, 'brain.pglite');
     makeFakeLayout(dir);
-    writeFileSync(join(dir, 'postmaster.pid'), '99999\n'); // unclean-shutdown marker
+    writeFileSync(join(dir, 'postmaster.pid'), `${deadPid()}\n`); // unclean-shutdown marker from a provably dead PID
     const parentBefore = readdirSync(parent).sort();
     const dirBefore = readdirSync(dir).sort();
 

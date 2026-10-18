@@ -15,6 +15,8 @@ import type {
   MinionQueueOpts, ChildDoneMessage, ChildOutcome, Attachment, AttachmentInput,
 } from './types.ts';
 import { rowToMinionJob, rowToInboxMessage, rowToAttachment } from './types.ts';
+import { WATCHDOG_SUSPECT_MARK, releaseWatchdogClaim, requeueCoRunnerStalls, unmarkedJobSql } from './watchdog-attribution.ts';
+export { WATCHDOG_SUSPECT_MARK } from './watchdog-attribution.ts';
 import { coalesceOnIdempotencyKey, decideCoalesce, insertOrCoalesce } from './idempotency-coalesce.ts';
 import { adoptSpendAuthorization, legacyDefaultClaimSetSql, legacyDefaultClaimParams, type SpendAuthorization } from './spend-authorization.ts';
 import { validateAttachment } from './attachments.ts';
@@ -31,7 +33,7 @@ import {
 } from './admission.ts';
 import {
   defaultTimeoutMsFor, HANDLER_DEFAULT_TIMEOUT_MS,
-  defaultLockDurationMsFor, HANDLER_DEFAULT_LOCK_DURATION_MS, clampLockDurationMs,
+  defaultLockDurationMsFor, HANDLER_DEFAULT_LOCK_DURATION_MS, clampLockDurationMs, WALL_CLOCK_THRESHOLD_MS_SQL,
 } from './handler-timeouts.ts';
 import {
   withRetry, BULK_RETRY_OPTS, resolveBulkRetryOpts, computeNextDelay,
@@ -1440,7 +1442,8 @@ export class MinionQueue {
    * The map binds as a RAW object (never JSON.stringify into ::jsonb — the
    * postgres.js double-encode trap; PGLite hides it, real PG does not).
    */
-  async claim(lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[]): Promise<MinionJob | null> {
+  /** `excludeWatchdogSuspects`: a worker with jobs in flight never claims a job marked by a shared watchdog drain (watchdog-attribution.ts). */
+  async claim(lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[], opts: { excludeWatchdogSuspects?: boolean } = {}): Promise<MinionJob | null> {
     if (registeredNames.length === 0) return null;
     await assertNoUnreviewedJobs(this.engine);
 
@@ -1478,16 +1481,20 @@ export class MinionQueue {
         updated_at = now()
        WHERE id = (
          SELECT id FROM minion_jobs
-         WHERE queue = $3 AND status = 'waiting' AND submission_authority IS NOT NULL AND name = ANY($4)
+         WHERE queue = $3 AND status = 'waiting' AND submission_authority IS NOT NULL AND name = ANY($4)${opts.excludeWatchdogSuspects ? ` AND ${unmarkedJobSql('$9')}` : ''}
          ORDER BY priority ASC, created_at ASC
          FOR UPDATE SKIP LOCKED
          LIMIT 1
        )
        RETURNING *`,
-      [lockToken, lockDurationMs, queue, registeredNames, HANDLER_DEFAULT_TIMEOUT_MS, HANDLER_DEFAULT_LOCK_DURATION_MS, ...legacyDefaultClaimParams()]
+      [lockToken, lockDurationMs, queue, registeredNames, HANDLER_DEFAULT_TIMEOUT_MS, HANDLER_DEFAULT_LOCK_DURATION_MS, ...legacyDefaultClaimParams(),
+        ...(opts.excludeWatchdogSuspects ? [WATCHDOG_SUSPECT_MARK] : [])]
     );
     return rows.length > 0 ? rowToMinionJob(rows[0]) : null;
   }
+
+  /** A co-runner of a watchdog drain back to waiting, marked, no attempt burned (token-fenced). */
+  releaseWatchdogClaim(id: number, lockToken: string, errorText: string): Promise<boolean> { return releaseWatchdogClaim(this.engine, id, lockToken, errorText); }
 
   /**
    * Dead-letter active jobs whose timeout_at has passed.
@@ -1650,11 +1657,7 @@ export class MinionQueue {
         `SELECT id, parent_job_id FROM minion_jobs
           WHERE status = 'active'
             AND started_at IS NOT NULL
-            AND EXTRACT(EPOCH FROM (now() - started_at)) * 1000 >
-              CASE
-                WHEN timeout_ms IS NOT NULL THEN timeout_ms * 2
-                ELSE COALESCE(lock_duration_ms, $1)::double precision * 2 * GREATEST(max_stalled, 1)
-              END`,
+            AND EXTRACT(EPOCH FROM (now() - started_at)) * 1000 > ${WALL_CLOCK_THRESHOLD_MS_SQL}`,
         [lockDurationMs]
       );
       if (candidates.length === 0) return [];
@@ -2144,11 +2147,13 @@ export class MinionQueue {
         [graceMs]
       );
       if (candidates.length === 0) return { requeued: [], dead: [] };
-      const ids = candidates.map(c => c.id);
+      // GBRA-130 A-30: the claims of a worker that held several (a kernel OOM kill) requeue marked, no stall counted.
+      const coRunners = await requeueCoRunnerStalls(tx, candidates, graceMs);
+      const ids = coRunners.rest.map(c => c.id);
       // Only the dead-letter branch touches parents; lock just those, sorted.
       await this.lockParentsOrdered(
         tx,
-        candidates.filter(c => Number(c.stalled_counter) + 1 >= Number(c.max_stalled)),
+        coRunners.rest.filter(c => Number(c.stalled_counter) + 1 >= Number(c.max_stalled)),
       );
 
       const requeuedRows = await tx.executeRaw<Record<string, unknown>>(
@@ -2188,7 +2193,7 @@ export class MinionQueue {
       // other terminal kill. Outcome 'dead' (not 'timeout') so consumers can
       // distinguish "died via max-stall" from "timed out during run".
       await this.killJobs(tx, deadRows, 'dead', 'max stalled count exceeded');
-      return { requeued: requeuedRows.map(rowToMinionJob), dead: deadRows.map(rowToMinionJob) };
+      return { requeued: [...coRunners.requeued, ...requeuedRows].map(rowToMinionJob), dead: deadRows.map(rowToMinionJob) };
     }).then(async (result) => {
       // W0 ship-review (data-migration): the per-kill unblock above is
       // forward-only — parents stranded in 'waiting-children' by PRE-upgrade

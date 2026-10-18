@@ -45,9 +45,28 @@ describe('day-zero keyless doctor', () => {
     expect(report.health_score).toBeGreaterThanOrEqual(90);
     expect(report.capped_by).toEqual(['embeddings_disabled']);
     const info = new Set(report.checks.filter(c => c.severity === 'info').map(c => c.name));
-    for (const name of ['embeddings', 'embedding_provider', 'takes_count', 'retrieval_reflex_health', 'skill_preconditions', 'cycle_freshness', 'backup_coverage']) {
+    // #6696 B3: embedding_state runs on day zero and stays info on a keyless brain.
+    expect(report.checks.find(c => c.name === 'embedding_state')).toMatchObject({ status: 'ok', severity: 'info' });
+    for (const name of ['embeddings', 'embedding_provider', 'embedding_state', 'takes_count', 'retrieval_reflex_health', 'skill_preconditions', 'cycle_freshness', 'backup_coverage']) {
       if (report.checks.some(c => c.name === name)) expect(info.has(name), name).toBe(true);
     }
+    // #6696 B5: ghost_pages runs on day zero and is ok, never a warning.
+    expect(report.checks.find(c => c.name === 'ghost_pages')).toMatchObject({ status: 'ok' });
+  }, 120_000);
+
+  test('doctor --tier ops --json (#6696): no WARN or FAIL, complete, PGLite-skipped sections not_applicable', async () => {
+    const run = await runGbrain(h, ['doctor', '--tier', 'ops', '--json']);
+    expect(run.exitCode).toBe(0);
+    const report = run.json as Report & { tier?: string; complete?: boolean; unknown_sections?: string[]; budget_ms?: number };
+    const notOk = report.checks.filter(c => c.status !== 'ok').map(c => `${c.status} ${c.name}: ${c.message}`);
+    expect(notOk).toEqual([]);
+    expect(report.tier).toBe('ops');
+    expect(report.complete).toBe(true);
+    expect(report.unknown_sections).toEqual([]);
+    expect(report.budget_ms).toBe(4000);
+    const skipped = report.checks.filter(c => (c as { details?: { health?: string } }).details?.health === 'not_applicable');
+    expect(skipped.length).toBeGreaterThan(0);
+    for (const c of skipped) expect(c.severity, c.name).toBe('info');
   }, 120_000);
 
   test('human doctor on a pipe keeps the heartbeat within 10 stderr lines', async () => {

@@ -16,13 +16,13 @@
  * (Bun snapshots env at startup — spawned git must see the swap, #2943).
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, truncateSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 
 import { runSources } from '../src/commands/sources.ts';
-import { acquirePushLock, resolveWorkspaceRoot } from '../src/core/workspace-push.ts';
+import { acquirePushLock, resolveWorkspaceRoot, PUSH_STREAM_SCAN_MAX_BYTES } from '../src/core/workspace-push.ts';
 import { SCAN_ALLOW_FILENAME } from '../src/core/secret-scan.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -254,8 +254,9 @@ describe('exit 5 — blocked and refused', () => {
     expect(originHead(bare)).toBe(before); // nothing left the machine
   }, T);
 
-  test('unscannable staged blob (over the scan cap) → exit 5, fail-closed', async () => {
-    writeFileSync(join(work, 'big.bin'), Buffer.alloc(26 * 1024 * 1024, 0x61));
+  test('unscannable staged blob (over the scan ceiling) → exit 5, fail-closed', async () => {
+    writeFileSync(join(work, 'big.bin'), '');
+    truncateSync(join(work, 'big.bin'), PUSH_STREAM_SCAN_MAX_BYTES + 1); // sparse: no disk blocks
     const before = originHead(bare);
     const r = await runPushCli(untouchableEngine, ['--path', work, '--allow-unverified-remote']);
     expect(r.exitCode).toBe(5);

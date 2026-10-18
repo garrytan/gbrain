@@ -94,8 +94,46 @@ describe.skipIf(!direct)('idle persistence consumer on PostgreSQL', () => {
         const backends = async () => Number((await db.admin.unsafe(
           'SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=$1', [db.name]))[0]!.n);
         expect(await backends()).toBeGreaterThanOrEqual(3);
-        await Bun.sleep(IDLE_DRAIN_MS);
-        expect(await backends()).toBe(1);
+        const started = performance.now();
+        // The pool drains idle_timeout (20 s) after its last pooled statement. The consumer's start-up fan-out and its
+        // background workers are that last statement on a quiet box; a loaded runner can stretch them past the fixed
+        // 28 s mark this test used to sleep for, so the drain is awaited (bounded) and then must hold.
+        await waitFor(async () => (await backends()) === 1, { timeoutMs: IDLE_DRAIN_MS + 20_000, intervalMs: 500 }).catch(() => undefined);
+        const drainedAfterMs = Math.round(performance.now() - started);
+        const dump = async () => db.admin.unsafe(`SELECT pid, application_name, backend_type, state, wait_event,
+          to_char(backend_start, 'HH24:MI:SS.MS') AS backend_start, to_char(state_change, 'HH24:MI:SS.MS') AS state_change,
+          left(query, 160) AS query FROM pg_stat_activity WHERE datname=$1 ORDER BY backend_start`, [db.name]);
+        let count = await backends();
+        if (count !== 1) console.error(`[idle-pool] ${count} backend(s) after ${drainedAfterMs} ms:`, JSON.stringify(await dump(), null, 1));
+        expect(count).toBe(1);
+        // Drained means drained: a hold longer than one 5 s probe cycle shows the idle probe itself opens no pooled connection.
+        await Bun.sleep(6_000);
+        count = await backends();
+        if (count !== 1) console.error(`[idle-pool] ${count} backend(s) 6 s after the drain (drain took ${drainedAfterMs} ms):`, JSON.stringify(await dump(), null, 1));
+        expect(count).toBe(1);
+      });
+    } finally { await db.drop(); }
+  }, 120_000);
+
+  test('forced probe: a pooled statement 10 s into the idle window delays the drain by idle_timeout and nothing more', async () => {
+    // GBRA-60's reproduction of the flake: one ordinary-pool statement mid-window kept a backend alive past the fixed
+    // 28 s mark the previous test slept for (8 of 8 runs). The pool still drains to one backend; it does so 20 s after
+    // that statement, which is what the awaited drain above tolerates and the old fixed sleep did not.
+    const db = await scratchDatabase(direct!, direct!);
+    try {
+      await withConsumer(db.url, async engine => {
+        const backends = async () => Number((await db.admin.unsafe(
+          'SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=$1', [db.name]))[0]!.n);
+        await Bun.sleep(10_000);
+        await engine.executeRaw('SELECT 1');
+        const late = performance.now();
+        await Bun.sleep(IDLE_DRAIN_MS - 10_000);
+        // 28 s from start, 18 s after the late statement: the pooled backend it used is still inside idle_timeout.
+        expect(await backends()).toBeGreaterThanOrEqual(2);
+        await waitFor(async () => (await backends()) === 1, { timeoutMs: 30_000, intervalMs: 500 });
+        const drainedMs = performance.now() - late;
+        expect(drainedMs).toBeGreaterThanOrEqual(19_000);
+        expect(drainedMs).toBeLessThan(30_000);
       });
     } finally { await db.drop(); }
   }, 120_000);
@@ -125,19 +163,25 @@ describe.skipIf(!direct)('idle persistence consumer on PostgreSQL', () => {
   }, 120_000);
 });
 
-describe.skipIf(!direct)('#5233 idle lane with a direct/session route configured', () => {
-  test('an idle consumer holds an ordinary-pool connection and opens no direct-route connection', async () => {
+describe.skipIf(!direct)('#5233 / #6317 idle lane with a direct/session route configured', () => {
+  // #6317 (reporter ask 2 on #6278): with a direct/session route configured the consumer's own statements take it, so an
+  // idle consumer's probes run on the direct pool and the ordinary (pooler) connections all drain; before #6317 (#5233)
+  // the idle probe reserved an ordinary-pool connection and opened no direct one.
+  test('an idle consumer probes on the direct route and lets every ordinary-pool connection drain', async () => {
     const db = await scratchDatabase(direct!, direct!);
     const directRoute = new URL(db.url);
     directRoute.searchParams.set('application_name', 'gbrain_5233_direct_route');
     try {
-      await withEnv({ GBRAIN_DIRECT_DATABASE_URL: directRoute.toString() }, () => withConsumer(db.url, async engine => {
+      await withEnv({ GBRAIN_DIRECT_DATABASE_URL: directRoute.toString() }, () => withConsumer(db.url, async (engine, consumer) => {
         expect(engine.connectionManager?.isDualPoolActive()).toBe(true);
+        expect(consumer.status().connection).toMatchObject({ lane: 'direct' });
         await Bun.sleep(IDLE_DRAIN_MS);
         const rows = await db.admin.unsafe<{ direct: number; total: number }[]>(`SELECT
           count(*) FILTER (WHERE application_name = 'gbrain_5233_direct_route')::int AS direct, count(*)::int AS total
           FROM pg_stat_activity WHERE datname = $1`, [db.name]);
-        expect(rows[0]).toEqual({ direct: 0, total: 1 });
+        expect(rows[0]!.direct).toBeGreaterThanOrEqual(1);
+        expect(rows[0]!.total - rows[0]!.direct).toBe(0);
+        expect(engine.getPoolDiagnostics()?.tracked.reserved ?? 0).toBe(0);
       }));
     } finally { await db.drop(); }
   }, 120_000);

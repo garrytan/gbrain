@@ -1,0 +1,117 @@
+name: Convergence nightly
+
+# The managed-sync convergence gate at nightly size (#6712 PR 0,
+# test/sync-convergence.serial.test.ts, scripts/persistence/README.md#managed-sync-convergence-gate):
+# 2,000 notes at 50 ms round trip, 20 seeded kills, the run id as a rotating
+# seed (a dispatch may pass one to replay). The PR cell (200 notes, 10 ms,
+# 6 kills, seed 6650) runs in persistence-validation.yml under test-status;
+# this cell runs only here, outside test.yml and its test-status, on its own
+# concurrency group, and a red lands in the nightly-red issue (nightly-watch.yml).
+# Every job name carries its seed, and a failure writes the seed, the modes, the
+# fault plan, the fired faults and the one-line repro to the step summary.
+
+on:
+  schedule:
+    - cron: '17 9 * * *'
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: Seed to replay (default the run id)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  convergence:
+    name: Convergence nightly / Bun ${{ matrix.bun }} / seed ${{ inputs.seed || github.run_id }}
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        bun: ['1.4.0', '1.4.3']
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: gbrain_test
+          POSTGRES_PASSWORD: gbrain_test
+          POSTGRES_DB: gbrain_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U gbrain_test -d gbrain_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      pgbouncer:
+        image: edoburu/pgbouncer:latest
+        env:
+          DB_HOST: postgres
+          DB_PORT: '5432'
+          DB_USER: gbrain_test
+          DB_PASSWORD: gbrain_test
+          POOL_MODE: transaction
+          AUTH_TYPE: plain
+          MAX_CLIENT_CONN: '200'
+          DEFAULT_POOL_SIZE: '10'
+          IGNORE_STARTUP_PARAMETERS: extra_float_digits,statement_timeout,idle_in_transaction_session_timeout,search_path
+        ports: ['55433:5432']
+    env:
+      GBRAIN_TEST_CONVERGENCE_LOG_DIR: ${{ github.workspace }}/.context/convergence
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ matrix.bun }}
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      # The step timeout sits inside the job's, so the summary, cleanup and evidence steps below still run after it.
+      - name: Converge a managed sync after 20 seeded kills under concurrent writers (2,000 notes, 50 ms)
+        timeout-minutes: 300
+        env:
+          GBRAIN_TEST_CONVERGENCE: '1'
+          GBRAIN_PGBOUNCER_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:55433/gbrain_test
+          GBRAIN_PGBOUNCER_DIRECT_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
+          GBRAIN_TEST_CONVERGENCE_NOTES: '2000'
+          GBRAIN_TEST_CONVERGENCE_LATENCY_MS: '50'
+          GBRAIN_TEST_CONVERGENCE_KILLS: '20'
+          GBRAIN_TEST_CONVERGENCE_SEED: ${{ inputs.seed || github.run_id }}
+          GBRAIN_TEST_CONVERGENCE_SYNC_TIMEOUT_MS: '3600000'
+          GBRAIN_TEST_CONVERGENCE_SCENARIO_TIMEOUT_MS: '17400000'
+        run: |
+          set -o pipefail
+          mkdir -p "$GBRAIN_TEST_CONVERGENCE_LOG_DIR"
+          bun --no-env-file test --timeout="$GBRAIN_TEST_CONVERGENCE_SCENARIO_TIMEOUT_MS" test/sync-convergence.serial.test.ts 2>&1 | tee "$GBRAIN_TEST_CONVERGENCE_LOG_DIR/bun-test.log"
+      - name: Write the seed-carrying failure summary
+        if: failure() || cancelled()
+        env:
+          SEED: ${{ inputs.seed || github.run_id }}
+          BUN_CELL: ${{ matrix.bun }}
+        run: |
+          log="$GBRAIN_TEST_CONVERGENCE_LOG_DIR/bun-test.log"
+          {
+            echo "### Convergence nightly red: Bun $BUN_CELL, seed $SEED"
+            echo
+            echo '```'
+            grep -E '^\(fail\)|^seed [0-9]|^fault plan:|^fired:|^repro ' "$log" 2>/dev/null | head -60 || true
+            [ -s "$log" ] || echo "no test output: the step timed out or never started"
+            echo '```'
+            echo
+            echo "Replay: gh workflow run convergence-nightly.yml -f seed=$SEED (or the repro line above, locally)."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Stop harness processes a timed-out run left behind
+        if: always()
+        run: pkill -9 -f 'src/cli\.ts (serve|sync|put|call|extract)' || true
+      - name: Upload the convergence fault evidence (plan, fired faults, every client, serve and writer log)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: convergence-nightly-bun-${{ matrix.bun }}
+          path: .context/convergence
+          include-hidden-files: true
+          if-no-files-found: warn

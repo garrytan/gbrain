@@ -16,7 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, t
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { parseOpArgs } from '../src/cli.ts';
+import { parseOpArgs } from '../src/cli/main.ts';
 import { operations, operationsByName } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -131,13 +131,21 @@ describe('#2822 — chunk_skip_reason on 0-chunk puts', () => {
     expect(result.chunk_skip_reason).toBe('empty_body');
   });
 
-  test('oversized content the gate marks embed_skip → embed_skip', async () => {
-    const result = (await putPage.handler(makeCtx(), {
-      slug: 'inbox/skipped-embed',
-      content: `---\ntitle: Big\n---\n\n${'Some prose that keeps going past the block threshold. '.repeat(10_000)}`,
-    })) as { chunks: number; chunk_skip_reason?: string };
-    expect(result.chunks).toBe(0);
-    expect(result.chunk_skip_reason).toBe('embed_skip');
+  test('oversized content the gate marks embed_skip keeps its chunks and says skipped: oversized (#6722)', async () => {
+    // An operator's bytes_block under the page ceiling: the gate stores the page with embed_skip; it stays chunked
+    // for keyword search, gets no vectors, and the receipt names why.
+    await engine.setConfig('content_sanity.bytes_block', '500000');
+    try {
+      const result = (await putPage.handler(makeCtx(), {
+        slug: 'inbox/skipped-embed',
+        content: `---\ntitle: Big\n---\n\n${'Some prose that keeps going past the block threshold. '.repeat(10_000)}`,
+      })) as { chunks: number; chunk_skip_reason?: string; size_state?: unknown };
+      expect(result.chunks).toBeGreaterThan(0);
+      expect(result.chunk_skip_reason).toBeUndefined();
+      expect(result.size_state).toEqual({ embedding: 'skipped', reason: 'oversized', bytes: expect.any(Number) });
+    } finally {
+      await engine.unsetConfig('content_sanity.bytes_block');
+    }
   });
 
   // #6259: a local put_page is not an owner-tier path, so an embed_skip it plants is stripped.

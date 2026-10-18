@@ -1,10 +1,12 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { unboundBindCommand } from '../../../core/persistence/unbound-source.ts';
+import { databaseOnlyPageSql } from '../../../core/persistence/unbound-pages.ts';
 
 /**
  * #5254: pages written database-only while their filesystem source had no
- * canonical owner (`persistence.unbound_write=database_only`). While the source
+ * canonical owner (`persistence.unbound_write=database_only`): the marker with
+ * no recorded origin, the same predicate persistence uses (#6536). While the source
  * stays unbound that is the chosen mode, so the count reports ok with the bind
  * command; once the source is bound those pages sit outside its canonical
  * files and are never materialized automatically, so it warns.
@@ -17,7 +19,7 @@ export async function checkUnboundSource(engine: BrainEngine): Promise<Check> {
           WHERE b.source_id=p.source_id) AS bound,
         COALESCE((SELECT s.local_path FROM sources s WHERE s.id=p.source_id),
           CASE WHEN p.source_id='default' THEN (SELECT c.value FROM config c WHERE c.key='sync.repo_path') END) AS local_path
-       FROM pages p WHERE p.database_only_reason='unbound_source' AND p.deleted_at IS NULL
+       FROM pages p WHERE ${databaseOnlyPageSql('p')} AND p.deleted_at IS NULL
        GROUP BY p.source_id ORDER BY p.source_id`);
     const sources = rows.map(row => ({ source_id: row.source_id, pages: row.pages, bound: row.bound }));
     const total = rows.reduce((sum, row) => sum + row.pages, 0);

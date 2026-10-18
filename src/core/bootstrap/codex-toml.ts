@@ -323,3 +323,111 @@ export function removeCodexHttpServerBlock(
   atomicWriteToml(configPath, nextText, crlf);
   return { configPath, removed: true, backupPath, notes };
 }
+
+// ── Hash-owned single tables (`gbrain setup codex`) ─────────────────────────
+//
+// Setup owns individual tables (`[mcp_servers.<name>]`, each
+// `[hooks.state."<key>"]`) by the fingerprint of their parsed value, not by
+// markers: codex itself may rewrite config.toml and drop comments. A table is
+// appended at EOF and removed by its header line through the next header;
+// both edits are verified by parsing: everything else in the file must parse
+// to exactly what it parsed to before, or the file is left as it was.
+
+export type CodexTomlValue = string | string[] | Record<string, string>;
+
+const tomlKey = (k: string): string => (/^[A-Za-z0-9_-]+$/.test(k) ? k : tomlString(k));
+
+export function codexTomlHeader(path: string[]): string {
+  return `[${path.map(tomlKey).join('.')}]`;
+}
+
+function renderTomlValue(v: CodexTomlValue): string {
+  if (typeof v === 'string') return tomlString(v);
+  if (Array.isArray(v)) return `[${v.map(tomlString).join(', ')}]`;
+  return `{ ${Object.entries(v).map(([k, val]) => `${tomlKey(k)} = ${tomlString(val)}`).join(', ')} }`;
+}
+
+/** The parsed value at `path`, or undefined. Throws when the file does not parse. */
+export function readCodexTomlTable(configPath: string, path: string[]): unknown {
+  if (!existsSync(configPath)) return undefined;
+  let node: unknown = parseToml(readFileSync(configPath, 'utf8'));
+  for (const seg of path) node = node && typeof node === 'object' && !Array.isArray(node) ? (node as Record<string, unknown>)[seg] : undefined;
+  return node;
+}
+
+const canonicalJson = (v: unknown): string => JSON.stringify(v, (_k, val) =>
+  val && typeof val === 'object' && !Array.isArray(val) ? Object.fromEntries(Object.keys(val).sort().map((k) => [k, (val as Record<string, unknown>)[k]])) : val);
+
+/** Delete `path` from a parsed document, then drop the ancestors that deletion emptied. */
+function withoutPath(doc: Record<string, unknown>, path: string[]): Record<string, unknown> {
+  const copy = JSON.parse(JSON.stringify(doc)) as Record<string, unknown>;
+  const chain: Array<Record<string, unknown>> = [copy];
+  for (const seg of path.slice(0, -1)) {
+    const next = chain[chain.length - 1]![seg];
+    if (!next || typeof next !== 'object' || Array.isArray(next)) return copy;
+    chain.push(next as Record<string, unknown>);
+  }
+  delete chain[chain.length - 1]![path[path.length - 1]!];
+  for (let i = chain.length - 1; i > 0; i--) {
+    if (Object.keys(chain[i]!).length > 0) break;
+    delete chain[i - 1]![path[i - 1]!];
+  }
+  return copy;
+}
+
+/**
+ * Append `[path]` with `value` at EOF (after an optional comment line). Refuses
+ * when the table already exists anywhere in the file (a duplicate table is a
+ * hard parse error that bricks codex) or when the result would not parse to
+ * the old document plus exactly this table.
+ */
+export function appendCodexTomlTable(configPath: string, path: string[], value: Record<string, CodexTomlValue>, comment?: string): void {
+  const raw = existsSync(configPath) ? readFileSync(configPath, 'utf8') : '';
+  const crlf = raw.includes('\r\n');
+  const text = raw.replace(/\r\n/g, '\n');
+  const before = parseToml(text);
+  if (readCodexTomlTable(configPath, path) !== undefined) throw new Error(`${configPath} already defines ${codexTomlHeader(path)}; setup never defines a table twice.`);
+  const block = [...(comment ? [`# ${comment}`] : []), codexTomlHeader(path), ...Object.entries(value).map(([k, v]) => `${tomlKey(k)} = ${renderTomlValue(v)}`)];
+  const body = text.replace(/\n*$/, '');
+  const next = `${body ? `${body}\n\n` : ''}${block.join('\n')}\n`;
+  const after = parseToml(next);
+  if (canonicalJson(withoutPath(after, path)) !== canonicalJson(before)) throw new Error(`appending ${codexTomlHeader(path)} to ${configPath} would change other settings; the file is left as it was.`);
+  let node: unknown = after;
+  for (const seg of path) node = (node as Record<string, unknown> | undefined)?.[seg];
+  if (canonicalJson(node) !== canonicalJson(value)) throw new Error(`${codexTomlHeader(path)} in ${configPath} did not parse back to what setup wrote; the file is left as it was.`);
+  atomicWriteTextFile(configPath, crlf ? next.replace(/\n/g, '\r\n') : next, { freshMode: 0o600 });
+}
+
+/**
+ * Remove `[path]`: its header line through the line before the next header
+ * (plus a directly preceding `# gbrain setup` comment and one separating blank
+ * line). `unlocatable` when no such header line exists or the edit would change
+ * anything but this table (it was split, re-rendered or extended); the file is
+ * then left as it was. The caller checks the table's fingerprint first.
+ */
+export function removeCodexTomlTable(configPath: string, path: string[], opts: { dryRun?: boolean } = {}): 'removed' | 'absent' | 'unlocatable' {
+  if (!existsSync(configPath)) return 'absent';
+  const raw = readFileSync(configPath, 'utf8');
+  const crlf = raw.includes('\r\n');
+  const lines = raw.replace(/\r\n/g, '\n').split('\n');
+  const before = parseToml(lines.join('\n'));
+  if (readCodexTomlTable(configPath, path) === undefined) return 'absent';
+  const header = codexTomlHeader(path);
+  const quoted = `[${path.map((seg) => tomlString(seg)).join('.')}]`;
+  const start = lines.findIndex((l) => l.trim() === header || l.trim() === quoted);
+  if (start < 0) return 'unlocatable';
+  let end = lines.findIndex((l, i) => i > start && /^\s*\[/.test(l));
+  if (end < 0) end = lines.length;
+  while (end > start + 1 && /^\s*(#.*)?$/.test(lines[end - 1]!)) end--;
+  let from = start;
+  if (from > 0 && lines[from - 1]!.startsWith('# gbrain setup')) from--;
+  if (from > 0 && lines[from - 1]!.trim() === '') from--;
+  const kept = [...lines.slice(0, from), ...lines.slice(end)];
+  while (kept.length > 0 && kept[kept.length - 1]!.trim() === '') kept.pop();
+  const next = kept.length > 0 ? `${kept.join('\n')}\n` : '';
+  let after: Record<string, unknown>;
+  try { after = parseToml(next); } catch { return 'unlocatable'; }
+  if (canonicalJson(after) !== canonicalJson(withoutPath(before, path))) return 'unlocatable';
+  if (!opts.dryRun) atomicWriteTextFile(configPath, crlf ? next.replace(/\n/g, '\r\n') : next, { freshMode: 0o600 });
+  return 'removed';
+}

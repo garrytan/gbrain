@@ -3,15 +3,18 @@
  * Each stage reads the resolved request (HybridRequest, request.ts) and
  * writes its per-request accumulators only as `req.<field>`.
  */
+import { brainHasImageVectors } from '../image-vector-presence.ts';
 import type { ModalityMode } from '../query-intent.ts';
 import type { ExactLookupOpts } from '../exact-lookup.ts';
-import type { HybridRequest } from './request.ts';
-import { type PostFusionOpts, embedQueryBounded, makeQueryEmbedDeadline } from '../hybrid.ts';
+import { type HybridRequest, vectorPoolMetaSink } from './request.ts';
+import type { StageTimer } from '../stage-timings.ts';
+import { type PostFusionOpts, embedQueryBounded, lazyQueryEmbedDeadline } from '../hybrid.ts';
 import type { SearchOpts, SearchResult } from '../../types.ts';
 import { type VectorArm, pushVectorList } from '../fusion-lists.ts';
 import { buildRelationalArm } from '../relational-recall.ts';
 import { isAmbiguousModalityQuery } from '../query-intent.ts';
 import { isDbAccessFailure } from '../../pg-access-classify.ts';
+import { isKeywordSkippedAfterTimeout } from '../../postgres-engine/keyword-timeout-cache.ts';
 import { isTimeoutError, pushDegraded } from './degraded.ts';
 import { markKeywordHits } from '../evidence.ts';
 import { resolveEffectiveRecency, resolveEffectiveSalience } from './effective-modes.ts';
@@ -25,9 +28,24 @@ export interface LexicalArms {
   exactLookupOpts: ExactLookupOpts;
 }
 
+/**
+ * The modality the lexical arms and the keyword-only gate read: the per-call
+ * override, else the regex suggestion. Pure regex via classifyQuery, so it is
+ * cheap. An inferred image/both modality on a brain with no image embeddings
+ * is text: the image arm has nothing to search and would only fail open (and
+ * 'image' would drop the keyword arm). Later stages read the same suggestion.
+ */
+export async function resolveEarlyModality(req: HybridRequest): Promise<ModalityMode> {
+  const { engine, opts, suggestions } = req;
+  if (!(opts?.crossModal && opts.crossModal !== 'auto') && (suggestions.suggestedModality ?? 'text') !== 'text' && !await brainHasImageVectors(engine)) suggestions.suggestedModality = 'text';
+  return (opts?.crossModal && opts.crossModal !== 'auto')
+    ? opts.crossModal
+    : (suggestions.suggestedModality ?? 'text');
+}
+
 /** Keyword + title FTS arms, fetched concurrently (fail-open per arm, rethrow when both hit a dead database). */
-export async function runLexicalArms(req: HybridRequest): Promise<LexicalArms> {
-  const { engine, query, opts, suggestions, searchOpts, identityTierOpts, degraded } = req;
+export async function runLexicalArms(req: HybridRequest, earlyModality: ModalityMode): Promise<LexicalArms> {
+  const { engine, query, opts, searchOpts, identityTierOpts, degraded } = req;
   // Run keyword search (always available, no API key needed).
   //
   // v0.36 cross-modal (D9): skip keyword for 'image'-only modality. Image
@@ -35,13 +53,6 @@ export async function runLexicalArms(req: HybridRequest): Promise<LexicalArms> {
   // would also surface every text chunk containing the query phrase —
   // not what an image-intent query asked for. Image vector search is the
   // canonical channel for image-modality queries.
-  //
-  // We classify modality early (it's also computed after for the modality
-  // branch). The classification is pure regex via classifyQuery; running it
-  // here is cheap.
-  const earlyModality = (opts?.crossModal && opts.crossModal !== 'auto')
-    ? opts.crossModal
-    : (suggestions.suggestedModality ?? 'text');
   // D1 fix (fix/title-retrieval-arm): page-grain title candidate arm,
   // fetched CONCURRENTLY with the keyword arm (Reviewer F7 — independent
   // engine queries). The chunk FTS vector never includes the page title, so
@@ -66,8 +77,13 @@ export async function runLexicalArms(req: HybridRequest): Promise<LexicalArms> {
     earlyModality === 'image'
       ? [[], []]
       : await Promise.all([
-          engine.searchKeyword(query, searchOpts).catch((err: unknown) => {
+          req.timer.overlap('keyword_arm', engine.searchKeyword(query, opts?.useCache === false ? searchOpts : { ...searchOpts, keywordTimeoutCache: true })).catch((err: unknown) => {
             if (isDatetimeInputError(err)) throw err;
+            if (isKeywordSkippedAfterTimeout(err)) {
+              pushDegraded(degraded, 'keyword_arm_failed', 'skipped_after_timeout');
+              warnOncePerProcess('search-keyword-arm-skipped', `[gbrain] searchKeyword arm skipped (fail-open): ${err.message}`);
+              return [] as SearchResult[];
+            }
             if (isDbAccessFailure(err)) keywordAccessError = err;
             pushDegraded(degraded, 'keyword_arm_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
             warnOncePerProcess(
@@ -77,7 +93,7 @@ export async function runLexicalArms(req: HybridRequest): Promise<LexicalArms> {
             );
             return [] as SearchResult[];
           }),
-          engine.searchTitles(query, searchOpts).catch((err: unknown) => {
+          req.timer.overlap('title_arm', engine.searchTitles(query, searchOpts)).catch((err: unknown) => {
             if (isDatetimeInputError(err)) throw err;
             if (isDbAccessFailure(err)) titleAccessError = err;
             pushDegraded(degraded, 'title_arm_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
@@ -171,6 +187,8 @@ export async function buildRelationalList(req: HybridRequest): Promise<SearchRes
       excludePrivate: opts?.excludePrivate,
       requireSafeChunks: opts?.requireSafeChunks,
       takesHoldersAllowList: opts?.takesHoldersAllowList,
+      minTrust: opts?.minTrust,
+      suppressFlagged: opts?.suppressFlagged,
       planner: resolvedMode.relational_planner,
       orientOneHop: resolvedMode.relational_orient_onehop ?? resolvedMode.relational_planner,
       onMeta: (m) => {
@@ -197,7 +215,8 @@ export async function resolveModalityAndQueries(req: HybridRequest) {
     explicitModality === undefined &&
     regexModality === 'text' &&
     resolvedMode.cross_modal_llm_intent &&
-    isAmbiguousModalityQuery(query)
+    isAmbiguousModalityQuery(query) &&
+    (await import('../../ai/multimodal-model.ts')).multimodalEmbeddingModel() !== null
   ) {
     try {
       const { classifyModalityWithLLM } = await import('../llm-intent.ts');
@@ -206,6 +225,8 @@ export async function resolveModalityAndQueries(req: HybridRequest) {
       // Fail-open: regex result stands.
     }
   }
+  // The tie-break may still pick image/both; a brain with no image embeddings has nothing for that arm.
+  if (explicitModality === undefined && regexModality !== 'text' && !await brainHasImageVectors(req.engine)) regexModality = 'text';
   const effectiveModality = regexModality;
   const unifiedRouting = resolvedMode.unified_multimodal === true;
 
@@ -221,7 +242,7 @@ export async function resolveModalityAndQueries(req: HybridRequest) {
   const expansionAllowed = resolvedMode.expansion && effectiveModality !== 'image';
   if (expansionAllowed && opts?.expandFn) {
     try {
-      const expanded = await opts.expandFn(query);
+      const expanded = await req.timer.stage('expansion', async () => opts.expandFn!(query));
       // INVARIANT: queries[0] IS the caller's query. Both fan-outs below tag
       // index 0 as the `original` arm (weight 1, cosine re-score vector), so
       // an expandFn that omits or reorders the original would silently hand
@@ -238,6 +259,49 @@ export async function resolveModalityAndQueries(req: HybridRequest) {
     }
   }
   return { effectiveModality, unifiedRouting, queries };
+}
+
+/** The vector side in flight: its own timer branch and degraded stamps, merged back by joinVectorSide. */
+export interface VectorSide {
+  work: Promise<Awaited<ReturnType<typeof resolveModalityAndQueries>> & VectorArmsResult>;
+  timer: StageTimer;
+  req: HybridRequest;
+}
+
+/**
+ * Start modality, expansion and the vector arms now, alongside the lexical and
+ * relational arms. The side reads nothing they produce; it stamps its own
+ * degraded list (and vector-pool sink) so the merge keeps the sequential order.
+ */
+export function startVectorSide(req: HybridRequest, multimodalProviderProbe: string): VectorSide {
+  const timer = req.timer.branch();
+  const degraded: HybridRequest['degraded'] = [];
+  const side: HybridRequest = { ...req, timer, degraded, searchOpts: { ...req.searchOpts, onVectorPoolMeta: vectorPoolMetaSink(req, degraded) } };
+  const work = (async () => {
+    const modality = await resolveModalityAndQueries(side);
+    return { ...modality, ...await runVectorArms(side, { ...modality, multimodalProviderProbe }) };
+  })();
+  return { work, timer, req: side };
+}
+
+/** Lexical then relational arms on the critical path; a failure waits for the vector side to settle before it is rethrown. */
+export async function runLexicalAndRelational(req: HybridRequest, earlyModality: ModalityMode, vectorSide: VectorSide | null) {
+  try {
+    const lexical = await req.timer.stage('lexical', () => runLexicalArms(req, earlyModality));
+    const relationalList = await req.timer.stage('relational', () => buildRelationalList(req));
+    return { lexical, relationalList };
+  } catch (err) {
+    if (vectorSide) await Promise.allSettled([vectorSide.work]);
+    throw err;
+  }
+}
+
+/** Wait for the vector side, then append its degraded stamps and expansion flag after the lexical ones. */
+export async function joinVectorSide(req: HybridRequest, side: VectorSide): Promise<Awaited<VectorSide['work']>> {
+  const result = await req.timer.join(side.timer, side.work);
+  for (const d of side.req.degraded) pushDegraded(req.degraded, d.stage, d.reason);
+  req.expansionApplied = side.req.expansionApplied;
+  return result;
 }
 
 export interface VectorArmsResult {
@@ -285,12 +349,12 @@ export async function runVectorArms(
       if (!aiIsAvailable('embedding', multimodalProviderProbe)) {
         throw new Error('gateway not configured for embedding — unified multimodal would also fail');
       }
-      const unifiedEmbedding = await embedQueryMultimodal(query);
+      const unifiedEmbedding = await req.timer.stage('embed', () => embedQueryMultimodal(query));
       const unifiedSearchOpts: SearchOpts = {
         ...searchOpts,
         embeddingColumn: 'embedding_multimodal',
       };
-      const unifiedList = await engine.searchVector(unifiedEmbedding, unifiedSearchOpts);
+      const unifiedList = await req.timer.stage('vector', () => engine.searchVector(unifiedEmbedding, unifiedSearchOpts));
       // D8 fail-open: zero rows + not strict-mode → fall through to dual-column.
       if (unifiedList.length === 0 && !resolvedMode.unified_multimodal_only) {
         console.error(
@@ -326,13 +390,13 @@ export async function runVectorArms(
       if (!aiIsAvailable('embedding', multimodalProviderProbe)) {
         throw new Error('gateway not configured for embedding — multimodal would also fail');
       }
-      const imageEmbedding = await embedQueryMultimodal(query);
+      const imageEmbedding = await req.timer.stage('embed', () => embedQueryMultimodal(query));
       imageQueryEmbedding = imageEmbedding;
       const imageSearchOpts: SearchOpts = {
         ...searchOpts,
         embeddingColumn: 'embedding_image',
       };
-      const imageList = await engine.searchVector(imageEmbedding, imageSearchOpts);
+      const imageList = await req.timer.stage('vector', () => engine.searchVector(imageEmbedding, imageSearchOpts));
       for (const r of imageList) {
         r.modality = r.modality ?? 'image';
       }
@@ -376,7 +440,7 @@ export async function runVectorArms(
     // threaded from hybridSearchCached (so the cache-lookup embed + this one
     // share one ~6s budget); direct callers get a fresh deadline. On timeout
     // the embed rejects → salvage below (or keyword-only when all reject).
-    const embedDl = opts?._queryEmbedDeadline ?? makeQueryEmbedDeadline();
+    const embedDl = opts?._queryEmbedDeadline ?? lazyQueryEmbedDeadline();
     // Hermetic eval canaries/CI: queryEmbedFn (non-semantic deterministic
     // embeddings) replaces the gateway query-embed for the text vector arm.
     // No deadline needed — it's a synchronous-ish local computation with no
@@ -384,17 +448,17 @@ export async function runVectorArms(
     const embedOneQuery = (q: string): Promise<Float32Array> =>
       opts?.queryEmbedFn
         ? Promise.resolve(opts.queryEmbedFn(q))
-        : embedQueryBounded(q, embedOpts, embedDl);
+        : embedQueryBounded(q, embedOpts, embedDl());
     if (!searchSalvageEnabled()) {
       // ENG-7 kill switch (GBRAIN_SEARCH_SALVAGE=off): pre-wave
       // all-or-nothing fan-outs — one variant's failure abandons every
       // embedding and falls back to keyword-only.
       try {
-        const embeddings = await Promise.all(queries.map(q => embedOneQuery(q)));
+        const embeddings = await req.timer.stage('embed', () => Promise.all(queries.map(q => embedOneQuery(q))));
         queryEmbedding = embeddings[0];
-        const textLists = await Promise.all(
+        const textLists = await req.timer.stage('vector', () => Promise.all(
           embeddings.map(emb => engine.searchVector(emb, searchOpts)),
-        );
+        ));
         for (const list of textLists) {
           for (const r of list) {
             r.modality = r.modality ?? 'text';
@@ -421,7 +485,7 @@ export async function runVectorArms(
       // WP2/T3 (ENG-15) salvage fan-outs: allSettled on BOTH the embed
       // fan-out and the searchVector fan-out so one variant's failure no
       // longer abandons the survivors (the query-vs-search asymmetry fix).
-      const settled = await Promise.allSettled(queries.map(q => embedOneQuery(q)));
+      const settled = await req.timer.stage('embed', () => Promise.allSettled(queries.map(q => embedOneQuery(q))));
       const okEmbeds: Float32Array[] = [];
       const embedFailures: unknown[] = [];
       for (const s of settled) {
@@ -454,7 +518,7 @@ export async function runVectorArms(
           queryEmbedding = null;
           pushDegraded(degraded, 'rescore_skipped', 'original_embed_failed');
         }
-        const vSettled = await Promise.allSettled(okEmbeds.map(emb => engine.searchVector(emb, searchOpts)));
+        const vSettled = await req.timer.stage('vector', () => Promise.allSettled(okEmbeds.map(emb => engine.searchVector(emb, searchOpts))));
         const okLists: SearchResult[][] = [];
         const okRoles: Array<'original' | 'variant'> = [];
         let vFirstErr: unknown;

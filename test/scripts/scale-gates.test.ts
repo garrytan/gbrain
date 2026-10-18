@@ -7,7 +7,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import {
-  CEILINGS_MS, evaluateScaleGates, importProgressPerFile, RATE_MIN_PAGES, HEADLINE_OP, HOT_TABLES, KEY_PLAN_OPS, phaseLimitsMs, PLANNER_HEALTH_ENFORCED, PLANNER_STATS_MIN_ROWS,
+  CEILING_PAGES, CEILINGS_MS, ceilingsFor, evaluateScaleGates, importProgressPerFile, RATE_MIN_PAGES, HEADLINE_OP, HOT_TABLES, KEY_PLAN_OPS, phaseLimitsMs, PLANNER_HEALTH_ENFORCED, PLANNER_STATS_MIN_ROWS,
   rateMeasure, resultHits, verdictLines, type GatePolicy, type RateMeasure, type ScaleReport,
 } from '../../scripts/scale/gates.ts';
 
@@ -63,6 +63,16 @@ describe('scale gates under --enforce', () => {
     expect(enforced.failures.map(f => f.gate)).toEqual([`ceiling:${HEADLINE_OP}`]);
     expect(enforced.failures[0]!.message).toContain(`p50 ${CEILINGS_MS[HEADLINE_OP]! + 1} ms`);
     expect(enforced.failures[0]!.explain).toContain('Result  (actual rows=1 loops=1)');
+  });
+
+  test('the interactive ceilings bind both nightly tiers (10k and 20k) and nothing larger', () => {
+    expect(CEILING_PAGES).toBe(20_000);
+    expect(ceilingsFor(10_000)).toEqual(CEILINGS_MS);
+    expect(ceilingsFor(20_000)).toEqual(CEILINGS_MS);
+    expect(ceilingsFor(20_001)).toEqual({});
+    const report = { ...passingReport(), pages: 20_000 };
+    report.ops[2] = { ...report.ops[2]!, p50_ms: CEILINGS_MS[HEADLINE_OP]! + 1 };
+    expect(evaluateScaleGates(report, { ...ENFORCE, enforceCeilings: true }).failures.map(f => f.gate)).toEqual([`ceiling:${HEADLINE_OP}`]);
   });
 
   test('a calibrated budget breach follows the ceilings switch', () => {

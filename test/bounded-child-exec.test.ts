@@ -104,10 +104,11 @@ test('bounded execution stops a running child on abort and at its deadline', asy
 
 test('a stopped child gets SIGTERM first so it can remove its lockfile, then SIGKILL after the grace period', async () => {
   const lock = join(dir, 'index.lock');
-  const script = `touch '${lock}'; trap "rm -f '${lock}'; exit 143" TERM; while :; do sleep 0.05; done`;
+  const script = `trap "rm -f '${lock}'; exit 143" TERM; touch '${lock}'; while :; do sleep 0.05; done`;
   const abort = new AbortController();
   const running = execFileBounded('sh', ['-c', script], { timeout: 60_000, signal: abort.signal });
-  await Bun.sleep(200);
+  // The lock appears once the child's trap is installed; on a loaded runner that can take longer than any fixed sleep.
+  for (const deadline = performance.now() + 10_000; !(await Bun.file(lock).exists()) && performance.now() < deadline;) await Bun.sleep(20);
   expect(await Bun.file(lock).exists()).toBe(true);
   abort.abort();
   expect((await running).error).toMatchObject({ code: 'ABORT_ERR', killed: true });
@@ -117,3 +118,23 @@ test('a stopped child gets SIGTERM first so it can remove its lockfile, then SIG
   expect(stubborn.error).toMatchObject({ code: 'ETIMEDOUT', killed: true });
   expect(performance.now() - started).toBeLessThan(5000);
 });
+
+test('#6932: a caller-set termGraceMs lets a slow-to-clean-up child remove its lock before SIGKILL', async () => {
+  const lock = join(dir, 'slow-cleanup.lock');
+  const ready = join(dir, 'slow-cleanup.ready');
+  // Stands in for a git stalled in I/O: it acts on SIGTERM only after 3 seconds, past the default 2-second grace.
+  const script = `trap "sleep 3; rm -f '${lock}'; exit 143" TERM; touch '${lock}' '${ready}'; while :; do sleep 0.05; done`;
+  const stop = async (termGraceMs?: number) => {
+    rmSync(ready, { force: true });
+    const abort = new AbortController();
+    const running = execFileBounded('sh', ['-c', script], { timeout: 60_000, signal: abort.signal, ...(termGraceMs === undefined ? {} : { termGraceMs }) });
+    for (const deadline = performance.now() + 10_000; !(await Bun.file(ready).exists()) && performance.now() < deadline;) await Bun.sleep(20);
+    expect(await Bun.file(ready).exists()).toBe(true);
+    abort.abort();
+    expect((await running).error).toMatchObject({ code: 'ABORT_ERR', killed: true });
+    return Bun.file(lock).exists();
+  };
+  expect(await stop()).toBe(true);
+  rmSync(lock, { force: true });
+  expect(await stop(10_000)).toBe(false);
+}, 30_000);

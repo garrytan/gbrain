@@ -102,10 +102,10 @@ describe('fence findings in the banner (#6188, D7)', () => {
 
   test('a fence-only git_held_files finding names the fence repair; a mixed one names both previews', () => {
     const fenceOnly = line('git_held_files', { held: 2, fences: 2, source_ids: ['notes-example'], auto_repair: { enabled: true, active: true } });
-    expect(fenceOnly).toBe('[AGENT]   git_held_files: 2 (fence holds: repaired automatically by the next maintenance run; preview with: gbrain repair fences --source notes-example)');
+    expect(fenceOnly).toBe('[AGENT]   git_held_files: 2 (fence holds: repaired automatically by the next maintenance run; preview with: gbrain repair content --source notes-example)');
     const mixed = line('git_held_files', { held: 3, fences: 1, source_ids: ['notes-example'], auto_repair: { enabled: true, active: false } });
     expect(mixed).toContain('explicit_kind_required; preview with: gbrain repair frontmatter --source notes-example');
-    expect(mixed).toContain('fence holds: not repaired automatically (no maintenance run is active); preview with: gbrain repair fences --source notes-example');
+    expect(mixed).toContain('fence holds: not repaired automatically (no maintenance run is active); preview with: gbrain repair content --source notes-example');
     expect(line('git_held_files', { held: 2, source_ids: ['notes-example'] })).toBe('[AGENT]   git_held_files: 2 (explicit_kind_required; preview with: gbrain repair frontmatter --source notes-example)');
   });
 });

@@ -133,7 +133,9 @@ describe('writeFactsAbsorbLog — ingest_log row shape', () => {
     expect(FACTS_ABSORB_REASONS).toContain('gateway_model_not_found');
     // #5362: write-path refusals record their own code.
     expect(FACTS_ABSORB_REASONS).toContain('write_refused');
-    expect(FACTS_ABSORB_REASONS.length).toBe(17);
+    expect(FACTS_ABSORB_REASONS).toContain('write_pending_accepted');
+    expect(FACTS_ABSORB_REASONS).toContain('write_deferred_unadmitted');
+    expect(FACTS_ABSORB_REASONS.length).toBe(19);
   });
 
   test.each([

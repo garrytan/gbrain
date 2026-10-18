@@ -1,0 +1,20 @@
+{
+  "fixture_id": "gen-state-006",
+  "turns": {},
+  "trust": {
+    "items": [
+      {
+        "item_id": "i1",
+        "check": "guarded",
+        "step": "s1",
+        "claim": "Petra Moonstead lives in Kyoto"
+      },
+      {
+        "item_id": "i2",
+        "check": "current",
+        "step": "s1",
+        "claim": "Petra Moonstead lives in Kyoto"
+      }
+    ]
+  }
+}

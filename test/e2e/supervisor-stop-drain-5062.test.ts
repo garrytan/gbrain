@@ -65,18 +65,38 @@ async function until(pred: () => Promise<boolean> | boolean, ms: number, what: s
 }
 
 function alive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) throw new Error(`alive(${pid}): not a process id (kill(0, 0) would signal this test's own group)`);
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
-function readPid(path: string): number {
-  return Number(readFileSync(path, 'utf8').trim());
+/** `echo $$ > f` creates `f` before the pid lands in it, so an existence check can read an empty file. */
+function readPid(path: string): number | null {
+  if (!existsSync(path)) return null;
+  const pid = Number(readFileSync(path, 'utf8').trim());
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-/** Barrier shell job: records each start, then leader + grandchild ignore SIGTERM. */
+async function barrierTree(dir: string): Promise<number[]> {
+  let tree: number[] = [];
+  await until(() => {
+    const pids = [readPid(join(dir, 'leader.pid')), readPid(join(dir, 'grandchild.pid'))];
+    if (pids.some(pid => pid === null)) return false;
+    tree = pids as number[];
+    return true;
+  }, 30_000, 'barrier job start');
+  return tree;
+}
+
+/** Barrier shell job: records each start, then leader + grandchild ignore SIGTERM.
+ *  Each pid file is created empty and written 300 ms later, forcing the window
+ *  `echo $$ > f` opens on its own (file exists, pid not yet in it); a reader
+ *  that trusts existence gets pid 0 and `kill(0, 0)` reports it alive forever. */
 function barrierCmd(dir: string): string {
   return [
     `echo start >> ${dir}/starts`,
-    `sh -c 'trap "" TERM; echo $$ > ${dir}/grandchild.pid; exec sleep 300' &`,
+    `sh -c 'trap "" TERM; : > ${dir}/grandchild.pid; sleep 0.3; echo $$ > ${dir}/grandchild.pid; exec sleep 300' &`,
+    `: > ${dir}/leader.pid`,
+    `sleep 0.3`,
     `echo $$ > ${dir}/leader.pid`,
     `trap "" TERM`,
     `sleep 301`,
@@ -117,8 +137,7 @@ describeDatabase('#5062 supervisor and worker stop drains real work', () => {
       '--health-interval', '0', '--max-rss', '0', '--pid-file', pidFile]);
     await until(async () => (await lockRow(queueName)) !== null, 30_000, 'supervisor lock');
     const job = await queue.add('shell', { cmd: barrierCmd(home), cwd: home }, { queue: queueName }, { allowProtectedSubmit: true });
-    await until(() => existsSync(join(home, 'grandchild.pid')) && existsSync(join(home, 'leader.pid')), 30_000, 'barrier job start');
-    const tree = [readPid(join(home, 'leader.pid')), readPid(join(home, 'grandchild.pid'))];
+    const tree = await barrierTree(home);
     expect(tree.every(alive)).toBe(true);
     return { home, queueName, pidFile, sup, job, tree };
   }
@@ -195,8 +214,7 @@ describeDatabase('#5062 supervisor and worker stop drains real work', () => {
     const job = await queue.add('shell', { cmd: barrierCmd(home), cwd: home }, { queue: queueName }, { allowProtectedSubmit: true });
     const worker = spawnCli(home, ['jobs', 'work', '--queue', queueName, '--allow-shell-jobs', '--health-interval', '0', '--max-rss', '0']);
     try {
-      await until(() => existsSync(join(home, 'grandchild.pid')) && existsSync(join(home, 'leader.pid')), 30_000, 'barrier job start');
-      const tree = [readPid(join(home, 'leader.pid')), readPid(join(home, 'grandchild.pid'))];
+      const tree = await barrierTree(home);
       worker.proc.kill('SIGTERM');
       expect(await worker.proc.exited, await worker.out()).toBe(0);
       expect(tree.filter(alive)).toEqual([]);

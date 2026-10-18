@@ -6,8 +6,9 @@
  * `brain-repo-durability.ts` re-exports it for its older callers.
  */
 import { readFileSync } from 'fs';
-import { execFile, type ChildProcess, type ExecFileException } from 'child_process';
+import { execFile, type ChildProcess, type ExecFileException } from './spawn.ts';
 
+/** Default time a stopped child gets to exit after SIGTERM before SIGKILL; a caller passes `termGraceMs` for children that need longer to clean up. */
 const BOUNDED_EXEC_TERM_GRACE_MS = 2_000;
 
 /**
@@ -31,6 +32,7 @@ export interface BoundedExecOptions {
   env?: NodeJS.ProcessEnv;
   maxBuffer?: number;
   signal?: AbortSignal;
+  termGraceMs?: number;
 }
 
 /**
@@ -45,10 +47,12 @@ export interface BoundedExecOptions {
  * Stopping sends SIGTERM first so git can remove its lockfiles (a SIGKILLed
  * `git add`/`commit` leaves `.git/index.lock` behind and every later git call
  * in that worktree fails), then SIGKILLs after a short grace period and
- * settles from the timer even if the exit event never arrives.
+ * settles from the timer even if the exit event never arrives. A git stalled in
+ * uninterruptible I/O or memory reclaim acts on SIGTERM only seconds later, so
+ * git callers pass a longer `termGraceMs` (#6932).
  */
 export function execFileBounded(file: string, args: string[], options: BoundedExecOptions): Promise<{ error: ExecFileException | null; stdout: string; stderr: string }> {
-  const { timeout, signal, ...rest } = options;
+  const { timeout, signal, termGraceMs = BOUNDED_EXEC_TERM_GRACE_MS, ...rest } = options;
   return new Promise(resolve => {
     let settled = false;
     const finish = (error: ExecFileException | null, stdout: string, stderr = '') => {
@@ -80,7 +84,7 @@ export function execFileBounded(file: string, args: string[], options: BoundedEx
       escalation = setTimeout(() => {
         child.kill('SIGKILL');
         settleStopped();
-      }, BOUNDED_EXEC_TERM_GRACE_MS);
+      }, termGraceMs);
     };
     const timer = setTimeout(() => stop(`${file} did not finish within ${timeout}ms`, 'ETIMEDOUT'), timeout);
     const onAbort = () => stop(`${file} was aborted`, 'ABORT_ERR');

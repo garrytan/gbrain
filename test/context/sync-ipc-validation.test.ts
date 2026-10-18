@@ -12,6 +12,7 @@ import {
   DELEGATED_SYNC_OPTION_FIELDS,
   DELEGATED_SYNC_TIMEOUT_MAX_SECONDS,
   WIRE_PAGES_AFFECTED_MAX,
+  isSyncStartRegistration,
   toWireSyncResult,
   validateDelegatedSyncOptions,
 } from '../../src/core/context/sync-ipc.ts';
@@ -37,6 +38,28 @@ describe('validateDelegatedSyncOptions', () => {
     if (!v.ok) throw new Error('unreachable');
     expect(v.options).toEqual(raw);
     expect(v.options).not.toBe(raw as never);
+  });
+
+  // #6712 PR 1: explicitProcessing is still validated by shape (an older CLI sends it) but dropped: the cursor's opt-outs are inherited.
+  test('#6317: the managed catch-up fields validate by shape (lanes 1..16, explicitProcessing from the three processing keys, accepted and ignored)', () => {
+    const ok = validateDelegatedSyncOptions({ noBulk: true, lanes: 4, explicitProcessing: ['noEmbed', 'noExtract'], timeoutSeconds: 60 } as never);
+    expect(ok.ok).toBe(true);
+    if (!ok.ok) throw new Error('unreachable');
+    expect(ok.options).toEqual({ noBulk: true, lanes: 4, timeoutSeconds: 60 });
+    for (const lanes of [0, 17, 1.5, '4']) expect(validateDelegatedSyncOptions({ lanes, timeoutSeconds: 60 })).toEqual({ ok: false, error: 'invalid_options:lanes' });
+    for (const explicitProcessing of ['noEmbed', ['repoPath'], [1], ['noEmbed', 'noEmbed', 'noExtract', 'noSchemaPack']]) {
+      expect(validateDelegatedSyncOptions({ explicitProcessing, timeoutSeconds: 60 })).toEqual({ ok: false, error: 'invalid_options:explicitProcessing' });
+    }
+  });
+
+  test('#6317: a registration rides sync_start only in the agreed shape (uuid id, 64-hex credential, lane cli)', () => {
+    const id = '11111111-2222-4333-8444-555555555555', credential = 'a'.repeat(64);
+    expect(isSyncStartRegistration({ id, credential, lane: 'cli' })).toBe(true);
+    expect(isSyncStartRegistration({ id, credential, lane: 'stdio' })).toBe(false);
+    expect(isSyncStartRegistration({ id, credential: 'short', lane: 'cli' })).toBe(false);
+    expect(isSyncStartRegistration({ id: 'not-a-uuid', credential, lane: 'cli' })).toBe(false);
+    expect(isSyncStartRegistration({ id, credential, lane: 'cli', extra: 1 })).toBe(false);
+    expect(isSyncStartRegistration(null)).toBe(false);
   });
 
   test('minimal valid payload: only timeoutSeconds', () => {
@@ -101,23 +124,37 @@ describe('validateDelegatedSyncOptions', () => {
     expect(validateDelegatedSyncOptions({ sourceId: 'ok-source', timeoutSeconds: 60 }).ok).toBe(true);
   });
 
+  test('#6696 (A5): origin carries the admission origin and rejects anything else', () => {
+    expect(validateDelegatedSyncOptions({ timeoutSeconds: 0, origin: 'interactive' })).toEqual({ ok: true, options: { timeoutSeconds: 0, origin: 'interactive' } });
+    expect(validateDelegatedSyncOptions({ timeoutSeconds: 0, origin: 'background' })).toMatchObject({ ok: true });
+    expect(validateDelegatedSyncOptions({ timeoutSeconds: 0, origin: 'admin' })).toEqual({ ok: false, error: 'invalid_options:origin' });
+    expect(validateDelegatedSyncOptions({ timeoutSeconds: 0, origin: true })).toEqual({ ok: false, error: 'invalid_options:origin' });
+  });
+
   test('field table and options interface stay in lockstep', () => {
     // The validator iterates the table; if a field is added to the interface
     // but not the table it becomes unreachable from the wire — this pin makes
     // that drift loud.
     expect(Object.keys(DELEGATED_SYNC_OPTION_FIELDS).sort()).toEqual([
       'dryRun',
+      'embedDeferred',
       'full',
       'includeGitignored',
+      'lanes',
+      'noBulk',
       'noEmbed',
       'noExtract',
       'noPull',
       'noSchemaPack',
+      'origin',
       'retryFailed',
       'skipFailed',
       'sourceId',
       'timeoutSeconds',
     ]);
+    // #6712 PR 2: a retired field is not in the table (a newer client never sends it); its window still accepts it.
+    expect(Object.keys(DELEGATED_SYNC_OPTION_FIELDS)).not.toContain('explicitProcessing');
+    expect(validateDelegatedSyncOptions({ explicitProcessing: ['noEmbed'], timeoutSeconds: 0 })).toEqual({ ok: true, options: { timeoutSeconds: 0 }, ignored: ['explicitProcessing'] });
   });
 });
 

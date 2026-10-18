@@ -137,15 +137,19 @@ describe('query op — CRAG gate (#1663)', () => {
     expect(JSON.stringify(local)).toContain('PRIVATE_CRAG_CANARY');
   }, 30000);
 
-  test('#4610: default-shape caller (expand on) skips the re-run — the documented callerExpanded guard', async () => {
+  test('#4610 + GBRA-81 item 1b: a default-shape caller did not expand (the mode decides), so the guard lets the re-run fire', async () => {
     await engine.setConfig('search.crag_escalation', 'true');
     const { ctx, meta } = ctxWithMeta();
-    // No expand param → expand defaults to true → the first pass already
-    // used the high-ceiling expansion knob → no redundant re-query.
+    // No expand param: the resolved mode decides, and nothing expanded on this
+    // keyless brain. The callerExpanded guard reads expansion_applied, so the
+    // high-ceiling re-run is not redundant and runs once. The skip case (the
+    // first pass really expanded) is pinned in operation-expansion-contract.serial.test.ts.
     await operationsByName.query.handler(ctx, { query: 'zxqv nonexistent quux' });
     const crag = cragOf(meta);
+    expect((meta.retrieval as { expansion_applied?: boolean }).expansion_applied).toBe(false);
+    expect(crag.escalated).toBe(true);
+    expect(crag.escalated_confidence).toBe('weak');
     expect(crag.confidence).toBe('weak');
-    expect(crag.escalated).toBeUndefined();
     expect(crag.escalate_to_think).toBe(true);
   }, 30000);
 

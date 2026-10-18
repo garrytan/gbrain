@@ -62,7 +62,7 @@ async function call(
 describe('list_skills over dispatch', () => {
   const boundClientCases: { auth: Partial<AuthInfo>; denied: string; allowed: string }[] = [
     { auth: { allowedOperations: ['list_skills', 'get_skill', 'search'] }, denied: 'query', allowed: 'search' },
-    { auth: { boundSlugPrefixes: ['wiki/agents/example'] }, denied: 'remember', allowed: 'put_page' },
+    { auth: { boundSlugPrefixes: ['wiki/agents/example'] }, denied: 'forget_fact', allowed: 'remember' },
     { auth: { fenceProjectionDegraded: true }, denied: 'put_page', allowed: 'search' },
   ];
   test.each(boundClientCases)('tool inventories honor operation grants and bound-client fences: %j', async ({ auth, denied, allowed }) => {

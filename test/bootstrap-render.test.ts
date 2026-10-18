@@ -455,6 +455,10 @@ describe('renderWorkspace — machine-specific wiring stays out of the repo [B8]
     const gi = readFileSync(join(ws, '.gitignore'), 'utf8');
     expect(gi).toContain('.mcp.json');
     expect(gi).toContain('.claude/settings.local.json');
+    // #5186 (W14 P1.5a): ownership markers and the bootstrap lock never reach the remote.
+    for (const pattern of ['.gbrain-owner.json', '.gbrain-owner-*.json', '.gbrain-owner.json.*.tmp', '.gbrain-bootstrap.lock/']) {
+      expect(gi.split('\n')).toContain(pattern);
+    }
     const gh = readFileSync(join(ws, 'GITHUB.md'), 'utf8');
     // The portable state/mcp.json snippet was never built — the promise is gone.
     expect(gh).not.toContain('state/mcp.json');

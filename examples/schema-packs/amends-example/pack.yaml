@@ -1,0 +1,56 @@
+# Example schema pack: dated records that amend other records.
+#
+# A contract page lists the records it amends in frontmatter:
+#
+#   ---
+#   type: contract
+#   title: MSA Amendment 2
+#   amends:
+#     - name: MSA Example
+#       since: 2026-11-01
+#   ---
+#
+# Each entry becomes an `amends` link from this page to the named page; its
+# `since` records when the amended terms take effect (link_relationships
+# first_start). `amends` takes no part in ranking and future-dated amends
+# edges stay visible in default graph reads; both policies live in gbrain's
+# code, so this pack needs no ranking field.
+#
+# `supersedes: [name]` is for a record that replaces another one entirely:
+# search halves the replaced record's score and labels it superseded. Use
+# `amends` when the earlier record still governs the terms it did not change.
+#
+# Copy this directory to ~/.gbrain/schema-packs/amends-example/, rename the page
+# type and prefixes to your layout, then: gbrain schema use amends-example.
+# Existing pages gain their amends links after:
+#   gbrain extract links --source db --include-frontmatter
+# Guide: docs/guides/temporal-edges.md ("Amendments: the amends link").
+
+api_version: gbrain-schema-pack-v1
+name: amends-example
+version: 1.0.0
+description: Contracts and other dated records that amend earlier records
+gbrain_min_version: 0.60.243.0
+extends: gbrain-base
+
+page_types:
+  - name: contract
+    primitive: temporal
+    path_prefixes:
+      - contracts/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+link_types:
+  - name: amends
+    temporal: event
+  - name: supersedes
+
+frontmatter_links:
+  - page_type: contract
+    fields: [amends]
+    link_type: amends
+  - page_type: contract
+    fields: [supersedes]
+    link_type: supersedes

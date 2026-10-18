@@ -112,7 +112,10 @@ time. Evidence expires after one hour even if the configured coverage interval
 is longer. Reuse retains its original timestamp and requires unchanged source
 identity, physical Git directory, HEAD, branch, origin, push-status identity and
 a clean tree. Roots beyond the budget report `budget_exhausted`; successive
-sweeps can cover them. Background and stdio refreshes use local probes only;
+sweeps can cover them. A probe starts only when its full two-second slot is
+still inside the eight-second budget: a root that would get less is deferred
+(`budget_exhausted`, and earlier `verified` evidence for it is kept) rather
+than probed on the leftover and recorded as `unavailable`. Background and stdio refreshes use local probes only;
 remote MCP doctor reads aggregate cache only, with no engine or Git access.
 
 ### Remote verification and your Git configuration
@@ -132,10 +135,10 @@ export is not used, and the remote's host key must already be in `known_hosts`.
 | `verification.state` | Meaning | What to do |
 |---|---|---|
 | `verified` | The remote branch HEAD matches a clean local HEAD. | Nothing. |
-| `missing_ref` | The remote answered but has no such branch. | `git push -u origin <branch>`, then `gbrain backup check`. |
+| `missing_ref` | The remote answered but has no such branch. | `git push -u origin <branch>` <!-- gbrain-allow-shared-tree-git: one-time first push that creates the remote branch and sets its upstream -->, then `gbrain backup check`. |
 | `mismatch` | The remote HEAD differs from the local HEAD, or the tree changed during the probe. | Push or pull until they match, then `gbrain backup check`. |
-| <a id="remote-unavailable"></a>`unavailable` | `git ls-remote` failed: no network, authentication refused, or an unknown host key. The probe passes only `HOME`, `PATH`, `XDG_CONFIG_HOME`, `SSH_AUTH_SOCK`, `GIT_CONFIG_GLOBAL`, `HTTPS_PROXY`/`https_proxy`, `HTTP_PROXY`/`http_proxy`, `NO_PROXY`/`no_proxy` (and `USERPROFILE`, `APPDATA`, `SystemRoot` on Windows). | Run `git -C <root> ls-remote origin` in the same shell; credentials must come from your Git config, a credential helper, `~/.ssh/config` or the SSH agent, not from a prompt or `GIT_SSH_COMMAND`. |
-| `budget_exhausted` | The sweep's eight-probe or eight-second budget ran out first. | Run `gbrain backup check` again. |
+| <a id="remote-unavailable"></a>`unavailable` | `git ls-remote` failed: no network, authentication refused, or an unknown host key. `cause` says which kind: `timeout` (the remote did not answer within its full two-second slot) or `exit` (git exited with an error). The probe passes only `HOME`, `PATH`, `XDG_CONFIG_HOME`, `SSH_AUTH_SOCK`, `GIT_CONFIG_GLOBAL`, `HTTPS_PROXY`/`https_proxy`, `HTTP_PROXY`/`http_proxy`, `NO_PROXY`/`no_proxy` (and `USERPROFILE`, `APPDATA`, `SystemRoot` on Windows). | Run `git -C <root> ls-remote origin` in the same shell; credentials must come from your Git config, a credential helper, `~/.ssh/config` or the SSH agent, not from a prompt or `GIT_SSH_COMMAND`. |
+| `budget_exhausted` | The sweep's eight-probe or eight-second budget ran out first, or this remote would not have received its full two-second slot. | Run `gbrain backup check` again. |
 | `stale`, `not_checked` | Earlier evidence expired or no probe ran yet. | `gbrain backup check`. |
 
 When does the compute actually run? On any of: `gbrain backup check`, a stale
@@ -186,7 +189,7 @@ source id. Full per-asset detail (which repo, which fix) is local-only:
 - Workspace with no repo: `gbrain bootstrap repo` (creates a private repo,
   verifies privacy, pushes).
 - A source repo with no remote:
-  `git remote add origin git@github.com:you/your-brain-repo.git && git push -u origin main`,
+  `git remote add origin git@github.com:you/your-brain-repo.git && git push -u origin main`, <!-- gbrain-allow-shared-tree-git: one-time first push that creates the remote branch and sets its upstream -->
   then `gbrain sources harden <source-id>` for auto-push durability.
 - Unpushed workspace work: for a managed canonical worktree, inspect the managed writer with `gbrain sources writer status --probe --json` (legacy bulk push is refused there); otherwise `gbrain sources push --path <workspace>`.
   On a managed worktree the persistence coordinator commits and pushes as Git effects; the probe lists `effects`, `blocking_effects` and `recent_failures`, and a parked push is retried with `gbrain sources writer retry-effects <source> --request-id <id>`. gbrain's own ownership stamp (`.gbrain-owner.json`) never counts as uncommitted work, the session hooks never start `sources push` there, and a root with no `origin` remote reads `no_remote` (add one: `git remote add origin <url>`) even after a recorded push refusal. A recorded push failure stops warning once the tree matches its origin branch with nothing uncommitted.
@@ -220,9 +223,14 @@ quarter, on a scratch machine or empty directory:
    a separate backup on an isolated destination.
 
 Windows directory-descriptor fsync portability is covered by Linux fault
-injection and restore drills, not a native Windows full backup/restore test. A
-separate Windows PGLite `dumpDataDir` failure remains unresolved; do not infer
-full Windows restore support from the Git check.
+injection and restore drills, and the archive layer's write → read →
+cluster-extract round trip runs natively on the `windows-latest` CI row
+(`test/backup-archive-roundtrip-5312.test.ts`). A separate Windows PGLite
+`dumpDataDir` failure remains unresolved; do not infer full Windows restore
+support from the Git check. If you copy a brain by hand instead, copy the
+tree, not just the files: the PGLite data directory needs its empty
+directories (`pg_tblspc`, `pg_wal/archive_status`, `pg_notify`, …), and a
+file-only copy fails to open with a message that reads like corruption.
 
 If a drill fails, fix the gap while the original disk still works. This check
 does not itself certify the database or full agent recovery.

@@ -285,11 +285,16 @@ const REASON_ROWS: ReadonlyArray<ReasonRow> = [
   {
     reason: 'conn_dropped',
     transient: true,
-    codes: ['CONNECTION_ENDED', 'CONNECTION_CLOSED'],
+    // #6355: the server's own session ends (pg_terminate_backend, a crash or a failover: 57P01/57P02/57P03) and the
+    // socket errnos a pooler drop surfaces are the same class; before this row they fell through to `unknown`.
+    codes: ['CONNECTION_ENDED', 'CONNECTION_CLOSED', 'CONNECTION_DESTROYED', '57P01', '57P02', '57P03'],
     codePrefixes: ['08'],
     patterns: [
       /Connection terminated unexpectedly/i,
+      /terminating connection due to administrator command/i,
       /ECONNRESET/i,
+      /ECONNABORTED/i,
+      /EPIPE/i,
       /connection.*closed/i,
       /server closed the connection/i,
       /could not connect to server/i,

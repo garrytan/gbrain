@@ -7,7 +7,7 @@
 import type { BrainEngine } from '../../engine.ts';
 import { hmacRef, receiptSalt, recordReceipts, type ReceiptRow } from './store.ts';
 import type { SlotPolicy } from './policy.ts';
-import { thresholdValue, type DecideLane, type DecideQuestion, type DecideResult, type DecideSlot, type EvidenceItem } from './types.ts';
+import { thresholdValue, type DecideLane, type DecidePartial, type DecideQuestion, type DecideResult, type DecideSlot, type EvidenceItem } from './types.ts';
 
 export interface ReceiptInput {
   slot: DecideSlot;
@@ -17,6 +17,8 @@ export interface ReceiptInput {
   policy?: Pick<SlotPolicy, 'threshold' | 'fingerprint' | 'calibration' | 'minKeep' | 'provider'>;
   provider: string;
   result?: DecideResult;
+  /** A failed decision's settled answers (#6519), recorded when there is no `result`; never applied. */
+  partial?: DecidePartial;
   questions: readonly DecideQuestion[];
   state: Record<string, EvidenceItem>;
   /** Outcome per question id; questions without one get `fallbackOutcome`. */
@@ -40,7 +42,7 @@ export async function buildReceiptRows(engine: BrainEngine, input: ReceiptInput)
   const r = input.result;
   const perQuestionTokens = r && input.questions.length > 0 ? Math.round(r.usage.input_tokens / input.questions.length) : null;
   return input.questions.map((q) => {
-    const answer = r?.answers[q.id] ?? r?.fallback?.answers[q.id];
+    const answer = r ? r.answers[q.id] ?? r.fallback?.answers[q.id] : input.partial?.answers[q.id];
     const subject = input.subjects?.[q.id];
     return {
       decision_id: r?.decision_id ?? `none:${stateHash}`,
@@ -49,7 +51,7 @@ export async function buildReceiptRows(engine: BrainEngine, input: ReceiptInput)
       mode: input.mode,
       provider: r?.fallback?.answers[q.id] ? r.fallback.provider : input.provider,
       model_alias: r?.model_alias ?? null,
-      model_resolved: r?.fallback?.answers[q.id] ? r.fallback.model_resolved : r?.model_resolved || null,
+      model_resolved: r?.fallback?.answers[q.id] ? r.fallback.model_resolved : r ? r.model_resolved || null : input.partial?.model_resolved ?? null,
       question_kind: q.kind,
       state_hash: stateHash,
       question_hash: hmacRef(salt, `${q.kind}|${q.instructions}|${JSON.stringify(Object.entries(q.inputs ?? {}).map(([k, v]) => [k, v.text]))}`),

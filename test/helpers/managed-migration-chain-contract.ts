@@ -90,7 +90,7 @@ export async function runManagedMigrationChain(databaseUrl: string | undefined, 
 /**
  * Eng capacity split: with the migration writer's permanent request IDs
  * exhausted, schema migrations still complete (they admit nothing), the
- * first admission-requiring backfill refuses up front with queue_capacity
+ * first admission-requiring backfill refuses up front with write_quota_exhausted
  * and the filled capacity command before it mutates anything, and after the
  * limit is raised the same runner completes the chain.
  */
@@ -108,7 +108,7 @@ export async function runExhaustedCapacityChain(databaseUrl: string | undefined,
     const ledger = fixture.ledger();
     expect(ledger.filter(e => e.status !== 'complete').map(e => e.version)).toEqual(['0.13.1']);
     const detail = phaseDetail(ledger, '0.13.1', 'grandfather');
-    expect(detail).toStartWith('queue_capacity: Write capacity exhausted: principal permanent request IDs (0 used of 0).');
+    expect(detail).toStartWith('write_quota_exhausted: Write capacity exhausted: principal permanent request IDs (0 used of 0).');
     expect(detail).toContain(`gbrain config set ${key} `);
 
     engine = await fixture.open();

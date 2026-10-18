@@ -22,7 +22,7 @@ const targetRunners = (job: Job) =>
 
 describe('CI runner routing', () => {
   test('owned Linux validation jobs use Ubicloud without moving release publishing', () => {
-    for (const file of ['test.yml', 'e2e.yml', 'heavy-tests.yml', 'persistence-validation.yml', 'native-locks.yml', 'actionlint.yml', 'semgrep.yml']) {
+    for (const file of ['test.yml', 'e2e.yml', 'heavy-tests.yml', 'persistence-validation.yml', 'convergence-nightly.yml', 'native-locks.yml', 'actionlint.yml', 'semgrep.yml']) {
       for (const job of Object.values(load(file).jobs)) {
         const runner = job['runs-on'];
         if (!runner || runner.startsWith('${{')) continue;
@@ -51,6 +51,8 @@ describe('CI runner routing', () => {
     expect(load('persistence-validation.yml').jobs['read-performance']['runs-on']).toBe(single);
     expect(load('persistence-validation.yml').jobs.invariants['runs-on']).toBe(single);
     expect(load('persistence-validation.yml').jobs.reconciliation['runs-on']).toBe(single);
+    expect(load('persistence-validation.yml').jobs.convergence['runs-on']).toBe(single);
+    expect(load('convergence-nightly.yml').jobs.convergence['runs-on']).toBe(single);
     expect(load('persistence-validation.yml').jobs['deployment-matrix']['runs-on']).toBe(pooled);
     expect(load('heavy-tests.yml').jobs.heavy['runs-on']).toBe(heavy);
   });

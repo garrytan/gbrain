@@ -1,16 +1,17 @@
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from '../spawn.ts';
 import { gbrainPath, isThinClient } from '../config.ts';
 import { opError, type OperationContext } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { claimWorktree, getWorktreeBinding } from '../persistence/ownership.ts';
+import { claimWorktree, getWorktreeBinding, readPersistenceBrain } from '../persistence/ownership.ts';
 import { activateSharedSkillPersistence } from '../persistence/skill-activation.ts';
 import { checkedContentRoot } from './setup-files.ts';
 import { DEFAULT_SHARED_PACK_ID, packagedSharedSkillPolicy, packagedSharedSkills } from './setup-bundle.ts';
 import { publicationEnabled, setSharedSkillPolicy } from './policy.ts';
 import type { BrainEngine } from '../engine.ts';
 import { assertPackagedSkillSource, sharedSkillSourcePolicy } from './setup-source-policy.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 export async function isNewContentDatabase(engine: BrainEngine): Promise<boolean> {
   const [row] = await engine.executeRaw<{ fresh: boolean }>("SELECT to_regclass('public.pages') IS NULL AND to_regclass('public.config') IS NULL AND to_regclass('public.persistence_brain') IS NULL AS fresh");
@@ -64,12 +65,12 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
     return receipt;
   }
   const sourceId = options.sourceId ?? ctx.sourceId;
-  const [brain] = await ctx.engine.executeRaw<{ brain_id: string; enabled: boolean; skill_bundles_enabled: boolean }>('SELECT brain_id,enabled,skill_bundles_enabled FROM persistence_brain WHERE singleton=1');
+  const brain = await readPersistenceBrain(ctx.engine);
   const [source] = await ctx.engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>(
     'SELECT id,incarnation,local_path FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
-  if (!brain || !source) {
-    throw opError('source_changed', 'Content setup requires the persistent brain identity and an active selected source.',
-      `Source ${sourceId} is archived or not registered, or this brain has no persistence identity yet. Check the registered sources, then run gbrain init again for an active one.`,
+  if (!source) {
+    throw opError('source_changed', 'Content setup requires an active selected source.',
+      `Source ${sourceId} is archived or not registered. Check the registered sources, then run gbrain init again for an active one.`,
       { fix: readFix('Lists the registered sources and whether each is archived.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
   }
   receipt.brain_id = brain.brain_id;
@@ -80,7 +81,7 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
     receipt.root = source.local_path;
     receipt.repository_kind = source.local_path ? 'content_directory' : 'db_only';
     if (source.local_path) {
-      const git = spawnSync('git', ['-C', source.local_path, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 15_000 });
+      const git = spawnSync('git', ['-C', source.local_path, 'rev-parse', '--show-toplevel'], { env: gitChildEnv(), encoding: 'utf8', timeout: 15_000 });
       if (git.status === 0 && resolve(git.stdout.trim()) === resolve(source.local_path)) receipt.repository_kind = 'git';
     }
     receipt.pending_actions = [sourcePolicy.reason];
@@ -127,7 +128,7 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
   receipt.root = root;
   receipt.owned_root = prior?.owned_root ?? (!existingRoot && (!!options.fresh || !!options.root));
   receipt.fresh_root_activation = prior?.fresh_root_activation ?? (!existingRoot && !!options.fresh);
-  const gitProbe = existsSync(join(root, '.git')) ? spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 15_000 }) : null;
+  const gitProbe = existsSync(join(root, '.git')) ? spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { env: gitChildEnv(), encoding: 'utf8', timeout: 15_000 }) : null;
   receipt.repository_kind = gitProbe?.status === 0 && resolve(gitProbe.stdout.trim()) === root ? 'git' : 'content_directory';
   const existed = existsSync(root);
   if (prior?.root && prior.root !== root) {
@@ -176,13 +177,13 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
       throw opError('local_conflict', 'Git initialization is allowed only in a newly owned empty content directory.',
         `${root} is not a new empty directory gbrain created; run gbrain init without --git and initialize Git there yourself if the user wants it.`);
     }
-    const git = spawnSync('git', ['init', '--quiet', root], { encoding: 'utf8', timeout: 15_000 });
+    const git = spawnSync('git', ['init', '--quiet', root], { env: gitChildEnv(), encoding: 'utf8', timeout: 15_000 });
     if (!git.error && git.status === 0) receipt.repository_kind = 'git';
     else receipt.pending_actions.push('Git initialization was unavailable; install Git and explicitly initialize this content directory later.');
   }
   if (receipt.repository_kind === 'content_directory' && !receipt.pending_actions.length) receipt.pending_actions.push('Optional: initialize Git explicitly; configure an off-host backup separately.');
   if (receipt.owned_root && receipt.repository_kind === 'content_directory') {
-    const enclosing = spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 15_000 });
+    const enclosing = spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { env: gitChildEnv(), encoding: 'utf8', timeout: 15_000 });
     if (enclosing.status === 0 && resolve(enclosing.stdout.trim()) !== root) {
       throw opError('local_conflict', 'The new content directory is inside another Git worktree. Choose a separate root or explicitly initialize Git here; setup will not claim its parent repository.',
         `${root} is inside the Git worktree ${enclosing.stdout.trim()}. Pass --content-root a path outside any repository, or add --git so the content directory gets its own repository.`);

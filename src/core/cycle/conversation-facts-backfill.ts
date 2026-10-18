@@ -52,6 +52,7 @@ import { withBudgetTracker } from '../ai/gateway.ts';
 import { listSources } from '../sources-ops.ts';
 import {
   runExtractConversationFactsCore,
+  emptyExtractConversationFactsResult,
   isAbortError,
   type ExtractConversationFactsResult,
 } from '../../commands/extract-conversation-facts.ts';
@@ -88,7 +89,7 @@ export interface ConversationFactsBackfillPhaseResult {
 
 const CFG_PREFIX = 'cycle.conversation_facts_backfill';
 
-interface ResolvedConfig {
+export interface ResolvedConfig {
   enabled: boolean;
   maxCostUsd: number;          // per source per cycle
   maxTotalCostUsd: number;     // brain-wide per cycle
@@ -105,7 +106,8 @@ interface ResolvedConfig {
   workers: number;
 }
 
-async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
+/** The backfill's resolved config (switch, caps, types); doctor reads the same values. */
+export async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
   const get = (k: string) => engine.getConfig(`${CFG_PREFIX}.${k}`);
   const [enabled, maxCost, maxTotalCost, maxWall, maxTotalWall, typesRaw, workersRaw] =
     await Promise.all([
@@ -223,33 +225,7 @@ export async function runPhaseConversationFactsBackfill(
   const sourcesNotOwned: string[] = [];
   let totalSpent = 0;
 
-  const zeroResult = (): ExtractConversationFactsResult => ({
-    pages_considered: 0,
-    pages_processed: 0,
-    pages_skipped: 0,
-    pages_skipped_unparsed: 0,
-    pages_skipped_type_mismatch: 0,
-    pages_skipped_insufficient_turns: 0,
-    pages_skipped_since: 0,
-    pages_skipped_too_large: 0,
-    pages_skipped_disappeared: 0,
-    pages_skipped_completed: 0,
-    pages_skipped_non_extractable: 0,
-    pages_marked_non_extractable: 0,
-    pages_skipped_unrecognized_speaker: 0,
-    pages_failed: 0,
-    pages_llm_fallback: 0,
-    // v0.41.15.0 (D6 + D11): new counters from the per-page lock
-    // + delete-orphans-first replay safety.
-    pages_lock_skipped: 0,
-    orphan_facts_cleaned: 0,
-    segments_processed: 0,
-    facts_extracted: 0,
-    facts_inserted: 0,
-    // #4052: alias_exact resolution counters (required on the result type).
-    fallback_slugify_count: 0,
-    resolution_errors: 0,
-  });
+  const zeroResult = emptyExtractConversationFactsResult;
 
   // #3627: the per-source caps (max_cost_usd / max_walltime_min) were parsed
   // but never enforced — one runaway source could eat the whole brain-wide

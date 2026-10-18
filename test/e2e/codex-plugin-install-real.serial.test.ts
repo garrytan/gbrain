@@ -10,7 +10,7 @@
  *      config.toml, snapshot carries the curated skills + non-root mcp.json +
  *      an EXECUTABLE launcher, dual-marketplace resolution yields exactly one
  *      gbrain plugin, add-twice idempotency, the deterministic tools/list
- *      surface oracle (== the starter surface, via the snapshot launcher),
+ *      surface oracle (== the registration surface, via the snapshot launcher),
  *      the cold-home fast-fail ("No brain configured. Run: gbrain init"),
  *      the --source-guard write gate (blocked without GBRAIN_SOURCE on a
  *      multi-source brain, allowed with it), the `codex mcp add` coexistence
@@ -30,6 +30,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { REGISTRATION_SURFACE } from '../../src/core/mcp-registration.ts';
 
 import {
   resolveCodexBinary,
@@ -187,7 +188,7 @@ describe.skipIf(!PLUGIN_CAPABLE)('codex plugin door — INSTALL (no auth needed)
       expect(statSync(launcher).mode & 0o111, 'launcher lost its exec bit in the snapshot copy').toBeGreaterThan(0);
       const mcpJson = JSON.parse(readFileSync(join(snap!, '.codex-plugin', 'mcp.json'), 'utf8'));
       const serverArgs: string[] = mcpJson.mcpServers.gbrain.args;
-      expect(serverArgs).toEqual(['serve', '--surface', 'starter', '--source-guard']);
+      expect(serverArgs).toEqual(['serve', '--surface', REGISTRATION_SURFACE, '--source-guard']);
 
       // (d) idempotency: add twice each — state stays sane (exactly one
       // gbrain@gbrain row; outcome recorded in the evidence, not softened).
@@ -218,7 +219,7 @@ describe.skipIf(!PLUGIN_CAPABLE)('codex plugin door — INSTALL (no auth needed)
         timeoutMs: 120_000,
       });
       const publishGates = publishGatesFromDisabled(operations, new Set());
-      const expected = operations.filter((o) => isCallable(o, { transport: 'stdio', surface: 'starter', scopes: [], publishGates })).map((o) => o.name).sort();
+      const expected = operations.filter((o) => isCallable(o, { transport: 'stdio', surface: REGISTRATION_SURFACE, scopes: [], publishGates })).map((o) => o.name).sort();
       expect(tools.sort()).toEqual(expected);
 
       // (f) cold-home fast-fail: fresh empty GBRAIN_HOME → actionable exit,

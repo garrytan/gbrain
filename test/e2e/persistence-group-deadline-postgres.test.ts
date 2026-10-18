@@ -227,7 +227,8 @@ describe.skipIf(!hasDatabase())('grouped preparation deadlines (Postgres, #6278)
     const rows = await admitGroup(engine, config, sources[0]!, 'kill', 6, 'ordered');
     const release = Promise.withResolvers<void>();
     const attempts = new Map<string, number>();
-    // Every dispatched member hangs: wave one (members 0-3) is marked preparing, members 4 and 5 are claimed but never dispatched.
+    // Every dispatched member hangs: wave one (members 0-3) is marked preparing, members 4 and 5 are claimed but never dispatched
+    // (#6650: they carry their own token and owner with no phase, so the sweep does not charge them).
     const owner = new PersistenceConsumer(engine, { engine: 'postgres' }, hangingPreparer(sources, new Set(rows.map(row => row.id)), release.promise, attempts),
       { hostId: config.hostId, concurrency: 1, pollMs: 60_000, renewalIntervalMs: 60_000, phaseMs: 2_000, preparationMs: 60_000,
         preparationBudgets: { maxAttempts: 5, ceilingMs: 120_000 }, onError: () => {} });
@@ -238,7 +239,7 @@ describe.skipIf(!hasDatabase())('grouped preparation deadlines (Postgres, #6278)
       await waitFor(() => [0, 1, 2, 3].every(i => attempts.get(rows[i]!.id) === 1), { timeoutMs: 15_000, label: 'the first wave is dispatched' });
       const stamps = await engine.executeRaw<{ slug: string; phase: string | null; own: boolean }>(`SELECT slug,claim_phase->>'phase' AS phase,
         claim_phase->>'token'=execution_token::text AS own FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY sequence`, [rows.map(row => row.id)]);
-      expect(stamps.map(s => [s.phase, s.own])).toEqual([['preparing', true], ['preparing', true], ['preparing', true], ['preparing', true], [null, null], [null, null]]);
+      expect(stamps.map(s => [s.phase, s.own])).toEqual([['preparing', true], ['preparing', true], ['preparing', true], ['preparing', true], [null, true], [null, true]]);
       // The owner dies (its renewals never run again); the leases lapse and another consumer's sweep reclaims them.
       await engine.executeRaw(`UPDATE persistence_requests SET claim_expires_at=now()-interval '1 second' WHERE id=ANY($1::uuid[])`, [rows.map(row => row.id)]);
       (sweeper as unknown as { rootRetryAfter: Map<string, number> }).rootRetryAfter.set(rows[0]!.worktree_id!, Date.now() + 60_000);

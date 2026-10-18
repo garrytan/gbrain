@@ -86,6 +86,7 @@ const extract_entities: Operation = {
       {
         trusted,
         ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}),
+        ctx,
         // Pure local DB writes — no external API call to pace, so the
         // system-load capacity gate would only stall the caller.
         throttle: false,

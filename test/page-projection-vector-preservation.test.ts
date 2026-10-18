@@ -169,9 +169,9 @@ for (const kind of backends) {
       const pending = (await readProjectionSnapshot(engine, slug, sourceId, { allowUnsealed: true }))!;
       await installPageProjection(engine, pending, (await preparePageProjection(pending)).chunks, preserve);
       const prepared = (await readProjectionSnapshot(engine, slug, sourceId))!;
-      expect(await installPageEmbeddings(engine, prepared, prepared.chunks.map(c => ({
+      expect((await installPageEmbeddings(engine, prepared, prepared.chunks.map(c => ({
         chunk_index: c.chunk_index, chunk_text: c.chunk_text, chunk_source: c.chunk_source, embedding: vector,
-      })))).toBe(true);
+      })))).complete).toBe(true);
       const before = await storedChunks();
       expect(before.map(c => c.embedding_input_hash).every(Boolean)).toBe(true);
       const rebuild = await capture();
@@ -292,7 +292,7 @@ for (const kind of backends) {
       await seed();
       const { prepared, chunks } = await capture();
       const newer = new Float32Array(1536); newer[0] = 0.875;
-      expect(await installPageEmbeddings(engine, prepared, chunks.map(c => ({ ...c, embedding: newer })))).toBe(true);
+      expect((await installPageEmbeddings(engine, prepared, chunks.map(c => ({ ...c, embedding: newer })))).complete).toBe(true);
       const before = await storedChunks();
       expect(before.map(c => c.embedding)).toEqual([`[${Array.from(newer).join(',')}]`, `[${Array.from(newer).join(',')}]`]);
       await expect(installPageProjection(engine, prepared, chunks, preserve)).rejects.toBeInstanceOf(PageProjectionConflictError);
@@ -329,7 +329,7 @@ for (const kind of backends) {
       const ready = new Promise<void>(resolve => { entered = resolve; });
       const newer = new Float32Array(1536); newer[0] = 0.9375;
       const writer = engine.transaction(async tx => {
-        expect(await installPageEmbeddings(tx, prepared, chunks.map(c => ({ ...c, embedding: newer })))).toBe(true);
+        expect((await installPageEmbeddings(tx, prepared, chunks.map(c => ({ ...c, embedding: newer })))).complete).toBe(true);
         entered();
         await held;
       });

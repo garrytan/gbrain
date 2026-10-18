@@ -233,7 +233,7 @@ USAGE
       gbrain jobs supervisor --json --allow-shell-jobs  # JSONL events + shell-exec on
 
 HANDLER TYPES (built in)
-  sync              Pull and embed new pages from the repo
+  sync              Pull and import new pages from the repo; on a managed brain it drains to the job's deadline (--timeout-ms)
   embed             (Re-)embed pages; --params '{"slug":...}' or '{"all":true}'
   lint              Run page linter; --params '{"dir":"...","fix":true}'
   import            Bulk import markdown; --params '{"dir":"..."}'

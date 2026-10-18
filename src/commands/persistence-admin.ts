@@ -16,24 +16,46 @@ import { bigintToStringReplacer } from '../core/utils.ts';
 
 export const WRITER_HELP = `Usage:
   gbrain sources writer status [<source>] [--probe] [--json]
-  gbrain sources writer retry-effects <source> --request-id <uuid> [--dry-run] [--json]
+  gbrain sources writer failures <source> [--state all] [--group-by category] [--since 7d] [--limit 20] [--before <cursor>]
+    [--category <c>] [--code <c>] [--origin <o>|none] [--json]
+  gbrain sources writer movement [<source>] [--wait <dur>] [--warn-only] [--json]
+  gbrain sources writer retry-effects <source> --request-id <uuid> [--admin-intent writer_retry_effects --expected-state <admin_state>] [--dry-run] [--json]
+  gbrain sources writer git-durability <source> --enable|--disable [--pat-file <path>] [administration options] [--dry-run] [--json]
   gbrain sources writer claim <source> --path <directory> [administration options] [--dry-run] [--json]
   gbrain sources writer activate --confirm-quiesced [--cleanup-dead-local-locks] [--shared-skills] [administration options] [--dry-run] [--json]
   gbrain sources writer deactivate [--admin-intent writer_deactivate --expected-state <admin_state>] [--dry-run] [--json]
-  gbrain sources writer transfer prepare <source> [--self-transfer] [administration options] [--dry-run] [--json]
-  gbrain sources writer transfer accept <source> --path <worktree-root> --expected-epoch <n> --manifest <sha256> [--self-transfer] [administration options] [--dry-run] [--json]
+  gbrain sources writer transfer prepare <source> [--self-transfer [--confirm-relocated-root]] [administration options] [--dry-run] [--json]
+  gbrain sources writer transfer accept <source> --path <worktree-root> --expected-epoch <n> --manifest <sha256> [--self-transfer [--confirm-relocated-root]] [administration options] [--dry-run] [--json]
+  gbrain sources writer transfer cancel <source> --expected-epoch <n> [administration options] [--dry-run] [--json]
   gbrain sources writer lock [--json]
   gbrain sources writer unlock [--json]
 
-Inspect status first. Routine diagnosis, doctor --fix, startup, and maintenance
+failures (read-only) lists the source's write receipts that ended without committing
+(failed, conflict, cancelled) plus any still holding a recovery record, newest first, each
+with its class, safe actions, whether a person decides, its disposition (superseded,
+already_written, duplicate or unknown), an inspect command and its fix. --group-by category
+groups them on code, origin and category, each group with its exact drill-down filter.
+A full page prints truncated with the next command (--before <cursor>). Unresolved rows by
+default; --state all adds resolved and historical ones. Human table by default, JSON with --json.
+Inspect status first. movement proves that managed sync data moves over a window
+(committed pages and the head's step, never a lease or a lock): run it after
+restarting serve and the workers; see movement --help for its states and exits.
+Routine diagnosis, doctor --fix, startup, and maintenance
 must not change ownership or activate managed persistence. Read the operator
 procedure in docs/architecture/topologies.md before deliberate administration.
-Non-dry-run changes require --admin-intent <writer_claim|writer_activate|writer_deactivate|writer_transfer_prepare|writer_transfer_accept>
+git-durability records whether this owner commits (and pushes) page writes through
+its Git effect; --enable runs a read-only push probe first and re-queues the Git
+effects skipped while it was off, --pat-file wires a repo-scoped push credential
+(same keys as sources harden) and retries this worktree's parked pushes.
+Non-dry-run changes require --admin-intent <writer_claim|writer_activate|writer_deactivate|writer_transfer_prepare|writer_transfer_accept|writer_transfer_cancel|writer_git_durability>
 matching the action and --expected-state <admin_state from reviewed status>.
 These checks also apply to interactive terminals; --yes is not a substitute.
 Explicit noninteractive administration is supported. Stale state is rejected.
 Use --brain <id> to select a database. Prepare drains the current owner and records
 an exact manifest; accept requires that epoch and matching bytes on the successor.
+Cancel, on the owner host, returns a prepared transfer nobody accepted to active at
+the same epoch and clears its manifest (pages and files untouched); an accept with
+that epoch then refuses. --dry-run shows whether the transfer is cancellable.
 Before activation, upgrade and stop older writers on every host, claim every
 filesystem source, and inspect/release remaining legacy locks. A claim alone
 fences legacy sync, sources push and lint --fix for that checkout; claim output
@@ -49,8 +71,8 @@ deactivate converts the whole brain back to classic mode (it takes no <source>):
 --dry-run prints every blocker with its exit and what would change, and changes
 nothing. It refuses while the writer admin lock is set or any request, effect,
 recovery or connector/maintenance lease is pending, naming each blocker's exit
-(gbrain cancel-write-request <request_id>, gbrain sync --source <id> --no-pull
---retry-failed, gbrain repair embedding-effects --source <id>, gbrain sources
+(gbrain cancel-write-request <request_id>, gbrain sync --source <id> --no-pull,
+gbrain repair embedding-effects --source <id>, gbrain sources
 writer retry-effects <source> --request-id <id> --dry-run, gbrain sources writer
 unlock). It retires every worktree, removes source and host bindings, and keeps
 canonical files and database pages. Its output and status report the database
@@ -64,10 +86,16 @@ previews parked targets with --dry-run and otherwise authorizes one more attempt
 per parked target (a target that fails again parks again). For embeddings it
 reconciles existing complete vectors or authorizes one additional bounded retry
 cycle per request; repeating it never renews that allowance. --dry-run never queues work.
-It never changes ownership or activation and needs no topology admin-intent.
+It never changes ownership or activation and needs no topology admin-intent, except
+when the original writer was revoked: --dry-run then reports action owner_revoked,
+and --admin-intent writer_retry_effects with the reviewed --expected-state lets the
+owner host retry the parked Git effect once under its own authority (recorded as
+retried_under: owner_host); a withdrawal effect is never retried that way.
+git-durability --pat-file retries every parked push of the worktree; requests refused
+on their own are listed in parked_pushes.refused, the result is status partial, and it exits 1.
 lock sets an opt-in, brain-level writer admin lock (config key persistence.writer_admin_lock)
 and unlock clears it; both are local-only, idempotent and print the resulting state.
-While locked, writer claim, activate and transfer (prepare and accept) are refused with
+While locked, writer claim, activate and transfer (prepare, accept and cancel) are refused with
 writer_admin_locked for every caller; ordinary writes continue. lock refuses while a transfer
 is prepared and not yet accepted. There is no --force: the escape hatch is the local unlock
 (operator workflow: unlock, administer, lock). The lock guards against routine or accidental
@@ -106,7 +134,7 @@ export function adminHostConfig<T extends GBrainConfig>(config: T | null | undef
 
 type Group = 'writer' | 'local-writer';
 const GROUP_ARGV: Record<Group, string[]> = { writer: ['gbrain', 'sources', 'writer'], 'local-writer': ['gbrain', 'auth', 'local-writer'] };
-const BARE_FLAGS = ['--json', '--dry-run', '--replace', '--probe', '--confirm-quiesced', '--self-transfer', '--cleanup-dead-local-locks', '--shared-skills'];
+const BARE_FLAGS = ['--json', '--dry-run', '--replace', '--probe', '--confirm-quiesced', '--self-transfer', '--confirm-relocated-root', '--cleanup-dead-local-locks', '--shared-skills', '--enable', '--disable'];
 /** A CLI usage refusal: the exact usage in the suggestion, the group's help as the read-only fix. */
 function invalid(group: Group, message: string, suggestion: string) {
   return opError('invalid_params', message, suggestion, {
@@ -123,7 +151,8 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     '--path': 'path', '--source': 'source_id', '--expected-epoch': 'expected_epoch', '--manifest': 'manifest',
     '--source-ids': 'source_ids', '--scopes': 'scopes', '--allowed-operations': 'allowed_operations',
     '--slug-prefixes': 'slug_prefixes', '--limit': 'limit', '--before': 'before',
-    '--admin-intent': 'admin_intent', '--expected-state': 'expected_state', '--request-id': 'request_id',
+    '--admin-intent': 'admin_intent', '--expected-state': 'expected_state', '--request-id': 'request_id', '--pat-file': 'pat_file',
+    '--state': 'state', '--group-by': 'group_by', '--since': 'since', '--code': 'code', '--origin': 'origin', '--category': 'category',
   };
   const arrays = new Set(['source_ids', 'scopes', 'allowed_operations', 'slug_prefixes']);
   const seen = new Set<string>();
@@ -148,13 +177,15 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     if (flag === '--brain') { brain = value; continue; }
     const key = values[flag];
     params[key] = arrays.has(key) ? value.split(',').map(part => part.trim()).filter(Boolean)
-      : key === 'limit' ? Number(value) : key === 'path' ? resolve(value) : value;
+      : key === 'limit' ? Number(value) : key === 'path' || key === 'pat_file' ? resolve(value) : value;
   }
   let operation: PersistenceAdminOperation;
   if (group === 'writer') {
     const verb = positional.shift();
     if (verb === 'status') operation = 'writer_status';
+    else if (verb === 'failures') operation = 'writer_failures';
     else if (verb === 'retry-effects') operation = 'writer_retry_effects';
+    else if (verb === 'git-durability') operation = 'writer_git_durability';
     else if (verb === 'claim') operation = 'writer_claim';
     else if (verb === 'activate') operation = 'writer_activate';
     else if (verb === 'deactivate') operation = 'writer_deactivate';
@@ -162,10 +193,10 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     else if (verb === 'unlock') operation = 'writer_unlock';
     else if (verb === 'transfer') {
       const phase = positional.shift();
-      if (phase !== 'prepare' && phase !== 'accept') throw invalid(group, 'Transfer requires prepare or accept.',
-        'Run gbrain sources writer transfer prepare on the current owner host first, then gbrain sources writer transfer accept on the successor with the epoch and manifest prepare printed.');
-      operation = phase === 'prepare' ? 'writer_transfer_prepare' : 'writer_transfer_accept';
-    } else throw invalid(group, 'Writer administration requires status, retry-effects, claim, activate, deactivate, transfer, lock, or unlock.',
+      if (phase !== 'prepare' && phase !== 'accept' && phase !== 'cancel') throw invalid(group, 'Transfer requires prepare or accept (or cancel, which ends a prepared transfer).',
+        'Run gbrain sources writer transfer prepare on the current owner host first, then gbrain sources writer transfer accept on the successor with the epoch and manifest prepare printed; gbrain sources writer transfer cancel <source> --expected-epoch <n> on the owner host ends a transfer nobody will accept.');
+      operation = phase === 'prepare' ? 'writer_transfer_prepare' : phase === 'accept' ? 'writer_transfer_accept' : 'writer_transfer_cancel';
+    } else throw invalid(group, 'Writer administration requires status, failures, movement, retry-effects, git-durability, claim, activate, deactivate, transfer, lock, or unlock.',
       `Name the action after gbrain sources writer${verb ? ` instead of ${verb}` : ''}; start with gbrain sources writer status --json, which changes nothing.`);
     const source = positional.shift();
     if (source !== undefined) {
@@ -187,6 +218,11 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
 }
 
 export async function runPersistenceAdminCli(group: Group, args: string[], connected?: BrainEngine): Promise<void> {
+  // #6317 (I2): the movement check waits a window on this process's own engine; it never crosses the owner IPC.
+  if (group === 'writer' && args[0] === 'movement') {
+    const { runWriterMovementCli } = await import('./sources-writer-movement.ts');
+    return runWriterMovementCli(args.slice(1), connected);
+  }
   if (!args.length || args.some(arg => arg === '--help' || arg === '-h')) {
     console.log(group === 'writer' ? WRITER_HELP : LOCAL_WRITER_HELP);
     return;
@@ -211,7 +247,19 @@ export async function runPersistenceAdminCli(group: Group, args: string[], conne
         brainId === 'host' ? 'owner' : 'mounted_database');
     }
     if (['writer_status', 'writer_lock', 'writer_unlock'].includes(parsed.operation)) result = { selected_brain: brainId, ...(result as Record<string, unknown>) };
+    // #6650: the failures drill-down prints a table for a person and JSON only with --json (fixes rendered for the CLI either way).
+    if (parsed.operation === 'writer_failures') {
+      const { renderWriterFailures } = await import('./sources-writer-failures.ts');
+      await writeStdoutFinal(renderWriterFailures(result as Parameters<typeof renderWriterFailures>[0], parsed.json));
+      return;
+    }
+    // #5182: activation proceeds, but a source whose Git effects it leaves skipped is named for a person on stderr too.
+    if (parsed.operation === 'writer_activate' && !parsed.json) {
+      for (const warning of (result as { warnings?: Array<{ message: string }> }).warnings ?? []) process.stderr.write(`warning: ${warning.message}\n`);
+    }
     await writeStdoutFinal(JSON.stringify(result, bigintToStringReplacer, 2) + '\n');
+    // #6678: a credential repair that refused some parked pushes on their own is partial and exits 1.
+    if (parsed.operation === 'writer_git_durability' && (result as { status?: unknown }).status === 'partial') setCliExitVerdict(1);
   } catch (error) {
     if (!await reportPersistenceCliError(error, args.includes('--json'))) {
       console.error(error instanceof Error ? error.message : String(error));

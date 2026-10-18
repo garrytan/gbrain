@@ -5,9 +5,10 @@
  * src/cli/command-table.ts.
  */
 import { jsonRequested, setCliExitVerdict, writeStdoutFinal } from '../../core/cli-force-exit.ts';
-import { lastBackgroundJob } from '../../core/cli-options.ts';
+import { getCliOptions, lastBackgroundJob } from '../../core/cli-options.ts';
 import { BUDGET_STOP_EXIT_CODE } from '../../core/exit-codes.ts';
 import type { BrainEngine } from '../../core/engine.ts';
+import type { Authorization } from '../../core/consent.ts';
 import type { CliDispatchContext } from '../command-table.ts';
 
 export async function run(engine: BrainEngine, args: string[], ctx: CliDispatchContext): Promise<void> {
@@ -17,21 +18,29 @@ export async function run(engine: BrainEngine, args: string[], ctx: CliDispatchC
   }
   const { SELECTED_CONFIG_BY_ENGINE } = ctx;
   // A4: an explicit backfill is paid work; consent first, on the probe-only engine (startup: 'observational').
-  if (!(await authorizeEmbed(engine, args))) return;
+  const consent = await authorizeEmbed(engine, args);
+  if (!consent) return;
   await ctx.completeStartup?.(engine);
   const { runEmbed } = await import('../../commands/embed.ts');
   // #3037: mirror the `import` case above — the CLI was discarding the
   // result, so a run where every chunk failed to embed still exited 0
   // and cron/CI/health gates read total silence as success. Surface
   // non-zero on failures > 0. (undefined = backgrounded via --background.)
-  const embedResult = await runEmbed(engine, args, SELECTED_CONFIG_BY_ENGINE.get(engine) ?? null);
+  const embedResult = await runEmbed(engine, args, SELECTED_CONFIG_BY_ENGINE.get(engine) ?? null, consent);
+  // #6803: large pages waiting for embedding approval left the stale queue; say so (informational, never a failure).
+  if (embedResult && args.includes('--stale') && !args.some(a => a === '--images' || a === '--facts' || a === '--held')) {
+    await (await import('../../core/held-embedding.ts')).noteBudgetLimited(engine, args, embedResult, getCliOptions().quiet);
+  }
   // D2: under --json the result is the one document (a budget stop carries
   // remaining_stale + resume_command and exits 11; --background names its job).
   if (jsonRequested(args)) {
     const job = lastBackgroundJob();
     await writeStdoutFinal(`${JSON.stringify(embedResult ?? { status: 'backgrounded', ...(job !== null ? { job_id: job } : {}) }, null, 2)}\n`);
   }
-  if (embedResult && embedResult.failures > 0) {
+  if (embedResult && 'reason' in embedResult && embedResult.reason === 'cost_cap') {
+    // Fix wave 13 P1.18: a stop at the approved cap is a budget stop, not a failure, even when earlier pages failed.
+    setCliExitVerdict(BUDGET_STOP_EXIT_CODE);
+  } else if (embedResult && embedResult.failures > 0) {
     setCliExitVerdict(1);
   } else if (embedResult && 'reason' in embedResult && embedResult.reason === 'time_budget') {
     setCliExitVerdict(BUDGET_STOP_EXIT_CODE);
@@ -39,20 +48,22 @@ export async function run(engine: BrainEngine, args: string[], ctx: CliDispatchC
 }
 
 /**
- * False when consent refused (exit 3 already reported). `--dry-run` and `--help` spend nothing.
+ * Null when consent refused (exit 3 already reported); otherwise the approval
+ * the run spends under (`authorization` null when the run cannot spend).
+ * `--dry-run` and `--help` spend nothing.
  * Consent flags (read by requireConsent): --yes, --max-usd, --max-cost.
  */
-async function authorizeEmbed(engine: BrainEngine, args: string[]): Promise<boolean> {
+async function authorizeEmbed(engine: BrainEngine, args: string[]): Promise<{ authorization: Authorization | null } | null> {
   const end = args.indexOf('--');
   const opts = end >= 0 ? args.slice(0, end) : args;
-  if (opts.includes('--dry-run') || opts.includes('--help') || opts.includes('-h')) return true;
+  if (opts.includes('--dry-run') || opts.includes('--help') || opts.includes('-h')) return { authorization: null };
   const { requireEmbedBackfillConsent } = await import('../../core/embed-consent.ts');
   const { isConsentRefusal, printConsentRefusal } = await import('../../core/consent.ts');
   const sourceAt = opts.indexOf('--source');
   const estimable = opts.includes('--stale') || opts.includes('--all');
   const argv = ['gbrain', 'embed', ...args.filter(a => a !== '--yes')];
   try {
-    await requireEmbedBackfillConsent(engine, {
+    const authorization = await requireEmbedBackfillConsent(engine, {
       command: 'embed',
       argv,
       ...(estimable && !opts.includes('--images') && !opts.includes('--facts') ? { preview_argv: [...argv.filter(a => a !== '--background'), '--dry-run'] } : {}),
@@ -61,19 +72,25 @@ async function authorizeEmbed(engine: BrainEngine, args: string[]): Promise<bool
         all: opts.includes('--all'),
         ...(sourceAt >= 0 && opts[sourceAt + 1] ? { sourceId: opts[sourceAt + 1] } : {}),
         unestimated: !estimable || opts.includes('--slugs') || opts.includes('--facts') || opts.includes('--images'),
+        ...(opts.includes('--images') ? { images: true } : {}),
       },
     });
-    return true;
+    return { authorization };
   } catch (e) {
-    if (isConsentRefusal(e)) { setCliExitVerdict(printConsentRefusal(e, { json: jsonRequested(args) })); return false; }
+    if (isConsentRefusal(e)) { setCliExitVerdict(printConsentRefusal(e, { json: jsonRequested(args) })); return null; }
     throw e;
   }
 }
 
 /** `gbrain embed --help` (answered without a brain) and the usage error. */
 const EMBED_USAGE = [
-  'Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--include-null-signature] [--source <id>] [--yes | --max-usd N] [--json] | --stale --images | --facts',
+  'Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...|--held] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--include-null-signature] [--source <id>] [--yes | --max-usd N] [--json] | --stale --images | --facts',
   '  Embeds chunks without a vector (--stale; --catch-up keeps going until the backlog is empty) or re-embeds pages (--all, a slug, --slugs).',
+  '  A page over 1 MiB spends at most embed.max_usd_per_page (default $2) and embeds its newest chunks first. --held --dry-run lists, for every',
+  '  source, the pages a cap or a pending approval stopped, the cost to finish and one approve command per source. --held --source <id>',
+  '  --max-usd N (or --slugs <slug> --source <id> --max-usd N) approves them, one source at a time: N is both the run\'s cap and the extra per-page allowance it',
+  '  saves, so use the printed N (a ceiling, not the estimate). A run stopped early keeps what it embedded; the rest stays held. --yes never',
+  '  approves a held page; --max-usd N does, on local providers too.',
   '  It calls the configured embedding provider, which bills per token: without a terminal it stops with exit 3 and the consent payload',
   '  unless --yes (cap: the estimate x1.5), --max-usd N, spend.posture=tokenmax or a per-run preapproval covers it. Pass those only after',
   '  the user agrees. --dry-run previews with no provider calls. Local providers that bill nothing (ollama, llama-server, lmstudio) need no approval.',

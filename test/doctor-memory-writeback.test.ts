@@ -305,3 +305,38 @@ describe('memory_writeback doctor check', () => {
     });
   }
 });
+
+describe('memory_writeback doctor check: capture-lane notices (#6268, #6316)', () => {
+  test('#6268 a held session file (source never resolved) → warn naming --assign-corpus preview then --apply; the default-off path reports it too', async () => {
+    const spool = join(tmp, '.gbrain', 'transcripts', 'corpus', 'sourced');
+    mkdirSync(spool, { recursive: true });
+    writeFileSync(join(spool, 'sess-held.src-_unresolved.txt'), 'USER: hi\n');
+    await withEnv({ GBRAIN_HOME: tmp }, async () => {
+      const off = await buildMemoryWritebackCheck(engine);
+      expect(off.status).toBe('warn');
+      expect(off.details?.corpus_source_holds).toEqual({ legacy_unstamped: 0, unresolved: 1, sessions: 1 });
+      expect(off.message).toContain('gbrain sweep --assign-corpus <source>');
+      expect(off.message).toContain('--apply');
+      await engine.setConfig('memory.auto_writeback', 'off');
+      writeFileMirror(tmp, { auto_writeback: 'off' });
+      expect((await buildMemoryWritebackCheck(engine)).message).not.toContain('--assign-corpus');
+    });
+  });
+
+  test('#6316 OpenClaw compactions that never banked → warn with the top skip; one banked compaction clears it', async () => {
+    await engine.setConfig('memory.auto_writeback', 'salient');
+    writeFileMirror(tmp, { auto_writeback: 'salient' });
+    await withEnv({ GBRAIN_HOME: tmp }, async () => {
+      const ts = new Date().toISOString();
+      for (let i = 0; i < 2; i++) await writeHeartbeat({ ts, event: 'openclaw-compact', outcome: 'degraded', reason: 'no_session', segment: 'skipped', duration_ms: 1 }, { trim: false });
+      const dead = await buildMemoryWritebackCheck(engine);
+      expect(dead.status).toBe('warn');
+      expect(dead.details?.openclaw_compactions_7d).toEqual({ total: 2, banked: 0, skipped: { no_session: 2 } });
+      expect(dead.message).toContain('banked none (top skip: no_session x2)');
+      await writeHeartbeat({ ts, event: 'openclaw-compact', outcome: 'ok', segment: 'banked', duration_ms: 1 }, { trim: false });
+      const live = await buildMemoryWritebackCheck(engine);
+      expect(live.message).not.toContain('banked none');
+      expect(live.details?.openclaw_compactions_7d).toMatchObject({ total: 3, banked: 1 });
+    });
+  });
+});

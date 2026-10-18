@@ -12,7 +12,7 @@
  * Run: DATABASE_URL=... bun test test/e2e/context-engine-rung3-extraction.test.ts
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
@@ -22,6 +22,7 @@ import { detectCapabilities } from '../../src/core/capability.ts';
 import { createGBrainContextEngine, __resetSdkLoadStateForTests } from '../../src/core/context-engine.ts';
 import { disposeReflex } from '../../src/core/context/reflex.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
@@ -87,5 +88,90 @@ describeE2E('context engine compact() rung 3 — DB-plane extraction model (#573
       `SELECT count(*)::int AS n FROM facts WHERE source = 'hook:compact' AND source_session = 'oc-rung3'`,
     );
     expect(rows[0]?.n).toBeGreaterThan(0);
+  }, 60_000);
+  /** A Postgres GBRAIN_HOME + workspace + one-turn OpenClaw session (the fixture above). */
+  function rung3Fixture(session: string): { home: string; workspace: string; sessionFile: string } {
+    const home = mkdtempSync(join(tmpdir(), 'gb-ce-rung3-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'gb-ce-rung3-ws-'));
+    dirs.push(home, workspace);
+    mkdirSync(join(home, '.gbrain'), { recursive: true });
+    writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'postgres', database_url: process.env.DATABASE_URL }));
+    mkdirSync(join(workspace, 'memory'), { recursive: true });
+    writeFileSync(join(workspace, 'memory', 'heartbeat-state.json'), '{}');
+    const sessionFile = join(home, `${session}.jsonl`);
+    const line = (o: unknown) => JSON.stringify(o);
+    writeFileSync(sessionFile, [
+      line({ type: 'session', id: session, cwd: '/w', timestamp: '2026-08-01T10:00:00Z' }),
+      line({ type: 'compaction', timestamp: '2026-08-01T10:00:01Z' }),
+      line({ type: 'message', timestamp: '2026-08-01T10:00:02Z', message: { role: 'user', content: [{ type: 'text', text: 'We chose a local extraction model for the synthetic project.' }] } }),
+    ].join('\n') + '\n');
+    return { home, workspace, sessionFile };
+  }
+
+  function segmentFiles(root: string): string[] {
+    const out: string[] = [];
+    for (const e of readdirSync(root, { withFileTypes: true, recursive: true })) {
+      if (e.isFile() && e.name.endsWith('.txt')) out.push(join(e.parentPath, e.name));
+    }
+    return out;
+  }
+
+  async function compactOnce(f: ReturnType<typeof rung3Fixture>, session: string): Promise<{ status: string; reason?: string } | undefined> {
+    return withEnv({ ...noProviderKeys, GBRAIN_HOME: f.home }, async () => {
+      __resetSdkLoadStateForTests();
+      const ce = createGBrainContextEngine({ workspaceDir: f.workspace });
+      const result = await ce.compact({ sessionId: session, sessionFile: f.sessionFile });
+      return ((result.result ?? {}) as { gbrain_checkpoint?: { status: string; reason?: string } }).gbrain_checkpoint;
+    });
+  }
+
+  test('#6785: a failed inline harvest is recorded once, and later compacts leave the segment to the sweep', async () => {
+    const f = rung3Fixture('oc-rung3-failing');
+    await getEngine().setConfig('facts.extraction_model', 'ollama:qwen2.5-coder:14b');
+    let calls = 0;
+    __setChatTransportForTests(async (): Promise<ChatResult> => {
+      calls++;
+      throw Object.assign(new Error('provider down'), { code: 'provider_error' });
+    });
+    const results = [];
+    for (let i = 0; i < 6; i++) results.push(await compactOnce(f, 'oc-rung3-failing'));
+    const segments = segmentFiles(f.home);
+    expect(segments.length).toBeGreaterThan(0);
+    // One paid attempt per segment file, each recorded; every later compact holds.
+    expect(calls).toBe(segments.length);
+    for (const segment of segments) {
+      expect(existsSync(segment + '.ingested')).toBe(false);
+      expect(JSON.parse(readFileSync(segment + '.failures.json', 'utf8')).count).toBe(1);
+    }
+    expect(results.at(-1)).toMatchObject({ status: 'banked', reason: 'corpus_window_backoff' });
+  }, 60_000);
+
+  test('#6785: a claimed, not activated worktree is held before any model call', async () => {
+    const f = rung3Fixture('oc-rung3-claimed');
+    await getEngine().setConfig('facts.extraction_model', 'ollama:qwen2.5-coder:14b');
+    let calls = 0;
+    __setChatTransportForTests(async (): Promise<ChatResult> => {
+      calls++;
+      return { text: '{"facts":[]}', blocks: [], stopReason: 'end', usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'ollama:qwen2.5-coder:14b', providerId: 'ollama' };
+    });
+    const root = mkdtempSync(join(tmpdir(), 'gb-ce-rung3-brain-'));
+    dirs.push(root);
+    // setupDB does not truncate the persistence bindings: release the claim so no later file inherits it.
+    const release = () => getEngine().executeRaw(`DELETE FROM persistence_source_bindings WHERE source_id = 'default';
+      DELETE FROM persistence_host_bindings h WHERE NOT EXISTS (SELECT 1 FROM persistence_source_bindings s WHERE s.worktree_id = h.worktree_id);
+      DELETE FROM persistence_worktrees w WHERE NOT EXISTS (SELECT 1 FROM persistence_source_bindings s WHERE s.worktree_id = w.id);
+      UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await release();
+    try {
+      await getEngine().executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [root]);
+      await claimWorktree(getEngine(), 'default', root);
+
+      expect(await compactOnce(f, 'oc-rung3-claimed')).toMatchObject({ status: 'banked', reason: 'writer_coordinator_required' });
+      expect(calls).toBe(0);
+      expect(segmentFiles(f.home).some((p) => existsSync(p + '.ingested'))).toBe(false);
+    } finally {
+      await release();
+    }
   }, 60_000);
 });

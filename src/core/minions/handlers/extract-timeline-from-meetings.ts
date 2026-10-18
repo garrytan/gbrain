@@ -13,8 +13,14 @@ export function makeExtractTimelineFromMeetingsHandler(engine: BrainEngine): Min
   return async (job) => {
     const { extractTimelineFromMeetings } = await import('../../extract-timeline-from-meetings.ts');
     const data = (job.data ?? {}) as { sourceId?: string };
-    return await extractTimelineFromMeetings(engine, {
+    const result = await extractTimelineFromMeetings(engine, {
       sourceIdFilter: data.sourceId,
     });
+    // #6273: a refused or still-pending write is a failed job, never a completed one.
+    if (result.batch_errors + (result.pages_pending ?? 0) > 0) {
+      throw new Error(`extract-timeline-from-meetings: ${result.batch_errors} write(s) refused, ${result.pages_pending ?? 0} page(s) pending`
+        + (result.first_batch_error ? `; first error: ${result.first_batch_error}` : ''));
+    }
+    return result;
   };
 }

@@ -13,11 +13,13 @@ import type { BrainEngine } from '../../core/engine.ts';
 import { OperationError, opError } from '../../core/ops/contract.ts';
 import { setCliExitVerdict } from '../../core/cli-force-exit.ts';
 import { writeCliError } from '../cli-error.ts';
+import { withAdmissionOrigin } from '../../core/persistence/admission-origin.ts';
 
 export async function run(engine: BrainEngine, args: string[]): Promise<void> {
   const { runSync, SyncLockBusyError } = await import('../../commands/sync.ts');
   try {
-    await runSync(engine, args);
+    // #6696 (A5): an operator's sync is interactive; autopilot's sync jobs run outside this command, as background.
+    await withAdmissionOrigin('interactive', () => runSync(engine, args));
   } catch (err) {
     // D1/D2: a busy sync lock is a retryable sync_in_progress refusal (its
     // message names the holder and the --break-lock recovery), not an

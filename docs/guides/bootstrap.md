@@ -300,9 +300,60 @@ mode wires them in one command, with no `agent.json` and no interview:
   `--yes`. Close active Claude Code sessions for the cleanest user-scope
   settings writes (the host also writes that file).
 
-PGLite note: minting needs the single-writer lock, so on a PGLite brain
-either pre-mint (`gbrain auth create bootstrap-harness --scopes read,write`
-while the serve is stopped) and pass `--token`, or stop/re-run/restart.
+PGLite note: minting needs the single-writer lock, and the health check
+needs the serve running, so on a PGLite brain the harness can't mint its own
+token. Pre-mint it with the harness grant while the serve is stopped, then
+pass `--token` (#6661). The `LIVE_SERVE` refusal prints these steps with the
+exact operation list:
+
+1. Stop the serve.
+2. `gbrain auth create bootstrap-harness --scopes read,write,skills_member_self`
+   (`--scopes read,write` under `--skills memory-only`; `skills_member_self`
+   is what lets the harness join shared skills).
+3. `gbrain auth rescope --token bootstrap-harness --operations <the printed list>`
+   (plus `--sources <id>` when you pass `--source`).
+4. Start `gbrain serve --http` again.
+5. Re-run `gbrain bootstrap harness` with `--token <value>`.
+
+<a id="pending-verify"></a>If the serve is still stopped when you run step 5, the run does not stop at
+the health check any more. On a PGLite brain with `--token`, when nothing
+answers at the serve URL and no serve holds the brain, the harness wires
+every target and ends with status `pending_verify` (exit 13, `"status":
+"pending_verify"` under `--json`): nothing failed, but the smoke test that
+proves the wiring needs the serve. The JSON `fix` is the completion step:
+start `gbrain serve --http`, then re-run the same command with the same
+`--token` (the printed argv shows `<TOKEN>` and pins the source this run
+resolved). That re-run needs no PGLite lock, so it works while the serve holds
+the brain. Until it passes its smoke test, `gbrain bootstrap harness --status`
+reports `"status": "partial"` and exits 1. A serve that holds the brain but
+doesn't answer at the URL you gave (a wrong `--url` or `--port`), anything
+else answering there, a run without `--token`, and a Postgres brain all still
+fail the health check with exit 1.
+
+<a id="cleanup-pending"></a>Each rotation leaves the old shared-skills
+enrollment with that enrollment's own credential, then revokes the
+credential: leave before revoke, because `leave_brain` is principal-owned and
+a revoked token can never leave. Each carried token id is revoked and cleared
+on its own, so one stuck enrollment no longer holds every other id on the
+receipt. An enrollment whose credential is already revoked (for example,
+revoked by hand before its leave finished) is inert: the run still removes it
+locally (adapter receipt, native router, unchanged owned files; edited files
+are retained) and records it as left with reason `credential_revoked`.
+
+While anything is still pending, the run exits `bootstrap_cleanup_pending`
+(exit 14, `"status": "cleanup_pending"` under `--json`) instead of 0. The
+JSON `cleanup` array lists each id with its token state (`active`,
+`revoked`, `missing`, `unknown`), its cleanup state (`revoke_pending`,
+`leave_pending`, `enrollment_retained`, `credential_unreadable`) and whether
+a re-run can finish it. When every id can, the `fix` re-runs the same command
+(`next: run`). When one cannot, the `fix` is the owner's step
+(`next: tell_user_to_run`): for a lost cleanup credential, restore it or
+revoke that token by id, after which the next re-run finishes the local
+cleanup; for an old enrollment kept because the current one is not ready,
+resolve the current enrollment first. `--status` exits 14 with the same list,
+and doctor's `bootstrap_harness_health` names each id as revoked (cleanup
+pending) or active.
+
 Postgres brains mint fine while the serve runs. A token you supply is never
 revoked by `--remove` or rotation (it is not the harness's to revoke) —
 retire it yourself with `gbrain auth revoke` when you're done with it.
@@ -404,6 +455,15 @@ One command: `gbrain doctor`. It covers hook health, push staleness, serve/lock
 collisions, schema state, and prints fixes. `gbrain bootstrap status --json` emits
 a support blob (versions, harness, last verify/push, hook failure rate) your agent
 can relay verbatim when you report a problem.
+
+Doctor's `bootstrap_last_verify` check reads the verify snapshots under
+`<home>/bootstrap/verify-*.json` and reports only when one exists: a brain that
+never ran `gbrain bootstrap verify` (a sole-writer deployment with no agent
+workspace, for example) has no snapshot and the check does not fire, so there is
+no not-applicable switch to set. Deleting those snapshot files returns the check
+to that silent state. `bootstrap verify` removes its two fixed-slug probe pages
+(`wiki/bootstrap-verify-probe`, `wiki/bootstrap-verify-probe-entity`) on every
+exit, including a roundtrip that fails at its first step.
 
 ## Real-agent e2e
 

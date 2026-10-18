@@ -32,6 +32,10 @@
  *      extracted; the directory says it's a meeting regardless of the
  *      legacy frontmatter type. Test fixtures cover all four combinations.)
  *
+ * Conversation-shaped types (conversation, imessage, slack threads, email
+ * digests) skip with `conversation_pipeline`: their facts come from the
+ * opt-in conversation facts backfill, not the page-write backstop.
+ *
  * Reasons returned for the skipped envelope are stable strings consumed
  * by tests and observability (the doctor's facts_extraction_health check
  * groups by reason).
@@ -39,7 +43,7 @@
 
 import { isQuarantined } from '../quarantine.ts';
 import type { PageType } from '../types.ts';
-import { isFrontmatterFlagOff } from './conversation-types.ts';
+import { ALLOWED_TYPES, isFrontmatterFlagOff, pageTypesForAllowed } from './conversation-types.ts';
 
 export type EligibilityResult = { ok: true } | { ok: false; reason: string };
 
@@ -86,6 +90,17 @@ const ELIGIBLE_TYPES: PageType[] = [
 
 const MIN_BODY_CHARS = 80;
 
+/**
+ * Page types the backstop leaves to the opt-in conversation facts pipeline
+ * (#6557): the paid backfill reads them in message windows under its own cost
+ * caps, so a write never fires an uncapped extraction for them. Skips carry
+ * `conversation_pipeline` and name the opt-in.
+ */
+export const CONVERSATION_PIPELINE_TYPES: readonly string[] = pageTypesForAllowed(ALLOWED_TYPES)
+  .filter(t => !(ELIGIBLE_TYPES as string[]).includes(t));
+export const CONVERSATION_PIPELINE_ENABLE_KEY = 'cycle.conversation_facts_backfill.enabled';
+export const BACKSTOP_RESCUE_SLUG_PREFIXES: readonly string[] = RESCUE_SLUG_PREFIXES;
+
 export function isFactsBackstopEligible(
   slug: string,
   parsed: { type: PageType; compiled_truth: string; frontmatter: Record<string, unknown> } | null | undefined,
@@ -104,7 +119,9 @@ export function isFactsBackstopEligible(
 
   const typeOk = ELIGIBLE_TYPES.includes(parsed.type);
   const slugOk = RESCUE_SLUG_PREFIXES.some(p => slug.startsWith(p));
-  if (!typeOk && !slugOk) return { ok: false, reason: `kind:${parsed.type}` };
+  if (!typeOk && !slugOk) {
+    return { ok: false, reason: CONVERSATION_PIPELINE_TYPES.includes(parsed.type) ? 'conversation_pipeline' : `kind:${parsed.type}` };
+  }
 
   return { ok: true };
 }

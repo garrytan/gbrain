@@ -474,7 +474,7 @@ function pickRecommended(options: ProviderOption[], env: Record<string, boolean>
   const embOpts = options.filter(o => o.touchpoint === 'embedding');
   if (env.VOYAGE_API_KEY) {
     const voyage = embOpts.find(o => o.id.startsWith('voyage:'));
-    if (voyage) return { id: voyage.id, reason: 'VOYAGE_API_KEY set — the default: voyage-4 at 1024 dims; the same key powers the rerank-2.5 reranker and the multimodal model.' };
+    if (voyage) return { id: voyage.id, reason: 'VOYAGE_API_KEY set — the default: voyage-4 at 1024 dims; the same key powers the rerank-3-lite reranker and the multimodal model.' };
   }
   if (env.OPENAI_API_KEY) {
     const openai = embOpts.find(o => o.id.startsWith('openai:'));

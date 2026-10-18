@@ -49,7 +49,7 @@ async function run(mode: 'timeout' | 'pending' | 'conflict' | 'interrupt', json 
   // #5232: no client-side replay here; the fixture answers pending forever.
   const env: Record<string, string | undefined> = { ...process.env, GBRAIN_HOME: root, GBRAIN_BRAIN_ID: 'host', GBRAIN_NO_BANNER: '1', GBRAIN_BACKUP_CHECK: '0', GBRAIN_WRITE_WAIT_MS: '0' };
   for (const name of ['DATABASE_URL', 'GBRAIN_DATABASE_URL', 'GBRAIN_SOURCE']) delete env[name];
-  const child = Bun.spawn([process.execPath, join(import.meta.dir, '../src/cli.ts'), ...command, ...(json ? ['--json'] : []), mode === 'interrupt' ? '--timeout=10s' : '--timeout=500ms'], {
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, '../src/cli.ts'), ...command, ...(json ? ['--json'] : []), mode === 'interrupt' ? '--timeout=10s' : '--timeout=3s'], {
     cwd: root, env, stdout: 'pipe', stderr: 'pipe',
   });
   const watchdog = setTimeout(() => child.kill('SIGKILL'), 10_000);

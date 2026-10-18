@@ -8,9 +8,11 @@ import { describe, expect, it } from "bun:test";
 import {
   computeMedian,
   computeQuantile,
+  formatPredictedWeight,
   imbalanceRatio,
   loadWeights,
   partition,
+  predictedWeight,
   WeightsLoadError,
   type WeightMap,
 } from "../../scripts/sharding.ts";
@@ -346,4 +348,48 @@ describe("sharding CLI stdout flush (#5669)", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 60_000);
+});
+
+// GBRA-79 — test-shard.sh prints each shard's predicted weight beside its
+// "(LPT-balanced)" line so a measured time far above it reads as a runner or
+// process-wide slowdown. The prediction must use the partition's own
+// weights and p75 fallback, and the CLI's --sum must print the same line.
+describe("predictedWeight / --sum", () => {
+  const weights: WeightMap = new Map([
+    ["test/a.test.ts", 4000],
+    ["test/b.test.ts", 1000],
+    ["test/c.test.ts", 2000],
+    ["test/d.test.ts", 3000],
+  ]);
+
+  it("sums mined weights and gives unknown files the p75 fallback", () => {
+    const p = predictedWeight(["test/a.test.ts", "test/b.test.ts", "test/new.test.ts"], weights);
+    expect(p).toEqual({ totalMs: 4000 + 1000 + 3000, files: 3, unweighted: 1, fallbackMs: 3000 });
+    expect(formatPredictedWeight(p)).toBe("predicted 8.0s over 3 files (1 unweighted at p75 3.0s)");
+  });
+
+  it("empty weights predict 1ms per file, matching partition's floor", () => {
+    expect(predictedWeight(["x", "y"], new Map())).toEqual({ totalMs: 2, files: 2, unweighted: 2, fallbackMs: 1 });
+  });
+
+  it("the CLI prints the line for the file list on stdin and refuses positional shard arguments", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "shard-sum-"));
+    const weightsPath = join(dir, "weights.json");
+    writeFileSync(weightsPath, JSON.stringify(Object.fromEntries(weights)), "utf8");
+    const cli = join(import.meta.dir, "../../scripts/sharding.ts");
+    try {
+      const ok = Bun.spawn([process.execPath, cli, "--sum", "--weights", weightsPath], {
+        stdin: new TextEncoder().encode("test/a.test.ts\ntest/new.test.ts\n"), stdout: "pipe", stderr: "pipe",
+      });
+      const [out, err, code] = await Promise.all([new Response(ok.stdout).text(), new Response(ok.stderr).text(), ok.exited]);
+      expect({ code, err, out }).toEqual({ code: 0, err: "", out: "predicted 7.0s over 2 files (1 unweighted at p75 3.0s)\n" });
+
+      const bad = Bun.spawn([process.execPath, cli, "--sum", "1", "8", "--weights", weightsPath], {
+        stdin: new TextEncoder().encode("test/a.test.ts\n"), stdout: "pipe", stderr: "pipe",
+      });
+      expect(await bad.exited).toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

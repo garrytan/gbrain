@@ -29,6 +29,7 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
   overrides.executeRaw = async (sql: string, params?: unknown[]) => sql.startsWith('SELECT page_kind FROM pages WHERE id=')
     ? [{ page_kind: pageKinds.get(Number(params?.[0])) ?? 'markdown' }]
     : sql === 'SELECT archived FROM sources WHERE id=$1' ? [{ archived: false }]
+    : sql.includes('FROM persistence_brain') ? [{ enabled: false }]
     : executeRaw(sql, params);
   const calls: { method: string; args: any[] }[] = [];
   const track = (method: string) => (...args: any[]) => {
@@ -46,7 +47,15 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
   return engine;
 }
 
+/**
+ * Vector writes installPageEmbeddings issued, one entry per updated row. Its
+ * batched statement binds `[page_id, rows]`; each row is expanded to the
+ * positional layout `[id, vector, image, model, page_id, chunk_text, input_hash]`.
+ */
 export function embeddingUpdates(engine: BrainEngine) {
   return (engine as any)._calls.filter((call: any) => call.method === 'executeRaw'
-    && /^UPDATE content_chunks SET/.test(call.args[0]));
+    && /^UPDATE content_chunks SET/.test(call.args[0]))
+    .flatMap((call: any) => !call.args[0].includes('jsonb_to_recordset') ? [call]
+      : (JSON.parse(call.args[1][1]) as any[]).map(row => ({ ...call,
+        args: [call.args[0], [row.id, row.embedding, row.image, row.model, call.args[1][0], row.chunk_text, row.input_hash]] })));
 }

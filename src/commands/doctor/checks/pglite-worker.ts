@@ -233,6 +233,10 @@ export async function computeWorkerOomLoopCheck(
  *           rebuilds are throwing (genuinely not recovering).
  *   - warn: reaps>=10/hr, all recovered → pooler thrash (self-heal works but the
  *           cap is likely too low / concurrency too high).
+ *   - fail (#6543 A6): a connection serve's driver retired (stuck, desync,
+ *           closed under statements) could not reconnect.
+ *   - warn (#6543 A6): serve's driver retired a connection as stuck or
+ *           desynced in the last hour (statements failed with it).
  *   - else: null (quiet — a few reaps that all recovered is normal).
  *
  * Returns null on PGLite / no engine / audit-read failure. Exported so
@@ -242,7 +246,7 @@ export async function computePoolReapHealthCheck(
   engine: BrainEngine | null,
 ): Promise<Check | null> {
   if (!engine || engine.kind === 'pglite') return null;
-  let r: { reaps: number; recoveries: number; failures: number };
+  let r: { reaps: number; recoveries: number; failures: number; stuck: number; desyncs: number; connection_recoveries: number; connection_recovery_failures: number };
   try {
     const { readRecentPoolRecoveries } = await import('../../../core/audit/pool-recovery-audit.ts');
     r = readRecentPoolRecoveries(1);
@@ -265,6 +269,31 @@ export async function computePoolReapHealthCheck(
         `DB reconnect FAILED ${r.failures}× in last hour (${r.reaps} pooler reap(s) detected) ` +
         `— reconnect is throwing; ${fix}.`,
       details: { reaps: r.reaps, recoveries: r.recoveries, failures: r.failures, fix_hint: fix },
+    };
+  }
+  const incidents = { stuck: r.stuck, desyncs: r.desyncs, connection_recoveries: r.connection_recoveries, connection_recovery_failures: r.connection_recovery_failures };
+  if (r.connection_recovery_failures > 0) {
+    const fix = 'check DB reachability / credentials from the serve host (a retired connection cannot reconnect); see docs/ENGINES.md#pg-connection-recovery-failed';
+    return {
+      name: 'pool_reap_health',
+      status: 'fail',
+      message:
+        `gbrain serve could not reconnect a retired connection ${r.connection_recovery_failures}× in last hour ` +
+        `(${r.stuck} stuck, ${r.desyncs} desynced, ${r.connection_recoveries} recovered); ${fix}.`,
+      details: { reaps: r.reaps, recoveries: r.recoveries, failures: r.failures, ...incidents, fix_hint: fix },
+    };
+  }
+  if (r.stuck + r.desyncs > 0) {
+    const fix = r.desyncs > 0
+      ? 'a desynced pipeline usually means a transaction-mode pooler: set PGMAX_PIPELINE=0 for serve; see docs/ENGINES.md#pg-connection-stuck'
+      : 'a statement outlived its in-flight budget; the warn line names reason=age|idle and the statement; see docs/ENGINES.md#pg-connection-stuck';
+    return {
+      name: 'pool_reap_health',
+      status: 'warn',
+      message:
+        `gbrain serve retired ${r.stuck} stuck and ${r.desyncs} desynced connection(s) in last hour ` +
+        `(${r.connection_recoveries} recovered); ${fix}.`,
+      details: { reaps: r.reaps, recoveries: r.recoveries, failures: r.failures, ...incidents, fix_hint: fix },
     };
   }
   if (r.reaps >= 10) {

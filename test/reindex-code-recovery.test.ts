@@ -105,7 +105,7 @@ describe('doctor code_chunk_metadata (#3970 surface 2)', () => {
 
 describe('CLI help line (#3970 surface 1)', () => {
   test('reindex-code help documents --force', () => {
-    const cli = surfaceFileSource('cli', 'src/cli.ts');
+    const cli = surfaceFileSource('cli', 'src/cli/top-help.ts');
     const line = cli.split('\n').find((l) => l.trimStart().startsWith('reindex-code ['));
     expect(line).toBeDefined();
     expect(line!).toContain('--force');

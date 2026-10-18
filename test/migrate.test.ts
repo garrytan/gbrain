@@ -894,12 +894,71 @@ describe('migrate runner v66 — partial index materialized on PGLite', () => {
     await engine.disconnect();
   });
 
-  test('v66 created idx_chunks_embedding_null on PGLite via handler branch', async () => {
-    const rows = await (engine as any).db.query(
+  // v225 drops the index again at head (content_chunks_stale_idx is the same
+  // partial index), so the handler branch is exercised directly.
+  test('v66 creates idx_chunks_embedding_null on PGLite via handler branch', async () => {
+    const indexes = async () => (await (engine as any).db.query(
       `SELECT indexname FROM pg_indexes WHERE indexname = 'idx_chunks_embedding_null'`
-    );
-    expect(rows.rows.length).toBe(1);
+    )).rows;
+    expect(await indexes()).toHaveLength(0);
+    await MIGRATIONS.find(m => m.version === 66)!.handler!(engine);
+    expect(await indexes()).toHaveLength(1);
   });
+});
+
+// v225: idx_chunks_embedding_null (v66) and content_chunks_stale_idx (v103)
+// were the same partial btree; v225 drops the v66 copy only while the kept
+// index is valid and identical.
+describe('v225 — drop_duplicate_embedding_null_index', () => {
+  const stale = async (engine: PGLiteEngine) => (await engine.executeRaw<{ indexname: string; indexdef: string }>(
+    `SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'content_chunks'
+      AND indexname IN ('idx_chunks_embedding_null', 'content_chunks_stale_idx') ORDER BY indexname`)).map(r => r.indexname);
+
+  test('a fresh brain keeps only content_chunks_stale_idx, and re-running is a no-op', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      expect(await stale(engine)).toEqual(['content_chunks_stale_idx']);
+      await MIGRATIONS.find(m => m.version === 225)!.handler!(engine);
+      expect(await stale(engine)).toEqual(['content_chunks_stale_idx']);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
+
+  test('a brain at v224 loses the duplicate and keeps the stale index', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      await MIGRATIONS.find(m => m.version === 66)!.handler!(engine);
+      expect(await stale(engine)).toEqual(['content_chunks_stale_idx', 'idx_chunks_embedding_null']);
+      await engine.setConfig('version', '224');
+      await runMigrations(engine);
+      expect(await stale(engine)).toEqual(['content_chunks_stale_idx']);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
+
+  test('keeps idx_chunks_embedding_null when content_chunks_stale_idx is missing or defined differently', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const v225 = MIGRATIONS.find(m => m.version === 225)!;
+      await MIGRATIONS.find(m => m.version === 66)!.handler!(engine);
+      await engine.executeRaw(`DROP INDEX content_chunks_stale_idx`);
+      await v225.handler!(engine);
+      expect(await stale(engine)).toEqual(['idx_chunks_embedding_null']);
+      await engine.executeRaw(`CREATE INDEX content_chunks_stale_idx ON content_chunks (page_id) WHERE embedding IS NULL`);
+      await v225.handler!(engine);
+      expect(await stale(engine)).toEqual(['content_chunks_stale_idx', 'idx_chunks_embedding_null']);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
 });
 
 // ────────────────────────────────────────────────────────────────────────
@@ -2394,7 +2453,8 @@ describe('v134 — restore_chunks_embedding_null_partial_indexes', () => {
             AND indexname IN ('idx_chunks_embedding_null', 'content_chunks_stale_idx')
           ORDER BY indexname`,
       );
-      expect(rows.map(r => r.indexname)).toEqual(['content_chunks_stale_idx', 'idx_chunks_embedding_null']);
+      // v134 re-creates both; v225 then drops the v66 duplicate of content_chunks_stale_idx.
+      expect(rows.map(r => r.indexname)).toEqual(['content_chunks_stale_idx']);
       for (const r of rows) {
         expect(r.indexdef).toMatch(/WHERE\s+\(?embedding IS NULL\)?/i);
       }

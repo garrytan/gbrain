@@ -92,7 +92,7 @@ export const SYNOPSIS_DOC_MAX_CHARS = (() => {
  */
 export const SYNOPSIS_PROMPT_VERSION = 1;
 
-const SYSTEM_PROMPT = [
+export const SYNOPSIS_SYSTEM_PROMPT = [
   'You generate one-sentence chunk synopses for a personal knowledge brain.',
   '',
   'Given a document (the FULL_DOCUMENT block) and a chunk from it (the CHUNK',
@@ -162,16 +162,28 @@ export type GeneratePerChunkSynopsisResult =
 export async function generatePerChunkSynopsis(
   args: GeneratePerChunkSynopsisArgs,
 ): Promise<GeneratePerChunkSynopsisResult> {
-  const userPrompt = buildUserPrompt(args.pageTitle, args.documentText, args.chunkText);
   const maxTokens = args.maxTokens ?? SYNOPSIS_MAX_TOKENS;
 
   const chatOpts: ChatOpts = {
     // #3813: key-aware tier default, not the hardcoded hash anchor above —
     // an OPENAI_API_KEY-only install must not route to Anthropic.
     model: args.model ?? resolveTierDefault('utility'),
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: userPrompt }],
+    system: SYNOPSIS_SYSTEM_PROMPT,
+    // PR #6341: the title + document block is the only prefix every chunk of
+    // a page shares (the ~190-token system prompt is below every published
+    // minimum cacheable length), so it rides on its own `cache: true` block
+    // and the chunk follows in a second block. Joined with '\n' the two are
+    // byte-identical to the former single string (that is how the claude-cli
+    // adapter renders them), so SYNOPSIS_PROMPT_VERSION is unchanged.
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: buildPagePrompt(args.pageTitle, args.documentText), cache: true },
+        { type: 'text', text: buildChunkPrompt(args.chunkText) },
+      ],
+    }],
     maxTokens,
+    thinking: 'off',
     abortSignal: args.abortSignal,
     cacheSystem: true,
   };
@@ -250,11 +262,7 @@ export async function generatePerChunkSynopsis(
   return { kind: 'success', synopsis, usage: result.usage };
 }
 
-function buildUserPrompt(
-  pageTitle: string,
-  documentText: string,
-  chunkText: string,
-): string {
+export function buildPagePrompt(pageTitle: string, documentText: string): string {
   // Tail-truncate `documentText` to `SYNOPSIS_DOC_MAX_CHARS` so small local
   // chat models don't stall on >100KB pages. Head preserved (title block,
   // frontmatter, intro paragraphs carry the document-level anchor).
@@ -270,6 +278,11 @@ function buildUserPrompt(
     '<full_document>',
     trimmedDoc,
     '</full_document>',
+  ].join('\n');
+}
+
+export function buildChunkPrompt(chunkText: string): string {
+  return [
     '',
     '<chunk>',
     chunkText,

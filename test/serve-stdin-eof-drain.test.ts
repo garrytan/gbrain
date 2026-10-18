@@ -26,11 +26,13 @@ import { _resetStdoutRedirectForTests } from '../src/core/console-prefix';
 const __realConsoleLog = console.log;
 const __realConsoleInfo = console.info;
 const __realConsoleDebug = console.debug;
-afterEach(() => {
+afterEach(async () => {
   console.log = __realConsoleLog;
   console.info = __realConsoleInfo;
   console.debug = __realConsoleDebug;
   _resetStdoutRedirectForTests();
+  // runServe's shutdown marks the delegated-sync runner shutting down; later files in this process start delegated syncs.
+  (await import('../src/core/serve-sync-runner')).__resetDelegatedSyncForTests();
 });
 /* eslint-enable no-console */
 

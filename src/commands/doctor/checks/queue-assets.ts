@@ -161,57 +161,79 @@ async function runImageAssets(ctx: DoctorContext): Promise<Check[]> {
   if (engine) {
     progress.heartbeat('image_assets');
     try {
-      const rows = await engine.executeRaw<{ storage_path: string; source_local_path: string | null; metadata: unknown }>(
-        `SELECT f.storage_path, f.metadata, s.local_path AS source_local_path FROM files f LEFT JOIN sources s ON s.id = COALESCE(f.source_id, 'default') WHERE f.mime_type LIKE 'image/%' LIMIT 1000`
+      const rows = await engine.executeRaw<{ storage_path: string; source_local_path: string | null; page_source_path: string | null; metadata: unknown }>(
+        `SELECT f.storage_path, f.metadata, s.local_path AS source_local_path, p.source_path AS page_source_path FROM files f
+           LEFT JOIN sources s ON s.id = COALESCE(f.source_id, 'default') LEFT JOIN pages p ON p.id = f.page_id
+          WHERE f.mime_type LIKE 'image/%' ORDER BY f.id LIMIT 1000`
       );
       let vanished = 0;
       let foreign = 0;
       let remote = 0;
+      let unrooted = 0;
+      let caseOnly = 0;
       const vanishedPaths: string[] = [];
+      const ambiguousPaths: string[] = [];
       const fs = await import('node:fs');
+      const { join } = await import('node:path');
       const { resolveImageAssetPath, imageAssetStorageLane } = await import('../../doctor-asset-paths.ts');
+      const { resolveRecordedImageFile } = await import('../../../core/image-asset-resolver.ts');
+      const listings = new Map<string, string[] | null>();
       // storage_path is repo-relative for sync-ingested assets. Prefer the
-      // owning source's root; sync.repo_path is only a legacy fallback.
-      const repoRoot = (await engine.getConfig('sync.repo_path')) ?? process.cwd();
+      // owning source's root; sync.repo_path is only a legacy fallback, and a
+      // row with neither is not checkable here (never joined onto the cwd).
+      const repoRoot = await engine.getConfig('sync.repo_path');
       for (const r of rows) {
         // #4910: an explicit non-git lane (supabase/s3/local backend) means
         // storage_path is a bucket key, never a source-relative file. Only
         // `gbrain files verify` can probe those; unmarked rows keep the stat.
         if (imageAssetStorageLane(r.metadata) === 'backend') { remote++; continue; }
+        const root = r.source_local_path ?? repoRoot;
+        if (!root) { unrooted++; continue; }
         // #1835: Windows drive paths (D:/…) translate to the WSL automount
         // (/mnt/d/…) under WSL, and are SKIPPED (not "missing") on hosts
         // where they cannot exist (macOS / plain Linux) — never joined onto
         // repoRoot, which produced a false "restore from git" WARN.
-        const resolved = resolveImageAssetPath(r.storage_path, r.source_local_path, repoRoot);
+        const resolved = resolveImageAssetPath(r.storage_path, root, root);
         if (resolved.abs === null) {
           foreign++;
           continue;
         }
-        try {
-          fs.statSync(resolved.abs);
-        } catch {
-          vanished++;
-          if (vanishedPaths.length < 5) vanishedPaths.push(r.storage_path);
+        // #6543 D3: a relative path resolves through the shared case-insensitive resolver (exact first; the page's
+        // recorded source_path is a second candidate); an absolute or translated path is stat'ed as it is.
+        if (resolved.abs !== join(root, r.storage_path)) {
+          try { fs.statSync(resolved.abs); } catch { vanished++; if (vanishedPaths.length < 5) vanishedPaths.push(r.storage_path); }
+          continue;
         }
+        const located = resolveRecordedImageFile(root, [r.storage_path, r.page_source_path], listings);
+        if (located.status === 'found') { if (located.caseMismatch) caseOnly++; continue; }
+        if (located.status === 'ambiguous') { if (ambiguousPaths.length < 5) ambiguousPaths.push(`${r.storage_path} (${located.matches.join(' | ')})`); continue; }
+        vanished++;
+        if (vanishedPaths.length < 5) vanishedPaths.push(r.storage_path);
       }
-      const checked = rows.length - foreign - remote;
+      const ambiguous = ambiguousPaths.length;
+      const checked = rows.length - foreign - remote - unrooted;
       const foreignNote = (foreign > 0
         ? ` (${foreign} Windows-drive path(s) skipped — not resolvable on this platform)`
         : '') + (remote > 0
         ? ` (${remote} storage-backend object(s) not checked locally — run \`gbrain files verify\`)`
-        : '');
+        : '') + (unrooted > 0
+        ? ` (${unrooted} image(s) not checkable here: their source has no local path)`
+        : '') + (caseOnly > 0
+        ? ` (${caseOnly} found under a different letter case than recorded)`
+        : '') + (rows.length === 1000 ? ' (the first 1000 image rows by id were checked)' : '');
       if (rows.length === 0) {
         checks.push({ name: 'image_assets', status: 'ok', message: 'No image assets indexed yet' });
       } else if (checked === 0) {
         checks.push({ name: 'image_assets', status: 'ok', message: `No local image assets to check${foreignNote}` });
-      } else if (vanished === 0) {
+      } else if (vanished === 0 && ambiguous === 0) {
         checks.push({ name: 'image_assets', status: 'ok', message: `${checked} image(s) all present on disk${foreignNote}` });
       } else {
         checks.push({
           name: 'image_assets',
           status: 'warn',
-          message: `${vanished} of ${checked} image(s) missing from disk (e.g. ${vanishedPaths.join(', ')})${foreignNote}. ` +
-                   `Fix: restore from git, or \`gbrain sync --skip-failed\` to acknowledge.`,
+          message: (vanished > 0 ? `${vanished} of ${checked} image(s) missing from disk (e.g. ${vanishedPaths.join(', ')}). ` : '')
+            + (ambiguous > 0 ? `${ambiguous} image path(s) are ambiguous: more than one file matches when letter case is ignored (${ambiguousPaths.join(', ')}); rename one so the recorded path names a single file. ` : '')
+            + `${foreignNote.trim()}${foreignNote ? ' ' : ''}Fix: restore missing files from git, or delete the pages whose file is gone.`,
         });
       }
     } catch {

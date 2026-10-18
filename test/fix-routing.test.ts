@@ -58,11 +58,14 @@ describe('pinRouting', () => {
 });
 
 describe('routing table agrees with the command table and the generated registry', () => {
-  test('every routes_source record pins --source and accepts it; nothing else does', () => {
+  test('every routes_source record pins its source flag and accepts it; nothing else does', () => {
     const declared = CLI_COMMANDS.filter(r => r.routes_source).map(r => r.name).sort();
     expect(declared.length).toBeGreaterThan(10);
-    for (const name of declared) expect(CLI_FLAG_REGISTRY[name], `${name} accepts --source`).toContain('--source');
-    expect(Object.keys(CLI_ROUTING_FLAGS).filter(k => CLI_ROUTING_FLAGS[k]!.includes('--source')).sort()).toEqual(declared);
+    // #6803 (D2): a record declares '--source-id' when its --source is a mode selector (extract: fs|db).
+    const flagOf = (name: string) => CLI_COMMANDS.find(r => r.name === name)!.routes_source === '--source-id' ? '--source-id' : '--source';
+    for (const name of declared) expect(CLI_FLAG_REGISTRY[name], `${name} accepts ${flagOf(name)}`).toContain(flagOf(name));
+    expect(Object.keys(CLI_ROUTING_FLAGS).filter(k => CLI_ROUTING_FLAGS[k]!.includes('--source') || CLI_ROUTING_FLAGS[k]!.includes('--source-id')).sort()).toEqual(declared);
+    for (const name of declared) expect(CLI_ROUTING_FLAGS[name], name).toContain(flagOf(name));
   });
 
   test('every engine-opening command pins --brain; pre-connect ones only when their code reads the brain option', () => {

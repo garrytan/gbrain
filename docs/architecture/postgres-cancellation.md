@@ -28,7 +28,7 @@ Direct PostgreSQL closes the cancellation connection after handling the request.
 
 `test/e2e/persistence-chaos.test.ts` exercises active, queued, delayed and failed cancellation; transaction siblings; stale ownership; atomic reservation settlement; reconnects; completed cursors; and real socket backpressure in both module formats. Its optional PgBouncer case requires `GBRAIN_PGBOUNCER_URL` and `GBRAIN_PGBOUNCER_DIRECT_URL`, uses a dedicated test database, and verifies another client can reuse the same server backend without receiving a late cancellation.
 
-Keep the response-mapping, actual-settlement and unchanged persistence latency checks alongside these protocol tests. Global `max_pipeline: 1`, serializer fallbacks and blind retries are not substitutes for ownership isolation.
+Keep the response-mapping, actual-settlement and unchanged persistence latency checks alongside these protocol tests. Global `max_pipeline: 1`, serializer fallbacks and blind retries are not substitutes for ownership isolation. The one place pipelining is off is transport, not cancellation: since v0.60.187.0 the read pools of a transaction-mode pooler URL (port 6543, `?prepare=false`, `GBRAIN_PREPARE=0`) are built with `max_pipeline: 0`, because a transaction pooler cannot carry pipelined statements across transaction boundaries (#6543; `db.resolveReadPoolPipeline`, the reason is in `/health?deep=1` `transport`). A URL `?max_pipeline=` or a non-empty `PGMAX_PIPELINE` still wins, and the direct pool keeps the driver default.
 
 ## Worker admission and configuration shutdown
 

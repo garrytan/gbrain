@@ -53,7 +53,8 @@ test('the resident answers projection_status with counts only; an owner without 
   try {
     const status = await requestPersistenceProjectionStatus(socket);
     expect(status).toMatchObject({ pending: 3, failed: 0 });
-    expect(Object.keys(status).sort()).toEqual(['failed', 'oldest_age_seconds', 'pending']);
+    expect(Object.keys(status).sort()).toEqual(['archived', 'as_of', 'failed', 'ocr_required', 'oldest_age_seconds', 'pending', 'protected',
+      'reimport', 'sealable', 'sealable_with_visual']);
     expect(status.oldest_age_seconds).toBeGreaterThanOrEqual(0);
   } finally { server.close(); }
   const old = (await startPersistenceIpcServer(socket, provider()))!;

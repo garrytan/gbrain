@@ -37,7 +37,70 @@ names, then 'gbrain sources retry-held <id>' and the same sync. Many such
 stalls in one run stop it with outcome blocked / preparation_systemic.
 'gbrain config set sync.holds fail' restores fail-closed blocking.
 
-Options:
+Managed brains (the flags an operator or cron needs; listed first):
+  --source <id>        Scope sync to a single source. Defaults to the
+                       brain's default source.
+  --all                Sync every registered source instead of just the
+                       default (multi-source brains).
+  --no-pull            Skip 'git pull' before the sync. Implied on managed
+                       brains, which never pull during sync: 'gbrain sources
+                       refresh <id>' moves the checkout, and sync catches the
+                       index up to it.
+  --timeout <dur>      Stop the sync after <dur> (per source with --all).
+                       A managed sync drains its whole backlog in one run
+                       until it is done, blocked, or this budget ends;
+                       progress never extends it. A stopped managed drain
+                       is 'resumable' (exit 0): rerun the same command.
+                       When another process is draining the source (a
+                       serve, a sync job, another terminal), the run follows
+                       it within this budget and its own deadline, printing
+                       the holder and the pages it commits; it takes over
+                       when the holder finishes. Out of budget it is
+                       'resumable' with code sync_drain_lease_held; a holder
+                       that commits nothing for 5 minutes stops it blocked
+                       (drain_stalled). Ctrl-C stops following and leaves
+                       the holder alone.
+                       See docs/guides/live-sync.md (catching up a large
+                       backlog on managed Postgres).
+  --hard-deadline <dur>
+                       Stop the whole process after <dur> (for example 13m),
+                       even when a step hangs. Doctor's managed cron line is
+                       'gbrain sync --all --no-pull --hard-deadline 13m'
+                       every 15 minutes. A non-TTY run gets a default
+                       deadline that extends while pages keep committing;
+                       --no-hard-deadline waives it.
+  --json               Emit a structured JSON envelope on stdout
+                       ({schema_version: 1, sources, parallel,
+                       ok_count, error_count, skipped_count}). Sources
+                       skipped by --missing-path skip appear with
+                       status 'skipped_missing_path' and their
+                       local_path. All human output routes to stderr
+                       (single-source runs too) so '--json | jq'
+                       parses cleanly.
+                       Exit codes: 0 = all sources ok or skipped,
+                       1 = any error, 2 = cost-prompt-not-confirmed.
+                       Managed syncs add outcome (synced | resumable |
+                       blocked), drain and next {command, safe_to_loop,
+                       eta_seconds, why}.
+  --dry-run            Show what would be synced without writing; lists
+                       every file the content screen would hold (would_hold)
+                       and screen errors separately (screen_skipped).
+                       Managed sources add 'convergence' to --json: every
+                       path classified the way the level-triggered pass
+                       will (counts, predicted decisions, deletes and the
+                       mass-delete verdict, samples). Read-only.
+  --no-bulk            Managed Postgres sync: publish one page per transaction
+                       instead of bulk groups (each page keeps its own write
+                       request either way). GBRAIN_SYNC_BULK=0 does the
+                       same for every run of a process; tune the group size
+                       with 'gbrain config set sync.bulk_size N'.
+  --no-lanes           Same as --lanes 1: one bulk group at a time.
+  --break-lock         Release the source's sync lock (the managed drain
+                       lease) left by a holder that is gone: a dead pid on
+                       this host, or a heartbeat past its TTL. A live holder
+                       is never broken; --max-age <s> narrows it.
+
+Classic brains / advanced (classic sync, processing opt-outs, one-off repair):
   --no-embed           Skip the embed step. Use this when the embed
                        provider is misconfigured or you want to defer
                        embedding (run 'gbrain embed --stale' later).
@@ -47,11 +110,12 @@ Options:
   --workers N          Run the import phase with N parallel workers
                        (alias: --concurrency). Default: 4 when the
                        diff is >100 files, else serial.
-  --source <id>        Scope sync to a single source. Defaults to the
-                       brain's default source.
   --repo <path>        Path to the brain repo. Defaults to the path
                        saved by 'gbrain init'.
   --full               Force a full re-sync (rare; usually incremental).
+  --redact-paths       With --dry-run --json: sample paths become sha256
+                       prefixes and slugs are dropped, so the counts can
+                       be shared.
   --src-subpath <dir>  Sync only this subdirectory of the git repo (monorepo
                        pattern: N logical sources in one repo). Git pull/diff
                        run at the repo root; imports are scoped to the subdir
@@ -81,47 +145,48 @@ Options:
                        Caution: imports untracked files as-is — unignored
                        scratch files and secrets included; review 'git status'
                        before enabling, especially as persisted config.
-  --dry-run            Show what would be synced without writing; lists
-                       every file the content screen would hold (would_hold)
-                       and screen errors separately (screen_skipped).
-  --skip-failed        Legacy sync only: acknowledge previously-recorded
+  --skip-failed        Classic sync only: acknowledge previously-recorded
                        sync failures so the bookmark can advance. Held files
-                       never need it; managed sync refuses it.
-  --retry-failed       Re-attempt previously-failed files; clear on success.
-                       Not needed for held files, which re-screen on the next
-                       sync when they change (or with 'gbrain sources
-                       retry-held <id>').
+                       never need it; a managed source refuses it
+                       (managed_sync_flag_refused), as it does
+                       --include-gitignored: fix the file, then run the
+                       plain sync again.
+  --acknowledge-managed <request_id|path>
+                       Managed sync, owner host only: remove a recorded
+                       failure (for example a --full run's) that the imported
+                       commit already settles; refuses anything still unsynced.
+  --retry-failed       Deprecated: accepted for two releases and prints a
+                       coaching notice. A plain sync now retries a failure
+                       the previous run recorded by itself, so drop the
+                       flag. Held files re-screen on the next sync when they
+                       change (or with 'gbrain sources retry-held <id>'). On
+                       a google or github connector source it still
+                       re-approves the failed item receipts it meets.
   --reset-checkpoint   Connector source only: re-walk its window once from an empty
                        checkpoint; unchanged pages are not admitted again.
   --watch              Re-sync continuously on an interval.
   --interval N         Watch-mode interval in seconds (default 60).
-  --no-pull            Skip 'git pull' before the sync. Required on managed
-                       brains: 'gbrain sources refresh <id>' moves the
-                       checkout, and sync catches the index up to it.
-  --no-bulk            Managed Postgres sync: publish one page per transaction
-                       instead of bulk groups (each page keeps its own write
-                       request either way). Persist with
-                       'gbrain config set sync.bulk false' or
-                       GBRAIN_SYNC_BULK=0; tune with sync.bulk_size and
-                       sync.bulk_max_txn_ms.
   --lanes N            Managed Postgres sync: publish at most N bulk groups at
                        once (1-16, default 16, capped by the connection pool:
                        GBRAIN_POOL_SIZE minus 4). Pages still commit in file
                        order. Persist with 'gbrain config set sync.lanes N' or
                        GBRAIN_SYNC_LANES; the drain reports what limited it.
-  --no-lanes           Same as --lanes 1: one bulk group at a time.
-  --no-delegate        On a PGLite brain with a live 'gbrain serve', sync
-                       normally delegates the run to the serve process over
-                       its IPC socket (the lock owner does the work; embeds
-                       defer to serve's background sweep). This flag (or
-                       GBRAIN_SYNC_NO_DELEGATE=1) opts out — sync then fails
-                       fast if a live serve holds the brain.
+  --no-delegate        Keep this process's own write consumer even when a
+                       live 'gbrain serve' could run the sync. Normally sync
+                       hands the run to that serve over its IPC socket and
+                       prints its progress: on PGLite because the serve holds
+                       the single-writer lock, on a managed Postgres brain so
+                       the host keeps one write consumer. This flag (or
+                       GBRAIN_SYNC_NO_DELEGATE=1) opts out: on Postgres the
+                       sync runs here beside the serve; on PGLite it fails
+                       fast if a live serve holds the brain. It never skips
+                       the drain lease: one drainer per managed source.
+  --force-break-lock   Release it without the liveness check (destructive:
+                       only when you have stopped the holder yourself).
   --no-schema-pack     Skip loading the active schema pack (no per-file pack
                        regex runs; pages use legacy prefix typing). Escape
                        hatch if a suspect pack regex is wedging sync.
                        GBRAIN_SYNC_TRACE=1 names the file being imported (hang triage).
-  --all                Sync every registered source instead of just the
-                       default (multi-source brains).
   --parallel N         (with --all) Run up to N sources concurrently.
                        Default: min(sourceCount, --workers, 4). Each
                        source takes its own per-source DB lock
@@ -137,27 +202,23 @@ Options:
                        from error_count and the rc=1 gate). Use skip on
                        brains whose sources were registered from more
                        than one machine.
-  --json               Emit a structured JSON envelope on stdout
-                       ({schema_version: 1, sources, parallel,
-                       ok_count, error_count, skipped_count}). Sources
-                       skipped by --missing-path skip appear with
-                       status 'skipped_missing_path' and their
-                       local_path. All human output routes to stderr
-                       (single-source runs too) so '--json | jq'
-                       parses cleanly.
-                       Exit codes: 0 = all sources ok or skipped,
-                       1 = any error, 2 = cost-prompt-not-confirmed.
-                       Managed syncs add outcome (synced | resumable |
-                       blocked), drain and next {command, safe_to_loop,
-                       eta_seconds, why}.
-  --timeout <dur>      Stop the sync after <dur> (per source with --all).
-                       A managed sync drains its whole backlog in one run
-                       until it is done, blocked, or this budget ends;
-                       progress never extends it. A stopped managed drain
-                       is 'resumable' (exit 0): rerun the same command.
-                       See docs/guides/live-sync.md (catching up a large
-                       backlog on managed Postgres).
   --yes                Accept any interactive prompts (CI / non-TTY).
+
+Subcommands:
+  gbrain sync status --source <id> [--json]
+                       Where a managed catch-up stands: cursor, pages
+                       committed in the last 10 minutes, each hold and the
+                       last error with class / safe_actions / needs_human,
+                       and the next action (for an operator agent's loop).
+                       'gbrain sync --status' is the same read (never a sync);
+                       sync refuses --preview, which it never reads.
+  gbrain sync unblock --source <id> [--apply] [--no-llm] [--no-repair] [--json]
+                       Performs the safe action for every hold (re-screens a
+                       held file whose edit is now committed, retries a
+                       stalled preparation, repairs a content hold through
+                       the content-repair lane with a hash-bound apply and
+                       a receipt per file) and refuses the rest by name.
+                       Runbook: docs/guides/sync-unblock-runbook.md
 
 See also:
   gbrain embed --stale    Re-embed all stale chunks (post --no-embed).
@@ -171,6 +232,23 @@ See also:
   docs/guides/troubleshooting.md#catch-up-stuck
                                           Catch-up stuck / held N files runbook.
 `);
+}
+
+/** #6712 PR 3 (L7): the coaching notice `--retry-failed` prints while it stays accepted (two releases). */
+export const RETRY_FAILED_DEPRECATED = '--retry-failed is deprecated: a plain gbrain sync now retries a failure the previous run recorded by itself, '
+  + 'so drop the flag (it stays accepted for two releases and changes nothing on a Git source). On a google or github connector source it still '
+  + 're-approves the failed item receipts it meets.';
+let retryFailedNoted = false;
+/** Prints the `--retry-failed` coaching notice on stderr, once per process (the CLI pipeline and the sync command both call it). */
+export function noteRetryFailedDeprecated(args: string[]): void {
+  if (retryFailedNoted || !args.includes('--retry-failed')) return;
+  retryFailedNoted = true;
+  process.stderr.write(`[gbrain notice sync_retry_failed_deprecated] ${RETRY_FAILED_DEPRECATED}\n`);
+}
+
+/** Tests share one process across files: forget that an earlier file already printed the notice. */
+export function resetRetryFailedNoticeForTests(): void {
+  retryFailedNoted = false;
 }
 
 /** Flags read before the `--break-lock` branch. */
@@ -211,8 +289,6 @@ export function parseSyncFlags(args: string[]) {
   const skipFailed = args.includes('--skip-failed');
   const retryFailed = args.includes('--retry-failed'), resetCheckpoint = args.includes('--reset-checkpoint');
   const noSchemaPack = args.includes('--no-schema-pack'); // v0.41.37.0 #1569
-  const explicitProcessing = ([['--no-embed', 'noEmbed'], ['--no-extract', 'noExtract'], ['--no-schema-pack', 'noSchemaPack']] as const)
-    .filter(([flag]) => args.includes(flag)).map(([, key]) => key);
   const includeGitignored = args.includes('--include-gitignored');
   // Untracked-gap fix: --working-tree imports uncommitted working-tree state.
   // The config fallback (sync.include_working_tree) resolves inside
@@ -234,6 +310,7 @@ export function parseSyncFlags(args: string[]) {
     console.error('[gbrain] WARN: --missing-path only applies to `sync --all`; ignored here.');
   }
   const jsonOut = args.includes('--json');
+  const redactPaths = args.includes('--redact-paths');
   const yesFlag = args.includes('--yes');
   // v0.41.6.0 D3: lock-recovery flags. --break-lock (safe) verifies the
   // holder is local-host + (TTL-expired OR PID-dead+60s-old) before
@@ -264,7 +341,7 @@ export function parseSyncFlags(args: string[]) {
     console.error(`--max-age cannot be combined with --force-break-lock (force skips all guards).`);
     process.exit(1);
   }
-  return { repoPath, watch, interval, dryRun, full, noPull, noBulk, lanes, noEmbed, noExtract, skipFailed, retryFailed, resetCheckpoint, noSchemaPack, explicitProcessing, includeGitignored, workingTree, syncAll, missingPathMode, jsonOut, yesFlag, breakLock, forceBreakLock, maxAgeSeconds };
+  return { repoPath, watch, interval, dryRun, full, noPull, noBulk, lanes, noEmbed, noExtract, skipFailed, retryFailed, resetCheckpoint, noSchemaPack, includeGitignored, workingTree, syncAll, missingPathMode, jsonOut, redactPaths, yesFlag, breakLock, forceBreakLock, maxAgeSeconds };
 }
 
 export type SyncFlags = ReturnType<typeof parseSyncFlags>;

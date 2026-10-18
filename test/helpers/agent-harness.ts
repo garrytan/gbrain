@@ -421,18 +421,23 @@ export interface ParsedOpencodeJsonl {
   /** Tool names from tool events, in order (MCP tools: `<server>_<tool>`,
    *  e.g. `gbrain_recall` — observed v1.18.18). */
   toolCalls: string[];
+  /** #6049: one line per `error` event: `<name> <statusCode> <responseBody error.type>: <message>`,
+   *  so a turn the provider refused (e.g. a FreeTierError 403) says why instead of an empty reply. */
+  errors: string[];
 }
 
 /**
  * Parse `opencode run --format json` NDJSON. Every event is
  * `{type, timestamp, sessionID, part}` (observed v1.18.18 —
  * OPENCODE-CLI-PIN.md §One-shot): `text` events carry `part.text`;
- * `tool_use` events carry `part.tool` + `part.state.{status,input,output}`.
+ * `tool_use` events carry `part.tool` + `part.state.{status,input,output}`;
+ * `error` events carry `error.{name,data.{message,statusCode,responseBody}}`.
  * Skips malformed lines and unknown event types.
  */
 export function parseOpencodeJsonl(lines: string[]): ParsedOpencodeJsonl {
   const textParts: string[] = [];
   const toolCalls: string[] = [];
+  const errors: string[] = [];
   for (const line of lines) {
     let evt: unknown;
     try {
@@ -441,14 +446,22 @@ export function parseOpencodeJsonl(lines: string[]): ParsedOpencodeJsonl {
       continue;
     }
     if (typeof evt !== 'object' || evt === null) continue;
-    const e = evt as { type?: string; part?: { text?: unknown; tool?: unknown } };
+    const e = evt as { type?: string; part?: { text?: unknown; tool?: unknown };
+      error?: { name?: unknown; data?: { message?: unknown; statusCode?: unknown; responseBody?: unknown } } };
     if (e.type === 'text' && typeof e.part?.text === 'string') {
       textParts.push(e.part.text);
     } else if (e.type === 'tool_use' && typeof e.part?.tool === 'string') {
       toolCalls.push(e.part.tool);
+    } else if (e.type === 'error') {
+      const data = e.error?.data;
+      let bodyType: unknown;
+      try { bodyType = typeof data?.responseBody === 'string' ? JSON.parse(data.responseBody)?.error?.type : undefined; } catch { /* non-JSON body */ }
+      const head = [e.error?.name, data?.statusCode, bodyType].filter((v) => typeof v === 'string' || typeof v === 'number').join(' ');
+      const message = typeof data?.message === 'string' ? data.message : '';
+      errors.push(head && message ? `${head}: ${message}` : head || message || 'error event without details');
     }
   }
-  return { finalText: textParts.join('\n').trim(), toolCalls };
+  return { finalText: textParts.join('\n').trim(), toolCalls, errors };
 }
 
 // ────────────────────────────────────────────────────────────────────────────

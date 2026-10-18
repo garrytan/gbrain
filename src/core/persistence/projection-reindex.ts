@@ -93,8 +93,8 @@ export async function reindexCodeProjection(engine: BrainEngine, slug: string, s
       const installed = await installPageEmbeddings(engine, prepared, chunks.map((c, i) => ({
         chunk_index: c.chunk_index, chunk_text: c.chunk_text, chunk_source: c.chunk_source,
         model: prepared.embeddingModel ?? undefined, embedding: vectors[i] })));
-      if (!installed) throw opError('revision_conflict', 'Code changed while embedding; text remains queued or searchable without new vectors.',
-        `Code page ${slug} in source ${sourceId} changed while its vectors were computed, so they were discarded. Run gbrain reindex-code --source ${sourceId} again to embed the current revision.`,
+      if (!installed.complete) throw opError('revision_conflict', 'Code changed while embedding; text remains queued or searchable without new vectors.',
+        `Code page ${slug} in source ${sourceId} changed while its vectors were computed, so only the ${installed.installed} of ${chunks.length} vectors whose chunks are unchanged were installed. Run gbrain reindex-code --source ${sourceId} again to embed the current revision.`,
         { fix: previewFix(sourceId) });
     }
   }

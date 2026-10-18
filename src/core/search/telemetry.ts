@@ -77,6 +77,25 @@ export const EMPTY_RESULT_MODE = 'empty_result';
 export type EmptyResultCause = 'vector_disabled' | 'budget_dropped_all' | 'keyword_zero';
 
 /**
+ * W3 — reserved `mode` value for the rerank gate counters, on the same
+ * (date, mode, intent) PK with zero new DDL: the intent slot names the
+ * counter (`eligible`, `graded`, `would_skip`, `provider_calls`,
+ * `reason:<grade reason>`, `ineligible:<why>`), `count` carries it.
+ * readSearchStats diverts these rows out of the call/intent/mode aggregates.
+ * Written only when `search.reranker.gate` is not `off`.
+ */
+export const RERANK_GATE_TELEMETRY_MODE = 'rerank_gate';
+
+/** The rerank gate counter rows one search contributes (intent slot of the reserved rows). */
+export function rerankGateCounters(gate: NonNullable<HybridSearchMeta['rerank_gate']>): string[] {
+  if (!gate.eligible) return [`ineligible:${gate.ineligible_reason ?? 'unknown'}`];
+  const out = ['eligible', 'graded', `reason:${gate.reason ?? 'unknown'}`];
+  if (gate.would_skip) out.push('would_skip');
+  if (gate.provider_called) out.push('provider_calls');
+  return out;
+}
+
+/**
  * WP2/T3 — why did this search return zero results? Precedence: a budget
  * that dropped everything (only reachable with GBRAIN_SEARCH_SALVAGE=off;
  * the minKeep failsafe otherwise returns 1) beats vector-unavailability
@@ -175,7 +194,12 @@ class TelemetryWriter {
     // WP2/T3 — empty-result cause rollup. Cache HITS are excluded: an empty
     // hit slice is an offset-past-end artifact, not a retrieval failure.
     if (opts.results_count === 0 && meta.cache?.status !== 'hit') {
-      this.recordEmptyResult(date, classifyEmptyResultCause(meta));
+      this.bumpReserved(date, EMPTY_RESULT_MODE, classifyEmptyResultCause(meta));
+    }
+    // W3 — rerank gate counters (reserved rows). Cache hits replay a stored
+    // decision, not a new one, so they are excluded.
+    if (meta.rerank_gate && meta.cache?.status !== 'hit') {
+      for (const counter of rerankGateCounters(meta.rerank_gate)) this.bumpReserved(date, RERANK_GATE_TELEMETRY_MODE, counter);
     }
 
     this.pendingCount += 1;
@@ -185,18 +209,18 @@ class TelemetryWriter {
   }
 
   /**
-   * Bump the reserved (date, EMPTY_RESULT_MODE, cause) bucket. Only `count`
-   * carries signal on these rows — every other column stays 0 and the flush
-   * SQL is unchanged (zero new DDL).
+   * Bump a reserved (date, mode, intent) counter bucket (EMPTY_RESULT_MODE,
+   * RERANK_GATE_TELEMETRY_MODE). Only `count` carries signal on these rows —
+   * every other column stays 0 and the flush SQL is unchanged (zero new DDL).
    */
-  private recordEmptyResult(date: string, cause: EmptyResultCause): void {
-    const key = `${date}::${EMPTY_RESULT_MODE}::${cause}`;
+  private bumpReserved(date: string, mode: string, intent: string): void {
+    const key = `${date}::${mode}::${intent}`;
     let b = this.buckets.get(key);
     if (!b) {
       b = {
         date,
-        mode: EMPTY_RESULT_MODE,
-        intent: cause,
+        mode,
+        intent,
         count: 0,
         sum_results: 0,
         sum_tokens: 0,
@@ -461,6 +485,40 @@ export interface StatsWindow {
   // EMPTY_RESULT_MODE rows; never counted in total_calls or the
   // intent/mode distributions.
   empty_results: { total: number; by_cause: Record<string, number> };
+  // W3 — rerank gate counters, diverted from the reserved
+  // RERANK_GATE_TELEMETRY_MODE rows (never counted in total_calls).
+  rerank_gate: RerankGateStats;
+}
+
+export interface RerankGateStats {
+  /** Searches where the reranker would have run and the gate was consulted. */
+  eligible: number;
+  graded: number;
+  would_skip: number;
+  /** would_skip / graded (0 when nothing was graded). */
+  would_skip_rate: number;
+  provider_calls: number;
+  /** Graded searches by grade reason (strong and not-strong reasons). */
+  by_reason: Record<string, number>;
+  /** Searches the gate saw but did not grade, by why (reranker off, egress denied, no candidates). */
+  ineligible: Record<string, number>;
+}
+
+function emptyRerankGateStats(): RerankGateStats {
+  return { eligible: 0, graded: 0, would_skip: 0, would_skip_rate: 0, provider_calls: 0, by_reason: {}, ineligible: {} };
+}
+
+/** Fold one reserved rerank-gate row into the section. */
+function addRerankGateRow(stats: RerankGateStats, counter: string, count: number): void {
+  if (counter.startsWith('reason:')) {
+    const k = counter.slice('reason:'.length);
+    stats.by_reason[k] = (stats.by_reason[k] ?? 0) + count;
+  } else if (counter.startsWith('ineligible:')) {
+    const k = counter.slice('ineligible:'.length);
+    stats.ineligible[k] = (stats.ineligible[k] ?? 0) + count;
+  } else if (counter === 'eligible' || counter === 'graded' || counter === 'would_skip' || counter === 'provider_calls') {
+    stats[counter] += count;
+  }
 }
 
 export async function readSearchStats(
@@ -525,6 +583,7 @@ export async function readSearchStats(
     let r1_high = 0;
     let empty_total = 0;
     const empty_by_cause: Record<string, number> = {};
+    const rerank_gate = emptyRerankGateStats();
 
     for (const r of rows) {
       // WP2/T3 — reserved empty-result rows carry cause in the intent slot;
@@ -532,6 +591,10 @@ export async function readSearchStats(
       if (r.mode === EMPTY_RESULT_MODE) {
         empty_total += r.count;
         empty_by_cause[r.intent] = (empty_by_cause[r.intent] ?? 0) + r.count;
+        continue;
+      }
+      if (r.mode === RERANK_GATE_TELEMETRY_MODE) {
+        addRerankGateRow(rerank_gate, r.intent, r.count);
         continue;
       }
       total_calls += r.count;
@@ -569,6 +632,7 @@ export async function readSearchStats(
       rank1_count: count_rank1,
       rank1_distribution: { lt_solid: r1_lt, solid: r1_solid, high: r1_high },
       empty_results: { total: empty_total, by_cause: empty_by_cause },
+      rerank_gate: { ...rerank_gate, would_skip_rate: rerank_gate.graded > 0 ? rerank_gate.would_skip / rerank_gate.graded : 0 },
     };
   } catch {
     // Best-effort by design: a pre-v0.32.3 brain WITHOUT the search_telemetry
@@ -594,6 +658,7 @@ export async function readSearchStats(
       rank1_count: 0,
       rank1_distribution: { lt_solid: 0, solid: 0, high: 0 },
       empty_results: { total: 0, by_cause: {} },
+      rerank_gate: emptyRerankGateStats(),
     };
   }
 }

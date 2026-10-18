@@ -16,10 +16,11 @@ function context(engine: Partial<BrainEngine>, opts: Partial<OperationContext> =
   };
 }
 
-const REPORT_NOTE = 'Stored contradiction reports are temporarily available only to trusted local callers without a source filter.';
 const auth = (allowedSources: string[]): NonNullable<OperationContext['auth']> => ({ token: 'fixture', clientId: 'example-client', scopes: ['read'], allowedSources });
 
 describe('stored contradiction report containment', () => {
+  // D9: scoped readers re-read each side live (find-contradictions-scoped.test.ts);
+  // a stored finding with no resolvable side never leaves.
   const deniedContexts: Array<[string, Partial<OperationContext>]> = [
     ['remote', { remote: true }],
     ['unset trust', { remote: undefined as unknown as boolean }],
@@ -30,11 +31,16 @@ describe('stored contradiction report containment', () => {
     ['federated grant wins over trusted all-sources sentinel', { sourceId: '__all__', auth: auth(['default']) }],
   ];
   for (const [label, opts] of deniedContexts) {
-    test(`${label} returns the availability note before reading any reports`, async () => {
-      const load = mock(async () => { throw new Error('protected report must not be loaded'); });
-      const result = await operationsByName.find_contradictions.handler(context({ loadContradictionsTrend: load }, opts), {});
-      expect(result).toEqual({ contradictions: [], note: REPORT_NOTE });
-      expect(load).not.toHaveBeenCalled();
+    test(`${label} never receives stored report text, totals or unresolvable findings`, async () => {
+      const finding = { a: { slug: 'page-a', chunk_id: null, take_id: null }, b: { slug: 'page-b', chunk_id: null, take_id: null }, severity: 'high', axis: 'SCOPED_REPORT_SECRET' };
+      const load = mock(async () => [{
+        run_id: 'scoped-run', ran_at: '2026-09-01T00:00:00Z', report_json: { per_query: [{ query: 'SCOPED_QUERY_SECRET', contradictions: [finding] }] },
+      }]);
+      const result = await operationsByName.find_contradictions.handler(context({ loadContradictionsTrend: load as never }, opts), {}) as Record<string, unknown>;
+      expect(result.contradictions).toEqual([]);
+      expect(result).not.toHaveProperty('total_in_run');
+      expect(JSON.stringify(result)).not.toContain('SCOPED_REPORT_SECRET');
+      expect(JSON.stringify(result)).not.toContain('SCOPED_QUERY_SECRET');
     });
   }
 
@@ -67,7 +73,7 @@ describe('remote history uses strict body sanitization', () => {
           executeRaw: (async () => []) as never,
           // Even an operator opt-out cannot disable the Facts/Takes boundary.
           getConfig: async () => 'visible',
-        }, { remote: remote as boolean, sourceId: 'default', takesHoldersAllowList }), { slug: 'example-page' }) as Array<{ compiled_truth: string }>;
+        }, { remote: remote as boolean, sourceId: 'default', takesHoldersAllowList }), { slug: 'example-page', include_body: true }) as Array<{ compiled_truth: string }>;
         expect(result).toHaveLength(1);
         expect(result[0].compiled_truth).toContain('WORLD_HISTORY');
         if (remote === false) {

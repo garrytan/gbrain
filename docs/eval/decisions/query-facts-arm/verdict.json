@@ -1,0 +1,405 @@
+{
+  "decision_id": "query-facts-arm",
+  "stage": "dev",
+  "decided_at": "2026-10-06T02:10:00Z",
+  "measured_build": "garrytan/gbrain@16288b95c",
+  "overall": "on_gates_1b_and_2_passed",
+  "gate_1": {
+    "status": "fail",
+    "rule_result": {
+      "after_1_write": {
+        "on_correct": 1,
+        "off_correct": 0,
+        "higher": true,
+        "on_stale": 4,
+        "off_stale": 92,
+        "stale_not_higher": true
+      },
+      "after_5_writes": {
+        "on_correct": 0,
+        "off_correct": 0,
+        "higher": false,
+        "on_stale": 6,
+        "off_stale": 92,
+        "stale_not_higher": true
+      }
+    },
+    "why": "With the key on the reader named the remembered correction in 158 of 200 post-correction answers (0 of 200 with the key off), but the fact is dated when it was saved (the run date), after each question's simulated date; the reader treated it as not yet in effect and kept the old value. The judge scored those answers wrong rather than stale, so stale fell from 92 to 4-6 while accuracy stayed at 0-1.",
+    "forget_remember": {
+      "off": {
+        "checkpoints": {
+          "0": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          },
+          "1": {
+            "correct": 0,
+            "stale": 92,
+            "n": 100
+          },
+          "5": {
+            "correct": 0,
+            "stale": 92,
+            "n": 100
+          }
+        },
+        "outcomes": {
+          "correct": 100,
+          "stale": 184,
+          "wrong": 12,
+          "abstain": 4
+        },
+        "metered_spend_usd": 3.586
+      },
+      "on": {
+        "checkpoints": {
+          "0": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          },
+          "1": {
+            "correct": 1,
+            "stale": 4,
+            "n": 100
+          },
+          "5": {
+            "correct": 0,
+            "stale": 6,
+            "n": 100
+          }
+        },
+        "outcomes": {
+          "correct": 101,
+          "stale": 10,
+          "wrong": 181,
+          "abstain": 8
+        },
+        "metered_spend_usd": 3.9239
+      }
+    },
+    "no_loss_checks": {
+      "status": "pass",
+      "edit_sync": {
+        "off": {
+          "1": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          },
+          "5": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          }
+        },
+        "on": {
+          "1": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          },
+          "5": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          }
+        }
+      },
+      "append": {
+        "off": {
+          "1": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          },
+          "5": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          }
+        },
+        "on": {
+          "1": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          },
+          "5": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          }
+        }
+      },
+      "ceiling": "both arms are at 100% with the key off and on, so these checks cannot show a gain, only rule out a loss",
+      "metered_spend_usd": {
+        "off": 5.5857,
+        "on": 5.5821
+      }
+    },
+    "context_tokens_mean": {
+      "forget_remember_off": 3127,
+      "forget_remember_on": 3139
+    }
+  },
+  "diagnostic_correction_dated": {
+    "preregistered": false,
+    "note": "Not a gate. Same runs, except remember receives the correction's own timestamp as valid_from (bench --remember-valid-from; gbrain's remember has accepted valid_from since this branch). Decided after gate 1's cells ran, so it cannot change the decision; it shows what the arm does once a fact carries the date it took effect.",
+    "forget_remember": {
+      "off": {
+        "checkpoints": {
+          "0": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          },
+          "1": {
+            "correct": 92,
+            "stale": 8,
+            "n": 100
+          },
+          "5": {
+            "correct": 92,
+            "stale": 8,
+            "n": 100
+          }
+        },
+        "metered_spend_usd": 3.4966
+      },
+      "on": {
+        "checkpoints": {
+          "0": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          },
+          "1": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          },
+          "5": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          }
+        },
+        "metered_spend_usd": 3.3887
+      }
+    }
+  },
+  "gate_2": {
+    "status": "pass",
+    "mode": "hermetic, keyword-only (no embedding provider), so the arm matched by terms and named entity only",
+    "corpora": {
+      "namedthing": {
+        "questions": 12,
+        "fired": 0,
+        "recall10_lower": 0
+      },
+      "relational": {
+        "questions": 38,
+        "fired": 0,
+        "recall10_lower": 0
+      },
+      "longmemeval-nightly": {
+        "questions": 10,
+        "fired": 0,
+        "recall10_lower": 0
+      }
+    },
+    "vacuous": "the arm never fired on the corpora as written, which hold no saved facts",
+    "diagnostics_with_saved_facts": {
+      "namedthing+facts": {
+        "questions": 12,
+        "fired": 11,
+        "recall10_lower": 0,
+        "recall10_mean_on": 0.917,
+        "recall10_mean_off": 0.917
+      },
+      "relational+facts": {
+        "questions": 38,
+        "fired": 38,
+        "recall10_lower": 2,
+        "recall10_mean_on": 0.974,
+        "recall10_mean_off": 1.0,
+        "why_lower": "fact rows take a page slot when the row count is already full"
+      }
+    },
+    "key_off_identity": "query output with the key off is identical to garrytan/gbrain@a87c3e2af on all gate-2 corpora apart from wall-clock recency scores and random revision ids"
+  },
+  "gate_3": {
+    "status": "not_run"
+  },
+  "decision": "search.query_facts_arm is on by default (gate 1 failed at 16288b95c; gates 1b and revised 2 passed at 947536f4c)",
+  "metered_spend_usd": 26.05,
+  "spend_note": "gate 1 runs 25.56, two 6-probe smokes 0.14, and 0.35 for a duplicate run stopped after 30 probes and not used",
+  "gate_1b": {
+    "status": "pass",
+    "measured_build": "garrytan/gbrain@947536f4c",
+    "rule_result": {
+      "after_1_write": {
+        "on_correct": 100,
+        "off_correct": 92,
+        "higher": true,
+        "on_stale": 0,
+        "off_stale": 8,
+        "stale_not_higher": true
+      },
+      "after_5_writes": {
+        "on_correct": 100,
+        "off_correct": 92,
+        "higher": true,
+        "on_stale": 0,
+        "off_stale": 8,
+        "stale_not_higher": true
+      }
+    },
+    "forget_remember": {
+      "off": {
+        "checkpoints": {
+          "0": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          },
+          "1": {
+            "correct": 92,
+            "stale": 8,
+            "n": 100
+          },
+          "5": {
+            "correct": 92,
+            "stale": 8,
+            "n": 100
+          }
+        },
+        "metered_spend_usd": 3.4989
+      },
+      "on": {
+        "checkpoints": {
+          "0": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          },
+          "1": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          },
+          "5": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          }
+        },
+        "fact_row_in_context": "200 of 200 post-correction answers",
+        "metered_spend_usd": 3.3858
+      }
+    },
+    "no_loss_checks": {
+      "status": "pass",
+      "edit_sync": {
+        "off": {
+          "1": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          },
+          "5": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          }
+        },
+        "on": {
+          "1": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          },
+          "5": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          }
+        }
+      },
+      "append": {
+        "off": {
+          "1": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          },
+          "5": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          }
+        },
+        "on": {
+          "1": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          },
+          "5": {
+            "correct": 100,
+            "stale": 0,
+            "n": 100
+          }
+        }
+      },
+      "arm_fired": "0 of 600 answers in each arm: they save no facts",
+      "ceiling": "both arms are at 100% with the key off and on, so these checks rule out a loss and cannot show a gain",
+      "metered_spend_usd": {
+        "off": 5.5835,
+        "on": 5.585
+      }
+    },
+    "context_tokens_mean": {
+      "forget_remember_off": 3127,
+      "forget_remember_on": 3139
+    },
+    "metered_spend_usd": 18.0532,
+    "unmetered_note": "a first attempt that ran out of disk is not in the total; its records were lost; about two minutes of one run, under $0.50 by the observed rate"
+  },
+  "gate_2_revised": {
+    "status": "pass",
+    "measured_build": "garrytan/gbrain@947536f4c",
+    "mode": "hermetic, keyword-only",
+    "sets": {
+      "namedthing": {
+        "questions": 12,
+        "fired": 0,
+        "recall10_lower": 0
+      },
+      "relational": {
+        "questions": 38,
+        "fired": 0,
+        "recall10_lower": 0
+      },
+      "longmemeval-nightly": {
+        "questions": 10,
+        "fired": 0,
+        "recall10_lower": 0
+      },
+      "namedthing+facts": {
+        "questions": 12,
+        "fired": 11,
+        "recall10_lower": 0
+      },
+      "relational+facts": {
+        "questions": 38,
+        "fired": 38,
+        "recall10_lower": 0,
+        "recall10_lower_at_16288b95c": 2
+      }
+    }
+  },
+  "metered_spend_usd_total": 44.1
+}

@@ -27,14 +27,21 @@ import type { BrainEngine } from './engine.ts';
 
 export interface DbLockHandle {
   id: string;
-  /** Epoch-seconds timestamp retained for diagnostics and legacy mutation detection. */
+  /** Epoch-seconds text of acquired_at, diagnostics only (#6028: never a predicate term). */
   acquiredAt: string;
-  /** Opaque UUID identity; timestamps are retained only for compatibility/diagnostics. */
+  /**
+   * The lease identity. Every acquisition mints a fresh UUID (v152), so
+   * refresh/release/cleanup match on (id, holder_pid, acquisition_token)
+   * alone: a successor's row has another token, and a rewrite of
+   * `acquired_at` under a live holder (its epoch text is session-fragile:
+   * numeric scale, DateStyle, a maintenance touch) no longer costs the
+   * holder its own lease (#6028).
+   */
   acquisitionToken: string;
   release: () => Promise<void>;
   /**
    * Bump ttl_expires_at + last_refreshed_at. Returns true when this handle
-   * still owns the row (exactly one row matched the fenced predicate);
+   * still owns the row (exactly one row matched (id, holder_pid, acquisition_token));
    * false means the lock was stolen or released — the caller must stop
    * relying on mutual exclusion. Transient DB errors still THROW (they are
    * not evidence of a steal; the TTL is the backstop).
@@ -252,13 +259,14 @@ export async function tryAcquireDbLock(
       RETURNING id, extract(epoch from acquired_at)::text AS fence
     `;
     if (rows.length === 0) return null;
-    // Epoch text avoids per-session TimeZone/DateStyle differences. The
-    // UUID distinguishes acquisitions sharing one transaction-stable NOW().
+    // The UUID is the fence; the epoch text rides on the handle for
+    // diagnostics (migration-orchestration-lock.ts reports it when a lease
+    // is lost) and is never compared (#6028).
     const fence = rows[0].fence;
     const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
       await sql`
         DELETE FROM gbrain_cycle_locks
-        WHERE id = ${lockId} AND holder_pid = ${pid} AND extract(epoch from acquired_at)::text = ${fence} AND acquisition_token = ${acquisitionToken}::uuid
+        WHERE id = ${lockId} AND holder_pid = ${pid} AND acquisition_token = ${acquisitionToken}::uuid
       `;
     });
     return {
@@ -274,9 +282,9 @@ export async function tryAcquireDbLock(
           `UPDATE gbrain_cycle_locks
               SET ttl_expires_at = NOW() + ($1)::interval,
                   last_refreshed_at = NOW()
-            WHERE id = $2 AND holder_pid = $3 AND extract(epoch from acquired_at)::text = $4 AND acquisition_token = $5::uuid
+            WHERE id = $2 AND holder_pid = $3 AND acquisition_token = $4::uuid
             RETURNING id`,
-          [ttl, lockId, pid, fence, acquisitionToken],
+          [ttl, lockId, pid, acquisitionToken],
           refreshOpts,
         );
         return updated.length > 0;
@@ -285,7 +293,7 @@ export async function tryAcquireDbLock(
         deregister();
         await sql`
           DELETE FROM gbrain_cycle_locks
-          WHERE id = ${lockId} AND holder_pid = ${pid} AND extract(epoch from acquired_at)::text = ${fence} AND acquisition_token = ${acquisitionToken}::uuid
+          WHERE id = ${lockId} AND holder_pid = ${pid} AND acquisition_token = ${acquisitionToken}::uuid
         `;
       },
     };
@@ -311,12 +319,12 @@ export async function tryAcquireDbLock(
       [lockId, pid, host, ttl, stealGraceSeconds, acquisitionToken],
     );
     if (rows.length === 0) return null;
-    // Fencing identity (D5.10) — see the postgres branch for rationale.
+    // Diagnostics only (#6028); the token is the fence — see the postgres branch.
     const fence = String((rows[0] as { fence: string }).fence);
     const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
       await db.query(
-        `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2 AND extract(epoch from acquired_at)::text = $3 AND acquisition_token = $4::uuid`,
-        [lockId, pid, fence, acquisitionToken],
+        `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2 AND acquisition_token = $3::uuid`,
+        [lockId, pid, acquisitionToken],
       );
     });
     return {
@@ -328,17 +336,17 @@ export async function tryAcquireDbLock(
           `UPDATE gbrain_cycle_locks
               SET ttl_expires_at = NOW() + $1::interval,
                   last_refreshed_at = NOW()
-            WHERE id = $2 AND holder_pid = $3 AND extract(epoch from acquired_at)::text = $4 AND acquisition_token = $5::uuid
+            WHERE id = $2 AND holder_pid = $3 AND acquisition_token = $4::uuid
             RETURNING id`,
-          [ttl, lockId, pid, fence, acquisitionToken],
+          [ttl, lockId, pid, acquisitionToken],
         );
         return res.rows.length > 0;
       },
       release: async () => {
         deregister();
         await db.query(
-          `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2 AND extract(epoch from acquired_at)::text = $3 AND acquisition_token = $4::uuid`,
-          [lockId, pid, fence, acquisitionToken],
+          `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2 AND acquisition_token = $3::uuid`,
+          [lockId, pid, acquisitionToken],
         );
       },
     };

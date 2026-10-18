@@ -11,7 +11,7 @@
  * allowlist is enforced by construction, not by trust. Never throws.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn } from '../spawn.ts';
 import { createHash } from 'node:crypto';
 import { accessSync, appendFileSync, chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -19,6 +19,9 @@ import { delimiter, join } from 'node:path';
 import type { ToolCallRecord } from '../transcripts/claude-code-jsonl.ts';
 import { ensureGbrainHome, resolveGbrainHome } from '../gbrain-home.ts';
 import { seatReasonHint } from './seat.ts';
+
+/** #6316: the OpenClaw context engine's per-compaction checkpoint event. */
+export const OPENCLAW_COMPACT_EVENT = 'openclaw-compact';
 
 /** Heartbeat file line cap [S3#7]. */
 export const HEARTBEAT_MAX_LINES = 5000;

@@ -4,10 +4,13 @@
  * at depth 5 took ~22 s for traversePaths 'both' and ~3.5 s for
  * traverseGraph). The walk is now pulled through a row cap and deduped to
  * (page, depth) before the edge join, so it stays bounded and the shallow
- * neighbourhood stays complete.
+ * neighbourhood stays complete. Each walk is timed in thread CPU time (PGLite
+ * runs on this thread), which measures the work rather than how long the
+ * scheduler made it wait.
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { cpuMsAsync } from './helpers/cpu-time.ts';
 
 const N = 12;
 let engine: PGLiteEngine;
@@ -26,18 +29,16 @@ afterAll(async () => { await engine.disconnect(); });
 
 describe('graph walks on a dense clique stay bounded', () => {
   test('traversePathsDetailed both @ depth 5', async () => {
-    const t = performance.now();
-    const r = await engine.traversePathsDetailed('clique/n00', { depth: 5, direction: 'both' });
-    expect(performance.now() - t).toBeLessThan(5000);
+    let r!: Awaited<ReturnType<typeof engine.traversePathsDetailed>>;
+    expect(await cpuMsAsync(async () => { r = await engine.traversePathsDetailed('clique/n00', { depth: 5, direction: 'both' }); })).toBeLessThan(5000);
     // Every edge of the clique is reachable at depth 1 or 2; none may be lost.
     const shallow = new Set(r.paths.filter(p => p.depth <= 2).map(p => `${p.from_slug}>${p.to_slug}`));
     expect(shallow.size).toBe(N * (N - 1));
   }, 30_000);
 
   test('traverseGraph @ depth 5', async () => {
-    const t = performance.now();
-    const nodes = await engine.traverseGraph('clique/n00', 5);
-    expect(performance.now() - t).toBeLessThan(1500);
+    let nodes!: Awaited<ReturnType<typeof engine.traverseGraph>>;
+    expect(await cpuMsAsync(async () => { nodes = await engine.traverseGraph('clique/n00', 5); })).toBeLessThan(1500);
     expect(new Set(nodes.filter(n => n.depth <= 1).map(n => n.slug)).size).toBe(N);
   }, 30_000);
 

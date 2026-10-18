@@ -22,6 +22,8 @@ import {
   appendFileSync,
   chmodSync,
   existsSync,
+  readdirSync,
+  renameSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -603,3 +605,216 @@ describe('eval-spend-guard.sh', () => {
     expect(ledgerRows().length).toBe(4);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Process groups (#6776). The guarded command runs in its own process group:
+// a signal, the kill grace or a normal exit stops every process in it.
+// ---------------------------------------------------------------------------
+
+/** Alive and not a zombie (an orphan's zombie is reaped by init shortly after). */
+function alive(pid: number): boolean {
+  if (!pid) return false;
+  const state = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf-8' }).stdout.trim();
+  return state !== '' && !state.startsWith('Z');
+}
+async function waitDead(pid: number, ms = 5000): Promise<boolean> {
+  const t0 = Date.now();
+  while (alive(pid)) {
+    if (Date.now() - t0 > ms) return false;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return true;
+}
+function readPid(file: string): number {
+  return Number(readFileSync(file, 'utf-8').trim());
+}
+function killQuietly(...pids: number[]): void {
+  for (const pid of pids) {
+    if (!pid) continue;
+    try { process.kill(-pid, 'SIGKILL'); } catch { /* not a group or gone */ }
+    try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ }
+  }
+}
+/** A TERM-ignoring grandchild that writes its pid, under a leader that writes its own. */
+function groupCommand(leaderPid: string, kidPid: string, leaderSeconds = 30): string[] {
+  return ['sh', '-c', 'echo $$ > "' + leaderPid + '"; sh -c \'trap "" TERM; echo $$ > "' + kidPid + '"; exec sleep 30\' & exec sleep ' + leaderSeconds];
+}
+describe('eval-spend-guard.sh process groups (#6776)', () => {
+  test('a SIGTERMed guard stops the whole process group, including a grandchild that ignores SIGTERM (exit 143)', async () => {
+    const leaderFile = join(dir, 'leader.pid');
+    const kidFile = join(dir, 'kid.pid');
+    const g = start(['10', '4', '--', ...groupCommand(leaderFile, kidFile)], { GBRAIN_EVAL_SPEND_GUARD_KILL_GRACE_SECONDS: '1' });
+    let kid = 0;
+    let leader = 0;
+    try {
+      await waitFor(() => existsSync(kidFile) && existsSync(leaderFile), 'the command pids');
+      await new Promise((r) => setTimeout(r, 200));
+      kid = readPid(kidFile);
+      leader = readPid(leaderFile);
+      g.child.kill('SIGTERM');
+      const { code } = await g.exit;
+      expect(code).toBe(143);
+      expect(await waitDead(leader)).toBe(true);
+      expect(await waitDead(kid)).toBe(true);
+      expect(doneRows()[0]?.exit_code).toBe(143);
+    } finally {
+      killQuietly(kid, leader);
+    }
+  }, 20_000);
+
+  test('a command that exits normally but leaves a helper in its group: the helper is stopped when the guard settles', async () => {
+    const helperFile = join(dir, 'helper.pid');
+    // Async: the leftover helper holds the guard's stdout/stderr open, so a
+    // spawnSync would wait for the pipes rather than the guard.
+    const g = start(['10', '1', '--', 'sh', '-c', 'sleep 30 & echo $! > "' + helperFile + '"; exit 0'], { GBRAIN_EVAL_SPEND_GUARD_KILL_GRACE_SECONDS: '1' });
+    const { code } = await g.exit;
+    const helper = existsSync(helperFile) ? readPid(helperFile) : 0;
+    try {
+      expect(code).toBe(0);
+      expect(helper).toBeGreaterThan(0);
+      expect(await waitDead(helper)).toBe(true);
+      expect(doneRows()[0]?.exit_code).toBe(0);
+    } finally {
+      killQuietly(helper);
+    }
+  }, 20_000);
+
+  test('piped stdin still reaches the command', () => {
+    const r = spawnSync('bash', [SCRIPT, '5', '1', '--', 'sh', '-c', 'read value; printf "received:%s" "$value"'], {
+      cwd: ROOT, env: guardEnv(), input: 'example-input\n', encoding: 'utf-8', timeout: 15_000,
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('received:example-input');
+  });
+
+  test.skipIf(process.platform === 'win32')('terminal stdin becomes EOF with a notice instead of a command stuck reading the terminal', async () => {
+    let screen = '';
+    let proc: ReturnType<typeof Bun.spawn> | undefined;
+    try {
+      proc = Bun.spawn(['bash', SCRIPT, '5', '1', '--', 'sh', '-c', 'if read value; then echo READ-LINE; else echo READ-EOF; fi'], {
+        cwd: ROOT,
+        env: guardEnv(),
+        terminal: { cols: 200, rows: 20, data(_t: unknown, d: Uint8Array) { screen += new TextDecoder().decode(d); } },
+      } as unknown as Parameters<typeof Bun.spawn>[1]);
+      const exit = await Promise.race([proc.exited, new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 8000))]);
+      expect(exit).toBe(0);
+      expect(screen).toContain('READ-EOF');
+      expect(screen).toContain('stdin is a terminal');
+    } finally {
+      proc?.kill('SIGKILL');
+    }
+  }, 15_000);
+});
+
+
+// ---------------------------------------------------------------------------
+// Stale run leases (r3-d1): a guard records its run's lease while the command
+// runs; a later start REPORTS a run whose guard is gone but whose group may
+// still run (inspect/stop commands, an unknown ledger row) and kills nothing.
+// ---------------------------------------------------------------------------
+
+const leaseDir = () => ledger + '.leases';
+const leaseFiles = () => (existsSync(leaseDir()) ? readdirSync(leaseDir()) : []);
+const unknownRows = () => ledgerRows().filter((r) => r.status === 'unknown');
+function writeLease(name: string, fields: Record<string, string | number>): string {
+  mkdirSync(leaseDir(), { recursive: true });
+  const file = join(leaseDir(), name + '.lease');
+  writeFileSync(file, Object.entries(fields).map(([k, v]) => k + '=' + v).join('\n') + '\n');
+  return file;
+}
+
+describe('eval-spend-guard.sh stale run leases (r3-d1)', () => {
+  test('a run records its lease (pgid, host, boot id) while it runs and removes it once reconciled', async () => {
+    const g = start(['10', '1', '--', 'sleep', '30']);
+    try {
+      await waitFor(() => leaseFiles().some((f) => f.endsWith('.lease')), 'the lease file');
+      const body = readFileSync(join(leaseDir(), leaseFiles()[0]!), 'utf-8');
+      expect(body).toContain('run_id=' + String(runningRows()[0]!.run_id));
+      expect(body).toMatch(/\nguard_pid=\d+\n/);
+      expect(body).toMatch(/\npgid=\d+\n/);
+      expect(body).toMatch(/\nhost=.+\n/);
+      expect(body).toMatch(/\nboot_id=.+\n/);
+    } finally {
+      g.child.kill('SIGTERM');
+      await g.exit;
+    }
+    expect(leaseFiles()).toEqual([]);
+    expect(run(['10', '1', '--', 'true']).status).toBe(0);
+    expect(leaseFiles()).toEqual([]);
+  }, 20_000);
+
+  test("a SIGKILLed guard's still-running group is reported with inspect and stop commands and recorded as unknown; nothing is killed and the reservation stays counted", async () => {
+    const leaderFile = join(dir, 'leader.pid');
+    const kidFile = join(dir, 'kid.pid');
+    const g = start(['10', '4', '--', ...groupCommand(leaderFile, kidFile)]);
+    let kid = 0;
+    let leader = 0;
+    try {
+      await waitFor(() => existsSync(kidFile) && existsSync(leaderFile) && leaseFiles().length === 1, 'the command pids and lease');
+      kid = readPid(kidFile);
+      leader = readPid(leaderFile);
+      const runId = String(runningRows()[0]!.run_id);
+      const lease = join(leaseDir(), runId + '.lease');
+      g.child.kill('SIGKILL');
+      await g.exit;
+      expect(alive(leader)).toBe(true);
+
+      const next = run(['10', '1', '--', 'true']);
+      expect(next.status).toBe(0);
+      expect(next.stderr).toContain('STALE RUN ' + runId);
+      expect(next.stderr).toContain('Lease: ' + lease);
+      expect(next.stderr).toContain('ps -o pid,pgid,cmd -g ' + leader);
+      expect(next.stderr).toContain('kill -TERM -- -' + leader);
+      expect(next.stderr).toContain('nothing was stopped');
+      expect(next.stderr).toContain('retired automatically once the group exits (or now: rm ' + lease + '.reported)');
+      expect(unknownRows()).toEqual([expect.objectContaining({ stale_run_id: runId, pgid: leader, lease, cost_usd: 0, reason: 'guard_gone_group_may_run' })]);
+      expect(unknownRows()[0]).not.toHaveProperty('run_id');
+      expect(alive(leader)).toBe(true);
+      expect(alive(kid)).toBe(true);
+      expect(leaseFiles()).toEqual([runId + '.lease.reported']);
+      // The stale reservation (estimate 4) is still counted: 4 + the next run's 1 + 1 = 6 > cap 5 refuses.
+      const capped = run(['5', '1', '--', 'true']);
+      expect(capped.status).toBe(3);
+      expect(capped.stderr).not.toContain('STALE RUN');
+      expect(unknownRows()).toHaveLength(1);
+    } finally {
+      killQuietly(kid, leader);
+    }
+  }, 30_000);
+
+  test("a lease whose group is gone is removed silently; another host's lease is left alone", () => {
+    const deadGuard = spawnSync('true').pid;
+    const deadGroup = spawnSync('true').pid;
+    const gone = writeLease('gone-run', { run_id: 'gone-run', guard_pid: deadGuard, pgid: deadGroup, host: spawnSync('hostname', { encoding: 'utf-8' }).stdout.trim(), boot_id: 'unknown' });
+    const foreign = writeLease('foreign-run', { run_id: 'foreign-run', guard_pid: deadGuard, pgid: process.pid, host: 'host-b.example', boot_id: 'unknown' });
+    const r = run(['10', '1', '--', 'true']);
+    expect(r.status).toBe(0);
+    expect(r.stderr).not.toContain('STALE RUN');
+    expect(existsSync(gone)).toBe(false);
+    expect(existsSync(foreign)).toBe(true);
+    expect(unknownRows()).toEqual([]);
+  });
+  test('a reported lease is retired on the next start once its group has exited, with no new ledger row; one whose group still runs is kept', async () => {
+    const host = spawnSync('hostname', { encoding: 'utf-8' }).stdout.trim();
+    const deadGuard = spawnSync('true').pid;
+    const deadGroup = spawnSync('true').pid;
+    const live = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+    try {
+      await waitFor(() => alive(live.pid ?? 0), 'the live group');
+      const exited = writeLease('exited-run', { run_id: 'exited-run', guard_pid: deadGuard, pgid: deadGroup, host, boot_id: 'unknown' }) + '.reported';
+      renameSync(exited.replace(/\.reported$/, ''), exited);
+      const running = writeLease('running-run', { run_id: 'running-run', guard_pid: deadGuard, pgid: live.pid!, host, boot_id: 'unknown' }) + '.reported';
+      renameSync(running.replace(/\.reported$/, ''), running);
+      const r = run(['10', '1', '--', 'true']);
+      expect(r.status).toBe(0);
+      expect(r.stderr).not.toContain('STALE RUN');
+      expect(existsSync(exited)).toBe(false);
+      expect(existsSync(running)).toBe(true);
+      expect(alive(live.pid!)).toBe(true);
+      expect(unknownRows()).toEqual([]);
+    } finally {
+      killQuietly(live.pid ?? 0);
+    }
+  }, 20_000);
+});
+

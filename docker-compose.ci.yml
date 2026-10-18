@@ -5,7 +5,7 @@
 # `bun run ci:local:diff` (see scripts/ci-local.sh).
 #
 # All services are pulled as `image:` (no build) so `docker compose pull`
-# refreshes everything. #4479: the bun tag is PINNED (default 1.4.2, matching
+# refreshes everything. #4479: the bun tag is PINNED (default 1.4.3, matching
 # the CI/build bun) instead of floating with `oven/bun:1` — a floating tag
 # resolved to a newer bun than the host and produced container-only behavior
 # skew during release gates. Override per-run with GBRAIN_CI_BUN_TAG (e.g.
@@ -125,7 +125,7 @@ services:
 
   runner:
     # #4479: pinned to the host bun version by default (see header comment).
-    image: oven/bun:${GBRAIN_CI_BUN_TAG:-1.4.2}
+    image: oven/bun:${GBRAIN_CI_BUN_TAG:-1.4.3}
     working_dir: /app
     environment:
       # The bind-mounted checkout may contain private developer test keys.
@@ -156,6 +156,9 @@ services:
       - gbrain-ci-node-modules:/app/node_modules
       - gbrain-ci-admin-node-modules:/app/admin/node_modules
       - gbrain-ci-admin-dist:/app/admin/dist
+      # #6756: the worktree's admin/dist, read-only, outside /app; the runner
+      # copies it into the volume above before building (scripts/ci-hydrate-admin-dist.sh).
+      - ./admin/dist:/ci-src/admin-dist:ro
       # Compiled CLI tests must execute a Linux binary, never a host Mac build.
       - gbrain-ci-bin:/app/bin
       # Warm install cache across runs.

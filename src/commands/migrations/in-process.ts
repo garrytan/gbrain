@@ -21,12 +21,12 @@
  * `getaddrinfo ENOTFOUND` line instead of the bare `Command failed: ...`.
  */
 
-import { execSync } from 'child_process';
+import { execSync } from '../../core/spawn.ts';
 import { resolveChildCliInvocation } from '../../core/minions/job-isolation.ts';
 
-import { loadConfig, toEngineConfig } from '../../core/config.ts';
+import { loadConfig } from '../../core/config.ts';
 import { buildGatewayConfig } from '../../core/ai/build-gateway-config.ts';
-import { createEngine } from '../../core/engine-factory.ts';
+import { connectMigrationEngine } from './run-engine.ts';
 
 /** Default wall-clock guard for in-process initSchema. Matches the 600s cap
  *  the old `execSync('gbrain init --migrate-only', { timeout: 600_000 })` used,
@@ -73,9 +73,8 @@ export async function runMigrateOnlyCore(opts?: { timeoutMs?: number }): Promise
   configureGateway(buildGatewayConfig(config));
 
   const timeoutMs = opts?.timeoutMs ?? MIGRATE_ONLY_TIMEOUT_MS;
-  const engine = await createEngine(toEngineConfig(config));
+  const { engine, close } = await connectMigrationEngine(config);
   try {
-    await engine.connect(toEngineConfig(config));
     const { runInitSchemaWithRetry } = await import('../../core/init-schema-retry.ts');
     await withTimeout(
       runInitSchemaWithRetry(engine).then(() => undefined),
@@ -83,7 +82,7 @@ export async function runMigrateOnlyCore(opts?: { timeoutMs?: number }): Promise
       `schema init timed out after ${Math.round(timeoutMs / 1000)}s`,
     );
   } finally {
-    try { await engine.disconnect(); } catch { /* best-effort */ }
+    try { await close(); } catch { /* best-effort */ }
   }
 
   return { engine: config.engine };

@@ -68,7 +68,9 @@ describe('onboard entity coverage invariants', () => {
     let call = 0;
     const postgres = {
       kind: 'postgres',
+      getConfig: async () => null,
       async executeRaw(sql: string) {
+        if (sql.includes('FROM config c')) return [];
         queries.push(sql);
         call++;
         if (call === 1) return [{ count: 100_000 }];
@@ -91,7 +93,9 @@ describe('onboard entity coverage invariants', () => {
     let call = 0;
     const postgres = {
       kind: 'postgres',
-      async executeRaw() {
+      getConfig: async () => null,
+      async executeRaw(sql: string) {
+        if (sql.includes('FROM config c')) return [];
         call++;
         if (call === 1) return [{ count: 100_000 }];
         return [{ matched: 12_000, sample_size: 10_000 }];

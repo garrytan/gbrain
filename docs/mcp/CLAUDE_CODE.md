@@ -13,6 +13,21 @@ For an existing agent, start with the [memory-only walkthrough](../tutorials/con
 > Open a new empty folder (bootstrap creates the private repo for you), or make an
 > empty private repo under your own account and open the clone — bootstrap adopts it.
 
+## Fastest: `gbrain setup claude-code`
+
+```bash
+gbrain setup claude-code --dry-run   # the brain, source, launcher and owner it resolved; writes nothing
+gbrain setup claude-code             # keyless brain if none, stdio MCP entry, read-context hooks, verified
+```
+
+Setup writes the same stdio entry as Option 1 into `~/.claude.json` plus the
+`SessionStart` and `UserPromptSubmit` hooks into `~/.claude/settings.json`,
+owned by hash through a connection receipt, and smoke-tests the registration.
+Capture hooks (`--capture`) and providers (`--providers`) stay off unless you
+accept them; `--remove` deletes only unchanged entries it wrote. It refuses
+instead of starting a second owner on a live PGLite brain or creating a local
+brain next to a hosted one. Details: [gbrain setup](../guides/setup.md).
+
 ## Option 0: Install as a Claude Code plugin
 
 gbrain ships as a native Claude Code plugin — MCP server + the curated

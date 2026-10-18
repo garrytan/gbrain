@@ -22,9 +22,10 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { materializedMarkerHash } from '../timeline-marker.ts';
 import { stripHtmlComments } from '../timeline-citations.ts';
+import { SEGMENTED_SAMPLE } from './timeline.ts';
 import { repairRequestId, type RepairHandler, type RepairItem, type RepairScope, type RepairCursor } from './core.ts';
 
-interface MarkupRow { id: number; page_id: number; source_id: string; slug: string; date: string; source: string; summary: string; detail: string }
+interface MarkupRow { id: number; page_id: number; source_id: string; slug: string; date: string; source: string; summary: string; detail: string; body_storage: string }
 
 const MARKUP_SQL = `(t.summary LIKE '%<!--%' OR t.summary LIKE '%-->%' OR t.source LIKE '%<!--%' OR t.source LIKE '%-->%'
   OR t.detail LIKE '%<!--%' OR t.detail LIKE '%-->%')`;
@@ -46,7 +47,7 @@ export function dropCommentBullets(body: string): string {
 }
 
 async function markupRows(engine: BrainEngine, where: string, params: unknown[]): Promise<MarkupRow[]> {
-  return engine.executeRaw<MarkupRow>(`SELECT t.id, t.page_id, p.source_id, p.slug, t.date::text AS date, t.source, t.summary, t.detail
+  return engine.executeRaw<MarkupRow>(`SELECT t.id, t.page_id, p.source_id, p.slug, t.date::text AS date, t.source, t.summary, t.detail, p.body_storage
     FROM timeline_entries t JOIN pages p ON p.id=t.page_id
     WHERE t.event_page_id IS NULL AND p.deleted_at IS NULL AND ${MARKUP_SQL} AND ${where} ORDER BY t.page_id, t.id`, params);
 }
@@ -75,7 +76,9 @@ async function cleanRows(engine: BrainEngine, page: { id: number; slug: string; 
 export const timelineCommentsRepair: RepairHandler = {
   kind: 'timeline-comments',
   async plan(engine: BrainEngine, scope: RepairScope, after: RepairCursor | null) {
-    const rows = await markupRows(engine, 'p.source_id=ANY($1::text[]) AND p.id>$2', [scope.source_ids, after?.id ?? 0]);
+    const all = await markupRows(engine, 'p.source_id=ANY($1::text[]) AND p.id>$2', [scope.source_ids, after?.id ?? 0]);
+    const rows = all.filter(row => row.body_storage !== 'segmented');
+    const segmented = [...new Map(all.filter(row => row.body_storage === 'segmented').map(row => [row.page_id, `${row.source_id}:${row.slug}`])).values()];
     const pages = await engine.executeRaw<{ id: number; source_id: string; slug: string; compiled_truth: string; timeline: string | null }>(
       `SELECT id, source_id, slug, compiled_truth, timeline FROM pages WHERE source_id=ANY($1::text[]) AND deleted_at IS NULL AND id>$2
          AND (compiled_truth LIKE '%gbrain:materialized%' OR timeline LIKE '%gbrain:materialized%') ORDER BY id`, [scope.source_ids, after?.id ?? 0]);
@@ -93,10 +96,14 @@ export const timelineCommentsRepair: RepairHandler = {
     }
     const items: RepairItem[] = [...byPage.values()].sort((a, b) => a.id - b.id).map(p => ({ cursor: { phase: 0, id: p.id }, source_id: p.source_id, slug: p.slug,
       chars: p.chars, action: [p.bullets ? 'drop comment bullets' : '', p.rows.length ? `clean ${p.rows.length} row(s)` : ''].filter(Boolean).join(', ') }));
-    return { items, residuals: {
+    const warnings = segmented.length ? [`segmented_pages: ${all.length - rows.length} timeline row(s) with comment markup on ${segmented.length} segmented page(s) `
+      + `(${segmented.slice(0, SEGMENTED_SAMPLE).join(', ')}${segmented.length > SEGMENTED_SAMPLE ? ', …' : ''}) are left as they are: this repair rewrites a whole body as one string, `
+      + 'so it does not handle segmented pages, and no command does yet.'] : [];
+    return { ...(warnings.length ? { warnings } : {}), items, residuals: {
       comment_only_rows: rows.filter(r => !clean(r.summary)).length,
       comment_bearing_rows: rows.filter(r => !!clean(r.summary)).length,
       pages_with_comment_bullets: [...byPage.values()].filter(p => p.bullets).length,
+      ...(segmented.length ? { segmented_pages: segmented.length, segmented_rows: all.length - rows.length } : {}),
     } };
   },
   async apply(ctx, item) {

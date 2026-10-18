@@ -634,8 +634,27 @@ describe('parseOpencodeJsonl (pure — fixtures pinned to observed v1.18.18 shap
   });
 
   test('empty/garbage input → empty result, never throws', () => {
-    expect(parseOpencodeJsonl([])).toEqual({ finalText: '', toolCalls: [] });
-    expect(parseOpencodeJsonl(['{', 'null', '42'])).toEqual({ finalText: '', toolCalls: [] });
+    expect(parseOpencodeJsonl([])).toEqual({ finalText: '', toolCalls: [], errors: [] });
+    expect(parseOpencodeJsonl(['{', 'null', '42'])).toEqual({ finalText: '', toolCalls: [], errors: [] });
+  });
+
+  test('#6049: a provider error event is collected with its status, name and response error type', () => {
+    const line = JSON.stringify({ type: 'error', error: { name: 'APIError', data: {
+      message: "OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai and keep building.",
+      statusCode: 403, isRetryable: false,
+      responseBody: JSON.stringify({ type: 'error', error: { type: 'FreeTierError', message: '...' } }),
+      metadata: { url: 'https://opencode.ai/zen/v1/chat/completions' },
+    } } });
+    const parsed = parseOpencodeJsonl([line]);
+    expect(parsed.finalText).toBe('');
+    expect(parsed.errors).toEqual(["APIError 403 FreeTierError: OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai and keep building."]);
+  });
+
+  test('#6049: an error event without data or with an unparsable response body still names what it can', () => {
+    expect(parseOpencodeJsonl([JSON.stringify({ type: 'error', error: { name: 'UnknownError' } })]).errors).toEqual(['UnknownError']);
+    expect(parseOpencodeJsonl([JSON.stringify({ type: 'error', error: { name: 'APIError', data: { message: 'upstream 502', statusCode: 502, responseBody: '<html>' } } })]).errors)
+      .toEqual(['APIError 502: upstream 502']);
+    expect(parseOpencodeJsonl([JSON.stringify({ type: 'error' })]).errors).toEqual(['error event without details']);
   });
 });
 

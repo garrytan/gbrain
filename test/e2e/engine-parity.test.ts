@@ -2128,11 +2128,11 @@ describeBoth('Engine parity — traverseGraph / traversePaths (D7)', () => {
       'tg/b>tg/a:cycle-back@1',
       'tg/a>tg/b:cycle-fwd@2',
     ]);
-    // 'both' emits every touched edge in its natural direction; the cycle
-    // pair shows at depth 1 and again from b's frontier at depth 2.
+    // 'both' emits every touched edge once, in its natural direction, one
+    // hop past its shallower walked endpoint: the cycle pair at depth 1 only.
     expect(edgeShape(await pgEngine.traversePaths('tg/a', { depth: 2, direction: 'both' }))).toEqual([
       'tg/a>tg/b:cycle-fwd@1', 'tg/b>tg/a:cycle-back@1',
-      'tg/a>tg/b:cycle-fwd@2', 'tg/b>tg/a:cycle-back@2', 'tg/b>tg/c:step@2', 'tg/b>tg/x:xsrc@2',
+      'tg/b>tg/c:step@2', 'tg/b>tg/x:xsrc@2',
     ]);
   });
 
@@ -2600,6 +2600,8 @@ describeBoth('Engine parity — facts TTL read-time validity (WP5)', () => {
       bySession: texts(await eng.listFactsBySession(SRC, SESSION)),
       dupRecency: texts(await eng.findCandidateDuplicates(SRC, ENTITY, 'ttl lapsed fact')),
       dupEmbedding: texts(await eng.findCandidateDuplicates(SRC, EMB_ENTITY, 'ttl embed lapsed', { embedding: emb, embeddingModel })),
+      dupKeyword: (await eng.findCandidateDuplicates(SRC, ENTITY, 'ttl lapsed future fact', { k: 5, arm: 'keyword' })).map(r => r.fact),
+      dupKeywordEmbedding: texts(await eng.findCandidateDuplicates(SRC, EMB_ENTITY, 'ttl embed lapsed', { embedding: emb, embeddingModel, arm: 'keyword' })),
       history: texts(await eng.listFactsByEntity(SRC, ENTITY, { activeOnly: false })),
       supersessions: texts(await eng.listSupersessions(SRC)),
       health: {
@@ -2624,6 +2626,10 @@ describeBoth('Engine parity — facts TTL read-time validity (WP5)', () => {
     expect(pg.dupRecency).toEqual(activeEntity);
     // Lapsed row is not a dedup candidate → a re-stated fact re-inserts fresh.
     expect(pg.dupEmbedding).toEqual(['ttl embed live']);
+    // C2 keyword arm: same active-row filters, ranked by shared terms (most shared first).
+    expect(pg.dupKeyword[0]).toBe('ttl future fact');
+    expect([...pg.dupKeyword].sort()).toEqual(activeEntity);
+    expect(pg.dupKeywordEmbedding).toEqual(['ttl embed live']);
     // History (activeOnly:false) still shows every row.
     expect(pg.history).toEqual([
       'ttl durable fact', 'ttl future fact', 'ttl lapsed fact',

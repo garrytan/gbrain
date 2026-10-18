@@ -8,8 +8,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { CHECKPOINT_GUARD_MAX_BYTES, PgliteCheckpointGuard, checkpointGuardThreshold, writesWal } from '../src/core/pglite-engine/checkpoint-guard.ts';
+import { CHECKPOINT_GUARD_MAX_BYTES, CHECKPOINT_PROBE_REUSE_MS, PGLITE_WAL_BYTES_PER_SECOND_BOUND, PgliteCheckpointGuard, checkpointGuardThreshold, writesWal } from '../src/core/pglite-engine/checkpoint-guard.ts';
 import { GBrainError } from '../src/core/types.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 
 const MB = 1024 * 1024;
 type Guarded = { _checkpointGuard: PgliteCheckpointGuard | undefined; db: { query(sql: string): Promise<{ rows: Array<Record<string, unknown>> }> } };
@@ -24,7 +26,7 @@ function install(engine: PGLiteEngine, opts: { threshold?: number; fail?: RegExp
   }, message => opts.warnings?.push(message));
   if (opts.threshold !== undefined) (guard as unknown as { threshold: number }).threshold = opts.threshold;
   inner._checkpointGuard = guard;
-  return { checkpoints: () => calls.filter(sql => sql === 'CHECKPOINT').length, calls };
+  return { checkpoints: () => calls.filter(sql => sql === 'CHECKPOINT').length, calls, guard };
 }
 
 describe('checkpoint guard threshold', () => {
@@ -106,6 +108,48 @@ describe('PGLite outermost transaction guard', () => {
     expect(String(refused.message)).toContain('gbrain pglite-repair');
     expect(entered).toBe(false);
     expect(await engine.executeRaw('SELECT id FROM guard_probe WHERE id=7')).toEqual([]);
+  });
+});
+
+describe('probe reuse window', () => {
+  let engine: PGLiteEngine;
+  const probes = (calls: string[]) => calls.filter(sql => sql.includes('pg_control_checkpoint')).length;
+  const reuseBudget = PGLITE_WAL_BYTES_PER_SECOND_BOUND * CHECKPOINT_PROBE_REUSE_MS / 1000;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.executeRaw('CREATE TABLE guard_reuse (id int PRIMARY KEY, v text)');
+  });
+  afterAll(async () => { await engine.disconnect(); });
+
+  test('a run of small writes inside the window reads the WAL position once', async () => {
+    await engine.executeRaw('CHECKPOINT');
+    const spy = install(engine, { threshold: CHECKPOINT_GUARD_MAX_BYTES });
+    const start = Date.now();
+    for (let i = 0; i < 5; i++) await engine.transaction(async tx => { await tx.executeRaw('INSERT INTO guard_reuse VALUES ($1, $2)', [i, 'x']); });
+    if (Date.now() - start < CHECKPOINT_PROBE_REUSE_MS) expect(probes(spy.calls)).toBe(1);
+    expect(spy.checkpoints()).toBe(0);
+  });
+
+  test('a reading within one window of the threshold is never reused', async () => {
+    await engine.executeRaw('CHECKPOINT');
+    // Any reading is within a full window's budget of this threshold, so every write probes.
+    const spy = install(engine, { threshold: reuseBudget });
+    for (let i = 10; i < 13; i++) await engine.transaction(async tx => { await tx.executeRaw('INSERT INTO guard_reuse VALUES ($1, $2)', [i, 'x']); });
+    expect(probes(spy.calls)).toBe(3);
+  });
+
+  test('WAL that crosses the threshold inside a reused window checkpoints on the first probe after it', async () => {
+    await engine.executeRaw('CHECKPOINT');
+    const spy = install(engine, { threshold: CHECKPOINT_GUARD_MAX_BYTES });
+    await engine.transaction(async tx => { await tx.executeRaw("INSERT INTO guard_reuse VALUES (20, 'first')"); });
+    expect(probes(spy.calls)).toBe(1);
+    // Forced: the WAL now sits past the threshold (as if a window's writes crossed it); the reused probe still says it is far.
+    (spy.guard as unknown as { threshold: number }).threshold = 1;
+    await Bun.sleep(CHECKPOINT_PROBE_REUSE_MS + 10);
+    await engine.transaction(async tx => { await tx.executeRaw("INSERT INTO guard_reuse VALUES (21, 'after the window')"); });
+    expect(probes(spy.calls)).toBe(2);
+    expect(spy.checkpoints()).toBe(1);
   });
 });
 
@@ -222,4 +266,54 @@ describe('autocommit write statements take the guard', () => {
       expect(stdout).toContain('done 200');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }, 120_000);
+
+  test('engine-sql autocommit writes (the extraction watermark stamp) past a 64 MB max_wal_size complete instead of wedging', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-engine-sql-wal-'));
+    try {
+      const child = Bun.spawn([process.execPath, join(import.meta.dir, 'fixtures', 'pglite-engine-sql-wal-worker.ts'), dir], { stdout: 'pipe', stderr: 'pipe' });
+      const timer = setTimeout(() => child.kill('SIGKILL'), 90_000);
+      const [stdout, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+      clearTimeout(timer);
+      expect(code).toBe(0);
+      expect(stdout).toMatch(/done \d+/);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 120_000);
+});
+
+describe('engine-sql writes take the guard (GBRA-69 stamp wedge)', () => {
+  let engine: PGLiteEngine;
+  const refs = [{ slug: 'notes/a', source_id: 'default' }, { slug: 'notes/b', source_id: 'default' }];
+  type Sql = { engineSql: { transaction<T>(fn: (tx: { executeRaw(sql: string): Promise<unknown> }) => Promise<T>): Promise<T> } };
+  beforeAll(async () => {
+    configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: {} });
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    for (const { slug } of refs) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'body' });
+  });
+  afterAll(async () => { await disposePersistenceConsumer(engine); await engine.disconnect(); resetGateway(); });
+
+  test('an autocommit engine-sql write past the threshold checkpoints', async () => {
+    const spy = install(engine, { threshold: 0 });
+    expect(await engine.markPagesExtractedBatch(refs, new Date().toISOString())).toBe(2);
+    expect(spy.checkpoints()).toBe(1);
+  });
+
+  test('an engine-sql executor transaction checkpoints before BEGIN', async () => {
+    const spy = install(engine, { threshold: 0 });
+    await (engine as unknown as Sql).engineSql.transaction(tx => tx.executeRaw("UPDATE pages SET links_extracted_at = now() WHERE slug = 'notes/a'"));
+    expect(spy.checkpoints()).toBe(1);
+  });
+
+  test('inside engine.transaction() only the outermost probe checkpoints', async () => {
+    const spy = install(engine, { threshold: 0 });
+    await engine.transaction(tx => tx.markPagesExtractedBatch(refs, new Date().toISOString()));
+    expect(spy.checkpoints()).toBe(1);
+  });
+
+  test('below the threshold an engine-sql write never checkpoints', async () => {
+    const spy = install(engine, { threshold: Number.MAX_SAFE_INTEGER });
+    await engine.markPagesExtractedBatch(refs, new Date().toISOString());
+    expect(spy.checkpoints()).toBe(0);
+  });
 });

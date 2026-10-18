@@ -19,7 +19,7 @@
  * what this test exercises.
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
 import { readFactsEmbeddingDim } from '../src/core/embedding-dim-check.ts';
@@ -28,8 +28,19 @@ import { readFactsEmbeddingDim } from '../src/core/embedding-dim-check.ts';
 // If GBRAIN_PGLITE_SNAPSHOT is set (ci:local sets it for unit shards), every
 // PGlite would boot post-initSchema and these assertions ("0 tables on fresh
 // install", "bootstrap converts pre-v0.18 brain to LATEST") would fail
-// trivially. Unset for this file's process.
-delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+// trivially. Unset for this file's tests and restore it afterwards: a CI
+// shard runs hundreds of files in ONE bun process (scripts/test-shard.sh),
+// so a module-scope delete would cold-boot every later engine in the shard
+// (~3 s each, +350 s per shard; check:test-env-opt-ins pins this shape).
+let savedSnapshot: string | undefined;
+beforeAll(() => {
+  savedSnapshot = process.env.GBRAIN_PGLITE_SNAPSHOT;
+  delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+});
+afterAll(() => {
+  if (savedSnapshot === undefined) delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+  else process.env.GBRAIN_PGLITE_SNAPSHOT = savedSnapshot;
+});
 
 describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
   test('fact embedding identity bootstrap repairs old and partial schemas without inventing provenance', async () => {
@@ -149,6 +160,9 @@ describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
         ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_source_slug_key;
         ALTER TABLE pages ADD CONSTRAINT pages_slug_key UNIQUE (slug);
         DROP INDEX IF EXISTS idx_pages_source_id;
+        -- The v230 trust generation trigger's WHEN reads pages.source_id, slug and
+        -- deleted_at; a pre-v0.18 brain predates it (v230 recreates it).
+        DROP TRIGGER IF EXISTS trust_generation_update ON pages;
         ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
         DROP TABLE IF EXISTS sources CASCADE;
       `);
@@ -203,6 +217,9 @@ describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
         ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_source_slug_key;
         ALTER TABLE pages ADD CONSTRAINT pages_slug_key UNIQUE (slug);
         DROP INDEX IF EXISTS idx_pages_source_id;
+        -- The v230 trust generation trigger's WHEN reads pages.source_id, slug and
+        -- deleted_at; a pre-v0.18 brain predates it (v230 recreates it).
+        DROP TRIGGER IF EXISTS trust_generation_update ON pages;
         ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
         DROP TABLE IF EXISTS sources CASCADE;
         ALTER TABLE links DROP CONSTRAINT IF EXISTS links_resolution_type_check;

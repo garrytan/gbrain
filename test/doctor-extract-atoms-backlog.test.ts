@@ -71,6 +71,23 @@ describe('countExtractAtomsBacklog (issue #1678)', () => {
     expect(await countExtractAtomsBacklog(engine)).toBe(0);
   });
 
+  it('counts by characters at the 500-character edge for 1- to 4-byte text', async () => {
+    const bodies: Record<string, string> = {
+      'ascii-499': 'x'.repeat(499), 'ascii-500': 'x'.repeat(500),
+      'latin-499': '\u00e9'.repeat(499), 'latin-500': '\u00e9'.repeat(500),
+      'han-499': '\u6f22'.repeat(499), 'han-500': '\u6f22'.repeat(500),
+      'emoji-499': '\u{1f600}'.repeat(499), 'emoji-500': '\u{1f600}'.repeat(500),
+      'emoji-1999-bytes': '\u{1f600}'.repeat(499) + 'xyz', 'toasted': '\u6f22 granite '.repeat(4000),
+    };
+    for (const [slug, body] of Object.entries(bodies)) await engine.putPage(`article-${slug}`, { type: 'article', title: slug, compiled_truth: body });
+    const expected = Object.values(bodies).filter(body => [...body].length >= 500).length;
+    const [reference] = await engine.executeRaw<{ cnt: number }>(
+      `SELECT COUNT(*)::int AS cnt FROM pages WHERE type = 'article' AND length(COALESCE(compiled_truth, '')) >= 500`);
+    expect(reference!.cnt).toBe(expected);
+    expect(await countExtractAtomsBacklog(engine)).toBe(expected);
+    expect(await countExtractAtomsBacklog(engine, 'default')).toBe(expected);
+  });
+
   it('ignores short pages and dream-generated pages', async () => {
     await engine.putPage('article-short', { type: 'article', title: 's', compiled_truth: 'too short' });
     await engine.putPage('article-dream', {
@@ -108,6 +125,16 @@ describe('computeExtractAtomsBacklogCheck (issue #1678)', () => {
     expect(check.message).toContain('--drain');
     expect((check.details as { pack_declares_phase: boolean }).pack_declares_phase).toBe(false);
     expect((check.details as { known_approximation: string }).known_approximation).toContain('page backlog only');
+  });
+
+  it('a DB-config pack that newly declares the phase WARNs with the consent command (#6393)', async () => {
+    for (let i = 0; i < 12; i++) await seedArticle(`article-${i}`);
+    await engine.setConfig('schema_pack', 'gbrain-creator');
+    const check = await withEnv({ GBRAIN_HOME: EMPTY_HOME, GBRAIN_SCHEMA_PACK: undefined }, () =>
+      computeExtractAtomsBacklogCheck(engine));
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('gbrain config set cycle.extract_atoms.enabled true');
+    expect(check.details?.pack_declares_phase).toBe(false);
   });
 
   it('includes the source in the drain hint when backlog lives outside default', async () => {

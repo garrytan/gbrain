@@ -10,7 +10,6 @@ import { load } from 'js-yaml';
 import {
   escapeAnchorLines,
   MESSAGE_ANCHOR_RE,
-  MESSAGE_CHAR_CAP,
   OVERLAP_MESSAGES,
   PART_TARGET_BYTES,
   redactSession,
@@ -251,7 +250,7 @@ describe('redaction [fail-closed page lane]', () => {
 
 describe('part splitting [embed-skip is the binding limit]', () => {
   test('long sessions split at message boundaries with overlap; ids unique; base slug stable', () => {
-    const chunk = 'x'.repeat(MESSAGE_CHAR_CAP - 100);
+    const chunk = 'x'.repeat(3_900);
     const many = Array.from({ length: 150 }, (_, i) => ({
       role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
       timestamp: `2026-08-02T09:${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}.000Z`,

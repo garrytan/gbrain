@@ -533,7 +533,7 @@ the release the same, uses that version's `CHANGELOG.md` entry as the notes
 (`scripts/changelog-entry.sh`; falls back to a CHANGELOG link if the entry is
 missing), and attaches the compiled binaries.
 
-The executable build job pins Bun 1.4.2 and verifies the Darwin artifact with
+The executable build job pins Bun 1.4.3 and verifies the Darwin artifact with
 strict native `codesign` before publishing it. A source merge does not repair
 already-published bad binaries; an affected release needs its own explicitly
 approved recovery and asset verification. The template and plugin publishing

@@ -55,4 +55,17 @@ test/e2e/mentions-parity.test.ts
 test/e2e/persistence-publish-lock-order-postgres.test.ts
 test/e2e/p8-memory-writes-postgres.test.ts
 test/e2e/delta-cursor-integrity-postgres.test.ts
+test/e2e/trust-tier-postgres.test.ts
+test/e2e/trust-generation-postgres.test.ts
+test/e2e/fence-chunk-overlay-postgres.test.ts
+test/e2e/fence-chunk-trust-read-postgres.test.ts
+test/e2e/trust-cross-session-parity.test.ts
+test/e2e/search-keyword-paging-parity.test.ts
 test/e2e/single-write-group-parity-postgres.test.ts
+test/e2e/db-lock-token-predicate-postgres.test.ts
+test/e2e/fts-cjk-boundary-postgres.test.ts
+test/e2e/oauth-client-registered-via-postgres.test.ts
+test/e2e/oauth-owner-consent-source-postgres.test.ts
+test/e2e/entity-names-parity-postgres.test.ts
+test/e2e/segment-gc-parity.test.ts
+test/e2e/doctor-entry-deadline-postgres.test.ts

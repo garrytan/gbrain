@@ -1,0 +1,27 @@
+{
+  "fixture_id": "gen-trust-008",
+  "turns": {},
+  "trust": {
+    "items": [
+      {
+        "item_id": "i1",
+        "check": "tier",
+        "step": "s1",
+        "claim": "Emrys Galewright chairs the Glintworks Co board",
+        "tier": "operator_curated"
+      },
+      {
+        "item_id": "i2",
+        "check": "tier",
+        "step": "s2",
+        "tier": "user_confirmed"
+      },
+      {
+        "item_id": "i3",
+        "check": "tier",
+        "step": "s4",
+        "tier": "user_confirmed"
+      }
+    ]
+  }
+}

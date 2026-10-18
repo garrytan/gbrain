@@ -178,7 +178,7 @@ async function transcribeLargeFile(
   // shell metacharacters (`;`, `$()`, backticks, quotes) would be a command
   // injection if passed through a shell. Argument arrays bypass the shell
   // entirely, so audioPath is always a single literal argv element.
-  const { execFileSync } = await import('child_process');
+  const { execFileSync } = await import('./spawn.ts');
   const tmpDir = execFileSync('mktemp', ['-d']).toString().trim();
 
   try {
@@ -240,7 +240,7 @@ async function transcribeLargeFile(
 
 async function checkFfmpeg(): Promise<boolean> {
   try {
-    const { execFileSync } = await import('child_process');
+    const { execFileSync } = await import('./spawn.ts');
     execFileSync('ffmpeg', ['-version'], { stdio: 'pipe' });
     return true;
   } catch {

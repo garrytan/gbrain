@@ -33,11 +33,13 @@
  * safe).
  */
 
+import type { Action } from '../agent-output.ts';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import type { BrainEngine } from '../engine.ts';
 import { contentHash } from '../utils.ts';
+import { assertInlineBody } from '../page-body/page-shape.ts';
 import type { Page } from '../types.ts';
 import {
   resolvePhantomCanonical,
@@ -52,6 +54,7 @@ import {
   type ParsedFact,
 } from '../facts-fence.ts';
 import { locateOutsideCode } from '../fence-scan.ts';
+import { assertFenceRewritable } from '../fence-shared.ts';
 import { parseMarkdown, splitBody, serializeMarkdown } from '../markdown.ts';
 import { tryAcquireDbLock, syncLockId, type DbLockHandle } from '../db-lock.ts';
 import { isAborted } from '../abort-check.ts';
@@ -61,6 +64,8 @@ import { resolvePageWriteTarget } from '../write-through.ts';
 import { recordRenameAlias } from '../page-state/rename-alias.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { ItemRun } from '../item-failure.ts';
+import { rotationAfter, saveRotation } from '../repair/rotation.ts';
 
 /** Tagged-union outcome of a single phantom-redirect attempt. */
 export type RedirectOutcome =
@@ -84,10 +89,20 @@ export interface PhantomPassResult {
   skipped_drift: number;
   no_canonical: number;
   not_phantom: number;
+  /**
+   * #6650: top-level pages held this pass because they own legacy (unfenced)
+   * fact rows: the redirect moves rows by fence position and would strand
+   * them on the deleted phantom. Every other phantom of the source proceeds.
+   */
+  held_legacy_rows: number;
   /** True iff the pass was skipped wholesale because the writer lock was busy. */
   lock_busy: boolean;
-  /** True iff more phantoms exist than the per-cycle cap — caller surfaces to operator. */
+  /** True iff live root pages remain after this pass's window; the next pass resumes after the last slug examined. */
   more_pending: boolean;
+  /** Root pages whose redirect threw an item-scoped error this pass; each is retried when the cursor next reaches it. */
+  failures: Array<{ key: string; code: string; message: string; fix: Action }>;
+  /** Set when most examined pages failed (item_failures_systemic): the pass stopped and its cursor did not move. */
+  stopped?: { code: string; message: string };
   /**
    * Canonical slugs whose disk fence was merged with phantom rows this pass.
    * `extract_facts`'s main reconcile loop UNIONs these into its slug set so
@@ -105,6 +120,8 @@ export interface PhantomPassResult {
 }
 
 const DEFAULT_PHANTOM_LIMIT = 50;
+/** op_checkpoints op (fingerprint: source id) holding the last root slug a pass examined; '' after a pass reaches the end. */
+export const PHANTOM_REDIRECT_CURSOR_OP = 'phantom-redirect-cursor';
 const LOCK_TTL_MINUTES = 5;
 const LOCK_RETRY_INTERVAL_MS = 1000;
 const LOCK_TOTAL_TIMEOUT_MS = 30_000;
@@ -118,8 +135,10 @@ export function emptyPhantomPassResult(): PhantomPassResult {
     skipped_drift: 0,
     no_canonical: 0,
     not_phantom: 0,
+    held_legacy_rows: 0,
     lock_busy: false,
     more_pending: false,
+    failures: [],
     touched_canonicals: [],
   };
 }
@@ -243,6 +262,8 @@ function appendPhantomFenceRowsToCanonical(
  * The canonical body with the phantom's rows appended (null when every row
  * dedups onto an existing canonical row) and the phantom -> canonical row
  * number map. Shared by the file writer above and the managed redirect.
+ * Throws `FenceRewriteRefusal` when the canonical fence does not parse
+ * cleanly; the pass records the phantom as `drift` and moves nothing.
  */
 export function mergePhantomFenceRows(
   body: string,
@@ -250,7 +271,10 @@ export function mergePhantomFenceRows(
   dbMaxRowNum: number,
 ): { body: string | null; renumber: Map<number, number> } {
   const renumber = new Map<number, number>();
-  const { facts: existingFacts } = parseFactsFence(body);
+  const parsed = parseFactsFence(body);
+  // Re-rendering a canonical fence the parser skipped rows of would delete them.
+  assertFenceRewritable('facts', parsed);
+  const existingFacts = parsed.facts;
 
   // Dedup key combines claim + valid_from. We deliberately do NOT include
   // valid_until or status in the key so that a "fact about Alice" already
@@ -527,6 +551,18 @@ export async function tryRedirectPhantom(
     return { outcome: 'drift', canonical };
   }
 
+  // Only parsed rows move and the phantom is then deleted, so a phantom fence
+  // the parser skipped rows of would lose them: leave it for a person.
+  if (parseFactsFence(page.compiled_truth ?? '').warnings.length > 0) {
+    logPhantomEvent({
+      phantom_slug: page.slug,
+      outcome: 'drift',
+      source_id: sourceId,
+      reason: 'phantom facts fence does not parse cleanly',
+    });
+    return { outcome: 'drift', canonical };
+  }
+
   // D10: dry-run preview — no FS / DB / audit writes.
   if (dryRun) return { outcome: 'redirected', canonical };
 
@@ -550,6 +586,8 @@ export async function tryRedirectPhantom(
     return { outcome: 'drift', canonical };
   }
   const canonicalPath = writeTarget.ok ? writeTarget.filePath : path.join(brainDir, `${canonical}.md`);
+  const target = await engine.getPage(canonical, { sourceId });
+  if (target) assertInlineBody(target, 'phantom redirect');
   await materializeCanonicalToDisk(engine, canonical, sourceId, canonicalPath);
 
   // Disk-side first: parse phantom's fence and append to canonical's
@@ -641,6 +679,7 @@ export async function runPhantomRedirectPass(
   sourceId: string,
   dryRun: boolean,
   signal?: AbortSignal,
+  holdSlugs: ReadonlySet<string> = new Set(),
 ): Promise<PhantomPassResult> {
   const result = emptyPhantomPassResult();
   const limitRaw = process.env.GBRAIN_PHANTOM_REDIRECT_LIMIT;
@@ -664,38 +703,59 @@ export async function runPhantomRedirectPass(
   try {
     // Find unprefixed phantoms in this source. We over-fetch by 1 so
     // `more_pending` reflects whether the cap actually clipped work.
+    // #6650: held phantoms are excluded before the cap, so they never use up
+    // the pass's candidate positions. GBRA-130 A-24: a root page that is not a
+    // phantom stays live, so the pass resumes after the last slug the previous
+    // pass examined and wraps at the end; otherwise 50+ root notes would fill
+    // the window every run and a phantom sorting after them would never be seen.
+    const held = [...holdSlugs].filter(slug => !slug.includes('/'));
+    result.held_legacy_rows = held.length;
+    const after = await rotationAfter(engine, PHANTOM_REDIRECT_CURSOR_OP, sourceId) ?? '';
     const rows = await engine.executeRaw<{ slug: string }>(
       `SELECT slug FROM pages
        WHERE source_id = $1
          AND deleted_at IS NULL
          AND slug NOT LIKE '%/%'
+         AND slug <> ALL($3::text[])
+         AND slug > $4
        ORDER BY slug ASC
        LIMIT $2`,
-      [sourceId, limit + 1],
+      [sourceId, limit + 1, held, after],
     );
     result.more_pending = rows.length > limit;
 
     const touchedSet = new Set<string>();
+    const run = new ItemRun('extract_facts.phantom_redirect');
+    let examined: string | null = null;
     for (let i = 0; i < Math.min(rows.length, limit); i++) {
       // #1972: bail between phantoms on abort (each is independently committed).
       if (isAborted(signal)) break;
       const slug = rows[i].slug;
       const page = await engine.getPage(slug, { sourceId });
+      examined = slug;
       if (!page) continue;
       result.scanned += 1;
 
       let redirectResult: RedirectResult;
       try {
         redirectResult = await tryRedirectPhantom(engine, page, sourceId, brainDir, dryRun);
+        run.succeed();
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`[gbrain] phantom-redirect: ${slug} failed (${msg}); skipping\n`);
+        const { failure, systemic } = run.record(slug, err);
+        process.stderr.write(`[gbrain] phantom-redirect: ${slug} failed (${failure.code}: ${failure.message}); skipping\n`);
         logPhantomEvent({
           phantom_slug: slug,
           outcome: 'drift',
           source_id: sourceId,
-          reason: `exception: ${msg.slice(0, 200)}`,
+          reason: `exception: ${failure.message.slice(0, 200)}`,
         });
+        result.failures.push({ key: slug, code: failure.code, message: failure.message,
+          fix: { argv: ['gbrain', 'dream', '--phase', 'extract_facts', '--source', sourceId], consent: [], actor: 'agent', requires_exclusive: false,
+            why: `Reruns the facts phase for ${sourceId}; the phantom pass retries ${slug} after its cursor wraps.` } });
+        if (systemic) {
+          result.stopped = { code: 'item_failures_systemic', message: systemic.message };
+          break;
+        }
         redirectResult = { outcome: 'drift' };
       }
 
@@ -716,6 +776,8 @@ export async function runPhantomRedirectPass(
       }
     }
     result.touched_canonicals = Array.from(touchedSet).sort();
+    const next = !isAborted(signal) && rows.length <= limit ? '' : examined;
+    if (!dryRun && !result.stopped && next !== null && next !== after) await saveRotation(engine, PHANTOM_REDIRECT_CURSOR_OP, sourceId, next);
   } finally {
     try {
       await lock.release();

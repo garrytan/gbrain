@@ -14,6 +14,15 @@
  * model call; a source this host does not own preflights only when a page
  * needs work. Runs on PGLite, and on
  * Postgres through test/e2e/conversation-facts-managed-postgres.test.ts.
+ *
+ * The two #6500 regressions (a slug keyset draining a 23-page timestamp tie
+ * without crossing the source, type or soft-deletion fences; a 13-page
+ * extraction walk whose oldest unvisited page is edited mid-run and is still
+ * visited exactly once with one committed request) were contributed by
+ * @javieraldape in PR #6515. They already pass on master: #6516 adopted the
+ * production fix before they were folded, and their discrimination is
+ * historical (16 pass / 2 fail against the pre-fix extractor 2895edb3). They
+ * are carried as durable regressions, not as fail-first evidence (wave 16 R28).
  * Seams: the Core's injected extractor (no gateway), the persistence fault
  * hook (to stall publication), the maintenance wait and batch-cap test seams.
  */
@@ -90,6 +99,57 @@ async function requests(engine: BrainEngine) {
 for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
 
+  // #6500 regression (PR #6515, already green on master; see the header): the keyset listing honours every fence in a tie cluster.
+  test(`${backend}: slug keysets drain timestamp ties without crossing type, source or deletion fences`, async () => {
+    const slugs = Array.from({ length: 23 }, (_, i) => `meetings/tied-${String(i).padStart(2, '0')}`);
+    await managedBrain(async ({ engine }) => {
+      const seen: string[] = [];
+      let slugAfter: string | undefined;
+      while (true) {
+        const batch = await engine.listPages({ sourceId: 'default', type: 'meeting', sort: 'slug', slugAfter, limit: 10 });
+        if (!batch.length) break;
+        seen.push(...batch.map(page => page.slug));
+        slugAfter = batch.at(-1)!.slug;
+      }
+      expect(seen).toEqual(slugs);
+    }, { databaseUrl, setup: async ({ engine }) => {
+      await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('other', 'Other')");
+      const page = { type: 'meeting' as const, title: 'Tied', compiled_truth: transcript(), timeline: '', frontmatter: {} };
+      for (const slug of [...slugs].reverse()) await engine.putPage(slug, page);
+      await engine.putPage(slugs[0]!, page, { sourceId: 'other' });
+      await engine.putPage('meetings/tied-other-type', { ...page, type: 'person' });
+      await engine.putPage('meetings/tied-deleted', page);
+      await engine.softDeletePage('meetings/tied-deleted', { sourceId: 'default' });
+      await engine.executeRaw("UPDATE pages SET updated_at='2026-09-28T12:00:00Z'");
+    } });
+  }, 120_000);
+
+  // #6500 regression (PR #6515, already green on master; see the header): the production loop survives a mid-run edit.
+  test(`${backend}: corpus enumeration visits each page once when an unvisited page moves ahead of the cursor`, async () => {
+    await managedBrain(async brain => {
+      const { engine } = brain;
+      const slugs = Array.from({ length: 13 }, (_, i) => `meetings/walk-${String(i).padStart(2, '0')}`);
+      for (const slug of [...slugs].reverse()) await putPage(brain, transcript(` ${slug}`), slug);
+      // The oldest page starts outside the first ten-page batch. Editing it
+      // during extraction puts it ahead of updated_desc's OFFSET cursor.
+      const oldest = (await engine.listPages({ sourceId: 'default', type: 'meeting', sort: 'updated_asc', limit: 1 }))[0]!.slug;
+      const visited: string[] = [];
+      const result = await runExtractConversationFactsCore(engine, {
+        sourceId: 'default', types: ['meeting'], force: true, sleepMs: 0, overrideDisabled: true,
+        extractor: async ({ turnText }) => {
+          visited.push(slugs.find(slug => turnText.includes(slug))!);
+          if (visited.length === 1) await putPage(brain, transcript(` ${oldest} edited`), oldest);
+          // Empty facts still produce a durable terminal outcome in the batch.
+          return [];
+        },
+      });
+      expect([...visited].sort()).toEqual(slugs);
+      expect(result).toMatchObject({ pages_processed: slugs.length, pages_failed: 0 });
+      expect(await requests(engine)).toEqual([{ state: 'committed', error_code: null }]);
+      for (const slug of slugs) expect(await factsOf(engine, slug)).toEqual(['EXTRACTION_COMPLETE']);
+    }, { databaseUrl });
+  }, 120_000);
+
   test(`${backend}: a transcript's facts and outcome commit in one receipted request; the frozen batch round-trips through JSONB`, async () => {
     await managedBrain(async brain => {
       const { engine } = brain;
@@ -116,6 +176,19 @@ for (const backend of testBackends()) {
         WHERE source_id='default' AND source_markdown_slug=$1`, [SLUG]);
       expect(n).toBe(1);
       expect((await conversationOutcomesStaleCheck(engine, ['default'])).status).toBe('ok');
+    }, { databaseUrl });
+  }, 120_000);
+
+  test(`${backend}: a completed managed extraction remembers the paid attempt for the page's current content (#6764)`, async () => {
+    await managedBrain(async brain => {
+      const { engine } = brain;
+      await putPage(brain, transcript());
+      expect(await extract(engine, { n: 0 })).toMatchObject({ pages_processed: 1, pages_failed: 0 });
+      const [outcome] = (await extractorRows(engine)).filter(r => r.fact === 'EXTRACTION_COMPLETE');
+      const memos = await engine.executeRaw<{ fact_id: number | string; tier: string; target_slug: string; current: boolean }>(
+        `SELECT a.fact_id, a.tier, a.target_slug, a.reason = p.content_hash AS current FROM fact_relink_attempts a
+           JOIN pages p ON p.source_id = a.source_id AND p.slug = a.target_slug WHERE a.source_id = 'default'`);
+      expect(memos.map(m => ({ ...m, fact_id: Number(m.fact_id) }))).toEqual([{ fact_id: Number(outcome!.id), tier: 'paid_reextract', target_slug: SLUG, current: true }]);
     }, { databaseUrl });
   }, 120_000);
 
@@ -338,7 +411,8 @@ for (const backend of testBackends()) {
       const [used] = await engine.executeRaw<{ n: number }>("SELECT COALESCE(max(lifetime_ids),0)::int AS n FROM persistence_counters WHERE key LIKE 'principal:%'");
       await engine.setConfig('persistence.limits.principal_lifetime_ids', String(used!.n));
       const lifetime = await extract(engine, calls).then(() => null, (e: Error & { code?: string }) => e);
-      expect(lifetime?.code).toBe('maintenance_backpressure');
+      // #6696 (A5): a cumulative cap is the host-only pause, not a retryable wait.
+      expect(lifetime?.code).toBe('write_capacity_backpressure');
       expect(calls.n).toBe(0);
       await engine.executeRaw("DELETE FROM config WHERE key='persistence.limits.principal_lifetime_ids'");
       // Outstanding: with one request pending, a limit of 2 (80% = 1) stops admitting the next page.
@@ -361,7 +435,7 @@ for (const backend of testBackends()) {
     }, { databaseUrl });
   }, 120_000);
 
-  test(`${backend}: admission stops at 80% of the writer's reserved receipt bytes, before any model call`, async () => {
+  test(`${backend}: admission stops at 80% of the writer's reserved receipt bytes, before any model call, with the host's raise or compaction`, async () => {
     await managedBrain(async brain => {
       const { engine } = brain;
       await putPage(brain, transcript());
@@ -370,15 +444,18 @@ for (const backend of testBackends()) {
       await engine.setConfig('persistence.limits.principal_terminal_bytes', String(Number(bytes) + 20_000));
       const calls = { n: 0 };
       const error = await extract(engine, calls).then(() => null, (e: Error & { code?: string; suggestion?: string }) => e);
-      expect(error?.code).toBe('maintenance_backpressure');
-      expect(error?.message).toContain('reserved receipt bytes');
+      expect(error?.code).toBe('write_capacity_backpressure');
+      expect(error).toMatchObject({ reason: 'terminal_bytes', fix: { actor: 'host_admin',
+        argv: ['gbrain', 'config', 'set', 'persistence.limits.principal_terminal_bytes', expect.stringMatching(/^\d+$/)] } });
+      expect(error?.message).toContain('terminal_bytes');
       expect(error?.suggestion).toContain('persistence.limits.principal_terminal_bytes');
+      expect(error?.suggestion).toContain('as retained receipts compact');
       expect(calls.n).toBe(0);
       expect(await extractorRows(engine)).toEqual([]);
     }, { databaseUrl });
   }, 120_000);
 
-  test(`${backend}: admission stops at 80% of the writer's permanent request ids, before any model call`, async () => {
+  test(`${backend}: admission stops at 80% of the writer's permanent request ids, before any model call, and asks for host action, never a wait`, async () => {
     await managedBrain(async brain => {
       const { engine } = brain;
       await putPage(brain, transcript());
@@ -387,9 +464,13 @@ for (const backend of testBackends()) {
       await engine.setConfig('persistence.limits.principal_lifetime_ids', String(used + 1)); // fits one admission, but past 80%
       const calls = { n: 0 };
       const error = await extract(engine, calls).then(() => null, (e: Error & { code?: string; suggestion?: string }) => e);
-      expect(error?.code).toBe('maintenance_backpressure');
-      expect(error?.message).toContain('permanent request ids');
-      expect(error?.suggestion).toContain('persistence.limits.principal_lifetime_ids');
+      // #6696 (A5, DX round 3): above the pause line, below the hard cap; ids never free, so the fix is the host's raise.
+      expect(error?.code).toBe('write_capacity_backpressure');
+      expect(error).toMatchObject({ reason: 'lifetime_ids', fix: { actor: 'host_admin',
+        argv: ['gbrain', 'config', 'set', 'persistence.limits.principal_lifetime_ids', expect.stringMatching(/^\d+$/)] } });
+      expect(error?.message).toContain('lifetime_ids');
+      expect(error?.suggestion).toContain('never freed');
+      expect(error?.suggestion).not.toMatch(/\b(wait|retry|settle)\b/i);
       expect(calls.n).toBe(0);
     }, { databaseUrl });
   }, 120_000);
@@ -410,7 +491,7 @@ for (const backend of testBackends()) {
       const calls = { n: 0 };
       const error = await runExtractConversationFactsCore(engine, { sourceId: 'default', sleepMs: 0, overrideDisabled: true,
         extractor: async () => { calls.n++; return []; } }).then(() => null, (e: Error & { code?: string; suggestion?: string }) => e);
-      expect(error?.code).toBe('maintenance_backpressure');
+      expect(error?.code).toBe('write_capacity_backpressure');
       expect(error?.message).toContain('3 planned');
       expect(error?.suggestion).toContain(`gbrain extract-conversation-facts --source-id default --limit ${room}`);
       expect(calls.n).toBe(0);

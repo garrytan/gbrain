@@ -343,13 +343,49 @@ describe('confineTranscriptPath [S3#8]', () => {
     // Absent OUTSIDE the tree: still an escape, not a missing file.
     const outside = tdir();
     expect(confineTranscriptPath(join(outside, 'nope.jsonl'), { root })).toEqual({ ok: false, reason: 'outside_projects_dir' });
-    // Absent parent (containment unprovable): fail closed, as before.
-    expect(confineTranscriptPath(join(root, 'no-such-dir', 'nope.jsonl'), { root })).toEqual({ ok: false, reason: 'unreadable' });
+    // #6739: an absent project folder that is a direct child of the root is
+    // the first prompt in a new working folder, so it validates absent too.
+    const freshProject = join(root, 'no-such-dir', 'nope.jsonl');
+    expect(confineTranscriptPath(freshProject, { root })).toEqual({ ok: true, path: freshProject, size: 0, absent: true });
     // A symlinked parent that escapes the tree is still seen (the parent
     // resolves outside → not contained).
     const escape = join(root, 'escape');
     symlinkSync(outside, escape);
     expect(confineTranscriptPath(join(escape, 'nope.jsonl'), { root })).toEqual({ ok: false, reason: 'outside_projects_dir' });
+  });
+
+  // #6739: Claude Code creates projects/<project>/ only after the first
+  // prompt in a new working folder, so the transcript's PARENT can be absent.
+  // It validates absent only when the missing folder is a direct child of an
+  // existing ancestor contained in the root and no segment is "..".
+  test('#6739: an absent project folder directly under the root validates absent', () => {
+    const root = tdir();
+    const p = join(root, '-home-alice-example-new-project', '18c0ffee-1234-4321-9999-abcdefabcdef.jsonl');
+    expect(confineTranscriptPath(p, { root })).toEqual({ ok: true, path: p, size: 0, absent: true });
+    const existingProject = join(root, 'proj-a');
+    mkdirSync(existingProject);
+    const nested = join(existingProject, 'new-sub', 'sess.jsonl');
+    expect(confineTranscriptPath(nested, { root })).toEqual({ ok: true, path: nested, size: 0, absent: true });
+  });
+
+  test('#6739: an absent parent fails closed outside the root, across "..", two levels deep, or through a symlinked ancestor', () => {
+    const base = tdir();
+    const root = join(base, 'projects');
+    mkdirSync(root);
+    const outside = join(base, 'outside');
+    mkdirSync(outside);
+    expect(confineTranscriptPath(join(outside, 'new', 'sess.jsonl'), { root }))
+      .toEqual({ ok: false, reason: 'outside_projects_dir' });
+    expect(confineTranscriptPath(`${root}/new/../../outside/new/sess.jsonl`, { root }))
+      .toEqual({ ok: false, reason: 'unreadable' });
+    expect(confineTranscriptPath(`${root}/new/../sess-dir/sess.jsonl`, { root }))
+      .toEqual({ ok: false, reason: 'unreadable' });
+    expect(confineTranscriptPath(join(root, 'a', 'b', 'sess.jsonl'), { root }))
+      .toEqual({ ok: false, reason: 'unreadable' });
+    const escape = join(root, 'escape');
+    symlinkSync(outside, escape);
+    expect(confineTranscriptPath(join(escape, 'new', 'sess.jsonl'), { root }))
+      .toEqual({ ok: false, reason: 'outside_projects_dir' });
   });
 
   test('rejects: directory named like a transcript', () => {

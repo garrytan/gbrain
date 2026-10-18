@@ -7,7 +7,9 @@ import { protectNewBackupPath } from './private-path.ts';
 
 const MAGIC = Buffer.from('GBRAIN-BACKUP-1\n');
 const MAX_MANIFEST = 8 * 1024 * 1024;
-const MAX_BYTES = 8 * 1024 * 1024 * 1024;
+/** The archive's total payload cap (8 GiB); `gbrain backup create` checks it up front (#6649). */
+export const BACKUP_ARCHIVE_MAX_BYTES = 8 * 1024 * 1024 * 1024;
+const MAX_BYTES = BACKUP_ARCHIVE_MAX_BYTES;
 const MAX_FILES = 100_000;
 export interface ArchiveEntry { path: string; size: number; sha256: string }
 export interface ArchiveManifest { format_version: 1; entries: ArchiveEntry[]; [key: string]: unknown }

@@ -246,6 +246,8 @@ test('managed writeSingleFact supersedes a near-duplicate of the same kind like 
   await managed(async ({ engine, put }) => {
     await engine.setConfig('embedding_model', 'openai:text-embedding-3-large');
     await engine.setConfig('embedding_dimensions', '1536');
+    // Calibrate the test embedder: an uncalibrated model never supersedes by cosine (supersession-threshold.ts).
+    await engine.setConfig('facts.supersession_thresholds', JSON.stringify({ 'openai:text-embedding-3-large@1536': 0.95 }));
     await put('people/alice-example', PERSON('Alice Example'));
   }, async ({ engine, sourceId, root }) => {
     const remember = (fact: string) => writeSingleFact(engine, sourceId, { fact, provenance: 'fixture', entity: 'people/alice-example', visibility: 'world' });

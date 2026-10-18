@@ -1,12 +1,16 @@
 /** Stable OS locks for cooperating writers on one owner host. No TTL takeover. */
 import { mkdir } from 'node:fs/promises';
+import { mkdirSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { family, GLIBC, MUSL } from 'detect-libc';
+import { constants as osConstants } from 'node:os';
+import { familySync, GLIBC, MUSL } from 'detect-libc';
 
 export interface NativeExportPublisher {
   beginExport(absoluteDestination: string): object;
   publishExportFile(handle: object, relativePath: string, data: Buffer): void;
+  /** Publishes a staged regular file (absolute path, leaf links refused) copied in bounded reads, never held whole. */
+  publishExportFileFrom(handle: object, relativePath: string, absoluteSource: string): void;
   completeExport(handle: object): void;
   closeExport(handle: object): void;
 }
@@ -22,10 +26,40 @@ interface NativeBinding extends NativeExportPublisher {
 
 export class NativeLockUnavailableError extends Error {
   readonly code = 'writer_lock_unavailable';
-  constructor(message = 'Native writer locking is unavailable on this host', cause?: unknown) {
-    super(message, { cause });
+  /** #6305: 'open' when this process could not create or open the lock file itself (its directory or the file), as opposed to an addon, close or IPC failure. */
+  readonly stage?: 'open';
+  /** #6305: the OS error behind the failure (`EACCES`, `EISDIR`, `os_error_5`), when the cause names one. */
+  readonly osError?: string;
+  constructor(message = 'Native writer locking is unavailable on this host', cause?: unknown, stage?: 'open') {
+    const osError = nativeLockOsError(cause);
+    super(osError ? `${message} (${osError})` : message, { cause });
     this.name = 'NativeLockUnavailableError';
+    if (stage) this.stage = stage;
+    if (osError) this.osError = osError;
   }
+}
+
+/** #6305: this process could not create or open the lock file; a busy lock returns null instead. */
+/** #6305: the OS error of the last lock-open failure per worktree, so the consumer's release line names it (the request's blocked_reason cannot). */
+const openFailures = new Map<string, string>();
+export function noteLockOpenFailure(worktreeId: string, error: unknown): void {
+  const os = error instanceof NativeLockUnavailableError ? error.osError : undefined;
+  if (os) openFailures.set(worktreeId, os); else openFailures.delete(worktreeId);
+}
+export function lockOpenOsError(worktreeId: string | null | undefined): string | null { return worktreeId ? openFailures.get(worktreeId) ?? null : null; }
+export function isLockOpenFailure(error: unknown): error is NativeLockUnavailableError {
+  return error instanceof NativeLockUnavailableError && error.stage === 'open';
+}
+
+/** A node:fs error code, or the native addon's `(OS error N)` as its errno name (`os_error_N` when the platform has no name). */
+export function nativeLockOsError(cause: unknown): string | undefined {
+  const code = (cause as { code?: unknown } | null)?.code;
+  if (typeof code === 'string' && /^E[A-Z0-9]+$/.test(code)) return code;
+  const match = /\(OS error (\d+)\)/.exec(cause instanceof Error ? cause.message : '');
+  if (!match || match[1] === '0') return undefined;
+  const errno = Number(match[1]);
+  if (process.platform === 'win32') return `os_error_${errno}`;
+  return Object.entries(osConstants.errno).find(([, value]) => value === errno)?.[0] ?? `os_error_${errno}`;
 }
 
 export interface NativeLockHandle {
@@ -33,6 +67,12 @@ export interface NativeLockHandle {
   readonly released: boolean;
   /** Idempotent. Closing the OS handle releases its lock without unlinking. */
   release(): Promise<void>;
+}
+
+/** #6530: a lock taken by {@link acquireNativeLockSync}; release is synchronous and idempotent. */
+export interface NativeLockSyncHandle {
+  readonly released: boolean;
+  release(): void;
 }
 
 export interface NativeLockOptions {
@@ -44,16 +84,22 @@ export interface NativeLockOptions {
 }
 
 let bindingPromise: Promise<NativeBinding> | undefined;
+let bindingLoaded: NativeBinding | undefined;
 const windowsSocketRemovers = new WeakMap<NativeLockHandle, (path: string) => boolean>();
 
 async function loadBinding(): Promise<NativeBinding> {
+  return loadBindingSync();
+}
+
+function loadBindingSync(): NativeBinding {
+  if (bindingLoaded) return bindingLoaded;
   const arch = process.arch;
   if (arch !== 'x64' && arch !== 'arm64') throw new NativeLockUnavailableError(`Native writer locking does not support ${process.platform}/${arch}`);
   let binding: NativeBinding;
   let target: string;
   try {
     if (process.platform === 'linux') {
-      const libc = await family();
+      const libc = familySync();
       if (libc !== GLIBC && libc !== MUSL) throw new NativeLockUnavailableError('Cannot identify the Linux C runtime for writer locking');
       target = `linux-${arch}-${libc}`;
       // Literal requires are intentional: Bun embeds each .node asset in its
@@ -81,6 +127,7 @@ async function loadBinding(): Promise<NativeBinding> {
     if (process.platform === 'win32' && (typeof binding.openIpcMutex !== 'function' || typeof binding.removeWindowsUnixSocket !== 'function')) {
       throw new NativeLockUnavailableError('Installed native writer lock addon lacks Windows IPC support');
     }
+    bindingLoaded = binding;
     return binding;
   } catch (cause) {
     if (cause instanceof NativeLockUnavailableError) throw cause;
@@ -96,7 +143,7 @@ export async function nativeLockCapability(): Promise<{ target: string; napi: 3 
 
 export async function nativeExportPublisher(): Promise<NativeExportPublisher> {
   const binding = await (bindingPromise ??= loadBinding());
-  if (typeof binding.beginExport !== 'function' || typeof binding.publishExportFile !== 'function' ||
+  if (typeof binding.beginExport !== 'function' || typeof binding.publishExportFile !== 'function' || typeof binding.publishExportFileFrom !== 'function' ||
       typeof binding.completeExport !== 'function' || typeof binding.closeExport !== 'function') {
     throw new NativeLockUnavailableError('Installed native addon lacks safe export publication support');
   }
@@ -124,7 +171,7 @@ export async function acquireNativeLock(path: string, options: NativeLockOptions
     handle = binding.openLock(path);
   } catch (cause) {
     if (signal?.aborted) throw signal.reason;
-    throw new NativeLockUnavailableError('Cannot open the stable writer lock file', cause);
+    throw new NativeLockUnavailableError('Cannot open the stable writer lock file', cause, 'open');
   }
   let released = false;
   const release = async () => {
@@ -154,6 +201,48 @@ export async function acquireNativeLock(path: string, options: NativeLockOptions
     }
   } catch (error) {
     await release();
+    throw error;
+  }
+}
+
+/**
+ * #6530: the same OS lock for synchronous callers (git write paths that run
+ * inside sync code). Blocks the thread between attempts, so callers pass a
+ * short budget.
+ */
+export function acquireNativeLockSync(path: string, options: { timeoutMs?: number; pollMs?: number } = {}): NativeLockSyncHandle | null {
+  if (!isAbsolute(path) || path.includes('\0')) throw new TypeError('Native lock path must be absolute and contain no NUL');
+  const timeoutMs = budget(options.timeoutMs, 5000, 0);
+  const pollMs = budget(options.pollMs, 25, 1);
+  const binding = loadBindingSync();
+  let handle: object;
+  try {
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    handle = binding.openLock(path);
+  } catch (cause) {
+    throw new NativeLockUnavailableError('Cannot open the stable writer lock file', cause, 'open');
+  }
+  let released = false;
+  const releaseSync = () => {
+    if (released) return;
+    released = true;
+    try { binding.close(handle); }
+    catch (cause) { throw new NativeLockUnavailableError('Cannot close the writer lock handle; this host must stop publishing', cause); }
+  };
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = performance.now() + timeoutMs;
+  try {
+    for (;;) {
+      let acquired: boolean;
+      try { acquired = binding.tryLock(handle); }
+      catch (cause) { throw new NativeLockUnavailableError('The OS could not acquire the writer lock', cause); }
+      if (acquired) return { get released() { return released; }, release: releaseSync };
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) { releaseSync(); return null; }
+      Atomics.wait(sleeper, 0, 0, Math.min(pollMs, remaining));
+    }
+  } catch (error) {
+    releaseSync();
     throw error;
   }
 }

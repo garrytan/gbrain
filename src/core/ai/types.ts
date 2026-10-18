@@ -54,6 +54,13 @@ export interface EmbeddingTouchpoint {
    */
   model_dims?: Readonly<Record<string, number>>;
   /**
+   * PR #5921 / wave 14: models whose endpoint returns the native width whatever `dimensions` asked, and whose model
+   * card documents dynamic sizes as "slice from the start, then L2-normalize". Keyed by folded model id
+   * (`modelMatchKey`). When such a model answers at `native` and the brain expects one of `prefixes`, the gateway fits
+   * the vector (`fitMatryoshkaPrefix`); any other width keeps the dim-mismatch refusal. Partial by design.
+   */
+  matryoshka?: Readonly<Record<string, { native: number; prefixes: readonly number[] }>>;
+  /**
    * #4530: per-model maximum tokens PER SINGLE INPUT, keyed like model_dims
    * (partial by design — declare only the models whose limit is known).
    * Distinct from max_batch_tokens (whole-request budget): some hosted

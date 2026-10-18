@@ -8,17 +8,19 @@ interface ConsentRequest {
   allowedOperations: string[] | null; boundSlugPrefixes: string[] | null;
   delegatedTools: string[] | null; delegatedSlugPrefixes: string[] | null; delegatedNamespace: string | null;
   resource: string | null; expiresAt: number; csrf: string;
+  sourceChoice: { editable: boolean; options: Array<{ id: string; name: string }> };
 }
 
 export function OAuthConsentPage() {
   const [request, setRequest] = useState<ConsentRequest>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [sourceId, setSourceId] = useState('');
   useEffect(() => {
     let active = true;
     const id = pendingOAuthRequest();
     if (!id) { setError('No pending authorization request. Restart the connection from your client.'); return; }
-    api.oauthRequest(id).then(value => { if (active) setRequest(value); })
+    api.oauthRequest(id).then((value: ConsentRequest) => { if (active) { setRequest(value); setSourceId(value.sourceId ?? ''); } })
       .catch(err => { if (active) setError(err.message); });
     return () => { active = false; };
   }, []);
@@ -27,7 +29,8 @@ export function OAuthConsentPage() {
     setBusy(true);
     setError('');
     try {
-      const result = await api.decideOAuthRequest(request.id, decision, request.csrf);
+      const chosen = decision === 'approve' && request.sourceChoice.editable && sourceId !== request.sourceId ? sourceId : undefined;
+      const result = await api.decideOAuthRequest(request.id, decision, request.csrf, chosen);
       clearOAuthRequest();
       window.location.assign(result.redirectUrl);
     } catch (err) {
@@ -54,8 +57,19 @@ export function OAuthConsentPage() {
           <dt>Delegated tools</dt><dd>{request.delegatedTools?.join(', ') || 'None'}</dd>
           <dt>Delegated write paths</dt><dd>{request.delegatedNamespace === 'job' ? 'A separate namespace for each job' : request.delegatedSlugPrefixes?.join(', ') || 'None'}</dd>
         </>}
-        <dt>Write source</dt><dd>{request.sourceId ?? 'Not configured'}</dd>
-        <dt>Read sources</dt><dd>{request.allowedSources.length ? request.allowedSources.join(', ') : request.sourceId ?? 'Not configured'}</dd>
+        {request.sourceChoice.editable ? <>
+          <dt><label htmlFor="consent-source">Write source</label></dt>
+          <dd>
+            <select id="consent-source" value={sourceId} disabled={busy} onChange={event => setSourceId(event.target.value)}>
+              {request.sourceChoice.options.map(option => <option key={option.id} value={option.id}>{option.name === option.id ? option.id : `${option.name} (${option.id})`}</option>)}
+            </select>
+            <div style={{ color: 'var(--text-secondary)', marginTop: 4 }}>This client reads and writes only this source. Change it later on the Agents page or with <code>gbrain auth rescope --client</code>.</div>
+          </dd>
+          <dt>Read sources</dt><dd>{sourceId}</dd>
+        </> : <>
+          <dt>Write source</dt><dd>{request.sourceId ?? 'Not configured'}</dd>
+          <dt>Read sources</dt><dd>{request.allowedSources.length ? request.allowedSources.join(', ') : request.sourceId ?? 'Not configured'}</dd>
+        </>}
         <dt>Resource</dt><dd><code>{request.resource ?? 'No resource binding requested'}</code></dd>
         <dt>Request expires</dt><dd>{new Date(request.expiresAt).toLocaleTimeString()}</dd>
       </dl>

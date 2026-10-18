@@ -22,6 +22,7 @@ import { privatePagesFilterFragment, privateTimelineEventFilterFragment } from '
 import { PageMissingError } from '../engine-errors.ts';
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
+import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
 
 export async function addTimelineEntry(
@@ -119,7 +120,7 @@ export async function getTimeline(exec: LegacyUnscopedRead, slug: string, opts?:
       SELECT te.* FROM ${pagesJoin}
       WHERE p.slug = ${slug} ${sourceCond} ${afterCond} ${beforeCond}
         ${opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterFragment('p')}
-          AND ${privateTimelineEventFilterFragment('te')}`) : sqlFragment``}
+          AND ${privateTimelineEventFilterFragment('te')}`) : sqlFragment``}${opts?.eligibility ? sqlFragment` AND ${trustedSql(projectionEligibleSql('timeline_entries', 'te', opts.eligibility))}` : sqlFragment``}
       ORDER BY te.date DESC, te.id DESC LIMIT ${limit}`)).rows;
     return rows as unknown as TimelineEntry[];
   }

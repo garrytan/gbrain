@@ -179,7 +179,7 @@ test('#6278: a source holding frontmatter, fence and preparation-stalled files r
     const coverage = (await readHeldCoverage(engine, { sourceId: id }))[0]!;
     expect(coverageRoute(coverage)).toEqual({ fences: 1, others: 1, stalled: 1 });
     const steps = holdRepairSteps(id, coverageRoute(coverage));
-    expect(steps.commands).toEqual([`gbrain repair frontmatter --source ${id}`, `gbrain repair fences --source ${id}`, `gbrain sources writer status --source ${id} --json`,
+    expect(steps.commands).toEqual([`gbrain repair frontmatter --source ${id}`, `gbrain repair content --source ${id}`, `gbrain sources writer status --source ${id} --json`,
       `gbrain sources status ${id} --json`, `gbrain sources retry-held ${id}`, `gbrain sync --source ${id} --no-pull`]);
     expect(steps.text).toContain('preparation-stalled hold(s) are not file problems and need no repair');
     expect(result.holds_fix!.why).toContain('the 1 preparation-stalled hold(s) are not file problems and need no repair');
@@ -194,7 +194,7 @@ test('#6278: a source holding frontmatter, fence and preparation-stalled files r
     expect(check.status).toBe('warn');
     expect(check.details).toMatchObject({ held: 3, sources: [{ source_id: id, fences: 1, stalled: 1, held: 3 }] });
     expect(check.message).toContain(`gbrain sources writer status --source ${id} --json`);
-    expect(check.message).toContain('gbrain repair fences');
+    expect(check.message).toContain('gbrain repair content'); // #6377: fence holds route to the content lane
     expect(check.message).toContain('gbrain repair frontmatter');
     // retry-held schedules all three and keeps the run's options on the follow-up sync.
     const retry = await retryHeld(engine, id);

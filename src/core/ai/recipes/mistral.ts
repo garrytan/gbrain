@@ -2,9 +2,20 @@ import type { Recipe } from '../types.ts';
 
 /**
  * Mistral AI exposes an OpenAI-compatible API at https://api.mistral.ai/v1
- * (/embeddings + /chat/completions). EU-hosted — the reason this recipe
- * exists: a brain that must stay inside EU jurisdiction can run embed +
- * expansion + chat on a single provider without a US hop.
+ * (/embeddings + /chat/completions). The reason this recipe exists: a brain
+ * that wants EU-based hosting can run embed + expansion + chat on a single
+ * provider.
+ *
+ * REGION (#5302) — `api.mistral.ai` is EU-hosted by DEFAULT (Mistral: "your
+ * data is hosted in the European Union") but carries NO regional-inference
+ * assurance: Mistral's own terms allow a request to be served outside the EU
+ * unless the account disables transfers. Inference pinned to the EU is
+ * Mistral's opt-in regional endpoint, https://api.eu.mistral.ai/v1, billed
+ * at 1.1x list price per Mistral. gbrain does not switch to it by default
+ * (price and account enablement are the operator's call); opt in with
+ * `gbrain config set provider_base_urls.mistral https://api.eu.mistral.ai/v1`
+ * and verify with `gbrain config get provider_base_urls.mistral`. No separate
+ * `mistral-eu` recipe: it would duplicate every model table for one URL.
  *
  * Verified against the live API on 2026-07-19 (model catalog, embedding
  * dimensions, dimension-parameter rejection, and the batch ceiling — see
@@ -49,6 +60,9 @@ export const mistral: Recipe = {
   touchpoints: {
     embedding: {
       models: ['mistral-embed', 'mistral-embed-2312'],
+      // [R13] audit: mistral-embed's 8,192-token per-input context. Above the
+      // default chunk cap, so chunking is unchanged.
+      max_input_tokens: { 'mistral-embed': 8192, 'mistral-embed-2312': 8192 },
       default_dims: 1024,
       // Mistral's published list price. Advisory only — canonical embedding
       // spend accounting lives in src/core/embedding-pricing.ts.
@@ -90,5 +104,7 @@ export const mistral: Recipe = {
       price_last_verified: '2026-07-19',
     },
   },
-  setup_hint: 'Get an API key at https://console.mistral.ai/api-keys, then `export MISTRAL_API_KEY=...` and use `mistral:mistral-embed` (1024 dims) for embeddings.',
+  setup_hint: 'Get an API key at https://console.mistral.ai/api-keys, then `export MISTRAL_API_KEY=...` and use `mistral:mistral-embed` (1024 dims) for embeddings. '
+    + 'api.mistral.ai is EU-hosted by default without a regional-inference assurance; for EU-pinned inference (1.1x list price) run '
+    + '`gbrain config set provider_base_urls.mistral https://api.eu.mistral.ai/v1` and verify with `gbrain config get provider_base_urls.mistral`.',
 };

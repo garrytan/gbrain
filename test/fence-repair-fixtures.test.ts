@@ -71,11 +71,14 @@ const FIXTURES = harvestFixtures(import.meta.dir);
 const PRIVATE: FenceCtx = { pageVisibility: 'private' };
 
 /** Claims per section and kind, in row order, from the raw extraction. */
-function rawClaims(page: FencePage): string[] {
+/** Claims of every fence of a kind in document order; `distinct` keeps each claim's first occurrence (what a `merge_fences` dedupe leaves). */
+function rawClaims(page: FencePage, distinct = false): string[] {
   return sectionsOf(page).flatMap(([section, text]) => {
     const raw = extractRawRows(text, section);
-    return (['facts', 'takes'] as const).map(kind => `${section}:${kind}:` + (primaryFence(raw, kind)?.rows ?? [])
-      .map(r => r.byColumn.get('claim')?.text.replace(/\s+/g, ' ').trim() ?? '').join('\u0001'));
+    return (['facts', 'takes'] as const).map(kind => {
+      const claims = raw.fences.filter(f => f.kind === kind).flatMap(f => f.rows).map(r => r.byColumn.get('claim')?.text.replace(/\s+/g, ' ').trim() ?? '');
+      return `${section}:${kind}:` + (distinct ? [...new Set(claims)] : claims).join('\u0001');
+    });
   });
 }
 
@@ -112,7 +115,8 @@ describe('fence fixtures in the test suite', () => {
           continue;
         }
         expect(normalizeFences(r.page, PRIVATE).fixes).toEqual([]);
-        expect(rawClaims(r.page)).toEqual(rawClaims(before));
+        const merged = r.fixes.some(f => f.class === 'merge_fences');
+        expect(rawClaims(r.page, merged)).toEqual(rawClaims(before, merged));
         if (r.residual.length) continue;
         expect(strictPageClean(r.page)).toBe(true);
         expect(validateFenceRepair(before, r.page, { ...PRIVATE, tier: 'deterministic', issues: [...r.fixes, ...r.residual] })).toEqual({ ok: true });

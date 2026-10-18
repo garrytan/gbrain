@@ -12,7 +12,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 
-export type Lane = "unit" | "serial" | "slow" | "e2e";
+export type Lane = "unit" | "serial" | "slow" | "e2e" | "pg-arms";
 
 export interface Item {
   lane: Lane;

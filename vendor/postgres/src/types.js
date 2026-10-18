@@ -80,7 +80,7 @@ export function handleValue(x, parameters, types, options) {
       : value = x = options.transform.undefined
 
     if (value === undefined)
-      throw Errors.generic('UNDEFINED_VALUE', 'Undefined values are not allowed')
+      throw Object.assign(Errors.generic('UNDEFINED_VALUE', 'Undefined values are not allowed (parameter $' + (types.length + 1) + ')'), { parameter: types.length + 1 })
   }
 
   return '$' + (types.push(

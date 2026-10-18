@@ -43,6 +43,9 @@ const mode = readFileSync(${JSON.stringify(FAKE_GIT_MODE)}, 'utf8');
 if (mode === 'fail') process.exit(1);
 if (mode === 'url-drift') console.log('https://github.com/different/url');
 if (mode === 'url-match') console.log('https://github.com/expected/url');
+// #6530: pullRepo locates the checkout's commit lock with rev-parse --git-path.
+const gitPath = process.argv.indexOf('--git-path');
+if (gitPath !== -1) console.log(${JSON.stringify(FAKE_GIT_DIR)} + '/locks/' + process.argv[gitPath + 1]);
 `);
   // Use the already-required Bun executable: optional host tools such as jq
   // must not decide whether argv security assertions can run in CI.
@@ -330,25 +333,27 @@ describe('cloneRepo', () => {
 // ---------------------------------------------------------------------------
 
 describe('pullRepo', () => {
-  test('happy path: invokes git -C path with GIT_SSRF_FLAGS + pull --ff-only', async () => {
+  test('happy path (#6530): fetch with GIT_SSRF_FLAGS, then merge --ff-only (merge.autoStash=false) under the commit lock; never git pull', async () => {
     const repo = join(FAKE_GIT_DIR, 'pull-target');
     mkdirSync(repo, { recursive: true });
     await withEnv({ PATH: fakePath() }, async () => {
       await pullRepo(repo);
     });
-    const argv = readArgvLog()[0];
+    const calls = readArgvLog();
+    const argv = calls[0];
     expect(argv[0]).toBe('-C');
     expect(argv[1]).toBe(repo);
     expect(argv.slice(2, 2 + GIT_SSRF_FLAGS.length)).toEqual([...GIT_SSRF_FLAGS]);
-    expect(argv).toContain('pull');
-    expect(argv).toContain('--ff-only');
+    expect(argv).toContain('fetch');
     // v0.34 fix wave: subcommand flag position assertion.
-    const pullIdx = argv.indexOf('pull');
-    expect(pullIdx).toBeGreaterThan(-1);
+    const fetchIdx = argv.indexOf('fetch');
     for (const subFlag of GIT_SSRF_SUBCOMMAND_FLAGS) {
-      const flagIdx = argv.indexOf(subFlag);
-      expect(flagIdx).toBeGreaterThan(pullIdx);
+      expect(argv.indexOf(subFlag)).toBeGreaterThan(fetchIdx);
     }
+    expect(calls.some(call => call.includes('pull') || call.includes('rebase') || call.includes('stash'))).toBe(false);
+    const merge = calls.find(call => call.includes('merge'))!;
+    expect(merge.slice(merge.indexOf('merge'))).toContain('--ff-only');
+    expect(merge[merge.indexOf('merge.autoStash=false') - 1]).toBe('-c');
     rmSync(repo, { recursive: true, force: true });
   });
 

@@ -7,7 +7,9 @@
  * keep exactly the edges, drop reasons (`cross_source` vs `missing_target`),
  * unresolved counts and wanted rows that the per-page slug read and the
  * slug-only endpoint query produced, for frontmatter, dir-qualified and bare
- * wikilink, markdown, source-qualified and renamed-slug forms; (2) the shared
+ * wikilink, markdown, source-qualified and renamed-slug forms — an edge the
+ * policy resolved into the other source is written (#4680), one it refused
+ * is not; (2) the shared
  * index sees every page written after it was built (insert, rename, delete),
  * whether or not the write went through a page write path, and is reused
  * without a full slug read while the source is unchanged.
@@ -79,6 +81,13 @@ const EDGES = [
   'alpha:notes/origin > alpha:topics/shared related_to frontmatter',
   'alpha:notes/origin > alpha:topics/shared wikilink_basename wikilink-resolved',
 ];
+// #4680 (contract change): the edges the source policy resolved into beta are written, not dropped
+// after approval. Under `cross_source` the bare and qualified beta-only forms collapse to one edge;
+// a federated origin admits only the qualified forms (the bare one stays a counted `cross_source`).
+const CROSS_SOURCE_EDGES = [...EDGES,
+  'alpha:notes/origin > beta:topics/beta-only mentions markdown',
+  'alpha:notes/origin > beta:topics/shared mentions markdown',
+];
 const resolutions = (betaOnly: string, betaOnlyQualified: string, sharedQualified: string) => [
   'alice-example  missing_target', 'bob-example  missing_target', 'ideas/unwritten  missing_target', 'people/alice-example  alpha>alpha',
   'projects/gadget  missing_target', 'projects/widget  alpha>alpha', 'shared  missing_target', `topics/beta-only  ${betaOnly}`,
@@ -89,10 +98,10 @@ const POLICIES = [
   { name: 'cross-source links off', env: {}, federated: false, expected: { edges: EDGES, unresolved: 2,
     resolutions: resolutions('cross_source', 'cross_source', 'cross_source'),
     wanted: wanted('alpha:topics/beta-only', 'alpha:bob-example', 'alpha:ideas/unwritten', 'alpha:topics/beta-only') } },
-  { name: 'link_resolution.cross_source on', env: { GBRAIN_LINK_RESOLUTION_CROSS_SOURCE: '1' }, federated: false, expected: { edges: EDGES, unresolved: 2,
+  { name: 'link_resolution.cross_source on', env: { GBRAIN_LINK_RESOLUTION_CROSS_SOURCE: '1' }, federated: false, expected: { edges: CROSS_SOURCE_EDGES, unresolved: 2,
     resolutions: resolutions('alpha>beta', 'alpha>beta', 'alpha>beta'),
     wanted: wanted('alpha:bob-example', 'alpha:ideas/unwritten', 'alpha:topics/beta-only', 'beta:topics/beta-only') } },
-  { name: 'federated origin source', env: {}, federated: true, expected: { edges: EDGES, unresolved: 2,
+  { name: 'federated origin source', env: {}, federated: true, expected: { edges: CROSS_SOURCE_EDGES, unresolved: 2,
     resolutions: resolutions('cross_source', 'alpha>beta', 'alpha>beta'),
     wanted: wanted('alpha:topics/beta-only', 'alpha:bob-example', 'alpha:ideas/unwritten', 'alpha:topics/beta-only', 'beta:topics/beta-only') } },
 ];

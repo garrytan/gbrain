@@ -52,13 +52,15 @@ describe('capture op', () => {
     expect(page?.frontmatter?.captured_at).toBeDefined();
 
     // Same-ID replay retains the accepted target and timestamp. A fresh
-    // create-only request cannot silently replace that existing target.
+    // create-only request cannot silently replace that existing target: since
+    // #5385 the refusal is `revision_required` (the page exists and the call
+    // named no expected_revision), no longer the stale-revision code.
     const again = parsed(await dispatchToolCall(engine, 'capture', { content, request_id }, { ...STDIO }));
     expect(again.slug).toBe(body.slug);
     expect(again.content_hash).toBe(body.content_hash);
     const fresh = await dispatchToolCall(engine, 'capture', { content: `  ${content}\r\n` }, { ...STDIO });
     expect(fresh.isError).toBe(true);
-    expect(parsed(fresh).write_error).toBe('revision_conflict');
+    expect(parsed(fresh).write_error).toBe('revision_required');
   });
 
   test('type routes the default slug prefix (diary → life/diary/)', async () => {

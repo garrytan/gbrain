@@ -168,9 +168,10 @@ describe('find_contradictions source scoping', () => {
     expect(touchesPrivate(res)).toBe(true);
   });
 
-  // Stored text has no trustworthy snapshot provenance. Current endpoint
-  // visibility cannot authorize old private content, so restricted readers
-  // must receive an explicit unavailable result BEFORE loading any report.
+  // Stored text has no trustworthy snapshot provenance, so a scoped reader
+  // gets only findings whose sides re-read live in its scope (D9,
+  // find-contradictions-scoped.test.ts). These fixture findings carry no chunk
+  // or take ids, so none resolves: no stored text and no run total leave.
   for (const [label, overrides] of [
     ['remote scalar', { sourceId: 'alpha' }],
     ['remote federated', { auth: { allowedSources: ['alpha'] } }],
@@ -185,23 +186,13 @@ describe('find_contradictions source scoping', () => {
     ['unset trust marked implicit', { remote: undefined, sourceId: 'default', localSourceImplicit: true }],
     ['local federated marked implicit', { remote: false, sourceId: 'default', localSourceImplicit: true, auth: { allowedSources: ['alpha'] } }],
   ] as const) {
-    test(`${label}: reports unavailable before any database load`, async () => {
-      const original = engine.loadContradictionsTrend;
-      let loads = 0;
-      engine.loadContradictionsTrend = async () => {
-        loads++;
-        throw new Error('Restricted callers must not load stored reports');
-      };
-      try {
-        const res = await find_contradictions.handler(ctxOf(overrides as Partial<OperationContext>), { limit: 1, severity: 'high', slug: 'alpha/one' });
-        expect(res).toEqual({
-          contradictions: [],
-          note: 'Stored contradiction reports are temporarily available only to trusted local callers without a source filter.',
-        });
-        expect(loads).toBe(0);
-      } finally {
-        engine.loadContradictionsTrend = original;
-      }
+    test(`${label}: no stored finding, text or run total leaves`, async () => {
+      const res = await find_contradictions.handler(ctxOf(overrides as Partial<OperationContext>), { limit: 1, severity: 'high', slug: 'alpha/one' }) as Record<string, unknown>;
+      expect(res.contradictions).toEqual([]);
+      expect(res).not.toHaveProperty('total_in_run');
+      const text = JSON.stringify(res);
+      expect(text).not.toContain('beta/secret');
+      expect(text).not.toContain('alpha/private-note');
     });
   }
 

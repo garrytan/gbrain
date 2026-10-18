@@ -46,6 +46,7 @@ function proposeEngine(pageCount: number): BrainEngine {
     kind: 'pglite',
     async executeRaw<T>(sql: string): Promise<T[]> {
       if (sql.includes(PAGE_SQL_MARKER)) return pages as T[];
+      if (sql.includes('FROM persistence_brain')) return [{ enabled: false } as unknown as T]; // #6482: the strict mode reader needs one well-formed unmanaged row.
       return [] as T[];
     },
     async getConfig() { return null; },
@@ -151,6 +152,7 @@ describe('phases consume deadlineAtMs (red on master: option was ignored)', () =
       },
       async executeRaw<T>(sql: string): Promise<T[]> {
         if (sql.includes('INSERT')) inserts.push(sql);
+        if (sql.includes('FROM persistence_brain')) return [{ enabled: false } as unknown as T]; // #6482: the strict mode reader needs one well-formed unmanaged row.
         return [] as T[];
       },
       async getConfig() { return null; },

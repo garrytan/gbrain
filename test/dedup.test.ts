@@ -4,7 +4,8 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { dedupResults } from '../src/core/search/dedup.ts';
+import { dedupResults, MAX_PER_SEGMENTED_PAGE, SEGMENT_CLUSTER_BYTES } from '../src/core/search/dedup.ts';
+import { applySnippetCap } from '../src/core/search/snippet-cap.ts';
 import type { SearchResult } from '../src/core/types.ts';
 
 function makeResult(overrides: Partial<SearchResult> = {}): SearchResult {
@@ -298,5 +299,54 @@ describe('compiled truth guarantee keeps evidence and score order (read-path aud
     const out = dedupResults(results);
     expect(out.map(r => r.chunk_id)).toEqual([1, 2, 3, 4]);
     for (let i = 1; i < out.length; i++) expect(out[i - 1].score).toBeGreaterThanOrEqual(out[i].score);
+  });
+});
+
+// Wave B PR 2 (spec 7.5): a segmented page keeps up to 2 chunks per occurrence cluster (occurrences more than
+// SEGMENT_CLUSTER_BYTES apart are separate regions), at most MAX_PER_SEGMENTED_PAGE in all; inline pages keep 2.
+// Fails when the regions are ignored (every page capped at 2), clusters split at or below 1 MiB, or the page total
+// passes 6.
+describe('segmented pages: two chunks per occurrence cluster, six per page', () => {
+  const MIB = 1024 * 1024;
+  const WORDS = ['amber', 'basil', 'cedar', 'delta', 'ember', 'fjord', 'grove', 'heron', 'iris', 'juniper', 'kelp', 'lotus'];
+  /** Hits on page `slug`, one per stored occurrence position, in score order, each with distinct text. */
+  function hits(slug: string, positions: number[], firstId: number): { results: SearchResult[]; regions: Map<number, number> } {
+    const results = positions.map((_, i) => makeResult({ slug, page_id: firstId, chunk_id: firstId + i, chunk_index: 10 + i, score: 1 - i * 0.01,
+      chunk_text: `${WORDS[i % WORDS.length]} ${WORDS[(i * 5 + 3) % WORDS.length]} passage ${i} ${'x'.repeat(i)}` }));
+    return { results, regions: new Map(positions.map((at, i) => [firstId + i, at])) };
+  }
+
+  test('regions more than 1 MiB apart keep two chunks each, capped at six per page', () => {
+    const { results, regions } = hits('chat/huge', [0, 0, 0, 3 * MIB, 3 * MIB, 3 * MIB, 6 * MIB, 6 * MIB, 9 * MIB, 9 * MIB, 12 * MIB, 12 * MIB], 100);
+    const out = dedupResults(results, { regions });
+    expect(MAX_PER_SEGMENTED_PAGE).toBe(6);
+    expect(out.length).toBe(6);
+    const perRegion = new Map<number, number>();
+    for (const r of out) perRegion.set(regions.get(r.chunk_id)!, (perRegion.get(regions.get(r.chunk_id)!) ?? 0) + 1);
+    expect([...perRegion.entries()].sort((a, b) => a[0] - b[0])).toEqual([[0, 2], [3 * MIB, 2], [6 * MIB, 2]]);
+  });
+
+  test('occurrences at most 1 MiB apart are one region; one byte further starts the next', () => {
+    const near = hits('chat/near', [0, SEGMENT_CLUSTER_BYTES, 2 * SEGMENT_CLUSTER_BYTES, 3 * SEGMENT_CLUSTER_BYTES], 200);
+    expect(dedupResults(near.results, { regions: near.regions }).length).toBe(2);
+    const apart = hits('chat/apart', [0, 0, SEGMENT_CLUSTER_BYTES + 1, SEGMENT_CLUSTER_BYTES + 1, 2 * SEGMENT_CLUSTER_BYTES + 2], 300);
+    expect(dedupResults(apart.results, { regions: apart.regions }).map(r => r.chunk_id).sort()).toEqual([300, 301, 302, 303, 304]);
+  });
+
+  test('inline pages keep two chunks, with or without regions for other pages', () => {
+    const seg = hits('chat/huge', [0, 0, 3 * MIB, 3 * MIB], 400);
+    const inline = hits('notes/inline', [0, 0, 0, 0, 0], 500).results;
+    const out = dedupResults([...seg.results, ...inline], { regions: seg.regions });
+    expect(out.filter(r => r.slug === 'notes/inline').map(r => r.chunk_id)).toEqual([500, 501]);
+    expect(out.filter(r => r.slug === 'chat/huge').length).toBe(4);
+    expect(dedupResults(inline).map(r => r.chunk_id)).toEqual([500, 501]);
+    expect(dedupResults(seg.results).length).toBe(2);
+  });
+
+  test('every kept hit of a segmented page points at its own window', () => {
+    const { results, regions } = hits('chat/huge', [0, 0, 3 * MIB, 3 * MIB, 6 * MIB, 6 * MIB], 600);
+    const capped = applySnippetCap(dedupResults(results, { regions }), 10);
+    expect(capped.length).toBe(6);
+    for (const r of capped) expect(r.chunk_text).toContain(`get_page chat/huge around_chunk_id=${r.chunk_id}]`);
   });
 });

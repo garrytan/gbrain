@@ -14,6 +14,7 @@ import { matchingCloseBracket } from '../llm-json.ts';
 import { maintenancePreflight } from '../persistence/prepared-maintenance.ts';
 import { parseConversation } from '../conversation-parser/parse.ts';
 import { chroniclePageDate } from './eligibility.ts';
+import { chronicleSettings } from './config.ts';
 import { buildChronicleEvent, pinDepth, publishChronicleGeneration, type BuiltChronicleEvent } from './publish.ts';
 
 export interface ChronicleEventProposal {
@@ -51,8 +52,9 @@ export type ChronicleJudge = (input: ChronicleJudgeInput) => Promise<ChronicleJu
  * Proposals refused before publication, never written:
  *   - 'future_dated': dated after the depth page's own day (a plan, follow-up or scheduled item).
  *   - 'date_imprecise': the judge could not give the day ("back in 2024" → "2024").
+ *   - 'over_cap' (#5329): past the page's `chronicle.max_events_per_page` after the date screen, in the judge's order.
  */
-export type ChronicleDropReason = 'future_dated' | 'date_imprecise';
+export type ChronicleDropReason = 'future_dated' | 'date_imprecise' | 'over_cap';
 export type ChronicleDropCounts = Partial<Record<ChronicleDropReason, number>>;
 
 export interface ChronicleExtractResult {
@@ -148,15 +150,20 @@ const DAY_PRECISION = /^\d{4}-\d{2}-\d{2}(?:$|[T ])/;
  * CL-1/CL-2: refuse proposals the page cannot support before anything is written. A `when` without
  * a day (YYYY, YYYY-MM) is `date_imprecise`: the timeline stores days, so pinning it to the first of
  * the month or year would invent one. A day after the page's own day is `future_dated`.
+ * #5329: of the dated survivors, at most `maxEvents` are kept, the first in the judge's order (a
+ * deterministic cut: the judge lists a page's events as it reads them); the rest are `over_cap`.
+ * The cap runs after the screen, so a proposal dropped for its date never takes a slot. Counting
+ * costs no provider call.
  */
 export function screenChronicleProposals(proposals: ChronicleEventProposal[], ctx: Pick<ChronicleJudgeContext, 'pageDates'>,
-  tz: string, now: Date): { kept: ChronicleEventProposal[]; dropped: ChronicleDropCounts } {
+  tz: string, now: Date, cap: { maxEvents: number }): { kept: ChronicleEventProposal[]; dropped: ChronicleDropCounts } {
   const cutoff = chronicleEventCutoff(ctx, tz, now);
   const kept: ChronicleEventProposal[] = [];
   const dropped: ChronicleDropCounts = {};
   for (const ev of proposals) {
     const reason: ChronicleDropReason | null = !DAY_PRECISION.test(ev.when.trim()) ? 'date_imprecise'
-      : isoDay(ev.when.trim(), tz) > cutoff ? 'future_dated' : null;
+      : isoDay(ev.when.trim(), tz) > cutoff ? 'future_dated'
+      : kept.length >= cap.maxEvents ? 'over_cap' : null;
     if (reason) dropped[reason] = (dropped[reason] ?? 0) + 1;
     else kept.push(ev);
   }
@@ -169,7 +176,7 @@ export function allDroppedReason(dropped: ChronicleDropCounts): ChronicleDropRea
 }
 
 /** The latest message timestamp of a chat-shaped body (multi-day conversations end on their last message). */
-function lastMessageAt(body: string, fallbackDate: string | undefined): Date | null {
+export function lastMessageAt(body: string, fallbackDate: string | undefined): Date | null {
   const { messages } = parseConversation(body, { fallbackDate, noPolish: true, noFallback: true });
   let last: Date | null = null;
   for (const m of messages) {
@@ -186,9 +193,14 @@ function asDate(value: unknown): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-/** The judge input for one immutable depth snapshot (E5: the judge never re-reads the page). */
+/**
+ * The judge input for one immutable depth snapshot (E5: the judge never re-reads the page). `lastMessage` is the
+ * body's last message time when the caller read the body itself (a segmented page, block by block); `compiled_truth`
+ * is then its lead.
+ */
 export function chronicleJudgeContext(page: { slug: string; type: string; title: string; compiled_truth?: string | null;
-  effective_date?: unknown; effective_date_source?: string | null; frontmatter?: Record<string, unknown> | null }): ChronicleJudgeContext {
+  effective_date?: unknown; effective_date_source?: string | null; frontmatter?: Record<string, unknown> | null },
+  lastMessage?: Date | null): ChronicleJudgeContext {
   const fm = (page.frontmatter ?? {}) as Record<string, unknown>;
   const edRaw = page.effective_date as unknown;
   const effectiveDate: string | null =
@@ -200,18 +212,19 @@ export function chronicleJudgeContext(page: { slug: string; type: string; title:
   const body = page.compiled_truth ?? '';
   const own = chroniclePageDate({ effectiveDate: page.effective_date as Date | string | null | undefined,
     effectiveDateSource: page.effective_date_source ?? null, frontmatter: fm });
-  const pageDates = [own, asDate(fm.end), lastMessageAt(body, own?.toISOString().slice(0, 10))].filter((d): d is Date => d !== null);
+  const last = lastMessage !== undefined ? lastMessage : lastMessageAt(body, own?.toISOString().slice(0, 10));
+  const pageDates = [own, asDate(fm.end), last].filter((d): d is Date => d !== null);
   return {
     effectiveDate, attendees, pageDates,
     input: { slug: page.slug, type: page.type, title: page.title, body, effectiveDate, attendees },
   };
 }
 
-/** Proposals → event pages for one depth snapshot; proposals the page cannot support are dropped first. */
+/** Proposals → event pages for one depth snapshot; proposals the page cannot support, then those past the cap, are dropped first. */
 export function buildChronicleEvents(proposals: ChronicleEventProposal[], ctx: ChronicleJudgeContext,
-  depth: { slug: string; visibility: 'private' | 'world'; contentHash: string }, opts: { tz: string; now: Date },
+  depth: { slug: string; visibility: 'private' | 'world'; contentHash: string }, opts: { tz: string; now: Date; maxEvents: number },
 ): { events: BuiltChronicleEvent[]; dropped: ChronicleDropCounts } {
-  const { kept, dropped } = screenChronicleProposals(proposals, ctx, opts.tz, opts.now);
+  const { kept, dropped } = screenChronicleProposals(proposals, ctx, opts.tz, opts.now, { maxEvents: opts.maxEvents });
   const events = kept.map((ev) => buildChronicleEvent(ev, {
     depthSlug: depth.slug, attendees: ctx.attendees, effectiveDate: ctx.effectiveDate, tz: opts.tz,
     visibility: depth.visibility, depthHash: depth.contentHash, isoDay, normalizeKind,
@@ -229,10 +242,13 @@ export function buildChronicleEvents(proposals: ChronicleEventProposal[], ctx: C
  */
 export async function runChronicleExtract(
   engine: BrainEngine,
-  opts: { slug: string; sourceId?: string; judge?: ChronicleJudge; tz?: string; signal?: AbortSignal },
+  opts: { slug: string; sourceId?: string; judge?: ChronicleJudge; tz?: string; signal?: AbortSignal;
+    /** #5329: events published from this page; `chronicle.max_events_per_page` when omitted. */
+    maxEvents?: number },
 ): Promise<ChronicleExtractResult> {
   const sourceId = opts.sourceId ?? 'default';
   const tz = opts.tz ?? 'UTC';
+  const maxEvents = opts.maxEvents ?? (await chronicleSettings(engine)).maxEventsPerPage;
   const snapshot = await engine.readPageSnapshot(opts.slug, { sourceId });
   if (!snapshot) return { slug: opts.slug, status: 'skipped', events_written: 0, reason: 'page_not_found' };
   const ctx = chronicleJudgeContext(snapshot.page);
@@ -262,7 +278,7 @@ export async function runChronicleExtract(
   }
   const pin = pinDepth(snapshot);
   const built = buildChronicleEvents(proposals, ctx, { slug: pin.slug, visibility: pin.visibility, contentHash: pin.contentHash },
-    { tz, now: new Date() });
+    { tz, now: new Date(), maxEvents });
   const generation = await publishChronicleGeneration(engine, {
     sourceId, pin, maintenance, decisionRequestId: null, signal: opts.signal, events: built.events,
   });

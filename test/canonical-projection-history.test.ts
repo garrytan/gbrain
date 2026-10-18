@@ -10,6 +10,8 @@ import { parseMarkdown } from '../src/core/markdown.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
+/** A publication declares its writer's tier (the coordinator does); the timeline rows these put_page fixtures project are agent_written. */
+const AGENT_PUBLICATION = { ...TEST_WRITE_ATTRIBUTION, trust: { tier: 'agent_written' as const, origin: null } };
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
@@ -182,7 +184,7 @@ describe('#5567 coordinated writes keep database-only timeline history', () => {
         await f.legacyTimeline(slug, legacy);
         const snapshot = await f.engine.readPageSnapshot(slug, { sourceId: f.sourceId, includeDeleted: true });
         const project = await prepareCanonicalProjections(f.engine, parseMarkdown(page(`Next for ${writer}.`), slug), slug, f.sourceId, snapshot, writer);
-        await f.engine.transaction(tx => withCoordinatedWrite(tx, [f.sourceId], () => project(tx), TEST_WRITE_ATTRIBUTION));
+        await f.engine.transaction(tx => withCoordinatedWrite(tx, [f.sourceId], () => project(tx), AGENT_PUBLICATION));
         expect(await f.timeline(slug)).toEqual([legacy]);
         await f.engine.transaction(tx => withCoordinatedWrite(tx, [f.sourceId], () => tx.executeRaw(
           'DELETE FROM timeline_entries WHERE page_id=$1', [snapshot!.page.id]), TEST_WRITE_ATTRIBUTION));

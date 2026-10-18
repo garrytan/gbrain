@@ -22,6 +22,10 @@
  *   - 'gateway_billing' — provider credit, quota, or billing hard limit failed.
  *   - 'gateway_rate_limit' — provider rate limit; retry policy remains with the caller.
  *   - 'write_refused'   — the write path refused the facts write (an OperationError); the detail starts with its code.
+ *   - 'write_pending_accepted' — the facts write was accepted and its durable receipt is still queued, running or
+ *     recovering after the publish wait; it commits later. Information, not a failure.
+ *   - 'write_deferred_unadmitted' — the canonical writer was busy before admission (writer_lock_unavailable, no
+ *     receipt): nothing was accepted and the job retries.
  *   - eligibility_skip is intentionally NOT logged (high cardinality, low signal).
  *
  * The writer is best-effort — a failure to log SHOULDN'T blow up the
@@ -55,6 +59,8 @@ export const FACTS_ABSORB_REASONS = [
   'gateway_rate_limit',
   'gateway_model_not_found',
   'write_refused',
+  'write_pending_accepted',
+  'write_deferred_unadmitted',
 ] as const;
 
 /**
@@ -66,6 +72,10 @@ export const FACTS_ABSORB_REASONS = [
 export const DETERMINISTIC_WRITE_REFUSALS: readonly string[] = [
   'writer_coordinator_required', 'permission_denied', 'invalid_params', 'writer_registration_required',
 ];
+
+/** #6778: reasons for facts writes that are not refusals; doctor facts_extraction_health keeps them out of the failure threshold. */
+export const WRITE_PENDING_ACCEPTED = 'write_pending_accepted';
+export const WRITE_DEFERRED_UNADMITTED = 'write_deferred_unadmitted';
 
 /** The OperationError code of a write-path refusal, or null. Name check keeps this module import-light. */
 export function writeRefusalCode(err: unknown): string | null {
@@ -167,7 +177,19 @@ export async function writeFactsAbsorbFailure(
   const errorType = err instanceof Error && err.name ? err.name : 'Error';
   const refusal = writeRefusalCode(err);
   if (refusal) {
-    await writeFactsAbsorbLog(engine, ref, 'write_refused', `${refusal} (${errorType}): ${(err as Error).message}`, sourceId);
+    const message = (err as Error).message;
+    if (refusal === 'write_pending') {
+      const pending = await pendingReceipt(engine, err);
+      if (pending) {
+        await writeFactsAbsorbLog(engine, ref, WRITE_PENDING_ACCEPTED,
+          `${refusal} (${errorType}) request_id ${pending.request_id} (${pending.state}): ${message}`, sourceId);
+        return;
+      }
+    } else if (refusal === 'writer_lock_unavailable' && (err as { writeRequest?: unknown }).writeRequest === undefined) {
+      await writeFactsAbsorbLog(engine, ref, WRITE_DEFERRED_UNADMITTED, `${refusal} (${errorType}): ${message}`, sourceId);
+      return;
+    }
+    await writeFactsAbsorbLog(engine, ref, 'write_refused', `${refusal} (${errorType}): ${message}`, sourceId);
     return;
   }
   const globalClass = classifyGlobalLlmError(err);
@@ -181,6 +203,25 @@ export async function writeFactsAbsorbFailure(
           ? 'gateway_model_not_found'
           : classifyFactsAbsorbError(err);
   await writeFactsAbsorbLog(engine, ref, reason, `${reason.startsWith('gateway_') ? 'provider request failed' : 'extraction failed'} (${errorType})`, sourceId);
+}
+
+/**
+ * #6778: the durable receipt behind a `write_pending` error, read back from the journal, when it is still queued,
+ * running or recovering; null when the error names no receipt, the row is gone or terminal, or the read fails.
+ */
+async function pendingReceipt(engine: BrainEngine, err: unknown): Promise<{ request_id: string; state: string } | null> {
+  const { writeRequest, receiptFields } = err as { writeRequest?: { request_id?: unknown }; receiptFields?: { principal_kind?: unknown; principal_id?: unknown } };
+  const requestId = writeRequest?.request_id;
+  if (typeof requestId !== 'string' || typeof receiptFields?.principal_kind !== 'string' || typeof receiptFields.principal_id !== 'string') return null;
+  try {
+    const [row] = await engine.executeRaw<{ request_id: string; state: string }>(
+      `SELECT request_id::text AS request_id, state FROM persistence_requests
+        WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid AND state IN ('queued','running','recovering')`,
+      [receiptFields.principal_kind, receiptFields.principal_id, requestId]);
+    return row ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**

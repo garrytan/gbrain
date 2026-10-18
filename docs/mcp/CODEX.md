@@ -11,6 +11,29 @@ Adding memory to an existing Codex agent preserves its identity and needs no pri
 > durable body — not just a connection? That's `gbrain bootstrap`: see the paste
 > block in the README and [docs/guides/bootstrap.md](../guides/bootstrap.md).
 
+## Fastest local path: `gbrain setup codex`
+
+For a brain on this machine, one command creates a keyless brain when there is
+none, registers the stdio MCP server, wires the read-context hooks with their
+trust entries and smoke-tests the registration:
+
+```bash
+bun install -g github:garrytan/gbrain
+gbrain setup codex --dry-run   # the resolved target and every step; writes nothing
+gbrain setup codex             # wire and verify
+gbrain setup codex --remove    # remove only what setup wrote
+```
+
+It writes `[mcp_servers.gbrain]` and one `[hooks.state."…"]` trust table per
+hook into `$CODEX_HOME/config.toml`, and the `SessionStart` and
+`UserPromptSubmit` hooks into `$CODEX_HOME/hooks.json`. Codex runs a user hook
+only when config.toml trusts its exact command, so setup writes both and owns
+each entry by its sha256 fingerprint. Transcript capture (`SessionEnd`, with
+`--capture`) and provider use (`--providers`) stay off unless you accept them;
+`--no-hooks` registers MCP only. Per-turn push is observed on codex-cli 0.162.1:
+setup reports `native-verified` when it owns the trusted `UserPromptSubmit`
+hook. Details: [setup guide](../guides/setup.md#codex).
+
 ## Install as a Codex plugin (recommended)
 
 gbrain ships as a native Codex plugin — MCP server + a curated brain-first
@@ -220,8 +243,20 @@ codex mcp remove gbrain
   paths above), or migrate to the Postgres/Supabase engine, which tolerates
   concurrent connections. Details:
   [serve ↔ sync concurrency](../architecture/serve-sync-concurrency.md).
-- **Ambient recall (Codex has no lifecycle hooks — use the pull path).** At the
-  start of a topical thread and after a compaction, call
+- **Ambient recall.** Codex has lifecycle hooks (`SessionStart`,
+  `UserPromptSubmit`, `SessionEnd` in `$CODEX_HOME/hooks.json`, each trusted by
+  a `[hooks.state]` entry in config.toml); `gbrain setup codex` wires the two
+  read-context hooks so brain pages named in a prompt arrive as context without
+  a tool call. `hooks.json` is machine-wide, so those hooks name no source:
+  each session reads context from the source its capture uses, `GBRAIN_SOURCE`
+  first, else the `.gbrain-source` file found walking up from the session's
+  working directory (fixed for the session at its first hook). A repository's
+  committed `.gbrain-source` therefore picks which source Codex reads there,
+  the same as every `gbrain` command run in it. When that source has no serve
+  of its own, the shared serve refuses with `source_mismatch` (the hook
+  heartbeat's reason) and the session gets no context rather than another
+  source's (#5941). Without those hooks (the plugin, `connect` or `--no-hooks`), use
+  the pull path: at the start of a topical thread and after a compaction, call
   `context_pack(entities, budget_tokens)` to warm the standing entities; on a
   periodic wake call `delta(session_id, budget_tokens)` for "what changed since
   my last wake" (deduped per session). Both are zero-LLM, sub-second, world-only

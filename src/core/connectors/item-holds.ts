@@ -95,7 +95,7 @@ export interface ItemHoldsState {
 
 const SOURCE_CODES = new Set([
   'writer_coordinator_required', 'owner_unavailable', 'database_contention', 'writer_lock_unavailable', 'writer_pool_capacity',
-  'queue_capacity', 'recovery_required', 'write_pending', 'source_changed', 'permission_denied', 'scope_denied',
+  'queue_capacity', 'write_quota_exhausted', 'write_capacity_backpressure', 'recovery_required', 'write_pending', 'source_changed', 'permission_denied', 'scope_denied',
   'writer_registration_required', 'writer_identity_invalid', 'writer_not_initialized', 'writer_upgrade_required',
   'writer_not_quiesced', 'writer_admin_locked', 'connector_account_changed', 'connector_intent_outdated',
   'unsupported_mutation_protocol', 'cancelled', 'write_claim_lost', 'lock_stolen', 'statement_timeout', 'lock_timeout',

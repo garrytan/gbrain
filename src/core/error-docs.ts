@@ -23,6 +23,8 @@ export interface ErrorCodeRow {
   legacy_error?: string;
   renamed_from?: string;
   reasons?: readonly string[];
+  /** Reasons whose class and exit replace the code's. */
+  reason_overrides?: Array<{ reason: string; class: ErrorClass; exit_code: number }>;
 }
 
 const CLASS_WHY: Record<ErrorClass, string> = {
@@ -59,8 +61,11 @@ export function errorCodeRow(code: string): ErrorCodeRow | undefined {
     ...(e.legacy_error ? { legacy_error: e.legacy_error } : {}),
     ...(e.renamed_from ? { renamed_from: e.renamed_from } : {}),
     ...(e.reasons?.length ? { reasons: e.reasons } : {}),
+    ...(e.reason_overrides ? { reason_overrides: Object.entries(e.reason_overrides).map(([reason, o]) => ({ reason, class: o.class, exit_code: o.exit ?? 1 })) } : {}),
   };
 }
+
+const overrideLine = (o: { reason: string; class: ErrorClass; exit_code: number }) => `reason ${o.reason}: ${o.class}, exit ${o.exit_code}${o.class === 'retryable' ? ', retryable' : ', not retryable'}`;
 
 /** Codes whose wire `error` value stays frozen under v1 while `code` carries the canonical value. */
 export function changedCodeRows(): ErrorCodeRow[] {
@@ -81,6 +86,7 @@ export function renderErrorCodeText(r: ErrorCodeRow): string {
     `  verify:    ${r.verify}`,
     ...(r.legacy_error ? [`  legacy:    some surfaces keep error: "${r.legacy_error}" with code: "${r.code}"`] : []),
     ...(r.reasons?.length ? [`  reasons:   ${r.reasons.join(', ')}`] : []),
+    ...(r.reason_overrides ?? []).map(o => `  override:  ${overrideLine(o)}`),
     `  docs:      ${docsUrl(r.docs)}`,
   ].join('\n');
 }
@@ -117,6 +123,7 @@ export function renderErrorCodesMarkdown(): string {
     out.push('|---|---|---|---|---|---|---|');
     out.push(`| ${cell(r.meaning)} | ${cell(r.why)} | ${cell(r.next_step)} | ${r.actor}${r.effects.length ? ` · ${r.effects.join(', ')}` : ''} | \`${cell(r.verify)}\` | ${r.exit_code} | ${r.retryable ? 'yes' : 'no'} |`);
     if (r.reasons?.length) out.push('', `Reasons: ${r.reasons.map(x => `\`${x}\``).join(', ')}.`);
+    for (const o of r.reason_overrides ?? []) out.push('', `Override: ${overrideLine(o).replace(o.reason, `\`${o.reason}\``)}.`);
     if (r.docs !== `docs/guides/error-codes.md#${r.code}`) out.push('', `More: [${r.docs}](../../${r.docs})`);
     out.push('');
   }

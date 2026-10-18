@@ -16,6 +16,7 @@ const engine = {
   getConfig: async (key: string) => key === 'takes.bootstrap_enabled' ? 'true' : null,
   executeRaw: async (sql: string, params: unknown[] = []) => {
     queries.push({ sql, params });
+    if (sql.includes('FROM persistence_brain')) return [{ enabled: false }]; // #6482: the strict mode reader needs one well-formed unmanaged row.
     return [];
   },
 } as unknown as BrainEngine;
@@ -127,7 +128,7 @@ describe('takes extract --before cursor validation (#5059)', () => {
       getConfig: async (key: string) => key === 'takes.bootstrap_enabled' ? 'true' : null,
       executeRaw: async (sql: string) => sql.includes('FROM pages')
         ? [{ id: 9, slug: 'concepts/short', source_id: 'default', type: 'concept', compiled_truth: 'too short', updated_at: new Date('2030-01-02T03:04:05.123Z'), resume_at: '2030-01-02 03:04:05.123456+00,9' }]
-        : [],
+        : sql.includes('FROM persistence_brain') ? [{ enabled: false }] : [],
     } as unknown as BrainEngine;
     const stdout = await captureStdout(() => runTakes(pageEngine, ['extract', '--from-pages', '--dry-run']));
     expect(stdout).toContain("next: --before '2030-01-02 03:04:05.123456+00,9'");

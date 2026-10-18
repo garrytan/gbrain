@@ -126,6 +126,8 @@ export interface FactsReconcileBacklog {
   pending: number;
   /** Pages whose current revision holds a malformed or misplaced fence. */
   invalid: Array<{ source_id: string; slug: string }>;
+  /** Wave B decision #10: due pages stored in segments with no fence rows; the body match cannot read them, so whether they hold a fence is unknown. */
+  skipped_segmented?: number;
 }
 
 /**
@@ -146,9 +148,14 @@ export async function readFactsReconcileBacklog(engine: BrainEngine): Promise<Fa
       ORDER BY d.source_id, d.slug`,
     [`%${FACTS_FENCE_BEGIN}%`],
   );
+  const [segmented] = await engine.executeRaw<{ n: number }>(
+    `SELECT COUNT(*)::int AS n FROM pages p LEFT JOIN page_facts_reconcile r ON r.page_id = p.id
+      WHERE p.deleted_at IS NULL AND ${DUE} AND p.body_storage = 'segmented' AND NOT ${OWNS_FENCE_ROWS}`,
+  ).catch(() => []);
   return {
     pending: rows.filter(r => !r.invalid).length,
     invalid: rows.filter(r => r.invalid).map(r => ({ source_id: r.source_id, slug: r.slug })),
+    ...(segmented?.n ? { skipped_segmented: Number(segmented.n) } : {}),
   };
 }
 

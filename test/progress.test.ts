@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PassThrough, type Readable } from 'node:stream';
 import { createProgress, startHeartbeat, __liveReporterCountForTest, __signalHandlerInstalledForTest } from '../src/core/progress.ts';
@@ -149,21 +150,73 @@ describe('progress reporter', () => {
     expect(events[events.length - 1]).toMatchObject({ event: 'finish', phase: 'doctor.jsonb_integrity' });
   });
 
-  test('json tick cpu_ms counts CPU work since the phase started, not time spent waiting', async () => {
-    const { stream, read } = sink(false);
-    const p = createProgress({ mode: 'json', stream, minIntervalMs: 0, minItems: 1 });
-    p.start('import.files', 3);
+  test('json tick cpu_ms counts CPU work since the phase started, not time spent waiting', () => {
+    // The thread's CPU clock is the scheduler's runtime for it: whatever the guest clock advanced while the thread
+    // was current. Under a hypervisor whose guest kernel lacks CONFIG_PARAVIRT_TIME_ACCOUNTING (Ubuntu's generic
+    // kernels, the CI runners included) that includes every vCPU stall that lands while this thread is current, and
+    // the stall right after the wait wakes is billed inside the wait: run 38467234783 billed 268 ms inside a 200 ms
+    // wait on a runner with 28 % steal, run 38588222510 billed 105 ms with the steal counter at 0 (a stall KVM does
+    // not count as steal: the vCPU thread asleep in the host, as on a page the host had to back or reclaim first).
+    // A thread blocked in a futex executes nothing, so CPU charged to it across the wait is a stall, not work, and
+    // that window is an invalid instrument reading: the measurement is repeated until a window shows no steal and
+    // no CPU charged while blocked, and the bound below is asserted only on that window. Without /proc/stat (macOS)
+    // the steal column is unknown and only the charged-while-blocked check applies.
+    const STALL_MS = 10; // a futex-blocked thread measured 0.2–2.2 ms across 500 clean windows on three hosts
+    const stealJiffies = (): number | null => {
+      try {
+        const cpuLine = readFileSync('/proc/stat', 'utf8').split('\n')[0] ?? '';
+        const fields = cpuLine.trim().split(/\s+/);
+        return fields[0] === 'cpu' && fields.length > 8 ? Number(fields[8]) : null;
+      } catch {
+        return null;
+      }
+    };
     const cpuMs = () => { const u = process.threadCpuUsage(); return (u.user + u.system) / 1000; };
-    const spinUntil = cpuMs() + 60;
-    while (cpuMs() < spinUntil) { /* burn 60 ms of CPU */ }
-    p.tick(1);
-    await new Promise(resolve => setTimeout(resolve, 200));
-    p.tick(1);
-    p.finish();
-    const [, worked, waited] = parseJsonl(read()) as Array<{ cpu_ms: number; elapsed_ms: number }>;
+    const measure = () => {
+      const { stream, read } = sink(false);
+      const p = createProgress({ mode: 'json', stream, minIntervalMs: 0, minItems: 1 });
+      p.start('import.files', 3);
+      const spinUntil = cpuMs() + 60;
+      while (cpuMs() < spinUntil) { /* burn 60 ms of CPU */ }
+      p.tick(1);
+      const stealBefore = stealJiffies();
+      const usageBefore = process.resourceUsage();
+      const cpuBeforeWait = cpuMs();
+      const wallBeforeWait = performance.now();
+      // Block the thread for 200 ms without yielding: an await would let other queued main-thread work (an earlier
+      // test's timer, a GC pause) run and be billed to the phase, and the test means "the thread sat idle".
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+      const wallInWait = performance.now() - wallBeforeWait;
+      const cpuInWait = cpuMs() - cpuBeforeWait;
+      const usageAfter = process.resourceUsage();
+      p.tick(1);
+      p.finish();
+      const stealAfter = stealJiffies();
+      const [, worked, waited] = parseJsonl(read()) as Array<{ cpu_ms: number; elapsed_ms: number }>;
+      const stealMs = stealBefore === null || stealAfter === null ? null : (stealAfter - stealBefore) * 10;
+      return { worked, waited, cpuInWait, wallInWait, usageBefore, usageAfter, stealMs, stalled: (stealMs ?? 0) !== 0 || cpuInWait >= STALL_MS };
+    };
+    const attempts: ReturnType<typeof measure>[] = [];
+    for (let attempt = 0; attempt < 5 && (attempts.length === 0 || attempts[attempts.length - 1]!.stalled); attempt++) attempts.push(measure());
+    const { worked, waited, cpuInWait, wallInWait, usageBefore, usageAfter, stealMs } = attempts[attempts.length - 1]!;
+    const describeAttempt = (a: ReturnType<typeof measure>) =>
+      `${a.cpuInWait.toFixed(1)} ms charged while blocked (wait overran by ${(a.wallInWait - 200).toFixed(1)} ms), steal ${a.stealMs === null ? 'unknown' : `${a.stealMs} ms`}`;
     expect(worked.cpu_ms).toBeGreaterThanOrEqual(60);
     expect(waited.elapsed_ms - worked.elapsed_ms).toBeGreaterThanOrEqual(190);
-    expect(waited.cpu_ms - worked.cpu_ms).toBeLessThan(100);
+    const waitedCpuMs = waited.cpu_ms - worked.cpu_ms;
+    expect(
+      waitedCpuMs,
+      `the second tick billed ${waitedCpuMs.toFixed(1)} ms of thread CPU (first tick, after the 60 ms spin: ${worked.cpu_ms.toFixed(1)} ms): ` +
+        `${cpuInWait.toFixed(1)} ms inside the 200 ms Atomics.wait (which returned after ${wallInWait.toFixed(1)} ms), ${(waitedCpuMs - cpuInWait).toFixed(1)} ms in the tick calls around it; ` +
+        `process during the wait: ${usageAfter.minorPageFault - usageBefore.minorPageFault} minor and ` +
+        `${usageAfter.majorPageFault - usageBefore.majorPageFault} major page faults, ` +
+        `${usageAfter.involuntaryContextSwitches - usageBefore.involuntaryContextSwitches} involuntary context switches, ` +
+        `${((usageAfter.userCPUTime + usageAfter.systemCPUTime - usageBefore.userCPUTime - usageBefore.systemCPUTime) / 1000).toFixed(1)} ms CPU on all threads; ` +
+        `hypervisor steal across the window: ${stealMs === null ? 'unknown (no /proc/stat)' : `${stealMs} ms`}` +
+        (attempts[attempts.length - 1]!.stalled
+          ? `; no window without a vCPU stall in ${attempts.length} attempts (${attempts.map(describeAttempt).join('; ')})`
+          : attempts.length > 1 ? ` (attempt ${attempts.length} of 5; earlier windows stalled: ${attempts.slice(0, -1).map(describeAttempt).join('; ')})` : ''),
+    ).toBeLessThan(100);
   });
 
   test('quiet mode emits nothing', () => {

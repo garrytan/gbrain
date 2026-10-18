@@ -1,4 +1,5 @@
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
+import { unmanagedBeliefPoint } from '../belief/projection-point.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError } from '../ops/contract.ts';
 import { matchesSlugAllowList, slugUnderBoundPrefixes } from '../ops/context.ts';
@@ -10,6 +11,8 @@ import { REMOTE_AUTO_LINKS_KEY, REMOTE_MENTION_LINK_SOURCE, type PersistenceEffe
 import { guardEffectSource } from './effect-recovery.ts';
 import type { SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
 import { excludesPrivateWrites } from './page-visibility.ts';
+import { isSegmentedPage } from '../page-body/page-shape.ts';
+import { extractSegmentedPageLinks } from '../page-body/segment-links.ts';
 import { isRemoteWantedPagesEnabled, replaceWantedLinks } from '../wanted-links.ts';
 
 /** `mcp.remote_auto_links`: unset is on; false/0/no/off (any case) turns the remote `links` effect off. */
@@ -26,11 +29,16 @@ const SKIPPED_TARGET_LIMIT = 50;
  * Plain mention targets of a page body: markdown links, [[wikilinks]] and
  * page-path mentions in compiled_truth only. No frontmatter, no timeline
  * section, no schema-pack verbs; every edge is stored as an untyped `mentions`.
+ * A segmented page's compiled truth is read block by block (page-body/segment-links.ts).
  */
 async function mentionTargets(engine: BrainEngine, snapshot: PageSnapshot, sourceId: string) {
   const { page } = snapshot;
-  const { candidates } = await extractPageLinks(page.slug, page.compiled_truth, {}, page.type,
-    makeResolver(engine, { mode: 'live', sourceId }), { skipFrontmatter: true, pack: null, globalBasename: await isGlobalBasenameEnabled(engine) });
+  const resolver = makeResolver(engine, { mode: 'live', sourceId });
+  const opts = { skipFrontmatter: true, pack: null, globalBasename: await isGlobalBasenameEnabled(engine) };
+  const { candidates } = isSegmentedPage(page)
+    ? await extractSegmentedPageLinks(engine, { id: Number(page.id), slug: page.slug, source_id: sourceId, type: page.type, frontmatter: {} }, resolver,
+      { ...opts, regions: ['truth'] })
+    : await extractPageLinks(page.slug, page.compiled_truth, {}, page.type, resolver, opts);
   const targets = new Map<string, string>();
   const skipped: SkippedLinkTarget[] = [];
   for (const candidate of candidates) {
@@ -81,6 +89,7 @@ export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEff
   if (!snapshot || snapshot.page.id !== effect.data.page_id || snapshot.revision !== effect.revision) return skip(engine, 'superseded');
   if (!await isAutoLinkEnabled(engine) || !await isRemoteAutoLinksEnabled(engine)) return skip(engine, 'disabled');
   const { targets, skipped } = await mentionTargets(engine, snapshot, sourceId);
+  const beliefs = unmanagedBeliefPoint(sourceId, [snapshot.page.slug], 'remote_auto_links');
   await engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
     await guardEffectSource(tx, effect, hostId);
@@ -112,8 +121,10 @@ export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEff
     const additions: LinkBatchInput[] = [...wanted].filter(([slug]) => !kept.has(slug)).map(([slug, context]) => ({
       from_slug: live.page.slug, to_slug: slug, from_source_id: sourceId, to_source_id: sourceId, link_type: 'mentions', context,
       link_source: REMOTE_MENTION_LINK_SOURCE, link_kind: 'plain', origin_slug: live.page.slug, origin_source_id: sourceId }));
-    if (obsolete.length) await tx.executeRaw('DELETE FROM links WHERE id=ANY($1::bigint[])', [obsolete]);
-    const added = additions.length ? await tx.addLinksBatch(additions, { auditSite: 'addLinksBatch' }) : 0;
+    const added = await beliefs.run(tx, async () => {
+      if (obsolete.length) await tx.executeRaw('DELETE FROM links WHERE id=ANY($1::bigint[])', [obsolete]);
+      return additions.length ? await tx.addLinksBatch(additions, { auditSite: 'addLinksBatch' }) : 0;
+    });
     // Wanted pages: a missing mention target is recorded so the edge appears once that page is written (core/wanted-links.ts).
     if (await isRemoteWantedPagesEnabled(tx)) {
       await replaceWantedLinks(tx, { pageId: Number(live.page.id), sourceId }, { producers: ['body'], rows: skipped
@@ -124,4 +135,5 @@ export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEff
     await completeEffect(tx, effect, { links: 'committed', added, removed: obsolete.length, skipped_targets: skipped.slice(0, SKIPPED_TARGET_LIMIT),
       ...(skipped.length > SKIPPED_TARGET_LIMIT ? { skipped_target_count: skipped.length } : {}) });
   });
+  await beliefs.commit(engine);
 }

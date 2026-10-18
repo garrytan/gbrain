@@ -187,3 +187,36 @@ describe('uncapped records', () => {
     expect(await engine.executeRaw('SELECT 1 FROM mcp_spend_reservations')).toEqual([]);
   });
 });
+
+// Protect registered operator pricing in a user-capped worker, which canonical-only
+// tests do not cover. Reverting override loading refuses before IO or fails settlement.
+// Uses the existing production invocation guard and isolated PGLite, no new seam.
+test('a user-capped job admits and settles a registered zero-price local model', async () => {
+  const previous = await engine.getConfig('pricing.overrides');
+  await engine.setConfig('pricing.overrides', JSON.stringify({ 'litellm:local-test': { input: 0, output: 0 }, 'llama-server-reranker:local-test': 0 }));
+  try {
+    const job = await claimed('subagent', {}, record(0.000001, 'user'));
+    let calls = 0;
+    await runWithJobSpend(engine, job, ctxFor(job), async () => invokeAI(
+      { operation: 'test-local', kind: 'chat', model: 'litellm:local-test', maxInputTokens: 10000, maxOutputTokens: 1000 },
+      async () => { calls++; return 'ok'; }, () => ({ inputTokens: 900, outputTokens: 40 }),
+    ));
+    await runWithJobSpend(engine, job, ctxFor(job), async () => invokeAI(
+      { operation: 'test-rerank', kind: 'rerank', model: 'llama-server-reranker:local-test', maxInputTokens: 10000 },
+      async () => { calls++; return 'ranked'; }, () => ({ inputTokens: 900, outputTokens: 0 }),
+    ));
+    expect(calls).toBe(2);
+    const holds = await engine.executeRaw<{ status: string; actual_cents: string }>('SELECT status, actual_cents FROM mcp_spend_reservations');
+    expect(holds).toHaveLength(2);
+    expect(holds.every(h => h.status === 'settled' && Number(h.actual_cents) === 0)).toBe(true);
+    for (const [model, refusal] of [['anthropic:claude-sonnet-5', 'cost_cap_exceeded'], ['example:unpriced-model', 'no_pricing']]) {
+      await expect(runWithJobSpend(engine, job, ctxFor(job), async () => invokeAI(
+        { operation: 'test-denied', kind: 'chat', model: model!, maxInputTokens: 10000, maxOutputTokens: 1000 },
+        async () => { calls++; return 'unexpected'; }, () => ({ inputTokens: 1, outputTokens: 1 }),
+      ))).rejects.toThrow(refusal);
+    }
+    expect(calls).toBe(2);
+  } finally {
+    await engine.setConfig('pricing.overrides', previous ?? '{}');
+  }
+});

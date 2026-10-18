@@ -146,9 +146,18 @@ export function unifiedDiff(a: string, b: string, opts: UnifiedDiffOpts = {}): s
     for (const ln of body) out.push(ln);
   }
 
-  // Trailing-newline markers.
-  if (!aSplit.trailingNewline) {
-    // Insert `\ No newline at end of file` after the last ' ' or '-' line.
+  insertNoNewlineMarkers(out, aSplit.trailingNewline, bSplit.trailingNewline);
+
+  return out.join('\n') + '\n';
+}
+
+/**
+ * Insert `\ No newline at end of file` after the last old-side line (' ' or
+ * '-') when `a` lacks a trailing newline, and after the last new-side line
+ * (' ' or '+') when `b` does.
+ */
+export function insertNoNewlineMarkers(out: string[], aTrailingNewline: boolean, bTrailingNewline: boolean): void {
+  if (!aTrailingNewline) {
     for (let i = out.length - 1; i >= 0; i--) {
       const c = out[i].charAt(0);
       if (c === ' ' || c === '-') {
@@ -157,7 +166,7 @@ export function unifiedDiff(a: string, b: string, opts: UnifiedDiffOpts = {}): s
       }
     }
   }
-  if (!bSplit.trailingNewline) {
+  if (!bTrailingNewline) {
     for (let i = out.length - 1; i >= 0; i--) {
       const c = out[i].charAt(0);
       if (c === ' ' || c === '+') {
@@ -166,16 +175,14 @@ export function unifiedDiff(a: string, b: string, opts: UnifiedDiffOpts = {}): s
       }
     }
   }
-
-  return out.join('\n') + '\n';
 }
 
-interface LineSplit {
+export interface LineSplit {
   lines: string[];
   trailingNewline: boolean;
 }
 
-function splitLines(s: string): LineSplit {
+export function splitLines(s: string): LineSplit {
   if (s.length === 0) return { lines: [], trailingNewline: true };
   const trailingNewline = s.endsWith('\n');
   const body = trailingNewline ? s.slice(0, -1) : s;

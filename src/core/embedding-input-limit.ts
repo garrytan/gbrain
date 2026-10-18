@@ -62,6 +62,31 @@ export function maxInputTokensForModel(recipe: Recipe, modelId: string): number 
 }
 
 /**
+ * [R13] (PR #5347): chunk caps LEARNED from a provider's single-input
+ * over-length rejection for a model that declares no `max_input_tokens`
+ * (`src/core/embed-overlength-heal.ts` derives them). Process-lifetime by
+ * design, like the embed quarantine: a long-lived sweep splits every later
+ * page the same way, a restart re-derives the same cap from the same
+ * failure. Keyed by the full `provider:model` string; an operator
+ * GBRAIN_MAX_CHUNK_TOKENS and a recipe declaration both win over it.
+ */
+const _learnedChunkCaps = new Map<string, number>();
+
+export function learnChunkCap(model: string, cap: number): void {
+  const current = _learnedChunkCaps.get(model);
+  if (current === undefined || cap < current) _learnedChunkCaps.set(model, cap);
+}
+
+export function learnedChunkCap(model: string): number | undefined {
+  return _learnedChunkCaps.get(model);
+}
+
+/** Test seam: forget every learned cap. */
+export function _resetLearnedChunkCapsForTest(): void {
+  _learnedChunkCaps.clear();
+}
+
+/**
  * Effective chunk-token cap for the active embedding model (or `model`). See module doc.
  * Never exceeds DEFAULT_MAX_CHUNK_TOKENS (existing downstream sizing —
  * tsvector limits, context assembly — calibrates to it) and never goes below
@@ -84,7 +109,8 @@ export function resolveMaxChunkTokens(env: Record<string, string | undefined> = 
     }
   }
   try {
-    const { parsed, recipe } = resolveRecipe(model ?? getEmbeddingModel());
+    const modelStr = model ?? getEmbeddingModel();
+    const { parsed, recipe } = resolveRecipe(modelStr);
     const declared = maxInputTokensForModel(recipe, parsed.modelId);
     if (declared !== undefined) {
       return Math.min(
@@ -92,6 +118,8 @@ export function resolveMaxChunkTokens(env: Record<string, string | undefined> = 
         Math.max(MIN_CHUNK_TOKENS, Math.floor(declared * EMBED_INPUT_SAFETY)),
       );
     }
+    const learned = _learnedChunkCaps.get(modelStr);
+    if (learned !== undefined) return Math.min(DEFAULT_MAX_CHUNK_TOKENS, Math.max(MIN_CHUNK_TOKENS, learned));
   } catch {
     // Gateway not configured (tests, engine-free paths) or unknown provider —
     // keep the historical default.

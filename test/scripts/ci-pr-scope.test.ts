@@ -51,16 +51,16 @@ describe('pull-request CI scope', () => {
 
   test('a pull request touching native paths runs every target on the primary Bun version', () => {
     const primary = nativeCells('primary');
-    expect(primary.native.sort()).toEqual(['darwin-arm64', 'darwin-x64', 'linux-arm64-glibc', 'linux-x64-glibc', 'win32-arm64', 'win32-x64'].map(target => `1.4.2/${target}`));
-    expect(primary.musl).toEqual(['1.4.2/linux-x64-musl', '1.4.2/linux-arm64-musl']);
-    expect(primary.console).toEqual(['windows-2022/1.4.2', 'windows-11-arm/1.4.2']);
-    expect(primary.dotnet).toEqual(['windows-2022/1.4.2', 'windows-11-arm/1.4.2']);
+    expect(primary.native.sort()).toEqual(['darwin-arm64', 'darwin-x64', 'linux-arm64-glibc', 'linux-x64-glibc', 'win32-arm64', 'win32-x64'].map(target => `1.4.3/${target}`));
+    expect(primary.musl).toEqual(['1.4.3/linux-x64-musl', '1.4.3/linux-arm64-musl']);
+    expect(primary.console).toEqual(['windows-2022/1.4.3', 'windows-11-arm/1.4.3']);
+    expect(primary.dotnet).toEqual(['windows-2022/1.4.3', 'windows-11-arm/1.4.3']);
     expect(primary.openclaw).toBe(true);
   });
 
   test('other pull requests keep one Linux smoke cell that runs the whole native step list', () => {
     const smoke = nativeCells('smoke');
-    expect(smoke).toEqual({ native: ['1.4.2/linux-x64-glibc'], musl: [], console: [], dotnet: [], openclaw: false });
+    expect(smoke).toEqual({ native: ['1.4.3/linux-x64-glibc'], musl: [], console: [], dotnet: [], openclaw: false });
   });
 
   test('native path changes, an empty list and docs-only diffs classify as expected', () => {
@@ -153,7 +153,7 @@ esac
   test('security and persistence matrices run both supported Bun versions on pull requests and merge-queue runs (event parity)', () => {
     const security = load('test.yml').jobs['security-regressions'];
     const persistence = load('persistence-validation.yml').jobs;
-    const jobs = [security, ...['read-performance', 'deployment-matrix', 'unit-postgres-arms', 'invariants', 'crash-robot', 'reconciliation'].map(name => persistence[name]!)];
+    const jobs = [security, ...['read-performance', 'deployment-matrix', 'unit-postgres-arms', 'invariants', 'crash-robot', 'reconciliation', 'convergence'].map(name => persistence[name]!)];
     for (const job of jobs) {
       expect(job.strategy!.matrix.exclude).toBeUndefined();
       const push = cells(job, { github: { event_name: 'push' }, inputs: {} });
@@ -173,7 +173,7 @@ esac
     const conditional = /github\.event_name|github\.event\.(?:pull_request|merge_group|action)|inputs\.scope|"\$EVENT"|\$EVENT\b/;
     const dispatchMode = /github\.event_name\s*(?:!=|==)\s*'workflow_dispatch'/g;
     const unclassified: string[] = [];
-    for (const name of ['test', 'stress', 'persistence-validation', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep']) {
+    for (const name of ['test', 'stress', 'persistence-validation', 'convergence-nightly', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep']) {
       const lines = readFileSync(join(root, '.github/workflows', `${name}.yml`), 'utf8').split('\n');
       // Blocks: each job (from the comments directly above its key to the next job) and the top-level preamble.
       const starts = lines.flatMap((line, i) => (/^  [\w-]+:\s*$/.test(line) && lines.slice(0, i).some(l => l === 'jobs:') ? [i] : []));
@@ -196,10 +196,81 @@ esac
     expect(readFileSync(join(root, 'docs/TESTING.md'), 'utf8')).toContain('### Event parity');
     const docs = readFileSync(join(root, 'docs/ci-event-parity.md'), 'utf8');
     const section = docs.slice(docs.indexOf('## Classification'), docs.indexOf('## Dependency-audit rule'));
-    for (const name of ['test', 'stress', 'persistence-validation', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep', 'osv-scanner', 'nightly-watch']) {
+    for (const name of ['test', 'stress', 'persistence-validation', 'convergence-nightly', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep', 'osv-scanner', 'nightly-watch']) {
       expect(section, name).toContain(`${name}.yml`);
     }
     expect(docs).toContain('## Dependency-audit rule');
+  });
+
+  function convergenceScope(files: string): string {
+    const result = spawnSync('bash', [join(root, 'scripts/ci-convergence-scope.sh')], { input: files, encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    return result.stdout.trim();
+  }
+
+  // #6712 PR 0: the convergence gate's own selector, not the native one: package.json is not a selector, so a
+  // release-stamp PR does not run the gate.
+  test('the convergence gate selects persistence, sync, projection, storage, driver and harness paths, never package.json alone', () => {
+    for (const path of ['src/core/persistence/sync-run.ts', 'src/core/persistence/fault-points.ts', 'src/commands/sync/run.ts', 'src/commands/sync.ts',
+      'src/core/sync-holds.ts', 'src/core/page-state/projections.ts', 'src/core/engine-sql/links.ts', 'src/core/storage/local.ts', 'src/core/storage-config.ts',
+      'src/core/import-file.ts', 'src/core/markdown.ts', 'src/core/write-through.ts', 'src/core/postgres-engine.ts',
+      'test/sync-convergence.serial.test.ts', 'test/fixtures/convergence-fault-kill.ts', 'scripts/ci-convergence-scope.sh', '.github/workflows/persistence-validation.yml',
+      '.github/workflows/convergence-nightly.yml', 'bun.lock', 'vendor/postgres/src/connection.js']) {
+      expect(convergenceScope(`README.md\n${path}\n`), path).toBe('run');
+    }
+    for (const path of ['package.json', 'VERSION', 'CHANGELOG.md', 'vendor/README.md', 'docs/guides/example.md', 'src/commands/doctor.ts', 'test/scripts/ci-pr-scope.test.ts', '.github/workflows/test.yml']) {
+      expect(convergenceScope(`README.md\n${path}\n`), path).toBe('skip');
+    }
+    expect(convergenceScope('')).toBe('run');
+    const large = Array.from({ length: 8000 }, (_, i) => `docs/guides/fixture-${i}-${'x'.repeat(72)}.md`);
+    expect(convergenceScope(large.join('\n'))).toBe('skip');
+    large.splice(large.length >> 1, 0, 'src/core/persistence/journal.ts');
+    expect(convergenceScope(large.join('\n'))).toBe('run');
+  });
+
+  test('the planning job runs the convergence gate off pull requests and on any unreadable pull-request diff', () => {
+    const step = load('test.yml').jobs.changes.steps!.find(entry => entry.id === 'convergence')!;
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-ci-convergence-'));
+    try {
+      const run = (event: string, gh: string, changedFiles = '1') => {
+        writeFileSync(join(dir, 'gh'), `#!/usr/bin/env bash\n${gh}\n`);
+        chmodSync(join(dir, 'gh'), 0o755);
+        const output = join(dir, 'out');
+        writeFileSync(output, '');
+        const result = spawnSync('bash', ['-c', step.run!], { cwd: root, encoding: 'utf8',
+          env: { PATH: `${dir}:${process.env.PATH}`, EVENT: event, PR: '7', REPO: 'example/repo', CHANGED_FILES: changedFiles, GITHUB_OUTPUT: output } });
+        expect(result.status, result.stderr).toBe(0);
+        return readFileSync(output, 'utf8').trim();
+      };
+      for (const event of ['push', 'schedule', 'workflow_dispatch', 'merge_group']) expect(run(event, "printf 'docs/a.md\\n'"), event).toBe('convergence=run');
+      expect(run('pull_request', "printf 'docs/a.md\\n'")).toBe('convergence=skip');
+      expect(run('pull_request', "printf 'package.json\\n'")).toBe('convergence=skip');
+      expect(run('pull_request', "printf 'src/core/persistence/journal.ts\\n'")).toBe('convergence=run');
+      expect(run('pull_request', 'exit 1')).toBe('convergence=run');
+      for (const count of ['', 'invalid', '3000', '99999']) expect(run('pull_request', "printf 'docs/a.md\\n'", count), count).toBe('convergence=run');
+      expect(run('pull_request', "printf 'docs/a.md\\n'", '2')).toBe('convergence=run');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test('the convergence job runs the PR cell on every event and skips only on the selector; the nightly cell runs only in its own workflow', () => {
+    const job = load('persistence-validation.yml').jobs.convergence!;
+    expect(evaluate(job.if!, { inputs: { convergence: 'skip' } })).toBe(false);
+    for (const convergence of ['run', undefined]) expect(evaluate(job.if!, { inputs: { convergence } })).toBe(true);
+    const cell = (workflow: Job) => {
+      const step = workflow.steps!.find(entry => entry.env?.GBRAIN_TEST_CONVERGENCE === '1')!;
+      return Object.fromEntries(['NOTES', 'LATENCY_MS', 'KILLS', 'SEED'].map(key => [key, step.env![`GBRAIN_TEST_CONVERGENCE_${key}`]]));
+    };
+    expect(cell(job)).toEqual({ NOTES: '200', LATENCY_MS: '10', KILLS: '6', SEED: '6650' });
+    const raw = loadYaml(readFileSync(join(root, '.github/workflows/convergence-nightly.yml'), 'utf8')) as {
+      on: Record<string, unknown>; concurrency: { group: string; 'cancel-in-progress': boolean }; jobs: Record<string, Job & { name?: string }> };
+    expect(Object.keys(raw.on).sort()).toEqual(['schedule', 'workflow_dispatch']);
+    expect(raw.concurrency).toEqual({ group: '${{ github.workflow }}-${{ github.ref }}', 'cancel-in-progress': false });
+    const nightly = raw.jobs.convergence!;
+    expect(nightly.strategy!.matrix.bun).toEqual([MINIMUM_BUN_VERSION, '1.4.3']);
+    expect(nightly.name).toContain('seed ${{ inputs.seed || github.run_id }}');
+    expect(cell(nightly)).toEqual({ NOTES: '2000', LATENCY_MS: '50', KILLS: '20', SEED: '${{ inputs.seed || github.run_id }}' });
+    // Outside test-status: no workflow calls it, and test.yml's aggregator never names it.
+    expect(readFileSync(join(root, '.github/workflows/test.yml'), 'utf8')).not.toContain('convergence-nightly');
   });
 
   test('export scale runs 10,001 pages on pull requests and 100,001 everywhere else', () => {
@@ -213,7 +284,7 @@ esac
   // #4479: a local gate or VM on a different Bun than CI produced
   // runtime-only skew, so every single-version pin moves together.
   test('every single-version Bun pin matches the primary, and matrices keep the oldest supported version', () => {
-    const primary = '1.4.2';
+    const primary = '1.4.3';
     const read = (path: string) => readFileSync(join(root, path), 'utf8');
     const workflows = ['test', 'e2e', 'heavy-tests', 'macos-validation', 'persistence-validation', 'release', 'native-locks']
       .map(name => read(`.github/workflows/${name}.yml`)).join('\n');
@@ -228,7 +299,7 @@ esac
     expect(/GBRAIN_E2E_BUN_IMAGE:-oven\/bun:([^}]+)\}/.exec(read('tests/docker/bootstrap-e2e.sh'))?.[1]).toBe(primary);
     const matrices = [load('test.yml').jobs['security-regressions'], ...Object.values(load('persistence-validation.yml').jobs)]
       .map(job => job.strategy?.matrix.bun).filter(Boolean);
-    expect(matrices).toHaveLength(7);
+    expect(matrices).toHaveLength(8);
     for (const bun of matrices) expect(bun).toEqual([MINIMUM_BUN_VERSION, primary]);
     for (const job of ['native', 'musl', 'windows-backup-console', 'windows-backup-dotnet']) {
       expect(native[job].strategy!.matrix.bun).toEqual([MINIMUM_BUN_VERSION, primary]);

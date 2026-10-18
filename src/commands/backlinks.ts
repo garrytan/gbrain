@@ -90,84 +90,155 @@ export function buildBacklinkEntry(sourceTitle: string, sourcePath: string): str
   return `- Referenced in [${sourceTitle}](${linkPath})`;
 }
 
-/** Scan a brain directory for back-link gaps */
-export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
-  const gaps: BacklinkGap[] = [];
+/**
+ * Pages the walker visits: every `.md` under `brainDir`, skipping dot
+ * entries and `_`-prefixed files, in readdir order (the order the gap list
+ * follows). Symlinks are not followed as directories (lstat).
+ */
+function* walkMarkdownFiles(brainDir: string, dir = brainDir): Generator<{ full: string; relPath: string }> {
+  for (const entry of readdirSync(dir)) {
+    if (entry.startsWith('.')) continue;
+    const full = join(dir, entry);
+    if (lstatSync(full).isDirectory()) yield* walkMarkdownFiles(brainDir, full);
+    else if (entry.endsWith('.md') && !entry.startsWith('_')) yield { full, relPath: relative(brainDir, full) };
+  }
+}
 
-  // Collect all markdown files
-  const allPages: { path: string; relPath: string; content: string }[] = [];
-  function walk(dir: string) {
-    for (const entry of readdirSync(dir)) {
-      if (entry.startsWith('.')) continue;
-      const full = join(dir, entry);
-      if (lstatSync(full).isDirectory()) {
-        walk(full);
-      } else if (entry.endsWith('.md') && !entry.startsWith('_')) {
-        const relPath = relative(brainDir, full);
-        try {
-          allPages.push({ path: full, relPath, content: readFileSync(full, 'utf-8') });
-        } catch { /* skip unreadable */ }
+/** Files between event-loop yields in the async walker (#6438). */
+export const BACKLINKS_YIELD_EVERY = 64;
+
+/**
+ * A fresh copy of a string sliced out of a page body. JSC substrings share
+ * their parent's buffer, so a title or display name kept from `content`
+ * would pin the whole page in memory (the retention #6438 is about); the
+ * UTF-8 round trip allocates a new backing store.
+ */
+function detach(s: string): string {
+  return Buffer.from(s, 'utf8').toString('utf8');
+}
+
+interface GapCandidate {
+  relPath: string;
+  sourceSlug: string;
+  sourceFilename: string;
+  title: string;
+  /** Unique targets in first-mention order (#967 dedupe), with the display name of the first mention. */
+  refs: Array<{ targetSlug: string; name: string }>;
+}
+
+/**
+ * The streaming gap scan (#6438). Pass 1 reads each page once and keeps only
+ * its slug, title and candidate `people/`/`companies/` targets (never the
+ * body); pass 2 reads each referenced existing target once, records which
+ * referencing sources it already credits (legacy `<basename>.md` substring
+ * or a canonical outgoing ref, #1776) and drops the body; pass 3 emits the
+ * gaps in the same order the single-pass walker produced them. The working
+ * set is the file currently read plus candidate/index metadata, so a brain's
+ * size in bytes no longer bounds the scan. The passes are generators so the
+ * sync and async entry points share one implementation; the async one
+ * yields to the event loop every BACKLINKS_YIELD_EVERY files, which lets the
+ * progress heartbeat and the minion RSS watchdog run mid-scan.
+ */
+class BacklinkGapScan {
+  private readonly existingSlugs = new Set<string>();
+  private readonly candidates: GapCandidate[] = [];
+  /** target slug -> candidate indexes that mention it */
+  private readonly referrers = new Map<string, number[]>();
+  /** target slug -> candidate indexes the target already credits */
+  private readonly credited = new Map<string, Set<number>>();
+
+  constructor(private readonly brainDir: string) {}
+
+  *pass1(): Generator<void> {
+    for (const { full, relPath } of walkMarkdownFiles(this.brainDir)) {
+      let content: string;
+      try {
+        content = readFileSync(full, 'utf-8');
+      } catch { continue; /* skip unreadable */ }
+      this.existingSlugs.add(relPath.replace('.md', ''));
+      const refs = projectPeopleCompaniesRefs(canonicalExtractEntityRefs(content));
+      if (refs.length > 0) {
+        const seen = new Set<string>();
+        const unique: GapCandidate['refs'] = [];
+        for (const ref of refs) {
+          const targetSlug = detach(`${ref.dir}/${ref.slug}`);
+          if (seen.has(targetSlug)) continue;
+          seen.add(targetSlug);
+          unique.push({ targetSlug, name: detach(ref.name) });
+        }
+        const index = this.candidates.length;
+        this.candidates.push({
+          relPath,
+          sourceSlug: relPath.replace(/\.md$/, ''),
+          sourceFilename: basename(relPath),
+          title: detach(extractPageTitle(content)),
+          refs: unique,
+        });
+        for (const { targetSlug } of unique) {
+          const list = this.referrers.get(targetSlug);
+          if (list) list.push(index);
+          else this.referrers.set(targetSlug, [index]);
+        }
       }
-    }
-  }
-  walk(brainDir);
-
-  // Build a lookup of existing pages by directory/slug. #1776: extract each
-  // page's canonical refs ONCE here — they feed both the gap candidates
-  // (people/companies projection) and the backlink-credit slug set, so
-  // extension-less convention links ([Alice](../people/alice),
-  // [[people/alice]]) count as backlinks even though the legacy
-  // `<basename>.md` substring check can't see them.
-  const pagesBySlug = new Map<string, { path: string; content: string }>();
-  const refsByRelPath = new Map<string, { name: string; slug: string; dir: string }[]>();
-  const outgoingSlugsBySlug = new Map<string, Set<string>>();
-  for (const page of allPages) {
-    const slug = page.relPath.replace('.md', '');
-    pagesBySlug.set(slug, { path: page.path, content: page.content });
-    const canonical = canonicalExtractEntityRefs(page.content);
-    refsByRelPath.set(page.relPath, canonical);
-    outgoingSlugsBySlug.set(slug, new Set(canonical.map(r => r.slug)));
-  }
-
-  // For each page, check entity references
-  for (const page of allPages) {
-    const refs = projectPeopleCompaniesRefs(refsByRelPath.get(page.relPath) ?? []);
-    const sourceFilename = basename(page.relPath);
-    const sourceSlug = page.relPath.replace(/\.md$/, '');
-    // LOCAL PATCH (paolo, 2026-05-12): dedupe (source, target) pairs within
-    // a single source page. extractEntityRefs returns one EntityRef per
-    // occurrence, so a source page that mentions the same target N times
-    // produced N identical gaps → N duplicate "Referenced in" lines on the
-    // target. The per-ref `hasBacklink(target.content, ...)` check reads a
-    // stale snapshot (target.content is frozen at this scope), so every
-    // iteration sees the same "no backlink yet" state and pushes another
-    // gap. Tracking seen target slugs per source caps gaps at one per pair.
-    const seen = new Set<string>();
-
-    for (const ref of refs) {
-      const targetSlug = `${ref.dir}/${ref.slug}`;
-      if (seen.has(targetSlug)) continue;
-      seen.add(targetSlug);
-      const target = pagesBySlug.get(targetSlug);
-      if (!target) continue; // target page doesn't exist
-
-      // Check if the target already has a back-link to this source page.
-      // Credited two ways (#1776): the legacy `<basename>.md` substring
-      // (old fixer rows, explicit .md links) OR the target's canonical
-      // outgoing refs containing the source slug (extension-less
-      // convention links and wikilinks the substring check misses).
-      if (hasBacklink(target.content, sourceFilename)) continue;
-      if (outgoingSlugsBySlug.get(targetSlug)?.has(sourceSlug)) continue;
-      gaps.push({
-        sourcePage: page.relPath,
-        targetPage: targetSlug + '.md',
-        entityName: ref.name,
-        sourceTitle: extractPageTitle(page.content),
-      });
+      yield;
     }
   }
 
-  return gaps;
+  *pass2(): Generator<void> {
+    for (const [targetSlug, indexes] of this.referrers) {
+      if (!this.existingSlugs.has(targetSlug)) continue;
+      let content: string;
+      try {
+        content = readFileSync(join(this.brainDir, `${targetSlug}.md`), 'utf-8');
+      } catch { continue; /* vanished since pass 1: not a target */ }
+      const outgoing = new Set(canonicalExtractEntityRefs(content).map(r => r.slug));
+      const credits = new Set<number>();
+      for (const i of indexes) {
+        const c = this.candidates[i]!;
+        if (hasBacklink(content, c.sourceFilename) || outgoing.has(c.sourceSlug)) credits.add(i);
+      }
+      this.credited.set(targetSlug, credits);
+      yield;
+    }
+  }
+
+  gaps(): BacklinkGap[] {
+    const gaps: BacklinkGap[] = [];
+    this.candidates.forEach((c, i) => {
+      for (const ref of c.refs) {
+        const credits = this.credited.get(ref.targetSlug);
+        if (!credits) continue; // target page doesn't exist
+        if (credits.has(i)) continue;
+        gaps.push({ sourcePage: c.relPath, targetPage: ref.targetSlug + '.md', entityName: ref.name, sourceTitle: c.title });
+      }
+    });
+    return gaps;
+  }
+}
+
+/** Scan a brain directory for back-link gaps (synchronous; see findBacklinkGapsAsync for the yielding form). */
+export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
+  const scan = new BacklinkGapScan(brainDir);
+  for (const _ of scan.pass1()) { /* drain */ }
+  for (const _ of scan.pass2()) { /* drain */ }
+  return scan.gaps();
+}
+
+/**
+ * The same scan, yielding to the event loop every BACKLINKS_YIELD_EVERY files
+ * so timers (the progress heartbeat, the worker RSS watchdog) run mid-scan.
+ */
+export async function findBacklinkGapsAsync(brainDir: string): Promise<BacklinkGap[]> {
+  const scan = new BacklinkGapScan(brainDir);
+  const yieldNow = () => new Promise<void>(resolve => setImmediate(resolve));
+  for (const pass of [scan.pass1(), scan.pass2()]) {
+    let n = 0;
+    for (const _ of pass) {
+      if (++n % BACKLINKS_YIELD_EVERY === 0) await yieldNow();
+    }
+    await yieldNow();
+  }
+  return scan.gaps();
 }
 
 /** Per-run outcome of the fixer: entries inserted + per-file skip reasons. */
@@ -343,6 +414,8 @@ export interface BacklinksResult {
   /** Pages the fixer refused to touch (invalid frontmatter, lock/write errors). */
   skipped_invalid?: number;
   skipped_pages?: Array<{ page: string; reason: string }>;
+  /** The gaps the scan found, so the CLI prints them without a second walk (#6438). */
+  gaps?: BacklinkGap[];
 }
 
 export interface ParsedBacklinksArgs {
@@ -405,14 +478,14 @@ export async function runBacklinksCore(opts: BacklinksOpts): Promise<BacklinksRe
     }
   }
 
-  // findBacklinkGaps is a sync double-walk of the brain dir. On 50K-page
-  // brains that can take seconds — heartbeat so agents see we're working.
+  // The scan streams the brain dir (#6438) and yields every few files so
+  // this heartbeat and the worker's RSS watchdog fire while it runs.
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('backlinks.scan');
   const stopHb = startHeartbeat(progress, 'walking pages for missing back-links…');
   let gaps: BacklinkGap[];
   try {
-    gaps = findBacklinkGaps(opts.dir);
+    gaps = await findBacklinkGapsAsync(opts.dir);
   } finally {
     stopHb();
     progress.finish();
@@ -440,9 +513,10 @@ export async function runBacklinksCore(opts: BacklinksOpts): Promise<BacklinksRe
       dryRun: !!opts.dryRun,
       skipped_invalid: fixOutcome.skipped.length,
       skipped_pages: fixOutcome.skipped,
+      gaps,
     };
   }
-  return { action: opts.action, gaps_found: gaps.length, fixed: 0, pages_affected: pagesAffected, dryRun: !!opts.dryRun };
+  return { action: opts.action, gaps_found: gaps.length, fixed: 0, pages_affected: pagesAffected, dryRun: !!opts.dryRun, gaps };
 }
 
 export async function runBacklinks(args: string[]) {
@@ -475,8 +549,7 @@ export async function runBacklinks(args: string[]) {
     return;
   }
   if (result.action === 'check') {
-    // Re-walk for user-facing output (core returns counts, CLI shows detail).
-    const gaps = findBacklinkGaps(brainDir);
+    const gaps = result.gaps ?? [];
     console.log(`Found ${gaps.length} missing back-link(s):\n`);
     for (const gap of gaps) {
       console.log(`  ${gap.targetPage} <- ${gap.sourcePage}`);

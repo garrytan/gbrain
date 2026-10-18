@@ -17,6 +17,7 @@
 
 import { homedir } from 'node:os';
 import type { BrainEngine } from '../core/engine.ts';
+import { helpFlagRequested } from '../cli/subcommands.ts';
 import type { CliDispatchContext } from '../cli/command-table.ts';
 import type { RecentTranscript } from '../core/transcripts.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
@@ -315,7 +316,7 @@ export function fmtSummary(r: TranscriptsIngestResult): string {
   const byHarness = new Map<string, number>();
   for (const f of r.files) {
     for (const s of f.sessions) {
-      if (!s.error && !s.skipped) byHarness.set(s.harness, (byHarness.get(s.harness) ?? 0) + 1);
+      if (!s.error && !s.skipped && !s.pending) byHarness.set(s.harness, (byHarness.get(s.harness) ?? 0) + 1);
     }
   }
   const lines: string[] = [];
@@ -323,6 +324,7 @@ export function fmtSummary(r: TranscriptsIngestResult): string {
   lines.push(
     `sessions: ${r.sessionsImported} imported (${counts || 'none'}), ` +
       `${r.sessionsFiltered} filtered, ${r.sessionsErrored} errored, ` +
+      (r.sessionsPending ? `${r.sessionsPending} pending, ` : '') +
       (r.sessionsSkippedNoTimestamp ? `${r.sessionsSkippedNoTimestamp} skipped (no timestamps), ` : '') +
       `${r.sessionsSeen} seen`,
   );
@@ -330,10 +332,12 @@ export function fmtSummary(r: TranscriptsIngestResult): string {
     `pages: ${r.pages.imported} imported, ${r.pages.skipped} unchanged` +
       (r.pages.errored ? `, ${r.pages.errored} ERRORED` : '') +
       (r.pages.planned ? `, ${r.pages.planned} planned (dry run)` : '') +
+      (r.pages.pending ? `, ${r.pages.pending} accepted and still publishing (the next run finishes them without a second write)` : '') +
       (r.partsDeleted ? `, ${r.partsDeleted} stale parts deleted` : ''),
   );
   if (r.redactions > 0) lines.push(`redactions: ${r.redactions} secrets/patterns redacted before write`);
   if (r.imperatives > 0) lines.push(`flagged: ${r.imperatives} agent-directed imperative(s) noted in frontmatter`);
+  if (r.subagentRollouts > 0) lines.push(`${r.subagentRollouts} sub-agent rollouts (no user turns by design)`);
   if (r.driftFiles > 0) {
     const userless = r.files.filter((f) => f.userTurnsMissing).length;
     const zero = r.driftFiles - userless;
@@ -605,6 +609,8 @@ export async function runTranscripts(engine: BrainEngine, args: string[], dispat
     return;
   }
   if (sub === 'status') {
+    // #6521: `status` has no parser of its own, so its help flag reached runStatus and the (null) engine.
+    if (helpFlagRequested(args.slice(1))) { console.log(HELP); return; }
     await runStatus(engine, args.slice(1));
     return;
   }

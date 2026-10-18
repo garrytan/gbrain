@@ -44,6 +44,24 @@ export interface RobotRun {
   schedule: string; seed: number; length: number; fault?: { point: FaultPoint; nth: number }; process?: ProcessFault;
   ops?: string[]; crashed: boolean; violations: RobotOutcome['violations']; duration_ms: number; trace?: string[];
   deferred?: RobotOutcome['deferred'];
+  /** The worker finished without reaching its requested fault (#6584): nothing was crashed or recovered. */
+  fault_not_reached?: boolean;
+  /** The worker's fault hook threw at the requested seam (`fault_hook_error`); the run proves nothing. */
+  hook_error?: string;
+}
+
+/**
+ * Requested faults a scenario (a schedule label, or a process fault) may
+ * legitimately finish without reaching, each with its reason. Any other
+ * unreached fault fails the run and the full gate.
+ */
+export const UNREACHED_FAULT_ALLOWLIST: readonly { scenario: string; point: FaultPoint; reason: string }[] = [];
+export function unreachedAllowed(run: Pick<RobotRun, 'schedule' | 'process' | 'fault'>): boolean {
+  return UNREACHED_FAULT_ALLOWLIST.some(entry => entry.scenario === (run.process ?? run.schedule) && entry.point === run.fault?.point);
+}
+/** A run fails the gate when it found violations, its hook threw, or it never reached a fault it was not allowed to miss. */
+export function runFailed(run: RobotRun): boolean {
+  return run.violations.length > 0 || run.hook_error !== undefined || (run.fault_not_reached === true && !unreachedAllowed(run));
 }
 export interface RobotOptions {
   engine: 'pglite' | 'postgres'; seed: number; seconds: number; scratch: string; home: string;
@@ -82,42 +100,65 @@ export async function runRobotPhase(o: RobotOptions) {
   const started = performance.now();
   const runs: RobotRun[] = [];
   const log = o.log ?? (line => process.stderr.write(`[crash-robot] ${o.engine}: ${line}\n`));
-  async function fresh(name: string): Promise<{ root: string; dataDir: string; databaseUrl?: string; directUrl?: string }> {
+  async function fresh(name: string): Promise<{ root: string; dataDir: string; databaseUrl?: string; directUrl?: string; database?: string }> {
     const root = join(o.scratch, `robot-${name}-${randomUUID().slice(0, 8)}`); mkdirSync(root, { recursive: true });
     if (!o.admin) return { root, dataDir: join(root, 'data') };
     const database = `gbrain_persistence_test_${randomUUID().replaceAll('-', '')}`;
     await o.admin.unsafe(`CREATE DATABASE ${database}`); o.databases.push(database);
     const direct = new URL(o.databaseUrl!); direct.pathname = `/${database}`;
     const pooled = o.pooledUrl ? new URL(o.pooledUrl) : null; if (pooled) pooled.pathname = `/${database}`;
-    return { root, dataDir: join(root, 'data'), databaseUrl: (pooled ?? direct).toString(), directUrl: direct.toString() };
+    return { root, dataDir: join(root, 'data'), databaseUrl: (pooled ?? direct).toString(), directUrl: direct.toString(), database };
+  }
+  // A transaction-mode pooler keeps every server connection a run opened in
+  // that run's per-database pool until its own idle timeout (PgBouncer: 600 s,
+  // the length of a full robot budget), so a run's database is released the
+  // moment the run passes: DROP ... WITH (FORCE) ends those backends. A
+  // failing run keeps its database for the retained-fixture metadata.
+  async function release(database: string | undefined) {
+    if (!database || !o.admin) return;
+    await o.admin.unsafe(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
+    const index = o.databases.indexOf(database); if (index >= 0) o.databases.splice(index, 1);
   }
   const environment: Record<string, string> = o.pooledUrl ? { GBRAIN_PREPARE: 'false' } : {};
   async function execute(schedule: Schedule, role: 'count' | 'run', extra: Partial<RobotConfig> = {}): Promise<RobotRun & { counts?: Record<string, number> }> {
     const at = performance.now();
-    const place = await fresh(`${schedule.label}-${role}`);
+    const { database, ...place } = await fresh(`${schedule.label}-${role}`);
     const config: RobotConfig = { kind: o.engine, ...place, schedule, worktrees: o.worktrees ?? 2, statePath: join(place.root, 'state.json'), ...extra };
     const path = join(place.root, 'robot.json'); writeFileSync(path, JSON.stringify(config), { mode: 0o600 });
     const base = { schedule: schedule.label, seed: schedule.seed, length: schedule.ops.length, ...(extra.fault ? { fault: extra.fault } : {}),
       ...(extra.process ? { process: extra.process } : {}), ...(o.keep?.has(schedule.label) ? { ops: schedule.ops.map(d => d.id) } : {}) };
     const child = o.spawn(path, o.home, 'robot', [role], environment); o.track(child);
-    if (role === 'run' && extra.fault) {
-      const reached = await Promise.race([child.event('fault', 600_000).then(e => ({ fault: e })), child.event('done', 600_000).then(e => ({ done: e }))]);
-      if ('done' in reached) {
-        const result = reached.done.result as RobotOutcome;
-        return { ...base, crashed: false, violations: result.violations, deferred: result.deferred, trace: result.trace, duration_ms: performance.now() - at };
+    const outcome = async (): Promise<RobotRun & { counts?: Record<string, number> }> => {
+      if (role === 'run' && extra.fault) {
+        const reached = await Promise.race([child.event('fault', 600_000).then(e => ({ fault: e })),
+          child.event('fault_hook_error', 600_000).then(e => ({ hookError: e })), child.event('done', 600_000).then(e => ({ done: e }))]);
+        if ('hookError' in reached) {
+          await child.kill();
+          return { ...base, crashed: false, hook_error: String(reached.hookError.message), violations: [], duration_ms: performance.now() - at };
+        }
+        if ('done' in reached) {
+          const result = reached.done.result as RobotOutcome;
+          return { ...base, crashed: false, fault_not_reached: true, violations: result.violations, deferred: result.deferred, trace: result.trace, duration_ms: performance.now() - at };
+        }
+        await child.kill();
+        const recovered = o.spawn(path, o.home, 'robot', ['recover'], environment); o.track(recovered);
+        const result = (await recovered.done()).result as RobotOutcome;
+        return { ...base, crashed: true, violations: result.violations, deferred: result.deferred, trace: result.trace, duration_ms: performance.now() - at };
       }
-      await child.kill();
-      const recovered = o.spawn(path, o.home, 'robot', ['recover'], environment); o.track(recovered);
-      const result = (await recovered.done()).result as RobotOutcome;
-      return { ...base, crashed: true, violations: result.violations, deferred: result.deferred, trace: result.trace, duration_ms: performance.now() - at };
-    }
-    const result = (await child.done()).result as RobotOutcome;
-    return { ...base, crashed: false, violations: result.violations, deferred: result.deferred, trace: result.trace, counts: result.counts, duration_ms: performance.now() - at };
+      const result = (await child.done()).result as RobotOutcome;
+      return { ...base, crashed: false, violations: result.violations, deferred: result.deferred, trace: result.trace, counts: result.counts, duration_ms: performance.now() - at };
+    };
+    const run = await outcome();
+    if (!runFailed(run)) await release(database);
+    return run;
   }
   const record = (run: RobotRun) => {
     runs.push(run);
     const what = run.fault ? `${run.fault.point}#${run.fault.nth}` : run.process ?? 'no crash';
-    log(`${run.schedule} ${what}: ${run.violations.length ? `${run.violations.length} VIOLATION(S) ${run.violations.map(v => v.class).join(',')}` : 'ok'} (${Math.round(run.duration_ms)} ms)`);
+    const verdict = run.violations.length ? `${run.violations.length} VIOLATION(S) ${run.violations.map(v => v.class).join(',')}`
+      : run.hook_error !== undefined ? `FAULT HOOK ERROR ${run.hook_error}`
+        : run.fault_not_reached ? (unreachedAllowed(run) ? 'fault not reached (allowed)' : 'FAULT NOT REACHED') : 'ok';
+    log(`${run.schedule} ${what}: ${verdict} (${Math.round(run.duration_ms)} ms)`);
   };
 
   if (o.replay) {
@@ -183,10 +224,13 @@ function summarize(runs: RobotRun[], started: number, o: RobotOptions) {
     seed: o.seed, budget_seconds: o.seconds, duration_ms: performance.now() - started,
     schedules: new Set(runs.map(r => `${r.schedule}:${r.seed}`)).size,
     crash_runs: crashRuns.length, crashed_runs: crashRuns.filter(r => r.crashed).length,
+    fault_hook_errors: runs.filter(r => r.hook_error !== undefined),
+    faults_not_reached: runs.filter(r => r.fault_not_reached && !unreachedAllowed(r)),
+    faults_not_reached_allowed: runs.filter(r => r.fault_not_reached && unreachedAllowed(r)),
     sequences_x_crash_points: crashRuns.length, distinct_crash_points: [...points].sort(),
     process_faults: runs.filter(r => r.process).map(r => ({ fault: r.process, violations: r.violations.length })),
     violations, deferred: runs.flatMap(r => (r.deferred ?? []).map(v => ({ ...v, schedule: r.schedule, seed: r.seed, fault: r.fault }))),
-    failing_runs: runs.filter(r => r.violations.length), runs,
+    failing_runs: runs.filter(runFailed), runs,
   };
 }
 

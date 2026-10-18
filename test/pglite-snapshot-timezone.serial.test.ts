@@ -63,3 +63,23 @@ describe('PGLite snapshot timezone parity', () => {
     expect(snap).toBe(cold);
   }, 120_000);
 });
+
+describe('PGLite snapshot creation-time parity', () => {
+  test('a snapshot-restored brain is created now, like a cold init (not when the snapshot was built)', async () => {
+    const prev = process.env.GBRAIN_PGLITE_SNAPSHOT;
+    process.env.GBRAIN_PGLITE_SNAPSHOT = SNAPSHOT;
+    const engine = new PGLiteEngine();
+    try {
+      await Bun.sleep(1500);
+      const t0 = Date.now();
+      await engine.connect({} as never);
+      await engine.initSchema();
+      const rows = await engine.executeRaw<{ at: string | Date }>(`SELECT MIN(created_at) AS at FROM sources`);
+      expect(new Date(rows[0].at).getTime()).toBeGreaterThanOrEqual(t0 - 500);
+    } finally {
+      await engine.disconnect?.();
+      if (prev === undefined) delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+      else process.env.GBRAIN_PGLITE_SNAPSHOT = prev;
+    }
+  }, 120_000);
+});

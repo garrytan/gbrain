@@ -26,6 +26,7 @@ import { join } from 'node:path';
 import { assessBackupRepository } from '../src/core/backup/repository.ts';
 import { pushStatusPathForRoot, workspacePush } from '../src/core/workspace-push.ts';
 import { bootstrapDoctorChecks } from '../src/commands/doctor/bootstrap-checks.ts';
+import { checkPushProbe } from '../src/core/bootstrap/verify.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -131,5 +132,32 @@ describe('the managed guard refusal record (#6083)', () => {
     const record = JSON.parse(readFileSync(pushStatusPathForRoot(root), 'utf8'));
     expect(record.ok).toBe(false);
     expect(record.code).toBe('writer_coordinator_required');
+  });
+
+  // #5606: the refusal names the managed equivalent instead of a bare "submit through the coordinator".
+  test('names the managed Git writer, its status and enable verbs, and plain git for non-page files', async () => {
+    const root = await repository();
+    manage(root);
+    const refusal = await workspacePush({ dir: root }).catch(error => error);
+    expect(refusal).toMatchObject({ code: 'writer_coordinator_required' });
+    expect(refusal.message).toContain('gbrain sources push is not its Git writer');
+    expect(refusal.suggestion).toContain('gbrain sources writer status');
+    expect(refusal.suggestion).toContain('gbrain sources writer git-durability');
+    expect(refusal.suggestion).toContain('--pat-file');
+    expect(refusal.suggestion).toContain('plain git');
+    expect(refusal.suggestion).not.toContain('Submit the change through the persistence coordinator');
+  });
+
+  test('bootstrap verify push_probe never recommends sources push on a managed worktree', async () => {
+    const root = await repository();
+    const before = checkPushProbe(root);
+    expect(before.detail).toContain('gbrain sources push');
+    manage(root);
+    const probe = checkPushProbe(root);
+    expect(probe).toMatchObject({ id: 'push_probe', ok: true });
+    expect(probe.warn).toBeFalsy();
+    expect(probe.detail).toContain('managed canonical worktree');
+    expect(probe.detail).toContain('gbrain sources writer git-durability');
+    expect(probe.detail).not.toContain('gbrain sources push');
   });
 });

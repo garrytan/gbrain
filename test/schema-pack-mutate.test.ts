@@ -10,6 +10,8 @@ import {
   addPrefixToType,
   addTypeToPack,
   BUNDLED_PACK_NAMES,
+  emitYaml,
+  writePackManifest,
   locateMutablePackFile,
   removeAliasFromType,
   removeLinkTypeFromPack,
@@ -485,6 +487,50 @@ filing_rules: []
       expect(reparsed).toBeDefined();
       const after = loadPackFromFile(path);
       expect(after.page_types.find((t) => t.name === 'researcher')).toBeDefined();
+    });
+  });
+});
+
+// ─── #6432 (wave 14 P1.2): the publication boundary refuses what it cannot read back ───
+
+describe('writePackManifest emit guard (#6432)', () => {
+  const manifest = (): SchemaPackManifest => ({
+    api_version: 'gbrain-schema-pack-v1', name: 'mine', version: '1.0.0', description: 'd',
+    gbrain_min_version: '0.38.0', extends: null, borrow_from: [],
+    page_types: [{ name: 'person', primitive: 'entity', path_prefixes: ['people/'], aliases: ['human'], extractable: false, expert_routing: false }],
+    link_types: [{ name: 'works_at', inverse: 'employs', inference: { regex: '\\b(works? at)\\b' } }],
+    frontmatter_links: [], takes_kinds: ['fact', 'take', 'bet', 'hunch'], enrichable_types: [], filing_rules: [],
+  } as SchemaPackManifest);
+
+  it('an emitter that drops a key refuses EMIT_MISMATCH and leaves the file bytes unchanged', () => {
+    const path = join(tmpDir, 'pack.yaml');
+    writeFileSync(path, 'original bytes\n', 'utf-8');
+    const dropping = (m: SchemaPackManifest) => emitYaml({ ...m, page_types: m.page_types.map(t => ({ ...t, aliases: [] })) });
+    try {
+      writePackManifest(path, manifest(), 'yaml', dropping);
+      throw new Error('expected EMIT_MISMATCH');
+    } catch (e) {
+      expect((e as SchemaPackMutationError).code).toBe('EMIT_MISMATCH');
+      expect((e as Error).message).toContain('page_types');
+    }
+    expect(readFileSync(path, 'utf-8')).toBe('original bytes\n');
+  });
+
+  it('a key-order-only difference is not a mismatch', () => {
+    const path = join(tmpDir, 'pack.yaml');
+    const reordered = (m: SchemaPackManifest) => {
+      const { name, api_version, ...rest } = m as Record<string, unknown>;
+      return emitYaml({ ...rest, name, api_version });
+    };
+    writePackManifest(path, manifest(), 'yaml', reordered);
+    expect(loadPackFromFile(path).link_types![0]!.inference!.regex).toBe('\\b(works? at)\\b');
+  });
+
+  it('PACK_TOO_LARGE keeps its typed code through withMutation', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_AUDIT_DIR: auditDir, GBRAIN_SCHEMA_PACK_MAX_BYTES: '1024' }, async () => {
+      const path = seedPack('mine', 'yaml');
+      writeFileSync(path, readFileSync(path, 'utf-8') + '# ' + 'x'.repeat(2048) + '\n', 'utf-8');
+      await expect(addAliasToType('mine', 'person', 'human', { lockDir })).rejects.toMatchObject({ code: 'PACK_TOO_LARGE' });
     });
   });
 });

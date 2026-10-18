@@ -31,7 +31,7 @@ test('one admissible page refuses up front with the capacity command', async () 
     const before = await engine.executeRaw('SELECT slug, frontmatter, knowledge_revision FROM pages ORDER BY slug');
     const { result } = await phaseCGrandfather(engine, OPTS);
     expect(result.status).toBe('failed');
-    expect(result.detail).toStartWith('queue_capacity: Write capacity exhausted: principal permanent request IDs (0 used of 0).');
+    expect(result.detail).toStartWith('write_quota_exhausted: Write capacity exhausted: principal permanent request IDs (0 used of 0).');
     expect(result.detail).toContain(`gbrain config set ${EXHAUSTED} `);
     expect(await engine.executeRaw('SELECT slug, frontmatter, knowledge_revision FROM pages ORDER BY slug')).toEqual(before);
   }, { setup: async brain => {

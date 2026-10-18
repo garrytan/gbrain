@@ -88,6 +88,37 @@ describe('history refusal names the refusing side', () => {
   });
 });
 
+describe('page history refusal', () => {
+  let bare: PGLiteEngine;
+  beforeAll(async () => {
+    bare = new PGLiteEngine();
+    await bare.connect({});
+    await bare.initSchema();
+  }, 120_000);
+  afterAll(async () => { await bare.disconnect(); });
+
+  test('a brain with no journal but with page versions is refused, naming how many versions the copy would discard', async () => {
+    await assertLegacyEngineMigration(bare, { side: 'source', from: 'pglite', to: 'postgres' });
+    await bare.putPage('notes/history', { type: 'note', title: 'History', compiled_truth: 'first body' });
+    const page = (await bare.getPage('notes/history'))!;
+    await bare.createVersion('notes/history');
+    await bare.createVersion('notes/history');
+    expect(Number((await bare.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_versions WHERE page_id = $1', [page.id]))[0]!.n)).toBe(2);
+    const e = await refusal(() => assertLegacyEngineMigration(bare, { side: 'source', from: 'pglite', to: 'postgres' }));
+    expect(e.code).toBe('writer_coordinator_required');
+    expect(e.reason).toBe('page_history');
+    expect(e.message).toBe('Engine migration would discard 2 page versions.');
+    expect(e.why).toContain('copy would discard all 2');
+    expect(envelope(e, cli).fix).toMatchObject({ next: 'ask_user', verify: { argv: expect.arrayContaining(VERIFY) } });
+    const e2 = await refusal(() => runMigrateEngine(bare, ['--to', 'postgres', '--url', 'postgresql://user@localhost:1/never']));
+    expect(e2.reason).toBe('page_history');
+  });
+
+  test('the target side is not refused for versions (an empty target is checked by the journal tables)', async () => {
+    await assertLegacyEngineMigration(bare, { side: 'target', from: 'pglite', to: 'postgres' });
+  });
+});
+
 describe('managed-brain refusal', () => {
   beforeAll(async () => { await engine.executeRaw('UPDATE persistence_brain SET enabled = true WHERE singleton = 1'); });
   afterAll(async () => { await engine.executeRaw('UPDATE persistence_brain SET enabled = false WHERE singleton = 1'); });

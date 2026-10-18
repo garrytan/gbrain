@@ -1,13 +1,14 @@
 /**
- * `gbrain repair request-indexes` (#5762): create a missing managed sync
- * request index, or drop an INVALID one (an interrupted concurrent build) and
- * rebuild it, on a brain whose schema version is already current, where the
- * v179 migration never runs again. Postgres builds CONCURRENTLY, one index at
+ * `gbrain repair request-indexes` (#5762, #6511): create a missing online-built
+ * request index (the managed sync checkpoint pair, the purge slug index), or
+ * drop an INVALID one (an interrupted concurrent build) and rebuild it, on a
+ * brain whose schema version is already current, where the v179 and slug-index
+ * migrations never run again. Postgres builds CONCURRENTLY, one index at
  * a time; PGLite builds inline. An index another session is still building is
  * reported, never dropped. Brain-wide; no journal admission and no user data
  * changes, so `--all` and doctor remediation include it.
  */
-import { PERSISTENCE_SYNC_RUN_INDEXES } from '../persistence/schema.ts';
+import { PERSISTENCE_REQUEST_ONLINE_INDEXES } from '../persistence/schema.ts';
 import { readRequestIndexStates } from '../persistence/checkpoint-validation.ts';
 import { buildIndexOnline } from '../schema-migrations/helpers.ts';
 import type { RepairHandler, RepairItem } from './core.ts';
@@ -25,9 +26,9 @@ export const requestIndexesRepair: RepairHandler = {
     return { items, residuals: { building: states.filter(index => index.state === 'building').length } };
   },
   async apply(ctx, item) {
-    const index = PERSISTENCE_SYNC_RUN_INDEXES.find(candidate => candidate.name === item.slug);
+    const index = PERSISTENCE_REQUEST_ONLINE_INDEXES.find(candidate => candidate.name === item.slug);
     if (!index) return false;
-    const outcome = await buildIndexOnline(ctx.engine, 0, { ...index, table: 'persistence_requests' }, { notice: line => ctx.logger.info(line.trimEnd()) });
+    const outcome = await buildIndexOnline(ctx.engine, 0, { table: 'persistence_requests', ...index }, { notice: line => ctx.logger.info(line.trimEnd()) });
     return outcome === 'created' || outcome === 'rebuilt';
   },
 };

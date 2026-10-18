@@ -1,0 +1,39 @@
+{
+  "fixture_id": "gen-trust-003",
+  "turns": {},
+  "trust": {
+    "items": [
+      {
+        "item_id": "i1",
+        "check": "refused",
+        "step": "s2"
+      },
+      {
+        "item_id": "i2",
+        "check": "refused",
+        "step": "s3"
+      },
+      {
+        "item_id": "i3",
+        "check": "refused",
+        "step": "s4"
+      },
+      {
+        "item_id": "i4",
+        "check": "refused",
+        "step": "s6"
+      },
+      {
+        "item_id": "i5",
+        "check": "refused",
+        "step": "s7"
+      },
+      {
+        "item_id": "i6",
+        "check": "tier",
+        "step": "s1",
+        "tier": "agent_written"
+      }
+    ]
+  }
+}

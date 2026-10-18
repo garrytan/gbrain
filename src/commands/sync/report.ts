@@ -50,37 +50,26 @@ export async function maybeBackupCoverageRefresh(engine: BrainEngine): Promise<v
 }
 
 /**
- * v0.42.7 (#1696): one-line end-of-sync nudge when the brain (or a source)
- * carries a meaningful link/timeline extraction backlog. Reuses the same warn
- * threshold (GBRAIN_EXTRACTION_LAG_WARN_PCT, default 20%) the doctor check uses
- * so the nudge fires iff doctor would warn — one source of truth. Always
- * stderr (never stdout — keeps `--json` clean), suppressible via
+ * v0.42.7 (#1696), #6803 (D1): end-of-sync nudge when the brain (or a source)
+ * carries a link/timeline extraction backlog. It IS doctor's
+ * `links_extraction_lag` (one statement and verdict, core/extraction-lag.ts),
+ * so it prints iff doctor would warn (attendance-blocked pages excluded), and
+ * names both routes: plain `gbrain extract --stale` (30 min per run, resumes)
+ * and `--catch-up` (finishes in one run), with an estimate at its stated basis.
+ * Always stderr (never stdout — keeps `--json` clean), suppressible via
  * GBRAIN_SYNC_NO_EXTRACT_NUDGE, best-effort (never throws). Source-prefix-aware
  * via serr when called inside a withSourcePrefix scope.
  */
 export async function maybeExtractionNudge(engine: BrainEngine, sourceId?: string): Promise<void> {
   if (process.env.GBRAIN_SYNC_NO_EXTRACT_NUDGE) return;
   try {
-    const { LINK_EXTRACTOR_VERSION_TS } = await import('../../core/link-extraction.ts');
-    // D3/C4: resolve the warn threshold + vacuous-skip floor through the SAME
-    // helpers the doctor check uses (dynamic import keeps doctor.ts off sync's
-    // eager-load path) so "the nudge fires iff doctor would warn" can't drift.
-    const { _resolveEnvNumber, EXTRACTION_LAG_WARN_PCT_DEFAULT, EXTRACTION_LAG_MIN_PAGES } = await import('../doctor.ts');
-    const totalRows = await engine.executeRaw<{ count: number }>(
-      sourceId
-        ? `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND source_id = $1`
-        : `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL`,
-      sourceId ? [sourceId] : [],
-    );
-    const total = Number(totalRows[0]?.count ?? 0);
-    // Match doctor's predicate EXACTLY (C4): skip tiny brains only when NOT
-    // source-scoped (a small explicit source IS assessed, like orphan_ratio).
-    if (total < EXTRACTION_LAG_MIN_PAGES && !sourceId) return;
-    const stale = await engine.countStalePagesForExtraction({ sourceId, versionTs: LINK_EXTRACTOR_VERSION_TS });
-    const warnPct = _resolveEnvNumber('GBRAIN_EXTRACTION_LAG_WARN_PCT', EXTRACTION_LAG_WARN_PCT_DEFAULT, { unit: '%' });
-    if ((stale / total) * 100 > warnPct) {
-      serr(`[sync] ${stale} page(s) have un-extracted edges — run 'gbrain extract --stale'`);
-    }
+    const { checkLinksExtractionLag } = await import('../doctor.ts');
+    const check = await checkLinksExtractionLag(engine, { sourceId });
+    const d = check.details as { total: number; stale: number; attendance_blocked: number; mention_due: number | null; mention_last_pass_at: string | null; routes?: unknown } | undefined;
+    if (check.status === 'ok' || !d?.routes) return;
+    const { extractionNudgeLines } = await import('../../core/extraction-lag.ts');
+    const lag = { total: d.total, actionable: d.stale, attendance_blocked: d.attendance_blocked, mention_due: d.mention_due, mention_last_pass_at: d.mention_last_pass_at };
+    for (const line of extractionNudgeLines(lag, { sourceId })) serr(line);
   } catch { /* nudge is best-effort — never block sync on it */ }
 }
 
@@ -129,7 +118,7 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
         const retries = [...new Set((result.failures ?? []).map(failure => managedSyncRetryCommand(failure)))];
         write(retries.length
           ? `  Fix the cause, then run: ${retries.join(' ; ')} (this admits a fresh run after active work drains).`
-          : '  Fix the cause, then run gbrain sync --no-pull --retry-failed with the same source and options; this admits a fresh run after active work drains.');
+          : '  Fix the cause, then run gbrain sync --no-pull with the same source and options; it retries the recorded failure and admits a fresh run after active work drains.');
         break;
       }
       write(`Sync BLOCKED at ${result.toCommit.slice(0, 8)}: ${result.failedFiles ?? 0} file(s) failed.`);

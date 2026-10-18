@@ -11,8 +11,9 @@
  *   gbrain loops list [--status s] [--type t] [--json]
  *   gbrain loops show <id> [--json]
  *   gbrain loops done <id> / drop <id>
- *   gbrain loops mute <sender|thread> <value> [--source <id>]
- *   gbrain loops unmute <sender|thread> <value> [--source <id>]
+ *   gbrain loops drop sender <email> [--source <id>] [--note <text>] [--dry-run]
+ *   gbrain loops mute <sender|thread> <value> [--source <id>] [--dry-run]
+ *   gbrain loops unmute <sender|thread> <value> [--source <id>] [--dry-run]
  *
  * All paths dispatch through the trusted-local op layer (handleToolCall,
  * remote:false) so CLI and MCP share one behavior. Reads default to the
@@ -27,6 +28,29 @@ import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { ALL_SOURCES } from '../core/source-id.ts';
 import { exitCliError, usageError, writeCliError } from '../cli/cli-error.ts';
 import { opError } from '../core/ops/contract.ts';
+import { LOOPS_SUBCOMMANDS, ROUTERS, subcommandHelpRequested } from '../cli/subcommands.ts';
+
+export { LOOPS_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
+
+export function printUsage(): void {
+  process.stdout.write(
+    [
+      'gbrain loops — inspect and manage open loops',
+      '  list  [--status open|done|dropped|stale] [--type <loop_type>] [--source <id>] [--json]',
+      '  show  <id> [--json]',
+      '  done  <id> [--note <text>]   mark handled',
+      '  drop  <id> [--note <text>]   not going to do it',
+      '  drop  sender <email> [--source <id>] [--note <text>] [--dry-run]',
+      '        close every open reply-owed loop from one sender (preview with --dry-run; cannot be undone)',
+      '  mute  sender <email> | thread <thread-id>   [--source <id>] [--dry-run]',
+      '        stop new loops and close its open reply-owed loops',
+      '  unmute sender <email> | thread <thread-id>  [--source <id>] [--dry-run]',
+      '        undo a mute; loops it closed are re-checked on the next sync',
+      '',
+      'The ranked digest lives at: gbrain waiting',
+    ].join('\n') + '\n',
+  );
+}
 
 function sourceFlag(args: string[]): string | undefined {
   const i = args.indexOf('--source');
@@ -68,6 +92,8 @@ interface WaitingResult {
   }>;
   /** #5871: loops that name no counterparty, listed apart from the people; null when none. */
   no_counterparty?: { loop_count: number } | null;
+  /** #5012: open reply-owed loops the automated-mail rule would not have opened; null when none. */
+  withheld_noise?: { loop_count: number; sender_count: number; senders: Array<{ email: string; open_loops: number; preview_command: string }> } | null;
   count: number;
   stale: boolean;
   sources: Array<{ id: string; last_sync_at: string | null; stale: boolean }>;
@@ -135,6 +161,13 @@ export async function runWaiting(engine: BrainEngine, args: string[]): Promise<v
     return;
   }
   process.stdout.write((result.text ?? 'No open loops.') + '\n');
+  const noise = result.withheld_noise;
+  if (noise) {
+    process.stdout.write(`\n${noise.loop_count} open reply-owed loop(s) come from ${noise.sender_count} sender(s) whose mail is automated; `
+      + `the detector would not open them now. Preview closing them, sender by sender:\n`
+      + noise.senders.map((x) => `  ${x.preview_command}   (${x.open_loops})`).join('\n') + '\n'
+      + (noise.sender_count > noise.senders.length ? `  … and ${noise.sender_count - noise.senders.length} more sender(s)\n` : ''));
+  }
   if (result.groups.length > 0 || result.no_counterparty) {
     process.stdout.write(
       `\n(close: gbrain loops done <id> · mute a sender: gbrain loops mute sender <email> · details: gbrain loops list)\n`,
@@ -188,24 +221,74 @@ async function showLoop(
   if (link) process.stdout.write(`${link}\n`);
 }
 
+function idList(ids: number[]): string {
+  if (ids.length === 0) return '';
+  return `: ${ids.slice(0, 20).join(', ')}${ids.length > 20 ? `, +${ids.length - 20} more` : ''}`;
+}
+
+/**
+ * #5012: `gbrain loops drop sender <email>` closes every open reply-owed
+ * (unanswered_inbound) loop from one sender as `dropped`, one `loops_close`
+ * per loop, so each id reports its own outcome. `--dry-run` is the consent
+ * step: it lists the ids and count and changes nothing. A drop is final: no
+ * command reopens a dropped loop (`mute` is the reversible path).
+ */
+async function dropSender(engine: BrainEngine, rest: string[], json: boolean): Promise<void> {
+  const email = rest[1]?.trim().toLowerCase();
+  if (!email || email.startsWith('-') || !email.includes('@')) {
+    exitCliError(usageError('gbrain loops drop sender needs an email address.',
+      'Usage: gbrain loops drop sender <email> [--source <id>] [--note <text>] [--dry-run]. Preview first with --dry-run.'), 'loops', { json });
+  }
+  const source = sourceFlag(rest);
+  const noteIdx = rest.indexOf('--note');
+  const note = noteIdx !== -1 ? rest[noteIdx + 1] : undefined;
+  const { listSenderInboundLoops } = await import('../core/loops/loops-store.ts');
+  const loops = await listSenderInboundLoops(engine, email!, source ? [source] : null);
+  const ids = loops.map((l) => l.id);
+  const apply = `gbrain loops drop sender ${email}${source ? ` --source ${source}` : ''}${note !== undefined ? ` --note ${JSON.stringify(note)}` : ''}`;
+  if (rest.includes('--dry-run')) {
+    if (json) {
+      process.stdout.write(JSON.stringify({ ok: true, status: 'dry_run', sender: email, source_id: source ?? null, would_close: ids, count: ids.length,
+        ...(ids.length > 0 ? { apply_command: apply } : {}) }, null, 2) + '\n');
+    } else if (ids.length === 0) {
+      process.stdout.write(`No open reply-owed loops from ${email}. Nothing to drop.\n`);
+    } else {
+      process.stdout.write(`Dry run: ${ids.length} open reply-owed loop(s) from ${email} would be dropped${idList(ids)}. Nothing changed.\n`
+        + `To drop them (cannot be undone): ${apply}\n`);
+    }
+    return;
+  }
+  const closed: number[] = [];
+  const failed: Array<{ id: number; reason: string }> = [];
+  for (const loop of loops) {
+    try {
+      const result = (await handleToolCall(engine, 'loops_close', { id: loop.id, status: 'dropped', source_id: loop.source_id,
+        note: note ?? `drop sender ${email}` })) as { closed: boolean; reason?: string };
+      if (result.closed) closed.push(loop.id);
+      else failed.push({ id: loop.id, reason: result.reason ?? 'not_closed' });
+    } catch (e) {
+      failed.push({ id: loop.id, reason: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  if (json) {
+    process.stdout.write(JSON.stringify({ ok: failed.length === 0, status: failed.length === 0 ? 'dropped' : 'partial', sender: email,
+      source_id: source ?? null, closed, failed, count: closed.length }, null, 2) + '\n');
+  } else {
+    process.stdout.write(`Dropped ${closed.length} open reply-owed loop(s) from ${email}${idList(closed)}.\n`
+      + (failed.length > 0 ? `${failed.length} could not be dropped: ${failed.slice(0, 10).map((f) => `${f.id} (${f.reason})`).join(', ')}\n` : '')
+      + (closed.length > 0 ? `To stop new loops from this sender too: gbrain loops mute sender ${email}${source ? ` --source ${source}` : ''}\n` : ''));
+  }
+  if (failed.length > 0) setCliExitVerdict(1);
+}
+
 export async function runLoops(engine: BrainEngine, args: string[]): Promise<void> {
-  const [sub, ...rest] = args;
+  const [first, ...rest] = args;
+  const sub = first as (typeof LOOPS_SUBCOMMANDS)[number] | undefined;
   const json = rest.includes('--json') || args.includes('--json');
 
-  if (!sub || sub === '--help' || sub === '-h' || sub === 'help') {
-    process.stdout.write(
-      [
-        'gbrain loops — inspect and manage open loops',
-        '  list  [--status open|done|dropped|stale] [--type <loop_type>] [--source <id>] [--json]',
-        '  show  <id> [--json]',
-        '  done  <id> [--note <text>]   mark handled',
-        '  drop  <id> [--note <text>]   not going to do it',
-        '  mute  sender <email> | thread <thread-id>   [--source <id>]',
-        '  unmute sender <email> | thread <thread-id>  [--source <id>]   undo a mute',
-        '',
-        'The ranked digest lives at: gbrain waiting',
-      ].join('\n') + '\n',
-    );
+  // cli.ts answers help before dispatch (#6114 router, #6521: `loops show --help` used to exit 2 "needs a loop id").
+  if (!sub || subcommandHelpRequested(args, ROUTERS.loops)) {
+    printUsage();
     return;
   }
 
@@ -239,6 +322,11 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
       const due = l.due_at ? `  due ${String(l.due_at).slice(0, 10)}` : '';
       process.stdout.write(`#${String(l.id).padEnd(5)} [${String(l.loop_type)}]${due}  ${String(l.summary)}\n`);
     }
+    return;
+  }
+
+  if (sub === 'drop' && rest[0] === 'sender') {
+    await dropSender(engine, rest, json);
     return;
   }
 
@@ -307,16 +395,28 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
         process.exit(2);
       }
     }
+    const dryRun = rest.includes('--dry-run');
     if (sub === 'mute') {
       const result = (await handleToolCall(engine, 'loops_mute', {
         kind,
         value,
         source_id: sourceId,
-      })) as { muted: boolean; reason?: string };
+        ...(dryRun ? { dry_run: true } : {}),
+      })) as { muted?: boolean; reason?: string; closed?: number[]; would_close?: number[]; undo_command: string };
+      if (dryRun) {
+        const ids = result.would_close ?? [];
+        if (json) process.stdout.write(JSON.stringify({ ok: true, status: 'dry_run', ...result }, null, 2) + '\n');
+        else process.stdout.write(`Dry run: muting ${kind} ${value} would close ${ids.length} open reply-owed loop(s)${idList(ids)}. Nothing changed.\n`);
+        return;
+      }
       if (json) {
         process.stdout.write(JSON.stringify({ ok: result.muted, status: result.muted ? 'muted' : 'not_muted', ...result }, null, 2) + '\n');
+      } else if (result.muted) {
+        const closed = result.closed ?? [];
+        process.stdout.write(`Muted ${kind} ${value}. New loops won't open for it; closed ${closed.length} open reply-owed loop(s)${idList(closed)}.\n`
+          + `Undo: ${result.undo_command} (re-checks the closed loops on the next sync)\n`);
       } else {
-        process.stdout.write(result.muted ? `Muted ${kind} ${value}. New loops won't open for it (existing loops keep their state).\n` : `Not muted: ${result.reason}\n`);
+        process.stdout.write(`Not muted: ${result.reason}\n`);
       }
       if (!result.muted) setCliExitVerdict(1);
       return;
@@ -325,16 +425,29 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
       kind,
       value,
       source_id: sourceId,
-    })) as { removed: boolean; reason?: string };
+      ...(dryRun ? { dry_run: true } : {}),
+    })) as { removed?: boolean; reason?: string; requeued?: number[]; would_requeue?: number[]; unverifiable: number[];
+      stale_source?: boolean; recheck_command?: string; undo_command: string };
+    if (dryRun) {
+      const ids = result.would_requeue ?? [];
+      if (json) process.stdout.write(JSON.stringify({ ok: true, status: 'dry_run', ...result }, null, 2) + '\n');
+      else process.stdout.write(`Dry run: unmuting ${kind} ${value} would queue ${ids.length} closed loop(s) for re-check${idList(ids)}. Nothing changed.\n`);
+      return;
+    }
     // A repeated unmute is a no-op, NOT a failure: removed:false exits 0 so
     // scripts can call it unconditionally without special-casing.
     if (json) {
       process.stdout.write(JSON.stringify({ ok: true, status: result.removed ? 'unmuted' : 'not_muted', ...result }, null, 2) + '\n');
     } else {
+      const requeued = result.requeued ?? [];
       process.stdout.write(
-        result.removed
-          ? `Unmuted ${kind} ${value}. New loops can open for it again (loops closed meanwhile stay closed).\n`
-          : `Not muted: ${kind} ${value} had no suppression in ${sourceId}.\n`,
+        (result.removed
+          ? `Unmuted ${kind} ${value}. New loops can open for it again.\n`
+          : `Not muted: ${kind} ${value} had no suppression in ${sourceId}.\n`)
+        + (requeued.length > 0 ? `Queued ${requeued.length} loop(s) the mute closed for re-check on the next sync${idList(requeued)}; each reopens only if nothing answered its thread since.\n` : '')
+        + (result.unverifiable.length > 0 ? `${result.unverifiable.length} closed loop(s) have no thread to re-check and stay closed${idList(result.unverifiable)}.\n` : '')
+        + (result.stale_source ? `This source has not synced in 24h; the re-check runs on its next sync: ${result.recheck_command}\n` : '')
+        + (result.removed ? `Undo: ${result.undo_command}\n` : ''),
       );
     }
     return;

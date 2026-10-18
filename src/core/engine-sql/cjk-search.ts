@@ -44,8 +44,13 @@ import { buildCJKCandidateSql, buildCJKKeywordSql, type CjkKeywordCtx, type CjkK
 import { scopedRead, type ScopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
 
-/** Runs `read` on the engine's scoped read executor. */
-export type ScopedReadRunner = <T>(read: (exec: ScopedRead) => Promise<T>) => Promise<T>;
+/**
+ * Runs `read` on the engine's scoped read executor. `settings` (setting name
+ * to transaction-local value) are applied before `read` in the same scoped
+ * transaction: Postgres folds them into its one settings statement
+ * (postgres-engine/search-settings.ts); PGLite's dialects never ask for any.
+ */
+export type ScopedReadRunner = <T>(read: (exec: ScopedRead) => Promise<T>, settings?: Readonly<Record<string, string>>) => Promise<T>;
 
 export const CJK_CANDIDATE_CAP = 2000;
 export const PGLITE_CJK_CAPPED_CHUNKS = 50_000;
@@ -71,6 +76,8 @@ export interface CjkKeywordRun {
   pgliteCappedChunks?: number;
   /** Full-scoring share of the deadline in ms (default 2/3 of it). */
   fullBudgetMs?: number;
+  /** Test seam: each Postgres statement's timeout and the arm time it was computed at, in ms. */
+  onStatementBudget?: (budget: { timeoutMs: number; armMs: number }) => void;
 }
 
 type Exec = ScopedRead;
@@ -113,7 +120,7 @@ function isStatementTimeout(e: unknown): boolean {
  * returns null and the next attempt opens a fresh one with the same source
  * scope.
  */
-async function bounded<T>(scoped: ScopedReadRunner, ms: number, fn: (exec: Exec) => Promise<T>): Promise<T | null> {
+async function bounded<T>(scoped: ScopedReadRunner, ms: number, fn: (exec: Exec) => Promise<T>, observe?: (timeoutMs: number, at: number) => void): Promise<T | null> {
   ms -= ROLLBACK_MARGIN_MS;
   if (ms < MIN_ATTEMPT_MS) return null;
   const end = performance.now() + ms;
@@ -124,8 +131,10 @@ async function bounded<T>(scoped: ScopedReadRunner, ms: number, fn: (exec: Exec)
       const timed = scopedRead({
         ...exec,
         unsafe: async (sql: string, params: readonly unknown[]) => {
-          const left = Math.floor(end - performance.now());
+          const now = performance.now();
+          const left = Math.floor(end - now);
           if (left < 1) throw Object.assign(new Error('cjk keyword attempt budget spent'), { code: '57014' });
+          observe?.(left, now);
           await exec.unsafe(`SELECT set_config('statement_timeout', $1, true)`, [String(left)]);
           return exec.unsafe(sql, params);
         },
@@ -156,6 +165,7 @@ export async function searchKeywordCJK(
   if (!run) return (await scoped(exec => fullScoring(exec, query, ctx, orFallback))).map(rowToSearchResult);
   const cap = run.candidateCap ?? CJK_CANDIDATE_CAP;
   const report = (meta: Omit<CjkKeywordMeta, 'arm_ms'>) => run.onMeta?.({ ...meta, arm_ms: Math.round(performance.now() - started) });
+  const observe = run.onStatementBudget && ((timeoutMs: number, at: number) => run.onStatementBudget!({ timeoutMs, armMs: at - started }));
   if (engine === 'pglite') {
     const out = await scoped(async exec => {
       if (await chunkEstimate(exec) <= (run.pgliteCappedChunks ?? PGLITE_CJK_CAPPED_CHUNKS)) {
@@ -169,12 +179,12 @@ export async function searchKeywordCJK(
     });
     return out.map(rowToSearchResult);
   }
-  const full = await bounded(scoped, started + (run.fullBudgetMs ?? (run.deadlineMs * 2) / 3) - performance.now(), exec => fullScoring(exec, query, ctx, orFallback));
+  const full = await bounded(scoped, started + (run.fullBudgetMs ?? (run.deadlineMs * 2) / 3) - performance.now(), exec => fullScoring(exec, query, ctx, orFallback), observe);
   if (full) {
     report({ incomplete: false, capped: false });
     return full.map(rowToSearchResult);
   }
-  const capped = await bounded(scoped, started + run.deadlineMs - performance.now(), exec => cappedScoring(exec, query, ctx, orFallback, cap));
+  const capped = await bounded(scoped, started + run.deadlineMs - performance.now(), exec => cappedScoring(exec, query, ctx, orFallback, cap), observe);
   report(!capped ? { incomplete: true, reason: 'timeout', capped: true } : capped.capHit ? { incomplete: true, reason: 'candidate_budget', capped: true } : { incomplete: false, capped: true });
   return (capped?.rows ?? []).map(rowToSearchResult);
 }

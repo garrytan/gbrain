@@ -6,6 +6,7 @@ import {
 } from '../../src/core/search/output-redaction.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { encodeDeepResearchId } from '../../src/core/deep-research-id.ts';
+import { cpuMs } from '../helpers/cpu-time.ts';
 
 const key = 'sk-proj-' + 'syntheticfixture19'.repeat(3);
 const bearer = 'syntheticbareecho19'.repeat(3);
@@ -103,9 +104,8 @@ describe('bounded retrieval display redaction', () => {
     const text = ('redis://:-eyJ-'.repeat(2000) + '@ ' + 'Bearer ' + 'A'.repeat(4000));
     let deep: unknown = { text: key };
     for (let i = 0; i < 1000; i++) deep = { nested: deep };
-    const start = performance.now();
-    const output = redactRetrievalOutput([{ chunk_text: text }], { deep });
-    expect(performance.now() - start).toBeLessThan(2000);
+    let output!: { results: { chunk_text: string }[]; meta: { deep: unknown } };
+    expect(cpuMs(() => { output = redactRetrievalOutput([{ chunk_text: text }], { deep }); })).toBeLessThan(2000);
     expect(JSON.stringify(output.meta)).toContain(OUTPUT_REDACTION_LIMIT);
     expect(output.results[0].chunk_text.includes('A'.repeat(4000))).toBe(false);
   });
@@ -138,6 +138,8 @@ const keyLabel = ['PRIVATE', 'KEY'].join(' ');
 const begin = (label = keyLabel) => `${fence}BEGIN ${label}${fence}`;
 const end = (label = keyLabel) => `${fence}END ${label}${fence}`;
 const redact = (text: string) => redactRetrievalOutput([{ chunk_text: text }], {}).results[0]!.chunk_text;
+// Process CPU, not cpuMs's thread CPU: an injected allocating PEM-scan regression read 2151 ms thread vs 3582 ms process (GC threads), under this 2000 ms bound on the thread.
+function processCpuMs(fn: () => unknown): number { const s = process.cpuUsage(); fn(); const u = process.cpuUsage(s); return (u.user + u.system) / 1000; }
 
 describe('retrieval output: assignment rule and #5348 shapes (B1/B2)', () => {
   test('KEY=value assignments reach the caller redacted, with no fragment of the value', () => {
@@ -249,9 +251,7 @@ describe('retrieval output: assignment rule and #5348 shapes (B1/B2)', () => {
 
   test('20k unterminated fences and END-only fences scan in linear time when uncapped', () => {
     for (const input of [`${begin('PUBLIC KEY')}\n`.repeat(20_000), `${begin()}\n`.repeat(20_000), `${end()}\n`.repeat(20_000)]) {
-      const t0 = performance.now();
-      redactRetrievalOutput([{ chunk_text: input }], {}, { uncapped: true });
-      expect(performance.now() - t0).toBeLessThan(2000);
+      expect(processCpuMs(() => redactRetrievalOutput([{ chunk_text: input }], {}, { uncapped: true }))).toBeLessThan(2000);
     }
   });
 });

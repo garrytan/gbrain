@@ -123,6 +123,7 @@ type CitationOpts = { skipLine?: (line: string) => boolean };
 
 function readCitations(content: string, opts: CitationOpts, legacy: boolean): InlineCitationTimelineCandidate[] {
   const result: InlineCitationTimelineCandidate[] = [];
+  if (!content.includes('[Source:')) return result;
   for (const paragraph of citationParagraphs(content, opts)) {
     const matches = [...paragraph.text.matchAll(CITATION_TIMELINE_RE)];
     if (matches.length === 0) continue;

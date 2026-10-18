@@ -12,7 +12,7 @@
  * not ours to recreate).
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from './spawn.ts';
 
 export const GBRAIN_PG_CONTAINER = 'gbrain-postgres';
 export const GBRAIN_PG_IMAGE = 'pgvector/pgvector:pg16';

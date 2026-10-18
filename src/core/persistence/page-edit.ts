@@ -19,12 +19,18 @@ import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../takes-fence.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { unifiedDiff } from '../skillpack/diff-text.ts';
+import { insertNoNewlineMarkers, splitLines, unifiedDiff } from '../skillpack/diff-text.ts';
 import { redactRetrievalOutput } from '../search/output-redaction.ts';
 import { scanCanonicalFences, targetFenceRefusal } from '../fence-repair/refusal.ts';
 
 export const EDIT_PAGE_MAX_EDITS = 50;
 export const EDIT_PAGE_DIFF_MAX_BYTES = 8 * 1024;
+/**
+ * Most LCS table cells (old lines + 1) x (new lines + 1) an edit_page diff
+ * fills, about 32 MB of numbers. Past it only the changed region is diffed.
+ */
+export const EDIT_PAGE_DIFF_CELL_BUDGET = 4_000_000;
+const EDIT_PAGE_DIFF_CONTEXT = 3;
 export const EDIT_PAGE_DOCS = 'docs/protocol/MEMORY_VERBS_v1.md#partial-page-edits-edit_page';
 
 export interface PageEdit { old_text: string; new_text: string; }
@@ -177,20 +183,99 @@ export function applyPageEdits(page: Page, tags: string[], remote: boolean, edit
 const encodedBytes = (text: string) => Buffer.byteLength(JSON.stringify(text));
 
 /**
+ * unifiedDiff when its LCS table fits `cellBudget`. Otherwise the common
+ * leading lines and (when both sides agree on the trailing newline) common
+ * trailing lines are trimmed down to the diff context, the remaining window
+ * is diffed, and its hunk headers are shifted back to page line numbers. A
+ * window still over budget becomes one coarse hunk (context, every old line
+ * removed, every new line added) with `coarse: true`. Every result applies
+ * cleanly to `before` and yields the lines of `after`, and its no-newline
+ * markers sit only at end-of-file (unifiedDiff can place them mid-file; a
+ * change of the final newline alone is no line change to either). Before
+ * this bound a one-line edit on a 50k-line page filled a 2.5-billion-cell
+ * table.
+ *
+ * @internal exported for the differential test.
+ */
+export function boundedUnifiedDiff(
+  before: string,
+  after: string,
+  oldPath: string,
+  newPath: string,
+  cellBudget = EDIT_PAGE_DIFF_CELL_BUDGET,
+): { diff: string; coarse: boolean } {
+  const a = splitLines(before);
+  const b = splitLines(after);
+  const n = a.lines.length;
+  const m = b.lines.length;
+  const opts = { oldPath, newPath, context: EDIT_PAGE_DIFF_CONTEXT };
+  if ((n + 1) * (m + 1) <= cellBudget) return { diff: unifiedDiff(before, after, opts), coarse: false };
+
+  let prefix = 0;
+  while (prefix < n && prefix < m && a.lines[prefix] === b.lines[prefix]) prefix++;
+  if (prefix === n && prefix === m) return { diff: '', coarse: false };
+  let suffix = 0;
+  if (a.trailingNewline === b.trailingNewline) {
+    while (suffix < n - prefix && suffix < m - prefix && a.lines[n - 1 - suffix] === b.lines[m - 1 - suffix]) suffix++;
+  }
+  const from = Math.max(0, prefix - EDIT_PAGE_DIFF_CONTEXT);
+  const tail = Math.max(0, suffix - EDIT_PAGE_DIFF_CONTEXT);
+  const aWindow = a.lines.slice(from, n - tail);
+  const bWindow = b.lines.slice(from, m - tail);
+  const header = [`--- ${oldPath}`, `+++ ${newPath}`];
+
+  if ((aWindow.length + 1) * (bWindow.length + 1) > cellBudget) {
+    const lead = prefix - from;
+    const trail = suffix - tail;
+    const out = [...header, `@@ -${from + 1},${aWindow.length} +${from + 1},${bWindow.length} @@`];
+    for (const line of aWindow.slice(0, lead)) out.push(' ' + line);
+    for (const line of aWindow.slice(lead, aWindow.length - trail)) out.push('-' + line);
+    for (const line of bWindow.slice(lead, bWindow.length - trail)) out.push('+' + line);
+    for (const line of aWindow.slice(aWindow.length - trail)) out.push(' ' + line);
+    insertNoNewlineMarkers(out, tail > 0 || a.trailingNewline, tail > 0 || b.trailingNewline);
+    return { diff: out.join('\n') + '\n', coarse: true };
+  }
+
+  // The window is diffed as if both sides ended in a newline; the markers
+  // go in afterwards, only on a side whose last hunk reaches end-of-file.
+  const windowText = (lines: string[]) => (lines.length === 0 ? '' : lines.join('\n') + '\n');
+  const out = [...header];
+  let aEnd = 0;
+  let bEnd = 0;
+  for (const line of unifiedDiff(windowText(aWindow), windowText(bWindow), opts).split('\n').slice(2, -1)) {
+    const hunk = /^@@ -(\d+),(\d+) \+(\d+),(\d+) @@$/.exec(line);
+    if (!hunk) {
+      out.push(line);
+      continue;
+    }
+    const [aStart, aCount, bStart, bCount] = hunk.slice(1).map(Number) as [number, number, number, number];
+    aEnd = aStart + from + aCount - 1;
+    bEnd = bStart + from + bCount - 1;
+    out.push(`@@ -${aStart + from},${aCount} +${bStart + from},${bCount} @@`);
+  }
+  insertNoNewlineMarkers(out, aEnd < n || a.trailingNewline, bEnd < m || b.trailingNewline);
+  return { diff: out.join('\n') + '\n', coarse: false };
+}
+
+/**
  * The caller-view unified diff, secret-redacted like retrieval output (it is
  * retained in the receipt), cut on a line boundary so its JSON encoding fits
  * 8 KB: the receipt reserves exactly that much (EDIT_PAGE_RECEIPT_RESERVE).
+ * `diff_coarse` marks a changed region too large to line-diff
+ * (boundedUnifiedDiff).
  */
-export function editDiff(slug: string, before: string, after: string): { diff: string; diff_truncated?: true } {
-  const [{ diff: full }] = redactRetrievalOutput([{ diff: unifiedDiff(before, after, { oldPath: `a/${slug}.md`, newPath: `b/${slug}.md` }) }], {}).results;
-  if (encodedBytes(full) <= EDIT_PAGE_DIFF_MAX_BYTES) return { diff: full };
+export function editDiff(slug: string, before: string, after: string): { diff: string; diff_truncated?: true; diff_coarse?: true } {
+  const { diff, coarse } = boundedUnifiedDiff(before, after, `a/${slug}.md`, `b/${slug}.md`);
+  const [{ diff: full }] = redactRetrievalOutput([{ diff }], {}).results;
+  const marked = coarse ? { diff_coarse: true as const } : {};
+  if (encodedBytes(full) <= EDIT_PAGE_DIFF_MAX_BYTES) return { diff: full, ...marked };
   const lines = full.split('\n');
   let kept = '';
   for (const line of lines) {
     if (encodedBytes(`${kept}${line}\n`) > EDIT_PAGE_DIFF_MAX_BYTES) break;
     kept += `${line}\n`;
   }
-  return { diff: kept, diff_truncated: true };
+  return { diff: kept, diff_truncated: true, ...marked };
 }
 
 /** Extra terminal-receipt bytes an edit_page admission reserves for its diff. */

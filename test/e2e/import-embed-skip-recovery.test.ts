@@ -11,14 +11,15 @@ suite('local import size-gate recovery on Postgres', () => {
   beforeAll(async () => { engine = await setupDB(); });
   afterAll(async () => { await teardownDB(); });
 
-  test('unchanged source rebuilds chunks after a threshold increase and removes them after a decrease', async () => {
+  test('unchanged source re-imports across threshold changes; an embed_skip page keeps keyword chunks without vectors (#6722)', async () => {
     const slug = 'test/size-gate-threshold';
     const content = '---\ntitle: Garden planning\ntype: note\n---\n\n' + 'Useful garden planning observations. '.repeat(100);
     await engine.setConfig('content_sanity.bytes_block', '1000');
     try {
       await importFromContent(engine, slug, content, { noEmbed: true, remote: false });
       expect(isEmbedSkipped((await engine.getPage(slug))!.frontmatter)).toBe(true);
-      expect(await engine.getChunks(slug)).toHaveLength(0);
+      expect((await engine.getChunks(slug)).length).toBeGreaterThan(0);
+      expect((await engine.getChunks(slug)).every(c => c.embedding == null)).toBe(true);
       await engine.setConfig('content_sanity.bytes_block', '10000');
       expect((await importFromContent(engine, slug, content, { noEmbed: true, remote: false })).status).toBe('imported');
       expect(isEmbedSkipped((await engine.getPage(slug))!.frontmatter)).toBe(false);
@@ -26,7 +27,8 @@ suite('local import size-gate recovery on Postgres', () => {
       expect((await importFromContent(engine, slug, content, { noEmbed: true, remote: false })).status).toBe('skipped');
       await engine.setConfig('content_sanity.bytes_block', '1000');
       expect((await importFromContent(engine, slug, content, { noEmbed: true, remote: false })).status).toBe('imported');
-      expect(await engine.getChunks(slug)).toHaveLength(0);
+      expect(isEmbedSkipped((await engine.getPage(slug))!.frontmatter)).toBe(true);
+      expect((await engine.getChunks(slug)).length).toBeGreaterThan(0);
     } finally {
       await engine.unsetConfig('content_sanity.bytes_block');
     }

@@ -387,7 +387,7 @@ describe('reranker companion (D8)', () => {
       const plan = await resolveRerankerPlan(engine, 'fixture-provider:embedding-v1', 'voyage:voyage-4', undefined);
       expect(plan.exposed).not.toBeNull();
       expect(plan.exposed!.model).toBe(OUTGOING_RERANKER);
-      expect(plan.action).toEqual({ kind: 'switch', to: 'voyage:rerank-2.5' });
+      expect(plan.action).toEqual({ kind: 'switch', to: 'voyage:rerank-3-lite' });
     } finally {
       await engine.unsetConfig('search.reranker.model');
     }
@@ -404,7 +404,7 @@ describe('reranker companion (D8)', () => {
       const plan = await resolveRerankerPlan(engine, 'fixture-provider:embedding-v1', 'openai:text-embedding-3-small', undefined);
       expect(plan.exposed).not.toBeNull();
       expect(plan.action.kind).toBe('none');
-      expect((plan.action as { suggestion: string | null }).suggestion).toBe('voyage:rerank-2.5');
+      expect((plan.action as { suggestion: string | null }).suggestion).toBe('voyage:rerank-3-lite');
     } finally {
       await engine.unsetConfig('search.reranker.model');
     }

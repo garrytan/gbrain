@@ -3,10 +3,11 @@
  * rows and retry pointers that no registered connector source can load and
  * that are older than 7 days. Cleanup only; the upgrade migration's re-key
  * copy never runs here. Rows referenced by a non-terminal request or a
- * recorded pending set are kept. No journal admission: these rows are
- * connector bookkeeping, not canonical pages.
+ * recorded pending set are kept, and so are rows under a source's #6561
+ * alias key (the interim Google key), counted as `alias_protected`. No journal
+ * admission: these rows are connector bookkeeping, not canonical pages.
  */
-import { deleteOrphanConnectorCheckpoints, orphanConnectorCheckpoints, type OrphanCheckpointRow } from '../persistence/connector-checkpoint-migration.ts';
+import { aliasProtectedConnectorCheckpoints, deleteOrphanConnectorCheckpoints, orphanConnectorCheckpoints, type OrphanCheckpointRow } from '../persistence/connector-checkpoint-migration.ts';
 import type { RepairHandler, RepairItem } from './core.ts';
 
 export const ORPHAN_CHECKPOINT_MIN_AGE_DAYS = 7;
@@ -21,7 +22,7 @@ export const connectorCheckpointsRepair: RepairHandler = {
     const items: RepairItem[] = rows.map((row, index) => ({ cursor: { phase: row.op === 'managed-connector' ? 0 : 1, id: index + 1 },
       source_id: '(brain)', slug: `${row.op}:${row.fingerprint.slice(0, 12)}`, chars: 0, action: 'delete_orphan',
       change: { from: JSON.stringify(row), to: 'deleted' } }));
-    return { items, residuals: {} };
+    return { items, residuals: { alias_protected: await aliasProtectedConnectorCheckpoints(engine) } };
   },
   async apply(ctx, item) {
     const row = JSON.parse(item.change!.from!) as OrphanCheckpointRow;

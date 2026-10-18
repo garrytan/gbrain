@@ -37,11 +37,12 @@ export function cliRoutingProvider(currentCommand: () => string | undefined, arg
       if (!thin) {
         try { brain = resolveBrainId(getCliOptions().brain); } catch { /* unresolvable: no brain pin */ }
         const cmd = currentCommand();
-        if (cmd && routingFlagsFor(cmd).source) {
+        const flag = cmd ? routingFlagsFor(cmd).source : false;
+        if (flag) {
           const end = args.indexOf('--');
           const head = end === -1 ? args : args.slice(0, end);
-          const i = head.findIndex(a => a === '--source' || a.startsWith('--source='));
-          const explicit = i === -1 ? null : head[i]!.startsWith('--source=') ? head[i]!.slice('--source='.length) : head[i + 1] ?? null;
+          const i = head.findIndex(a => a === flag || a.startsWith(`${flag}=`));
+          const explicit = i === -1 ? null : head[i]!.startsWith(`${flag}=`) ? head[i]!.slice(flag.length + 1) : head[i + 1] ?? null;
           try { source = resolveSourceIdEngineFree(explicit) ?? undefined; } catch { /* invalid: no source pin */ }
         }
       }

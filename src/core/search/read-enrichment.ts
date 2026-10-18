@@ -1,8 +1,9 @@
 import type { PageReadScope, PageReadPolicy, AdjacencyRow, RelationalFanoutOpts, RelationalFanoutRow, ChainHopOpts, ChainHopEdge } from '../types.ts';
 import { unverifiedExtractionFragment } from '../extraction-review.ts';
-import { currentTextProjectionFilter, protectedBodyFilter, requiresSafeChunks, safeChunksFilter } from './safe-chunks.ts';
+import { chunkGenerationProbe, currentTextProjectionFilter, protectedBodyFilter, requiresSafeChunks, safeChunksFilter } from './safe-chunks.ts';
 import { hasReadPolicy, pageReadFilter } from './read-policy-sql.ts';
 import { relationshipFilterSql } from '../link-validity.ts';
+import { rankingLinkSql } from '../link-ranking-policy.ts';
 
 /** Narrow query dependency shared by both engines. */
 export type ReadQuery = <T = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<T[]>;
@@ -15,7 +16,7 @@ function originFilter(scope: PageReadScope | undefined, params: unknown[]): stri
 }
 
 /** Authorize graph seeds, hops and edge origins before ranking or emitting paths. */
-export async function readRelationalFanout(query: ReadQuery, seeds: string[], opts?: RelationalFanoutOpts): Promise<RelationalFanoutRow[]> {
+export async function readRelationalFanout(query: ReadQuery, seeds: string[], opts?: RelationalFanoutOpts, chunkManifest = true): Promise<RelationalFanoutRow[]> {
   if (!seeds?.length) return [];
   const depth = Math.min(Math.max(1, opts?.depth ?? 2), 3);
   const direction = opts?.direction ?? 'both';
@@ -61,7 +62,7 @@ export async function readRelationalFanout(query: ReadQuery, seeds: string[], op
       FROM walk w ${recurStep}
       WHERE w.depth < $2 AND NOT (p2.id = ANY(w.visited))
         AND p2.source_id = w.seed_source AND p2.deleted_at IS NULL
-        AND ${step} AND ${origin} ${mentionsFilter} ${typeFilter} ${temporalFilter}
+        AND ${step} AND ${origin} AND ${rankingLinkSql('l')} ${mentionsFilter} ${typeFilter} ${temporalFilter}
     )
     SELECT n.source_id, n.slug, MIN(n.depth) AS hop,
       COUNT(DISTINCT n.last_link_type) AS edge_count,
@@ -70,7 +71,7 @@ export async function readRelationalFanout(query: ReadQuery, seeds: string[], op
         array_length(n.path, 1) ASC, array_to_string(n.path, chr(9)) ASC))[1] AS path_str,
       (array_agg(array_to_string(n.edges, chr(9)) ORDER BY n.depth ASC,
         array_length(n.path, 1) ASC, array_to_string(n.path, chr(9)) ASC))[1] AS edges_str,
-      (SELECT cc.id FROM content_chunks cc WHERE cc.page_id = n.id
+      (SELECT cc.id FROM content_chunks cc WHERE cc.page_id = n.id AND ${chunkGenerationProbe('cc', chunkManifest)}
         ${requiresSafeChunks(opts) ? `AND EXISTS (SELECT 1 FROM pages cp WHERE cp.id = n.id AND ${safeChunksFilter('cp')})` : ''}
         ORDER BY cc.chunk_index ASC LIMIT 1) AS canonical_chunk_id
     FROM walk n WHERE n.depth > 0 GROUP BY n.source_id, n.slug, n.id
@@ -113,7 +114,7 @@ function inlineIds(ids: number[], label: string): string {
  * the relationship-validity predicate) before anything is returned; edge context is returned only when the evidence page's text is
  * readable under the policy.
  */
-export async function readChainHop(query: ReadQuery, frontier: number[], opts: ChainHopOpts): Promise<ChainHopEdge[]> {
+export async function readChainHop(query: ReadQuery, frontier: number[], opts: ChainHopOpts, chunkManifest = true): Promise<ChainHopEdge[]> {
   if (!frontier.length || !opts.linkTypes.length) return [];
   const ids = inlineIds([...new Set(frontier)], 'readChainHop');
   // Pages are fetched by primary key behind an optimization fence: the read
@@ -132,7 +133,7 @@ export async function readChainHop(query: ReadQuery, frontier: number[], opts: C
         ${a}l.link_source, ${a}f.type AS from_type, ${a}t.type AS to_type, ${a}f.source_id
       FROM f CROSS JOIN LATERAL (
         SELECT x.* FROM links x WHERE x.${frontierCol} = f.id AND x.link_type = ANY($1::text[])
-          AND x.from_page_id <> x.to_page_id AND x.link_source IS DISTINCT FROM 'mentions'
+          AND x.from_page_id <> x.to_page_id AND x.link_source IS DISTINCT FROM 'mentions' AND ${rankingLinkSql('x')}
         OFFSET 0
       ) ${a}l
       CROSS JOIN LATERAL ${byId(`${a}l.from_page_id`)} ${a}f
@@ -194,7 +195,7 @@ export async function readChainHop(query: ReadQuery, frontier: number[], opts: C
           SELECT CASE WHEN dl.from_page_id = f.id THEN dl.to_page_id ELSE dl.from_page_id END AS nb_id, dl.id AS lid, dl.origin_page_id
           FROM links dl
           WHERE (dl.from_page_id = f.id OR dl.to_page_id = f.id) AND dl.from_page_id <> dl.to_page_id
-            AND dl.link_type = ANY($4::text[]) AND dl.link_source IS DISTINCT FROM 'mentions' ${degreeLive}
+            AND dl.link_type = ANY($4::text[]) AND dl.link_source IS DISTINCT FROM 'mentions' AND ${rankingLinkSql('dl')} ${degreeLive}
           OFFSET 0
         ) dn
         CROSS JOIN LATERAL ${byId('dn.nb_id')} nb
@@ -212,7 +213,7 @@ export async function readChainHop(query: ReadQuery, frontier: number[], opts: C
       r.link_ids, sf.slug AS stored_from_slug, st.slug AS stored_to_slug,
       CASE WHEN ev.id IS NOT NULL ${textGate} THEN el.context END AS context,
       el.origin_page_id, op.slug AS origin_slug, deg.degree AS from_degree, (r.per_frontier > $5) AS cap_hit,
-      (SELECT cc.id FROM content_chunks cc WHERE cc.page_id = r.next_id
+      (SELECT cc.id FROM content_chunks cc WHERE cc.page_id = r.next_id AND ${chunkGenerationProbe('cc', chunkManifest)}
         ${requiresSafeChunks(policy) ? `AND EXISTS (SELECT 1 FROM pages cp WHERE cp.id = r.next_id AND ${safeChunksFilter('cp')})` : ''}
         ORDER BY cc.chunk_index ASC LIMIT 1) AS canonical_chunk_id
     FROM ranked r
@@ -254,7 +255,7 @@ export async function readBacklinkCounts(query: ReadQuery, ids: number[], scope?
     SELECT p.id AS page_id, COUNT(DISTINCT l.from_page_id)::int AS cnt
     FROM pages p LEFT JOIN links l ON l.to_page_id = p.id
       AND l.from_page_id <> p.id
-      AND l.link_source IS DISTINCT FROM 'mentions'
+      AND l.link_source IS DISTINCT FROM 'mentions' AND ${rankingLinkSql('l')}
       ${scope ? `AND EXISTS (SELECT 1 FROM pages contributor WHERE contributor.id = l.from_page_id AND ${contributor}) AND ${origin}` : ''}
     WHERE p.id = ANY($1::int[]) AND ${target} GROUP BY p.id`, params);
   for (const row of rows) result.set(Number(row.page_id), Number(row.cnt));
@@ -281,7 +282,7 @@ export async function readAdjacencyBoosts(query: ReadQuery, ids: number[], scope
     FROM links l JOIN pages p ON p.id = l.from_page_id AND p.deleted_at IS NULL
       JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL
     WHERE l.from_page_id = ANY(${idArray}) AND l.to_page_id = ANY(${idArray})
-      AND ${from} AND ${to} AND ${origin}
+      AND ${from} AND ${to} AND ${origin} AND ${rankingLinkSql('l')}
     GROUP BY l.to_page_id HAVING COUNT(DISTINCT l.from_page_id) >= 1`, params);
   return new Map(rows.map(row => [Number(row.to_page_id), { hits: Number(row.hits), cross_source_hits: Number(row.cross_source_hits) }]));
 }
@@ -345,13 +346,16 @@ export async function readAliases(query: ReadQuery, aliases: string[], scope?: P
   const params: unknown[] = [aliases];
   const aliasScope = pageReadFilter('m', scope && { sourceId: scope.sourceId, sourceIds: scope.sourceIds }, params);
   const filter = pageReadFilter('p', scope, params, true);
+  const titleFilter = pageReadFilter('t', scope, params, true);
   // Alias matches first, then one unique-key page lookup each (OFFSET 0 keeps the
   // read filter out of that lookup): without planner statistics (PGLite has no
   // autovacuum) the page_aliases -> sources foreign key otherwise makes the planner
   // walk every readable page and probe aliases per page.
   // Precedence: within a source, only the claims at the best origin answer
   // (frontmatter > declared > subject), and a derived (declared or subject)
-  // alias never answers for a name that is another live page's exact title,
+  // alias never answers for a name that is another live page's exact title
+  // the caller can read (a private title a remote caller can't see must not
+  // hide a readable alias),
   // so "Acme Example" stays the company page beside "CRM record: Acme Example".
   const rows = await query<PageRef & { alias_norm: string; rank: number }>(`
     WITH a AS MATERIALIZED (
@@ -363,7 +367,7 @@ export async function readAliases(query: ReadQuery, aliases: string[], scope?: P
     SELECT a.alias_norm, a.slug, a.source_id, a.rank FROM a
     CROSS JOIN LATERAL (SELECT * FROM pages WHERE source_id = a.source_id AND slug = a.slug OFFSET 0) p
     WHERE ${filter}
-      AND (a.rank = 0 OR NOT EXISTS (SELECT 1 FROM pages t WHERE t.source_id = a.source_id AND t.deleted_at IS NULL
+      AND (a.rank = 0 OR NOT EXISTS (SELECT 1 FROM pages t WHERE t.source_id = a.source_id AND ${titleFilter}
                                      AND lower(t.title) = a.alias_norm AND t.slug <> a.slug))
     ORDER BY a.alias_norm, a.source_id, a.rank, a.slug`, params);
   const best = new Map<string, number>();

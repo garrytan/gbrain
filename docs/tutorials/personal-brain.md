@@ -2,6 +2,8 @@
 
 By the end of this tutorial you'll have your own AI agent running on a server you control, talking to you over Telegram, with a brain that remembers everything you tell it. About two hours end-to-end, $100 to $150 a month sustained.
 
+> **Want the result without the two hours?** [gbrain.io](https://gbrain.io/?ref=personal-brain) is hosted GBrain: nothing to deploy, always on, and connected to ChatGPT, Claude and Cursor. Prefer a hand? Email support@gbrain.io and a person will set up your first skill with you. Read on if you want to own every piece of the stack.
+
 This is the install I'd run if I were setting up the whole stack from scratch today. I documented it live during a setup session with a collaborator (we used Granola to capture the screen because "this is already too complicated for an archetypical person"). The tutorial is the cleaned-up version of that session.
 
 > "This is the Apple I, we're just soldering breadboards over here."
@@ -106,7 +108,7 @@ In the AlphaClaw UI (Providers tab):
 - **OpenAI API Key.** Required for embeddings if you use the OpenAI provider.
 - **Anthropic API Key.** Required for Claude (the main model the agent talks through).
 - **Perplexity API Key.** Optional, for web search.
-- **Voyage API Key.** Recommended. GBrain ships with Voyage as the default embedder + reranker (`voyage-4` + `rerank-2.5`) — one key covers both, at about half OpenAI's embedding price.
+- **Voyage API Key.** Recommended. GBrain ships with Voyage as the default embedder + reranker (`voyage-4` + `rerank-3-lite`) — one key covers both, at about half OpenAI's embedding price.
 
 You can use the same keys across multiple agents.
 

@@ -111,8 +111,11 @@ describe('durable mutation journal', () => {
     let release!: () => void;
     const ready = new Promise<void>(resolve => { held = resolve; });
     const released = new Promise<void>(resolve => { release = resolve; });
+    // Counter rows are created lazily by the first admission; on a fresh brain (this test run alone) the lock below would hold nothing.
+    await engine.executeRaw("INSERT INTO persistence_counters(key) VALUES('brain') ON CONFLICT DO NOTHING");
     const blocker = engine.transaction(async tx => {
-      await tx.executeRaw("SELECT key FROM persistence_counters WHERE key='brain' FOR UPDATE");
+      const locked = await tx.executeRaw("SELECT key FROM persistence_counters WHERE key='brain' FOR UPDATE");
+      expect(locked).toHaveLength(1);
       held();
       await released;
     });
@@ -130,7 +133,7 @@ describe('durable mutation journal', () => {
     const accepted = await admitWrite(engine, a);
     expect(accepted.request_id).toBe(a.requestId!);
     await cancelWriteRequest(engine, a.principal, a.requestId!);
-  });
+  }, 30_000);
 
   test.skipIf(!process.env.DATABASE_URL)('Postgres admission progresses while short counter transactions keep the lock queue occupied', async () => {
     const engine = engines.find(candidate => candidate.kind === 'postgres')!;

@@ -14,7 +14,7 @@ import { acquireWorktree } from '../src/core/persistence/ownership.ts';
 import { admission, assertCommittedSnapshot, assertConservation, fixtures, initializeFixtures, prepared, selectFixtureHost, type HarnessConfig } from '../scripts/persistence/harness.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { waitFor } from './helpers/wait-for.ts';
-import { awaitWrite, disposePersistenceConsumer, registerMutationPreparer, startPersistenceConsumer, waitForWrite } from '../src/core/persistence/service.ts';
+import { awaitWrite, disposePersistenceConsumer, registerMutationPreparer, startPersistenceConsumer, waitForWrite, WRITE_POLL_START_MS } from '../src/core/persistence/service.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-consumer-scheduling-'));
 const config: HarnessConfig = {
@@ -236,6 +236,33 @@ for (const cooperates of [true, false]) test(`preparation deadline retains track
     await consumer.stop();
     resetWriteSwitches();
     await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id);
+  }
+}), 5000);
+
+test('a write whose preparation overruns its deadline twice ends as a terminal preparation_stalled failure, not an endless retry (default limit, #6278)', async () => withEnv(env, async () => {
+  const sources = await fixtures(engine, config);
+  const row = await admitWrite(engine, admission(config, sources[0], 'deadline-twice', 'never prepares in time'));
+  let attempts = 0;
+  const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async (_e, _current, _c, signal?: AbortSignal) => {
+    attempts++;
+    await new Promise<void>((_, reject) => signal?.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    throw new Error('unreachable');
+  }, { hostId: config.hostId, pollMs: 20, preparationMs: 40 });
+  try {
+    consumer.start();
+    await waitFor(async () => (await getWriteRequestById(engine, row.id))?.state === 'failed');
+    const done = (await getWriteRequestById(engine, row.id))!;
+    expect(attempts).toBe(2);
+    expect(done.error_code).toBe('preparation_stalled');
+    expect(done.preparation_attempts).toBe(2);
+    expect(done.error_message).toContain('persistence.max_preparation_attempts (2)');
+    expect(done.error_message).toContain('new request_id');
+    expect(await engine.readPageSnapshot(row.slug, { sourceId: row.source_id })).toBeNull();
+    await Bun.sleep(100);
+    expect(attempts).toBe(2);
+    await assertConservation(engine);
+  } finally {
+    await consumer.stop();
   }
 }), 5000);
 
@@ -807,12 +834,19 @@ test('healthy renewals during a long preparation keep the claim: one attempt, co
   const sources = await fixtures(engine, config);
   const row = await admitWrite(engine, admission(config, sources[0], 'claim-lease/healthy', 'healthy body'));
   const renewed: string[] = [];
-  const restore = interceptRenewals(id => { renewed.push(id); return undefined; });
+  const threeRenewals = Promise.withResolvers<void>();
+  const restore = interceptRenewals(id => {
+    renewed.push(id);
+    if (renewed.filter(seen => seen === row.id).length >= 3) threeRenewals.resolve();
+    return undefined;
+  });
   let attempts = 0;
   const errors: unknown[] = [];
   const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async (_engine, current) => {
     attempts++;
-    await Bun.sleep(120);
+    // A long preparation: at least 120 ms and until the lease has renewed three times (at most 3 s). Only one renewal is
+    // in flight at a time, so a fixed 120 ms saw two when each renewal took over 40 ms on a loaded host.
+    await Promise.all([Bun.sleep(120), Promise.race([threeRenewals.promise, Bun.sleep(3_000)])]);
     return prepared(current, sources);
   }, { hostId: config.hostId, pollMs: 60_000, renewalIntervalMs: 10, phaseMs: 2_000, onError: error => errors.push(error) });
   try {
@@ -882,6 +916,28 @@ test('a write this process publishes resolves from the consumer handoff with zer
     expect(waited.row).toEqual((await getWriteRequestById(engine, row.id))!);
     expect(waited.row.state).toBe('committed');
     expect(counts).toEqual(before);
+  } finally { await disposePersistenceConsumer(proxy); }
+}), 15_000);
+
+test('a waiter that registers after this process settled its write reads at once instead of sleeping through the first poll', async () => withEnv(env, async () => {
+  const sources = await fixtures(engine, config);
+  registerMutationPreparer('test_wait_settled_first', async (_e, row) => prepared(row, sources));
+  let firstRead: number | undefined;
+  const { proxy } = countingProxy(engine, sql => { if (sql === WRITE_PROGRESS_SQL) firstRead ??= performance.now(); });
+  const consumer = startPersistenceConsumer(proxy, { engine: 'pglite' });
+  try {
+    // Settled before anyone waits, as when a caller admits a window of writes and then waits on each in turn.
+    const row = await admitWrite(engine, admission(config, sources[0], 'wait-settled-first', 'settled body', 0, { operation: 'test_wait_settled_first' }));
+    consumer.wake(true);
+    await waitFor(async () => (await getWriteRequestById(engine, row.id))?.state === 'committed', { timeoutMs: 10_000, label: 'consumer settles the write' });
+    // Only the waiter runs from here: the wait's own consumer wake must not occupy the event loop.
+    (consumer as unknown as { doTick(): Promise<void> }).doTick = async () => {};
+    firstRead = undefined;
+    const started = performance.now();
+    const waited = await awaitWrite(proxy, row, { engine: 'pglite' }, { waitMs: 10_000 });
+    expect(waited.kind).toBe('terminal');
+    expect(waited.row.state).toBe('committed');
+    expect(firstRead! - started).toBeLessThan(WRITE_POLL_START_MS);
   } finally { await disposePersistenceConsumer(proxy); }
 }), 15_000);
 

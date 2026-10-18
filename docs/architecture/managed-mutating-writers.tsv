@@ -53,7 +53,7 @@ op	request_tools	no_canonical_write	Persists the calling client's MCP tool surfa
 op	connector_sync	coordinator	Managed connector sync admits pages and checkpoints through the coordinator.
 op	ontology_propose	engine_guard	mergeOntologyFact inserts into facts; the managed writer trigger refuses it on a managed brain.
 op	chronicle_backfill	no_canonical_write	Queues chronicle jobs; the chronicle extractor publishes through publishMaintenancePage.
-op	extract_entities	early_refusal	enrichment-service writes through direct importFromContent, which refuses on managed brains.
+op	extract_entities	coordinator	#6262: the stub is a create-only put_page through submitPageMutation; its tier lowering, timeline row and backlink are coordinatedDatabaseWrite transactions. A refusal or pending write returns its envelope and stops the batch.
 op	extraction_review	no_canonical_write	Review queue state only.
 op	entity_identity_link	no_canonical_write	entity_identity side table.
 op	entity_identity_unlink	no_canonical_write	entity_identity side table.
@@ -67,8 +67,14 @@ op	run_skillopt	no_canonical_write	Skill files and proposals outside the brain d
 op	loops_close	coordinator	open_loops state rows; the commitment fact is retired (expired, fence row struck) through the loop-fact-retirement coordinator mutation (#5869).
 op	loops_mute	no_canonical_write	Loop suppression rows.
 op	mute_notice	no_canonical_write	Notice mute list in <GBRAIN_HOME>/notices/muted.json; no brain table or canonical file.
+op	questions_pin	coordinator	pinned_questions side-table rows; the question page publishes through coordinated put_page (trusted local callers only).
+op	questions_refresh	coordinator	Answer and evidence pointers in the pinned_questions side tables; question page sync through coordinated put_page (trusted local callers only).
+op	questions_unpin	coordinator	pinned_questions state; the question page is archived through coordinated put_page (trusted local callers only).
 op	loops_unmute	no_canonical_write	Loop suppression rows.
 op	rate_answer	no_canonical_write	Writes only retrieval_* feedback tables (answer ratings and learned weights), never a guarded canonical table or file.
+op	purge_fact	coordinator	submitPurgeFactMutation admits a journaled write and deletes the purged rows under withCoordinatedWrite (trusted local CLI only).
+op	unpurge_page	no_canonical_write	Deletes only purge tombstone rows (page_purges, fact_purges, take_purges); restores no canonical row (trusted local CLI only).
+op	confirm_memory	coordinator	applyOwnerAction raises the row to user_confirmed through the owner action path (journaled owner page mutation or withCoordinatedWrite on a managed brain).
 cli	src/commands/enrich.ts	coordinator	gbrain enrich preflights maintenance authority, then publishMaintenancePage per page.
 cli	src/commands/extract-conversation-facts.ts	coordinator	Bulk conversation facts publish in batches of pages as receipted managed_maintenance_conversation_facts requests after a maintenance preflight.
 cli	src/commands/pages.ts	coordinator	gbrain pages purge-deleted runs purgeDeletedPagesCoordinated.

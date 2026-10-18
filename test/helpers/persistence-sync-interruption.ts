@@ -5,7 +5,7 @@ import { performManagedSync } from '../../src/core/persistence/sync-run.ts';
 export async function interruptAfterSyncDiscovery(engine: BrainEngine, opts: SyncOpts) {
   const abort = new AbortController(), transaction = engine.transaction;
   let discovered = false;
-  engine.transaction = async function (this: BrainEngine, run: (tx: BrainEngine) => Promise<unknown>) {
+  engine.transaction = async function (this: BrainEngine, run: (tx: BrainEngine) => Promise<unknown>, txOpts?: Parameters<BrainEngine['transaction']>[1]) {
     let saved = false;
     const value = await transaction.call(this, async tx => {
       const execute = tx.executeRaw;
@@ -16,7 +16,7 @@ export async function interruptAfterSyncDiscovery(engine: BrainEngine, opts: Syn
       } as BrainEngine['executeRaw'];
       try { return await run(tx); }
       finally { tx.executeRaw = execute; }
-    });
+    }, txOpts);
     if (saved) { discovered = true; abort.abort(); }
     return value;
   } as BrainEngine['transaction'];

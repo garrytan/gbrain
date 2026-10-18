@@ -1,4 +1,6 @@
 import type { BrainEngine } from '../core/engine.ts';
+import type { EngineConnectOptions } from '../core/engine-connect.ts';
+import { OPERATION_MANIFEST } from '../core/operation-manifest.generated.ts';
 import { handleToolCall } from '../mcp/server.ts';
 import { resolveSourceWithTier, localFederatedSourceIds } from '../core/source-resolver.ts';
 import { bigintToStringReplacer } from '../core/utils.ts';
@@ -32,7 +34,7 @@ function writePathFailure(error: unknown): boolean {
  * env / dotfile / path-match all work.
  */
 export async function runCall(
-  engine: BrainEngine | (() => Promise<BrainEngine>),
+  engine: BrainEngine | ((opts?: EngineConnectOptions) => Promise<BrainEngine>),
   args: string[],
   // Test seam — production always uses the awaited-delivery writer (#3423).
   out: (payload: string) => Promise<void> = writeStdoutFinal,
@@ -89,7 +91,9 @@ export async function runCall(
     throw error;
   }
   try {
-  const connected = typeof engine === 'function' ? await engine() : engine;
+  const connected = typeof engine === 'function'
+    ? await engine({ oneShotRead: OPERATION_MANIFEST.find(op => op.name === tool)?.scope === 'read' })
+    : engine;
   // Resolve through the canonical 6-tier chain. resolveSourceWithTier()
   // throws if an explicit/env/dotfile id refers to a non-registered source.
   // #3874: mirror cli.ts's makeContext — when the source resolved via a
@@ -132,5 +136,5 @@ async function failCall(tool: string, error: unknown, out: (text: string) => Pro
   const envelope = localCallErrorEnvelope(tool, error);
   await out(JSON.stringify(envelope, null, 2) + '\n');
   console.error(`Error [${envelope.code}]: ${envelope.message}`);
-  setCliExitVerdict(exitCodeForCode(envelope.code));
+  setCliExitVerdict(exitCodeForCode(envelope.code, envelope.reason));
 }

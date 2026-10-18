@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
+import { trueUpRequests } from './receipt-true-up.ts';
 import { loadConfigWithEngine, type GBrainConfig } from '../config.ts';
 import { MAX_RATE_LIMIT_RETRIES } from '../embed-retry.ts';
 import { EmbeddingDisabledError, readContentChunksColumnDim } from '../embedding-dim-check.ts';
@@ -14,6 +15,7 @@ import { PARK_AFTER_FAILURES, type PersistenceEffect } from './effect-model.ts';
 import type { WriteRequest } from './model.ts';
 import { targetedWithdrawalEffect, upgradeWithdrawalEffect } from './effect-targets.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
+import { writerAdminState } from './admin-intent.ts';
 
 const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner with its blocking, retrying and parked effects, read-only.`,
   { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
@@ -57,58 +59,152 @@ async function mountedEmbeddingSignature(engine: BrainEngine): Promise<string> {
   return `${model}:${dimensions}`;
 }
 
-/**
- * #5612: parked Git and withdrawal effects of one committed request. Returns
- * null when the request has none, so the caller falls through to embedding
- * retry. Each invocation authorizes exactly one more attempt per parked target.
- */
-export async function retryParkedEffects(engine: BrainEngine, sourceId: string, requestId: string, dryRun: boolean): Promise<Record<string, unknown> | null> {
-  const [request, ambiguous] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 AND request_id=$2::uuid LIMIT 2', [sourceId, requestId]);
-  if (!request || ambiguous) return null;
-  const tracked = await engine.executeRaw<PersistenceEffect>(`SELECT * FROM persistence_effects WHERE request_id=$1::uuid
-    AND kind IN ('git','withdrawal-mirror') AND (data ? 'parked' OR data ? 'retried') ORDER BY kind`, [request.id]);
-  if (!tracked.length) return null;
-  const hostId = existingLocalHostId();
-  if (!hostId) throw unregisteredHost(sourceId, requestId);
-  return engine.transaction(async tx => {
+/** The refusal fields a caller reports for one request: the same envelope whether it was previewed or thrown. */
+export function refusalEnvelope(error: OperationError): { code: string; message: string; suggestion?: string; fix?: Action } {
+  return { code: error.code, message: error.message, ...(error.suggestion ? { suggestion: error.suggestion } : {}), ...(error.fix ? { fix: error.fix } : {}) };
+}
+
+/** #6697: the stored authority's refusal, or null while the original writer may still act. */
+async function storedAuthorityRefusal(tx: BrainEngine, request: WriteRequest, sourceId: string): Promise<OperationError | null> {
+  try {
     await authorizeStoredRequest(tx, request, true);
     const authority = await submissionAuthority({ engine: tx, remote: false, sourceId } as OperationContext,
       request.operation, sourceId, request.source_incarnation, request.slug);
     await authorizeWrite(tx, authority, request.operation, request.slug, true);
+    return null;
+  } catch (error) {
+    if (error instanceof OperationError && error.code === 'permission_denied') return error;
+    throw error;
+  }
+}
+
+/**
+ * #6697 / D6: a parked effect whose original writer was revoked. A Git effect
+ * mirrors content already committed under valid authority, so the brain owner
+ * may approve one more attempt under its own authority; a withdrawal effect
+ * keeps the strict original-authority rule and has no supported retry.
+ */
+async function ownerRevokedError(tx: BrainEngine, sourceId: string, request: WriteRequest, refusal: OperationError, gitParked: boolean): Promise<OperationError> {
+  const why = `Request ${request.request_id}'s original writer is no longer authorized (${refusal.message}), so its parked effect cannot retry under that writer and the Git backup of ${request.slug} is incomplete.`;
+  const fix: Action = gitParked
+    ? { ask_user: true, argv: ['gbrain', 'sources', 'writer', 'retry-effects', '--source', sourceId, '--request-id', request.request_id,
+      '--admin-intent', 'writer_retry_effects', '--expected-state', await writerAdminState(tx)], consent: [], actor: 'agent', requires_exclusive: false,
+    why: 'Retries the parked Git effect once under this brain owner\'s authority on the owner host; the effect records retried_under: owner_host.',
+    user_message: `${why} Approve one more Git attempt for ${request.slug} under this brain owner's authority? It mirrors content the database already committed.`,
+    verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] } }
+    : { ask_user: true, consent: [], actor: 'user', requires_exclusive: false, why: 'A withdrawal effect runs only under its original writer\'s authority.',
+      user_message: `${why} A withdrawal is never retried under another authority, so this parked withdrawal has no supported retry; decide with the brain owner how to withdraw ${request.slug}.`,
+      verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] } };
+  return opError('permission_denied', why, gitParked
+    ? 'Ask the user before retrying under the brain owner\'s authority: run the command in fix on the owner host after they agree.'
+    : 'Relay fix.user_message; nothing can retry this withdrawal under another authority.', { fix });
+}
+
+/**
+ * #5612: parked Git and withdrawal effects of one committed request, plus
+ * (GBRA-130) parked embedding targets and failed Git, withdrawal-mirror, links
+ * and facts-backstop effects without parked targets (a mirror that failed
+ * `source_changed` while its source was archived, a facts-backstop effect that
+ * used up its attempts), and an embedding effect that failed `source_changed`. Returns null when the request has none, so the caller
+ * falls through to embedding retry. Each invocation authorizes exactly one more
+ * attempt per parked target or failed effect. `internalId` selects one journal
+ * row when several principals share the public receipt id; `ownerHost` is the
+ * owner's admin-intent approval for #6697 (D6); `parkedOnly` keeps to parked
+ * Git and withdrawal effects (the credential-change retry).
+ */
+export async function retryParkedEffects(engine: BrainEngine, sourceId: string, requestId: string, dryRun: boolean,
+  options: { internalId?: string; ownerHost?: boolean; parkedOnly?: boolean } = {}): Promise<Record<string, unknown> | null> {
+  const [request, ambiguous] = options.internalId
+    ? await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 AND id=$2::uuid', [sourceId, options.internalId])
+    : await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 AND request_id=$2::uuid LIMIT 2', [sourceId, requestId]);
+  if (!request || ambiguous) return null;
+  const tracked = await engine.executeRaw<PersistenceEffect>(`SELECT * FROM persistence_effects WHERE request_id=$1::uuid
+    AND ((kind IN ('git','withdrawal-mirror') AND (data ? 'parked' OR data ? 'retried'))
+      OR (NOT $2::boolean AND (state='failed' AND (kind<>'embedding' OR error_code='source_changed') OR kind='embedding' AND data ? 'parked'))) ORDER BY kind`,
+  [request.id, options.parkedOnly === true]);
+  if (!tracked.length) return null;
+  const hostId = existingLocalHostId();
+  if (!hostId) throw unregisteredHost(sourceId, requestId);
+  return engine.transaction(async tx => {
+    const refusal = await storedAuthorityRefusal(tx, request, sourceId);
+    const denied = refusal ? await ownerRevokedError(tx, sourceId, request, refusal,
+      tracked.some(effect => effect.kind === 'git' && effect.state === 'failed' && effect.error_code === 'targets_parked')) : null;
     const effects = [];
     for (const selected of tracked) {
       await guardEffectSource(tx, selected, hostId);
       const [effect] = await tx.executeRaw<PersistenceEffect>('SELECT * FROM persistence_effects WHERE id=$1 FOR UPDATE', [selected.id]);
       const parked = effect.data.parked ?? [];
-      const summary = { kind: effect.kind, parked_targets: parked.length, targets: parked.slice(0, 20), retried: effect.data.retried ?? 0 };
-      if (effect.state !== 'failed' || effect.error_code !== 'targets_parked') {
+      const summary = { kind: effect.kind, error_code: effect.error_code, parked_targets: parked.length, targets: parked.slice(0, 20), retried: effect.data.retried ?? 0 };
+      const parkedState = effect.error_code === 'targets_parked' ? 'parked' : 'failed';
+      if (effect.state !== 'failed' || (parkedState === 'failed' && options.parkedOnly)) {
         effects.push({ ...summary, state: effect.state, terminal: effect.state === 'committed', action: 'unchanged' });
         continue;
       }
       if (effect.execution_token !== null || effect.recovery) throw opError('write_claim_lost', 'A parked effect still has a claim or recovery record; inspect it before retrying.',
         `The ${effect.kind} effect of request ${requestId} in source ${sourceId} is still claimed by a worker or holds a recovery record, so nothing was queued. Inspect the owner's effects; once the worker releases it, preview it again with --dry-run.`,
         { fix: ownerStatusFix(sourceId) });
-      if (dryRun) { effects.push({ ...summary, state: 'parked', terminal: true, action: 'would_retry' }); continue; }
+      const underOwner = denied !== null && options.ownerHost === true && effect.kind === 'git';
+      if (denied && !underOwner) {
+        if (!dryRun && !options.ownerHost) throw denied;
+        effects.push({ ...summary, state: parkedState, terminal: true, action: 'owner_revoked' });
+        continue;
+      }
+      const retriedUnder = underOwner ? { retried_under: 'owner_host' } : {};
+      if (dryRun) { effects.push({ ...summary, state: parkedState, terminal: true, action: 'would_retry', ...retriedUnder }); continue; }
       const { parked: _parked, retry_slugs: retrying = [], failing_target: _target, ...data } = effect.data;
       const scanning = targetedWithdrawalEffect(effect) || effect.data.source_scan === true;
       const slugs = scanning ? [...new Set([...retrying, ...parked.flatMap(entry => entry.slug ? [entry.slug] : [])])] : [];
       const [updated] = await tx.executeRaw<{ state: string }>(`UPDATE persistence_effects SET state='queued',data=$2::text::jsonb,error_code=NULL,
-        next_attempt_at=now(),claim_expires_at=NULL,updated_at=now() WHERE id=$1 AND state='failed' AND error_code='targets_parked'
+        next_attempt_at=now(),claim_expires_at=NULL,updated_at=now() WHERE id=$1 AND state='failed' AND error_code IS NOT DISTINCT FROM $3
         AND execution_token IS NULL AND recovery IS NULL RETURNING state`,
       [effect.id, JSON.stringify({ ...data, ...(slugs.length ? { retry_slugs: slugs } : {}), target_failures: PARK_AFTER_FAILURES - 1,
         ...(!scanning && (effect.data.slug ?? effect.data.relative_path) ? { failing_target: effect.data.slug ?? effect.data.relative_path } : {}),
-        retried: (effect.data.retried ?? 0) + 1 })]);
+        ...(underOwner ? { retried_under: 'owner_host', retried_by_host: hostId } : {}),
+        ...(effect.kind === 'embedding' ? { embedding_attempt_base: effect.attempts } : {}),
+        retried: (effect.data.retried ?? 0) + 1 }), effect.error_code]);
       if (!updated) throw opError('write_claim_lost', 'The parked effect changed during retry approval.',
         `The ${effect.kind} effect of request ${requestId} changed (claimed, retried or settled by the worker) while this approval ran, so the transaction rolled back and nothing was queued. Preview its current state before deciding again.`,
         { fix: previewFix(sourceId, requestId) });
-      effects.push({ ...summary, state: 'queued', terminal: false, action: 'retry_queued' });
+      effects.push({ ...summary, state: 'queued', terminal: false, action: 'retry_queued', ...retriedUnder });
     }
     const queued = effects.some(effect => effect.action === 'retry_queued');
+    const revoked = denied !== null && effects.some(effect => effect.action === 'owner_revoked');
     return { request_id: request.request_id, source_id: sourceId, dry_run: dryRun, effects,
-      next_action: dryRun ? 'Fix the recorded cause, then run the same command without --dry-run to authorize one more attempt per parked target.'
-        : queued ? 'The resident owner makes one more attempt per parked target. Rerun this command with --dry-run to read the terminal state; a target that fails again parks again.'
-          : 'No parked target remains for this request.' };
+      ...(denied ? { authority: { ok: false, code: refusal!.code, message: refusal!.message } } : {}),
+      ...(revoked ? { action: 'owner_revoked', refusal: refusalEnvelope(denied!), fix: denied!.fix } : {}),
+      next_action: revoked && !queued ? denied!.suggestion
+        : dryRun ? 'Fix the recorded cause, then run the same command without --dry-run to authorize one more attempt per parked target or failed effect.'
+          : queued ? 'The resident owner makes one more attempt per parked target or failed effect. Rerun this command with --dry-run to read the terminal state; a target that fails again parks again.'
+            : 'No parked target remains for this request.' };
   });
+}
+
+/** Park codes an abandoned index lock produces; a reclaim removes their cause. */
+const INDEX_LOCK_PARK_CODES = ['git_index_stale', 'git_index_locked'];
+
+/**
+ * #6932: after the canonical writer reclaims an abandoned index lock in a worktree, each request there whose
+ * parked targets were all parked by that lock gets the one more attempt `retry-effects` would authorize,
+ * through the same checks (stored authority, claims, recovery). A request it cannot retry stays parked for
+ * the operator. Returns the number of requests requeued; never throws, so a reclaim's own outcome stands.
+ */
+export async function retryIndexLockParks(engine: BrainEngine, worktreeId: string): Promise<number> {
+  let requeued = 0;
+  try {
+    const requests = await engine.executeRaw<{ id: string; source_id: string; request_id: string }>(
+      `SELECT DISTINCT r.id,r.source_id,r.request_id FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
+       WHERE e.worktree_id=$1::uuid AND e.kind='git' AND e.state='failed' AND e.error_code='targets_parked' AND e.data ? 'parked'
+       AND NOT EXISTS (SELECT 1 FROM persistence_effects o CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.data->'parked','[]'::jsonb)) AS p(target)
+         WHERE o.request_id=e.request_id AND (o.state<>'committed' AND o.data ? 'parked') AND COALESCE(p.target->>'error_code','') <> ALL($2::text[]))
+       LIMIT 100`, [worktreeId, INDEX_LOCK_PARK_CODES]);
+    for (const request of requests) {
+      try {
+        const result = await retryParkedEffects(engine, request.source_id, request.request_id, false, { internalId: request.id });
+        if ((result?.effects as { action?: string }[] | undefined)?.some(effect => effect.action === 'retry_queued')) requeued++;
+      } catch { /* refused (authority, claim, host identity): it stays parked with its retry command */ }
+    }
+  } catch { /* the parked effects keep their retry commands */ }
+  return requeued;
 }
 
 /**
@@ -117,8 +213,8 @@ export async function retryParkedEffects(engine: BrainEngine, sourceId: string, 
  * history reported alongside (or alone when the request has no retryable embedding).
  */
 export async function retryRequestEffects(engine: BrainEngine, sourceId: string, requestId: string, dryRun: boolean, baseConfig?: GBrainConfig,
-  policy: 'owner' | 'mounted_database' = 'owner'): Promise<Record<string, unknown>> {
-  const parked = await retryParkedEffects(engine, sourceId, requestId, dryRun);
+  policy: 'owner' | 'mounted_database' = 'owner', ownerHost = false): Promise<Record<string, unknown>> {
+  const parked = await retryParkedEffects(engine, sourceId, requestId, dryRun, { ownerHost });
   if (parked && (parked.effects as Array<{ state: string }>).some(effect => effect.state !== 'committed')) return parked;
   try {
     const embedding = await retryEmbeddingEffect(engine, sourceId, requestId, dryRun, baseConfig, policy);
@@ -142,7 +238,7 @@ export async function retryEmbeddingEffect(engine: BrainEngine, sourceId: string
   const config = await loadConfigWithEngine(engine, baseConfig);
   const configuredSignature = config?.embedding_model && config.embedding_dimensions
     ? `${config.embedding_model}:${config.embedding_dimensions}` : null;
-  return engine.transaction(async tx => {
+  const result = await engine.transaction(async tx => {
     await declarePersistenceProtocol(tx);
     const [selected] = await tx.executeRaw<PersistenceEffect>("SELECT * FROM persistence_effects WHERE request_id=$1::uuid AND kind='embedding'", [request.id]);
     if (!selected) throw opError('invalid_params', 'The embedding obligation is unavailable.',
@@ -223,4 +319,7 @@ export async function retryEmbeddingEffect(engine: BrainEngine, sourceId: string
     return { ...receipt, state: updated.state, action: complete ? 'reconciled' : 'retry_queued', pending_chunks: pending.length,
       next_action: complete ? 'The existing vectors satisfy this obligation; no provider work was scheduled.' : 'The resident owner may spend up to five attempts only when its selected file configuration and the database policy permit embedding, under existing provider and job budgets. Repeating this command does not renew that allowance.' };
   });
+  // #6696 (A1): a reconciled obligation settled the request's last effect; its reservation shrinks outside the approval transaction.
+  if (result.action === 'reconciled') await trueUpRequests(engine, [request.id]);
+  return result;
 }

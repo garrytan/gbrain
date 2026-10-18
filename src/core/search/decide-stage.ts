@@ -26,7 +26,7 @@ import { writeReceipts } from '../ai/decide/receipts.ts';
 import { rerankQuestions } from '../ai/decide/rerank-adapter.ts';
 import { createQueryBudget, runShadow, sampled, stageDeadlineMs, type DecideQueryBudget } from '../ai/decide/runtime.ts';
 import { listCalibrations, pageSubject, recentResolvedModels, type CalibrationRow } from '../ai/decide/store.ts';
-import { DecideError, type DecideMode, type DecideQuestion, type DecideResult, type DecideSlot } from '../ai/decide/types.ts';
+import { DecideError, partialOf, type DecideMode, type DecidePartial, type DecideQuestion, type DecideResult, type DecideSlot } from '../ai/decide/types.ts';
 import { candidateItem, injectionCoPack, launchSearchIntent, startQueryAnswerability, type AnswerabilityVerdict, type IntentAsk } from './decide-retrieval.ts';
 import { capRerankDoc } from './rerank.ts';
 
@@ -276,15 +276,15 @@ async function evidenceStage(ctx: DecideSearchContext, query: string, pool: Sear
 
   const run = async (visible: boolean): Promise<{ pool: SearchResult[] }> => {
     const seen = (p: SlotPolicy) => visible && (p.effective === 'on' || ctx.explain || p.shadowWait);
-    const failAll = (reason: string, outcome: 'skipped' | 'error') => {
+    const failAll = (reason: string, outcome: 'skipped' | 'error', partial?: DecidePartial) => {
       if (s3Runs) {
         if (seen(policy)) ctx.meta.evidence = { mode: policy.requested, effective: 'off', provider: policy.provider, skipped: reason };
-        void writeReceipts(ctx.engine, { ...receiptBase, mode: modeOf(policy), outcomes: {}, fallbackOutcome: outcome, reason });
+        void writeReceipts(ctx.engine, { ...receiptBase, mode: modeOf(policy), outcomes: {}, fallbackOutcome: outcome, reason, partial });
       }
       for (const h of coPacked) {
         const hp = ctx.policies[h.slot]!;
         if (seen(hp)) ctx.meta[h.slot] = { mode: hp.requested, effective: 'off', provider: hp.provider, skipped: reason };
-        void writeReceipts(ctx.engine, { ...coBase(h), mode: modeOf(hp), outcomes: {}, fallbackOutcome: outcome, reason });
+        void writeReceipts(ctx.engine, { ...coBase(h), mode: modeOf(hp), outcomes: {}, fallbackOutcome: outcome, reason, partial });
       }
       return { pool };
     };
@@ -297,7 +297,7 @@ async function evidenceStage(ctx: DecideSearchContext, query: string, pool: Sear
         provider: lead.provider, remote: ctx.remote, coPacked: coPacked.map((h) => h.slot),
       }, { engine: ctx.engine, config: ctx.cfg, sourceId: ctx.sourceId });
     } catch (err) {
-      return failAll(err instanceof DecideError ? err.reason : 'provider_error', 'error');
+      return failAll(err instanceof DecideError ? err.reason : 'provider_error', 'error', partialOf(err));
     }
     let next = pool;
     if (s3Runs) {
@@ -453,7 +453,7 @@ export function startRerankShadow(ctx: DecideSearchContext | undefined, query: s
     } catch (err) {
       const reason = err instanceof DecideError ? err.reason : 'provider_error';
       if (visible) ctx.meta.rerank = { mode: 'shadow', effective: 'off', provider, skipped: reason };
-      void writeReceipts(ctx.engine, { slot: 'rerank', mode: 'shadow', callSite: ctx.callSite, lane: 'hot', provider, policy, questions, state, subjects, outcomes: {}, fallbackOutcome: 'error', reason, sourceId: ctx.sourceId ?? null, remote: ctx.remote });
+      void writeReceipts(ctx.engine, { slot: 'rerank', mode: 'shadow', callSite: ctx.callSite, lane: 'hot', provider, policy, questions, state, subjects, outcomes: {}, fallbackOutcome: 'error', reason, partial: partialOf(err), sourceId: ctx.sourceId ?? null, remote: ctx.remote });
       return;
     }
     const jevOrder = questions.map((q, i) => ({ i, s: result.answers[q.id]?.kind === 'score' ? (result.answers[q.id] as { normalized: number }).normalized : -1 }))

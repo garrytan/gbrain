@@ -115,6 +115,19 @@ describe('a failed lexical arm is stamped in meta.degraded (#5324)', () => {
     expect(titles.map(d => d.stage)).not.toContain('keyword_arm_failed');
   });
 
+  test('a Postgres statement timeout (SQLSTATE 57014) is stamped reason timeout, not provider_error (#6495)', async () => {
+    const statementTimeout = () => Object.assign(new Error('canceling statement due to statement timeout'), { name: 'PostgresError', code: '57014' });
+    const run = async (arms: Parameters<typeof fakeEngine>[0]) => {
+      let degraded: Array<{ stage: string; reason?: string }> = [];
+      await hybridSearch(fakeEngine(arms), QUERY, { limit: 5, onMeta: (m) => { degraded = (m.degraded ?? []) as typeof degraded; } });
+      return degraded;
+    };
+    expect(await run({ searchKeyword: () => Promise.reject(statementTimeout()), searchTitles: async () => [] }))
+      .toContainEqual({ stage: 'keyword_arm_failed', reason: 'timeout' });
+    expect(await run({ searchKeyword: async () => [], searchTitles: () => Promise.reject(statementTimeout()) }))
+      .toContainEqual({ stage: 'title_arm_failed', reason: 'timeout' });
+  });
+
   test('healthy arms stamp neither stage', async () => {
     let degraded: Array<{ stage: string }> = [];
     await hybridSearch(fakeEngine({ searchKeyword: async () => [], searchTitles: async () => [] }), QUERY, {

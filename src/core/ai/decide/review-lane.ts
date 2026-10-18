@@ -21,6 +21,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import type { BrainEngine } from '../../engine.ts';
+import { boundedBodyPrefixSql } from '../../page-window/bounded-lead.ts';
 import { loadConfigSnapshot } from '../../config-snapshot.ts';
 import { readDecideConfig, type DecideConfig } from './config.ts';
 import { CONFLICT_INSTRUCTIONS, CONFLICT_MIN_COSINE, CONFLICT_NEIGHBOURS, CONFLICT_OPTIONS } from './conflict.ts';
@@ -30,7 +31,7 @@ import { resolveSlotPolicy, type SlotPolicy } from './policy.ts';
 import { writeReceipts } from './receipts.ts';
 import { reviewWithdrawOn } from '../../facts/withdrawal.ts';
 import { flushDecideWrites, hmacRef, listCalibrations, receiptSalt, recentResolvedModels } from './store.ts';
-import { DecideError, type ChoiceAnswer, type DecideQuestion, type EvidenceItem } from './types.ts';
+import { DecideError, partialOf, type ChoiceAnswer, type DecideQuestion, type EvidenceItem } from './types.ts';
 
 export const REVIEW_KINDS = ['withdraw', 'duplicate_page', 'duplicate_entity'] as const;
 export type ReviewKind = typeof REVIEW_KINDS[number];
@@ -243,7 +244,7 @@ async function withdrawAnchor(engine: BrainEngine, row: QueueRow, cfg: DecideCon
 
 async function pagePairAnchor(engine: BrainEngine, row: QueueRow): Promise<Anchor | { skip: string }> {
   const pages = await engine.executeRaw<{ slug: string; title: string; compiled_truth: string }>(
-    `SELECT slug, title, compiled_truth FROM pages WHERE source_id = $1 AND slug = ANY($2::text[]) AND deleted_at IS NULL`,
+    `SELECT slug, title, ${boundedBodyPrefixSql('pages')} AS compiled_truth FROM pages WHERE source_id = $1 AND slug = ANY($2::text[]) AND deleted_at IS NULL`,
     [row.source_id, [row.a_ref, row.b_ref]]);
   const a = pages.find(p => p.slug === row.a_ref);
   const b = pages.find(p => p.slug === row.b_ref);
@@ -321,7 +322,7 @@ export async function runReviewLane(engine: BrainEngine, opts: { kind: ReviewKin
         provider: policy.provider, lane: 'background', signal: opts.signal }, { engine, config: cfg, sourceId });
     } catch (err) {
       const reason = err instanceof DecideError ? err.reason : 'provider_error';
-      receipts.push(writeReceipts(engine, { ...base, mode, provider: policy.provider, policy, questions, outcomes: {}, fallbackOutcome: 'error', reason }));
+      receipts.push(writeReceipts(engine, { ...base, mode, provider: policy.provider, policy, questions, outcomes: {}, fallbackOutcome: 'error', reason, partial: partialOf(err) }));
       result.skipped++;
       if (PERMANENT_FAILURES.has(reason)) await clearQueue(engine, row);
       else { await deferQueue(engine, row, reason); result.deferred++; }

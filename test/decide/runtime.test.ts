@@ -20,7 +20,7 @@ import { buildReceiptRows } from '../../src/core/ai/decide/receipts.ts';
 import {
   dailySpend, flushDecideWrites, receiptSalt, recordReceipts, __resetDecideStoreForTests,
 } from '../../src/core/ai/decide/store.ts';
-import type { DecideQuestion, EvidenceItem } from '../../src/core/ai/decide/types.ts';
+import type { DecidePartial, DecideQuestion, EvidenceItem } from '../../src/core/ai/decide/types.ts';
 
 let engine: PGLiteEngine;
 
@@ -200,5 +200,66 @@ describe('receipts and salt', () => {
     expect(a).toMatch(/^[0-9a-f]{64}$/);
     const config = JSON.stringify(await engine.getAllConfig());
     expect(config).not.toContain(a);
+  });
+});
+
+describe('settled answers in error receipts (#6519)', () => {
+  const many = () => Array.from({ length: 40 }, (_, i) => q(`q${i}`, { ...cand('notes/world'), text: 'evidence '.repeat(1200) }));
+  const cfg = () => readDecideConfig({ ...CONSENT, 'decide.egress.private': 'allow' });
+  const errorRows = (questions: DecideQuestion[], err: unknown) => buildReceiptRows(engine, {
+    slot: 'evidence', mode: 'on', callSite: 'search', lane: 'hot', provider: 'typesafe:jev-1.13.0', questions, state: STATE,
+    outcomes: {}, fallbackOutcome: 'error', reason: (err as { reason?: string }).reason, partial: (err as { partial?: DecidePartial }).partial,
+  });
+  async function failing(transport: Parameters<typeof __setDecideTransportForTests>[0]): Promise<{ err: unknown; calls: number; questions: DecideQuestion[] }> {
+    let calls = 0;
+    __setDecideTransportForTests(async (u, init) => { calls++; return transport!(u, init); });
+    const questions = many();
+    const err = await runDecide({ slot: 'evidence', callSite: 'search', state: STATE, questions }, { engine, config: cfg() }).then(() => null, (e) => e);
+    return { err, calls, questions };
+  }
+  const answering = (model: (n: number) => string, failFrom = Infinity) => {
+    let n = 0;
+    return async (_u: string, init: RequestInit) => {
+      const i = n++;
+      if (i >= failFrom) return new Response('boom', { status: 500 });
+      const body = JSON.parse(init.body as string);
+      return new Response(JSON.stringify({ model: model(i), usage: { input_tokens: 200, output_tokens: 5 },
+        answers: Object.fromEntries(Object.keys(body.questions).map((id) => [id, { type: 'noul', noul: 0.7 }])) }));
+    };
+  };
+
+  test('a charged batch before a failed one leaves its answers on the error receipts; the outcome stays error', async () => {
+    const { err, calls, questions } = await failing(answering(() => 'jev-1.13.0', 1));
+    expect(calls).toBeGreaterThan(1);
+    expect(err).toMatchObject({ reason: 'provider_error' });
+    const rows = await errorRows(questions, err);
+    const answered = rows.filter((r) => r.answer_value !== null);
+    expect(answered.length).toBeGreaterThan(0);
+    expect(answered.length).toBeLessThan(rows.length);
+    expect(answered.every((r) => r.answer_value === 0.7 && r.model_resolved === 'jev-1.13.0')).toBe(true);
+    expect(rows.every((r) => r.outcome === 'error' && r.error_reason === 'provider_error')).toBe(true);
+  });
+
+  test('mixed models keep the answers with a null model_resolved', async () => {
+    const { err, questions } = await failing(answering((i) => (i === 0 ? 'jev-1.13.0' : 'jev-1.14.0')));
+    expect(err).toMatchObject({ reason: 'mixed_model' });
+    const rows = await errorRows(questions, err);
+    expect(rows.every((r) => r.answer_value === 0.7 && r.model_resolved === null)).toBe(true);
+  });
+
+  test('when every batch fails the error receipts carry no answers', async () => {
+    const { err, questions } = await failing(answering(() => 'jev-1.13.0', 0));
+    expect((err as { partial?: unknown }).partial).toBeUndefined();
+    const rows = await errorRows(questions, err);
+    expect(rows.every((r) => r.answer_value === null && r.model_resolved === null)).toBe(true);
+  });
+
+  test('a successful decision carries no partial and its receipts are unchanged', async () => {
+    __setDecideTransportForTests(answering(() => 'jev-1.13.0'));
+    const questions = many();
+    const result = await runDecide({ slot: 'evidence', callSite: 'search', state: STATE, questions }, { engine, config: cfg() });
+    const rows = await buildReceiptRows(engine, { slot: 'evidence', mode: 'on', callSite: 'search', lane: 'hot', provider: 'typesafe:jev-1.13.0',
+      result, questions, state: STATE, outcomes: {}, fallbackOutcome: 'kept' });
+    expect(rows.every((r) => r.answer_value === 0.7 && r.model_resolved === 'jev-1.13.0' && r.decision_id === result.decision_id)).toBe(true);
   });
 });

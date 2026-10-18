@@ -73,7 +73,9 @@ describe('put_page result normalization', () => {
     for (const [content, code] of [['---\ntitle: [\n---\nbody', 'invalid_params'], ['x'.repeat(MAX_FILE_SIZE + 1), 'request_too_large']]) {
       const failure = await tool.execute({ slug: 'wiki/agents/1/rejected', content, request_id: randomUUID() }, { engine, jobId: 1, remote: true })
         .then(() => null, error => error);
-      expect(failure).toMatchObject({ code, writeRequest: { state: 'failed' } });
+      // Invalid YAML fails its admitted request; an over-ceiling body is refused before admission (no request).
+      if (code === 'request_too_large') expect(failure).toMatchObject({ code, writeRequest: undefined });
+      else expect(failure).toMatchObject({ code, writeRequest: { state: 'failed' } });
       expect(failure.message).not.toContain(content);
       expect(await engine.getPage('wiki/agents/1/rejected', { sourceId: 'default' })).toBeNull();
     }

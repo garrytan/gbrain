@@ -8,7 +8,7 @@
 import type { Operation } from './contract.ts';
 import { enforceClientSlugFence, readPolicyOpts } from './context.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
-import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
+import { MERGE_PRECONDITION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 
 // --- Tags ---
 
@@ -19,6 +19,7 @@ const add_tag: Operation = {
   description: 'Add one tag to a page (idempotent). Use when filing or grouping pages for later get_tags / list_pages tag filters. Needs write scope. On page_not_found: resolve the slug with resolve_slugs, then call again.',
   params: {
     request_id: WRITE_REQUEST_PARAM,
+    ...MERGE_PRECONDITION_PARAMS,
     slug: { type: 'string', required: true, description: "Slug of the page to tag, e.g. 'people/alice-example'." },
     tag: { type: 'string', required: true, description: "Tag to add — a plain string like 'founder' or 'follow-up', not a slug." },
   },
@@ -40,6 +41,7 @@ const remove_tag: Operation = {
   description: 'Remove one tag from a page. Use when a tag was wrong or no longer applies. Needs write scope. On page_not_found: resolve the slug with resolve_slugs, then call again.',
   params: {
     request_id: WRITE_REQUEST_PARAM,
+    ...MERGE_PRECONDITION_PARAMS,
     slug: { type: 'string', required: true, description: 'Slug of the page to untag.' },
     tag: { type: 'string', required: true, description: 'Tag to remove (exact match against the tags get_tags returns).' },
   },

@@ -397,7 +397,7 @@ check('old manifest reuse refuses a present-file deletion before admitting any r
   expect((await engine.getPage(f.slug, { sourceId: f.id }))?.id).toBe(f.snapshot.page.id);
 });
 
-check('already-admitted legacy deletion fails under its original ID and only explicit rediscovery advances', async engine => {
+check('already-admitted legacy deletion fails under its original ID and the next sync rediscovers', async engine => {
   const f = await fixture(engine, process.platform === 'win32' ? 'notes\\example.md' : 'notes/example.md');
   const legacy = await legacyDeletion(engine, f, true);
   const first = await performManagedSync(engine, f.opts);
@@ -406,13 +406,11 @@ check('already-admitted legacy deletion fails under its original ID and only exp
   expect(row.state).not.toBe('committed');
   expect(row.error_code).toBe('page_identity_changed');
   expect(row.intent).toEqual(legacy.intent);
-  expect((await performManagedSync(engine, f.opts)).managedWrite?.write_request).toEqual(first.managedWrite?.write_request);
-  expect((await engine.getPage(f.slug, { sourceId: f.id }))?.id).toBe(f.snapshot.page.id);
-  expect(readFileSync(join(f.root, 'notes/example.md'), 'utf8')).toBe(content);
-  expect((await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [f.id]))[0].last_commit).toBeNull();
-  expect((await performManagedSync(engine, { ...f.opts, retryFailed: true })).status).toBe('first_sync');
+  // #6712 PR 3 (L7): the next plain sync retries the recorded failure by rediscovering, as `--retry-failed` (now its alias) did.
+  expect((await performManagedSync(engine, f.opts)).status).toBe('first_sync');
   expect((await getWriteRequest(engine, legacy.cursor.authority.writer.principal, legacy.requestId))?.state).toBe(row.state);
   expect((await engine.getPage(f.slug, { sourceId: f.id }))?.id).toBe(f.snapshot.page.id);
+  expect(readFileSync(join(f.root, 'notes/example.md'), 'utf8')).toBe(content);
 });
 
 check('explicit working-tree deletion remains valid even when the pinned Git target contains the file', async engine => {

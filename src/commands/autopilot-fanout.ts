@@ -39,13 +39,14 @@ import { existsSync } from 'fs';
 import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
 import { SOURCE_FRESHNESS_PHASES, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
+import { GLOBAL_FLOOR_MIN, resolveGlobalFloorMin } from '../core/minions/handlers/autopilot-global-maintenance.ts';
 import { CONNECTOR_SOURCE_PHASES } from '../core/cycle/phase-scope.ts';
 import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts';
-import { attemptedConnectorSourceIds } from '../core/persistence/connector-state.ts';
+import { attemptedConnectorSourceIds, type ConnectorAccountMismatch } from '../core/persistence/connector-state.ts';
+import { connectorAccountMismatches, connectorAccountMismatchSkipWarning } from '../core/persistence/connector-account-mismatch.ts';
 import { parseSourceConfig, sourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { automaticSyncPull } from '../core/persistence/automatic-sync-policy.ts';
-import { isSyncDisabledConfig } from '../core/sync-policy.ts';
-import { loadActivationPendingSourceIds, skipActivationPendingSync } from '../core/sync-policy.ts';
+import { automaticSyncSkip, loadActivationPendingSourceIds, reportAutomaticSyncSkip } from '../core/sync-policy.ts';
 import { AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES } from './autopilot-remediation-policy.ts';
 
 // #2194 fix #2: failure cooldown. A source whose autopilot-cycle keeps
@@ -369,6 +370,7 @@ export function selectSourcesForDispatch(
   cooldownOpts: CooldownOpts = { baseMin: FAILURE_COOLDOWN_BASE_MIN, capMin: FAILURE_COOLDOWN_CAP_MIN },
   pathExists: (path: string) => boolean = () => true,
   connectorIds: ReadonlySet<string> = new Set(),
+  accountMismatches: ReadonlyMap<string, ConnectorAccountMismatch> = new Map(),
 ): {
   dispatch: SourceRow[];
   skippedFresh: SourceRow[];
@@ -383,7 +385,9 @@ export function selectSourcesForDispatch(
   const cooldown: SourceRow[] = [];
   const unavailablePath: Array<SourceRow & { skip_warning: string }> = [];
   for (const s of sources) {
-    const skipWarning = s.local_path && !connectorIds.has(s.id) ? sourceLocalPathSkipWarning(s.id, s.local_path, pathExists, s.config) : null;
+    const mismatch = connectorIds.has(s.id) ? accountMismatches.get(s.id) : undefined;
+    const skipWarning = mismatch ? connectorAccountMismatchSkipWarning(s.id, mismatch)
+      : s.local_path && !connectorIds.has(s.id) ? sourceLocalPathSkipWarning(s.id, s.local_path, pathExists, s.config) : null;
     if (skipWarning) {
       unavailablePath.push({ ...s, skip_warning: skipWarning });
       continue;
@@ -543,6 +547,8 @@ export async function dispatchPerSource(
   }
 
   const pathExists = opts.pathExists ?? existsSync;
+  // #6803: a connector whose credential resolves to another account is unavailable until the operator repins it.
+  const accountMismatches = connectorIds.size ? await connectorAccountMismatches(engine).catch(() => new Map<string, ConnectorAccountMismatch>()) : new Map<string, ConnectorAccountMismatch>();
   const { dispatch, skippedFresh, skippedCap, skippedCooldown, skippedUnavailablePath } =
     selectSourcesForDispatch(
       sources,
@@ -553,6 +559,7 @@ export async function dispatchPerSource(
       cooldownOpts,
       pathExists,
       connectorIds,
+      accountMismatches,
     );
 
   for (const src of skippedUnavailablePath) {
@@ -575,11 +582,11 @@ export async function dispatchPerSource(
       // stamp; only the sync phase (and the pull that feeds it) is dropped —
       // normalizeQueuedSourcePhases passes a freshness subset through as-is.
       // #5198: a claimed source awaiting activation is treated the same way,
-      // so its cycle does not fail on a sync that is refused by contract.
-      const pendingActivation = skipActivationPendingSync(
-        activationPending, src.id, 'fanout_sync_skipped', opts.jsonMode === true, opts.jsonMode ? emit : log,
-      );
-      const syncDisabled = isSyncDisabledConfig(src.config) || pendingActivation;
+      // so its cycle does not fail on a sync that is refused by contract, and
+      // so is a gbrain-owned content directory where sync does not apply (P4.2).
+      const skip = await automaticSyncSkip(engine, src, activationPending);
+      if (skip?.reason !== 'sync_disabled') reportAutomaticSyncSkip(src.id, skip, 'fanout_sync_skipped', opts.jsonMode === true, opts.jsonMode ? emit : log);
+      const syncDisabled = !!skip;
       const connector = connectorIds.has(src.id);
       const shouldPull = !syncDisabled && !connector && await automaticSyncPull(engine, src);
       const job = await queue.add(
@@ -682,8 +689,6 @@ export async function dispatchPerSource(
   };
 }
 
-const GLOBAL_FLOOR_MIN = 60;
-
 /** Is the brain-wide maintenance overdue? Null/unparseable → overdue. */
 export function isGlobalMaintenanceStale(lastGlobalAtIso: string | null, now = Date.now(), floorMin = GLOBAL_FLOOR_MIN): boolean {
   if (!lastGlobalAtIso) return true;
@@ -726,12 +731,7 @@ export async function dispatchGlobalMaintenance(
   const emit = opts.emit ?? ((line) => process.stderr.write(line + '\n'));
   const log = opts.log ?? ((line) => console.log(line));
 
-  let floorMin = GLOBAL_FLOOR_MIN;
-  const floorCfg = await engine.getConfig('autopilot.global_floor_min');
-  if (floorCfg) {
-    const n = parseInt(floorCfg, 10);
-    if (Number.isFinite(n) && n >= 1) floorMin = n;
-  }
+  const floorMin = await resolveGlobalFloorMin(engine);
   const lastGlobalAt = await engine.getConfig(LAST_GLOBAL_AT_KEY);
   if (!isGlobalMaintenanceStale(lastGlobalAt, Date.now(), floorMin)) {
     return { dispatched: false, reason: 'fresh' };

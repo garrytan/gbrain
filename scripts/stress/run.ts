@@ -349,13 +349,22 @@ export interface FileResult {
 /** Workflows whose dedicated jobs provide prerequisites (agent binaries, native targets) the stress shards lack. */
 const OWNING_WORKFLOWS = ['heavy-tests.yml', 'native-locks.yml', 'macos-validation.yml'];
 
+/** Credentialed URLs of external services (a live Supabase Supavisor pooler) that no CI job provides: a secret by another name. */
+const EXTERNAL_SERVICE_URLS = ['GBRAIN_SUPAVISOR_URL'];
+
 function skipReason(file: string): string | null {
   const text = readFileSync(join(ROOT, file), 'utf8');
   if (/process\.platform/.test(text)) return `every test skipped on ${process.platform}: platform-only tests, run by their owning native lane; not stressed`;
   const keys = [...new Set([...text.matchAll(/process\.env\.([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET))/g)].map(m => m[1]!))];
   if (keys.length) return `every test skipped without ${keys.join(', ')} (secret not available here); not stressed`;
+  const external = EXTERNAL_SERVICE_URLS.filter(name => text.includes(`process.env.${name}`) && !process.env[name]);
+  if (external.length) return `every test skipped without ${external.join(', ')} (a credentialed external service no CI job holds); not stressed`;
   const owner = OWNING_WORKFLOWS.find(w => { const p = join(ROOT, '.github/workflows', w); return existsSync(p) && readFileSync(p, 'utf8').includes(file); });
   if (owner) return `every test skipped here: its prerequisite (agent binary or native target) comes from its owning job in .github/workflows/${owner}; not stressed`;
+  if (/process\.env\.GBRAIN_PGBOUNCER_URL/.test(text) && !process.env.GBRAIN_PGBOUNCER_URL) {
+    const pooled = readdirSync(join(ROOT, '.github/workflows')).find(w => { const body = readFileSync(join(ROOT, '.github/workflows', w), 'utf8'); return body.includes(file) && body.includes('GBRAIN_CI_REQUIRE_PGBOUNCER'); });
+    if (pooled) return `every test skipped without the PgBouncer fixture (GBRAIN_PGBOUNCER_URL); its owning pooled job in .github/workflows/${pooled} requires it; not stressed`;
+  }
   return null;
 }
 

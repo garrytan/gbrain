@@ -241,11 +241,17 @@ function sanitizeIdent(s: string): string | null {
  * @param language  used to switch between JS/TS and Python AST shapes
  * @param bareCallee  the already-extracted bare callee name (`method`); we only
  *                    qualify it, never override it
+ * @param fileBindings  the file's top-level binding index, shared by every
+ *                      call site of one tree
+ *
+ * @internal exported for the differential test; production callers go
+ *   through extractCallEdges.
  */
-function resolveReceiverType(
+export function resolveReceiverType(
   callNode: any,
   language: SupportedCodeLanguage,
   bareCallee: string,
+  fileBindings: FileBindings,
 ): string | null {
   if (!RECEIVER_RESOLUTION_LANGS.has(language)) return null;
 
@@ -290,8 +296,8 @@ function resolveReceiverType(
   }
 
   // Resolve via top-of-file binding search. The receiver is an identifier
-  // (`obj`); walk up to the file root, then scan top-level statements for
-  // `import {obj} from 'pkg'` (pattern 1) or `const obj = new C()`
+  // (`obj`); walk up to the file root, then look among top-level statements
+  // for `import {obj} from 'pkg'` (pattern 1) or `const obj = new C()`
   // (pattern 3).
   if (receiver.type !== 'identifier' && receiver.type !== 'name') return null;
   const receiverName = recvText;
@@ -302,61 +308,161 @@ function resolveReceiverType(
   for (let i = 0; i < WALK_DEPTH_CAP && root && root.parent; i++) root = root.parent;
   if (!root) return null;
 
-  // Scan top-level children for a binding of `receiverName`.
-  for (const stmt of root.namedChildren ?? []) {
-    // Pattern 1: ES import.
-    //   import { obj } from 'pkg'  → import_statement / import_clause
-    //   import obj from 'pkg'       → default import
-    //   import * as obj from 'pkg' → namespace import
-    if (
-      (language === 'typescript' || language === 'tsx' || language === 'javascript') &&
-      stmt.type === 'import_statement'
-    ) {
-      const sourceNode = stmt.childForFieldName('source');
-      const source = (sourceNode?.text ?? '').replace(/^['"]|['"]$/g, '');
-      if (!source) continue;
-      // Check named imports + default + namespace imports for receiverName.
+  // A call nested deeper than the walk cap stops at an inner ancestor, not
+  // the file root: scan that ancestor's children directly, as before.
+  const prefix = root.parent
+    ? scanBindingPrefix(root.namedChildren ?? [], language, receiverName)
+    : fileBindings.prefixFor(receiverName);
+  return prefix === null ? null : `${prefix}::${bareCallee}`;
+}
+
+/**
+ * Patterns 1 and 3 for one top-level statement: the qualifier (`pkg`,
+ * `module`, `ClassName`) when `stmt` binds `receiverName`, else null.
+ */
+function statementBindingPrefix(stmt: any, language: SupportedCodeLanguage, receiverName: string): string | null {
+  // Pattern 1: ES import.
+  //   import { obj } from 'pkg'  → import_statement / import_clause
+  //   import obj from 'pkg'       → default import
+  //   import * as obj from 'pkg' → namespace import
+  if (
+    (language === 'typescript' || language === 'tsx' || language === 'javascript') &&
+    stmt.type === 'import_statement'
+  ) {
+    const sourceNode = stmt.childForFieldName('source');
+    const source = (sourceNode?.text ?? '').replace(/^['"]|['"]$/g, '');
+    if (!source) return null;
+    // Check named imports + default + namespace imports for receiverName.
+    const importText = (stmt.text ?? '') as string;
+    // Cheap pre-filter: must mention receiverName as an identifier.
+    if (!mentionsWord(importText, receiverName)) return null;
+    return source;
+  }
+  // Pattern 1 (Python): `from pkg import obj` / `import pkg`
+  if (language === 'python') {
+    if (stmt.type === 'import_from_statement') {
+      const moduleNode = stmt.childForFieldName('module_name');
+      const module = moduleNode?.text;
       const importText = (stmt.text ?? '') as string;
-      // Cheap pre-filter: must mention receiverName as an identifier.
-      if (!new RegExp(`\\b${receiverName}\\b`).test(importText)) continue;
-      return `${source}::${bareCallee}`;
+      if (!module) return null;
+      if (!mentionsWord(importText, receiverName)) return null;
+      return module;
     }
-    // Pattern 1 (Python): `from pkg import obj` / `import pkg`
+    if (stmt.type === 'import_statement') {
+      // `import pkg` — receiver matches module name directly.
+      const importText = (stmt.text ?? '') as string;
+      if (!mentionsWord(importText, receiverName)) return null;
+      return receiverName;
+    }
+  }
+  // Pattern 3: `const obj = new C()` / `obj = ClassName(...)` (python)
+  if (
+    stmt.type === 'lexical_declaration' ||
+    stmt.type === 'variable_declaration' ||
+    stmt.type === 'assignment'
+  ) {
+    const stmtText = (stmt.text ?? '') as string;
+    if (!mentionsWord(stmtText, receiverName)) return null;
+    // Look for `new ClassName(...)` (JS/TS) or `ClassName(...)` (Python).
+    const newMatch = stmtText.match(/=\s*new\s+([A-Za-z_][A-Za-z0-9_]*)/);
+    if (newMatch) return newMatch[1]!;
+    // Python: `obj = ClassName(...)`
     if (language === 'python') {
-      if (stmt.type === 'import_from_statement') {
-        const moduleNode = stmt.childForFieldName('module_name');
-        const module = moduleNode?.text;
-        const importText = (stmt.text ?? '') as string;
-        if (!module) continue;
-        if (!new RegExp(`\\b${receiverName}\\b`).test(importText)) continue;
-        return `${module}::${bareCallee}`;
-      }
-      if (stmt.type === 'import_statement') {
-        // `import pkg` — receiver matches module name directly.
-        const importText = (stmt.text ?? '') as string;
-        if (!new RegExp(`\\b${receiverName}\\b`).test(importText)) continue;
-        return `${receiverName}::${bareCallee}`;
-      }
-    }
-    // Pattern 3: `const obj = new C()` / `obj = ClassName(...)` (python)
-    if (
-      stmt.type === 'lexical_declaration' ||
-      stmt.type === 'variable_declaration' ||
-      stmt.type === 'assignment'
-    ) {
-      const stmtText = (stmt.text ?? '') as string;
-      if (!new RegExp(`\\b${receiverName}\\b`).test(stmtText)) continue;
-      // Look for `new ClassName(...)` (JS/TS) or `ClassName(...)` (Python).
-      const newMatch = stmtText.match(/=\s*new\s+([A-Za-z_][A-Za-z0-9_]*)/);
-      if (newMatch) return `${newMatch[1]}::${bareCallee}`;
-      // Python: `obj = ClassName(...)`
-      if (language === 'python') {
-        const pyMatch = stmtText.match(new RegExp(`${receiverName}\\s*=\\s*([A-Z][A-Za-z0-9_]*)\\s*\\(`));
-        if (pyMatch) return `${pyMatch[1]}::${bareCallee}`;
-      }
+      const pyMatch = stmtText.match(new RegExp(`${receiverName}\\s*=\\s*([A-Z][A-Za-z0-9_]*)\\s*\\(`));
+      if (pyMatch) return pyMatch[1]!;
     }
   }
   return null;
+}
+
+/** The first statement in `stmts` that binds `receiverName`, as its qualifier. */
+function scanBindingPrefix(stmts: readonly any[], language: SupportedCodeLanguage, receiverName: string): string | null {
+  for (const stmt of stmts) {
+    const prefix = statementBindingPrefix(stmt, language, receiverName);
+    if (prefix !== null) return prefix;
+  }
+  return null;
+}
+
+const BINDING_STATEMENT_TYPES = new Set([
+  'import_statement', 'import_from_statement', 'lexical_declaration', 'variable_declaration', 'assignment',
+]);
+const WORD_NAME = /^\w+$/;
+
+function isWordChar(code: number): boolean {
+  return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 95;
+}
+
+function isWordBoundary(text: string, at: number): boolean {
+  const before = at > 0 && isWordChar(text.charCodeAt(at - 1));
+  const after = at < text.length && isWordChar(text.charCodeAt(at));
+  return before !== after;
+}
+
+/**
+ * True when `name` occurs in `text` with a word boundary on both sides (JS
+ * `\b`, ASCII word characters). The receiver name comes from indexed source,
+ * so it is matched literally instead of being compiled into a RegExp.
+ *
+ * @internal exported for tests.
+ */
+export function mentionsWord(text: string, name: string): boolean {
+  if (name.length === 0) return false;
+  for (let i = text.indexOf(name); i !== -1; i = text.indexOf(name, i + 1)) {
+    if (isWordBoundary(text, i) && isWordBoundary(text, i + name.length)) return true;
+  }
+  return false;
+}
+
+/**
+ * Top-level bindings of one file, built on first use. Every binding pattern
+ * requires `\b<name>\b` in the statement text, which for a `\w+` name means
+ * the name is one of the text's maximal `\w+` runs, so a word index narrows
+ * the candidates to statements mentioning the receiver; each candidate then
+ * runs the full per-statement check in file order, so the first match is
+ * the same statement a full scan would find. Results are memoized per name.
+ * Before this index every member call rescanned (and re-marshaled out of
+ * WASM) every top-level statement: O(calls x statements).
+ *
+ * @internal exported for the differential test.
+ */
+export class FileBindings {
+  private stmts: any[] | null = null;
+  private byWord = new Map<string, number[]>();
+  private memo = new Map<string, string | null>();
+
+  constructor(private readonly root: any, private readonly language: SupportedCodeLanguage) {}
+
+  prefixFor(receiverName: string): string | null {
+    const cached = this.memo.get(receiverName);
+    if (cached !== undefined) return cached;
+    const stmts = this.statements();
+    let prefix: string | null = null;
+    if (WORD_NAME.test(receiverName)) {
+      for (const i of this.byWord.get(receiverName) ?? []) {
+        prefix = statementBindingPrefix(stmts[i], this.language, receiverName);
+        if (prefix !== null) break;
+      }
+    } else {
+      prefix = scanBindingPrefix(stmts, this.language, receiverName);
+    }
+    this.memo.set(receiverName, prefix);
+    return prefix;
+  }
+
+  private statements(): any[] {
+    if (this.stmts) return this.stmts;
+    this.stmts = this.root?.namedChildren ?? [];
+    this.stmts!.forEach((stmt: any, i: number) => {
+      if (!BINDING_STATEMENT_TYPES.has(stmt.type)) return;
+      for (const word of new Set(((stmt.text ?? '') as string).match(/\w+/g) ?? [])) {
+        const list = this.byWord.get(word);
+        if (list) list.push(i);
+        else this.byWord.set(word, [i]);
+      }
+    });
+    return this.stmts!;
+  }
 }
 
 /**
@@ -466,6 +572,7 @@ export function extractCallEdges(tree: any, language: SupportedCodeLanguage): Ex
   // stack overflow on generated code). Uses TreeCursor when available,
   // else falls back to namedChildren iteration.
   const root = tree.rootNode;
+  const fileBindings = new FileBindings(root, language);
   const stack: any[] = [root];
   while (stack.length > 0) {
     const node = stack.pop();
@@ -475,7 +582,7 @@ export function extractCallEdges(tree: any, language: SupportedCodeLanguage): Ex
       if (callee) {
         // v0.34 W1: try receiver-type resolution. On success, emit the
         // qualified name; on miss, emit the bare token (pre-W1 behavior).
-        const qualified = resolveReceiverType(node, language, callee);
+        const qualified = resolveReceiverType(node, language, callee, fileBindings);
         out.push({
           callSiteByteOffset: node.startIndex,
           toSymbol: qualified ?? callee,
@@ -680,21 +787,48 @@ export function findChunkForOffset(
   source: string,
   chunks: Array<{ startLine: number; endLine: number }>,
 ): number | null {
-  // Compute line number of byteOffset by counting newlines up to it.
-  // Cache: the chunker already knows startLine/endLine per chunk, so
-  // a naive line lookup here is fine on a per-file basis.
-  let line = 1;
-  for (let i = 0; i < byteOffset && i < source.length; i++) {
-    if (source.charCodeAt(i) === 10) line++;
-  }
-  // Prefer innermost (smallest line span) chunk containing the line.
-  let best: number | null = null;
-  let bestSpan = Infinity;
-  for (let i = 0; i < chunks.length; i++) {
+  return chunkLocator(source, chunks)(byteOffset);
+}
+
+/**
+ * findChunkForOffset for many offsets into one file. The offset's line is
+ * 1 + the newlines before it (binary search over the newline positions),
+ * and each line's answer is painted once: chunks in decreasing span order,
+ * ties by decreasing index, so the last painter of a line is the smallest
+ * span containing it with the lowest index — the chunk a per-offset scan
+ * picks. Before, every edge rescanned the file up to its offset and every
+ * chunk: O(edges x (file + chunks)).
+ */
+export function chunkLocator(
+  source: string,
+  chunks: Array<{ startLine: number; endLine: number }>,
+): (byteOffset: number) => number | null {
+  const newlines: number[] = [];
+  for (let i = source.indexOf('\n'); i !== -1; i = source.indexOf('\n', i + 1)) newlines.push(i);
+  const lineCount = newlines.length + 1;
+  const best = new Int32Array(lineCount + 1).fill(-1);
+  // A non-finite span (NaN or infinite line bounds) never wins a per-offset scan.
+  const order = chunks.map((_, i) => i).filter((i) => chunks[i]!.endLine - chunks[i]!.startLine < Infinity).sort((a, b) => {
+    const spanA = chunks[a]!.endLine - chunks[a]!.startLine;
+    const spanB = chunks[b]!.endLine - chunks[b]!.startLine;
+    return spanB - spanA || b - a;
+  });
+  for (const i of order) {
     const c = chunks[i]!;
-    if (line < c.startLine || line > c.endLine) continue;
-    const span = c.endLine - c.startLine;
-    if (span < bestSpan) { bestSpan = span; best = i; }
+    const from = Math.max(1, Math.ceil(c.startLine));
+    const to = Math.min(lineCount, Math.floor(c.endLine));
+    for (let line = from; line <= to; line++) best[line] = i;
   }
-  return best;
+  return (byteOffset: number) => {
+    const end = Math.min(byteOffset, source.length);
+    let lo = 0;
+    let hi = newlines.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (newlines[mid]! < end) lo = mid + 1;
+      else hi = mid;
+    }
+    const found = best[lo + 1]!;
+    return found === -1 ? null : found;
+  };
 }

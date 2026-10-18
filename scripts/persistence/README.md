@@ -142,7 +142,12 @@ fault. Full runs crash every seam and run every fault. The manifest's `robot`
 key lists every run (schedule, seed, seam and occurrence or process fault),
 `sequences_x_crash_points`, `lease_bound_seams_skipped`,
 `lease_bound_faults_skipped` and violations with the observed trace;
-`robot_full_gate` is true for a full-budget run with no violations.
+`robot_full_gate` is true for a full-budget run with no violations, no
+`fault_hook_errors` (a fault hook that threw instead of freezing the worker)
+and no `faults_not_reached` (a worker that finished without reaching its
+requested seam, outside the per-scenario `UNREACHED_FAULT_ALLOWLIST` in
+`robot-driver.ts`); either kind of run also fails validation with a nonzero
+exit and is listed in `failing_runs` for `--replay`.
 
 A failing run prints two commands. `--replay=<manifest>` re-runs exactly the
 manifest's failing runs. `--shrink=<manifest>` removes ops from the first
@@ -536,6 +541,121 @@ recovery bytes and pool activity.
 The CLI without `--informational` still enforces the threshold. The original
 heavy shell entry invokes this harness; its optional `STRICT_LATENCY=1`
 flag affects only the latency threshold, never validity requirements.
+
+### Managed-sync convergence gate
+
+`test/sync-convergence.serial.test.ts` (#6650, the #6712 L0 gate) is a
+real-process profile of this gate. It uses the same fault seam
+(`src/core/persistence/fault-points.ts`, preloaded into real `gbrain serve` and
+`gbrain sync` processes by `test/fixtures/convergence-fault-kill.ts`, since
+production never installs a hook). The preload acts once, at the nth hit of
+one point, through a registry of actions: `kill` (SIGKILL), `stall` (until the
+harness releases it), `edit` (an uncommitted worktree edit) and `throw` (an
+error carrying a given SQLSTATE, as the driver reports a database error). Each
+scenario builds its own Postgres database behind transaction-mode PgBouncer,
+reached through an in-test TCP proxy that adds the configured round-trip
+latency to the pooled and the direct URL.
+
+The chaos modes, each named in failures and selectable with
+`GBRAIN_TEST_CONVERGENCE_MODES`:
+
+| Mode | What happens | Expected end state | On master |
+| --- | --- | --- | --- |
+| (a) client kills, (b) serve kills | A kill loop of `GBRAIN_TEST_CONVERGENCE_KILLS` change rounds, each ending in one `kill -9` at a point of the curated list (`publication:before_commit`, `publication:after_commit`, `consumer:preparing`, `lane:applied`, `sync:before_group_admission`, `sync:mid_checkpoint`), cycling a `--no-delegate` client, a serve running a delegated catch-up, and a serve with its delegating client | strict convergence | runs |
+| (c) concurrent writers | During the kill loop: `gbrain put` rewrites of 5% of the notes, `remember` facts on an entity page, `gbrain extract timeline --source db` (a managed maintenance job) | strict convergence; every acknowledged write in the ledger | runs |
+| (c-db) DB-only competitor | With `sync.write_through=false`, a DB-only `put` lands while the run is stalled on that page's frozen entry, and another on a page whose file did not change | the raced page is held `concurrent_write` (needs a person), its file keeps the committed bytes and its page the DB write; both pages are left out of disk == DB | runs |
+| (d) out-of-band Git | While a run is stalled mid-manifest: `git mv` and `git rm` of 1% of the files, committed, and deletion of 1% uncommitted | moves and removals converge strictly; each uncommitted deletion is listed by `gbrain pages ghosts` with the `gbrain repair ghost-pages` exit and left out of disk == DB | runs |
+| (e) mid-run edit | The `sync:after_freeze` hook writes an uncommitted edit to a seeded entry after it was frozen | the run's receipt and `sync status` name `worktree_dirty`; after the editor commits, strict convergence | runs (turned on by PR 1 of #6712) |
+| (f) pooler drop | Every pooled connection drops at the proxy after 20 committed pages of a bulk run (`GBRAIN_TEST_CONVERGENCE_PGBOUNCER_CONTAINER=<name>` restarts that container instead) | no new hold; the drain resumes within the owner-kill stall bound; strict convergence | runs (turned on by PR 2 of #6712: a pass whose connection died releases its unpublished claims once the database answers, instead of holding them under the publication lease) |
+| (g) two drainers | `sync --all --no-delegate` beside a serve draining a delegated sync of the same source | strict convergence | runs |
+| (lease) drain-lease takeover | A `--no-delegate` leader stalls right after it takes the source's drain lease (`sync:lease_acquired`), two `--no-delegate` followers queue behind it, and the leader is SIGKILLed | a follower reports following, one takes over inside the lease TTL (2 min) and finishes `synced`, no follower ends `blocked`; strict convergence | runs (#6712 PR 1) |
+| (knock-on) | One page's publication throws P0001 once inside a bulk group, then a trigger refuses one page with P0001 for a whole run | no other page of the run is cancelled; strict convergence once the trigger is gone | runs (turned on by PR 1 of #6712) |
+| (systemic) | A trigger on `pages` raises an unregistered P0001 (one scenario) or 55000 (another) on every page write for one run, then is dropped | the refused run does not report success and its receipt names the SQLSTATE; strict convergence once the trigger is gone | runs (turned on by PR 1 of #6712) |
+
+A skipped mode stays written; naming it in `GBRAIN_TEST_CONVERGENCE_MODES` runs it
+anyway, which is how the PR that fixes it turns it on.
+
+After the chaos every scenario gets a fresh serve (what a supervisor restarts)
+and at most two plain `gbrain sync --no-pull` runs, with no operator step; only
+exit 0 with outcome `synced` counts. Then the oracle, each check its own test
+named by this gate's violation class: disk == database both ways (except the
+pages the mode's end state names), no request queued, running, recovering or
+holding a recovery record, every non-committed terminal request superseded or
+carrying a registered code, the cursor at HEAD, no lost fact or timeline row on
+the large page (timeline duplicates are printed, not asserted), the next sync
+delegating to the live serve whatever heartbeat a killed client left, no sync
+after an owner kill stalling longer than the consumer liveness window plus one
+renewal and 30 s of slack, and two oracles independent of the brain's own
+bookkeeping:
+
+- **The acknowledged-write ledger.** Every writer operation that returned
+  success (a harness commit, a `put`, a `remember`, a maintenance run, a DB-only
+  write, a `git mv`/`git rm`, an uncommitted deletion) is recorded by the harness
+  with the time it started and the time it was acknowledged, and where it
+  landed (the page, its file, or an additive fact). For every page and location
+  the final state must show a write that no later acknowledged write causally
+  supersedes (none started after it was acknowledged); a remembered fact must
+  survive unless a page write on its entity may have been ordered after it.
+- **The status oracle.** `gbrain sync status --source <id> --json` must carry
+  every field the operator loop reads (`checkpoint_blockers` and `cursors`
+  arrays, `checkpoint_blockers` empty, `terminal_failures` `ok` with no active
+  blocker, `needs_human`, `holds` exactly the end state's, `last_error` and
+  `next` null) and a finished cursor (done, or retired to `null`).
+  `checkpoint_blockers` is present on every status, empty when no checkpoint is
+  pending (`test/sync-status-checkpoint-blockers-shape.test.ts` pins the four
+  cursor states); PR 2 of #6712 moves the heavy reads behind `sync status
+  --detail` and the oracle then reads that. An always-on calibration test proves
+  the oracle fails when any required field is missing.
+
+Every random choice (victims, fault points and their nth hit, writer targets)
+comes from `GBRAIN_TEST_CONVERGENCE_SEED`, and every failure prints the seed,
+the scenario's modes, the fault plan, which faults fired, and a one-line repro
+command. `[convergence <scenario>]` lines print elapsed times and the longest
+stall each sync printed.
+
+It skips unless `GBRAIN_TEST_CONVERGENCE=1`. Run it against the E2E Postgres
+plus a PgBouncer in front of it:
+
+```bash
+docker network create gbtest
+docker run -d --name gbrain-test-pg --network gbtest -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=gbrain_test -p 5434:5432 pgvector/pgvector:pg16
+docker run -d --name gbrain-test-pgbouncer --network gbtest -e DB_HOST=gbrain-test-pg \
+  -e DB_USER=postgres -e DB_PASSWORD=postgres -e POOL_MODE=transaction -e AUTH_TYPE=plain \
+  -e IGNORE_STARTUP_PARAMETERS=extra_float_digits,statement_timeout,idle_in_transaction_session_timeout,search_path \
+  -p 6543:5432 edoburu/pgbouncer:latest
+export GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@localhost:6543/gbrain_test
+export GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@localhost:5434/gbrain_test
+GBRAIN_TEST_CONVERGENCE_LATENCY_MS=10 bun run test:convergence     # the PR cell
+GBRAIN_TEST_CONVERGENCE_MODES=e bun run test:convergence            # one mode, skipped or not
+docker rm -f gbrain-test-pgbouncer gbrain-test-pg && docker network rm gbtest
+```
+
+Knobs (`GBRAIN_TEST_CONVERGENCE_*`): `SEED` (default 6650), `MODES` (default:
+every mode not skipped), `NOTES` (default 200; the large page is always there),
+`KILLS` (default 6), `LATENCY_MS` (default 50; 0 for a fast local loop),
+`SYNC_TIMEOUT_MS` (per child process, default 900000), `SCENARIO_TIMEOUT_MS`
+(per scenario, default 3600000), `LOG_DIR` (keeps `convergence.log` and every
+client, serve and writer log per scenario) and `PGBOUNCER_CONTAINER` (mode (f)).
+
+CI: the `convergence` job of `.github/workflows/persistence-validation.yml`, on
+both supported Bun versions with the deployment matrix's pgvector and
+transaction-mode PgBouncer services. Pull requests run it when
+`scripts/ci-convergence-scope.sh` selects their diff (persistence, sync,
+projections, storage, the harness and its workflow; never `package.json`
+alone; `bun.lock` and `vendor/postgres/` select it, since a driver change is a
+persistence change); merge-queue runs and pushes always run it. Those run the
+PR cell: 200 notes at 10 ms, 6 kills, seed 6650.
+
+The nightly cell is its own scheduled workflow,
+`.github/workflows/convergence-nightly.yml` ("Convergence nightly", its own
+concurrency group, outside `test.yml` and its `test-status` gate): 2,000 notes
+at 50 ms, 20 kills, the run id as the seed (`workflow_dispatch` takes a seed to
+replay one), with a 300-minute step timeout inside a 330-minute job, so the
+cleanup step (it kills any harness process a timed-out step left), the failure
+summary (every failing test with its seed, fault plan, fired faults and repro
+line) and the upload of `LOG_DIR` still run. The nightly watcher
+(`nightly-watch.yml`) files its failures like every other scheduled workflow.
 
 ## Engine graduation tests
 

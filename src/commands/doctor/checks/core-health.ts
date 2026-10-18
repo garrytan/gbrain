@@ -15,6 +15,7 @@ import type { ProgressReporter } from '../../../core/progress.ts';
 import type { Check } from '../../doctor.ts';
 import { PAGE_CHILD_FK_TARGETS, orphanPredicate } from '../../../core/repair/orphan-children.ts';
 import { checkError } from '../check-fix.ts';
+import { isMissingSchemaObject } from '../../../core/utils.ts';
 
 /**
  * Doctor check: takes.weight grid integrity (v0.32 — EXP-2).
@@ -394,7 +395,7 @@ export async function checkVolunteerChannels(
     // a connection blip on a fully-migrated brain must not be misreported
     // as an old schema. Info-only either way; never block doctor.
     const msg = e instanceof Error ? e.message : String(e);
-    const tableAbsent = /does not exist|undefined table|no such table|42P01/i.test(msg);
+    const tableAbsent = isMissingSchemaObject(e, 'table', 'context_volunteer_events');
     return {
       name,
       status: 'ok',
@@ -532,6 +533,10 @@ export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check
  *   - an attached `raw_data` row
  *   - `synthesis_evidence` rows (think-op citations)
  *   - explicit `raw_trace_exempt: true` (reason in `raw_trace_exempt_reason`)
+ *   - an extract_atoms atom (`type: atom`, `extracted_by: extract_atoms-*`)
+ *     naming its origin: `source_slug` (page origin) or `source_path`
+ *     (transcript origin), as the writer stamps them (#6537). Other pages
+ *     carrying `source_slug` do not count.
  *
  * v1 is deliberately warn-only — no write path is blocked. Escalation to
  * fail-closed enforcement in the synthesis/import write paths is the v2
@@ -545,6 +550,9 @@ export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
         p.deleted_at IS NULL
     AND (COALESCE(p.frontmatter->>'dream_generated', '') = 'true' OR p.type = 'synthesis')
     AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ?| ARRAY['raw_trace', 'raw_source', 'source_uri', 'raw_trace_exempt'])
+    AND NOT (p.type = 'atom'
+      AND COALESCE(p.frontmatter->>'extracted_by', '') LIKE 'extract\\_atoms%'
+      AND COALESCE(p.frontmatter, '{}'::jsonb) ?| ARRAY['source_slug', 'source_path'])
     AND NOT EXISTS (SELECT 1 FROM raw_data rd WHERE rd.page_id = p.id)
     AND NOT EXISTS (SELECT 1 FROM synthesis_evidence se WHERE se.synthesis_page_id = p.id)`;
   try {

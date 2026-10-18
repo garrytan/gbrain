@@ -48,6 +48,9 @@ import { createHash } from 'crypto';
 import { estimateTokens, packToBudget } from '../search/token-budget.ts';
 import { DEFAULT_SOURCE_BOOSTS } from '../search/source-boost.ts';
 import type { GetPageOpts, Page, PageFilters } from '../types.ts';
+import type { BrainEngine } from '../engine.ts';
+import { isSegmentedPage } from '../page-body/page-shape.ts';
+import { overlaidBoundedPrefix, pageLeadSource } from '../page-window/bounded-lead.ts';
 import { safeSynopsis } from './retrieval-reflex.ts';
 import type { SensitivityScanConfig } from './sensitivity-scan.ts';
 import { scanSensitive } from './sensitivity-scan.ts';
@@ -99,6 +102,8 @@ export interface CompileViewEngine {
   getPage(slug: string, opts?: GetPageOpts): Promise<Page | null>;
   /** Relationship notes (temporal typed edges); absent → entries render without them. */
   executeRaw?<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
+  /** A segmented page's excerpt: its stored lead under the withdrawal overlay; absent → such a page renders without one. */
+  readPageSnapshotsBatch?: BrainEngine['readPageSnapshotsBatch'];
 }
 
 export interface CompileViewInput {
@@ -266,7 +271,7 @@ interface RenderedEntry {
   rendered: string;
 }
 
-function renderEntry(page: Page, relationshipNote?: string): RenderedEntry {
+function renderEntry(page: Page, lead: string | null, relationshipNote?: string): RenderedEntry {
   const date = updatedDate(page);
   const excerpt = safeSynopsis(
     {
@@ -275,7 +280,7 @@ function renderEntry(page: Page, relationshipNote?: string): RenderedEntry {
       title: page.title,
       type: page.type ?? null,
       frontmatter: page.frontmatter ?? null,
-      compiled_truth: page.compiled_truth ?? null,
+      compiled_truth: lead,
     },
     { keepVisibility: ['world'], maxLen: EXCERPT_MAX_LEN },
   );
@@ -289,6 +294,19 @@ function renderEntry(page: Page, relationshipNote?: string): RenderedEntry {
   if (relationshipNote) lines.push('', `relationships: ${relationshipNote}`);
   const block = lines.join('\n');
   return { slug: page.slug, date, block, rendered: `\n\n${block}` };
+}
+
+/**
+ * The excerpt source of a page read whole: its (overlaid) compiled truth, or a segmented page's stored lead under the
+ * same withdrawal overlay (its body fields throw). A segmented page without the overlay readers gets no excerpt.
+ */
+async function entryLead(engine: CompileViewEngine, page: Page): Promise<string | null> {
+  const segmented = isSegmentedPage(page);
+  if (segmented && (!engine.executeRaw || !engine.readPageSnapshotsBatch)) return null;
+  const reader = { executeRaw: (sql: string, params?: unknown[]) => engine.executeRaw!(sql, params),
+    readPageSnapshotsBatch: (...args: Parameters<BrainEngine['readPageSnapshotsBatch']>) => engine.readPageSnapshotsBatch!(...args) } as Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw'>;
+  const lead = await pageLeadSource(reader, page);
+  return segmented ? overlaidBoundedPrefix(reader, { slug: page.slug, source_id: page.source_id ?? 'default', compiled_truth: lead }) : lead;
 }
 
 function headerLine(digestHex16: string, target: string, budget: number, core?: CompileViewInput['core']): string {
@@ -337,7 +355,7 @@ export async function compileView(input: CompileViewInput): Promise<CompileViewR
   const raw = input.engine.executeRaw?.bind(input.engine);
   const notes = !raw ? new Map<string, string>() : await loadRelationshipNotes(
     { executeRaw: raw },
-    scored.map(({ c }) => ({ slug: c.page.slug, source_id: input.sourceId, summary: c.page.compiled_truth ?? '' })),
+    await Promise.all(scored.map(async ({ c }) => ({ slug: c.page.slug, source_id: input.sourceId, summary: await pageLeadSource({ executeRaw: raw }, c.page) ?? '' }))),
     { excludePrivate: true },
   ).catch(() => new Map<string, string>());
   for (const { c } of scored) {
@@ -347,7 +365,7 @@ export async function compileView(input: CompileViewInput): Promise<CompileViewR
         `compile-context: page ${c.page.slug} vanished mid-run (source ${input.sourceId}) — aborting, no partial output`,
       );
     }
-    const entry = renderEntry(page, notes.get(relationshipNoteKey(input.sourceId, page.slug)));
+    const entry = renderEntry(page, await entryLead(input.engine, page), notes.get(relationshipNoteKey(input.sourceId, page.slug)));
     const findings = scanSensitive(entry.rendered, input.scanConfig);
     if (findings.length > 0) {
       scanDrops.push({

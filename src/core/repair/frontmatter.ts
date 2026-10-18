@@ -37,7 +37,7 @@
  * step. An apply refuses while an unfinished managed sync cursor still names
  * a selected file.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../spawn.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { join } from 'node:path';
@@ -46,9 +46,10 @@ import { opError, OperationError, type OperationContext } from '../ops/contract.
 import { shellQuote, type Action } from '../agent-output.ts';
 import { autoFixFrontmatter, createFrontmatterBackup, makeFrontmatterBackupRunId, repairRecoverableFrontmatter } from '../brain-writer.ts';
 import { classifyImportHold, parseMarkdown, type ContentHold, type ParsedMarkdown } from '../markdown.ts';
+import { dataFrontmatter as matter } from '../data-frontmatter.ts';
 import { MAX_FILE_SIZE, type ContentRefusal } from '../import-screen.ts';
 import { importFromFile } from '../import-file.ts';
-import { resolveSlugForPath } from '../sync.ts';
+import { resolveSlugForPath, slugifyPath } from '../sync.ts';
 import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
 import { digest, sha256 } from '../persistence/digest.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
@@ -58,7 +59,11 @@ import type { SyncRename } from '../persistence/sync-discovery.ts';
 import { canonicalRepairFields, confinedRepairTarget, managedRepairRoot, prepareRepairPublication, repairScreenConfig, submitManagedFileRepair } from '../persistence/file-repair.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
+import { materializedSnapshot, segmentedOverCeiling } from '../persistence/segmented-apply.ts';
+import { pageBodyOverCeilingError } from '../page-body/page-shape.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
+import { gitChildEnv } from '../git-env.ts';
+import { bindOrigin, originConflictMessage, pickCanonicalOrigin } from '../persistence/origin-guard.ts';
 
 type Mode = 'managed' | 'legacy';
 type RepairClass = 'safe' | 'interpretive';
@@ -171,9 +176,11 @@ function resolution(hold: Pick<ContentRefusal, 'code' | 'reason' | 'key' | 'line
     // #6188: frontmatter repair never rewrites a fence; the fence repair does.
     case 'invalid_fence': return `${path}: ${fenceWhere(hold.fence)} is malformed (${hold.fence?.reason ?? hold.reason ?? 'invalid_fence'}), and frontmatter repair does not change fences. `
       + `Preview its repair with gbrain repair fences --source ${sourceId} --only ${path} (read-only; it names the exact edit when gbrain will not repair it).`;
-    case 'file_too_large': return `Split ${path} into files under ${MAX_FILE_SIZE} bytes and commit, or leave it out of the source with sync.exclude.`;
+    case 'file_too_large': return `${path} is over the ${MAX_FILE_SIZE}-byte page limit, which no repair changes; every page under it imports and is searchable. Leave it out of the source with sync.exclude, or split it into files under the limit and commit.`;
     case 'frontmatter_slug_conflict': return `Remove the slug: line of ${path} (the path decides the slug), or move the file to the path its slug names.`;
     case 'content_rejected': return `Remove the junk the content-sanity gate matched in ${path}, or ask the user whether junk_disposition should stay reject.`;
+    case 'purged_content': return `${path} carries purged page content; delete or edit it and commit, or the owner clears the tombstone with gbrain pages unpurge.`;
+    case 'write_gate_rejected': return `The write gate refused ${path} as external instruction-like content; ask the user whether to edit it or whether write_gate.external_mode should stay reject.`;
     case 'rename_held': return `Re-run the preview with --include-ambiguous to re-bind the rename of ${path} to the current page, or restore the old file name.`;
     case 'parser_regression': return `This is a gbrain bug: report the gbrain version, ${path} and the code; upgrade or pin the last good version.`;
     default: return hold.reason === 'ambiguous_protected_key' ? `Write ${where} on one line with one quoted value; gbrain never guesses who may read a page or where it came from.`
@@ -208,7 +215,7 @@ async function sourceRoots(engine: BrainEngine, scope: RepairScope, residuals: R
 function markdownFiles(root: string): string[] {
   let paths: string[];
   try {
-    paths = execFileSync('git', ['-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { encoding: 'utf8', maxBuffer: 1 << 30, stdio: ['ignore', 'pipe', 'ignore'] })
+    paths = execFileSync('git', ['-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { env: gitChildEnv(), encoding: 'utf8', maxBuffer: 1 << 30, stdio: ['ignore', 'pipe', 'ignore'] })
       .split('\0').filter(Boolean);
   } catch {
     paths = (readdirSync(root, { recursive: true }) as string[]).map(path => path.split('\\').join('/'));
@@ -218,10 +225,28 @@ function markdownFiles(root: string): string[] {
 
 interface PageRow { id: number; slug: string; source_path: string; revision: string; title: string; head: string }
 
-async function pagesByOrigin(engine: BrainEngine, sourceId: string): Promise<Map<string, PageRow>> {
+/** Each recorded origin's canonical live page (#6948: twins resolve to the page whose slug the file derives, else stay ambiguous). */
+async function pagesByOrigin(engine: BrainEngine, sourceId: string): Promise<Map<string, PageRow | { ambiguous: string[] }>> {
   const rows = await engine.executeRaw<PageRow>(`SELECT id, slug, source_path, knowledge_revision::text AS revision, title, left(compiled_truth, 400) AS head
-    FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL`, [sourceId]);
-  return new Map(rows.map(row => [row.source_path, { ...row, id: Number(row.id) }]));
+    FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL ORDER BY slug`, [sourceId]);
+  const grouped = new Map<string, PageRow[]>();
+  for (const row of rows) grouped.set(row.source_path, [...grouped.get(row.source_path) ?? [], { ...row, id: Number(row.id) }]);
+  return new Map([...grouped].map(([path, pages]) => [path, pickCanonicalOrigin(pages, path)!]));
+}
+
+/**
+ * Wave B decision #10: a page stored in segments has no stored head (its body
+ * columns are NULL), so the database-side embedded-block check does not read
+ * it. The preview and the apply report how many (`skipped_segmented`).
+ */
+async function reportSkippedSegmented(engine: BrainEngine, sourceIds: string[], residuals: Record<string, number>, warnings: string[]): Promise<void> {
+  const [row] = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM pages
+    WHERE source_id=ANY($1::text[]) AND deleted_at IS NULL AND source_path IS NOT NULL AND body_storage='segmented'`, [sourceIds]);
+  const n = Number(row?.n ?? 0);
+  if (!n) return;
+  residuals.skipped_segmented = n;
+  warnings.push(`skipped (segmented): ${n} page(s) store their body in segments, so the database-side check for a stored body that begins with its own frontmatter block `
+    + 'did not read them; their files were checked.');
 }
 
 /** #4526: a body that begins with its own frontmatter block. */
@@ -242,13 +267,33 @@ function pageDamage(page: PageRow | undefined, content: string): string | null {
   return null;
 }
 
+/**
+ * #5966 (W14 P1.7): a file an earlier gbrain rendered for a slug its path
+ * cannot derive (a doubled hyphen the path collapses to one) carries no `slug:`
+ * stamp, so every path-derived reader loses the page. The stamp is a SAFE
+ * candidate only when the file is the page's recorded `source_path` (one page
+ * records a path), the file declares no slug and the page slug is not the
+ * derived one; nothing is ever normalized or guessed. Inserted as
+ * `serializeMarkdown` would write it, right after the opening `---`.
+ */
+function slugStampCandidate(content: string, path: string, sourcePath: string, page: PageRow | undefined, parsed: ParsedMarkdown, ctx: SlugContext): { content: string; fixes: string[] } | null {
+  if (!page || page.source_path !== sourcePath || slugifyPath(sourcePath) === page.slug || parsed.slug === page.slug) return null;
+  const open = /^(\uFEFF?---[ \t]*\r?\n)/.exec(content);
+  if (!open) return null;
+  const eol = open[1].endsWith('\r\n') ? '\r\n' : '\n';
+  const line = matter.stringify('', { slug: page.slug }).split('\n')[1] ?? `slug: ${page.slug}`;
+  const stamped = open[1] + line + eol + content.slice(open[1].length);
+  if (!clean(stamped, path, ctx) || reading(stamped, path) !== reading(content, path) || parseMarkdown(stamped, path).slug !== page.slug) return null;
+  return { content: stamped, fixes: [`Stamp slug: ${page.slug} (the path ${sourcePath} derives ${slugifyPath(sourcePath)}, so readers lose the page without it)`] };
+}
+
 interface Analysis {
   proposal?: { content: string; fixes: string[]; class: RepairClass; rename_from?: SyncRename; reimport?: string };
   pending?: { content: string; fixes: string[] };
   review?: NeedsReview;
 }
 
-interface FileContext { engine: BrainEngine; src: SourceRoot; includeAmbiguous: boolean; pages: Map<string, PageRow> }
+interface FileContext { engine: BrainEngine; src: SourceRoot; includeAmbiguous: boolean; pages: Map<string, PageRow | { ambiguous: string[] }> }
 
 /** One file's proposal, pending interpretation, or manual fix; null when it needs nothing. */
 async function analyzeFile(ctx: FileContext, path: string, hold: GitHoldRecord | undefined): Promise<Analysis | null> {
@@ -267,6 +312,7 @@ async function analyzeFile(ctx: FileContext, path: string, hold: GitHoldRecord |
   if (!Buffer.from(content, 'utf8').equals(bytes)) return review(hold?.code ?? 'invalid_frontmatter', `${path} is not valid UTF-8, so gbrain will not rewrite it; re-save it as UTF-8, then preview again.`);
   const sourcePath = hold?.source_path ?? path;
   const page = ctx.pages.get(sourcePath);
+  if (page && 'ambiguous' in page) return review('origin_conflict', originConflictMessage(src.sourceId, sourcePath, page.ambiguous));
   const slugCtx: SlugContext = { expectedSlug: resolveSlugForPath(sourcePath), slugExempt: declared => page?.source_path === sourcePath && declared === page.slug };
   const found = inspect(content, path, slugCtx, size);
   const heldBefore = hold && hold.page_id !== null && ['ambiguous_protected_key', 'ambiguous_identity_key'].includes(hold.meta.reason ?? '')
@@ -280,6 +326,8 @@ async function analyzeFile(ctx: FileContext, path: string, hold: GitHoldRecord |
   }
   const problem = found.errors.length > 0 || found.hold !== null || found.recovered > 0 || found.comments > 0;
   const damage = !problem && !hold ? pageDamage(page, content) : null;
+  const stamp = !problem && !hold && !damage ? slugStampCandidate(content, path, sourcePath, page, found.parsed, slugCtx) : null;
+  if (stamp) return { proposal: { ...stamp, class: 'safe' } };
   if (!problem && !hold && !damage) return null;
   if (damage) {
     const body = parseMarkdown(content, path).compiled_truth;
@@ -315,8 +363,14 @@ async function bindProposal(ctx: FileContext, path: string, hold: GitHoldRecord 
   const { engine, src } = ctx;
   const sourcePath = hold?.source_path ?? path;
   const page = ctx.pages.get(sourcePath);
+  if (page && 'ambiguous' in page) return { source_id: src.sourceId, path, code: 'origin_conflict', resolution: originConflictMessage(src.sourceId, sourcePath, page.ambiguous) };
   const slug = page?.slug ?? (proposal.rename_from ? resolveSlugForPath(sourcePath) : hold?.slug ?? resolveSlugForPath(sourcePath));
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: src.sourceId, includeDeleted: true });
+  // Wave B decision #1: the re-import compares the stored body whole, which a page stored in segments allows up to 24 MiB.
+  if (proposal.reimport && snapshot && segmentedOverCeiling(snapshot.page)) {
+    const refusal = pageBodyOverCeilingError(snapshot.page, `gbrain repair frontmatter (re-import of ${path})`);
+    return { source_id: src.sourceId, path, code: refusal.code, resolution: `${refusal.message} ${refusal.suggestion}` };
+  }
   const base: PageSnapshot | null = proposal.rename_from ? await engine.readPageSnapshot(proposal.rename_from.slug, { sourceId: src.sourceId, includeDeleted: true }) : snapshot;
   const publication = await prepareRepairPublication(engine, { sourceId: src.sourceId, slug, sourcePath, path, root: src.root, content: proposal.content,
     snapshot, base, ...screenConfig });
@@ -324,7 +378,8 @@ async function bindProposal(ctx: FileContext, path: string, hold: GitHoldRecord 
     ...(publication.refusal.line !== undefined ? { line: publication.refusal.line } : {}), resolution: resolution(publication.refusal, path, src.sourceId) };
   if (publication.status === 'overlay') return { source_id: src.sourceId, path, code: 'canonical_overlay',
     resolution: `Importing the repaired ${path} would keep page data the file does not carry (tags added outside the file, a withdrawal or sanitized text), so it is not written. Edit the file by hand to carry them (gbrain get --source ${src.sourceId} -- ${slug} shows the page), then preview again.` };
-  if (proposal.reimport && snapshot && digest(canonicalRepairFields(snapshot.page, snapshot.tags)) === publication.digest) {
+  const stored = proposal.reimport ? await materializedSnapshot(engine, snapshot) : null;
+  if (stored && digest(canonicalRepairFields(stored.page, stored.tags)) === publication.digest) {
     return { source_id: src.sourceId, path, code: 'embedded_frontmatter', resolution: `The page of ${path} already matches its file; nothing to re-import.` };
   }
   const original = readFileSync(join(src.root, path));
@@ -397,7 +452,8 @@ export const frontmatterRepair: RepairHandler = {
         throw opError('invalid_params', 'gbrain repair frontmatter --apply writes only the set a preview printed.',
           `Preview first: ${shellQuote(preview)} — show the user the per-file diffs, then run the apply command it prints (with --yes --expect <preview-hash>).`);
       }
-      const approved = await loadApprovedSet<ApprovedSetItem>(engine, { command: 'frontmatter', hash: opts.expect, previewCommand: shellQuote(preview) });
+      const approved = await loadApprovedSet<ApprovedSetItem>(engine, { command: 'frontmatter', hash: opts.expect, previewCommand: shellQuote(preview),
+        emptyHash: async () => previewHash({ kind: 'frontmatter-v1', brain_id: scope.brain_id, sources: (await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids])), selection, items: [] }) });
       if (approved.items.some(entry => !sameSelection(entry.selection, selection))) throw previewChangedError(opts.expect, shellQuote(preview));
       for (const sourceId of new Set(approved.items.map(entry => entry.source_id))) {
         const named = await unfinishedSyncPath(engine, sourceId, new Set(approved.items.filter(entry => entry.source_id === sourceId).flatMap(entry => [entry.path, entry.source_path])));
@@ -407,11 +463,15 @@ export const frontmatterRepair: RepairHandler = {
             why: `Finishes source ${sourceId}'s unfinished sync cursor, which would otherwise race the repair of a file it still names.` } });
       }
       const items = approved.items.map(({ selection: chosen, ...repair }, index) => item(repair, chosen, opts.expect!, index, index === approved.items.length - 1));
-      return { items: items.filter(entry => afterCursor(entry.cursor, after)), preview_hash: opts.expect, residuals: {} };
+      const residuals: Record<string, number> = {};
+      const warnings: string[] = [];
+      await reportSkippedSegmented(engine, scope.source_ids, residuals, warnings);
+      return { items: items.filter(entry => afterCursor(entry.cursor, after)), preview_hash: opts.expect, residuals, ...(warnings.length ? { warnings } : {}) };
     }
     const residuals: Record<string, number> = {};
     const warnings: string[] = [];
     const found = await scan(engine, scope, selection, residuals, warnings);
+    await reportSkippedSegmented(engine, scope.source_ids, residuals, warnings);
     for (const path of found.unknownOnly) warnings.push(`--only ${path}: no such Markdown file or hold in scope; check the source-relative path.`);
     const sources = await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
     const approvedItems = found.prepared.map(entry => entry.approved);
@@ -513,7 +573,7 @@ async function applyRepair(ctx: OperationContext, repair: ApprovedRepair, select
     const from = repair.rename_from;
     await maintenanceTransaction(ctx.engine, async tx => {
       if (await tx.updateSlug(from.slug, repair.slug, { sourceId: repair.source_id }) === 1) {
-        await tx.executeRaw('UPDATE pages SET source_path=$1 WHERE id=$2 AND source_id=$3', [repair.source_path, from.pageId, repair.source_id]);
+        await bindOrigin(tx, { sourceId: repair.source_id, pageId: from.pageId, sourcePath: repair.source_path });
       }
     });
   }

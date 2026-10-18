@@ -36,7 +36,7 @@ The canonical knob table (with cost anchors) lives in
 | `cache.ttl_seconds`           | 3600           | 3600       | 3600           |
 | `intentWeighting`             | true           | true       | true           |
 | `tokenBudget`                 | **4000**       | **12000**  | **off**        |
-| `expansion` (LLM multi-query) | false          | false      | **true**       |
+| `expansion` (LLM multi-query) | false          | false      | false          |
 | `relationalRetrieval`         | false          | **true**   | **true**       |
 | `searchLimit` default         | 10             | 25         | 50             |
 
@@ -74,8 +74,8 @@ and prints a paste-ready revert command.
 ## Cache contamination guard
 
 The retained `query_cache.knobs_hash` machinery separates mode settings:
-tokenmax (expansion=on, limit=50) has a different hash from conservative
-(no expansion, limit=10). Its stored lookup filter is:
+tokenmax (limit=50, no token budget) has a different hash from conservative
+(limit=10). Its stored lookup filter is:
 
     WHERE source_id = $ AND knobs_hash = $ AND embedding similarity < $
 

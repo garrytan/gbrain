@@ -24,7 +24,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { __testing } from '../src/core/cycle/patterns.ts';
 
-const { collectChildPutPageSlugs, reverseWriteRefs } = __testing;
+const { collectChildPutPageSlugs, countChildTimelineAppends, reverseWriteRefs } = __testing;
 
 const SOURCE_ID = 'coast';
 const SLUG = 'wiki/personal/patterns/a-pattern';
@@ -150,5 +150,25 @@ describe('#1586: the patterns phase scopes its writes to the cycle source', () =
     } finally {
       rmSync(abortDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('#6302 Part A: timeline appends are counted, never stamped', () => {
+  test('completed add_timeline_entry calls count as appended_unverified; put_page refs are unchanged', async () => {
+    const db = (engine as any).db;
+    await db.exec(`
+      INSERT INTO minion_jobs (submission_authority, id, queue, name, data, status)
+      VALUES ('{"version":1,"kind":"application"}'::jsonb, 2002, 'default', 'subagent', '{}'::jsonb, 'completed')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    for (const [i, status] of (['complete', 'complete', 'failed'] as const).entries()) {
+      await db.query(
+        `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, status, input)
+         VALUES (2002, $1, $2, 'brain_add_timeline_entry', $3, $4::jsonb)`,
+        [i, `tool_t${i}`, status, JSON.stringify({ slug: SLUG, date: '2026-10-01', summary: `recurring theme ${i}` })],
+      );
+    }
+    expect(await countChildTimelineAppends(engine as any, [2002])).toBe(2);
+    expect(await collectChildPutPageSlugs(engine as any, [2002], SOURCE_ID)).toEqual([]);
   });
 });

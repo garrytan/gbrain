@@ -8,6 +8,7 @@ import { loadConfig, loadConfigWithEngine } from '../../config.ts';
 import type { FactsBackstopResult } from '../../facts/backstop.ts';
 import { JobDeferredError, UnrecoverableError } from '../errors.ts';
 import { ERROR_CATALOGUE } from '../../error-catalogue.ts';
+import { readManagedMode } from '../../persistence/managed-mode.ts';
 
 /** Shared predicate: an inline result reporting execution-time unavailability. */
 export function factsAbsorbUnavailable(result: FactsBackstopResult): boolean {
@@ -44,6 +45,8 @@ export function factsAbsorbShouldRetry(
  */
 /** How long a keyless job waits before the next look for a key (no attempt is counted). */
 export const FACTS_ABSORB_KEYLESS_RETRY_MS = 30 * 60_000;
+/** The lead of a segmented page that the backstop's eligibility reads. */
+const FACTS_ABSORB_LEAD_CHARS = 8_000;
 
 export function makeFactsAbsorbHandler(engine: BrainEngine): MinionHandler {
   const handle: MinionHandler = async (job) => {
@@ -67,8 +70,7 @@ export function makeFactsAbsorbHandler(engine: BrainEngine): MinionHandler {
     };
     // #5362: before activation the legacy fence writer refuses every file in a claimed
     // worktree, so check the source root before any inference is paid for.
-    const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-    if (!brain?.enabled) {
+    if (!await readManagedMode(engine)) {
       const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [sourceId]);
       if (source?.local_path) {
         const { assertLegacyFilesystemWriter } = await import('../../persistence/filesystem-guard.ts');
@@ -80,12 +82,17 @@ export function makeFactsAbsorbHandler(engine: BrainEngine): MinionHandler {
     const source = (KNOWN_SOURCES as readonly string[]).includes(job.data.source as string)
       ? (job.data.source as typeof KNOWN_SOURCES[number])
       : 'mcp:put_page';
+    // A segmented page is never materialized: eligibility reads its lead, the extraction plan its segments.
+    const { isSegmentedPage } = await import('../../page-body/page-shape.ts');
+    const segmented = isSegmentedPage(page);
+    const { truthLead } = await import('../../page-body/segment-blocks.ts');
     const result = await runFactsBackstop(
       {
         slug: page.slug,
         type: page.type,
-        compiled_truth: page.compiled_truth,
+        compiled_truth: segmented ? await truthLead(engine, Number(page.id), FACTS_ABSORB_LEAD_CHARS) : page.compiled_truth,
         frontmatter: (page.frontmatter ?? {}) as Record<string, unknown>,
+        ...(segmented ? { segmentedPageId: Number(page.id) } : {}),
       },
       {
         engine, config: await loadConfigWithEngine(engine, loadConfig() ?? { engine: engine.kind }) ?? { engine: engine.kind },
@@ -98,6 +105,7 @@ export function makeFactsAbsorbHandler(engine: BrainEngine): MinionHandler {
         visibility: job.data.visibility === 'world' ? 'world' : 'private',
         ...(typeof job.data.model === 'string' && job.data.model ? { model: job.data.model } : {}),
         abortSignal: job.signal,
+        deadlineAtMs: job.deadlineAtMs,
       },
     ).catch(refuse);
     // An aborted run returns empty counts; completing it would consume the page's extraction.

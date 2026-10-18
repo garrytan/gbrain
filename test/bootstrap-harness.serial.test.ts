@@ -149,6 +149,7 @@ function makeFake(opts: {
       });
     }) as unknown as typeof fetch,
     probeIdentity: async (_url: string, probeToken: string): Promise<ConnectProbeResult> => {
+      if (!health.ok) return { ok: false, reason: 'unreachable', message: 'fetch failed: ECONNREFUSED' };
       // Token-aware like a REAL serve: only tokens this fixture knows about
       // authenticate — the apply-time canary (a random same-format token)
       // must fail with reason 'auth' or every apply trips the impostor guard.
@@ -460,6 +461,25 @@ describe('full apply', () => {
     expect(readFileSync(f2.codexConfig, 'utf8')).toContain('http://192.168.1.50:3131/mcp');
   });
 
+  test('registrar mode wires no Codex capture hook, the same recorded consent as the Claude lane (MCP only)', async () => {
+    const f = makeFake();
+    const code = await applyHarness(flags(['--url', 'http://192.168.1.50:3131/mcp', '--token', TOKEN_A, '--harness', 'codex']), f.deps);
+    expect(code).toBe(0);
+    expect(f.out.join('\n')).toContain('No hooks are wired by this invocation.');
+    expect(existsSync(join(dirname(f.codexConfig), 'hooks.json'))).toBe(false);
+    expect(readFileSync(f.codexConfig, 'utf8')).not.toContain('gbrain:codex-hooks-trust');
+  });
+
+  test('--no-capture declines the Codex SessionEnd capture hook (capture is its own consent item)', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(['--harness', 'codex', '--no-capture']), f.deps)).toBe(0);
+    expect(existsSync(join(dirname(f.codexConfig), 'hooks.json'))).toBe(false);
+    const g = makeFake();
+    expect(await applyHarness(flags(['--harness', 'codex']), g.deps)).toBe(0);
+    expect(g.out.join('\n')).toMatch(/Codex session-transcript capture/);
+    expect(readFileSync(join(dirname(g.codexConfig), 'hooks.json'), 'utf8')).toContain('hook session-end --harness codex');
+  });
+
   test('--project must exist [F4]', async () => {
     const f = makeFake();
     const code = await applyHarness(flags(['--project', '/definitely/not/a/dir']), f.deps);
@@ -725,6 +745,41 @@ describe('outside-voice hardening (X-batch)', () => {
     await expect(applyHarness(flags(['--harness', 'codex']), f.deps)).rejects.not.toThrow(/pass --source/);
     expect(f.mintCalls).toHaveLength(0);
     expect(readHarnessReceiptState(f.home)).toEqual({ state: 'absent' });
+  });
+
+  // #6661 (D25): the refusal's pre-mint carries the harness grant; a bare `--scopes read,write` token got join_brain refused.
+  test('LIVE_SERVE refusal prints the stop/mint/rescope/start/--token sequence with the full harness grant', async () => {
+    const f = makeFake({
+      pgliteLive: true,
+      hookSourceError: new Error("GBrain's local database is already open through `gbrain serve` (MCP, PID 4242)."),
+    });
+    const err = await applyHarness(flags(['--harness', 'codex']), f.deps).then(() => null, (e: unknown) => e as { code: string; message: string; details: { steps: string[]; scopes: string[]; operations: string[] } });
+    expect(err?.code).toBe('LIVE_SERVE');
+    const { steps, scopes, operations } = err!.details;
+    expect(scopes).toEqual(['read', 'write', 'skills_member_self']);
+    expect(operations).toEqual(expect.arrayContaining(['join_brain', 'sync_brain_skills', 'leave_brain', 'put_page', 'query']));
+    const { operations: all } = await import('../src/core/operations.ts');
+    const byName = new Map(all.map(op => [op.name, op]));
+    expect(operations.filter(name => byName.get(name)?.localOnly || !['read', 'write'].includes(byName.get(name)?.scope ?? ''))).toEqual([]);
+    expect(steps).toEqual([
+      'stop the serve that holds this brain',
+      'gbrain auth create bootstrap-harness --scopes read,write,skills_member_self',
+      `gbrain auth rescope --token bootstrap-harness --operations ${operations.join(',')}`,
+      'start `gbrain serve --http` again',
+      're-run this `gbrain bootstrap harness` command with --token <the token step 2 printed>',
+    ]);
+    for (const step of steps) expect(err!.message).toContain(step);
+    expect(f.mintCalls).toHaveLength(0);
+  });
+
+  test('LIVE_SERVE refusal on a memory-only re-run with --source carries the memory-only grant and the source floor', async () => {
+    const f = makeFake({ pgliteLive: true, mintQueue: [] });
+    const err = await applyHarness(flags(['--harness', 'codex', '--skills', 'memory-only', '--source', 'wiki', '--token-name', 'hx']), f.deps)
+      .then(() => null, (e: unknown) => e as { code: string; details: { steps: string[]; operations: string[] } });
+    expect(err?.code).toBe('LIVE_SERVE');
+    expect(err!.details.steps[1]).toBe('gbrain auth create hx --scopes read,write');
+    expect(err!.details.steps[2]).toMatch(/^gbrain auth rescope --token hx --operations \S+ --sources wiki$/);
+    expect(err!.details.operations).not.toContain('join_brain');
   });
 
   test('live PGLite serve + --token + no --source: wires unpinned with a warning (the documented PGLite lane)', async () => {
@@ -1788,5 +1843,75 @@ describe('harness hooks without their marker (#6092, #6171)', () => {
     f.out.length = 0;
     await statusHarness(parseHarnessArgs(['--status']), f.deps);
     expect(f.out.join('\n')).toContain(`hook entries in ${f.userSettings}: 5 gbrain (5 without the _gbrain marker)`);
+  });
+});
+
+// #6661 option B: on PGLite a stopped serve is the normal state for a --token run, so nothing answering is
+// pending verification (exit 13, JSON status pending_verify) instead of a hard stop; everything else still fails.
+describe('--token on PGLite with no serve answering: pending_verify (#6661)', () => {
+  const pglite = () => ({ engine: 'pglite' } as GBrainConfig);
+
+  test('wires, skips the smoke without rolling back, records verify_pending and names the re-run as the fix', async () => {
+    const f = makeFake({ health: { ok: false } });
+    f.deps.loadFileConfig = pglite;
+    const code = await applyHarness(flags(['--harness', 'codex', '--token', TOKEN_A, '--json']), f.deps);
+    expect(code).toBe(13);
+    const doc = JSON.parse(f.out.at(-1)!) as { status: string; code: string; smoke_ok: boolean; targets: HarnessTarget[]; fix: { argv: string[]; next: string; inputs: Array<{ name: string }>; verify: { argv: string[] } } };
+    expect(doc.status).toBe('pending_verify');
+    expect(doc.code).toBe('pending_verify');
+    expect(doc.smoke_ok).toBe(false);
+    expect(doc.targets.every(t => t.state === 'confirmed')).toBe(true);
+    expect(doc.fix.next).toBe('tell_user_to_run');
+    expect(doc.fix.argv).toEqual(['gbrain', 'bootstrap', 'harness', '--yes', '--harness', 'codex', '--token', '<TOKEN>', '--source', 'default']);
+    expect(JSON.stringify(doc)).not.toContain(TOKEN_A);
+    expect(doc.fix.inputs.map(i => i.name)).toEqual(['TOKEN']);
+    expect(doc.fix.verify.argv).toEqual(['gbrain', 'bootstrap', 'harness', '--status', '--json']);
+    expect(readFileSync(f.codexConfig, 'utf8')).toContain(`Authorization = "Bearer ${TOKEN_A}"`);
+    const state = readHarnessReceiptState(f.home);
+    expect(state.state === 'ok' && state.receipt.verify_pending?.reason).toBe('serve_unreachable');
+
+    // --status stays partial (exit 1) while pending, even once the serve answers and the token verifies.
+    f.out.length = 0;
+    expect(await statusHarness(parseHarnessArgs(['--status', '--json']), f.deps)).toBe(1);
+    expect(JSON.parse(f.out.join('\n'))).toMatchObject({ status: 'partial', serve_ok: false, verify_pending: { reason: 'serve_unreachable' } });
+    const up = makeFake();
+    up.deps.gbrainHome = f.home;
+    up.deps.codexConfig = f.codexConfig;
+    up.deps.loadFileConfig = pglite;
+    expect(await statusHarness(parseHarnessArgs(['--status', '--json']), up.deps)).toBe(1);
+    expect(JSON.parse(up.out.join('\n'))).toMatchObject({ status: 'partial', serve_ok: true, token_verified: true });
+
+    // The fix's re-run with the serve up passes its smoke, writes a fresh receipt without the marker, and status is green.
+    const rerun = doc.fix.argv.slice(3).map(a => (a === '<TOKEN>' ? TOKEN_A : a));
+    expect(await applyHarness(parseHarnessArgs(rerun), up.deps)).toBe(0);
+    const after = readHarnessReceiptState(f.home);
+    expect(after.state === 'ok' && after.receipt.verify_pending).toBeUndefined();
+    up.out.length = 0;
+    expect(await statusHarness(parseHarnessArgs(['--status', '--json']), up.deps)).toBe(0);
+  });
+
+  test('a serve that holds the brain but does not answer at this url (wrong --url/--port) still fails with no writes', async () => {
+    const f = makeFake({ health: { ok: false }, pgliteLive: true });
+    f.deps.loadFileConfig = pglite;
+    expect(await applyHarness(flags(['--harness', 'codex', '--port', '9999', '--token', TOKEN_A]), f.deps)).toBe(1);
+    expect(f.err.join('\n')).toMatch(/no healthy gbrain serve/);
+    expect(readHarnessReceiptState(f.home)).toEqual({ state: 'absent' });
+  });
+
+  test('without --token, on Postgres, or when something non-gbrain answers, the health failure is still a hard stop', async () => {
+    const noToken = makeFake({ health: { ok: false } });
+    noToken.deps.loadFileConfig = pglite;
+    expect(await applyHarness(flags(['--harness', 'codex']), noToken.deps)).toBe(1);
+    const postgres = makeFake({ health: { ok: false } });
+    postgres.deps.loadFileConfig = () => ({ engine: 'postgres' } as GBrainConfig);
+    expect(await applyHarness(flags(['--harness', 'codex', '--token', TOKEN_A]), postgres.deps)).toBe(1);
+    const answered = makeFake();
+    answered.deps.loadFileConfig = pglite;
+    answered.deps.fetchFn = (async () => new Response('nope', { status: 404 })) as unknown as typeof fetch;
+    expect(await applyHarness(flags(['--harness', 'codex', '--token', TOKEN_A]), answered.deps)).toBe(1);
+    for (const f of [noToken, postgres, answered]) {
+      expect(f.err.join('\n')).toMatch(/no healthy gbrain serve/);
+      expect(readHarnessReceiptState(f.home)).toEqual({ state: 'absent' });
+    }
   });
 });

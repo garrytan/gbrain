@@ -1,6 +1,13 @@
 import { basename } from 'node:path';
 
 export const PHYSICAL_ROOT_MARKER = '.gbrain-owner.json';
+/**
+ * #5186: gitignore-dialect globs for every file `isPhysicalRootMetadata`
+ * recognizes (the stamp, the reservation beside the root, a staged stamp).
+ * Written to `<gitdir>/info/exclude` on stamp/adopt and denied by
+ * `workspace-push`, so the ownership token never reaches a remote.
+ */
+export const OWNERSHIP_MARKER_GLOBS: readonly string[] = ['.gbrain-owner.json', '.gbrain-owner-*.json', '.gbrain-owner.json.*.tmp'];
 
 /** Ownership metadata gbrain writes inside or beside a managed canonical root; never brain content. */
 export function isPhysicalRootMetadata(name: string): boolean {

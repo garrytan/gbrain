@@ -20,6 +20,13 @@
 *.sqlite3
 *.db
 
+# Ownership markers and the bootstrap lock — this machine's claim on the
+# checkout, never content (`gbrain sources push` denies them as well)
+.gbrain-owner.json
+.gbrain-owner-*.json
+.gbrain-owner.json.*.tmp
+.gbrain-bootstrap.lock/
+
 # Machine-local state (committed state/ files are allowlisted explicitly)
 state/*.local
 state/*.local.json

@@ -82,8 +82,12 @@ export async function assertRetainedEmbeddingRebuildability(tx: BrainEngine, dim
     counts = row;
     if (model !== undefined) archivedWork = await countArchivedEmbeddingWork(tx,
       { signature: `${model}:${dimensions}`, includeNullSignature: true, includeUnsealed: true }, activeExists ? active : null);
-  } catch {
-    throw new Error('retained_vector_check_failed: Cannot determine whether retained vectors can be rebuilt; migration mutations refused. Inspect the selected brain and database/schema access before retrying.');
+  } catch (error) {
+    // #6587: a deadlock is retryable by the caller (withMigrationLeaseTransaction); keep it recognizable.
+    if (typeof error === 'object' && error !== null && (error as { code?: unknown }).code === '40P01') throw error;
+    // The message stays content-free (a data error can quote stored text); the SQLSTATE names the class.
+    const code = typeof error === 'object' && error !== null && typeof (error as { code?: unknown }).code === 'string' ? (error as { code: string }).code : null;
+    throw new Error(`retained_vector_check_failed: Cannot determine whether retained vectors can be rebuilt; migration mutations refused.${code ? ` Database error SQLSTATE ${code}.` : ''} Inspect the selected brain and database/schema access before retrying.`, { cause: error });
   }
   if (counts.pages + counts.facts + counts.takes + archivedWork > 0) {
     throw new Error(`retained_vectors_blocked: ${counts.pages} page chunk(s), ${counts.facts} fact(s), ${counts.takes} take(s) cannot be rebuilt by this migration; ${archivedWork} archived page(s) have blocked embedding work. No invalidation is permitted. Inspect the blockers: archived sources require deliberate gbrain sources restore <id>; embed_skip, importer-only media, and deleted pages require an explicit retention/recovery decision. No source or page is restored automatically. See docs/guides/embedding-migration.md#recovery.`);

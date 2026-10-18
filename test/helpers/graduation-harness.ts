@@ -6,7 +6,7 @@
  * carried probe table. Custody, schema, fence, manifest, marker, tombstone,
  * lock and routing code under test is the production code.
  */
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -123,7 +123,36 @@ async function freshTarget(opts: HarnessOptions): Promise<{ engine: BrainEngine;
   return { engine, drop };
 }
 
-/** A source brain with history-shaped rows: three probe rows and one access token. */
+let sourceTemplate: Promise<string> | undefined;
+
+/**
+ * One initialized, seeded source datastore per test process. A fresh PGLite
+ * datastore costs an initdb plus the full schema replay (about 2 s); every
+ * harness copies this closed template instead (under 0.2 s), so a file that
+ * builds a harness per test stays inside its lane budget.
+ */
+function seededSourceTemplate(): Promise<string> {
+  sourceTemplate ??= (async () => {
+    const dir = join(mkdtempSync(join(tmpdir(), 'gbrain-graduation-template-')), 'brain.pglite');
+    const source = await openPglite(dir);
+    try {
+      await source.initSchema();
+      await source.executeRaw(PROBE_DDL);
+      await source.executeRaw(`INSERT INTO grad_probe VALUES (1,'alpha'),(2,'beta'),(3,'gamma')`);
+      await source.executeRaw(`INSERT INTO access_tokens (id, name, token_hash) VALUES ($1::uuid, 'agent-example', 'hash-a1')`, [SOURCE_TOKEN_ID]);
+    } finally { await source.disconnect(); }
+    return dir;
+  })();
+  return sourceTemplate;
+}
+
+/**
+ * A source brain with history-shaped rows: three probe rows and one access
+ * token. The datastore is a copy of the process template, opened once at its
+ * own path in the harness home (which writes its owner sidecars there), with
+ * the identity values initSchema randomizes per brain drawn fresh, so no two
+ * harnesses share a brain id or shared-skill secret.
+ */
 export async function makeHarness(opts: HarnessOptions = {}): Promise<Harness> {
   const root = mkdtempSync(join(tmpdir(), 'gbrain-graduation-'));
   const home = join(root, 'home');
@@ -133,13 +162,12 @@ export async function makeHarness(opts: HarnessOptions = {}): Promise<Harness> {
   const mountsPath = join(root, 'mounts.json');
   writeFileSync(join(gbrainDir, 'config.json'), JSON.stringify({ engine: 'pglite', database_path: dataDir }), { mode: 0o600 });
   writeFileSync(mountsPath, JSON.stringify({ version: 1, mounts: [{ id: 'team-example', path: root, engine: 'pglite', database_path: dataDir }] }), { mode: 0o600 });
+  cpSync(await seededSourceTemplate(), dataDir, { recursive: true });
   await withEnv({ GBRAIN_HOME: home }, async () => {
     const source = await openPglite(dataDir);
     try {
-      await source.initSchema();
-      await source.executeRaw(PROBE_DDL);
-      await source.executeRaw(`INSERT INTO grad_probe VALUES (1,'alpha'),(2,'beta'),(3,'gamma')`);
-      await source.executeRaw(`INSERT INTO access_tokens (id, name, token_hash) VALUES ($1::uuid, 'agent-example', 'hash-a1')`, [SOURCE_TOKEN_ID]);
+      await source.executeRaw(`UPDATE persistence_brain SET brain_id = gen_random_uuid() WHERE singleton = 1`);
+      await source.executeRaw(`UPDATE shared_skill_state SET token_secret = replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', ''), serving_epoch = gen_random_uuid() WHERE singleton = 1`);
     } finally { await source.disconnect(); }
   });
   const { engine: target, drop: dropTarget } = await freshTarget(opts);

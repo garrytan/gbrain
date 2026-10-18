@@ -9,7 +9,10 @@ notice). User guide: [core memory](../../guides/core-memory.md).
 
 - `src/core/core-memory.ts`: marking and priority normalization, settings
   (`memory.core.*`), page rendering and budget accounting, `listCorePages`
-  (withdrawal-aware), `renderCoreBlock` (whole-page truncation, notice lines,
+  (withdrawal-aware; a page stored in segments is read back whole up to 24 MiB,
+  through `materializedSnapshot` when withdrawn, and a larger one is left out
+  unread and counted by doctor `core_memory` as `skipped_segmented`,
+  `test/large-pages/segmented-core-list.test.ts`), `renderCoreBlock` (whole-page truncation, notice lines,
   withheld lines), `coreRevision`, the delivery sensitivity policy
   (`applyCoreSensitivity`: credential-like hits withhold, contact details and
   private paths redact) and `loadCoreBlock`, which every delivery lane uses.
@@ -36,7 +39,12 @@ notice). User guide: [core memory](../../guides/core-memory.md).
   `src/core/context/session-start-output.ts`), `context_pack`
   (`src/core/ops/facts.ts`, `src/mcp/context-pack-handler.ts`, including the
   read-only `coreOnly` IPC arm), OpenClaw `assemble()` in
-  `src/core/context-engine.ts` (60 s memo), and `gbrain compile-context
+  `src/core/context-engine.ts` through `src/core/context/openclaw-core.ts`
+  (60 s memo keyed on the trust cache identity from
+  `src/core/eligibility/generation.ts`, revalidated on every delivery: the
+  `coreOnly` arm answers `coreTrust.unchanged` for a matching
+  `coreIdentity`; a failed or timed-out refresh delivers no core block,
+  never the memo), and `gbrain compile-context
   --include-core` (`src/core/context/compile-view.ts`,
   `src/core/context/compiled-core.ts` for git safety and the record doctor
   reads).
@@ -50,4 +58,5 @@ notice). User guide: [core memory](../../guides/core-memory.md).
 - Tests: `test/core-memory.test.ts`, `test/core-guard.test.ts`,
   `test/core-cli.test.ts`, `test/compile-context-core.serial.test.ts`,
   `test/context-pressure.test.ts`, `test/remember-batch.test.ts`,
+  `test/trust-cache-invalidation.test.ts` (core lane after trust transitions),
   `test/e2e/core-memory-locks-postgres.test.ts`.

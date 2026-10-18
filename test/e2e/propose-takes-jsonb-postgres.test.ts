@@ -135,4 +135,21 @@ describeIfDB('propose_takes dedup_against_fence_rows JSONB — Postgres regressi
     expect(tomb[0]!.kind).toBe('array');
     expect(tomb[0]!.first_claim).toBe('Cities send messages');
   });
+
+  test('the dream cycle\'s own output is never a candidate: JSONB predicates on Postgres (#5212)', async () => {
+    const own: Array<[string, string, Record<string, unknown>]> = [
+      ['wiki/personal/reflections/2026-10-01-dream', 'note', { dream_generated: true }],
+      ['atoms/acme-example-claim', 'atom', { extracted_by: 'extract_atoms-v0.41.2.1' }],
+      ['concepts/founder-mode', 'concept', { synthesized_by: 'synthesize_concepts-v1' }],
+    ];
+    for (const [slug, type, frontmatter] of own) {
+      await engine.putPage(slug, { title: slug, type: type as never, compiled_truth: 'A strong claim the dream cycle wrote.', frontmatter, timeline: '' });
+    }
+    await engine.putPage('wiki/essays/human-thesis', { title: 'Human thesis', type: 'analysis' as never, compiled_truth: 'A claim a person wrote.', frontmatter: { synthesized_by: null }, timeline: '' });
+    const scanned: string[] = [];
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor: async ({ pagePath }) => { scanned.push(pagePath); return []; }, pageLimit: 50 });
+    expect(result.error?.message ?? '').toBe('');
+    expect(scanned).toContain('wiki/essays/human-thesis');
+    for (const [slug] of own) expect(scanned).not.toContain(slug);
+  });
 });

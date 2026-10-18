@@ -74,9 +74,12 @@ async function consolidatedIds(): Promise<number[]> {
 
 describe('#5363 cluster threshold is configurable', () => {
   test('cycle.consolidate.cluster_threshold lowers the bar the phase actually uses', async () => {
+    // #6023: the knob governs typed (metric) facts; untyped facts cluster at
+    // the explicit-duplicate bar regardless (test/consolidate-divergence.test.ts).
+    const mrr = { metric: 'mrr', unit: 'USD', period: 'monthly' };
     await seedPage('acme-example');
-    await seedFact('acme-example', 'acme ships weekly', vecAt(1), 40);
-    await seedFact('acme-example', 'acme releases every week', vecAt(0.8), 39);
+    await seedFact('acme-example', 'acme mrr is 1000', vecAt(1), 40, mrr);
+    await seedFact('acme-example', 'acme monthly recurring revenue is 1200', vecAt(0.8), 39, mrr);
     await seedFact('acme-example', 'acme was founded in 2020', vecAt(0), 38);
 
     const atDefault = await runPhaseConsolidate(engine, {});

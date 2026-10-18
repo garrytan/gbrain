@@ -181,6 +181,29 @@ for (const backend of backends) {
       expect(await s.keys()).toEqual([]);
     }, 60_000);
 
+    if (backend === 'pglite') {
+      // GBRA-75 wave 10: the pass orders by the timestamp its keyset compares, not the text it returns, so small
+      // batches never skip a page, even in a session time zone whose text offsets change (a DST fallback hour).
+      test('the incremental pass in batches of one reads every page across a DST fallback in the session time zone', async () => {
+        const s = await source(null);
+        const slugs = ['notes/dst-a', 'notes/dst-b', 'notes/dst-c', 'notes/dst-d'];
+        for (const slug of slugs) await s.stored(slug, CLEAN);
+        await s.census();
+        const [{ zone }] = await engine.executeRaw<{ zone: string }>(`SELECT current_setting('TimeZone') AS zone`);
+        try {
+          await engine.executeRaw(`SELECT set_config('TimeZone', 'America/New_York', false)`);
+          // 01:20-04, 01:40-04, then 01:10-05 and 01:30-05: their text sorts differently from their instants.
+          for (const [i, at] of ['2026-11-01T05:20:00Z', '2026-11-01T05:40:00Z', '2026-11-01T06:10:00Z', '2026-11-01T06:30:00Z'].entries()) {
+            await engine.executeRaw('UPDATE pages SET compiled_truth=$1, updated_at=$2::timestamptz WHERE source_id=$3 AND slug=$4', [DETERMINISTIC, at, s.id, slugs[i]]);
+          }
+          await s.census({ batchSize: 1 });
+          expect(await s.keys()).toEqual(slugs);
+        } finally {
+          await engine.executeRaw(`SELECT set_config('TimeZone', $1, false)`, [zone]);
+        }
+      }, 60_000);
+    }
+
     if (backend === 'postgres') {
       test('a writer transaction open during a pass is read after it commits, with no grace period', async () => {
         const s = await source(null);

@@ -7,6 +7,9 @@
 # v1.3.0 adds `account` (a customer or CRM record, alias `crm`): an entity
 # type, so documents that name an account link to it, kept out of expert
 # routing.
+# v1.4.0 adds `question`, the type the pinned-question writer stamps on
+# questions/ pages (#6742), mirroring gbrain-base: a non-extractable
+# annotation outside the canonical content taxonomy.
 #
 # STANDALONE pack (D11/F1): NO `extends:` field. Declaring inheritance
 # would compose gbrain-base's 24 types on top of the 16 declared here,
@@ -29,7 +32,7 @@
 
 api_version: gbrain-schema-pack-v1
 name: gbrain-base-v2
-version: 1.3.0
+version: 1.4.0
 description: 15-type DRY/MECE canonical taxonomy + `note` catch-all (16 total). Successor to gbrain-base. Issue #1479.
 gbrain_min_version: 0.42.0
 extends: null
@@ -357,6 +360,16 @@ page_types:
     primitive: temporal
     path_prefixes:
       - life/diary/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+  # A pinned question's page (src/core/questions/pages.ts); the answer
+  # lives in pinned_questions. Owner-private and never evidence. Set via
+  # frontmatter only, so an existing questions/ folder keeps its own types.
+  - name: question
+    primitive: annotation
+    path_prefixes: []
     aliases: []
     extractable: false
     expert_routing: false

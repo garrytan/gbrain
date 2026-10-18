@@ -40,6 +40,8 @@ describe('/health while startup-degraded', () => {
 
     const server = await startHttpTransport({ port: 0, engine });
     stopServer = () => (server as { stop: (force?: boolean) => void }).stop(true);
+    // Startup config resolution must not consume the lazy recovery attempt.
+    expect(attempts).toBe(0);
     const port = (server as { port: number }).port;
 
     const res = await fetch(`http://127.0.0.1:${port}/health`);

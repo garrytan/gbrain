@@ -5,7 +5,8 @@ export const help: CliHelpSpec = {
   summary: 'Check brain health; preview and run remediation.',
   usage: [
     'gbrain doctor [--fast] [--json] [--fix [--dry-run]] [--scope=brain] [--source <id>] [--no-migrate] [--locks]',
-    'gbrain doctor --only <check>[,<check>…] [--json]',
+    'gbrain doctor --tier ops|standard|deep [--budget-ms <n>] [--json]',
+    'gbrain doctor --only <check>[,<check>…] [--tier ops] [--json]',
     'gbrain doctor --remediation-plan [--target-score <n>] [--no-embed] [--json]',
     'gbrain doctor --remediate [--yes [--expect <plan_hash>]] [--include-repairs] [--max-usd <n>] [--target-score <n>]',
     '              [--max-jobs <n>] [--no-embed] [--dry-run] [--resume [<plan_hash>]] [--json]',
@@ -14,6 +15,8 @@ export const help: CliHelpSpec = {
     { name: '--json', type: 'boolean', desc: 'Print one JSON document (checks, score, findings) on stdout.' },
     { name: '--only', type: 'string', desc: 'Read-only: run just the named checks (comma-separated or repeated; no migrations). The usual fix.verify. An unknown name exits 2 with the valid list.' },
     { name: '--fast', type: 'boolean', desc: 'Skip database checks; filesystem and config checks only.' },
+    { name: '--tier', type: 'enum', values: ['ops', 'standard', 'deep'], desc: 'ops: only the operational sections (capacity, write failures, embedding state, sync movement, compaction, serve build, schema pack) under a 4 s deadline, observational (no migrations). standard (default): ops first, then the rest. deep: adds full scans (orphan_ratio on brains over 50,000 pages).' },
+    { name: '--budget-ms', type: 'number', desc: 'Absolute end-to-end deadline in ms, counted from before the connect (default 4000 with --tier ops; 0: none). A plain non-interactive --json run caps its check run at doctor.default_budget_ms (file plane, default 90000, 0 off) instead. With --only, the named checks get the whole budget. Checks past it report health unknown (reason budget, which budget in details.limit); the report says complete: false.' },
     { name: '--fix', type: 'boolean', desc: 'Apply the local fixes doctor knows (skill files, stale locks); pair with --dry-run to preview.' },
     { name: '--dry-run', type: 'boolean', desc: 'Preview --fix or --remediate without changing anything.' },
     { name: '--scope', type: 'enum', values: ['all', 'brain'], desc: 'Pass --scope=brain to skip the skill-file check group (default all).' },

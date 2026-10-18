@@ -130,8 +130,8 @@ export interface TableRecordShape {
   helpSpecifier?: string | null;
   /** The record's `phase` string literal (A1 routing pin: pre-connect commands open no brain through the terminator). */
   phase?: string;
-  /** A1: `routes_source: true` on the record. */
-  routesSource?: true;
+  /** A1: the flag naming the record's target source: `'--source'` for `routes_source: true`, else the declared flag (`'--source-id'`). */
+  routesSource?: '--source' | '--source-id';
 }
 
 /** Every record of CLI_COMMANDS in table order, read by AST (the EO13 literal-load contract). */
@@ -155,8 +155,10 @@ export function readTableRecords(root: string): TableRecordShape[] {
         && ts.isStringLiteral(init.body.arguments[0]!) ? init.body.arguments[0].text : null;
     const help = prop('help');
     const phase = prop('phase')?.initializer;
-    const routesSource = prop('routes_source')?.initializer.kind === ts.SyntaxKind.TrueKeyword;
+    const routes = prop('routes_source')?.initializer;
+    const routesSource = routes?.kind === ts.SyntaxKind.TrueKeyword ? '--source' as const
+      : routes && ts.isStringLiteral(routes) && routes.text === '--source-id' ? '--source-id' as const : undefined;
     return { name: name.text, loadSpecifier: literalImport(prop('load')?.initializer), ...(help ? { helpSpecifier: literalImport(help.initializer) } : {}),
-      ...(phase && ts.isStringLiteral(phase) ? { phase: phase.text } : {}), ...(routesSource ? { routesSource: true as const } : {}) };
+      ...(phase && ts.isStringLiteral(phase) ? { phase: phase.text } : {}), ...(routesSource ? { routesSource } : {}) };
   });
 }

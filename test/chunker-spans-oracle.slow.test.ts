@@ -1,0 +1,553 @@
+/**
+ * Differential oracle for the recursive chunker (large pages, Wave A).
+ *
+ * Recording chunk spans (`spans: true`) restructured src/core/chunkers/recursive.ts
+ * to carry projected offsets through split, merge, overlap and the char cap.
+ * Chunk text drives embeddings and embedding reuse, so the restructure must
+ * leave every chunk's text and index byte-identical. The bottom of this file
+ * is master's chunker at df46372d, verbatim apart from its imports and export
+ * names; a seeded fuzz corpus (headings, CJK, emoji and astral characters,
+ * CRLF, long whitespace runs, takes/facts fences, newline-free text, single
+ * and capped paths, maxTokens variants) is chunked by both, and every span the
+ * new chunker records must hold its chunk's text once whitespace is ignored.
+ */
+import { describe, test, expect } from 'bun:test';
+import { chunkText, type ChunkOptions } from '../src/core/chunkers/recursive.ts';
+import { countCJKAwareWords, isCJKDominant, wordStats, concatWordStats, wordCountOf, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } from '../src/core/cjk.ts';
+import { estimateEmbedTokens, fitsEmbedTokens, DEFAULT_MAX_CHUNK_TOKENS } from '../src/core/chunkers/token-estimate.ts';
+import { safeSplitIndex } from '../src/core/text-safe.ts';
+import { sanitizeRemoteBody } from '../src/core/remote-body.ts';
+import { credentialSafeProjection } from '../src/core/credential-projection.ts';
+
+/** mulberry32: deterministic, so a failing seed reproduces. */
+function rng(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const WORDS = ['acme-example', 'widget', 'plan', 'the', 'rollout', 'alice-example', 'said', 'ok', 'roadmap', 'Q3', 'revenue', '3.5', 'e.g.', 'URL', 'https://example.com/a?b=c', 'naïve', 'café', 'über'];
+const CJK = ['我们', '计划', '下周', '发布', '小部件', '东京', '会议', '记录', 'データ', '会議', '한국어', '문장'];
+const ASTRAL = ['😀', '🚀', '𝄞', '𠀋', '👩‍💻', '🇯🇵'];
+
+function generate(seed: number): string {
+  const r = rng(seed);
+  const pick = <T,>(xs: T[]) => xs[Math.floor(r() * xs.length)];
+  const words = (n: number) => Array.from({ length: n }, () => (r() < 0.06 ? pick(ASTRAL) : pick(WORDS))).join(r() < 0.1 ? '  ' : ' ');
+  const sentence = () => `${words(4 + Math.floor(r() * 18))}${pick(['. ', '! ', '? ', '; ', ', ', ': ', '.\n'])}`;
+  const cjkSentence = () => Array.from({ length: 3 + Math.floor(r() * 12) }, () => pick(CJK)).join('') + pick(['。', '！', '？', '，', '；', '、']);
+  const blocks: string[] = [];
+  const target = r() < 0.15 ? 1 + Math.floor(r() * 3) : 3 + Math.floor(r() * 60);
+  for (let b = 0; b < target; b++) {
+    const k = r();
+    if (k < 0.12) blocks.push(`${'#'.repeat(1 + Math.floor(r() * 4))} ${words(2 + Math.floor(r() * 5))}`);
+    else if (k < 0.40) blocks.push(Array.from({ length: 1 + Math.floor(r() * 8) }, sentence).join(''));
+    else if (k < 0.52) blocks.push(Array.from({ length: 1 + Math.floor(r() * 30) }, cjkSentence).join(r() < 0.3 ? '' : ' '));
+    else if (k < 0.58) blocks.push(Array.from({ length: 2 + Math.floor(r() * 6) }, () => `- ${words(3 + Math.floor(r() * 10))}`).join('\n'));
+    else if (k < 0.63) blocks.push(`**alice-example:** ${sentence()}\n**bob-example:** ${sentence()}`);
+    else if (k < 0.67) blocks.push(' \t '.repeat(1 + Math.floor(r() * 40)) + words(5) + '\n'.repeat(1 + Math.floor(r() * 6)) + ' '.repeat(Math.floor(r() * 200)));
+    else if (k < 0.71) blocks.push(`<!--- gbrain:takes:begin -->\n| # | claim | kind | who | weight | since | source |\n|---|---|---|---|---|---|---|\n| 1 | ${words(6)} | take | alice-example | 0.8 | 2026-04 | note |\n${r() < 0.8 ? '<!--- gbrain:takes:end -->' : ''}`);
+    else if (k < 0.75) blocks.push(`<!--- gbrain:facts:begin -->\n\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|---|---|---|---|---|---|---|---|---|\n| 1 | ${words(5)} | fact | 1.0 | ${pick(['world', 'private'])} | high | 2026-01-01 |  | note |  |\n| 2 | ${words(5)} | fact | 0.9 | ${pick(['world', 'private'])} | medium | 2026-02-01 |  | note |  |\n<!--- gbrain:facts:end -->`);
+    else if (k < 0.79) blocks.push(Array.from({ length: 200 + Math.floor(r() * 2000) }, () => pick(WORDS)).join(' '));
+    else if (k < 0.83) blocks.push(Array.from({ length: 500 + Math.floor(r() * 9000) }, () => pick(CJK)).join(''));
+    else if (k < 0.86) blocks.push(Array.from({ length: 2000 + Math.floor(r() * 9000) }, () => pick(['A', 'b', '9', '+', '/', '='])).join(''));
+    else if (k < 0.89) blocks.push(Array.from({ length: 100 + Math.floor(r() * 900) }, () => pick(ASTRAL)).join(r() < 0.5 ? '' : ' '));
+    else if (k < 0.93) blocks.push('```ts\nconst x = 1;\n# not a heading\n' + words(10) + '\n```');
+    else blocks.push(`${words(8)}\n${words(8)}\n${words(8)}`);
+  }
+  let text = blocks.join(pick(['\n\n', '\n\n\n', '\n', '\n \n']));
+  if (r() < 0.25) text = text.replace(/\n/g, '\r\n');
+  if (r() < 0.1) text = text.replace(/\n/g, ' ');
+  return text;
+}
+
+const OPTION_SETS: Array<[string, ChunkOptions]> = [
+  ['defaults', {}],
+  ['small chunks', { chunkSize: 40, chunkOverlap: 10 }],
+  ['no overlap', { chunkSize: 60, chunkOverlap: 0 }],
+  ['tight char cap', { maxChars: 300 }],
+  ['maxTokens 128', { maxTokens: 128 }],
+  ['maxTokens 512 small chunks', { maxTokens: 512, chunkSize: 80, chunkOverlap: 20 }],
+];
+
+const SEEDS = Array.from({ length: 160 }, (_, i) => 0x51ed + i * 7919);
+const strip = (s: string) => s.replace(/\s+/g, '');
+
+describe('chunkText matches master (df46372d) chunk for chunk', () => {
+  for (const [name, opts] of OPTION_SETS) {
+    test(`${name}: text and index byte-identical; every span holds its chunk`, () => {
+      let chunks = 0;
+      let spanned = 0;
+      for (const seed of SEEDS) {
+        const doc = generate(seed);
+        const oracle = oracleChunkText(doc, opts);
+        const plain = chunkText(doc, opts);
+        const withSpans = chunkText(doc, { ...opts, spans: true });
+        const label = `seed ${seed} (${name})`;
+        expect(plain.map(c => [c.index, c.text]), label).toEqual(oracle.map(c => [c.index, c.text]));
+        expect(withSpans.map(c => [c.index, c.text]), label).toEqual(oracle.map(c => [c.index, c.text]));
+        expect(plain.every(c => c.byte_start === undefined && c.byte_end === undefined), label).toBe(true);
+        const projected = Buffer.from(credentialSafeProjection(sanitizeRemoteBody(doc)), 'utf8');
+        for (const c of withSpans) {
+          chunks++;
+          if (c.byte_start === undefined) continue;
+          spanned++;
+          expect(c.byte_end! > c.byte_start && c.byte_end! <= projected.length, label).toBe(true);
+          const held = projected.subarray(c.byte_start, c.byte_end).toString('utf8');
+          expect(held.includes('\uFFFD') && !c.text.includes('\uFFFD'), `${label}: span splits a character`).toBe(false);
+          expect(strip(held), `${label}: chunk ${c.index}`).toBe(strip(c.text));
+        }
+      }
+      expect(chunks).toBeGreaterThan(SEEDS.length);
+      expect(spanned, `${name}: chunks without a span`).toBe(chunks);
+    }, 120_000);
+  }
+
+  test('the corpus reaches the single-chunk, capped, fenced, CRLF and newline-free paths', () => {
+    const docs = SEEDS.map(generate);
+    expect(docs.some(d => chunkText(d).length === 1)).toBe(true);
+    expect(docs.some(d => chunkText(d, { maxChars: 300 }).some(c => c.text.length === 300 || c.text.length === 299))).toBe(true);
+    expect(docs.some(d => d.includes('gbrain:takes:begin'))).toBe(true);
+    expect(docs.some(d => d.includes('gbrain:facts:begin') && d.includes('| private |'))).toBe(true);
+    expect(docs.some(d => d.includes('\r\n'))).toBe(true);
+    expect(docs.some(d => !d.includes('\n') && d.length > 20_000)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Oracle: src/core/chunkers/recursive.ts at df46372d (master before spans).
+// ---------------------------------------------------------------------------
+
+
+const DELIMITERS: string[][] = [
+  ['\n\n'],                          // L0: paragraphs
+  ['\n'],                            // L1: lines
+  ['. ', '! ', '? ', '.\n', '!\n', '?\n', ...CJK_SENTENCE_DELIMITERS], // L2: sentences
+  ['; ', ': ', ', ', ...CJK_CLAUSE_DELIMITERS],                         // L3: clauses
+  [],                                // L4: words (whitespace + CJK char-slice fallback)
+];
+
+interface OracleChunkOptions {
+  chunkSize?: number;    // target words per chunk (default 300)
+  chunkOverlap?: number; // overlap words (default 50)
+  maxChars?: number;     // hard cap on any chunk's char length (default 6000)
+  /**
+   * #4530: hard cap on any chunk's ESTIMATED embedding tokens (default
+   * DEFAULT_MAX_CHUNK_TOKENS). Callers on strict per-input embedding models
+   * (e.g. nvidia/nv-embedqa-e5-v5's 512) thread
+   * resolveMaxChunkTokens() (src/core/embedding-input-limit.ts) so oversize
+   * text is SPLIT to fit — never truncated, never left permanently
+   * unembeddable. Chunk boundaries are unchanged for callers that don't pass
+   * it (or whose model has no declared limit), so MARKDOWN_CHUNKER_VERSION
+   * does not bump.
+   */
+  maxTokens?: number;
+}
+
+interface OracleChunk {
+  text: string;
+  index: number;
+}
+
+// The strict full-body sanitizer removes all Takes and non-world Facts. Takes content
+// lives in the takes table only; duplicating it inside content_chunks would
+// bypass the per-token MCP allow-list (Codex P0 #3 privacy fix).
+
+// v0.32.2 (Codex R2-#1 P0): same posture for facts — private fact rows must
+// not reach content_chunks.chunk_text, embeddings, or search. Pass
+// `keepVisibility: ['world']` so world-visibility facts remain searchable
+// (they're public knowledge by definition) while private rows are stripped
+// at the row level. The fence shell stays in the chunked body so callers
+// that re-import the chunk content can still parse it; only the private
+// rows go.
+
+function oracleChunkText(text: string, opts?: OracleChunkOptions): OracleChunk[] {
+  const chunkSize = opts?.chunkSize || 300;
+  const chunkOverlap = opts?.chunkOverlap || 50;
+  const maxChars = opts?.maxChars || 6000;
+  // #4530: per-call token budget, clamped to the historical default so a
+  // misconfigured larger value can't emit chunks the rest of the pipeline
+  // (tsvector limits, context assembly) was never sized for.
+  const maxTokens = opts?.maxTokens && opts.maxTokens > 0
+    ? Math.min(opts.maxTokens, DEFAULT_MAX_CHUNK_TOKENS)
+    : DEFAULT_MAX_CHUNK_TOKENS;
+
+  if (!text || text.trim().length === 0) return [];
+
+  // v0.28: strip fenced takes blocks BEFORE chunking. Takes are retrieval-
+  // accessible only via the takes table; their content must not appear in
+  // content_chunks where the per-token allow-list cannot reach.
+  //
+  // v0.32.2: also strip private facts (Codex R2-#1). World facts stay so
+  // search retains its public-knowledge surface; private rows are filtered
+  // out at the fence-row level via stripFactsFence({keepVisibility:['world']}).
+  const stripped = credentialSafeProjection(sanitizeRemoteBody(text));
+  if (!stripped || stripped.trim().length === 0) return [];
+
+  const wordCount = countWords(stripped);
+  if (wordCount <= chunkSize) {
+    // Single-chunk path: still apply the maxChars cap.
+    const capped = capByChars(stripped.trim(), maxChars, maxTokens);
+    return capped.map((t, i) => ({ text: t, index: i }));
+  }
+
+  // Recursively split, then greedily merge to target size
+  const pieces = recursiveSplit(stripped, 0, chunkSize);
+  const merged = greedyMerge(pieces, chunkSize);
+  const withOverlap = applyOverlap(merged, chunkOverlap);
+  // v0.32.7: hard char cap. Catches pathological CJK + whitespace-less text
+  // that the word-level pipeline can't bound (a single Chinese paragraph can
+  // exceed 8192 OpenAI embedding tokens at any word count).
+  const capped: string[] = [];
+  for (const chunk of withOverlap) {
+    capped.push(...capByChars(chunk.trim(), maxChars, maxTokens));
+  }
+  return capped.map((t, i) => ({ text: t, index: i }));
+}
+
+/**
+ * Hard-cap a chunk via a sliding window — by char length AND by estimated
+ * embedding tokens. Returns the input unchanged when it fits both budgets.
+ *
+ * The char budget (maxChars, default 6000) is the historical belt; the token
+ * budget (DEFAULT_MAX_CHUNK_TOKENS, shared with the code chunker's oversize
+ * cap) is the constraint embedders actually enforce. A char-only cap cannot
+ * bound tokens: 6000 CJK-dense chars run 3-6k tokens, past strict embedder
+ * contexts (nomic-embed-text 2048), so those chunks fail on every embed
+ * sweep, silently, forever (#3037) — and URL-dense CJK markdown emits
+ * over-limit chunks well under maxChars (#2826). When the text over-runs the
+ * token budget, the window is derived from its own measured density —
+ * floor(length × budget / estimate) — and every slice is re-checked (local
+ * density can exceed the whole-text average), re-deriving on the slice until
+ * each piece fits. ASCII prose is unaffected: 6000 chars measure ~1.5-1.7k
+ * cl100k tokens, under the budget, so the window stays maxChars.
+ *
+ * Overlap is min(500, window/10) so successive windows preserve semantic
+ * continuity across the cut.
+ *
+ * v0.32.7. Surrogate-safe: the window is derived from measured density and so
+ * has arbitrary parity, which a raw slice would use to cut an astral pair in
+ * half — every boundary goes through safeSplitIndex. (The former "BMP-only
+ * safe" note rested on maxChars=6000 and stride=5500 both being even;
+ * deriving the window from density retired that guarantee.)
+ */
+function capByChars(
+  text: string,
+  maxChars: number,
+  maxTokens: number = DEFAULT_MAX_CHUNK_TOKENS,
+  knownEst?: number,
+): string[] {
+  if (text.length === 0) return [];
+  if (knownEst === undefined && text.length <= maxChars && fitsEmbedTokens(text, maxTokens)) return [text];
+  const est = knownEst ?? probeEmbedTokens(text);
+  const window = est <= maxTokens
+    ? maxChars
+    : Math.max(1, Math.min(maxChars, Math.floor((text.length * maxTokens) / est)));
+  if (text.length <= window) {
+    // Emitting the text whole is the one path that skips the per-slice
+    // re-check below, so a PROBED estimate has to be confirmed exactly first:
+    // a sparse ASCII head can under-read a dense CJK tail.
+    if (knownEst !== undefined || text.length <= DENSITY_PROBE_CHARS) return [text];
+    const exact = estimateEmbedTokens(text);
+    return exact <= maxTokens ? [text] : capByChars(text, maxChars, maxTokens, exact);
+  }
+  // The stride keeps its nominal window-minus-overlap value. Evening the
+  // windows out (as the header-budget hard split does) is WRONG here: that
+  // splitter partitions, this one overlaps, so shrinking the stride to land
+  // the last window flush against the end collapses successive windows into
+  // near-duplicates — measured on scripts/test-weights.json, two 6,047-char
+  // chunks differing by 47 chars. A short final window is the cheaper end of
+  // that trade and is the behavior this loop has always had.
+  const overlap = Math.min(500, Math.floor(window / 10));
+  const stride = Math.max(1, window - overlap);
+  const out: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const end = safeSplitIndex(text, Math.min(text.length, i + window));
+    const slice = text.slice(i, end).trim();
+    if (slice.length > 0) {
+      const sliceEst = fitsEmbedTokens(slice, maxTokens) ? 0 : estimateEmbedTokens(slice);
+      if (sliceEst > maxTokens) {
+        // Denser than the text average — re-derive locally, reusing the exact
+        // figure just measured (it also guarantees window < slice.length, so
+        // the recursion strictly shrinks).
+        out.push(...capByChars(slice, maxChars, maxTokens, sliceEst));
+      } else {
+        out.push(slice);
+      }
+    }
+    if (end >= text.length) break;
+    const next = safeSplitIndex(text, Math.min(text.length, i + stride));
+    i = next > i ? next : i + 1;
+  }
+  return out;
+}
+
+/**
+ * Chars measured to derive the window. estimateEmbedTokens is SUPERLINEAR on
+ * CJK — measured on this repo's encoder: 2K chars 11ms, 6K 99ms, 20K 1,138ms —
+ * and capByChars runs on every chunk, so measuring the whole text up front
+ * dominates the chunker (the 20K-char whitespace-less CJK cap test went from
+ * an O(1) length compare to a 6.7s run, past bun's 5s per-test limit, on a
+ * cold encoder). The window only needs an approximate density: every emitted
+ * slice is re-measured exactly, denser-than-average slices recurse on that
+ * exact figure, and the one path that emits without a re-check confirms
+ * exactly first — so the cap holds regardless of what the probe reads.
+ */
+const DENSITY_PROBE_CHARS = 2000;
+
+function probeEmbedTokens(text: string): number {
+  if (text.length <= DENSITY_PROBE_CHARS) return estimateEmbedTokens(text);
+  const head = text.slice(0, safeSplitIndex(text, DENSITY_PROBE_CHARS));
+  return Math.ceil((estimateEmbedTokens(head) * text.length) / head.length);
+}
+
+function recursiveSplit(text: string, level: number, target: number): string[] {
+  if (level >= DELIMITERS.length) {
+    // Level 4: split on whitespace
+    return splitOnWhitespace(text, target);
+  }
+
+  const delimiters = DELIMITERS[level];
+  if (delimiters.length === 0) {
+    return splitOnWhitespace(text, target);
+  }
+
+  const pieces = splitAtDelimiters(text, delimiters);
+
+  // If splitting didn't help (only 1 piece), try next level
+  if (pieces.length <= 1) {
+    return recursiveSplit(text, level + 1, target);
+  }
+
+  // Check if any piece is still too large, recurse deeper
+  const result: string[] = [];
+  for (const piece of pieces) {
+    if (countWords(piece) > target) {
+      result.push(...recursiveSplit(piece, level + 1, target));
+    } else {
+      result.push(piece);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Split text at delimiter boundaries, preserving delimiters at the end
+ * of the piece that precedes them (lossless).
+ */
+function splitAtDelimiters(text: string, delimiters: string[]): string[] {
+  const pieces: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    let earliest = -1;
+    let earliestDelim = '';
+
+    for (const delim of delimiters) {
+      const idx = remaining.indexOf(delim);
+      if (idx !== -1 && (earliest === -1 || idx < earliest)) {
+        earliest = idx;
+        earliestDelim = delim;
+      }
+    }
+
+    if (earliest === -1) {
+      pieces.push(remaining);
+      break;
+    }
+
+    // Include the delimiter with the preceding text
+    const piece = remaining.slice(0, earliest + earliestDelim.length);
+    if (piece.trim().length > 0) {
+      pieces.push(piece);
+    }
+    remaining = remaining.slice(earliest + earliestDelim.length);
+  }
+
+  // Handle trailing content
+  if (remaining.trim().length > 0 && !pieces.includes(remaining)) {
+    // Already added above
+  }
+
+  return pieces.filter(p => p.trim().length > 0);
+}
+
+/**
+ * Fallback: split on whitespace boundaries to hit target word count.
+ * v0.32.7: when the input is whitespace-less or any single "word" exceeds
+ * the target (CJK paragraph, base64 blob, long URL), slice on character
+ * boundaries so we still bound chunk size and the chunker makes forward
+ * progress. The downstream maxChars cap tightens this further.
+ */
+function splitOnWhitespace(text: string, target: number): string[] {
+  const words = text.match(/\S+\s*/g) || [];
+
+  // No whitespace tokens, OR a single token longer than `target` chars
+  // (greedy /\S+/g returns a CJK paragraph as one "word"). Slice by char.
+  const noUsefulWhitespace =
+    words.length === 0 || (words.length === 1 && words[0].length > target);
+  if (noUsefulWhitespace) {
+    if (text.trim().length === 0) return [];
+    const pieces: string[] = [];
+    const charsPerPiece = Math.max(1, target);
+    // Cursor advances to wherever safeSplitIndex actually cut, so no astral
+    // pair (emoji, non-BMP CJK) is halved and no code unit is skipped or
+    // repeated. A window too narrow to hold a pair takes the pair whole.
+    let i = 0;
+    while (i < text.length) {
+      let end = safeSplitIndex(text, Math.min(text.length, i + charsPerPiece));
+      if (end <= i) end = Math.min(text.length, i + 2);
+      const slice = text.slice(i, end);
+      if (slice.trim().length > 0) pieces.push(slice);
+      i = end;
+    }
+    return pieces;
+  }
+
+  const pieces: string[] = [];
+  for (let i = 0; i < words.length; i += target) {
+    const slice = words.slice(i, i + target).join('');
+    if (slice.trim().length > 0) {
+      pieces.push(slice);
+    }
+  }
+  return pieces;
+}
+
+/**
+ * Greedily merge adjacent pieces until each chunk is near the target size.
+ * Avoids creating chunks larger than target * 1.5. The running chunk's word
+ * stats grow with it (concatWordStats), so each piece is counted once instead
+ * of recounting the whole chunk on every merge.
+ */
+function greedyMerge(pieces: string[], target: number): string[] {
+  if (pieces.length === 0) return [];
+
+  const result: string[] = [];
+  const limit = Math.ceil(target * 1.5);
+  let current = pieces[0];
+  let currentStats = wordStats(current);
+
+  for (let i = 1; i < pieces.length; i++) {
+    const pieceStats = wordStats(pieces[i]);
+    const combinedStats = concatWordStats(currentStats, pieceStats);
+    if (wordCountOf(combinedStats) <= limit) {
+      current += pieces[i];
+      currentStats = combinedStats;
+    } else {
+      result.push(current);
+      current = pieces[i];
+      currentStats = pieceStats;
+    }
+  }
+
+  if (current.trim().length > 0) {
+    result.push(current);
+  }
+
+  return result;
+}
+
+/**
+ * Apply sentence-aware trailing overlap.
+ * The last N words of chunk[i] are prepended to chunk[i+1].
+ */
+function applyOverlap(chunks: string[], overlapWords: number): string[] {
+  if (chunks.length <= 1 || overlapWords <= 0) return chunks;
+
+  const result: string[] = [chunks[0]];
+
+  for (let i = 1; i < chunks.length; i++) {
+    const prevTrailing = extractTrailingContext(chunks[i - 1], overlapWords);
+    result.push(prevTrailing + chunks[i]);
+  }
+
+  return result;
+}
+
+/**
+ * Extract the last N words from text, trying to align to sentence boundaries.
+ * If a sentence boundary exists within the last N words, start there.
+ */
+function extractTrailingContext(text: string, targetWords: number): string {
+  // CJK-dominant chunks count chars, not whitespace tokens (see countWords);
+  // the whitespace path below would return '' (whole chunk = one token) or
+  // duplicate most of the chunk. English path is unchanged.
+  if (isCJKDominant(text)) return extractTrailingContextCJK(text, targetWords);
+
+  const words = text.match(/\S+\s*/g) || [];
+  if (words.length <= targetWords) return '';
+
+  const trailing = words.slice(-targetWords).join('');
+
+  // Try to find a sentence boundary to start from
+  const sentenceStart = trailing.search(/[.!?]\s+/);
+  if (sentenceStart !== -1 && sentenceStart < trailing.length / 2) {
+    // Start after the sentence boundary
+    const afterSentence = trailing.slice(sentenceStart).replace(/^[.!?]\s+/, '');
+    if (afterSentence.trim().length > 0) {
+      return afterSentence;
+    }
+  }
+
+  return trailing;
+}
+
+/**
+ * Sentence end for the CJK overlap aligner: a CJK delimiter needs no trailing
+ * whitespace; an ASCII one still does, so "3.5" inside CJK prose is not a
+ * boundary.
+ */
+const CJK_SENTENCE_END = new RegExp(`[${CJK_SENTENCE_DELIMITERS.join('')}]\\s*|[.!?]\\s+`);
+
+/**
+ * CJK-dominant twin of extractTrailingContext: walks back targetWords
+ * non-whitespace code units (the unit countCJKAwareWords counts), then
+ * aligns to a sentence end the same way. Changes chunk boundaries only for
+ * CJK-dominant pages chunked from now on; re-chunking existing pages needs a
+ * MARKDOWN_CHUNKER_VERSION bump (see TODOS.md).
+ */
+function extractTrailingContextCJK(text: string, targetWords: number): string {
+  if (countCJKAwareWords(text) <= targetWords) return '';
+
+  let count = 0;
+  let i = text.length;
+  while (i > 0 && count < targetWords) {
+    i--;
+    if (!/\s/.test(text[i])) count++;
+  }
+  // Code-unit walk can stop between an astral pair's halves; move the cut to
+  // the pair start (one extra overlap char beats a lone surrogate).
+  const trailing = text.slice(safeSplitIndex(text, i));
+
+  const sentenceEnd = CJK_SENTENCE_END.exec(trailing);
+  if (sentenceEnd && sentenceEnd.index < trailing.length / 2) {
+    const afterSentence = trailing.slice(sentenceEnd.index + sentenceEnd[0].length);
+    if (afterSentence.trim().length > 0) return afterSentence;
+  }
+
+  return trailing;
+}
+
+/**
+ * Word count, CJK-aware (v0.32.7). For Latin-dominant text this behaves
+ * exactly like the historical `text.match(/\S+/g).length`. When CJK char
+ * density exceeds CJK_DENSITY_THRESHOLD (30%), each non-whitespace char is
+ * counted as one "word" so the chunker actually splits CJK paragraphs
+ * (whitespace-tokenization counts a whole Chinese paragraph as 1 word,
+ * letting it overflow the OpenAI embedding token limit).
+ *
+ * Delegated to src/core/cjk.ts so the slugify whitelist, expansion
+ * detection, and PGLite keyword fallback all agree on what "CJK enough"
+ * means.
+ */
+function countWords(text: string): number {
+  return countCJKAwareWords(text);
+}

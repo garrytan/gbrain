@@ -40,7 +40,7 @@ const PACK = { '--pack': null } as const;
 
 export const STRICT_SUBCOMMANDS: Readonly<Record<string, StrictSpec>> = {
   'pages purge-deleted': {
-    flags: ['--dry-run', '--json', '--yes'],
+    flags: ['--dry-run', '--json', '--yes', '--retry-parked'],
     values: { '--older-than': { re: OLDER_THAN_RE, shape: 'hours (72 or 72h) or days (3d)' } },
     maxPositionals: 0,
     fix: { argv: ['pages', 'purge-deleted', '--dry-run', '--json'], why: 'Lists the soft-deleted pages a brain-wide purge would remove; changes nothing.' },
@@ -79,6 +79,28 @@ export const STRICT_SUBCOMMANDS: Readonly<Record<string, StrictSpec>> = {
     maxPositionals: 0,
     when: args => args.includes('--reset') || args.includes('--mode') || args.includes('--source'),
     fix: { argv: ['search', 'modes'], why: 'Shows every search.* override and its value; changes nothing.' },
+  },
+};
+
+/**
+ * Strict subcommands of self-help commands that print their own per-subcommand
+ * help (not routers: `gbrain skillpack reference --help` is the reference
+ * command's usage, not an inventory usage). cli.ts applies them exactly like
+ * STRICT_SUBCOMMANDS, after help is resolved and before dispatch; the command
+ * re-checks on its own entry so an in-process caller gets the same refusal.
+ *
+ * `skillpack reference` (#5491): `--apply-clean-hunks` overwrites local skill
+ * edits and `--dry-run` is the only no-write boundary, so a `--dry-run=true`,
+ * a typo or an unknown flag the handler would ignore refuses instead of
+ * running the real apply. The harness lane (`--harness`) has its own parser.
+ */
+export const STRICT_SELF_HELP_SUBCOMMANDS: Readonly<Record<string, StrictSpec>> = {
+  'skillpack reference': {
+    flags: ['--all', '--apply-clean-hunks', '--dry-run', '--json'],
+    values: { '--workspace': null, '--since': null },
+    maxPositionals: 1,
+    when: args => !args.some(a => a === '--harness' || a.startsWith('--harness=')),
+    fix: { argv: ['skillpack', 'reference', '--all'], why: 'Lists every bundled skill\'s drift against the workspace copy; changes nothing.' },
   },
 };
 
@@ -121,7 +143,7 @@ export function strictArgsProblem(spec: StrictSpec, args: readonly string[]): St
 /** The `invalid_params` refusal for `gbrain <command> <sub> ...rest`, or null when the subcommand is not strict or the arguments parse. */
 export function strictArgsRefusal(command: string, subArgs: readonly string[]): OperationError | null {
   const key = `${command} ${subArgs[0] ?? ''}`;
-  const spec = STRICT_SUBCOMMANDS[key];
+  const spec = STRICT_SUBCOMMANDS[key] ?? STRICT_SELF_HELP_SUBCOMMANDS[key];
   if (!spec) return null;
   const rest = subArgs.slice(1);
   if (spec.when && !spec.when(rest)) return null;

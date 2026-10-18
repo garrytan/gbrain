@@ -87,6 +87,12 @@ export interface FileDiagnostics {
    * ingest reports it as drift and holds the watermark.
    */
   userTurnsMissing?: boolean;
+  /**
+   * #6741: a Codex sub-agent rollout with assistant turns and no user turn. Its
+   * task arrives as injected context by design, so it is understood, not drift,
+   * and does not hold the watermark.
+   */
+  subagentRollout?: boolean;
 }
 
 export interface ParseSessionsOpts {

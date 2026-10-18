@@ -21,11 +21,12 @@ import type { WriteRequest } from './model.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import type { SyncIntent } from './sync-prepare.ts';
 import type { SyncAuthority } from './sync-authority.ts';
+import { assertDrainLease } from './sync-lease.ts';
 
 /** What sets a drain's lane ceiling: lanes off, the configured maximum, or the connection pool. */
 export type LanesCap = 'disabled' | 'maximum' | 'pool';
 export interface BulkSettings { enabled: boolean; reason: string | null; size: number; maxTxnMs: number;
-  /** Whether `sync.bulk_max_txn_ms` (or its env) was set; an explicit budget only ever lowers the group budget. */
+  /** Whether `GBRAIN_SYNC_BULK_MAX_TXN_MS` was set; an explicit budget only ever lowers the group budget. */
   maxTxnExplicit?: boolean;
   /** #5984 lanes: groups published at once (1 = one at a time), and why it is lower than asked when it is. */
   lanes?: number; lanesMax?: number; lanesReason?: string | null; lanesCap?: LanesCap;
@@ -42,8 +43,9 @@ async function resolveGrouping(engine: BrainEngine, noBulk: boolean | undefined)
   const env = process.env.GBRAIN_SYNC_BULK;
   const configured = await engine.getConfig('sync.bulk').catch(() => null);
   const size = await whole(engine, 'GBRAIN_SYNC_BULK_SIZE', 'sync.bulk_size', 16, 1, 64);
-  const maxTxnMs = await whole(engine, 'GBRAIN_SYNC_BULK_MAX_TXN_MS', 'sync.bulk_max_txn_ms', 15_000, 100, 300_000);
-  const maxTxnExplicit = !!process.env.GBRAIN_SYNC_BULK_MAX_TXN_MS || await engine.getConfig('sync.bulk_max_txn_ms').then(v => v != null).catch(() => false);
+  // #6712 PR 2: `sync.bulk_max_txn_ms` retired; only its environment variable tunes the budget (RETIRED_SYNC_KEYS).
+  const maxTxnMs = envWhole('GBRAIN_SYNC_BULK_MAX_TXN_MS', 15_000, 100, 300_000);
+  const maxTxnExplicit = !!process.env.GBRAIN_SYNC_BULK_MAX_TXN_MS?.trim();
   const reason = noBulk ? 'disabled by --no-bulk' : env === '0' || env === 'false' ? 'disabled by GBRAIN_SYNC_BULK=0'
     : env === undefined || env === '' ? (configured === 'false' || configured === '0' ? 'disabled by config sync.bulk=false' : null) : null;
   if (reason) return { enabled: false, reason, size, maxTxnMs, maxTxnExplicit };
@@ -70,6 +72,14 @@ async function resolveLanes(engine: BrainEngine, bulk: BulkSettings, flag: numbe
   if (capacity >= asked) return { lanes: asked, lanesMax: asked, lanesReason: null, lanesCap: 'maximum' };
   return { lanes: Math.max(1, capacity), lanesMax: asked, lanesReason: `the connection pool holds ${capacity + 3} long transactions; set GBRAIN_POOL_SIZE=${asked + 4} for ${asked} lanes`, lanesCap: 'pool' };
 }
+function envWhole(env: string, fallback: number, min: number, max: number): number {
+  const value = process.env[env]?.trim();
+  if (!value) return fallback;
+  const raw = Number(value);
+  if (!Number.isFinite(raw) || raw < min || raw > max) throw new OperationError('invalid_params', `${env} must be a whole number from ${min} to ${max}; got ${value}.`,
+    `Unset ${env} (default ${fallback}) or set it within range, then retry.`);
+  return Math.floor(raw);
+}
 async function whole(engine: BrainEngine, env: string, key: string, fallback: number, min: number, max: number): Promise<number> {
   const raw = process.env[env] ? Number(process.env[env]) : await engine.getConfig(key).then(v => v == null ? undefined : Number(v)).catch(() => undefined);
   if (raw === undefined) return fallback;
@@ -78,9 +88,9 @@ async function whole(engine: BrainEngine, env: string, key: string, fallback: nu
   return Math.floor(raw);
 }
 
-/** Entries a group may carry: plain page imports and deletes; renames, company plans and the checkpoint stay single. */
+/** Entries a group may carry: plain page imports and deletes; renames, company plans, streamed pages (Wave B) and the checkpoint stay single. */
 export function groupableIntent(intent: SyncIntent): boolean {
-  return (intent.kind === 'managed_sync_import' || intent.kind === 'managed_sync_delete') && !intent.renameFrom && !intent.companyApproval;
+  return (intent.kind === 'managed_sync_import' || intent.kind === 'managed_sync_delete') && !intent.renameFrom && !intent.companyApproval && !intent.body_ref;
 }
 
 /** Apply budgets for a lane group: normally, and while a foreground write on the worktree is queued or just committed. */
@@ -90,8 +100,8 @@ export const FOREGROUND_GROUP_BUDGET_MS = 2_000;
  * Adaptive group size: as many members as fit the time budget at the last observed time per member, within
  * the configured maximum. The budget is, in order: the first group of a drain is small (2 pages) so its first
  * commit lands early; with lanes a group gets `LANE_GROUP_BUDGET_MS` of apply time (`FOREGROUND_GROUP_BUDGET_MS`
- * while a foreground write is queued or just committed), without lanes `sync.bulk_max_txn_ms`; an explicit
- * `sync.bulk_max_txn_ms` only ever lowers it. With lanes the time per member is the lanes' measured apply time
+ * while a foreground write is queued or just committed), without lanes `GBRAIN_SYNC_BULK_MAX_TXN_MS`; an explicit
+ * `GBRAIN_SYNC_BULK_MAX_TXN_MS` only ever lowers it. With lanes the time per member is the lanes' measured apply time
  * (transaction begin to the commit-turn wait), which does not grow with how long a group waited in the window;
  * without a measurement a group takes the configured size. Foreground writes queued behind a group wait at
  * most about this budget (ENG-A5).
@@ -105,14 +115,23 @@ export function nextGroupSize(settings: BulkSettings, perMemberMs: number | null
   return Math.max(1, Math.min(settings.size, Math.floor(budget / perMemberMs)));
 }
 
+/** #6712: the page keys a sync member occupies (its slug, and its page id when it has one); two members sharing one depend on each other. */
+export function dependencyKeys(member: Pick<WaiverEntry, 'slug' | 'pageId'>): string[] {
+  return [`slug:${member.slug}`, ...(member.pageId !== null ? [`page:${member.pageId}`] : [])];
+}
+
 /**
  * Followers for a group: frozen in manifest order after the head, four at a
  * time, stopping at the first entry that is not groupable, was overtaken by
  * another cursor, would be waived (the waiver handles it as a head) or is held (#5988).
+ * #6712 dependency edges: also at the first entry that shares a slug or page id with a member still in flight or held by
+ * the run (`taken`: the head, the groups admitted ahead, the run's held entries, and the followers frozen so far), so a
+ * delete and an import of one slug are never co-scheduled and the later one is frozen only after the earlier one settled.
  */
 export async function freezeFollowers<P extends WaiverEntry & { rebound?: true }>(engine: BrainEngine, cursor: WaiverCursor & { entries: unknown[] }, config: GBrainConfig,
-  count: number, freezeAt: (index: number) => Promise<P | null>): Promise<P[]> {
+  count: number, freezeAt: (index: number) => Promise<P | null>, taken: Iterable<string> = []): Promise<P[]> {
   const followers: P[] = [];
+  const occupied = new Set(taken);
   for (let next = cursor.index + 1; followers.length < count && next < cursor.entries.length;) {
     const batch = Array.from({ length: Math.min(4, count - followers.length, cursor.entries.length - next) }, (_, i) => next + i);
     const frozen = await Promise.all(batch.map(async index => {
@@ -120,7 +139,8 @@ export async function freezeFollowers<P extends WaiverEntry & { rebound?: true }
       return !entry || entry.rebound || !groupableIntent(entry.intent) || await wouldWaiveEntry(engine, { ...cursor, index }, entry, config) ? null : entry;
     }));
     for (const entry of frozen) {
-      if (!entry) return followers;
+      if (!entry || dependencyKeys(entry).some(key => occupied.has(key))) return followers;
+      for (const key of dependencyKeys(entry)) occupied.add(key);
       followers.push(entry);
     }
     next += batch.length;
@@ -143,7 +163,8 @@ export async function admitGroup(engine: BrainEngine, members: WaiverEntry[], cu
         principal: cursor.authority.writer.principal, authority: cursor.authority.writer, callerIntent: member.intent, intent: member.intent }))),
     ]) as [unknown, WriteRequest[]];
     if (!await cursorHolds(tx)) throw new GroupMoved();
+    await assertDrainLease(tx, cursor.sourceId);
     return rows;
-  })).catch(error => { if (error instanceof GroupMoved) return null; throw error; });
+  }), undefined, error => engine.reconnect({ error })).catch(error => { if (error instanceof GroupMoved) return null; throw error; });
 }
 class GroupMoved extends Error {}

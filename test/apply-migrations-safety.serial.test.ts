@@ -242,3 +242,175 @@ await runApplyMigrations(process.argv.slice(2));
     });
   }
 });
+
+/**
+ * #6755: Phase F on a Postgres brain with no sync.repo_path. The child scripts
+ * stub the schema step, the orchestration lock and the engine (sync.repo_path
+ * and the default source's local_path are the fixture's), and a PATH shim
+ * stands in for the gbrain child, logging every invocation.
+ */
+describe('v0.11.0 Phase F without a repo path (#6755)', () => {
+  // What the old Phase F's refusal left in the ledger, reproduced on cadaf5cd7 with a PATH shim that prints the refusal
+  // and exits 1: execSync's message only; the child's stderr ("No repo path. ...") went to the terminal, not the ledger.
+  const OLD_REFUSAL = 'Command failed: gbrain autopilot --install --yes';
+  const phaseRows = (installDetail: string) => [
+    { name: 'schema', status: 'complete' }, { name: 'smoke', status: 'complete' }, { name: 'mode', status: 'complete' },
+    { name: 'prefs', status: 'complete' }, { name: 'host', status: 'complete' },
+    { name: 'install', status: 'failed', detail: installDetail }, { name: 'record', status: 'complete' },
+  ];
+
+  async function postgresBrain(brain: { syncRepoPath?: string; defaultSourcePath?: string; autopilotExit?: number }, run: (h: {
+    home: string; ledger: string; calls: () => string; apply: (args: string[]) => { exitCode: number | null; stdout: string; stderr: string };
+    script: (body: string) => { exitCode: number | null; stdout: string; stderr: string };
+  }) => Promise<void>): Promise<void> {
+    await fixture(async (home, ledger) => {
+      writeFileSync(join(home, '.gbrain/config.json'), JSON.stringify({ engine: 'postgres', database_url: 'postgresql://fixture:fixture@127.0.0.1:1/gbrain_test' }));
+      const bin = join(home, 'bin');
+      mkdirSync(bin);
+      const callsPath = join(home, 'calls.log');
+      writeFileSync(callsPath, '');
+      writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${callsPath}'\nif [ "$1" = autopilot ]; then exit ${brain.autopilotExit ?? 0}; fi\nexit 0\n`, { mode: 0o755 });
+      const env: Record<string, string> = { HOME: home, GBRAIN_HOME: home, PATH: `${bin}:${process.env.PATH ?? ''}` };
+      const setup = `
+import { mock } from 'bun:test';
+import { LATEST_VERSION } from ${JSON.stringify(join(root, 'src/core/migrate.ts'))};
+const migrationSetup = await import(${JSON.stringify(join(root, 'src/commands/migrations/in-process.ts'))});
+mock.module(${JSON.stringify(join(root, 'src/commands/migrations/in-process.ts'))}, () => ({
+  ...migrationSetup, runMigrateOnlyCore: async () => ({ engine: 'postgres' }),
+}));
+mock.module(${JSON.stringify(join(root, 'src/core/migration-orchestration-lock.ts'))}, () => ({
+  acquireMigrationOrchestrationLock: async () => ({ assertHeld: async () => {}, release: async () => {} }),
+  MIGRATIONS_RUNNING_EXIT_CODE: 75,
+  MigrationsRunningError: class extends Error {},
+  MigrationLeaseLostError: class extends Error {},
+}));
+const brain = ${JSON.stringify(brain)};
+const factory = await import(${JSON.stringify(join(root, 'src/core/engine-factory.ts'))});
+mock.module(${JSON.stringify(join(root, 'src/core/engine-factory.ts'))}, () => ({
+  ...factory,
+  createEngine: async () => ({
+    kind: 'postgres', connect: async () => {}, disconnect: async () => {},
+    getConfig: async (key) => key === 'version' ? String(LATEST_VERSION) : key === 'sync.repo_path' ? (brain.syncRepoPath ?? null) : null,
+    executeRaw: async (sql) => /FROM sources WHERE id = 'default'/.test(sql) ? [{ local_path: brain.defaultSourcePath ?? null }] : [],
+  }),
+}));
+`;
+      const script = (body: string, args: string[] = []) => {
+        const file = join(home, `script-${Math.random().toString(36).slice(2)}.ts`);
+        writeFileSync(file, setup + body);
+        const child = Bun.spawnSync([process.execPath, '--no-env-file', file, ...args], { cwd: home, env, stdout: 'pipe', stderr: 'pipe', timeout: 30_000 });
+        return { exitCode: child.exitCode, stdout: child.stdout.toString(), stderr: child.stderr.toString() };
+      };
+      const apply = (args: string[]) => script(`
+const { runApplyMigrations } = await import(${JSON.stringify(join(root, 'src/commands/apply-migrations.ts'))});
+await runApplyMigrations(process.argv.slice(2));
+`, args);
+      await run({ home, ledger, calls: () => readFileSync(callsPath, 'utf8'), apply, script });
+    });
+  }
+
+  const doctorLine = (script: (body: string) => { stdout: string; stderr: string }) => {
+    const out = script(`
+const { autopilotInstallPendingCheck } = await import(${JSON.stringify(join(root, 'src/commands/doctor/checks/autopilot-install-pending.ts'))});
+console.log('CHECK=' + JSON.stringify(autopilotInstallPendingCheck()));
+`);
+    const line = out.stdout.split('\n').find(l => l.startsWith('CHECK='));
+    expect(line, out.stderr).toBeDefined();
+    return JSON.parse(line!.slice(6));
+  };
+
+  const pendingInstallItems = (home: string) => {
+    const path = join(home, '.gbrain/migrations/pending-host-work.jsonl');
+    if (!existsSync(path)) return [];
+    return readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).map(row => JSON.parse(row))
+      .filter((row: { type: string }) => row.type === 'autopilot-install-needs-repo');
+  };
+
+  test('neither sync.repo_path nor a default-source path: an auto-update skips Phase F, completes, and leaves a host-work item plus a doctor line', async () => {
+    await postgresBrain({}, async ({ home, ledger, calls, apply, script }) => {
+      const run = apply(['--yes', '--non-interactive', '--migration', '0.11.0']);
+      expect(run.exitCode, run.stderr).toBe(0);
+      expect(calls()).not.toContain('autopilot');
+      const record = entries(ledger).at(-1)!;
+      expect(record).toMatchObject({ version: '0.11.0', status: 'complete', autopilot_installed: false });
+      const install = record.phases!.find(phase => phase.name === 'install')!;
+      expect(install).toMatchObject({ status: 'skipped', reason: 'no_repo_path' });
+      expect(install.detail).toContain('gbrain autopilot --install --yes --repo <REPO_PATH>');
+      const items = pendingInstallItems(home);
+      expect(items).toHaveLength(1);
+      expect(items[0]).toMatchObject({ status: 'pending', install_argv: ['gbrain', 'autopilot', '--install', '--yes', '--repo', '<REPO_PATH>'] });
+      const check = doctorLine(script);
+      expect(check).toMatchObject({ name: 'minions_migration', status: 'warn',
+        fix: { argv: ['gbrain', 'autopilot', '--install', '--yes', '--repo', '<REPO_PATH>'], consent: ['persistent_install'], actor: 'agent' } });
+      expect(check.fix.inputs[0].name).toBe('REPO_PATH');
+      expect(apply(['--yes', '--non-interactive', '--migration', '0.11.0']).exitCode).toBe(0);
+      expect(pendingInstallItems(home)).toHaveLength(1);
+    });
+  }, 60_000);
+
+  test('only a default-source path: Phase F still skips, prints the install command with that path, and installs nothing', async () => {
+    const repo = '/srv/brain repo';
+    await postgresBrain({ defaultSourcePath: repo }, async ({ home, ledger, calls, apply, script }) => {
+      const run = apply(['--yes', '--migration', '0.11.0']);
+      expect(run.exitCode, run.stderr).toBe(0);
+      expect(calls()).not.toContain('autopilot');
+      const record = entries(ledger).at(-1)!;
+      expect(record.status).toBe('complete');
+      expect(record.phases!.find(phase => phase.name === 'install')).toMatchObject({ status: 'skipped' });
+      expect(run.stdout).toContain("gbrain autopilot --install --yes --repo '/srv/brain repo'");
+      expect(pendingInstallItems(home)[0].install_argv).toEqual(['gbrain', 'autopilot', '--install', '--yes', '--repo', repo]);
+      const check = doctorLine(script);
+      expect(check.fix.argv).toEqual(['gbrain', 'autopilot', '--install', '--yes', '--repo', repo]);
+      expect(check.fix.inputs).toBeUndefined();
+    });
+  }, 60_000);
+
+  test('sync.repo_path set: Phase F installs as before', async () => {
+    await postgresBrain({ syncRepoPath: '/srv/brain' }, async ({ home, ledger, calls, apply }) => {
+      const run = apply(['--yes', '--migration', '0.11.0']);
+      expect(run.exitCode, run.stderr).toBe(0);
+      expect(calls()).toContain('autopilot --install --yes');
+      expect(entries(ledger).at(-1)).toMatchObject({ status: 'complete', autopilot_installed: true });
+      expect(pendingInstallItems(home)).toHaveLength(0);
+    });
+  }, 60_000);
+
+  test('a failing install with sync.repo_path set records reason install_failed', async () => {
+    await postgresBrain({ syncRepoPath: '/srv/brain', autopilotExit: 1 }, async ({ ledger, apply }) => {
+      const run = apply(['--yes', '--migration', '0.11.0']);
+      expect(run.exitCode).toBe(1);
+      expect(entries(ledger).at(-1)!.phases).toContainEqual(expect.objectContaining({ name: 'install', status: 'failed', reason: 'install_failed' }));
+    });
+  }, 60_000);
+
+  for (const detail of [OLD_REFUSAL, 'Command failed']) test(`install-only partials (detail ${JSON.stringify(detail)}) on a brain with no sync.repo_path are cleared automatically and the migration completes`, async () => {
+    await postgresBrain({}, async ({ ledger, calls, apply }) => {
+      const partial = (n: number) => JSON.stringify({ version: '0.11.0', ts: `2026-10-0${n}T00:00:00.000Z`, status: 'partial', phases: phaseRows(detail) });
+      writeFileSync(ledger, [partial(1), partial(2), partial(3)].join('\n') + '\n');
+      const run = apply(['--yes', '--migration', '0.11.0']);
+      expect(run.exitCode, run.stderr).toBe(0);
+      expect(run.stderr).toContain('Cleared the v0.11.0 wedge');
+      expect(entries(ledger).map(row => row.status)).toEqual(['partial', 'partial', 'partial', 'retry', 'complete']);
+      expect(entries(ledger)[3]).toMatchObject({ reason: 'phase_f_no_repo_path' });
+      expect(calls()).not.toContain('autopilot');
+    });
+  }, 60_000);
+
+  for (const [label, row, brain] of [
+    ['partials that carry no phases', { status: 'partial' }, {}],
+    ['partials that also failed another phase', { status: 'partial', phases: [...phaseRows(OLD_REFUSAL).slice(0, 4), { name: 'host', status: 'failed', detail: 'boom' }, ...phaseRows(OLD_REFUSAL).slice(5)] }, {}],
+    ['install-only partials on a brain whose sync.repo_path is set', { status: 'partial', phases: phaseRows(OLD_REFUSAL) }, { syncRepoPath: '/srv/brain' }],
+  ] as const) {
+    test(`a wedge from ${label} is not cleared; the run prints the exact --force-retry command`, async () => {
+      await postgresBrain(brain, async ({ ledger, apply }) => {
+        const rows = [1, 2, 3].map(n => JSON.stringify({ version: '0.11.0', ts: `2026-10-0${n}T00:00:00.000Z`, ...row })).join('\n') + '\n';
+        writeFileSync(ledger, rows);
+        const run = apply(['--yes', '--migration', '0.11.0']);
+        expect(run.exitCode).not.toBe(0);
+        expect(run.stderr).toContain('gbrain apply-migrations --force-retry 0.11.0');
+        expect(run.stderr).not.toContain('Cleared the v0.11.0 wedge');
+        expect(readFileSync(ledger, 'utf8')).toBe(rows);
+      });
+    }, 60_000);
+  }
+});

@@ -201,6 +201,36 @@ describe('routeThinClientCommand — (a) op name + param mapping per route', () 
   });
 });
 
+describe('routeThinClientCommand — beliefs changes runs through the host delta', () => {
+  const window = { source_id: 'default', since: '2026-10-01T00:00:00.000Z', until: '2026-10-08T00:00:00.000Z', coverage_from: null, truncated: false,
+    changes: [{ kind: 'fact', slug: 'companies/acme-example', change: 'added', subject: { claim: 'Acme sells gadgets' }, before: null, after: { fact: 'Acme sells gadgets' },
+      before_known: true, cause: { event: 'fact.asserted', op: 'put_page' }, evidence: { event_id: 7, recorded_at: '2026-10-02T00:00:00.000Z', slug: 'companies/acme-example', row: 1 }, trust_tier: 'agent' }] };
+  const reply = (body: unknown) => callSpy.mockImplementationOnce(async (_cfg: GBrainConfig, tool: string, args: Record<string, unknown> = {}) => {
+    calls.push({ tool, args });
+    return { content: [{ type: 'text', text: JSON.stringify(body) }] };
+  });
+
+  test('entities and --since map onto delta {since, beliefs, entities}; the text is the host renderer', async () => {
+    reply({ pages: [], beliefs: window });
+    expect(await routeThinClientCommand(cfg, 'beliefs', ['changes', 'companies/acme-example', 'people/alice-example', '--since', '2026-10-01'])).toBe(true);
+    expect(soleCall()).toEqual({ tool: 'delta', args: { since: '2026-10-01T00:00:00.000Z', beliefs: true, entities: 'companies/acme-example,people/alice-example' } });
+    expect(logs.join('\n')).toBe(['Belief changes on default from 2026-10-01T00:00:00.000Z to 2026-10-08T00:00:00.000Z: 1',
+      '- [2026-10-02] fact on companies/acme-example: added "Acme sells gadgets" (put_page, event 7, row 1)'].join('\n'));
+  });
+
+  test('a host whose delta has no beliefs is reported, not printed as empty', async () => {
+    reply({ pages: [] });
+    const stderr: string[] = [];
+    const write = spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => { stderr.push(String(chunk)); return true; }) as never);
+    try {
+      expect(await routeThinClientCommand(cfg, 'beliefs', ['changes'])).toBe(true);
+    } finally { write.mockRestore(); }
+    expect(currentExitCode()).not.toBe(0);
+    expect(stderr.join('')).toContain('Error [unavailable]: The remote brain\'s delta does not return belief changes');
+    expect(logs).toEqual([]);
+  });
+});
+
 describe('routeThinClientCommand — (b) host-bound forms return false', () => {
   const hostBound: Array<[string, string[]]> = [
     ['search', ['modes', '--reset']],
@@ -208,6 +238,16 @@ describe('routeThinClientCommand — (b) host-bound forms return false', () => {
     ['quarantine', ['scan']],
     ['quarantine', ['clear']],
     ['takes', ['extract']],
+    ['takes', ['grades']],
+    ['beliefs', ['changes', '--source', 'notes']],
+    ['beliefs', ['status']],
+    ['takes', ['horizon', 'scan']],
+    ['takes', ['horizon', 'set', 'companies/acme-example', '--row', '1', '--date', '2025-06-30']],
+    ['takes', ['horizon', 'clear', 'companies/acme-example', '--row', '1']],
+    ['takes', ['journal']],
+    ['takes', ['journal', '--holder', 'alice-example', '--json']],
+    ['takes', ['scorecard', '--group-by', 'holder']],
+    ['takes', ['scorecard', 'alice-example', '--min-n', '5']],
   ];
 
   for (const [command, args] of hostBound) {

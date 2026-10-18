@@ -34,6 +34,7 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}): {
     for (const [pattern, rows] of Object.entries(rowsByPattern)) {
       if (sql.includes(pattern)) return rows as never;
     }
+    if (sql.includes('FROM persistence_brain')) return [{ enabled: false }] as never; // #6482: the strict mode reader needs one well-formed unmanaged row.
     return [] as never;
   };
 

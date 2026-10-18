@@ -82,6 +82,10 @@ The nightly E2E workflow's `order-hunt` job (also `gh workflow run e2e.yml -f or
 - **A failure** is rerun alone. A file that passes alone is reported as `order-dependent test` with `bash scripts/run-e2e.sh <the files before it, in order> <file>` to replay it; bisect the files before it to find the one that leaks, and fix that file's teardown. A file that also fails alone is only a warning here, since the full E2E lanes report it.
 - The job is keyless and outside `e2e-status`, so it never blocks a PR; a red order hunt turns the E2E nightly red.
 
+## Paid lanes switch
+
+The repository variable `GBRAIN_PAID_LANES=0` switches every paid lane off: Tier 2 (LLM Skills) in `e2e.yml`, the hermes door's paid leg and the OpenCode credentialed lane in `heavy-tests.yml` (#5903). Use it on a fork or during a spend freeze; unset (or any other value) keeps the lanes on. Each lane writes a visible "paid lanes disabled" step summary, and `e2e-status` accepts Tier 2 as `skipped` only under that exact value, saying so in its own summary; any other skip, failure or cancellation still fails the aggregate (`test/paid-lanes-switch-5903.test.ts` runs the aggregate script with every combination). A run with the variable set is not green coverage of the paid lanes.
+
 ## CI failure manifest
 
 The `executed-receipts` job of test.yml and e2e.yml runs `scripts/ci-manifest.ts`

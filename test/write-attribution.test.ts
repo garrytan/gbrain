@@ -198,6 +198,8 @@ describe('write attribution on a managed brain', () => {
     await withFixedEmbeddings(async () => {
       for (const engine of engines) {
         const brain = await managedBrain(engine, { embedding: true });
+        // Calibrate the fixed test embedder: an uncalibrated model never supersedes by cosine (supersession-threshold.ts).
+        await brain.engine.setConfig('facts.supersession_thresholds', JSON.stringify({ 'openai:text-embedding-3-small@1536': 0.95 }));
         await run(brain.local, 'put_page', { slug: 'people/alice-example', content: page('Alice', 'Profile') });
         await run(brain.local, 'put_page', { slug: 'people/charlie-example', content: page('Charlie', 'Profile') });
         const byOauth = await submitRememberMutation(brain.oauth, { fact: 'Prefers written updates', provenance: 'test', entity: 'people/alice-example', request_id: randomUUID() }, 30_000);

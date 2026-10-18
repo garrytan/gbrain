@@ -268,7 +268,8 @@ export interface DelegationRef {
  *   1. `> **Convention:** ... \`skills/<path>\` ...`
  *   2. `> **Filing rule:** ... \`skills/<path>\` ...`
  *   3. Inline backtick `\`skills/conventions/*.md\`` or
- *      `\`skills/_brain-filing-rules.md\``
+ *      `\`skills/_brain-filing-rules.md\``, optionally followed by a
+ *      `#anchor` (`\`skills/conventions/quality.md#citations\``)
  *
  * Paths are normalized by stripping the leading `skills/` so they match the
  * `conventions` field of CROSS_CUTTING_PATTERNS.
@@ -277,8 +278,9 @@ export function extractDelegationTargets(content: string): DelegationRef[] {
   const refs: DelegationRef[] = [];
   const lines = content.split('\n');
   // Match backtick-wrapped skills/ paths that point at a known delegation
-  // target. Scoped to conventions/ subtree and _brain-filing-rules.md.
-  const pathRe = /`skills\/((?:conventions\/[^`]+\.md)|(?:_brain-filing-rules\.md))`/g;
+  // target. Scoped to conventions/ subtree and _brain-filing-rules.md. An
+  // anchor after `.md` is dropped so the path matches `conventions`.
+  const pathRe = /`skills\/((?:conventions\/[^`#]+\.md)|(?:_brain-filing-rules\.md))(?:#[^`\s]*)?`/g;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     pathRe.lastIndex = 0;

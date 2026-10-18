@@ -321,6 +321,7 @@ NAPI_MODULE_INIT() {
     {"close", NULL, close_lock, NULL, NULL, NULL, napi_default, state},
     {"beginExport", NULL, begin_export, NULL, NULL, NULL, napi_default, publisher},
     {"publishExportFile", NULL, publish_export_file, NULL, NULL, NULL, napi_default, publisher},
+    {"publishExportFileFrom", NULL, publish_export_file_from, NULL, NULL, NULL, napi_default, publisher},
     {"completeExport", NULL, complete_export, NULL, NULL, NULL, napi_default, publisher},
     {"closeExport", NULL, close_export, NULL, NULL, NULL, napi_default, publisher},
 #ifdef _WIN32

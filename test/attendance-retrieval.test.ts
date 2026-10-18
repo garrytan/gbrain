@@ -18,6 +18,7 @@ import { loadActivePackForLocalEngine } from '../src/core/schema-pack/best-effor
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { cpuMs } from './helpers/cpu-time.ts';
 
 const sourceId = 'attendance-fixture';
 const person = 'people/alice-example';
@@ -893,10 +894,11 @@ for (const kind of testBackends()) {
 describe('shared and filesystem canonical attendance grammar', () => {
   test('large malformed lists are bounded and never accept a valid prefix', async () => {
     const { attendanceEvidenceRanges } = await import('../src/core/link-extraction.ts');
-    const started = performance.now();
-    expect(attendanceEvidenceRanges(`${positive} ${'['.repeat(65_536)}`)).toEqual([]);
-    expect(attendanceEvidenceRanges('Attendees: [nested[Alice](../people/alice-example.md)]')).toEqual([]);
-    expect(performance.now() - started).toBeLessThan(500);
+    const elapsed = cpuMs(() => {
+      expect(attendanceEvidenceRanges(`${positive} ${'['.repeat(65_536)}`)).toEqual([]);
+      expect(attendanceEvidenceRanges('Attendees: [nested[Alice](../people/alice-example.md)]')).toEqual([]);
+    });
+    expect(elapsed).toBeLessThan(500);
   });
   const types = new Map([[person, 'person'], ['people/company-example', 'company'], [meeting, 'meeting']]);
   const resolver = { async resolve(value: string) { return types.has(value) ? value : null; } };

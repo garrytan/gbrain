@@ -9,7 +9,8 @@
  * production action reducer, family-level Wilson bound, stores
  * action_precision_lb and per-slice results bound to the policy fingerprint.
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, constants, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { BrainEngine } from '../../core/engine.ts';
 import { meanItemSd, qualifyActions, reliability, requiredN, searchThreshold, type CalibrationTarget, type HarmfulAction, type LabelledValue } from '../../core/ai/decide/calibrate.ts';
 import { datasetAdapter, datasetBuilder, datasetHash, datasetSources, families, idsHash, itemForCallSite, parseDatasetJsonl, splitHash, toJsonl, type DatasetItem } from '../../core/ai/decide/dataset.ts';
@@ -18,6 +19,7 @@ import { runDecideUnpacked } from '../../core/ai/decide/unpacked.ts';
 import { estimateContextTokens, planBatches } from '../../core/ai/decide/pack.ts';
 import { lookupModel, marginFor, policyFingerprint } from '../../core/ai/decide/policy.ts';
 import { refusalLine } from '../../core/ai/decide/outcomes.ts';
+import { REFERENCE_CALIBRATIONS } from '../../core/ai/decide/reference-calibrations.ts';
 import { toWireQuestion } from '../../core/ai/decide/providers/typesafe.ts';
 import { SLOT_SPECS } from '../../core/ai/decide/slots.ts';
 import { getCalibration, insertCalibration, listCalibrations, setCalibrationRetired, storeQualification } from '../../core/ai/decide/store.ts';
@@ -171,9 +173,12 @@ async function cmdQualify(engine: BrainEngine, args: string[]): Promise<number> 
   const json = args.includes('--json');
   const slot = slotArg(args);
   const path = flagValue(args, '--dataset');
-  if (!slot || !path) { console.error('Usage: gbrain decide qualify --slot <slot> --dataset <jsonl> [--call-site <site>]'); return 1; }
+  const itemsOut = flagValue(args, '--items-out');
+  if (!slot || !path) { console.error('Usage: gbrain decide qualify --slot <slot> --dataset <jsonl> [--call-site <site>] [--items-out <path>]'); return 1; }
   const adapter = datasetAdapter(slot);
   if (!adapter?.harmfulActions) { console.error(refusalLine('slot_unavailable', slot)); return 1; }
+  const unwritable = itemsOut ? itemsOutProblem(itemsOut) : null;
+  if (unwritable) { console.error(`qualify: --items-out ${itemsOut} is not writable (${unwritable}); nothing was sent`); return 1; }
   const text = readFileSync(path, 'utf8');
   const callSite = flagValue(args, '--call-site') ?? adapter.callSite;
   const all = parseDatasetJsonl(text).filter((i) => i.slot === slot && itemForCallSite(i, callSite));
@@ -193,12 +198,24 @@ async function cmdQualify(engine: BrainEngine, args: string[]): Promise<number> 
     const fams = [...families(evalItems).values()];
     const answered = await askFamilies(engine, slot, provider, fams, cfg);
     if (answered.model !== cal.model_resolved) { console.error(refusalLine('model_drift', slot)); return 1; }
-    const actions: HarmfulAction[] = fams.flatMap((fam) => adapter.harmfulActions!(fam, answered.values, policy).map((a) => ({ family: a.item.family, correct: a.correct, slice: a.item.slice })));
+    const judged = fams.flatMap((fam) => adapter.harmfulActions!(fam, answered.values, policy));
+    const actions: HarmfulAction[] = judged.map((a) => ({ family: a.item.family, correct: a.correct, slice: a.item.slice }));
     const minPrecision = state.cfg.slots[slot].minActionPrecision;
     const q = qualifyActions(actions, minPrecision);
     const fingerprint = policyFingerprint({ slot, callSite, threshold: policy.threshold, marginFloor: state.cfg.marginFloor, minKeep, packShape: cal.pack_shape, suppressBelow });
     await storeQualification(engine, cal.id, { action_precision_lb: q.action_precision_lb, qualification: JSON.stringify({ ...q, min_action_precision: minPrecision }), policy_fingerprint: fingerprint });
     resetDecideSearchCache();
+    if (itemsOut) {
+      const header = { calibration: `local:${cal.id}`, slot, call_site: callSite, provider, model_resolved: answered.model, split_hash: cal.split_hash, policy_fingerprint: fingerprint, min_action_precision: minPrecision, status: q.status };
+      const items = judged.map((a) => ({ id: a.item.id, family: a.item.family, split: a.item.split, slice: a.item.slice ?? null, protected: a.item.protected === true, value: answered.values[a.item.id] ?? null, correct: a.correct }));
+      try {
+        writeFileSync(itemsOut, JSON.stringify({ header, items }, null, 2) + '\n', { mode: 0o600 });
+        chmodSync(itemsOut, 0o600);
+      } catch (err) {
+        console.error(`qualify: the qualification is stored, but writing --items-out ${itemsOut} failed (${err instanceof Error ? err.message : err})`);
+        return 1;
+      }
+    }
     const out = { calibration: `local:${cal.id}`, ...q, min_action_precision: minPrecision, policy_fingerprint: fingerprint, next: q.status === 'qualified' ? `gbrain decide enable ${slot}` : null };
     if (json) { console.log(JSON.stringify(out, null, 2)); return q.status === 'qualified' ? 0 : 1; }
     console.log(`Qualification of local:${cal.id} (${slot}, ${callSite}): ${q.correct_families}/${q.families} families correct over ${q.actions} harmful actions; action_precision_lb ${q.action_precision_lb === null ? 'n/a' : q.action_precision_lb.toFixed(3)} (gate ${minPrecision})`);
@@ -210,6 +227,17 @@ async function cmdQualify(engine: BrainEngine, args: string[]): Promise<number> 
   } catch (err) {
     console.error(`qualify failed: ${refusalLine(err instanceof DecideError ? err.reason : 'provider_error')}`);
     return 1;
+  }
+}
+
+/** Why `--items-out <path>` cannot be written, checked before any provider call; null when it can. */
+function itemsOutProblem(path: string): string | null {
+  try {
+    if (statSync(path, { throwIfNoEntry: false })?.isDirectory()) return 'it is a directory';
+    accessSync(statSync(path, { throwIfNoEntry: false }) ? path : dirname(path), constants.W_OK);
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
   }
 }
 
@@ -225,8 +253,17 @@ async function cmdCalibrations(engine: BrainEngine, args: string[]): Promise<num
     }
     return 0;
   }
-  const id = Number(String(args[1] ?? '').replace(/^local:/, ''));
-  if (!Number.isInteger(id) || id <= 0) { console.error(`Usage: gbrain decide calibrations ${action} <id>`); return 1; }
+  const raw = String(args[1] ?? '');
+  if (action === 'adopt' && raw.startsWith('ref:')) {
+    const ref = REFERENCE_CALIBRATIONS.find((r) => `ref:${r.id}` === raw);
+    if (!ref) { console.error(`reference calibration ${raw} not found in this build (gbrain decide calibrations list shows local ones; shipped references appear in gbrain decide status)`); return 1; }
+    await engine.setConfig(`decide.slots.${ref.slot}.calibration`, raw);
+    resetDecideSearchCache();
+    console.log(`${ref.slot} (${ref.call_site}) now uses ${raw} (threshold ${ref.threshold.toFixed(3)} for ${ref.model_resolved}).`);
+    return 0;
+  }
+  const id = Number(raw.replace(/^local:/, ''));
+  if (!Number.isInteger(id) || id <= 0) { console.error(`Usage: gbrain decide calibrations ${action} <id>  (adopt also takes ref:<id>)`); return 1; }
   const row = await getCalibration(engine, id);
   if (!row) { console.error(`calibration local:${id} not found`); return 1; }
   if (action === 'adopt') {

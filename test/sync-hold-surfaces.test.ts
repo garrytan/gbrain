@@ -50,6 +50,7 @@ import { operations, type OperationContext } from '../src/core/operations.ts';
 import { cliRenderContext, renderAction, type Action } from '../src/core/agent-output.ts';
 import { fenceMessage } from '../src/core/fence-repair/reasons.ts';
 import { RECOVERY_VERSION } from '../src/core/markdown.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 type HoldInput = Omit<GitHoldRecord, 'version' | 'held_at' | 'updated_at'>;
 
@@ -124,18 +125,17 @@ describe('sources status and retry-held on Git sources', () => {
     expect(text).not.toContain('other-git');
   });
 
-  test('sources status lists at most sync.hold_cap holds per source, limited in SQL, with the outstanding count from the summary row', async () => {
+  test('sources status lists at most GBRAIN_SYNC_HOLD_CAP holds per source, limited in SQL, with the outstanding count from the summary row', async () => {
     const listing = await readGitHoldListing(engine, ['notes-git', 'other-git', 'default'], 1);
     expect(listing.map(source => [source.sourceId, source.count, source.holds.map(record => record.path)])).toEqual([
       ['notes-git', 2, ['notes/huge.md']], ['other-git', 1, ['other/a.md']]]);
-    await engine.setConfig('sync.hold_cap', '1');
-    try {
+    await withEnv({ GBRAIN_SYNC_HOLD_CAP: '1' }, async () => {
       const doc = JSON.parse(await captured(() => runSources(engine, ['status', 'notes-git', '--json'])));
       expect(doc.sources[0].git_holds).toMatchObject({ count: 2, truncated: true });
       expect(doc.sources[0].git_holds.items.map((item: { path: string }) => item.path)).toEqual(['notes/huge.md']);
       const text = await captured(() => runSources(engine, ['status', 'notes-git']));
       expect(text).toContain('notes-git: 2 held file(s)');
-    } finally { await engine.unsetConfig('sync.hold_cap'); }
+    });
   });
 
   test('sources status <unknown id> refuses with not_found and the list command', async () => {
@@ -346,10 +346,11 @@ describe('#6188 fence holds on every DB-backed surface: the router and the fix b
   afterAll(async () => { await engine.disconnect(); rmSync(home, { recursive: true, force: true }); }, 60_000);
 
   const expectRoute = (text: string, kind: 'fences' | 'frontmatter' | 'mixed', sourceId: string) => {
-    if (kind !== 'frontmatter') expect(text).toContain(`gbrain repair fences --source ${sourceId}`);
+    // #6377: the source-level route for fence (and slug-conflict) holds is the content lane; a fence hold's own fix still names `repair fences --only`.
+    if (kind !== 'frontmatter') expect(text).toContain(`gbrain repair content --source ${sourceId}`);
     if (kind !== 'fences') expect(text).toContain(`gbrain repair frontmatter --source ${sourceId}`);
     if (kind === 'fences') expect(text).not.toContain('repair frontmatter');
-    if (kind === 'frontmatter') expect(text).not.toContain('repair fences');
+    if (kind === 'frontmatter') expect(text).not.toContain('repair content');
     for (const secret of SECRETS) expect(text).not.toContain(secret);
   };
   const SOURCES = [['fences-only', 'fences'], ['frontmatter-only', 'frontmatter'], ['mixed-holds', 'mixed']] as const;
@@ -367,7 +368,7 @@ describe('#6188 fence holds on every DB-backed surface: the router and the fix b
       expectRoute((await retryHeld(engine, sourceId, { dryRun: false })).next_action, kind, sourceId);
       const doctor = await gitHeldFilesCheck(engine, [sourceId]);
       expectRoute(doctor.message, kind, sourceId);
-      expect(doctor.fix!.argv).toEqual(kind === 'fences' ? ['gbrain', 'repair', 'fences', '--source', sourceId] : ['gbrain', 'repair', 'frontmatter', '--source', sourceId]);
+      expect(doctor.fix!.argv).toEqual(kind === 'fences' ? ['gbrain', 'repair', 'content', '--source', sourceId] : ['gbrain', 'repair', 'frontmatter', '--source', sourceId]);
       const banner = bannerFindingLine({ spec: WAVE_CHECKS.find(spec => spec.id === 'git_held_files')!, check: doctor, state: 'finding' });
       expectRoute(banner, kind, sourceId);
       const report = await buildHoldReport(engine, { sourceId, incarnation: await incarnationOf(engine, sourceId), runId: 'none', remote: false,

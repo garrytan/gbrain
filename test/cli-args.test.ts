@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { findUnknownOpFlag, parseOpArgs } from '../src/cli.ts';
+import { findUnknownOpFlag, parseOpArgs } from '../src/cli/main.ts';
 import { operations, operationsByName } from '../src/core/operations.ts';
 
 describe('parseOpArgs', () => {

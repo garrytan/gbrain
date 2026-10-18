@@ -64,6 +64,8 @@ import type { SourceRow } from './sources-ops.ts';
 import { installPageEmbeddings, readProjectionSnapshot, type ProjectionSnapshot } from './page-state/projections.ts';
 import { reconcileContextualEmbeddingInputs } from './page-state/contextual-proof.ts';
 import { digest } from './persistence/digest.ts';
+import { isLargePageBytes } from './page-size-policy.ts';
+import { isSegmentedPage, pageBodyBytes } from './page-body/page-shape.ts';
 
 /**
  * v3 = chunks embed with optional contextual retrieval wrapper. The
@@ -226,7 +228,7 @@ export type ReembedPageResult =
     }
   | {
       kind: 'skipped';
-      reason: 'mode_none' | 'no_chunks' | 'page_missing' | 'soft_deleted';
+      reason: 'mode_none' | 'no_chunks' | 'page_missing' | 'soft_deleted' | 'budget_limited' | 'page_body_segmented';
     }
   | {
       kind: 'page_fallback';
@@ -308,6 +310,9 @@ export async function reembedPageWithContextualRetrieval(
   if (initial.deleted_at != null) {
     return { kind: 'skipped', reason: 'soft_deleted' };
   }
+  // Wave B: a segmented page's vectors come from its stale chunk rows (page-body/segmented-embedding.ts); its contextual
+  // synopsis per segment is spec 8.6. Nothing is stamped: its vectors were not rebuilt under this mode.
+  if (isSegmentedPage(initial)) return { kind: 'skipped', reason: 'page_body_segmented' };
 
   const prepared = await readProjectionSnapshot(args.engine, args.pageSlug, args.sourceId, { allowUnsealed: true });
   if (!prepared) return { kind: 'skipped', reason: 'page_missing' };
@@ -324,8 +329,8 @@ export async function reembedPageWithContextualRetrieval(
         await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
         if (digest(sourcePolicy(await loadSourceRow(tx, page.source_id))) !== digest(sourcePolicy(source))) return false;
         if (embedded) {
-          if (!await installPageEmbeddings(tx, prepared, embedded.map(chunk => ({ ...chunk, model: prepared.embeddingModel ?? undefined })),
-            undefined, { tier: mode, corpusGeneration: generation })) return false;
+          if (!(await installPageEmbeddings(tx, prepared, embedded.map(chunk => ({ ...chunk, model: prepared.embeddingModel ?? undefined })),
+            undefined, { tier: mode, corpusGeneration: generation })).complete) return false;
         } else {
           const current = await readProjectionSnapshot(tx, page.slug, page.source_id, { allowUnsealed: true });
           if (!sameProjection(prepared, current)) return false;
@@ -391,7 +396,13 @@ export async function reembedPageWithContextualRetrieval(
   // else undefined → page-summary's SYNOPSIS_MAX_TOKENS default (200).
   const synopsisMaxTokens =
     args.synopsisMaxTokens ?? (await resolveSynopsisMaxTokens(args.engine));
-  let attemptMode: CRMode = resolution.mode;
+  // Large pages: the title tier until per-chunk synopses are metered per page
+  // (plan B8), and no re-embed while the per-page cap holds or capped the page.
+  const large = isLargePageBytes(pageBodyBytes(page));
+  if (large && (await args.engine.executeRaw(`SELECT 1 FROM page_embedding_budget WHERE page_id = $1 AND state <> 'open'`, [page.id])).length) {
+    return { kind: 'skipped', reason: 'budget_limited' };
+  }
+  let attemptMode: CRMode = large && resolution.mode === 'per_chunk_synopsis' ? 'title' : resolution.mode;
   let fallbackReason: SynopsisFailureKind | null = null;
 
   // eslint-disable-next-line no-constant-condition

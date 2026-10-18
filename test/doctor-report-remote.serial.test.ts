@@ -261,12 +261,15 @@ describe('run_doctor canonical projection readiness', () => {
       auth: { allowedSources: ['readiness-visible', 'readiness-hidden'] },
     } as unknown as OperationContext;
     const check = (report: DoctorReport) => report.checks.find(c => c.name === 'text_projection_readiness')!;
+    // #6803: doctor also counts the queue by class, within the caller's visible scope.
+    const counts = (pending: number, oldest: number | null) => ({ pending, failed: 0, sealable: 0, sealable_with_visual: 0, reimport: 0, ocr_required: 0,
+      protected: 0, archived: 0, oldest_age_seconds: oldest, as_of: expect.any(String) });
     const remote = check(await operationsByName.run_doctor.handler(ctx, {}) as DoctorReport);
     expect(remote.status).toBe('ok');
-    expect(remote.details).toEqual({ readiness: 'ready', ready: true });
+    expect(remote.details).toEqual({ readiness: 'ready', ready: true, ...counts(0, null) });
     const local = check(await operationsByName.run_doctor.handler({ ...ctx, remote: false }, {}) as DoctorReport);
     expect(local.status).toBe('warn');
-    expect(local.details).toEqual({ readiness: 'projection_pending', ready: false });
+    expect(local.details).toEqual({ readiness: 'projection_pending', ready: false, ...counts(1, expect.any(Number)) });
     const restricted = check(await operationsByName.run_doctor.handler({ ...ctx, auth: { ...ctx.auth!, allowedSources: ['readiness-visible'] } }, {}) as DoctorReport);
     expect(restricted.status).toBe('ok');
     expect(JSON.stringify(restricted)).not.toContain('readiness-hidden');
@@ -274,6 +277,6 @@ describe('run_doctor canonical projection readiness', () => {
     await engine.executeRaw("UPDATE pages SET text_projection_revision=NULL WHERE source_id='readiness-visible'");
     const pending = check(await operationsByName.run_doctor.handler(ctx, {}) as DoctorReport);
     expect(pending.status).toBe('warn');
-    expect(pending.details).toEqual({ readiness: 'projection_pending', ready: false });
+    expect(pending.details).toEqual({ readiness: 'projection_pending', ready: false, ...counts(0, null) });
   });
 });

@@ -534,14 +534,16 @@ function makeServiceEngine(chunks: ChunkInput[]) {
         return [{ chunker_version: MARKDOWN_CHUNKER_VERSION, corpus_generation: null }];
       }
       if (sql.startsWith('UPDATE content_chunks SET')) {
-        const original = storedChunks.find(chunk => chunk.id === params[0]);
-        if (!original || params[4] !== original.page_id || params[5] !== original.chunk_text) {
-          throw new Error('Embedding update must address the existing chunk row and text');
+        for (const row of JSON.parse(String(params[1])) as Array<{ id: number; chunk_text: string; embedding: string | null; model: string | null }>) {
+          const original = storedChunks.find(chunk => chunk.id === row.id);
+          if (!original || params[0] !== original.page_id || row.chunk_text !== original.chunk_text) {
+            throw new Error('Embedding update must address the existing chunk row and text');
+          }
+          embeddedChunks.push({ ...original,
+            embedding: row.embedding == null ? undefined : new Float32Array(JSON.parse(row.embedding)),
+            model: typeof row.model === 'string' ? row.model : undefined,
+          });
         }
-        embeddedChunks.push({ ...original,
-          embedding: params[1] == null ? undefined : new Float32Array(JSON.parse(String(params[1]))),
-          model: typeof params[3] === 'string' ? params[3] : undefined,
-        });
         return [];
       }
       if (!sql.includes('FROM sources')) throw new Error(`Unexpected fixture SQL: ${sql}`);
@@ -569,7 +571,10 @@ function makeServiceEngine(chunks: ChunkInput[]) {
 }
 
 function extractChunk(opts: ChatOpts): string {
-  const content = String(opts.messages[0]?.content ?? '');
+  // The synopsis prompt is two text blocks (page, chunk) since PR #6341;
+  // joined with '\n' they render as the former single string.
+  const raw = opts.messages[0]?.content ?? '';
+  const content = typeof raw === 'string' ? raw : raw.map(b => (b.type === 'text' ? b.text : '')).join('\n');
   return content.match(/<chunk>\n([\s\S]*?)\n<\/chunk>/)?.[1] ?? '';
 }
 

@@ -65,7 +65,7 @@ async function legacyFixture(engine: BrainEngine) {
   await engine.executeRaw('UPDATE pages SET contextual_retrieval_mode=NULL WHERE source_id=$1', [id]);
   await claimWorktree(engine, id, root);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-  return { id, root, working: { sourceId: id, noPull: true, noEmbed: true, noExtract: true, workingTree: true, explicitProcessing: [] } };
+  return { id, root, working: { sourceId: id, noPull: true, noEmbed: true, noExtract: true, workingTree: true } };
 }
 const admitted = async (engine: BrainEngine, id: string) =>
   (await engine.executeRaw<{ slug: string }>("SELECT slug FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence", [id])).map(r => r.slug);

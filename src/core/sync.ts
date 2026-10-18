@@ -23,8 +23,21 @@ export interface SyncManifest {
   added: string[];
   modified: string[];
   deleted: string[];
-  renamed: Array<{ from: string; to: string }>;
+  /** `similarity`: Git's rename score (100 = byte-identical); absent for a pairing that did not come from Git's similarity guess. */
+  renamed: Array<{ from: string; to: string; similarity?: number;
+    /** #6729: sha256 of the first 64 KiB of the working-tree `to` file the identity verdict read (dirty-tree renames only); identity moves only for those bytes. */
+    identityHead?: string }>;
+  /** #6729: inexact Git renames whose identity could not be confirmed; each was split into a delete of `from` plus an add of `to`. */
+  downgradedRenames?: DowngradedRename[];
 }
+
+/** #6729: why an inexact Git rename did not keep its page identity (see `confirmRenameIdentities`). */
+export type RenameDowngradeReason = 'id_conflict' | 'id_shared' | 'id_one_side' | 'title_not_unique' | 'slug_not_unique' | 'no_identity_signal';
+/** Where a rename side's frontmatter was read: a committed blob, or the file on disk (the dirty-tree manifest's target side). */
+export type RenameSideSource = 'commit' | 'working_tree';
+export interface DowngradedRename { from: string; to: string; similarity: number; reason: RenameDowngradeReason;
+  /** #6729: the source each side's frontmatter was read from (absent on a pair recorded before this field). */
+  read?: { from: RenameSideSource; to: RenameSideSource } }
 
 export interface RawManifestEntry {
   action: 'A' | 'M' | 'D' | 'R';
@@ -33,6 +46,11 @@ export interface RawManifestEntry {
 }
 
 export type SyncStrategy = 'markdown' | 'code' | 'auto';
+/** Every SyncStrategy; the only values `sources.config.strategy` may hold. */
+export const SYNC_STRATEGIES: readonly SyncStrategy[] = ['markdown', 'code', 'auto'];
+export function isSyncStrategy(value: unknown): value is SyncStrategy {
+  return typeof value === 'string' && (SYNC_STRATEGIES as readonly string[]).includes(value);
+}
 
 interface SyncableOptions {
   strategy?: SyncStrategy;
@@ -223,7 +241,9 @@ export function buildSyncManifest(gitDiffOutput: string): SyncManifest {
           // A copy leaves the source in place — only the destination is new.
           manifest.added.push(newPath);
         } else {
-          manifest.renamed.push({ from: oldPath, to: newPath });
+          // #6729: the score rides along; confirmRenameIdentities decides whether an inexact pair keeps its identity.
+          const similarity = Number(action.slice(1));
+          manifest.renamed.push({ from: oldPath, to: newPath, ...(action.length > 1 && Number.isInteger(similarity) ? { similarity } : {}) });
         }
       }
     }
@@ -265,8 +285,9 @@ export function isMarkdownFilePath(path: string): boolean {
   return path.endsWith('.md') || path.endsWith('.mdx');
 }
 
-function isMultimodalEnabled(): boolean {
-  return process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
+/** The image side of the brain is on: the sync walker admits images, managed sync imports them (#6529) and `embed --stale` sweeps them. */
+export function isMultimodalEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
 }
 
 function isAllowedByStrategy(path: string, strategy: SyncStrategy): boolean {
@@ -540,6 +561,21 @@ export function sanitizePathForDisplay(path: string): string {
 export const SYNC_SKIP_FILES = ['schema.md', 'index.md', 'log.md', 'README.md', 'RESOLVER.md'] as const;
 
 /**
+ * #5186 (W14 P1.5b): `gbrain harden` scaffolds these at the source root as
+ * agent instructions, not brain content. Metafiles at depth 0 only: a
+ * `docs/AGENTS.md` is an ordinary page.
+ */
+export const SYNC_ROOT_SKIP_FILES = ['AGENTS.md', 'CLAUDE.md'] as const;
+
+/** Whether a repo-relative path is directory scaffolding sync never imports (`SYNC_SKIP_FILES` anywhere, `SYNC_ROOT_SKIP_FILES` at the root). */
+export function isSyncMetafile(path: string): boolean {
+  const segments = path.split('/');
+  const basename = segments[segments.length - 1] || '';
+  return (SYNC_SKIP_FILES as readonly string[]).includes(basename)
+    || (segments.length === 1 && (SYNC_ROOT_SKIP_FILES as readonly string[]).includes(basename));
+}
+
+/**
  * Internal classifier. Returns null when the path IS syncable, or a tagged
  * SyncableReason explaining why it isn't. The single source of truth that
  * both `isSyncable` (boolean) and `unsyncableReason` (tagged) call.
@@ -566,9 +602,7 @@ function classifySync(path: string, opts: SyncableOptions = {}): SyncableReason 
   if (isPathPruned(path, opts.includeHidden)) return 'pruned-dir';
 
   // Skip meta files that aren't pages
-  const segments = path.split('/');
-  const basename = segments[segments.length - 1] || '';
-  if ((SYNC_SKIP_FILES as readonly string[]).includes(basename)) return 'metafile';
+  if (isSyncMetafile(path)) return 'metafile';
 
   if (opts.include && opts.include.length > 0 && !matchesAnyGlob(path, opts.include)) return 'include-glob-miss';
   if (opts.exclude && opts.exclude.length > 0 && matchesAnyGlob(path, opts.exclude)) return 'exclude-glob-hit';

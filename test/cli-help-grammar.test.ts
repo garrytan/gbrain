@@ -6,7 +6,7 @@
 import { describe, expect, test } from 'bun:test';
 import { ROUTERS, cliHelpRequested, helpFlagRequested, subcommandHelpRequested } from '../src/cli/subcommands.ts';
 import { ROUTER_MODULES } from '../src/cli/router-help.ts';
-import { STRICT_SUBCOMMANDS, strictArgsProblem, strictArgsRefusal } from '../src/cli/strict-args.ts';
+import { STRICT_SELF_HELP_SUBCOMMANDS, STRICT_SUBCOMMANDS, strictArgsProblem, strictArgsRefusal } from '../src/cli/strict-args.ts';
 import { CLI_COMMANDS } from '../src/cli/command-table.ts';
 
 describe('help grammar', () => {
@@ -58,6 +58,20 @@ describe('router inventories', () => {
 });
 
 describe('strict arguments', () => {
+  test('every strict self-help subcommand belongs to a self-help command outside the router inventories, with a read-only fix that parses', () => {
+    for (const [key, spec] of Object.entries(STRICT_SELF_HELP_SUBCOMMANDS)) {
+      const [command, sub] = key.split(' ');
+      expect(ROUTERS[command!], key).toBeUndefined();
+      expect(CLI_COMMANDS.find(c => c.name === command)?.selfHelp, key).toBe(true);
+      const refusal = strictArgsRefusal(command!, [sub!, '--not-a-flag']);
+      expect(refusal?.code, key).toBe('invalid_params');
+      expect('argv' in spec.fix, key).toBe(true);
+      const [, fixCommand, fixSub, ...fixRest] = refusal!.fix!.argv!;
+      expect(strictArgsRefusal(fixCommand!, [fixSub!, ...fixRest]), key).toBeNull();
+    }
+  });
+
+
   test('each refusal fix is a read-only command that parses under the same table, or an ask_user fix', () => {
     for (const [key, spec] of Object.entries(STRICT_SUBCOMMANDS)) {
       const [command, sub] = key.split(' ');

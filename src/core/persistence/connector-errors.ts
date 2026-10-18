@@ -71,6 +71,15 @@ export const DATABASE_REFUSAL_HINT = 'This is not a content conflict: a gbrain p
   + 'Do not force-write, edit SQL, or disable the guard; ask the user before changing which hosts own the brain.';
 
 /** #5974: another database trigger (named in write_error_detail.raiser) refused the write. */
+/** #6719: an owner exception's recorded identity (class, errno, frame, build) does not name its cause; nothing proves the database refused it. */
+export const ownerExceptionHint = (requestId: string) => 'An unexpected owner exception ended this write and nothing was committed; its cause is unknown from the recorded identity alone. '
+  + `On the brain host run gbrain write-request ${requestId} --json and read error_detail (error_class, errno, frame, attempt.consumer_version) beside the persistence consumer log; `
+  + 'report that identity and the gbrain version on the issue tracker, and upgrade when a fix ships. Do not replay the old intent to diagnose it.';
+
+/** #6719: an origin that names no database refusal (or none at all) stays unknown rather than read as a trigger. */
+export const unknownOriginHint = (requestId: string) => 'The recorded origin of this failure does not name a database refusal, so its cause is not established by this status. '
+  + `On the brain host run gbrain write-request ${requestId} --json and follow its diagnosis.fix; report the receipt's error_code and error_detail if it names no cause.`;
+
 export const DATABASE_TRIGGER_HINT = 'A database trigger refused this write and nothing was committed; write_error_detail.raiser names it. '
   + 'On the brain host run gbrain sources writer status --probe --json and compare recent_failures[].error_detail.attempt.consumer_version '
   + 'with the version of every gbrain process sharing this database; upgrade or restart the older one, run gbrain apply-migrations --yes, then retry with a new request ID. '

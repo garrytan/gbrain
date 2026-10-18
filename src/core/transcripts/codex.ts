@@ -12,7 +12,10 @@
  * (isRepeatedCodexUserTurn);
  * `response_item` rows with role user/developer are INJECTED context
  * (app-context, plugin lists, instruction preambles) and are skipped
- * wholesale. Assistant text comes from `response_item` payload.type='message'
+ * wholesale. A sub-agent rollout (`session_meta` payload.source.subagent,
+ * e.g. the guardian auto-reviewer) receives its task only as such injected
+ * context, so it has assistant turns and no user turn by design: it reports
+ * `subagentRollout`, never `userTurnsMissing` drift (#6741). Assistant text comes from `response_item` payload.type='message'
  * role='assistant' output_text blocks. reasoning / tool calls / token_count
  * and every other event kind are skipped — the archive records conversation
  * text only (lossy by design).
@@ -51,8 +54,9 @@ export const CODEX_SPEC_TARGET: HostSpecTarget = {
     'One JSON object per line: {timestamp: ISO, type, payload}; 0.159 adds ' +
     'ordinal/started_at_ms/completed_at_ms, ignored. type ' +
     "'session_meta' header carries payload.{id, session_id, cwd, timestamp, " +
-    "cli_version}; identity = payload.id (per-thread; session_id is the root " +
-    "session shared by forked/subagent threads), first header wins. User turns: type 'event_msg' with payload.type " +
+    "cli_version, source}; identity = payload.id (per-thread; session_id is the root " +
+    "session shared by forked/subagent threads), first header wins. payload.source is a string ('cli', 'exec', ...) " +
+    "or {subagent: ...} for a sub-agent thread, whose task arrives only as injected context. User turns: type 'event_msg' with payload.type " +
     "'user_message' (payload.message = typed text) through 0.152; from 0.153 " +
     "type 'event_msg' with payload.type 'item_completed' and " +
     "payload.item.{type:'UserMessage', content:[{type:'text', text}]} (other " +
@@ -101,7 +105,7 @@ export function isRepeatedCodexUserTurn(previous: { role: string; text: string }
  * result rather than with an inferred one.
  */
 export type CodexLineResult =
-  | { kind: 'session'; sessionId?: string; cwd?: string; startedAt?: string; cliVersion?: string; modelProvider?: string }
+  | { kind: 'session'; sessionId?: string; cwd?: string; startedAt?: string; cliVersion?: string; modelProvider?: string; subagent?: true }
   | { kind: 'user'; message: TranscriptMessage }
   | { kind: 'assistant'; message: TranscriptMessage }
   | { kind: 'tool_call'; name: string; input: unknown }
@@ -138,6 +142,7 @@ export function mapCodexLine(entry: unknown): CodexLineResult {
       startedAt: typeof payload.timestamp === 'string' ? utcTimestamp(payload.timestamp) : lineTs || undefined,
       cliVersion: typeof payload.cli_version === 'string' ? payload.cli_version : undefined,
       modelProvider: typeof payload.model_provider === 'string' ? payload.model_provider : undefined,
+      ...(typeof payload.source === 'object' && payload.source !== null && 'subagent' in payload.source ? { subagent: true as const } : {}),
     };
   }
   if (e.type === 'compacted') return { kind: 'boundary' };
@@ -234,6 +239,7 @@ export const codexAdapter: TranscriptAdapter = {
     let sessionId = '';
     let cwd: string | undefined;
     let startedAt = '';
+    let subagent = false;
     const messages: TranscriptMessage[] = [];
     let rawMeta: Record<string, unknown> | undefined;
 
@@ -255,6 +261,7 @@ export const codexAdapter: TranscriptAdapter = {
         if (mapped.sessionId) sessionId = mapped.sessionId;
         if (mapped.cwd) cwd = mapped.cwd;
         if (mapped.startedAt) startedAt = mapped.startedAt;
+        subagent = mapped.subagent === true;
         rawMeta = {
           session_id: sessionId,
           cwd: cwd ?? null,
@@ -274,6 +281,7 @@ export const codexAdapter: TranscriptAdapter = {
       // the consumer that keeps calls and boundary positions.
     }
 
+    const userless = messages.length > 0 && !messages.some((m) => m.role === 'user');
     let sessions = 0;
     if (messages.length > 0) {
       sessions = 1;
@@ -296,7 +304,8 @@ export const codexAdapter: TranscriptAdapter = {
       sessions,
       zeroSessionsReason:
         sessions === 0 ? 'no user turns (user_message or item_completed UserMessage) or assistant message items in rollout' : undefined,
-      userTurnsMissing: messages.length > 0 && !messages.some((m) => m.role === 'user') ? true : undefined,
+      userTurnsMissing: userless && !subagent ? true : undefined,
+      subagentRollout: userless && subagent ? true : undefined,
     };
   },
 };

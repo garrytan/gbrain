@@ -50,6 +50,8 @@ beforeAll(async()=>{
   await withEnv(env,async()=>{
     await setup.connect(config);await setup.initSchema();
     await setup.setConfig('search.mcp_keyword_only','true');
+    // #6340 holds a pinned-worktree conflict when holds are on; `sync.holds=fail` keeps the failure receipt the diagnostics test below is about.
+    await setup.setConfig('sync.holds','fail');
     await setup.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES('workspace','workspace',$1,'{}')",[root]);
     const code = 'export function residentExample() { return 4; }\n';
     writeFileSync(join(root,'example.ts'),code);
@@ -126,11 +128,12 @@ test('resident-owner failure JSON retains safe scoped diagnostics and the frozen
   expect(blocked.err).toContain('source_changed');
   expect(blocked.out+blocked.err).not.toContain('PRIVATE_RESIDENT_DIAGNOSTIC_CONTENT_CANARY');
   expect(blocked.out+blocked.err).not.toContain(root);
-  writeFileSync(path,pinned);
+  // #6712 PR 3 (L7): while the file keeps the bytes that refused, every sync replays the receipt; the fix below retries it.
   rmSync(join(home,'sync-failures.jsonl'),{force:true});
   const replay=await cli(args);
   expect(replay.code).toBe(1);
   expect(JSON.parse(replay.out).managed_write.write_request).toEqual(body.managed_write.write_request);
+  writeFileSync(path,pinned);
   const corrected=await cli([...args,'--retry-failed']);
   expect(corrected.code).toBe(0);
   expect(JSON.parse(corrected.out).sync_status).toBe('synced');

@@ -37,16 +37,16 @@ for (const kind of ['pglite', 'postgres'] as const) {
         const prepared = (await readProjectionSnapshot(engine, slug, sourceId))!;
         const install = () => installPageEmbeddings(engine, prepared, prepared.chunks.map(chunk => ({ chunk_index: chunk.chunk_index, chunk_source: chunk.chunk_source, chunk_text: chunk.chunk_text, embedding: vector })), `${model}:8`);
         if (order === 'install-first') {
-          expect(await install()).toBe(true);
+          expect((await install()).complete).toBe(true);
           expect(await engine.searchVector(vector, { sourceId })).toHaveLength(1);
         }
         expect((await recordFactWithdrawal(engine, fact.id, sourceId, true)).withdrawn).toBe(true);
-        expect(await install()).toBe(false);
+        expect(await install()).toEqual({ installed: 0, complete: false });
         expect(await engine.searchVector(vector, { sourceId })).toEqual([]);
         expect(await engine.searchKeyword('withdrawalsentinel', { sourceId })).toEqual([]);
         expect((await rebuildPendingPageProjections(engine, 100)).rebuilt).toBeGreaterThan(0);
         expect((await engine.getChunks(slug, { sourceId })).map(c => c.chunk_text).join('\n')).not.toContain(claim);
-        expect(await install()).toBe(false);
+        expect(await install()).toEqual({ installed: 0, complete: false });
         expect(await engine.searchKeyword('withdrawalsentinel', { sourceId })).toEqual([]);
       });
     }
@@ -62,7 +62,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
         else if (change === 'model') await engine.setConfig('embedding_model', 'openai:text-embedding-3-large');
         else expect(await engine.softDeletePage(slug, { sourceId })).not.toBeNull();
         const before = await engine.executeRaw('SELECT to_jsonb(c) AS chunk FROM content_chunks c WHERE page_id=$1 ORDER BY id', [prepared.snapshot.page.id]);
-        expect(await installPageEmbeddings(engine, prepared, prepared.chunks.map(chunk => ({ chunk_index: chunk.chunk_index, chunk_source: chunk.chunk_source, chunk_text: chunk.chunk_text, embedding: vector })))).toBe(false);
+        expect(await installPageEmbeddings(engine, prepared, prepared.chunks.map(chunk => ({ chunk_index: chunk.chunk_index, chunk_source: chunk.chunk_source, chunk_text: chunk.chunk_text, embedding: vector })))).toEqual({ installed: 0, complete: false });
         expect(await engine.executeRaw('SELECT to_jsonb(c) AS chunk FROM content_chunks c WHERE page_id=$1 ORDER BY id', [prepared.snapshot.page.id])).toEqual(before);
         await engine.setConfig('embedding_model', model);
       });

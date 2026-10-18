@@ -26,10 +26,10 @@ import { waitFor } from './helpers/wait-for.ts';
 const PREAMBLE = 'Of course. Here is a detailed brain page for Jane Doe.\n\n';
 const BODY = '# Jane Doe\n\nContent that stays.\n';
 const PAGE = `---\ntitle: Jane Doe\ntype: person\n---\n${PREAMBLE}${BODY}`;
-// A page the coordinator wrote carries `ingested_at`, so lint sees TWO fixable
-// issues on it: the LLM preamble and `missing-created` (promotable from
-// `ingested_at`, #3958). A hand-written file has only the preamble to fix.
-const FIXABLE_ON_INDEXED_PAGE = 2;
+// A page the coordinator wrote carries `ingested_at`; since #5433 that counts
+// as temporal provenance (no `missing-created`, nothing to promote), so lint
+// sees ONE fixable issue on it: the LLM preamble. Same as a hand-written file.
+const FIXABLE_ON_INDEXED_PAGE = 1;
 
 const engines: BrainEngine[] = [];
 const dataDir = mkdtempSync(join(tmpdir(), 'gbrain-managed-lint-db-'));
@@ -133,7 +133,7 @@ test('managed lint leaves a file with no indexed page pending instead of writing
     const seen: Array<{ rel: string; rules: string[] }> = [];
     const result = await runLintCore({ target: root, fix: true, engine, sourceId,
       onPageIssues: (rel, issues) => seen.push({ rel, rules: issues.map(i => i.rule) }) });
-    // jane-doe: 2 fixable, fixed. stray: preamble fixable but unpublishable (+1 pending issue), missing-created not promotable.
+    // jane-doe: 1 fixable, fixed. stray: preamble fixable but unpublishable (+1 pending issue).
     expect(result).toMatchObject({ pages_scanned: 2, total_fixable: FIXABLE_ON_INDEXED_PAGE + 1, total_fixed: FIXABLE_ON_INDEXED_PAGE, fix_pending: 1, write_path: 'coordinator' });
     expect(readFileSync(stray, 'utf8')).toBe(PAGE);
     expect(seen.find(s => s.rel === 'notes/stray.md')?.rules).toContain('managed-write-pending');

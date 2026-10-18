@@ -11,10 +11,11 @@
  * so coverage grows deliberately.
  */
 
-import { execSync } from 'child_process';
+import { execFileSync } from '../spawn.ts';
 import { existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { gitChildEnv } from '../git-env.ts';
 
 /**
  * Glob-ish patterns watched for retrieval drift. Each pattern is matched
@@ -77,32 +78,54 @@ export function resolveGbrainSourceRoot(moduleUrl: string = import.meta.url): st
 }
 
 /**
+ * A working-tree diff at least this slow refreshes the index afterwards. Slowness there means racily-clean entries
+ * (a fresh clone or a just-pulled checkout), which git re-hashes on every diff until the index is rewritten; a
+ * settled checkout diffs fast and skips the refresh.
+ */
+export const RACY_DIFF_MS = 75;
+
+/**
  * Return repo-relative paths that have changed in the working tree since
  * the given commit (or HEAD if no commit). Returns `null` when the probe
  * itself failed (repo root missing, git unavailable, not a work tree,
  * timeout) so callers never mistake "could not check" for "clean".
  *
- * `commitSha` is a full or short SHA. When omitted, compares HEAD against
+ * `commitSha` is a SHA or revision; it never reaches git as an option (an
+ * empty or `-`-prefixed value returns null, and `--end-of-options` precedes
+ * the range). When omitted, compares HEAD against
  * working tree (uncommitted changes only).
  */
-export function filesDriftedSince(repoRoot: string, commitSha?: string): string[] | null {
+export function filesDriftedSince(repoRoot: string, commitSha?: string, racyDiffMs = RACY_DIFF_MS, diffTimeoutMs = 5000): string[] | null {
   if (!existsSync(repoRoot)) return null;
+  if (commitSha !== undefined && (commitSha === '' || commitSha.startsWith('-'))) return null;
+  const refreshIndex = () => {
+    try {
+      execFileSync('git', ['update-index', '-q', '--refresh'], { env: gitChildEnv(), cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'], timeout: 30_000 });
+    } catch {
+      /* a held index.lock or read-only checkout keeps the index as it was */
+    }
+  };
+  const startedAt = Date.now();
   try {
-    const range = commitSha ? `${commitSha}..HEAD` : 'HEAD';
     const args = commitSha
-      ? ['diff', '--name-only', range]
+      ? ['diff', '--name-only', '--end-of-options', `${commitSha}..HEAD`]
       : ['diff', '--name-only', 'HEAD'];
-    const out = execSync(`git ${args.join(' ')}`, {
+    const out = execFileSync('git', args, {
+      env: gitChildEnv(),
       cwd: repoRoot,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 5000,
+      timeout: diffTimeoutMs,
     });
+    if (!commitSha && Date.now() - startedAt >= racyDiffMs) refreshIndex();
     return out
       .split('\n')
       .map(s => s.trim())
       .filter((s): s is string => s.length > 0);
   } catch {
+    // A diff never rewrites the index, so one that ran out of time on a racy index would time out the same way
+    // on every later probe; refresh it so the next probe answers.
+    if (!commitSha && Date.now() - startedAt >= diffTimeoutMs) refreshIndex();
     return null;
   }
 }

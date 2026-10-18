@@ -55,7 +55,7 @@ describe('runDrain', () => {
   test('blocked results end the drain as blocked with a retry command', async () => {
     const failed = await runDrain({ pass: async () => ({ ...base, status: 'blocked_by_failures', failedFiles: 1 }) });
     expect(failed.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'blocked_by_failures' });
-    expect(drainNext(failed, RESUME, 's')).toMatchObject({ command: `${RESUME} --retry-failed`, safe_to_loop: false });
+    expect(drainNext(failed, RESUME, 's')).toMatchObject({ command: RESUME, safe_to_loop: false });
     const terminal = pending(3);
     terminal.managedWrite!.write_error = 'revision_conflict';
     terminal.status = 'blocked_by_failures';

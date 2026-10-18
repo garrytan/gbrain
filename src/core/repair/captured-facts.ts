@@ -34,7 +34,7 @@
  * `changed_since_preview` and kept.
  */
 import { existsSync, readdirSync, readFileSync, type Dirent } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -82,6 +82,8 @@ export interface CapturedFactsClassification {
   candidates: CapturedFactCandidate[];
   unclassifiable: number;
   not_suspect: number;
+  /** GBRA-130 A-65: corpus directories and session files the classification could not read (relative to the corpus dir). */
+  unreadable_corpus_files: string[];
 }
 
 export interface CapturedFactsPage {
@@ -108,13 +110,13 @@ function words(text: string): Set<string> {
   return new Set((text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter(w => !STOPWORDS.has(w)));
 }
 
-/** Every `.txt` under `root` (dream discovery's pruning), keyed by its session id. */
-function sessionFiles(root: string | null | undefined): Map<string, string[]> {
+/** Every `.txt` under `root` (dream discovery's pruning), keyed by its session id; a directory it cannot list goes to `unreadable`. */
+function sessionFiles(root: string | null | undefined, unreadable: string[]): Map<string, string[]> {
   const bySession = new Map<string, string[]>();
   if (!root || !existsSync(root)) return bySession;
   const walk = (dir: string) => {
     let entries: Dirent[];
-    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { unreadable.push(dir); return; }
     for (const entry of entries) {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) { if (pruneDir(entry.name, dir)) walk(full); }
@@ -163,20 +165,22 @@ export async function classifyCapturedFacts(db: BrainEngine, sourceIds: string[]
      WHERE f.source_id=ANY($1::text[]) AND f.source=ANY($2::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
        AND ($3::bigint[] IS NULL OR f.id=ANY($3::bigint[]))
      ORDER BY f.source_id, f.id`, [sourceIds, [...CAPTURE_LANES], opts.ids ?? null]);
-  if (!rows.length) return { candidates: [], unclassifiable: 0, not_suspect: 0 };
+  if (!rows.length) return { candidates: [], unclassifiable: 0, not_suspect: 0, unreadable_corpus_files: [] };
   const projectsRoot = opts.projectsRoot ?? claudeProjectsDir();
   const selfDirs = claudeCliSelfProjectDirs(projectsRoot);
   const known = harnessSessionIds(projectsRoot);
   const corpusDir = opts.corpusDir === undefined ? await db.getConfig(CORPUS_KEY) : opts.corpusDir;
-  const corpus = sessionFiles(corpusDir);
-  const quarantine = sessionFiles(corpusDir ? join(dirname(corpusDir), `${basename(corpusDir)}.quarantine`) : null);
+  const unreadable: string[] = [];
+  const corpus = sessionFiles(corpusDir, unreadable);
+  const quarantine = sessionFiles(corpusDir ? join(dirname(corpusDir), `${basename(corpusDir)}.quarantine`) : null, unreadable);
+  const unreadSessions = new Set<string>();
   const pasteWords = new Map<string, { file: string; paste: Set<string> } | null>();
   const pasteOnlyWords = (session: string) => {
     if (pasteWords.has(session)) return pasteWords.get(session)!;
     let found: { file: string; paste: Set<string> } | null = null;
     for (const file of corpus.get(session) ?? []) {
       let raw: string;
-      try { raw = readFileSync(file, 'utf8'); } catch { continue; }
+      try { raw = readFileSync(file, 'utf8'); } catch { unreadable.push(file); unreadSessions.add(session); continue; }
       if (!raw.includes('<pasted_content')) continue;
       const own = words(corpusTextForExtraction(file, raw));
       const paste = new Set([...words(raw)].filter(w => !own.has(w)));
@@ -204,7 +208,7 @@ export async function classifyCapturedFacts(db: BrainEngine, sourceIds: string[]
         return { klass: 'ambiguous', reason: 'paste_heuristic', session, evidence: `${basename(paste.file)}: ${covered}/${claim.length} words only in paste blocks` };
       }
     }
-    return corpus.has(session) || known.has(session) ? 'not_suspect' : 'unclassifiable';
+    return !unreadSessions.has(session) && (corpus.has(session) || known.has(session)) ? 'not_suspect' : 'unclassifiable';
   });
   // A suspect claim that also has an active copy not proven suspect (another lane, or any other capture row) is kept.
   const twinKey = (row: FactRow) => JSON.stringify([row.source_id, row.visibility, row.entity_slug, row.fingerprint]);
@@ -219,7 +223,8 @@ export async function classifyCapturedFacts(db: BrainEngine, sourceIds: string[]
       evidence: hit.evidence, fact_hash: factHash(row) });
   });
   candidates.sort((a, b) => a.source_id.localeCompare(b.source_id) || a.slug.localeCompare(b.slug) || a.id - b.id);
-  return { candidates, unclassifiable: classified.filter(c => c === 'unclassifiable').length, not_suspect: classified.filter(c => c === 'not_suspect').length };
+  return { candidates, unclassifiable: classified.filter(c => c === 'unclassifiable').length, not_suspect: classified.filter(c => c === 'not_suspect').length,
+    unreadable_corpus_files: unreadable.map(path => !corpusDir ? path : path.startsWith(`${corpusDir}/`) ? relative(corpusDir, path) : relative(dirname(corpusDir), path)) };
 }
 
 function previewCommand(scope: RepairScope, all: string[], includeAmbiguous: boolean): string {
@@ -243,7 +248,7 @@ export const capturedFactsRepair: RepairHandler = {
     const includeAmbiguous = opts?.includeAmbiguous === true;
     const command = previewCommand(scope, await activeSources(engine), includeAmbiguous);
     if (!opts?.apply) {
-      const { candidates, unclassifiable, not_suspect } = await classifyCapturedFacts(engine, scope.source_ids);
+      const { candidates, unclassifiable, not_suspect, unreadable_corpus_files } = await classifyCapturedFacts(engine, scope.source_ids);
       const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
       const hash = previewHash(['captured-facts-v1', brain?.brain_id ?? 'host', scope.source_ids, includeAmbiguous,
         candidates.map(c => [c.id, c.class, c.reason, c.fact_hash])]);
@@ -260,15 +265,22 @@ export const capturedFactsRepair: RepairHandler = {
       const count = (klass: CapturedFactClass) => candidates.filter(c => c.class === klass).length;
       const listing: RepairListing[] = candidates.map(c => ({ item: `${c.source_id}:${c.slug}#${c.id}`,
         class: c.class === 'excluded' ? c.reason : c.class, detail: `${c.reason === 'paste_heuristic' ? 'paste candidate' : c.reason}; session ${c.session}; ${c.evidence}` }));
+      for (const path of unreadable_corpus_files) listing.push({ item: path, class: 'unreadable_corpus_file',
+        detail: 'not read (check its permissions); facts of its sessions are counted unclassifiable and kept' });
       return { items: approved.map((page, i) => pageItem(page, hash, i, i === approved.length - 1)), preview_hash: hash, listing,
-        residuals: { evidenced: count('evidenced'), ambiguous: count('ambiguous'), excluded: count('excluded'), unclassifiable, not_suspect } };
+        residuals: { evidenced: count('evidenced'), ambiguous: count('ambiguous'), excluded: count('excluded'), unclassifiable, not_suspect,
+          ...(unreadable_corpus_files.length ? { unreadable_corpus_files: unreadable_corpus_files.length } : {}) } };
     }
     if (!opts.expect) {
       throw new OperationError('invalid_params', 'gbrain repair captured-facts --apply expires only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }
-    const approved = await loadApprovedSet<CapturedFactsPage>(engine, { command: 'captured-facts', hash: opts.expect, previewCommand: command });
+    const approved = await loadApprovedSet<CapturedFactsPage>(engine, { command: 'captured-facts', hash: opts.expect, previewCommand: command,
+      emptyHash: async () => {
+        const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
+        return previewHash(['captured-facts-v1', brain?.brain_id ?? 'host', scope.source_ids, includeAmbiguous, []]);
+      } });
     const scopeKey = JSON.stringify(scope.source_ids);
     if (approved.items.some(page => page.include_ambiguous !== includeAmbiguous || JSON.stringify(page.scope) !== scopeKey)) {
       throw previewChangedError(opts.expect, command);

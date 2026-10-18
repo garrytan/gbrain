@@ -125,12 +125,45 @@ interface BaseOptions<T extends Record<string, postgres.PostgresType>> {
    */
   onpoisoned: (status: string) => void;
   /**
+   * GBrain: seconds a head statement may wait for the server with nothing coming back
+   * before the connection is retired and every statement queued on it rejects with
+   * `CONNECTION_STUCK`. Null disables the watchdog.
+   * @default null
+   */
+  inflight_timeout: number | null;
+  /**
+   * GBrain (#6543): seconds a head statement may run in total, whatever the server keeps sending, before the
+   * connection is retired with `CONNECTION_STUCK` (`reason: 'age'`). A statement after a declared
+   * `statement_timeout` above the budget gets that timeout plus `inflight_grace`; a declared 0 disables both clocks.
+   * @default null
+   */
+  inflight_max: number | null;
+  /** GBrain (#6543): seconds added to a declared statement_timeout that raises a statement's budget. @default null */
+  inflight_grace: number | null;
+  /** GBrain: called once per connection the in-flight watchdog retired; `reason` is `age` when bytes kept arriving, else `idle`. */
+  onstuck: (stuck: { age_ms: number; queued: number; statement: string; reason: 'age' | 'idle'; budget_ms: number }) => void;
+  /** GBrain (#6543): a connection retired by an incident (`stuck`, `desync`, `closed` under statements) completed a new startup. */
+  onrecovered: (recovered: { connection: number; cause: 'stuck' | 'desync' | 'closed' }) => void;
+  /** GBrain (#6543): the reconnect of a connection retired by an incident failed; it stays marked until one succeeds. */
+  onrecoveryfailed: (failed: { connection: number; cause: 'stuck' | 'desync' | 'closed'; code: string }) => void;
+  /**
+   * GBrain: called when a statement fails to build (`UNDEFINED_VALUE`, `MAX_PARAMETERS_EXCEEDED`);
+   * `statement` is its text with `$n` placeholders, never parameter values; `parameter` is the 1-based
+   * index of an undefined parameter value, undefined when the failure names none (an array element).
+   */
+  onbuilderror: (code: string, statement: string, parameter?: number) => void;
+  /**
+   * GBrain: called once per connection retired because a statement's answer arrived with no statement
+   * waiting for it; `statement` is the last statement written on it, with `$n` placeholders.
+   */
+  ondesync: (desync: { message: string; connection: number; statement: string }) => void;
+  /**
    * GBrain: share the parameter types of a described statement across this pool's
    * connections, so a connection running it for the first time skips the describe
    * round trip and keeps pipelining. Only built-in types are shared.
    * @default true
    */
-  shared_types: boolean;
+  shared_types: boolean | Map<string, number[]>;
   backoff: boolean | ((attemptNum: number) => number);
   max_lifetime: number | null;
   keep_alive: number | null;
@@ -718,6 +751,8 @@ declare namespace postgres {
 
     options: ParsedOptions<TTypes>;
     parameters: ConnectionParameters;
+    /** GBrain: the pool's own queue lengths at this instant (`queued` = queries waiting for a connection). */
+    pool: { max: number; open: number; busy: number; full: number; reserved: number; connecting: number; closed: number; ended: number; queued: number; inflight_oldest_ms: number; completed: number };
 
     end(options?: { timeout?: number | undefined } | undefined): Promise<void>;
 
@@ -735,6 +770,7 @@ declare namespace postgres {
 
   interface TransactionSql<TTypes extends Record<string, unknown> = {}> extends ISql<TTypes>  {
     discard(): void;
+    cancelAndDiscard(options?: { timeout?: number }): Promise<void>;
     savepoint<T>(cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
     savepoint<T>(name: string, cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
 
@@ -743,6 +779,7 @@ declare namespace postgres {
 
   interface ReservedSql<TTypes extends Record<string, unknown> = {}> extends Sql<TTypes> {
     discard(): void;
+    cancelAndDiscard(options?: { timeout?: number }): Promise<void>;
     release(): void;
   }
 }

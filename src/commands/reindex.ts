@@ -89,6 +89,7 @@ USAGE
   gbrain reindex --multimodal [--limit N] [--workers N] [--dry-run] [--cost-estimate] [--no-embed] [--yes] [--json]
   gbrain reindex --aliases    [--limit N] [--dry-run] [--json] [--source <id>]
   gbrain reindex --vectors    [--dry-run] [--json]
+  gbrain reindex --oversized  [--limit N] [--dry-run] [--json] [--source <id>]
 
 TARGETS (exactly one required)
   --markdown        Re-chunk markdown pages whose chunker_version lags the
@@ -103,6 +104,14 @@ TARGETS (exactly one required)
                     pages whose frontmatter aliases predate the projection.
   --vectors         Rebuild every HNSW vector index from the stored vectors
                     (no re-embedding, no cost). Run after a PGLite WAL repair.
+  --oversized       Re-chunk pages an older gbrain stored without chunks
+                    because they were over 500 KB (embed_skip: oversized).
+                    Under content_sanity.bytes_block (default: the 24 MiB
+                    page ceiling) the marker is removed; over it the marker
+                    stays and the page gets no vectors. CPU only and free: it works
+                    with embeddings off and makes them keyword-searchable
+                    now. Pages over 1 MiB wait for approval before any paid
+                    embedding (gbrain embed --held). Resumable.
 
 OPTIONS
   --type <t>        --markdown only: restrict to one page type
@@ -119,7 +128,7 @@ OPTIONS
                     --dry-run, --no-embed and a keyless brain never ask);
                     --multimodal skips its cost confirm
   --max-usd USD     --markdown: approve the paid run with this cost cap
-  --source <id>     --aliases only: restrict to one source
+  --source <id>     --aliases and --oversized: restrict to one source
   --repo PATH       --markdown only: brain repo override
   --json            Machine-readable output
   --help, -h        Show this help
@@ -163,6 +172,7 @@ export function validateReindexModeScope(args: string[]): string | null {
   if (!args.includes('--type')) return null;
   if (args.includes('--multimodal')) return '--type is only supported with reindex --markdown, not --multimodal';
   if (args.includes('--aliases')) return '--type is only supported with reindex --markdown, not --aliases';
+  if (args.includes('--oversized')) return '--type is only supported with reindex --markdown, not --oversized';
   return null;
 }
 
@@ -514,7 +524,7 @@ export async function runReindex(engine: BrainEngine, args: string[], runOpts: R
   reporter.finish();
   if (stopped) return reportBudgetStop(engine, stopped, { pending, type, json: !!opts.json, reindexed, skipped, failed, workers });
 
-  if (reindexed > 0) await refreshProjectionStatistics(engine);
+  if (reindexed > 0) await refreshProjectionStatistics(engine, reindexed);
   const pendingAfter = await countPending(engine, type, !!opts.noEmbed);
   if (failed > 0) setCliExitVerdict(1);
 
@@ -550,7 +560,7 @@ export async function runReindex(engine: BrainEngine, args: string[], runOpts: R
  * kept (a rerun continues with the rest); exit 1 with the spend and the rerun.
  */
 async function reportBudgetStop(engine: BrainEngine, e: BudgetExhausted, r: { pending: number; type: string | null; json: boolean; reindexed: number; skipped: number; failed: number; workers?: number }): Promise<ReindexResult> {
-  if (r.reindexed > 0) await refreshProjectionStatistics(engine);
+  if (r.reindexed > 0) await refreshProjectionStatistics(engine, r.reindexed);
   const pendingAfter = await countPending(engine, r.type, false);
   setCliExitVerdict(1);
   const message = `stopped at the $${e.cap.toFixed(2)} cost cap after spending $${e.spent.toFixed(4)} (${e.message}). ${pendingAfter} page(s) still pending, and pages re-chunked after the cap wait for gbrain embed --stale; ask the user before running again with a higher --max-usd.`;
@@ -591,24 +601,30 @@ async function reindexManaged(engine: BrainEngine, opts: ReindexOpts, type: stri
     logger: { info: (msg: string) => process.stderr.write(`${msg}\n`), warn: (msg: string) => process.stderr.write(`${msg}\n`), error: (msg: string) => process.stderr.write(`${msg}\n`) } };
   const scope = await resolveRepairScope(engine);
   const stopped: string[] = [];
+  const failures: string[] = [];
   let unsupported = 0;
   for (const handler of opts.noEmbed ? [safeChunksRepair] : [safeChunksRepair, contextualModeRepair]) {
     const run = await runRepair(ctx as Parameters<typeof runRepair>[0], handler, scope, { apply: true, limit: opts.limit, embed: !opts.noEmbed });
     if (run.stopped) stopped.push(run.stopped.message);
     unsupported += Object.values(run.residuals).reduce((sum, count) => sum + count, 0);
+    // GBRA-130 A-26: pages the repair held (projection_unbuildable) or failed per item are counted, not thrown.
+    failures.push(...run.failed.map(f => `${f.item} (${f.reason}): ${f.message}`),
+      ...(run.outcome_items ?? []).filter(o => o.outcome === 'held').map(o => `${o.item} (${o.reason}): ${String(o.detail?.message ?? '')}`));
   }
-  if (pending > 0) await refreshProjectionStatistics(engine);
+  const failed = failures.length;
+  if (pending > 0) await refreshProjectionStatistics(engine, pending);
   const pendingAfter = await countPending(engine, type, !!opts.noEmbed);
   const reindexed = Math.max(0, pending - pendingAfter);
-  if (stopped.length) setCliExitVerdict(1);
+  if (stopped.length || failed) setCliExitVerdict(1);
   if (opts.json) {
-    process.stdout.write(JSON.stringify({ pending, pending_after: pendingAfter, reindexed, skipped: 0, failed: 0, chunker_version: MARKDOWN_CHUNKER_VERSION, type,
-      delegated_to: repairs, ...(unsupported ? { unsupported_pages: unsupported } : {}), ...(stopped.length ? { stopped } : {}) }) + '\n');
+    process.stdout.write(JSON.stringify({ pending, pending_after: pendingAfter, reindexed, skipped: 0, failed, chunker_version: MARKDOWN_CHUNKER_VERSION, type,
+      delegated_to: repairs, ...(unsupported ? { unsupported_pages: unsupported } : {}), ...(stopped.length ? { stopped } : {}), ...(failed ? { failures } : {}) }) + '\n');
   } else {
     process.stderr.write(`[reindex] Managed brain: re-chunked through ${repairs.map(kind => `gbrain repair ${kind}`).join(' and ')} (no page writes). `
       + `reindexed=${reindexed} pending_before=${pending} pending_after=${pendingAfter}\n`);
     if (unsupported) process.stderr.write(`[reindex] ${unsupported} page(s) the projection repairs cannot rebuild (code without a source path, or another page kind) are left for their importer.\n`);
     for (const message of stopped) process.stderr.write(`[reindex] ${message}\n`);
+    for (const failure of failures) process.stderr.write(`[reindex] not re-chunked, its chunks stay withheld: ${failure}. Retry with: gbrain repair safe-chunks --apply\n`);
   }
-  return { ...base, pendingAfter, reindexed, skipped: 0, failed: 0 };
+  return { ...base, pendingAfter, reindexed, skipped: 0, failed };
 }

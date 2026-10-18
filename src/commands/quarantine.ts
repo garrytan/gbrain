@@ -1,13 +1,17 @@
 /**
  * gbrain quarantine — operator surface for the content-quality gate (issue #1699).
  *
- *   gbrain quarantine list [--json] [--include-flagged]
+ *   gbrain quarantine list [--json] [--include-flagged]   (also write-gate fact/take holds)
  *   gbrain quarantine clear <slug> [--force] [--no-embed] [--json]
  *   gbrain quarantine scan [--limit N] [--apply] [--no-embed] [--json]
  *
  * `quarantine` (hidden) marks high-confidence junk; `content_flag` (warned,
  * still searchable) marks fuzzy markup-heavy / oversize pages. See
  * src/core/quarantine.ts for the marker contract.
+ *
+ * `scan` re-checks a page by holding its whole body as one string (and
+ * `--apply` re-imports it), so a segmented page (Wave B) is not re-checked:
+ * it is listed in the scan's `skipped` with the reason, and the scan goes on.
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { isQuarantined, getContentFlag, QUARANTINE_KEY, CONTENT_FLAG_KEY } from '../core/quarantine.ts';
@@ -21,8 +25,12 @@ import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
 import { submitPageMutation } from '../core/persistence/page-mutations.ts';
 import { resolveCliWriteWaitMs } from '../core/persistence/write-wait.ts';
 import { QUARANTINE_OVERRIDE_KEY, quarantineOverrideFor } from '../core/quarantine-override.ts';
+import { ownerSourceGateInput } from '../core/trust/channel.ts';
+import { compareTrust, OWNER_TIER_FLOOR } from '../core/trust/tier.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
 import type { PageType } from '../core/types.ts';
+import { isSegmentedPage } from '../core/page-body/page-shape.ts';
+import { listWriteGateHolds, type WriteGateHold } from '../core/write-gate-store.ts';
 
 export interface QuarantineRow {
   slug: string;
@@ -141,15 +149,28 @@ export async function collectQuarantineRows(
   return { rows, scanned, truncated };
 }
 
+/** One-line, inert preview of a held row's text for the owner's review. */
+function holdPreview(hold: WriteGateHold): string {
+  const text = String(hold.payload.fact ?? hold.payload.claim ?? '').replace(/\s+/g, ' ').trim();
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+}
+
 async function runList(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
   const includeFlagged = args.includes('--include-flagged');
   const { rows } = await collectQuarantineRows(engine, { includeFlagged });
+  // #5575: facts and takes the write gate held (never inserted); release or drop with gbrain trust release|drop <ref>.
+  const holds = await listWriteGateHolds(engine, { status: 'held', limit: 1000 });
 
   if (json) {
-    console.log(JSON.stringify({ schema_version: 1, count: rows.length, rows }, null, 2));
+    console.log(JSON.stringify({ schema_version: 1, count: rows.length, rows, hold_count: holds.length, holds }, null, 2));
     return;
   }
+  for (const h of holds) {
+    const src = h.source_id === 'default' ? '' : ` [${h.source_id}]`;
+    console.log(`  HELD    ${h.kind} ${h.ref}${src}${h.slug ? ` ${h.slug}` : ''}  reasons=${h.reason_families.join(',') || 'detector_error'}  tier=${h.tier}  at=${h.last_seen_at}\n          ${holdPreview(h)}`);
+  }
+  if (holds.length) console.log(`\n${holds.length} held fact/take row(s): review, then gbrain trust release <ref> or gbrain trust drop <ref>.\n`);
   if (rows.length === 0) {
     console.log(
       includeFlagged
@@ -264,8 +285,13 @@ async function runClear(engine: BrainEngine, args: string[]): Promise<void> {
     flagReason = result.flag_reason;
   }
 
+  // #6919: a sync of the page's file carries the override only at the owner tier (wave 13); a page whose own
+  // frontmatter lowers that tier loses it on the next sync and the write gate assesses it again.
+  const syncTier = force && page.source_path ? (await ownerSourceGateInput(engine, page.source_id, fm)).tier : null;
+  const syncDrops = syncTier !== null && compareTrust(syncTier, OWNER_TIER_FLOOR) < 0;
   if (json) {
-    console.log(JSON.stringify({ slug, cleared: !reQuarantined, re_quarantined: reQuarantined, flagged, forced: force }, null, 2));
+    console.log(JSON.stringify({ slug, cleared: !reQuarantined, re_quarantined: reQuarantined, flagged, forced: force,
+      ...(force ? { override_survives_sync: !syncDrops } : {}) }, null, 2));
     return;
   }
   if (reQuarantined) {
@@ -277,7 +303,10 @@ async function runClear(engine: BrainEngine, args: string[]): Promise<void> {
   }
   console.log(
     `Cleared "${slug}".` +
-    (force ? ' It stays cleared until its title, type or body changes.' : '') +
+    (force && !syncDrops ? ' It stays cleared until its title, type or body changes.' : '') +
+    (syncDrops ? ` Its frontmatter lowers a sync of its file to ${syncTier}, below the owner tier, so the next sync of its file drops this override `
+      + 'and the write gate assesses the page again. To keep it cleared, remove the provenance marker that lowers it (trust_tier, source_kind, '
+      + 'ingested_via, captured_via) from the file.' : '') +
     (flagged ? ` (now flagged: ${flagReason} — searchable, agent warned.)` : '') +
     (noEmbed ? ' Embedding skipped (--no-embed); run `gbrain embed --stale` to make it searchable.' : ''),
   );
@@ -322,6 +351,7 @@ async function runScan(engine: BrainEngine, args: string[]): Promise<void> {
   let quarantined = 0;
   let flagged = 0;
   const touched: Array<{ slug: string; outcome: 'quarantine' | 'flag' }> = [];
+  const skipped: Array<{ slug: string; source_id: string; reason: 'page_body_segmented'; message: string }> = [];
 
   for (const ref of refs) {
     if (scanned >= limit) break;
@@ -332,6 +362,11 @@ async function runScan(engine: BrainEngine, args: string[]): Promise<void> {
     // so --apply doesn't re-chunk/re-embed already-flagged pages every run.
     const pfm = page.frontmatter as Record<string, unknown> | null;
     if (isQuarantined(pfm) || getContentFlag(pfm)) continue;
+    if (isSegmentedPage(page)) {
+      skipped.push({ slug: ref.slug, source_id: ref.source_id, reason: 'page_body_segmented',
+        message: 'The page stores its body in segments and this scan re-checks a page by reading its whole body as one string, so it was not re-checked.' });
+      continue;
+    }
 
     if (!apply) {
       // Dry-run: assess read-only (re-import would mutate). Same thresholds as --apply.
@@ -374,21 +409,26 @@ async function runScan(engine: BrainEngine, args: string[]): Promise<void> {
   }
 
   if (json) {
-    console.log(JSON.stringify({ schema_version: 1, applied: apply, scanned, quarantined, flagged, touched }, null, 2));
+    console.log(JSON.stringify({ schema_version: 1, applied: apply, scanned, quarantined, flagged, touched, ...(skipped.length ? { skipped } : {}) }, null, 2));
     return;
   }
   const verb = apply ? '' : '(dry-run) would ';
   console.log(`Scanned ${scanned} page(s): ${verb}quarantine ${quarantined}, ${verb}flag ${flagged}.`);
+  if (skipped.length) {
+    console.log(`Not re-checked: ${skipped.length} segmented page(s) (this scan reads a whole body as one string):`);
+    for (const page of skipped) console.log(`  ${page.source_id}:${page.slug}`);
+  }
   if (!apply && (quarantined > 0 || flagged > 0)) {
     console.log('Re-run with --apply to set the markers.');
   }
 }
 
-export const QUARANTINE_HELP = `Usage: gbrain quarantine <list|clear|scan> [options]
+export const QUARANTINE_HELP = `Usage: gbrain quarantine <list|clear|scan|release|drop> [options]
 
   list [--json] [--include-flagged]
       Pages the content-quality gate hid as junk (quarantine), and with
       --include-flagged the searchable pages it flagged (content_flag).
+      Also lists facts and takes the write gate held for review (h<id>).
   clear <slug> [--source-id <id>] [--force] [--no-embed] [--json]
       Remove the markers and write the page again; the gate re-checks it.
       --force records that the page is not junk (quarantine_override, bound
@@ -397,6 +437,9 @@ export const QUARANTINE_HELP = `Usage: gbrain quarantine <list|clear|scan> [opti
   scan [--limit N] [--apply] [--no-embed] [--json]
       Re-check existing pages against the gate (preview by default).
       --apply re-imports them and is refused on a managed brain.
+  release <h<id>> | drop <h<id>>
+      Aliases of gbrain trust release|drop: release a held fact or take into
+      memory (asks you to type its ref), or drop it.
 
 One junk pattern that misfires brain-wide can be turned off with
 content_sanity.disabled_patterns.`;

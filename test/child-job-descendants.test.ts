@@ -1,5 +1,5 @@
-import { expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { afterEach, expect, test } from 'bun:test';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ChildWorkerShutdownError, runJobInChild } from '../src/core/minions/child-job-runner.ts';
@@ -23,12 +23,45 @@ function running(pid: number): boolean {
   } catch { return false; }
 }
 
+async function readPid(path: string): Promise<number> {
+  const pid = (): number => existsSync(path) ? Number(readFileSync(path, 'utf8')) : 0;
+  await until(() => Number.isInteger(pid()) && pid() > 1);
+  return pid();
+}
+
+const fixtureDirs: string[] = [];
+
+function fixtureDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  fixtureDirs.push(dir);
+  return dir;
+}
+
+function fixtureProcesses(dir: string): number[] {
+  if (process.platform !== 'linux') return [];
+  return readdirSync('/proc').filter(entry => /^\d+$/.test(entry)).map(Number).filter(pid => {
+    if (pid === process.pid) return false;
+    try { return readFileSync(`/proc/${pid}/cmdline`, 'utf8').includes(dir) && running(pid); } catch { return false; }
+  });
+}
+
+afterEach(async () => {
+  for (const dir of fixtureDirs.splice(0)) {
+    for (const pid of fixtureProcesses(dir)) {
+      killProcessGroup(pid, 'SIGKILL');
+      try { process.kill(pid, 'SIGKILL'); } catch {}
+    }
+    await until(() => fixtureProcesses(dir).length === 0);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 const tini = detectTini();
 
 for (const tiniPath of ['', tini].filter((value, index, all) => all.indexOf(value) === index)) {
   for (const escaped of [false, true]) {
     test.skipIf(process.platform !== 'linux')(`shutdown preserves group backstop after direct exit (${tiniPath ? 'tini -s' : 'no tini'}, escaped=${escaped})`, async () => {
-      const dir = mkdtempSync(join(tmpdir(), 'job-descendants-'));
+      const dir = fixtureDir('job-descendants-');
       const pidFile = join(dir, 'grandchild.pid');
       const ready = join(dir, 'ready');
       const parent = join(dir, 'parent.mjs');
@@ -74,7 +107,7 @@ for (const tiniPath of ['', tini].filter((value, index, all) => all.indexOf(valu
 }
 
 test.skipIf(process.platform !== 'linux')('failed group signalling returns bounded unconfirmed cleanup while execution remains live', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'job-signal-failure-'));
+  const dir = fixtureDir('job-signal-failure-');
   const pidFile = join(dir, 'pid');
   const script = join(dir, 'child.mjs');
   let pid = 0;
@@ -89,8 +122,7 @@ test.skipIf(process.platform !== 'linux')('failed group signalling returns bound
       signalProcessGroup: () => false,
       onExecutionStopped: () => { stopped = true; },
     }).catch((error: unknown) => error);
-    await until(() => existsSync(pidFile));
-    pid = Number(readFileSync(pidFile, 'utf8'));
+    pid = await readPid(pidFile);
     shutdown.abort();
     const error = await result;
     expect(error).toBeInstanceOf(ChildWorkerShutdownError);
@@ -104,7 +136,7 @@ test.skipIf(process.platform !== 'linux')('failed group signalling returns bound
 });
 
 test.skipIf(process.platform !== 'linux')('oversized output cannot erase unconfirmed configuration shutdown while the child remains live', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'job-oversize-shutdown-'));
+  const dir = fixtureDir('job-oversize-shutdown-');
   const pidFile = join(dir, 'pid');
   const script = join(dir, 'child.mjs');
   let pid = 0;
@@ -121,8 +153,7 @@ test.skipIf(process.platform !== 'linux')('oversized output cannot erase unconfi
       abortSignal: new AbortController().signal, shutdownSignal: shutdown.signal, killGraceMs: 20,
       signalProcessGroup: () => false, onExecutionStopped: () => { stopped = true; },
     }).catch((error: unknown) => error);
-    await until(() => existsSync(pidFile));
-    pid = Number(readFileSync(pidFile, 'utf8'));
+    pid = await readPid(pidFile);
     shutdown.abort(new LocalConfigurationError('postgres_cancellation_unavailable', 'fixture'));
     const error = await result;
     expect(error).toBeInstanceOf(ChildWorkerShutdownError);
@@ -136,7 +167,7 @@ test.skipIf(process.platform !== 'linux')('oversized output cannot erase unconfi
 });
 
 test('normally exited oversized output retains its unrecoverable classification', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'job-oversize-completed-'));
+  const dir = fixtureDir('job-oversize-completed-');
   const script = join(dir, 'child.mjs');
   try {
     writeFileSync(script, `import {writeFileSync,truncateSync} from 'node:fs';
@@ -151,7 +182,7 @@ test('normally exited oversized output retains its unrecoverable classification'
 
 for (const typedOutcome of [false, true]) {
   test.skipIf(process.platform !== 'linux' || process.getuid?.() === 0)(`final filesystem cleanup failure preserves shutdown provenance (typed outcome=${typedOutcome})`, async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'job-final-cleanup-'));
+    const dir = fixtureDir('job-final-cleanup-');
     const ready = join(dir, 'ready');
     const script = join(dir, 'child.mjs');
     let pid = 0;
@@ -172,8 +203,8 @@ for (const typedOutcome of [false, true]) {
         abortSignal: new AbortController().signal, shutdownSignal: shutdown.signal, killGraceMs: 20,
         signalProcessGroup: () => false, onExecutionStopped: () => { stopped = true; },
       }).catch((error: unknown) => error);
-      await until(() => existsSync(ready));
-      const record = JSON.parse(readFileSync(ready, 'utf8'));
+      let record = { pid: 0, dir: '' };
+      await until(() => { try { record = JSON.parse(readFileSync(ready, 'utf8')); return true; } catch { return false; } });
       pid = record.pid;
       resultDir = record.dir;
       shutdown.abort(new LocalConfigurationError('postgres_cancellation_unavailable', 'fixture'));
@@ -192,7 +223,7 @@ for (const typedOutcome of [false, true]) {
 }
 
 test.skipIf(process.platform !== 'linux')('an unobserved wrapper child group never produces positive stop evidence', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'job-unknown-wrapper-group-'));
+  const dir = fixtureDir('job-unknown-wrapper-group-');
   const wrapper = join(dir, 'wrapper.mjs');
   let stopped = false;
   try {
@@ -212,7 +243,7 @@ test.skipIf(process.platform !== 'linux')('an unobserved wrapper child group nev
 
 for (const liveGrandchild of [false, true]) {
   test.skipIf(process.platform !== 'linux')(`normal successful child exit publishes only supported cleanup evidence (live grandchild=${liveGrandchild})`, async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'job-normal-stop-proof-'));
+    const dir = fixtureDir('job-normal-stop-proof-');
     const pidFile = join(dir, 'grandchild.pid');
     const script = join(dir, 'child.mjs');
     let pid = 0;
@@ -247,7 +278,7 @@ for (const liveGrandchild of [false, true]) {
 for (const tiniPath of ['', tini].filter((value, index, all) => all.indexOf(value) === index)) {
   for (const kind of ['timeout', 'shutdown', 'configuration'] as const) {
     test.skipIf(process.platform !== 'linux')(`prompt SIGTERM exit settles without the full kill grace and publishes stop evidence (${tiniPath ? 'tini -s' : 'no tini'}, ${kind})`, async () => {
-      const dir = mkdtempSync(join(tmpdir(), 'job-prompt-settle-'));
+      const dir = fixtureDir('job-prompt-settle-');
       const ready = join(dir, 'ready');
       const script = join(dir, 'child.mjs');
       let stopped = 0;
@@ -285,7 +316,7 @@ for (const tiniPath of ['', tini].filter((value, index, all) => all.indexOf(valu
 }
 
 test.skipIf(process.platform !== 'linux')('SIGTERM-ignoring grandchild keeps the group SIGKILL at the grace deadline after a prompt direct exit', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'job-deadline-kill-'));
+  const dir = fixtureDir('job-deadline-kill-');
   const pidFile = join(dir, 'grandchild.pid');
   const ready = join(dir, 'ready');
   const parent = join(dir, 'parent.mjs');
@@ -333,7 +364,7 @@ test.skipIf(process.platform !== 'linux')('SIGTERM-ignoring grandchild keeps the
 }, 15_000);
 
 test.skipIf(process.platform !== 'linux')('unsupported cleanup proof sends the group SIGKILL once the direct child exits and settles unconfirmed', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'job-unsupported-settle-'));
+  const dir = fixtureDir('job-unsupported-settle-');
   const pidFile = join(dir, 'grandchild.pid');
   const ready = join(dir, 'ready');
   const wrapper = join(dir, 'exec-wrapper.sh');

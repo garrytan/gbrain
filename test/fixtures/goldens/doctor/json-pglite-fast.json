@@ -10,6 +10,7 @@
     "exit_code": 0,
     "report": {
       "brain_checks_score": 100,
+      "budget_ms": "<volatile>",
       "category_scores": {
         "brain": 100,
         "meta": 100,
@@ -19,6 +20,7 @@
       "checks": [
         {
           "category": "skill",
+          "elapsed_ms": "<volatile>",
           "message": "1 skills, all reachable",
           "name": "resolver_health",
           "status": "ok"
@@ -33,6 +35,7 @@
             "path": "pglite — serve IPC socket not present",
             "policy_skill_installed": false
           },
+          "elapsed_ms": "<volatile>",
           "fix": {
             "actor": "user",
             "consent": [
@@ -52,24 +55,28 @@
         },
         {
           "category": "skill",
+          "elapsed_ms": "<volatile>",
           "message": "no verb calls recorded yet (sidecar appears on first remember/recall/entity/synthesize/forget)",
           "name": "memory_verbs_usage",
           "status": "ok"
         },
         {
           "category": "skill",
+          "elapsed_ms": "<volatile>",
           "message": "1/1 skills pass",
           "name": "skill_conformance",
           "status": "ok"
         },
         {
           "category": "skill",
+          "elapsed_ms": "<volatile>",
           "message": "1 skill(s) compliant or exempt",
           "name": "skill_brain_first",
           "status": "ok"
         },
         {
           "category": "skill",
+          "elapsed_ms": "<volatile>",
           "message": "No skills.lock.json in <home>/skills — integrity check not applicable",
           "name": "skills_manifest_integrity",
           "status": "ok"
@@ -145,6 +152,7 @@
               "webhook-transforms"
             ]
           },
+          "elapsed_ms": "<volatile>",
           "fix_unavailable_reason": "unstructured",
           "message": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
           "name": "skill_currency",
@@ -152,6 +160,7 @@
         },
         {
           "category": "skill",
+          "elapsed_ms": "<volatile>",
           "message": "skill preconditions not checked (no connected brain)",
           "name": "skill_preconditions",
           "status": "ok"
@@ -163,6 +172,7 @@
             "out_of_band_settable": true,
             "reason": "disabled"
           },
+          "elapsed_ms": "<volatile>",
           "message": "memorable relay off (default)",
           "name": "memorable_relay_health",
           "status": "ok"
@@ -176,6 +186,7 @@
             "transient_ttl": "3d",
             "ttl_valid": true
           },
+          "elapsed_ms": "<volatile>",
           "message": "ambient writeback off (default; file-plane mirror — database unreachable)",
           "name": "memory_writeback",
           "status": "ok"
@@ -191,6 +202,7 @@
               "0.53.0"
             ]
           },
+          "elapsed_ms": "<volatile>",
           "fix": {
             "actor": "agent",
             "argv": [
@@ -223,36 +235,42 @@
         },
         {
           "category": "ops",
+          "elapsed_ms": "<volatile>",
           "message": "mode=notify",
           "name": "self_upgrade_health",
           "status": "ok"
         },
         {
           "category": "ops",
+          "elapsed_ms": "<volatile>",
           "message": "Bun <bun-version> (minimum 1.4.0)",
           "name": "bun_runtime",
           "status": "ok"
         },
         {
           "category": "brain",
+          "elapsed_ms": "<volatile>",
           "message": "disabled (opt-in). Enable with: gbrain config set autopilot.nightly_quality_probe.enabled true",
           "name": "nightly_quality_probe_health",
           "status": "ok"
         },
         {
           "category": "ops",
+          "elapsed_ms": "<volatile>",
           "message": "No progressive-batch operations in the last 7 days",
           "name": "progressive_batch_audit_health",
           "status": "ok"
         },
         {
           "category": "brain",
+          "elapsed_ms": "<volatile>",
           "message": "disabled (opt-in; default-on only for search.mode=tokenmax). Enable with: `gbrain config set autopilot.conversation_parser_probe.enabled true`",
           "name": "conversation_parser_probe_health",
           "status": "ok"
         },
         {
           "category": "ops",
+          "elapsed_ms": "<volatile>",
           "message": "gbrain home is outside any enclosing git worktree.",
           "name": "home_dir_in_worktree",
           "status": "ok"
@@ -269,6 +287,7 @@
             "embedding_model": "voyage:voyage-4",
             "shadows": []
           },
+          "elapsed_ms": "<volatile>",
           "message": "No embedding key is set here (VOYAGE_API_KEY or voyage_api_key). No environment variable overrides a different config-plane provider key. This check sees only the environment `gbrain doctor` runs in; a daemon (gbrain serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.",
           "name": "embedding_key_source",
           "status": "ok"
@@ -276,8 +295,22 @@
         {
           "category": "ops",
           "details": {
+            "decision": null,
+            "provider_env": []
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No gbrain setup receipt records a provider-use decision for this install; provider calls follow the configured keys.",
+          "name": "provider_consent",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
             "reason": "no_harness_detected"
           },
+          "elapsed_ms": "<volatile>",
           "fix": {
             "actor": "user",
             "consent": [
@@ -305,12 +338,14 @@
             "json_document_missing": 0,
             "window_days": 7
           },
+          "elapsed_ms": "<volatile>",
           "message": "No agent dead ends in the last 7 days (0 non-success event(s) logged).",
           "name": "agent_contract",
           "status": "ok"
         },
         {
           "category": "ops",
+          "elapsed_ms": "<volatile>",
           "fix": {
             "actor": "agent",
             "argv": [
@@ -343,10 +378,13 @@
           "status": "warn"
         }
       ],
+      "complete": true,
       "db_url_source": "config-file-path",
+      "elapsed_ms": "<volatile>",
       "health_score": 90,
       "schema_version": 2,
       "status": "warnings",
+      "tier": "standard",
       "top_issues": [
         {
           "action": {
@@ -389,9 +427,12 @@
       ],
       "unknown_scores": [
         "brain"
-      ]
+      ],
+      "unknown_sections": []
     },
-    "stderr": [],
+    "stderr": [
+      "[gbrain doctor] non-interactive run: the check run (not connect or migrations) is capped at 90000 ms (doctor.default_budget_ms); checks past it report health unknown. Off for one run: --budget-ms 0; off for good: gbrain config set doctor.default_budget_ms 0. On PGLite a statement already running cannot be stopped, so a check can finish late."
+    ],
     "stdout": "<json>"
   },
   "normalizer": "doctor-json-v1"

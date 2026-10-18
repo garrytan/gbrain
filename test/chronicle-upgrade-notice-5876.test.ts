@@ -10,7 +10,7 @@
  * stale unset advice comes back.
  * Seams: the provider view is passed in (pricing/provider state is config, not under test here).
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { CHRONICLE_ACK_KEY, CHRONICLE_NOTICE_SHOWN_KEY } from '../src/core/chronicle/config.ts';
 import { autoChronicleUpgradeNotice, printAutoChronicleUpgradeNotice } from '../src/core/chronicle/upgrade-notice.ts';
@@ -25,6 +25,8 @@ const priced = { model: 'anthropic:claude-sonnet-4-6', priced: true, chatAvailab
 
 beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 120_000);
 afterAll(async () => { await engine.disconnect(); });
+// The unconfigured-gateway case restores inline; the hook covers a throw before that restore (isolation lint R7).
+afterEach(() => { resetGateway(); });
 beforeEach(async () => { for (const k of ['auto_chronicle', CHRONICLE_ACK_KEY, CHRONICLE_NOTICE_SHOWN_KEY]) await engine.unsetConfig(k); });
 
 describe('auto_chronicle upgrade notice', () => {

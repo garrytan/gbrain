@@ -33,8 +33,10 @@ import { scorePush } from './metrics/push.ts';
 import { runWriteBack, type WriteBackScore } from './metrics/write-back.ts';
 import { scoreContinuityPair } from './metrics/continuity.ts';
 import { SeedError, seedBrain, type SeedOutcome } from './seed.ts';
+import { assembleTrustCell, runTrustSuites } from './trust-suites.ts';
 import { configureDecideBrain, decideRowReceipt, decideSpendTotals, spendDelta, type DecideEvalRun } from '../decide-eval-flags.ts';
 import {
+  isTrustSuite,
   round4,
   toPublicTurn,
   type AdapterFixtureView,
@@ -222,7 +224,13 @@ export async function runBrainBench(
   // Continuity pairs are orchestrated separately from regular fixtures.
   const pairFixtures = new Map<string, { writer?: LoadedFixture; reader?: LoadedFixture }>();
   const regular: LoadedFixture[] = [];
+  // Memory-trust fixtures run on their own persistence-enabled brain after everything else (trust-scenario.ts).
+  const trustFixtures: LoadedFixture[] = [];
   for (const lf of eligible) {
+    if (lf.fixture.suites.some(isTrustSuite)) {
+      trustFixtures.push(lf);
+      continue;
+    }
     const cont = lf.fixture.continuity;
     if (cont && wantedSuites.has('continuity')) {
       const p = pairFixtures.get(cont.pair_id) ?? {};
@@ -243,6 +251,7 @@ export async function runBrainBench(
     stored_rows: 0, matched_any_gold: 0, fixtures: [], failed_items: [],
   };
   const continuityByReader = new Map<HarnessName, ContinuityAgg>();
+  let trustAgg: Awaited<ReturnType<typeof runTrustSuites>> | null = null;
 
   // RUN-scoped --llm budget (review finding: a per-invocation cap would
   // multiply by fixture count — ~$550 worst case on the committed corpus).
@@ -372,6 +381,13 @@ export async function runBrainBench(
         continuityByReader.set(readerHarness, agg);
       }
     }
+
+    // ---- memory-trust suites: real tiered writes, one source per fixture (trust-suites.ts) ----
+    if (trustFixtures.length > 0) {
+      trustAgg = await runTrustSuites(trustFixtures, { harnesses: harnessList, adapterFor, progress });
+      turnRows.push(...trustAgg.turnRows);
+      fixturesRun += trustFixtures.length;
+    }
   } finally {
     for (const a of adapters.values()) {
       try {
@@ -387,7 +403,9 @@ export async function runBrainBench(
   const cells: SuiteMetrics[] = [];
   for (const harness of harnessList) {
     for (const suite of opts.suites) {
-      const cell = assembleCell(harness, suite, turnRows, writeBackAgg, continuityByReader, opts.llm);
+      const cell = isTrustSuite(suite)
+        ? (trustAgg ? assembleTrustCell(harness, suite, trustAgg, SEAM[harness]) : null)
+        : assembleCell(harness, suite, turnRows, writeBackAgg, continuityByReader, opts.llm);
       if (cell) cells.push(cell);
     }
   }

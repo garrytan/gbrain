@@ -43,12 +43,13 @@ import { validatePageSlug } from '../ops/context.ts';
 import { privatePagesFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 import { maintenancePreflight } from '../persistence/prepared-maintenance.ts';
 import { derivedWriteThrough } from './derived-write-through.ts';
-import { canonicalConceptStem, loadConceptRedirects } from './concept-redirects.ts';
+import { addSpellingRedirects, canonicalConceptStem, loadConceptRedirects, loadLiveConceptStems } from './concept-redirects.ts';
 import {
   addManagedProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishClassicConcept, publishManagedConcept, stripFenceSections,
 } from './concept-publication.ts';
 import { readPhaseConfigNumber, SYNTHESIZE_CONCEPTS_BUDGET_KEY, SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD } from './phase-config-values.ts';
 import { ConceptRetryBound, MAX_CONCEPT_ATTEMPTS } from './concept-retry-bound.ts';
+import { ConceptDriftSkips } from '../persistence/drift-conflicts.ts';
 
 // Miss policy for the shared resolver (`priceFor`: operator overrides, the
 // claude-cli → Anthropic sibling, canonical rows): assume Sonnet-tier
@@ -216,12 +217,11 @@ export async function runPhaseSynthesizeConcepts(
     };
   }
 
-  // 2. Group atoms by normalized concept slug (#6161: a merged concept groups under its canonical one); one atom counts once per concept.
-  const redirects = await loadConceptRedirects(engine, opts.sourceId ?? 'default', conceptStemFor).catch(() => new Map<string, string>());
+  // 2. Group atoms by concept stem (#6161 human redirects, then #5965 spelling folds; see resolveAtomConceptStems); one atom counts once per concept.
+  const { atomStems, foldedSpellings } = await resolveAtomConceptStems(engine, opts.sourceId ?? 'default', atoms);
   const groups = new Map<string, { slugs: string[]; titles: string[]; bodies: string[]; visibilities: Visibility[] }>();
-  for (const atom of atoms) {
-    const conceptSlugs = new Set(atom.concept_refs.map(conceptStemFor).filter((s): s is string => s !== null).map((stem) => canonicalConceptStem(stem, redirects)));
-    for (const conceptSlug of conceptSlugs) {
+  for (const [i, atom] of atoms.entries()) {
+    for (const conceptSlug of atomStems[i]!) {
       const existing = groups.get(conceptSlug) ?? { slugs: [], titles: [], bodies: [], visibilities: [] };
       existing.slugs.push(atom.slug);
       existing.titles.push(atom.title);
@@ -341,6 +341,8 @@ export async function runPhaseSynthesizeConcepts(
   const pricingFallbackModels = new Set<string>();
   const retries = await ConceptRetryBound.load(engine); // #6260: bounded paid retries per member hash
   const skippedRetryBound: string[] = [];
+  const driftSkips = await ConceptDriftSkips.load(engine, opts.sourceId ?? 'default', !!maintenance?.binding, !!opts.dryRun);
+  const skippedFileDrift = driftSkips.skipped;
   for (const group of atomGroups) {
     const conceptSlug = `concepts/${group.conceptSlug}`;
     // A concept page this phase did not write belongs to a human (or another
@@ -370,6 +372,8 @@ export async function runPhaseSynthesizeConcepts(
       skippedUnchanged.push(conceptSlug);
       continue;
     }
+    // #6643 (B1): a drifted concept would only add a conflict receipt per publication; checked live before any spend.
+    if (await driftSkips.skip(conceptSlug, existingSnapshot)) continue;
     // A page hashed by the pre-D-N3 formula (full atom bodies) whose inputs are
     // provably unchanged keeps its narrative: only the hash is rewritten, no spend.
     const grandfathered = realNarrative && existing?.frontmatter?.member_hash === hashOf(synthModel, group.atomBodies);
@@ -495,12 +499,12 @@ export async function runPhaseSynthesizeConcepts(
       const publish = async (pageVisibility: Visibility): Promise<void> => {
         if (maintenance) {
           conceptRevision = await publishManagedConcept(engine, maintenance, conceptSlug, synthesized(pageVisibility), narrative,
-            conceptRevision, opts.brainDir);
+            conceptRevision, opts.brainDir, group.atomSlugs);
           return;
         }
         // #4416: target the cycle's resolved source, not the 'default' literal.
         baseline = await publishClassicConcept(engine, conceptSlug, opts.sourceId ?? 'default', synthesized(pageVisibility), narrative,
-          baseline, { writeThrough: conceptFiles !== null, importPage: (markdown) => importFromContent(engine, conceptSlug, markdown, {
+          baseline, { writeThrough: conceptFiles !== null, members: group.atomSlugs, importPage: (markdown) => importFromContent(engine, conceptSlug, markdown, {
             noEmbed: !isAvailable('embedding'), sourceId: opts.sourceId, preserveGateMarkers: true,
           }) });
       };
@@ -576,6 +580,7 @@ export async function runPhaseSynthesizeConcepts(
   // survives only as the fallback for legacy unscoped callers. Receipt only
   // fires when concepts were actually written; rollup always fires so doctor
   // sees the phase ran.
+  const driftActions = await driftSkips.finish();
   const warnings = budgetWarnings(budget.warning, budgetCapped, budgetCap);
   if (!opts.dryRun) await retries.save(engine);
   // Managed brains skip the receipt page (a legacy putPage), like extract_atoms;
@@ -608,13 +613,13 @@ export async function runPhaseSynthesizeConcepts(
       source_id: opts.sourceId ?? 'default',
       cost_delta: estimatedSpendUsd,
       round_completed_delta: failures.length === 0 && publicationDeferred.length === 0 && publicationHeld.length === 0 ? 1 : 0,
-      halt_delta: failures.length > 0 ? 1 : 0,
+      halt_delta: failures.length > 0 ? 1 : 0, halt_reason: 'item_error',
     });
   }
 
   return {
     phase: 'synthesize_concepts',
-    status: failures.length > 0 || linkWarnings.length > 0 || publicationDeferred.length > 0 || publicationHeld.length > 0 ? 'warn' : 'ok',
+    status: failures.length > 0 || linkWarnings.length > 0 || publicationDeferred.length > 0 || publicationHeld.length > 0 || skippedFileDrift.length > 0 ? 'warn' : 'ok',
     duration_ms: 0,
     summary:
       `synthesize_concepts: ${conceptsWritten} concepts ` +
@@ -628,7 +633,8 @@ export async function runPhaseSynthesizeConcepts(
       (keptExistingNarrative.length > 0 ? ` (${keptExistingNarrative.length} existing narrative(s) kept)` : '') +
       (skippedRetryBound.length > 0 ? ` (${skippedRetryBound.length} skipped after ${MAX_CONCEPT_ATTEMPTS} failed attempts on unchanged members)` : '') +
       (publicationDeferred.length > 0 ? ` (${publicationDeferred.length} publication(s) deferred: page changed, retried next run)` : '') +
-      (publicationHeld.length > 0 ? ` (${publicationHeld.length} publication(s) held: existing page needs import/repair)` : ''),
+      (publicationHeld.length > 0 ? ` (${publicationHeld.length} publication(s) held: existing page needs import/repair)` : '') +
+      (skippedFileDrift.length > 0 ? ` (${skippedFileDrift.length} skipped before synthesis: canonical file differs from the database; ${driftActions.join('; ')})` : ''),
     details: {
       concepts_written: conceptsWritten,
       tier_counts: tierCounts,
@@ -644,6 +650,9 @@ export async function runPhaseSynthesizeConcepts(
       rehashed,
       kept_existing_narrative: keptExistingNarrative,
       skipped_retry_bound: skippedRetryBound,
+      skipped_file_drift: skippedFileDrift,
+      ...(driftActions.length ? { file_drift_next_actions: driftActions } : {}),
+      folded_spellings: foldedSpellings,
       publication_deferred: publicationDeferred,
       publication_held: publicationHeld,
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
@@ -653,6 +662,24 @@ export async function runPhaseSynthesizeConcepts(
       dry_run: opts.dryRun ?? false,
     },
   };
+}
+
+/**
+ * Each atom's concept stems, one entry per atom: the ref's stem through the
+ * human redirects (#6161), then through the run's spelling folds (#5965:
+ * `network-effects` / `networkeffects` become one stem; the live page's
+ * spelling wins, else the most frequent, tie to the hyphenated one; two live
+ * spellings are left apart). The folds are reported, never written.
+ */
+async function resolveAtomConceptStems(engine: BrainEngine, sourceId: string, atoms: Array<{ concept_refs: string[] }>):
+  Promise<{ atomStems: Set<string>[]; foldedSpellings: Array<{ from: string; to: string }> }> {
+  const redirects = await loadConceptRedirects(engine, sourceId, conceptStemFor).catch(() => new Map<string, string>());
+  const afterHumanHop = atoms.map((atom) => new Set(atom.concept_refs.map(conceptStemFor).filter((s): s is string => s !== null).map((stem) => canonicalConceptStem(stem, redirects))));
+  const atomCounts = new Map<string, number>();
+  for (const stems of afterHumanHop) for (const stem of stems) atomCounts.set(stem, (atomCounts.get(stem) ?? 0) + 1);
+  const liveStems = await loadLiveConceptStems(engine, sourceId, conceptStemFor).catch(() => new Set<string>());
+  const foldedSpellings = addSpellingRedirects(redirects, atomCounts, liveStems);
+  return { atomStems: afterHumanHop.map((stems) => new Set([...stems].map((stem) => canonicalConceptStem(stem, redirects)))), foldedSpellings };
 }
 
 /**

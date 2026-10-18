@@ -160,8 +160,8 @@ export async function phaseCGrandfather(
           AND NOT (COALESCE(p.source_path,'') ~ '\\.[^./]+$' AND COALESCE(p.source_path,'') !~* '\\.mdx?$')`, [ids]);
       try { await assertGrandfatherCapacity(engine, Number(admissible)); }
       catch (error) {
-        if (!(error instanceof OperationError) || error.code !== 'queue_capacity') throw error;
-        return { result: { name: 'grandfather', status: 'failed', detail: `queue_capacity: ${error.message} ${error.suggestion ?? ''}`.trim() }, detail: gf };
+        if (!(error instanceof OperationError) || !['queue_capacity', 'write_quota_exhausted', 'write_quota_insufficient'].includes(error.code)) throw error;
+        return { result: { name: 'grandfather', status: 'failed', detail: `${error.code}: ${error.message} ${error.suggestion ?? ''}`.trim() }, detail: gf };
       }
     }
 

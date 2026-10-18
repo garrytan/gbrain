@@ -177,6 +177,26 @@ describe('journaled memory publication, both engines', () => {
     }
   }, 120_000);
 
+  test('remember numbers its fence row past a facts row the fence does not hold', async () => {
+    for (const engine of engines) {
+      const slug = 'people/row-floor-example';
+      const fenced = [1, 2].reduce(body => upsertFactRow(body, { claim: `Fenced claim ${body.length}`, kind: 'fact', visibility: 'world',
+        confidence: 1, notability: 'medium' }).body, 'Biography');
+      await setupPage(engine, slug, fenced);
+      await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.executeRaw(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, row_num, source_markdown_slug)
+         VALUES ($1, $2, 'Extracted occupant claim', 'fact', 'world', 'extraction fixture', 3, $2)`, [sourceId, slug]), TEST_WRITE_ATTRIBUTION));
+      const receipt = await submitRememberMutation(context(engine), { fact: 'Remembered past the occupant', provenance: 'test conversation',
+        entity: slug, request_id: randomUUID() }, 30_000);
+      expect(receipt).toMatchObject({ status: 'inserted', state: 'committed' });
+      const rows = await engine.executeRaw<{ fact: string; row_num: number }>(
+        'SELECT fact, row_num FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 ORDER BY row_num', [sourceId, slug]);
+      expect(rows.map(r => [r.fact, Number(r.row_num)])).toEqual([['Extracted occupant claim', 3], ['Remembered past the occupant', 4]]);
+      const fence = parseFactsFence((await engine.readPageSnapshot(slug, { sourceId }))!.page.compiled_truth).facts;
+      expect(fence.map(f => f.rowNum)).toEqual([1, 2, 4]);
+    }
+  }, 60_000);
+
   test('a remember prepared against a stale page re-prepares; every committed receipt is readable at acknowledgement', async () => {
     let held = 0;
     let gate = Promise.withResolvers<void>();
@@ -246,6 +266,8 @@ describe('journaled memory publication, both engines', () => {
     try {
       for (const engine of engines) {
         const slug = 'people/supersede-example';
+        // Calibrate the fixed test embedder: an uncalibrated model never supersedes by cosine (supersession-threshold.ts).
+        await engine.setConfig('facts.supersession_thresholds', JSON.stringify({ 'openai:text-embedding-3-small@1536': 0.95 }));
         await setupPage(engine, slug);
         const privateMemory = await submitRememberMutation(context(engine), { fact: 'Confidential unrelated claim',
           provenance: 'test', entity: slug, visibility: 'private' }, 30_000);

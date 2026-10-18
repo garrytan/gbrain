@@ -6,16 +6,16 @@
  * back to 'default'), so the op's source-filter refusal fired for every local
  * CLI call. Driven through the real CLI seam (makeContext) so the implicit
  * source marker and the op handler are tested together; user-selected
- * sources (--source, GBRAIN_SOURCE) still get the unavailable note.
+ * sources (--source, GBRAIN_SOURCE) get the scoped view (D9): each side is
+ * re-read in that source, and this fixture's chunk ids name no row there.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { makeContext } from '../src/cli.ts';
+import { makeContext } from '../src/cli/main.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-const UNAVAILABLE = 'Stored contradiction reports are temporarily available only to trusted local callers without a source filter.';
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
@@ -53,7 +53,7 @@ const findContradictions = (params: Record<string, unknown>) =>
   withEnv({ GBRAIN_SOURCE: undefined }, async () => {
     const ctx = await makeContext(engine, params);
     return operationsByName['find_contradictions'].handler(ctx, {}) as Promise<{
-      run_id?: string; contradictions: unknown[]; note?: string;
+      run_id?: string; ran_at?: unknown; contradictions: unknown[]; note?: string; total_visible?: number;
     }>;
   });
 
@@ -65,9 +65,9 @@ describe('find-contradictions through the local CLI context', () => {
     expect(res.contradictions).toHaveLength(1);
   });
 
-  test('--source <id> is a filter the report cannot honor: unavailable note', async () => {
+  test('--source <id> is a filter: the scoped view, without the run total', async () => {
     const res = await findContradictions({ source: 'alpha' });
-    expect(res).toEqual({ contradictions: [], note: UNAVAILABLE });
+    expect(res).toEqual({ run_id: 'cli-run-1', ran_at: expect.anything(), contradictions: [], total_visible: 0 });
   });
 
   test('--source __all__ still spans the brain', async () => {
@@ -75,11 +75,11 @@ describe('find-contradictions through the local CLI context', () => {
     expect(res.run_id).toBe('cli-run-1');
   });
 
-  test('GBRAIN_SOURCE is user-selected scope: unavailable note', async () => {
+  test('GBRAIN_SOURCE is user-selected scope: the scoped view', async () => {
     const res = await withEnv({ GBRAIN_SOURCE: 'alpha' }, async () => {
       const ctx = await makeContext(engine, {});
       return operationsByName['find_contradictions'].handler(ctx, {});
     });
-    expect(res).toEqual({ contradictions: [], note: UNAVAILABLE });
+    expect(res).toEqual({ run_id: 'cli-run-1', ran_at: expect.anything(), contradictions: [], total_visible: 0 });
   });
 });

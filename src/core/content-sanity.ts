@@ -44,6 +44,7 @@
  * is honored by the CALLER (import-file.ts), not by this module. The
  * assessor stays pure so unit tests don't need env mutation.
  */
+import { isLargePageBytes, PAGE_MAX_BYTES } from './page-size-policy.ts';
 
 /** Maximum number of body bytes scanned for pattern matches. The body
  *  is sliced to this size before regex/substring evaluation so pattern
@@ -58,12 +59,12 @@ export const SCAN_HEAD_BYTES = 2048;
  *  stderr warn. Page still writes. */
 export const DEFAULT_BYTES_WARN = 50_000;
 
-/** Default block threshold. Operator override via
+/** Default block threshold: the page ceiling (page-size-policy.ts), so size
+ *  alone never decides searchability below it. Operator override via
  *  `content_sanity.bytes_block` config key or `GBRAIN_PAGE_BLOCK_BYTES`
- *  env var. Above this, page writes but `frontmatter.embed_skip` is set
- *  and the embedder skips on next sweep. Page is still queryable; just
- *  not searchable until manually re-embedded or split. */
-export const DEFAULT_BYTES_BLOCK = 500_000;
+ *  env var. Above an operator's lower value the page writes with
+ *  `frontmatter.embed_skip` and zero chunks, as before. */
+export const DEFAULT_BYTES_BLOCK = PAGE_MAX_BYTES;
 
 /** Default max markup ratio. When the prose pass runs (warn-tier window,
  *  `prose_check_enabled`, non-code page) and `markup_ratio` exceeds this,
@@ -325,6 +326,60 @@ export function assessProse(body: string): ProseAssessment {
   return { prose_chars, total_chars, markup_ratio: ratio };
 }
 
+/** Characters in each head / middle / tail window of a large-page sample. */
+export const JUNK_SAMPLE_CHARS = 65_536;
+
+/** The head, middle and tail windows of `body` (the whole body when it is shorter than three windows). */
+export function sampleWindows(body: string, size = JUNK_SAMPLE_CHARS): string[] {
+  if (body.length <= size * 3) return [body];
+  const middle = Math.floor((body.length - size) / 2);
+  return [body.slice(0, size), body.slice(middle, middle + size), body.slice(body.length - size)];
+}
+
+/** assessProse over the sample windows: their summed prose and character counts. */
+function sampledProse(body: string): ProseAssessment {
+  const parts = sampleWindows(body).map(assessProse);
+  const total_chars = parts.reduce((n, part) => n + part.total_chars, 0);
+  const prose_chars = parts.reduce((n, part) => n + part.prose_chars, 0);
+  return { prose_chars, total_chars, markup_ratio: total_chars ? Math.min(1, Math.max(0, (total_chars - prose_chars) / total_chars)) : 0 };
+}
+
+export interface SampledJunkAssessment {
+  junk: boolean;
+  /** `sampled_markup_heavy` when every window is over the markup ratio; `sampled_junk_pattern` when two or more windows open with a junk pattern or operator literal. */
+  reasons: Array<'sampled_markup_heavy' | 'sampled_junk_pattern'>;
+  /** Markup ratio of each window, in head / middle / tail order. */
+  markup_ratios: number[];
+}
+
+/**
+ * The junk check a large page gets before it is embedded (the import-time
+ * scan reads only the first 2 KB). Boilerplate walls (the 890K-char nav dump
+ * the 500 KB block was first written for) read as markup in every window;
+ * a scraped error page repeats its pattern through the body. One hit in one
+ * window is not enough: a conversation may quote any of the patterns.
+ */
+export function assessSampledJunk(body: string, opts: { max_markup_ratio?: number;
+  extra_literals?: ReadonlyArray<OperatorLiteral>; disabled_patterns?: ReadonlyArray<string> }): SampledJunkAssessment {
+  return assessJunkWindows(sampleWindows(body), opts);
+}
+
+/** `assessSampledJunk` over windows the caller already sampled (a segmented page reads them from its segments). */
+export function assessJunkWindows(windows: string[], opts: { max_markup_ratio?: number;
+  extra_literals?: ReadonlyArray<OperatorLiteral>; disabled_patterns?: ReadonlyArray<string> }): SampledJunkAssessment {
+  const markup_ratios = windows.map(window => assessProse(window).markup_ratio);
+  const max = opts.max_markup_ratio ?? DEFAULT_MAX_MARKUP_RATIO;
+  const hits = windows.filter(window => {
+    const r = assessContentSanity({ compiled_truth: window, timeline: '', title: '', bytes_warn: Infinity, bytes_block: Infinity,
+      prose_check_enabled: false, extra_literals: opts.extra_literals, disabled_patterns: opts.disabled_patterns });
+    return r.junk_pattern_matches.length + r.literal_substring_matches.length > 0;
+  }).length;
+  const reasons: SampledJunkAssessment['reasons'] = [];
+  if (windows.length === 3 && markup_ratios.every(ratio => ratio > max)) reasons.push('sampled_markup_heavy');
+  if (hits >= 2) reasons.push('sampled_junk_pattern');
+  return { junk: reasons.length > 0, reasons, markup_ratios };
+}
+
 /**
  * Assess a parsed page against the size + junk-pattern + prose surface.
  *
@@ -344,6 +399,8 @@ export function assessContentSanity(opts: {
   timeline: string;
   /** Post-parseMarkdown title. Some patterns key on title alone. */
   title: string;
+  /** UTF-8 bytes of the whole body when `compiled_truth`/`timeline` hold only its head (a streamed page over the single-string ceiling). */
+  body_bytes?: number;
   /** Effective warn threshold; defaults to DEFAULT_BYTES_WARN. */
   bytes_warn?: number;
   /** Effective block threshold; defaults to DEFAULT_BYTES_BLOCK. */
@@ -387,7 +444,7 @@ export function assessContentSanity(opts: {
   // octet_length() does at the DB layer, so the two surfaces agree on
   // the same page (D2 parity).
   const body = opts.compiled_truth + (opts.timeline ? '\n' + opts.timeline : '');
-  const bytes = Buffer.byteLength(body, 'utf-8');
+  const bytes = opts.body_bytes ?? Buffer.byteLength(body, 'utf-8');
   const oversize = bytes > bytes_block;
 
   // Head-slice for pattern evaluation. Cost stays O(SCAN_HEAD_BYTES)
@@ -444,7 +501,9 @@ export function assessContentSanity(opts: {
   let high_markup = false;
   const inProseWindow = bytes > bytes_warn && bytes <= bytes_block;
   if (prose_check_enabled && inProseWindow && opts.page_kind !== 'code') {
-    const prose = assessProse(body);
+    // A large page is judged on its head, middle and tail windows, so the
+    // regex pass stays bounded however big the page is.
+    const prose = isLargePageBytes(bytes) ? sampledProse(body) : assessProse(body);
     prose_chars = prose.prose_chars;
     markup_ratio = prose.markup_ratio;
     high_markup = markup_ratio > max_markup_ratio;

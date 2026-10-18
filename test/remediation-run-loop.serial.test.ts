@@ -68,6 +68,7 @@ function makeHealth(): BrainHealth {
     dead_links: 1,
     link_coverage: 1,
     entity_page_count: 10,
+    entity_types_status: 'resolved',
     timeline_coverage: 1,
     most_connected: [],
     embed_coverage_score: 35,

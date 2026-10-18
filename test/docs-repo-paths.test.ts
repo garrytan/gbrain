@@ -46,6 +46,24 @@ const ALLOWLIST: Record<string, Record<string, string>> = {
   'docs/guides/multi-source-brains.md': {
     'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
   },
+  'AGENTS.md': {
+    'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
+  },
+  'INSTALL_FOR_AGENTS.md': {
+    'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
+  },
+  'docs/GBRAIN_RECOMMENDED_SCHEMA.md': {
+    'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
+  },
+  'docs/guides/diligence-ingestion.md': {
+    'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
+  },
+  'docs/guides/live-sync.md': {
+    'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
+  },
+  'docs/guides/shared-checkout-git.md': {
+    'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
+  },
   'docs/architecture/key-files/files-and-sync-1.md': {
     'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
   },

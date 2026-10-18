@@ -22,6 +22,7 @@
  * level; repeats re-derive the same embedding over identical content.
  */
 
+import { budgetedPageRead } from './read-budget.ts';
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import { operations } from '../../operations.ts';
@@ -30,52 +31,12 @@ import { paramDefToSchema } from '../../../mcp/tool-defs.ts';
 import { normalizeOptionalParams, validateParams } from '../../../mcp/validate-params.ts';
 import { validateSourceId } from '../../utils.ts';
 import type { ToolCtx, ToolDef } from '../types.ts';
-import { putPageRejection } from './put-page-result.ts';
+import { putPageRejection, rethrowWithCurrentRevision } from './put-page-result.ts';
+import { BRAIN_TOOL_ALLOWLIST } from './brain-tool-allowlist.ts';
 
-/**
- * v0.15 brain-tool allow-list. Review carefully when extending. Op names
- * verified against origin/master:src/core/operations.ts (post shell-jobs +
- * Knowledge Runtime).
- *
- * Read-only (all safe):
- *   query, search, get_page, list_pages,
- *   get_backlinks, traverse_graph, resolve_slugs, get_ingest_log
- *
- * Conditional write:
- *   put_page (namespace-enforced by the tool schema + server-side check)
- *
- * Every name below MUST exist in src/core/operations.ts OPERATIONS; the
- * brain-allowlist test pins this invariant so an upstream rename fails CI
- * instead of silently dropping a tool.
- */
-export const BRAIN_TOOL_ALLOWLIST: ReadonlySet<string> = new Set([
-  'query',
-  'search',
-  'get_page',
-  'list_pages',
-  'get_backlinks',
-  'traverse_graph',
-  // v114 (#1941): read-only provenance discovery. Edge-WRITE ops (add_link /
-  // remove_link) are deliberately NOT allowlisted — exposing graph writes to
-  // subagents is a separate trust decision.
-  'list_link_sources',
-  'resolve_slugs',
-  'get_ingest_log',
-  'put_page',
-  // #2778: the canonical timeline-write op. Fenced exactly like put_page —
-  // operations.ts:enforceSubagentSlugFence confines the target slug to the
-  // trusted-workspace allow-list (or the wiki/agents/<id>/ namespace) when
-  // ctx.viaSubagent=true, so a subagent can only append timeline entries to
-  // pages it could have written anyway.
-  'add_timeline_entry',
-  // v0.29 — Salience + Anomaly Detection. Both read-only. `get_recent_transcripts`
-  // is intentionally NOT included: subagent calls always have ctx.remote=true,
-  // and the v0.29 trust gate rejects remote callers — adding it here would be
-  // a footgun (subagent calls op, gets permission_denied, looks like a bug).
-  // The cycle synthesize phase already calls discoverTranscripts directly.
-  'get_recent_salience',
-  'find_anomalies',
-]);
+// The allow-list itself lives in a handler-free module so the MCP surface
+// tiers (src/mcp/surface.ts) can read it without this module's operations import.
+export { BRAIN_TOOL_ALLOWLIST };
 
 /**
  * v0.41 Approach C: per-tool usage_hint surfaced verbatim in the subagent
@@ -214,6 +175,8 @@ export interface BuildBrainToolsOpts {
   sourceId?: string;
   /** Current remote owner grant; never populated from caller tool arguments. */
   delegatedAuth?: Pick<AuthInfo, 'clientId' | 'scopes' | 'sourceId' | 'allowedSources' | 'allowedOperations'>;
+  /** #6297: byte budget on this job's get_page results (SubagentHandlerData.read_budget_bytes); unset = none. */
+  readBudgetBytes?: number;
 }
 
 interface OpContextDeps {
@@ -319,11 +282,16 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
         // model instead of crashing inside the handler, and `since: ""` never
         // reaches a handler raw.
         const params = normalizeOptionalParams(op, raw);
+        // #6297: a subagent's full-content read returns the round-trip fields only, not the body twice.
+        if (op.name === 'get_page' && params.include_content === true) params.content_only = true;
         const validationError = validateParams(op, params);
         if (validationError) throw new Error(`${toolName}: ${validationError}`);
-        const output = await op.handler(opCtx, params);
+        const output = op.name === 'put_page'
+          ? await op.handler(opCtx, params).catch(e => rethrowWithCurrentRevision(ctx.engine, opCtx.sourceId ?? 'default', params.slug, e))
+          : await op.handler(opCtx, params);
         const rejection = op.name === 'put_page' ? putPageRejection(output) : null;
         if (rejection) throw new Error(rejection);
+        if (op.name === 'get_page' && opts.readBudgetBytes) return budgetedPageRead(ctx.engine, ctx.jobId, opts.readBudgetBytes, params.slug, output);
         return output;
       },
     };

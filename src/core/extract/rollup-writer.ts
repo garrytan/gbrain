@@ -28,6 +28,87 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { isMissingSchemaObject } from '../utils.ts';
+
+/**
+ * #5495: why a round halted, as a closed vocabulary stored per reason in
+ * `extract_rollup_7d.halt_reasons` (migration v239) next to `halt_count`.
+ * No provider text and no paths ever enter the table: a caller passes one of
+ * these, or `true` for a halt it cannot classify, which reads back as
+ * `unknown` (`halt_count - sum(halt_reasons)`, computed on read, so rows
+ * written before the column and by older writers need no backfill).
+ */
+export const HALT_REASONS = Object.freeze([
+  'provider_auth',
+  'provider_billing',
+  'provider_rate_limit',
+  'provider_model_not_found',
+  'no_pricing',
+  'integrity_guard',
+  'item_error',
+] as const);
+export type HaltReason = (typeof HALT_REASONS)[number];
+/** The read-side bucket for halts no reason was recorded for; never written. */
+export const UNKNOWN_HALT_REASON = 'unknown';
+
+/** The provider error classes a phase's global LLM halt tracker reports, as halt reasons. */
+export function providerHaltReason(cls: 'auth' | 'billing' | 'rate_limit' | 'model_not_found' | null | undefined): HaltReason | null {
+  switch (cls) {
+    case 'auth': return 'provider_auth';
+    case 'billing': return 'provider_billing';
+    case 'rate_limit': return 'provider_rate_limit';
+    case 'model_not_found': return 'provider_model_not_found';
+    default: return null;
+  }
+}
+
+/** Reasons recorded on 7-day rows plus the read-side `unknown` bucket for the halts no reason covers. */
+export function haltReasonsWithUnknown(haltCount: number, recorded: Record<string, number | string>): Record<string, number> {
+  const reasons: Record<string, number> = {};
+  let classified = 0;
+  for (const [reason, n] of Object.entries(recorded)) {
+    const count = Number(n) || 0;
+    if (count <= 0) continue;
+    reasons[reason] = count;
+    classified += count;
+  }
+  const unknown = haltCount - classified;
+  if (unknown > 0) reasons[UNKNOWN_HALT_REASON] = unknown;
+  return reasons;
+}
+
+/**
+ * The halt reasons recorded over the last 7 days, summed per kind. A brain
+ * whose schema is behind v239 has no column: every halt then reads as
+ * `unknown` (a backfill never runs; `unknown` is computed on read).
+ */
+export async function readRecordedHaltReasons7d(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Map<string, Record<string, number>>> {
+  const recorded = new Map<string, Record<string, number>>();
+  try {
+    const rows = await engine.executeRaw<{ kind: string; reason: string; n: number | string }>(
+      `SELECT r.kind, e.key AS reason, SUM(e.value::int) AS n
+         FROM extract_rollup_7d r, jsonb_each_text(r.halt_reasons) e
+        WHERE r.day >= CURRENT_DATE - 7
+        GROUP BY r.kind, e.key`, []);
+    for (const row of rows) {
+      const perKind = recorded.get(row.kind) ?? {};
+      perKind[row.reason] = Number(row.n) || 0;
+      recorded.set(row.kind, perKind);
+    }
+  } catch (err) {
+    if (!isMissingSchemaObject(err, 'column', 'halt_reasons')) throw err;
+  }
+  return recorded;
+}
+
+/** The most frequent halt reason, `unknown` included, or null without halts. */
+export function topHaltReason(reasons: Record<string, number>): { reason: string; count: number } | null {
+  let top: { reason: string; count: number } | null = null;
+  for (const [reason, count] of Object.entries(reasons)) {
+    if (!top || count > top.count || (count === top.count && reason < top.reason)) top = { reason, count };
+  }
+  return top;
+}
 
 /**
  * One UPSERT increments per audit event. All counters default to 0 so
@@ -54,6 +135,8 @@ export interface RollupUpsertInput {
   /** Increment rollup_write_failures inside the table (used by the
    * self-healing path that records its own write failures forensically). */
   failure_delta?: number;
+  /** #5495: the reason `halt_delta` halts are counted under in `halt_reasons`; omitted halts read as `unknown`. */
+  halt_reason?: HaltReason;
 }
 
 /**
@@ -71,10 +154,11 @@ export interface RollupUpsertInput {
 export function classifyRunStop(stop: {
   budget_exhausted?: boolean;
   deadline_hit?: boolean;
-  error?: boolean;
-}): { round_completed_delta: number; halt_delta: number; expected_limit_delta: number } {
-  if (stop.error === true) {
-    return { round_completed_delta: 0, halt_delta: 1, expected_limit_delta: 0 };
+  /** `true` for an unclassified error halt (reads as `unknown`); a HaltReason names it (#5495). A cap is never a halt reason. */
+  error?: boolean | HaltReason;
+}): { round_completed_delta: number; halt_delta: number; expected_limit_delta: number; halt_reason?: HaltReason } {
+  if (stop.error === true || (typeof stop.error === 'string' && (HALT_REASONS as readonly string[]).includes(stop.error))) {
+    return { round_completed_delta: 0, halt_delta: 1, expected_limit_delta: 0, ...(typeof stop.error === 'string' ? { halt_reason: stop.error } : {}) };
   }
   if (stop.budget_exhausted === true || stop.deadline_hit === true) {
     return { round_completed_delta: 0, halt_delta: 0, expected_limit_delta: 1 };
@@ -110,15 +194,20 @@ export async function upsertExtractRollup(
   const completed = input.round_completed_delta ?? 0;
   const expectedLimits = input.expected_limit_delta ?? 0;
   const failures = input.failure_delta ?? 0;
+  // #5495: the reason bucket this event's halts land in (null: unclassified,
+  // read back as `unknown`). Bound as text and keyed in SQL: never JSON text
+  // cast to jsonb (the #2339 class), and only vocabulary words reach the table.
+  const reason = halts > 0 && input.halt_reason && (HALT_REASONS as readonly string[]).includes(input.halt_reason) ? input.halt_reason : null;
 
   try {
     await engine.executeRaw(
       `INSERT INTO extract_rollup_7d (
          kind, source_id, day,
          cost_usd, halt_count, eval_fail_count, eval_pass_count,
-         round_completed_count, expected_limit_count, rollup_write_failures, updated_at
+         round_completed_count, expected_limit_count, rollup_write_failures, halt_reasons, updated_at
        )
-       VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10, now())
+       VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10,
+         CASE WHEN $11::text IS NULL THEN '{}'::jsonb ELSE jsonb_build_object($11::text, $5::int) END, now())
        ON CONFLICT (kind, source_id, day) DO UPDATE SET
          cost_usd               = extract_rollup_7d.cost_usd               + EXCLUDED.cost_usd,
          halt_count             = extract_rollup_7d.halt_count             + EXCLUDED.halt_count,
@@ -127,18 +216,28 @@ export async function upsertExtractRollup(
          round_completed_count  = extract_rollup_7d.round_completed_count  + EXCLUDED.round_completed_count,
          expected_limit_count   = extract_rollup_7d.expected_limit_count   + EXCLUDED.expected_limit_count,
          rollup_write_failures  = extract_rollup_7d.rollup_write_failures  + EXCLUDED.rollup_write_failures,
+         halt_reasons           = CASE WHEN $11::text IS NULL THEN extract_rollup_7d.halt_reasons
+           ELSE jsonb_set(extract_rollup_7d.halt_reasons, ARRAY[$11::text],
+             to_jsonb(COALESCE((extract_rollup_7d.halt_reasons->>$11::text)::int, 0) + $5::int)) END,
          updated_at             = now()`,
-      [input.kind, input.source_id, day, cost, halts, evalFails, evalPasses, completed, expectedLimits, failures],
+      [input.kind, input.source_id, day, cost, halts, evalFails, evalPasses, completed, expectedLimits, failures, reason],
     );
     return { ok: true };
   } catch (err) {
     const msg = (err as Error).message || String(err);
+    // #5495 (no fallback by design): a brain whose schema is behind v239 has no
+    // halt_reasons column. The rollup is a best-effort cache, so the row is
+    // lost until the migration runs; say which fix restores it.
+    if (isMissingSchemaObject(err, 'column', 'halt_reasons')) {
+      rollupErrorLogOnce(input.kind, day, `${msg} (the schema is behind: doctor reports migrations_pending; run gbrain apply-migrations --yes --no-autopilot-install)`);
+      return { ok: false, error: msg };
+    }
     // #4482 back-compat: a brain that hasn't applied migration v141 yet has
     // no expected_limit_count column. Rather than losing the WHOLE rollup
     // write (best-effort would swallow it), retry the pre-v141 statement —
     // the cap stop degrades to the old conflated halt accounting until the
     // migration runs.
-    if (/expected_limit_count/i.test(msg)) {
+    if (isMissingSchemaObject(err, 'column', 'expected_limit_count')) {
       try {
         await engine.executeRaw(
           `INSERT INTO extract_rollup_7d (

@@ -5,8 +5,8 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { countMentionDuePages, type MentionPassResult } from './pass.ts';
-import { readMentionPolicy } from './policy.ts';
+import { countIndexDuePages, countMentionDuePages, type MentionPassResult } from './pass.ts';
+import { linkableTypesFor, loadSourcePack, readMentionPolicy } from './policy.ts';
 
 export interface MentionPreview {
   due: number;
@@ -14,13 +14,22 @@ export interface MentionPreview {
   enabled: boolean;
 }
 
-/** Mention-due pages and the newest pass time, for `extract --stale --dry-run` and post-upgrade. */
+/**
+ * Index-due pages (mention-due pages plus linkable entity pages with stale
+ * derived aliases) and the newest pass time, for `extract --stale --dry-run`,
+ * doctor and post-upgrade.
+ */
 export async function previewMentionPass(engine: BrainEngine, sourceId?: string): Promise<MentionPreview> {
   const policy = await readMentionPolicy(engine);
   const [row] = await engine.executeRaw<{ last: string | null }>(
     `SELECT to_char(max(last_pass_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last FROM mention_index_status
       WHERE ($1::text IS NULL OR source_id = $1)`, [sourceId ?? null]);
-  return { due: policy.enabled ? await countMentionDuePages(engine, sourceId) : 0, last_pass_at: row?.last ?? null, enabled: policy.enabled };
+  let due = 0;
+  if (policy.enabled) {
+    const sources = sourceId ? [sourceId] : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')).map(r => r.id);
+    for (const id of sources) due += await countIndexDuePages(engine, id, linkableTypesFor(await loadSourcePack(engine, id), policy));
+  }
+  return { due, last_pass_at: row?.last ?? null, enabled: policy.enabled };
 }
 
 /**

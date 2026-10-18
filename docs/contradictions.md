@@ -149,13 +149,21 @@ pay near-zero on re-runs (until you bump PROMPT_VERSION).
 - Probe never mutates the brain. Runs only read pages/takes/chunks.
   Writes go only to `eval_contradictions_runs` and `eval_contradictions_cache`.
 - `find_contradictions` is read-scope and is not in the subagent allowlist.
-  Stored reports are temporarily available only to trusted local callers
-  without a source filter. The bare local `gbrain find-contradictions` reads
-  the latest run: a source the CLI resolved by default (no `--source`,
-  `GBRAIN_SOURCE` or `.gbrain-source`) is not a filter. Remote or
-  source-scoped callers receive
-  `{ contradictions: [], note }` with an availability note; their requests
-  do not load the stored report.
+  The bare local `gbrain find-contradictions` reads the latest run as stored:
+  a source the CLI resolved by default (no `--source`, `GBRAIN_SOURCE` or
+  `.gbrain-source`) is not a filter.
+- A stored report has no source column and copies both sides' text, private
+  takes included. So a remote, source-scoped or `min_trust` caller never gets
+  stored text: each side is re-read live by its chunk or take id under the
+  caller's policy (source scope, page visibility, live page and source,
+  quarantine, current text, safe chunks for remote callers, the takes holder
+  allow-list and the trust floor). A finding is returned only when both sides
+  are readable and still read exactly as judged, so its axis never describes
+  text the caller cannot see. Each side carries `source_id`, `trust_tier` and
+  `origin`, the resolution command is rebuilt from the live rows, and the
+  response carries `total_visible` instead of the run total. A supersede
+  proposal that would let a lower-trust side replace a higher-trust take is
+  returned as a manual review with `supersede_withheld: "higher_trust_target"`.
 - Build-fixture script is local-only. The redactor + `isCleanForCommit`
   gate makes accidental private-data commits hard, but the operator MUST
   inspect every redaction before commit.

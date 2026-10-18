@@ -51,6 +51,10 @@ rows for edge-shaped pages.
 binds any uncovered legacy type to `note` with
 `frontmatter.legacy_type = <original>` preserved for rollback.
 
+The pack also declares `question`, the owner-private annotation type
+the pinned-question writer stamps on its pages (non-extractable, no
+folder prefix), so pinned questions never read as undeclared types.
+
 ## Subtypes (declared in frontmatter post-unify)
 
 | Canonical | Subtype field | Values |

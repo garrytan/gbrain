@@ -23,6 +23,7 @@ import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { parseGoogleSourceConfig, runGoogleSync } from '../src/core/google/google-source.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { admitWrite } from '../src/core/persistence/journal.ts';
+import { withAdmissionOrigin } from '../src/core/persistence/admission-origin.ts';
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 import { migrateConnectorCheckpoints } from '../src/core/persistence/connector-checkpoint-migration.ts';
 import { readConnectorSourceStatuses } from '../src/core/persistence/connector-status.ts';
@@ -67,7 +68,8 @@ for (const backend of testBackends()) test(`${backend}: post-upgrade to a clean 
   const databaseUrl = backend === 'postgres' ? process.env.DATABASE_URL : undefined;
   await waveBrain(async ({ engine }) => {
     await withEnv({ CONNECTOR_TEST_TOKEN: 'synthetic-local-fixture' }, async () => {
-      const connector = await rewalkingConnector(engine);
+      // Pre-upgrade history, written before the background pause line existed (#6696); the fixture's ids sit past it.
+      const connector = await withAdmissionOrigin('interactive', () => rewalkingConnector(engine));
       // A page imported before every import recorded its contextual mode.
       await engine.executeRaw("UPDATE content_chunks SET embedding=$1::text::vector WHERE page_id=(SELECT id FROM pages WHERE source_id='default' AND slug='notes/base')", [VECTOR]);
       await engine.executeRaw("UPDATE pages SET contextual_retrieval_mode=NULL WHERE source_id='default' AND slug='notes/base'");

@@ -138,9 +138,10 @@ describe('deadline plumbing wiring (structural)', () => {
     expect(workerSrc).toContain('job.timeout_at.getTime() - Date.now()');
   });
 
-  test('autopilot-cycle, global-maintenance AND phase-wrapper handlers thread deadlineAtMs into runCycle', () => {
+  test('cycle handlers and explicit atom retries thread the job deadline into their work', () => {
     const matches = jobsSrc.match(/deadlineAtMs: job\.deadlineAtMs/g) ?? [];
-    expect(matches.length).toBe(3);
+    // Three runCycle paths, the explicit managed-atom retry (#6622) and the facts-absorb publish wait (#6778).
+    expect(matches.length).toBe(5);
   });
 
   test('runCycle forwards deadlineAtMs to the patterns phase', () => {

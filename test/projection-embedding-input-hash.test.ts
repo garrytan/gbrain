@@ -77,7 +77,7 @@ for (const kind of backends) {
       const prepared = (await readProjectionSnapshot(engine, slug, sourceId))!;
       const chunks = prepared.chunks.filter(c => !only || only.includes(c.chunk_index))
         .map(c => ({ chunk_index: c.chunk_index, chunk_text: c.chunk_text, chunk_source: c.chunk_source, embedding: vec(c.chunk_index + 1) }));
-      expect(await (installPageEmbeddings as (...a: unknown[]) => Promise<boolean>)(engine, prepared, chunks, undefined, override)).toBe(true);
+      expect((await (installPageEmbeddings as (...a: unknown[]) => Promise<{ complete: boolean }>)(engine, prepared, chunks, undefined, override)).complete).toBe(true);
     }
     async function rebuild() {
       await queuePageProjection(engine, sourceId, slug, 'test_rebuild');

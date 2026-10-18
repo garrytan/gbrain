@@ -25,14 +25,19 @@ import {
 } from '../core/migration-orchestration-lock.ts';
 import { loadCompletedMigrations, appendCompletedMigration, type CompletedMigrationEntry } from '../core/preferences.ts';
 import { migrations, compareVersions, type Migration, type OrchestratorOpts } from './migrations/index.ts';
+import { setRunEngineSharing, withRunEngineSession } from './migrations/run-engine.ts';
+import { migrationDeclinedError, readDeclinedMigrations } from './migrations/opt-out.ts';
 import {
   indexCompletedEntries,
   statusForVersion as ledgerStatusForVersion,
   freshInstallVersion,
   isFreshInstallStamp,
+  forwardProgressPast,
   isPendingFreshInstall,
   MAX_CONSECUTIVE_PARTIALS,
+  wedgedLedgerHint,
 } from '../core/migration-ledger.ts';
+import { clearRepoPathWedge } from './migrations/v0_11_0-install.ts';
 import { shellQuote, type Effect } from '../core/agent-output.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
 import { consentGate } from '../core/consent-cli.ts';
@@ -186,7 +191,9 @@ Exit codes:
   1  An orchestrator failed, the migration lease stopped matching this run
      (migration_lease_lost), or the run left the schema behind
      (migrations_pending: not_applied → apply them with --yes; still_behind or
-     schema_unreadable → run gbrain doctor --json and report, not --yes again).
+     schema_unreadable → run gbrain doctor --json and report, not --yes again;
+     wedged → a migration ended partial 3+ times in a row: ask the user, fix
+     the cause, then --force-retry <version>).
      An unreachable Postgres stays 0 (GBRAIN_DB_ACCESS on stderr) unless --require-db.
   2  Invalid arguments.
   3  confirmation_required: a migration installs the autopilot service and the
@@ -223,6 +230,10 @@ interface Plan {
   pending_fresh_install: Migration[];
   skippedFuture: Migration[];
   wedged: Migration[];
+  /** #6696 C5: wedged in the ledger, but a newer migration ran past it (doctor's forward-progress rule): history, not outstanding work. */
+  wedged_superseded: Migration[];
+  /** #6466: declined by the brain's config (`Migration.optOut`); never run, listed as `declined`. */
+  declined: Migration[];
 }
 
 /**
@@ -236,22 +247,26 @@ interface Plan {
  *             after this version (fresh-install stamps). Runs like pending.
  * - skippedFuture: migration.version > installed VERSION (binary is older
  *                  than the migration; wait for a newer install).
+ * - declined: the brain's config turns the migration off (#6466); not
+ *             applied, partial or pending whatever the ledger says.
  *
  * Codex H9: we never compare against `current VERSION >` — that rule would
  * skip v0.11.0 when running v0.11.1. Compare against completed.jsonl.
  */
-function buildPlan(idx: CompletedIndex, installed: string, filterVersion?: string): Plan {
-  const plan: Plan = { applied: [], partial: [], pending: [], pending_fresh_install: [], skippedFuture: [], wedged: [] };
+function buildPlan(idx: CompletedIndex, installed: string, filterVersion?: string, declined: ReadonlySet<string> = new Set()): Plan {
+  const plan: Plan = { applied: [], partial: [], pending: [], pending_fresh_install: [], skippedFuture: [], wedged: [], wedged_superseded: [], declined: [] };
+  const ledger = [...idx.byVersion.values()].flat();
   for (const m of migrations) {
     if (filterVersion && m.version !== filterVersion) continue;
     if (compareVersions(m.version, installed) > 0) {
       plan.skippedFuture.push(m);
       continue;
     }
+    if (declined.has(m.version)) { plan.declined.push(m); continue; }
     const status = statusForVersion(m.version, idx);
     if (status === 'complete') plan.applied.push(m);
     else if (status === 'partial') plan.partial.push(m);
-    else if (status === 'wedged') plan.wedged.push(m);
+    else if (status === 'wedged') (forwardProgressPast(m.version, ledger) === null ? plan.wedged : plan.wedged_superseded).push(m);
     else if (isPendingFreshInstall(m.version, idx.freshVersion)) plan.pending_fresh_install.push(m);
     else plan.pending.push(m);
   }
@@ -284,9 +299,10 @@ function listRows(plan: Plan): Array<{ status: string; m: Migration }> {
   return [
     ...plan.applied.map(m => ({ status: 'applied', m })),
     ...plan.partial.map(m => ({ status: 'partial', m })),
-    ...plan.wedged.map(m => ({ status: 'wedged', m })),
+    ...[...plan.wedged, ...plan.wedged_superseded].map(m => ({ status: 'wedged', m })),
     ...plan.pending.map(m => ({ status: 'pending', m })),
     ...plan.pending_fresh_install.map(m => ({ status: 'pending_fresh_install', m })),
+    ...plan.declined.map(m => ({ status: 'declined', m })),
     ...plan.skippedFuture.map(m => ({ status: 'future', m })),
   ];
 }
@@ -306,7 +322,9 @@ function printList(plan: Plan, installed: string, dbProbe: DbProbeOutcome): void
   console.log('');
   const needsWork = plan.pending.length + plan.partial.length;
   const setup = plan.pending_fresh_install.length;
-  if (needsWork === 0 && setup === 0) {
+  for (const m of plan.declined) console.log(`v${m.version} is declined by config (${m.optOut?.key} is false); turn it back on: gbrain config set ${m.optOut?.key} true`);
+  for (const m of plan.wedged) console.log(`v${m.version} is wedged (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partial runs). Read ${wedgedLedgerHint()}, fix the cause, then: ${shellQuote(forceRetryArgv(m.version))}`);
+  if (needsWork === 0 && setup === 0 && plan.wedged.length === 0) {
     console.log('All migrations up to date.');
     return;
   }
@@ -329,8 +347,10 @@ function listJson(plan: Plan, idx: CompletedIndex, installed: string, dbProbe: D
       status: r.status,
       headline: r.m.featurePitch.headline,
       ...(r.status === 'applied' && (idx.byVersion.get(r.m.version) ?? []).some(isFreshInstallStamp) ? { fresh_install: true } : {}),
+      ...(r.status === 'declined' && r.m.optOut ? { opt_out: { key: r.m.optOut.key } } : {}),
     })),
     needs_action: plan.pending.length + plan.partial.length,
+    ...(plan.wedged.length ? { wedged: plan.wedged.map(m => ({ version: m.version, fix: { argv: forceRetryArgv(m.version), command: shellQuote(forceRetryArgv(m.version)) } })) } : {}),
     pending_fresh_install: plan.pending_fresh_install.length,
     ...(outstanding > 0 ? { next: { argv: FINISH_SETUP_ARGV, command: shellQuote(FINISH_SETUP_ARGV) } } : {}),
   };
@@ -358,6 +378,11 @@ function printDryRun(plan: Plan, installed: string, dbProbe: DbProbeOutcome): vo
   if (plan.pending_fresh_install.length) {
     console.log('Would APPLY (pending_fresh_install — setup a brain created by gbrain init has not run yet; expected, not a failed upgrade):');
     for (const m of plan.pending_fresh_install) console.log(`  → v${m.version} — ${m.featurePitch.headline}`);
+    console.log('');
+  }
+  if (plan.declined.length) {
+    console.log('Declined by config (not run; turn one back on with gbrain config set <key> true):');
+    for (const m of plan.declined) console.log(`  ⊘ v${m.version} — ${m.optOut?.key} is false`);
     console.log('');
   }
   if (plan.skippedFuture.length) {
@@ -430,6 +455,8 @@ const COMMAND = 'apply-migrations';
 interface RunReport {
   doc: Record<string, unknown>;
   failure?: OperationError;
+  /** #6696 C5: wedged migrations the run cannot clear itself; a run that otherwise succeeds fails `migrations_pending` reason `wedged`. */
+  wedged?: readonly Migration[];
 }
 
 function unknownMigrationError(version: string): OperationError {
@@ -526,7 +553,7 @@ export async function applyMigrations(args: string[]): Promise<{ exitCode: numbe
   let exitCode: number | undefined;
   try {
     await holdLock();
-    exitCode = await runLockedMigrations(cli, installed, holdLock, () => held.lock, report, args);
+    exitCode = await withRunEngineSession(() => runLockedMigrations(cli, installed, holdLock, () => held.lock, report, args));
   } catch (error) {
     if (error instanceof MigrationLeaseLostError) {
       console.error(`apply-migrations stopped: ${error.message}`);
@@ -648,40 +675,39 @@ async function runLockedMigrations(
   // Pre-flight: schema drift (#1530) and the DB probe (#4364); see preflightSchema.
   const { schemaBehind, dbProbe } = await preflightSchema(cli, migrateSchema);
 
+  if (!cli.list && !cli.dryRun) await clearRepoPathWedge(loadCompletedMigrations());
   const completed = loadCompletedMigrations();
   const idx = indexCompleted(completed);
-  const plan = buildPlan(idx, installed, cli.specificMigration);
+  await setRunEngineSharing(true);
+  const declined = await readDeclinedMigrations(loadConfig()!);
+  const plan = buildPlan(idx, installed, cli.specificMigration, declined);
 
   doc.database = dbProbe;
   doc.plan = Object.fromEntries(Object.entries(plan).map(([state, entries]) => [state, entries.map((migration: Migration) => migration.version)]));
-  // Bug 3 — surface wedged migrations as a loud, actionable error.
-  if (plan.wedged.length > 0) {
-    for (const m of plan.wedged) {
-      console.error(
-        `\nMigration v${m.version} is WEDGED (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partials with no completion). ` +
-        `Check ~/.gbrain/upgrade-errors.jsonl for the last failure reasons, fix the underlying issue, then run:\n` +
-        `  gbrain apply-migrations --force-retry ${m.version}\n` +
-        `Then run \`gbrain apply-migrations\` again (it asks for any approval the migration needs).`,
-      );
-    }
-    // Don't exit — applied/partial/pending are still worth reporting and running.
-  }
+  report.wedged = plan.wedged;
+  reportWedgedMigrations(plan.wedged, plan.wedged_superseded, completed);
 
-  if (cli.specificMigration && plan.applied.length + plan.partial.length + plan.pending.length + plan.pending_fresh_install.length + plan.skippedFuture.length === 0) {
+  if (cli.specificMigration && plan.applied.length + plan.partial.length + plan.pending.length + plan.pending_fresh_install.length + plan.skippedFuture.length + plan.declined.length === 0) {
     console.error(`No migration registered with version "${cli.specificMigration}". Run \`gbrain apply-migrations --list\` to see registered versions.`);
     fail('invalid', unknownMigrationError(cli.specificMigration));
     return 2;
+  }
+  // #6466: an explicit run of a declined migration refuses (T1) instead of overriding brain-level config every machine shares.
+  if (cli.specificMigration && plan.declined.length > 0 && !cli.list && !cli.dryRun) {
+    fail('declined', migrationDeclinedError(plan.declined[0]!));
+    return writeCliError(report.failure, COMMAND, { json: cli.json });
   }
 
   // #4364: --require-db turns an unreachable DB into a hard failure instead
   // of a filesystem-only plan that renders identically to a clean database.
   const listExit = cli.requireDb && dbProbe.status === 'unreachable' ? 1 : 0;
   if (listExit) fail('database_unreachable', requireDbError(dbProbe));
+  if (cli.list || cli.dryRun) await setRunEngineSharing(false);
   if (cli.list && cli.json) { Object.assign(doc, listJson(plan, idx, installed, dbProbe)); doc.status = listExit ? doc.status : 'listed'; return listExit; }
   if (cli.list) { printList(plan, installed, dbProbe); return listExit; }
   if (cli.dryRun) {
     const previews: Array<{ version: string; preview?: unknown; error?: string }> = [];
-    for (const migration of [...plan.applied, ...plan.partial, ...plan.pending, ...plan.pending_fresh_install, ...plan.wedged]) {
+    for (const migration of [...plan.applied, ...plan.partial, ...plan.pending, ...plan.pending_fresh_install, ...plan.wedged, ...plan.wedged_superseded]) {
       if (!migration.preview) continue;
       try { previews.push({ version: migration.version, preview: await migration.preview(orchestratorOptsFrom(cli)) }); }
       catch (error) { previews.push({ version: migration.version, error: error instanceof Error ? error.message : 'Inventory unavailable.' }); }
@@ -718,11 +744,7 @@ async function runLockedMigrations(
   }
   const toRun: Migration[] = [...pendingWork, ...plan.applied.filter(migration => migration.reconcile)]
     .sort((left, right) => compareVersions(left.version, right.version));
-  if (toRun.length === 0) {
-    console.log('All migrations up to date.');
-    doc.status = 'up_to_date';
-    return 0;
-  }
+  if (toRun.length === 0) return upToDateOrWedged(report);
   if (!schemaBehind && pendingWork.length === 0) {
     console.log('All migrations up to date. This covers orchestrator checkpoints only; host publication and client activation are being rechecked.');
   }
@@ -732,6 +754,7 @@ async function runLockedMigrations(
   // --non-interactive mapping (persistent_install only), a preapproval, or a
   // TTY prompt. Refused: nothing runs, exit 3 with the consent payload.
   const consent = migrationConsentRequest(cli, toRun, args);
+  if (consent) await setRunEngineSharing(false);
   if (consent && !(await consentGate(consent, { json: cli.json }))) {
     doc.status = 'confirmation_required';
     return 3;
@@ -763,6 +786,7 @@ async function runLockedMigrations(
   for (const m of toRun) {
     // A lease lost while an earlier orchestrator ran stops the chain here.
     await holdLock();
+    await setRunEngineSharing(m.sharesRunEngine === true);
     const recordCheckpoint = !m.reconcile || !plan.applied.includes(m);
     console.log(`\n=== Applying migration v${m.version}: ${m.featurePitch.headline} ===`);
     try {
@@ -853,6 +877,7 @@ async function runLockedMigrations(
   }
 
   if (failed) return 1;
+  await setRunEngineSharing(true);
   // #6089: an orchestrator may migrate the schema itself, so read it again.
   return failSchemaBehind(report, args, await checkSchemaAfterOrchestrators({
     cfg: loadConfig()!, authorized, preflightVersion: dbProbe.status === 'connected' ? dbProbe.schemaVer : null, apply: migrateSchema,
@@ -861,7 +886,7 @@ async function runLockedMigrations(
 
 /** #6089: the run leaves the schema behind → `migrations_pending`, exit 1; undefined (success) when it does not. */
 function failSchemaBehind(report: RunReport, args: readonly string[], pending: SchemaPending | null): number | undefined {
-  if (!pending) return undefined;
+  if (!pending) return failWedged(report);
   report.doc.status = 'schema_behind';
   report.doc.schema_pending = pending;
   report.failure = schemaPendingError(pending, rerunFix(args, 'Applies the pending schema migrations (no consent effect; it migrates the brain\'s own schema).', true));
@@ -927,6 +952,51 @@ async function preflightSchema(
     };
   }
   return { schemaBehind, dbProbe };
+}
+
+/** #6696 C5: the clearing step for a wedged migration; it needs the user, since the cause behind the partial runs must be fixed first. */
+function forceRetryArgv(version: string): string[] { return ['gbrain', COMMAND, '--force-retry', version]; }
+
+/** #6696 C5: nothing left to run is up to date only when no migration is wedged. */
+function upToDateOrWedged(report: RunReport): number {
+  const wedged = failWedged(report);
+  if (wedged !== undefined) return wedged;
+  console.log('All migrations up to date.');
+  report.doc.status = 'up_to_date';
+  return 0;
+}
+
+/** #6696 C5: a run that leaves a wedged migration fails `migrations_pending` (reason `wedged`, exit 1); undefined when none is wedged. */
+function failWedged(report: RunReport): number | undefined {
+  const wedged = report.wedged ?? [];
+  if (!wedged.length) return undefined;
+  const versions = wedged.map(m => `v${m.version}`).join(', ');
+  report.doc.status = 'wedged';
+  report.doc.wedged = wedged.map(m => m.version);
+  report.failure = opError('migrations_pending',
+    `Migration ${versions} is wedged (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partial runs with no completion), so the run did not complete every migration.`,
+    `Read ${wedgedLedgerHint()} for the last failure, fix its cause, then clear it with \`${shellQuote(forceRetryArgv(wedged[0]!.version))}\` and run \`gbrain apply-migrations --yes\` again. Ask the user first.`,
+    { reason: 'wedged', fix: { ask_user: true, argv: forceRetryArgv(wedged[0]!.version), consent: [], actor: 'agent', requires_exclusive: true,
+      why: `Writes a 'retry' marker so the next run re-attempts v${wedged[0]!.version}; without fixing the cause the run partials again.`,
+      user_message: `gbrain migration ${versions} failed ${MAX_CONSECUTIVE_PARTIALS} or more times in a row. Fix the cause recorded in ${wedgedLedgerHint()}, then clear it with ${shellQuote(forceRetryArgv(wedged[0]!.version))} and run gbrain apply-migrations --yes. Clear it now?`,
+      verify: { argv: ['gbrain', COMMAND, '--list', '--json'] } } });
+  return 1;
+}
+
+/** Bug 3 — surface wedged migrations as a loud, actionable error; the run continues (applied/partial/pending are still reported and run). */
+function reportWedgedMigrations(wedged: readonly Migration[], superseded: readonly Migration[], completed: readonly CompletedMigrationEntry[]): void {
+  for (const m of superseded) {
+    console.error(`\nMigration v${m.version} has ${MAX_CONSECUTIVE_PARTIALS}+ consecutive partial runs, but v${forwardProgressPast(m.version, completed)} completed after it, `
+      + 'so it is history, not outstanding work. Nothing to do.');
+  }
+  for (const m of wedged) {
+    console.error(
+      `\nMigration v${m.version} is WEDGED (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partials with no completion). ` +
+      `Check ${wedgedLedgerHint()} for the last failure reasons, fix the underlying issue, then run:\n` +
+      `  gbrain apply-migrations --force-retry ${m.version}\n` +
+      `Then run \`gbrain apply-migrations\` again (it asks for any approval the migration needs).`,
+    );
+  }
 }
 
 function requireDbError(dbProbe: DbProbeOutcome): OperationError {

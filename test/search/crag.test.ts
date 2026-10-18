@@ -44,6 +44,15 @@ describe('gradeRetrievalConfidence (#1663)', () => {
     expect(weak.reason).toBe('rerank_top_below_floor');
   });
 
+  test('every grade carries the rank-1 rerank score when the reranker ran, including identity tiers', () => {
+    for (const evidence of ['high_vector_match', 'exact_title_match', 'alias_hit'] as const) {
+      const g = gradeRetrievalConfidence([r({ evidence, rerank_score: 0.91 })]);
+      expect({ level: g.level, reason: g.reason, top_rerank_score: g.top_rerank_score }).toEqual({ level: 'strong', reason: evidence, top_rerank_score: 0.91 });
+    }
+    expect(gradeRetrievalConfidence([r({ evidence: 'high_vector_match' })]).top_rerank_score).toBeUndefined();
+    expect(gradeRetrievalConfidence([r({ evidence: 'high_vector_match', rerank_score: 3, rerank_score_kind: 'rubric' })]).top_rerank_score).toBeUndefined();
+  });
+
   test('floor is overridable', () => {
     expect(gradeRetrievalConfidence([r({ rerank_score: 0.15 })], { minTopScore: 0.1 }).level).toBe('strong');
     expect(gradeRetrievalConfidence([r({ rerank_score: 0.15 })], { minTopScore: 0.3 }).level).toBe('weak');

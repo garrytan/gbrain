@@ -6,15 +6,15 @@
  * credentials, query or fragment, and no whitespace or control characters.
  */
 
-/** The override with trailing slashes removed; null when unset or blank; `{ invalid }` when it is not a plain https URL. */
+/** The override as the URL parser normalizes it, trailing slashes removed; null when unset or blank; `{ invalid }` when it is not a plain https URL. */
 export function parseRepoBase(raw: string | undefined): string | null | { invalid: string } {
   const value = raw?.trim().replace(/\/+$/, '');
   if (!value) return null;
-  if (/[\s\x00-\x1f\x7f]/.test(value)) return { invalid: value };
+  if (/[\s\x00-\x1f\x7f?#]/.test(value)) return { invalid: value };
   let url: URL;
   try { url = new URL(value); } catch { return { invalid: value }; }
   if (url.protocol !== 'https:' || !url.hostname || url.username || url.password || url.search || url.hash) return { invalid: value };
-  return value;
+  return url.href.replace(/\/+$/, '');
 }
 
 /** Build scripts: the override, or `fallback` when unset; an invalid value throws. */

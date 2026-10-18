@@ -6,7 +6,7 @@
  */
 import type { Operation } from '../core/operations.ts';
 import { opOwnsSource } from '../core/ops/contract.ts';
-import { ignoredRemoteParams } from '../core/mcp-client.ts';
+import { ignoredRemoteParams } from '../core/remote-mcp-error.ts';
 
 /** Where an ambient (not flag-supplied) thin-client source scope came from. */
 export type AmbientSourceBinding = { sourceId: string; via: 'GBRAIN_SOURCE' | '.gbrain-source' };

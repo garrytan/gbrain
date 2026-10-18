@@ -38,7 +38,7 @@
  * Binary resolution: $OPENCODE_BIN > `which opencode` > unavailable.
  */
 
-import { execFileSync } from 'child_process';
+import { execFileSync } from '../../spawn.ts';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import {

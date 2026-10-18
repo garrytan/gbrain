@@ -17,7 +17,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { runThink, persistSynthesis, type ThinkLLMClient } from '../think/index.ts';
 import { resolveModel } from '../model-config.ts';
-import { embedQuery } from '../embedding.ts';
+import { embedQueryWithPrefix } from '../search/query-prefix.ts';
 import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd } from './budget-meter.ts';
 
 /**
@@ -168,7 +168,7 @@ export async function runPhaseAutoThink(
       const result = await runThink(engine, {
         question: q,
         // #3734: auto-think uses same vector takes retrieval as interactive think.
-        embedQuestion: (text) => embedQuery(text),
+        embedQuestion: (text) => embedQueryWithPrefix(engine, text),
         save: config.autoCommit,
         client: opts.client,
         model: modelId,

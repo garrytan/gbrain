@@ -5,7 +5,8 @@
  * offering 'defaults'. Pure: no engine, no filesystem.
  */
 import { describe, expect, test } from 'bun:test';
-import { buildInitFirstRunNotices } from '../src/commands/init-first-run.ts';
+import { buildInitFirstRunNotices, setupFirstRunNotices } from '../src/commands/init-first-run.ts';
+import { costMatrixSentence } from '../src/core/search/mode-advice.ts';
 
 const searchMode = { mode: 'balanced' as const, reason: 'Balanced default for a new brain.' };
 const scaffold = { missing: ['cold-start', 'book-mirror'], argv: ['gbrain', 'skillpack', 'scaffold', 'cold-start', 'book-mirror'] };
@@ -47,5 +48,45 @@ describe('buildInitFirstRunNotices', () => {
     const [bundle] = buildInitFirstRunNotices({ searchMode, writeback: true, skillsScaffold: scaffold });
     const argvs = bundle.decisions!.flatMap(d => d.options.map(o => o.argv ?? []));
     expect(argvs.some(a => a.includes('remember'))).toBe(false);
+  });
+});
+
+describe('setupFirstRunNotices (gbrain setup <harness>)', () => {
+  const wiring = { id: 'harness_wiring', question: 'Which agent app should get gbrain memory?', options: [{ id: 'wire', label: 'wire' }, { id: 'skip', label: 'skip' }], default: 'wire', default_reason: 'detected' };
+  const fromInit = (inputs: Parameters<typeof buildInitFirstRunNotices>[0]) => {
+    const [bundle] = buildInitFirstRunNotices(inputs);
+    return [{ ...bundle, decisions: [...bundle.decisions!, wiring], contract_version: 1 }];
+  };
+
+  test('drops harness_wiring (setup just wired it) and keeps the rest of the bundle', () => {
+    const [n] = setupFirstRunNotices(fromInit({ searchMode, writeback: true, skillsScaffold: scaffold }), 'Claude Code');
+    expect(n).toMatchObject({ code: 'first_run_decisions', kind: 'ask' });
+    expect(n.decisions!.map(d => d.id)).toEqual(['search_mode', 'writeback', 'skills_scaffold']);
+  });
+
+  test('frames the bundle as settings in effect, relayed in the install reply, never a reply-to-continue question', () => {
+    const [n] = setupFirstRunNotices(fromInit({ searchMode, writeback: true }), 'Claude Code');
+    expect(n.user_message).toBe(
+      'gbrain is set up and Claude Code is wired, so memory works now. In effect: search mode balanced; agents save only what you ask them to remember, '
+      + 'until you turn on automatic saving (gbrain recommends salient: durable facts you state, saved with provenance). '
+      + `${costMatrixSentence()} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
+    );
+    expect(n.user_message).not.toContain("Reply 'defaults'");
+    expect(n.why).toContain('in the reply that reports this install');
+    expect(n.why).toContain('do not hold the install open');
+  });
+
+  test('the search-mode matrix still reaches the user and every option keeps its command', () => {
+    const [n] = setupFirstRunNotices(fromInit({ searchMode }), 'Claude Code');
+    expect(n.user_message).toContain(costMatrixSentence());
+    const mode = n.decisions!.find(d => d.id === 'search_mode')!;
+    expect(mode.options.map(o => o.argv)).toEqual(['conservative', 'balanced', 'tokenmax'].map(m => ['gbrain', 'config', 'set', 'search.mode', m]));
+    expect(n.user_message).not.toContain('automatic saving');
+  });
+
+  test('nothing left to relay → no notice; foreign or missing notices are ignored', () => {
+    expect(setupFirstRunNotices([{ code: 'first_run_decisions', kind: 'ask', why: 'x', decisions: [wiring] }], 'Claude Code')).toEqual([]);
+    expect(setupFirstRunNotices([{ code: 'other', kind: 'info', why: 'x' }, null], 'Claude Code')).toEqual([]);
+    expect(setupFirstRunNotices([], 'Claude Code')).toEqual([]);
   });
 });

@@ -39,8 +39,8 @@ describe('addTakesBatch + listTakes', () => {
   test('inserts a batch and round-trips through listTakes', async () => {
     const inserted = await engine.addTakesBatch([
       { page_id: alicePageId, row_num: 1, claim: 'CEO of Acme', kind: 'fact', holder: 'world', weight: 1.0 },
-      { page_id: alicePageId, row_num: 2, claim: 'Strong technical founder', kind: 'take', holder: 'garry', weight: 0.85 },
-      { page_id: alicePageId, row_num: 3, claim: 'Will reach $50B', kind: 'bet', holder: 'garry', weight: 0.65 },
+      { page_id: alicePageId, row_num: 2, claim: 'Strong technical founder', kind: 'take', holder: 'dana', weight: 0.85 },
+      { page_id: alicePageId, row_num: 3, claim: 'Will reach $50B', kind: 'bet', holder: 'dana', weight: 0.65 },
     ]);
     expect(inserted).toBe(3);
 
@@ -53,7 +53,7 @@ describe('addTakesBatch + listTakes', () => {
 
   test('upsert path: re-inserting the same row updates fields', async () => {
     await engine.addTakesBatch([
-      { page_id: alicePageId, row_num: 2, claim: 'Best technical founder in batch', kind: 'take', holder: 'garry', weight: 0.9 },
+      { page_id: alicePageId, row_num: 2, claim: 'Best technical founder in batch', kind: 'take', holder: 'dana', weight: 0.9 },
     ]);
     const takes = await engine.listTakes({ page_id: alicePageId });
     const row2 = takes.find(t => t.row_num === 2);
@@ -71,9 +71,9 @@ describe('addTakesBatch + listTakes', () => {
   });
 
   test('listTakes filters by holder', async () => {
-    const garryTakes = await engine.listTakes({ holder: 'garry' });
-    expect(garryTakes.every(t => t.holder === 'garry')).toBe(true);
-    expect(garryTakes.length).toBeGreaterThan(0);
+    const danaTakes = await engine.listTakes({ holder: 'dana' });
+    expect(danaTakes.every(t => t.holder === 'dana')).toBe(true);
+    expect(danaTakes.length).toBeGreaterThan(0);
   });
 
   test('listTakes filters by kind', async () => {
@@ -84,7 +84,7 @@ describe('addTakesBatch + listTakes', () => {
   test('takesHoldersAllowList filters out non-allowed holders', async () => {
     const worldOnly = await engine.listTakes({ takesHoldersAllowList: ['world'] });
     expect(worldOnly.every(t => t.holder === 'world')).toBe(true);
-    // garry takes exist but aren't returned
+    // dana takes exist but aren't returned
     const allTakes = await engine.listTakes({});
     expect(allTakes.length).toBeGreaterThan(worldOnly.length);
   });
@@ -111,7 +111,7 @@ describe('searchTakes', () => {
       {
         page_id: acmePageId, row_num: 50,
         claim: 'Acme will consolidate the mid-market vertical SaaS landscape through disciplined acquisitions and a shared billing platform over the next five years',
-        kind: 'bet', holder: 'garry', weight: 0.6,
+        kind: 'bet', holder: 'dana', weight: 0.6,
       },
     ]);
     const hits = await engine.searchTakes('consolidate');
@@ -136,7 +136,7 @@ describe('supersedeTake', () => {
     const { oldRow, newRow } = await engine.supersedeTake(alicePageId, 3, {
       claim: 'Will reach $40B',
       kind: 'bet',
-      holder: 'garry',
+      holder: 'dana',
       weight: 0.7,
     });
     expect(oldRow).toBe(3);
@@ -157,34 +157,34 @@ describe('resolveTake + immutability', () => {
   test('resolves a bet with metadata', async () => {
     // Add a fresh bet to resolve
     await engine.addTakesBatch([
-      { page_id: alicePageId, row_num: 10, claim: 'Series A within 12 months', kind: 'bet', holder: 'garry', weight: 0.6 },
+      { page_id: alicePageId, row_num: 10, claim: 'Series A within 12 months', kind: 'bet', holder: 'dana', weight: 0.6 },
     ]);
     await engine.resolveTake(alicePageId, 10, {
       outcome: true,
       value: 15_000_000,
       unit: 'usd',
       source: 'crustdata',
-      resolvedBy: 'garry',
+      resolvedBy: 'dana',
     });
     const [resolved] = await engine.listTakes({ page_id: alicePageId, resolved: true });
     expect(resolved.resolved_outcome).toBe(true);
     expect(resolved.resolved_value).toBe(15_000_000);
     expect(resolved.resolved_unit).toBe('usd');
-    expect(resolved.resolved_by).toBe('garry');
+    expect(resolved.resolved_by).toBe('dana');
   });
 
   test('TAKE_ALREADY_RESOLVED on re-resolve attempt', async () => {
     await expect(
-      engine.resolveTake(alicePageId, 10, { outcome: false, resolvedBy: 'garry' }),
+      engine.resolveTake(alicePageId, 10, { outcome: false, resolvedBy: 'dana' }),
     ).rejects.toThrow(/TAKE_ALREADY_RESOLVED/);
   });
 
   // v0.30.0: 3-state quality input + back-compat outcome alias.
   test('v0.30.0: resolve with --quality correct writes both columns', async () => {
     await engine.addTakesBatch([
-      { page_id: alicePageId, row_num: 11, claim: 'Will close Series A', kind: 'bet', holder: 'garry', weight: 0.7 },
+      { page_id: alicePageId, row_num: 11, claim: 'Will close Series A', kind: 'bet', holder: 'dana', weight: 0.7 },
     ]);
-    await engine.resolveTake(alicePageId, 11, { quality: 'correct', resolvedBy: 'garry' });
+    await engine.resolveTake(alicePageId, 11, { quality: 'correct', resolvedBy: 'dana' });
     const takes = await engine.listTakes({ page_id: alicePageId, resolved: true });
     const r = takes.find(t => t.row_num === 11)!;
     expect(r.resolved_quality).toBe('correct');
@@ -193,9 +193,9 @@ describe('resolveTake + immutability', () => {
 
   test('v0.30.0: resolve with --quality partial writes (partial, NULL)', async () => {
     await engine.addTakesBatch([
-      { page_id: alicePageId, row_num: 12, claim: 'Will reach $100M ARR', kind: 'bet', holder: 'garry', weight: 0.55 },
+      { page_id: alicePageId, row_num: 12, claim: 'Will reach $100M ARR', kind: 'bet', holder: 'dana', weight: 0.55 },
     ]);
-    await engine.resolveTake(alicePageId, 12, { quality: 'partial', resolvedBy: 'garry' });
+    await engine.resolveTake(alicePageId, 12, { quality: 'partial', resolvedBy: 'dana' });
     const takes = await engine.listTakes({ page_id: alicePageId, resolved: true });
     const r = takes.find(t => t.row_num === 12)!;
     expect(r.resolved_quality).toBe('partial');
@@ -204,9 +204,9 @@ describe('resolveTake + immutability', () => {
 
   test('v0.30.0 (back-compat): outcome=true → quality=correct (legacy v0.28 callers)', async () => {
     await engine.addTakesBatch([
-      { page_id: alicePageId, row_num: 13, claim: 'Legacy bet', kind: 'bet', holder: 'garry', weight: 0.8 },
+      { page_id: alicePageId, row_num: 13, claim: 'Legacy bet', kind: 'bet', holder: 'dana', weight: 0.8 },
     ]);
-    await engine.resolveTake(alicePageId, 13, { outcome: true, resolvedBy: 'garry' });
+    await engine.resolveTake(alicePageId, 13, { outcome: true, resolvedBy: 'dana' });
     const takes = await engine.listTakes({ page_id: alicePageId, resolved: true });
     const r = takes.find(t => t.row_num === 13)!;
     expect(r.resolved_quality).toBe('correct');
@@ -215,10 +215,10 @@ describe('resolveTake + immutability', () => {
 
   test('v0.30.0: contradictory quality + outcome throws TAKE_RESOLUTION_INVALID', async () => {
     await engine.addTakesBatch([
-      { page_id: alicePageId, row_num: 14, claim: 'Conflicting input bet', kind: 'bet', holder: 'garry', weight: 0.5 },
+      { page_id: alicePageId, row_num: 14, claim: 'Conflicting input bet', kind: 'bet', holder: 'dana', weight: 0.5 },
     ]);
     await expect(
-      engine.resolveTake(alicePageId, 14, { quality: 'correct', outcome: false, resolvedBy: 'garry' }),
+      engine.resolveTake(alicePageId, 14, { quality: 'correct', outcome: false, resolvedBy: 'dana' }),
     ).rejects.toThrow(/TAKE_RESOLUTION_INVALID/);
   });
 
@@ -227,7 +227,7 @@ describe('resolveTake + immutability', () => {
       engine.supersedeTake(alicePageId, 10, {
         claim: 'Series B within 6 months',
         kind: 'bet',
-        holder: 'garry',
+        holder: 'dana',
         weight: 0.4,
       }),
     ).rejects.toThrow(/TAKE_RESOLVED_IMMUTABLE/);
@@ -250,21 +250,21 @@ describe('v0.30.0 getScorecard', () => {
     // 4 bets at varied weights, mixed outcomes — matches the unit-test
     // hand-calc in takes-resolution.test.ts so we can sanity-check Brier.
     await engine.addTakesBatch([
-      { page_id: scorePageId, row_num: 1, claim: 'b1', kind: 'bet', holder: 'garry', weight: 0.9 },
-      { page_id: scorePageId, row_num: 2, claim: 'b2', kind: 'bet', holder: 'garry', weight: 0.6 },
-      { page_id: scorePageId, row_num: 3, claim: 'b3', kind: 'bet', holder: 'garry', weight: 0.7 },
-      { page_id: scorePageId, row_num: 4, claim: 'b4', kind: 'bet', holder: 'garry', weight: 0.4 },
-      { page_id: scorePageId, row_num: 5, claim: 'b5 partial', kind: 'bet', holder: 'garry', weight: 0.5 },
+      { page_id: scorePageId, row_num: 1, claim: 'b1', kind: 'bet', holder: 'dana', weight: 0.9 },
+      { page_id: scorePageId, row_num: 2, claim: 'b2', kind: 'bet', holder: 'dana', weight: 0.6 },
+      { page_id: scorePageId, row_num: 3, claim: 'b3', kind: 'bet', holder: 'dana', weight: 0.7 },
+      { page_id: scorePageId, row_num: 4, claim: 'b4', kind: 'bet', holder: 'dana', weight: 0.4 },
+      { page_id: scorePageId, row_num: 5, claim: 'b5 partial', kind: 'bet', holder: 'dana', weight: 0.5 },
     ]);
-    await engine.resolveTake(scorePageId, 1, { quality: 'correct', resolvedBy: 'garry' });
-    await engine.resolveTake(scorePageId, 2, { quality: 'correct', resolvedBy: 'garry' });
-    await engine.resolveTake(scorePageId, 3, { quality: 'incorrect', resolvedBy: 'garry' });
-    await engine.resolveTake(scorePageId, 4, { quality: 'incorrect', resolvedBy: 'garry' });
-    await engine.resolveTake(scorePageId, 5, { quality: 'partial', resolvedBy: 'garry' });
+    await engine.resolveTake(scorePageId, 1, { quality: 'correct', resolvedBy: 'dana' });
+    await engine.resolveTake(scorePageId, 2, { quality: 'correct', resolvedBy: 'dana' });
+    await engine.resolveTake(scorePageId, 3, { quality: 'incorrect', resolvedBy: 'dana' });
+    await engine.resolveTake(scorePageId, 4, { quality: 'incorrect', resolvedBy: 'dana' });
+    await engine.resolveTake(scorePageId, 5, { quality: 'partial', resolvedBy: 'dana' });
   });
 
   test('counts correct/incorrect/partial; accuracy excludes partial', async () => {
-    const card = await engine.getScorecard({ holder: 'garry', domainPrefix: 'companies/scorecard-fixture' }, undefined);
+    const card = await engine.getScorecard({ holder: 'dana', domainPrefix: 'companies/scorecard-fixture' }, undefined);
     expect(card.correct).toBe(2);
     expect(card.incorrect).toBe(2);
     expect(card.partial).toBe(1);
@@ -274,7 +274,7 @@ describe('v0.30.0 getScorecard', () => {
   });
 
   test('Brier excludes partial: hand-calculated reference == 0.205', async () => {
-    const card = await engine.getScorecard({ holder: 'garry', domainPrefix: 'companies/scorecard-fixture' }, undefined);
+    const card = await engine.getScorecard({ holder: 'dana', domainPrefix: 'companies/scorecard-fixture' }, undefined);
     // Per-row Brier (correct ∨ incorrect only):
     //   (0.9-1)^2 = 0.01
     //   (0.6-1)^2 = 0.16
@@ -286,24 +286,24 @@ describe('v0.30.0 getScorecard', () => {
 
   test('PRIVACY: SQL allow-list filter — hidden-holder rows contribute zero', async () => {
     // Add a take from a different holder (e.g., harj). The scorecard with
-    // allow-list ['garry'] must NOT count that take in any aggregate.
+    // allow-list ['dana'] must NOT count that take in any aggregate.
     const p = await engine.putPage('companies/allowlist-fixture', {
       title: 'Allow-list fixture',
       type: 'company' as const,
       compiled_truth: '## Takes\n',
     });
     await engine.addTakesBatch([
-      { page_id: p.id, row_num: 1, claim: 'garry bet', kind: 'bet', holder: 'garry', weight: 0.7 },
+      { page_id: p.id, row_num: 1, claim: 'dana bet', kind: 'bet', holder: 'dana', weight: 0.7 },
       { page_id: p.id, row_num: 2, claim: 'harj bet', kind: 'bet', holder: 'harj-taggar', weight: 0.6 },
     ]);
-    await engine.resolveTake(p.id, 1, { quality: 'correct', resolvedBy: 'garry' });
+    await engine.resolveTake(p.id, 1, { quality: 'correct', resolvedBy: 'dana' });
     await engine.resolveTake(p.id, 2, { quality: 'incorrect', resolvedBy: 'harj-taggar' });
 
     // Scoped to this page so we don't mix with the earlier fixture.
-    const allowedGarry = await engine.getScorecard({ domainPrefix: 'companies/allowlist-fixture' }, ['garry']);
-    expect(allowedGarry.correct).toBe(1);
-    expect(allowedGarry.incorrect).toBe(0);
-    expect(allowedGarry.resolved).toBe(1);
+    const allowedDana = await engine.getScorecard({ domainPrefix: 'companies/allowlist-fixture' }, ['dana']);
+    expect(allowedDana.correct).toBe(1);
+    expect(allowedDana.incorrect).toBe(0);
+    expect(allowedDana.resolved).toBe(1);
 
     const trustedFull = await engine.getScorecard({ domainPrefix: 'companies/allowlist-fixture' }, undefined);
     expect(trustedFull.resolved).toBe(2);
@@ -322,14 +322,14 @@ describe('v0.30.0 getCalibrationCurve', () => {
   test('bins resolved bets by stated weight; partial excluded; harj non-allowed contributes zero', async () => {
     // The cross-suite state has accumulated several resolved bets; rather
     // than couple to exact totals, assert the structural invariants:
-    // (1) all returned buckets contain garry rows only when allow-list is garry
+    // (1) all returned buckets contain dana rows only when allow-list is dana
     // (2) the unfiltered count INCLUDES at least one harj row that the
     //     allow-listed call does NOT include
     // (3) partial bets never appear (Brier excludes them by definition)
-    const garryAll = await engine.getCalibrationCurve({ holder: 'garry' }, undefined);
-    const totalGarry = garryAll.reduce((s, b) => s + b.n, 0);
-    expect(totalGarry).toBeGreaterThan(0);
-    for (const b of garryAll) {
+    const danaAll = await engine.getCalibrationCurve({ holder: 'dana' }, undefined);
+    const totalDana = danaAll.reduce((s, b) => s + b.n, 0);
+    expect(totalDana).toBeGreaterThan(0);
+    for (const b of danaAll) {
       // observed in [0, 1]; predicted in [0, 1)
       if (b.observed !== null) { expect(b.observed).toBeGreaterThanOrEqual(0); expect(b.observed).toBeLessThanOrEqual(1); }
       if (b.predicted !== null) { expect(b.predicted).toBeGreaterThanOrEqual(0); expect(b.predicted).toBeLessThan(1.001); }
@@ -341,12 +341,12 @@ describe('v0.30.0 getCalibrationCurve', () => {
     const trustedAll = await engine.getCalibrationCurve({}, undefined);
     const totalTrusted = trustedAll.reduce((s, b) => s + b.n, 0);
 
-    const garryOnly = await engine.getCalibrationCurve({}, ['garry']);
-    const totalGarry = garryOnly.reduce((s, b) => s + b.n, 0);
+    const danaOnly = await engine.getCalibrationCurve({}, ['dana']);
+    const totalDana = danaOnly.reduce((s, b) => s + b.n, 0);
 
     // Harj has at least one resolved binary bet from the allowlist fixture.
-    // The allow-list MUST drop it strictly: garry-only count < trusted count.
-    expect(totalGarry).toBeLessThan(totalTrusted);
+    // The allow-list MUST drop it strictly: dana-only count < trusted count.
+    expect(totalDana).toBeLessThan(totalTrusted);
   });
 });
 

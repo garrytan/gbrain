@@ -15,6 +15,9 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { configureGateway, resetGateway, __setChatTransportForTests, type ChatResult } from '../src/core/ai/gateway.ts';
@@ -59,9 +62,15 @@ async function seedCommitment(engine: BrainEngine, managed: boolean) {
   } else {
     await disposePersistenceConsumer(engine);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-    await engine.putPage('people/alice-example', { title: 'Alice Example', type: 'person', compiled_truth: '# Alice Example' }, { sourceId: f.id });
-    await engine.putPage('emails/example', { title: 'Synthetic exchange', type: 'email', compiled_truth: 'I will send the deck by Friday.',
-      frontmatter: { thread_id: 'example', from: 'sender@example.invalid' } }, { sourceId: f.id });
+    const written = [await engine.putPage('people/alice-example', { title: 'Alice Example', type: 'person', compiled_truth: '# Alice Example' }, { sourceId: f.id }),
+      await engine.putPage('emails/example', { title: 'Synthetic exchange', type: 'email', compiled_truth: 'I will send the deck by Friday.',
+        frontmatter: { thread_id: 'example', from: 'sender@example.invalid' } }, { sourceId: f.id })];
+    // The pages have their files, as a local_path source's pages do (#6398: a DB-only page takes the DB-only fact route).
+    const [{ local_path: root }] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [f.id]);
+    for (const page of written) if (root) {
+      mkdirSync(join(root, page.slug, '..'), { recursive: true });
+      writeFileSync(join(root, `${page.slug}.md`), serializePageToMarkdown(page, []));
+    }
   }
   const extracted = await runLoopsExtract(engine, { slug: 'emails/example', sourceId: f.id });
   expect(extracted).toMatchObject({ status: 'extracted', commitments: 1 });

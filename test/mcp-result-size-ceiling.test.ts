@@ -24,8 +24,23 @@ import { serializeMarkdown } from '../src/core/markdown.ts';
 import { dispatchToolCall, type ToolResult } from '../src/mcp/dispatch.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-/** ceil(measured x 1.05) on the fixture below. */
-const CEILINGS = { search: 2540, query: 2540 };
+/**
+ * ceil(measured x 1.05) on the fixture below. search 2540 -> 2754 (2622
+ * measured): Cat 40 Hard F2's keyword count line rides on every search call
+ * (the rows are top-K; the line says how many pages match the keywords).
+ * search 2754 -> 3129 (2980) and query 2540 -> 2916 (2777): Cat 40 Hard F4,
+ * lean rows keep effective_date_source and a line labels each row's date by
+ * its source (document, event or fallback date, never contractual validity).
+ * Master merge (#5575 trust labels on every row, which raised master's own
+ * ceilings 2540 -> 2756): search 3129 -> 3408 (3245 measured), query
+ * 2916 -> 3195 (3042). Master merge (19358c1d9 re-pinned master's query
+ * ceiling to 3303 for per-row fact trust tiers): query 3195 -> 3669 (3494
+ * measured); search unchanged (3245). GBRA-81 item 2 (lean-row score at 4
+ * significant digits; the fixture is now a full-surface HTTP client with a
+ * read grant, so `id` stays): search 3408 -> 3356 (3196 measured), query
+ * 3669 -> 3593 (3421).
+ */
+const CEILINGS = { search: 3356, query: 3593 };
 /**
  * The keyless fixture also gets the operator contract's degraded_recall
  * notice (F3) on every HTTP call. It is bounded on its own so the ceilings
@@ -42,6 +57,9 @@ const PAGES: Array<[string, string, string]> = [
   ['notes/renewal-playbook', 'Renewal playbook', 'The renewal playbook: confirm the billing contact, check payment terms, and send the renewal quote 60 days before the term ends.'],
   ['notes/billing-faq', 'Billing FAQ', 'Billing contacts change often. Confirm the current billing contact before sending an invoice or a renewal quote.'],
 ];
+
+/** A full-surface HTTP client with a read grant (the registration default): `fetch` is callable, so lean rows keep `id`. */
+const HTTP_CLIENT = { remote: true, transport: 'http' as const, sourceId: 'default', auth: { token: 't', clientId: 'size-client', clientName: 'size', scopes: ['read'], expiresAt: Date.now() / 1000 + 3600 } };
 
 let engine: PGLiteEngine;
 
@@ -61,7 +79,7 @@ afterAll(async () => { await engine?.disconnect(); });
 
 async function visible(name: 'search' | 'query'): Promise<{ res: ToolResult; text: string }> {
   const args = name === 'query' ? { query: 'Numbat Labs billing contact renewal', expand: false } : { query: 'Numbat Labs billing contact renewal' };
-  const res = await withEnv({ GBRAIN_BACKUP_CHECK: '0' }, () => dispatchToolCall(engine, name, args, { remote: true, transport: 'http', sourceId: 'default' }));
+  const res = await withEnv({ GBRAIN_BACKUP_CHECK: '0' }, () => dispatchToolCall(engine, name, args, HTTP_CLIENT));
   expect(res.isError).not.toBe(true);
   const degraded = res.content.filter(c => isDegradedNotice(c.text));
   expect(degraded.length).toBe(1);
@@ -97,7 +115,7 @@ describe('canonical remote result size', () => {
       expect(JSON.stringify(body, null, 2).length + rest).toBeGreaterThan(CEILINGS[name]);
       const full = await withEnv({ GBRAIN_BACKUP_CHECK: '0' }, () => dispatchToolCall(engine, name,
         { query: 'Numbat Labs billing contact renewal', ...(name === 'query' ? { expand: false } : {}), fields: 'full' },
-        { remote: true, transport: 'http', sourceId: 'default' }));
+        HTTP_CLIENT));
       expect(full.content.filter(c => !isDegradedNotice(c.text)).map(c => c.text).join('\n').length).toBeGreaterThan(CEILINGS[name]);
     });
   }

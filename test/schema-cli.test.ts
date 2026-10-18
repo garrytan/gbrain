@@ -97,7 +97,7 @@ describe('gbrain schema CLI (Phase C)', () => {
     // unified extract receipt-writer surface (D-EXTRACT-19 belt+suspenders).
     // v0.42.56.0 (#2390): extended to 27 by adding the Life Chronicle
     // `event` + `diary` temporal types (life/events/, life/diary/).
-    expect(r.stdout).toContain('Page types (27)');
+    expect(r.stdout).toContain('Page types (28)');
     expect(r.stdout).toContain('event :: temporal');
     expect(r.stdout).toContain('diary :: temporal');
     expect(r.stdout).toContain('Link verbs (12)');
@@ -131,7 +131,8 @@ describe('gbrain schema CLI (Phase C)', () => {
     // v1.2.0 (v0.47 open-loop engine): +owes_to +awaiting_reply_from — 15
     // link verbs became 17. (#2117 history: 14 became 15 with `advises`.)
     // v1.3.0 (entity recall): +account page type (alias crm).
-    expect(r.stdout).toContain('gbrain-base-v2 v1.3.0');
+    // v1.4.0 (#6742): +question page type (the pinned-question writer's).
+    expect(r.stdout).toContain('gbrain-base-v2 v1.4.0');
     expect(r.stdout).toContain('Page types (');
     expect(r.stdout).toContain('Link verbs (17)');
   });

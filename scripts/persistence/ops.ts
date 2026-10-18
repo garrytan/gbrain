@@ -104,6 +104,8 @@ export interface World {
   sessionDrops?: SessionDrops;
   /** Write reply wait every op context carries; absent = the operation default (a probe shortens it to force `write_pending`). */
   writeWaitMs?: number;
+  /** `consumer:claiming` passes a counting or crashing worker's fault hook saw; `finish` waits for one after its probe (#6957). */
+  claimPasses?: number;
 }
 
 /**
@@ -127,7 +129,8 @@ export class SessionDrops {
   }
 }
 
-const DROPPED_CONNECTION = /CONNECTION_CLOSED|CONNECTION_ENDED|ECONNRESET|57P01|08P01|08006|server conn crashed|terminating connection|Connection terminated/i;
+// CONNECT_TIMEOUT: a backend the fault killed mid-handshake surfaces to the client as a connect timeout, not a close.
+const DROPPED_CONNECTION = /CONNECTION_CLOSED|CONNECTION_ENDED|CONNECTION_DESTROYED|CONNECT_TIMEOUT|ECONNRESET|57P01|08P01|08006|server conn crashed|terminating connection|Connection terminated/i;
 const DROP_RETRIES = 8;
 
 /**

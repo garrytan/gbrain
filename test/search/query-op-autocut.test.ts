@@ -26,10 +26,13 @@ describe('query op — autocut agent surface', () => {
     // The actionable direction is FALSE for breadth.
     expect(desc).toContain('false');
     expect(desc).toContain('breadth');
-    // Safety contract so the agent trusts it.
-    expect(desc).toContain('never returns empty');
-    // Distinguish from adaptive_return so the agent picks the right knob.
-    expect(desc).toContain('adaptive_return');
+    // Safety contract so the agent trusts it: the result is never empty.
+    expect(desc).toContain('never empty');
+    // Distinguish from adaptive_return so the agent picks the right knob: autocut's
+    // override is false for breadth, adaptive_return's is true for one answer.
+    const adaptive = ((query.params?.adaptive_return as { description?: string })?.description ?? '').toLowerCase();
+    expect(desc).toContain('false: full top-k for breadth');
+    expect(adaptive).toContain('true for one answer');
   });
 
   test('search op (keyword-only) does NOT carry autocut (no reranker there)', () => {

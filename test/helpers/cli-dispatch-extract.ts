@@ -322,7 +322,7 @@ function tableRule(name: string, run: ts.FunctionDeclaration): BranchRule {
 }
 
 export function extractCliDispatch(): CliDispatchShape {
-  const sf = parseTs('src/cli.ts');
+  const sf = parseTs('src/cli/main.ts');
   const cliOnly = [...TABLE_CLI_ONLY];
   const refused = [...TABLE_REFUSED];
   const setsByName: Record<string, string[]> = {

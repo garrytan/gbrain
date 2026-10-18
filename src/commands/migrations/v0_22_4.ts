@@ -25,8 +25,8 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } fr
 import { join } from 'path';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import type { BrainEngine } from '../../core/engine.ts';
-import { loadConfig, toEngineConfig, gbrainPath } from '../../core/config.ts';
-import { createEngine } from '../../core/engine-factory.ts';
+import { loadConfig, gbrainPath } from '../../core/config.ts';
+import { connectMigrationEngine } from './run-engine.ts';
 import { scanBrainSources, type AuditReport } from '../../core/brain-writer.ts';
 
 /** Test-only injection point for the audit phase. When set, phaseBAudit uses
@@ -78,13 +78,11 @@ async function phaseBAudit(opts: OrchestratorOpts): Promise<{ phase: Orchestrato
           report: null,
         };
       }
-      const engineConfig = toEngineConfig(config);
-      const engine = await createEngine(engineConfig);
-      await engine.connect(engineConfig);
+      const { engine, close } = await connectMigrationEngine(config);
       try {
         report = await scanBrainSources(engine);
       } finally {
-        await engine.disconnect();
+        await close();
       }
     }
     if (report.per_source.length === 0) {
@@ -220,6 +218,7 @@ export const v0_22_4: Migration = {
     },
   },
   orchestrator,
+  sharesRunEngine: true,
 };
 
 /** Exported for unit tests. */

@@ -47,7 +47,8 @@ describe('heavy door supply chain and coverage gates', () => {
 
   test('OpenCode defaults to keyless and explicitly requests a separate credentialed lane', () => {
     expect(workflow.on.workflow_dispatch.inputs.run_opencode_paid.default).toBe(false);
-    expect(opencode.strategy?.matrix.lane).toBe('${{ fromJSON((inputs.run_opencode_paid || vars.GBRAIN_OPENCODE_PAID_E2E == \'1\') && \'["keyless","credentialed"]\' || \'["keyless"]\') }}');
+    // The credentialed lane is requested per dispatch or by GBRAIN_OPENCODE_PAID_E2E, and the repository-wide switch GBRAIN_PAID_LANES=0 keeps it off either way (#5903).
+    expect(opencode.strategy?.matrix.lane).toBe('${{ fromJSON((inputs.run_opencode_paid || vars.GBRAIN_OPENCODE_PAID_E2E == \'1\') && format(\'{0}\', vars.GBRAIN_PAID_LANES) != \'0\' && \'["keyless","credentialed"]\' || \'["keyless"]\') }}');
     expect(opencode.strategy?.['fail-fast']).toBe(false);
     expect(opencode.env.ANTHROPIC_API_KEY).toBeUndefined();
     const keyless = opencode.steps.find(step => step.name?.startsWith('Run opencode door tests (keyless'))!;

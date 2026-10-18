@@ -20,13 +20,16 @@ const opts = { sourceId: input.sourceId, repoPath: input.root, noPull: true, noE
 const requests = () => engine.executeRaw('SELECT id,request_id,state,intent FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [input.sourceId]);
 try {
   const before = await requests();
+  // #6712 PR 1: `resume` resumes with the opposite --no-embed; the cursor's opt-outs are inherited instead of refused,
+  // and the pending request keeps the options it was admitted with.
   let changedOptions: unknown;
+  let result: Awaited<ReturnType<typeof performManagedSync>> | undefined;
   if (process.argv[3] === 'resume') {
-    try { await performManagedSync(engine, { ...opts, noEmbed: !input.noEmbed }); }
-    catch (error) { changedOptions = { code: (error as { code?: string }).code }; }
+    result = await performManagedSync(engine, { ...opts, noEmbed: !input.noEmbed });
+    changedOptions = { inherited: result.inherited_options ?? [] };
   }
   const afterChangedOptions = await requests();
-  const result = await performManagedSync(engine, { ...opts, retryFailed: true });
+  result ??= await performManagedSync(engine, { ...opts, retryFailed: true });
   await disposePersistenceConsumer(engine);
   const beforeDrain = await engine.executeRaw('SELECT kind,state FROM persistence_effects WHERE source_id=$1 ORDER BY kind', [input.sourceId]);
   await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now() WHERE source_id=$1 AND kind='embedding'", [input.sourceId]);

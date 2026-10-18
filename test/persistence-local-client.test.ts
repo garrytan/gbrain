@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { persistenceConfigForBrain, readPersistenceCliRegistration, maybeDelegateLocalOperation, residentPersistenceConfig } from '../src/core/persistence/local-client.ts';
 import { acquireLock, releaseLock } from '../src/core/pglite-lock.ts';
-import { PersistenceIpcTransportError } from '../src/core/persistence/ipc.ts';
+import { PersistenceIpcTransportError, persistenceSocketPathForConfig, startPersistenceIpcServer } from '../src/core/persistence/ipc.ts';
 import { resolveSourceId } from '../src/core/source-resolver.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -41,7 +41,7 @@ describe('engine-free local persistence routing', () => {
     await withEnv({ GBRAIN_HOME: dir }, () => {
       expect(() => readPersistenceCliRegistration(BRAIN)).toThrow('no readable durable writer registration');
       expect(() => readFileSync(join(dir, '.gbrain', 'persistence', `${BRAIN}.cli.json`))).toThrow();
-      expect(() => readPersistenceCliRegistration('../other')).toThrow('UUID');
+      expect(() => readPersistenceCliRegistration('../other')).toThrow('Missing durable brain identity');
     });
   });
 
@@ -81,9 +81,34 @@ describe('engine-free local persistence routing', () => {
         holder('call');
         expect(await maybeDelegateLocalOperation('forget', { id: '1' }, config, { brain: 'host', cwd: dir })).toEqual({ handled: false });
         holder('serve');
-        await expect(maybeDelegateLocalOperation('forget', { id: '1' }, config, { brain: 'host', cwd: dir })).rejects.toBeInstanceOf(PersistenceIpcTransportError);
+        await expect(maybeDelegateLocalOperation('forget', { id: '1' }, config, { brain: 'host', cwd: dir, startupWaitMs: 0 })).rejects.toBeInstanceOf(PersistenceIpcTransportError);
       });
     } finally { await releaseLock(lock); }
+  });
+
+  test('a serve that holds the datastore but has not bound its socket yet is an owner starting: the call waits for the socket instead of failing owner_unavailable (#6531)', async () => {
+    const dir = temp();
+    const config = { engine: 'pglite' as const, database_path: join(dir, 'db') };
+    const lock = await acquireLock(config.database_path, { timeoutMs: 1000 });
+    writeFileSync(lock.lockPath!, JSON.stringify({ ...JSON.parse(readFileSync(lock.lockPath!, 'utf8')), subcommand: 'serve' }));
+    const owner: { binding: Awaited<ReturnType<typeof startPersistenceIpcServer>> } = { binding: null };
+    try {
+      await withEnv({ GBRAIN_HOME: dir, GBRAIN_BRAIN_ID: 'host' }, async () => {
+        const socketPath = persistenceSocketPathForConfig(config)!;
+        const bind = new Promise<void>(resolve => setTimeout(async () => {
+          owner.binding = await startPersistenceIpcServer(socketPath, { brainId: BRAIN, dispatch: async () => ({ ok: true }) });
+          resolve();
+        }, 400));
+        // The socket appears 400 ms into the wait: the probe reaches the owner, so the next refusal is the missing CLI registration, not the transport.
+        const started = Date.now();
+        await expect(maybeDelegateLocalOperation('forget', { id: '1' }, config, { brain: 'host', cwd: dir })).rejects.toMatchObject({ code: 'permission_denied' });
+        expect(Date.now() - started).toBeGreaterThanOrEqual(350);
+        await bind;
+        // Without the wait the same call fails on the transport at once.
+        owner.binding!.close(); owner.binding = null;
+        await expect(maybeDelegateLocalOperation('forget', { id: '1' }, config, { brain: 'host', cwd: dir, startupWaitMs: 0 })).rejects.toBeInstanceOf(PersistenceIpcTransportError);
+      });
+    } finally { owner.binding?.close(); await releaseLock(lock); }
   });
 
   test('owner source environment and dotfiles cannot redirect a client with no local signal', async () => {

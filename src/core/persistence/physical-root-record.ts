@@ -1,14 +1,47 @@
 import { randomUUID } from 'node:crypto';
-import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { execFileSync } from '../spawn.ts';
+import { appendFileSync, closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
+import { gitChildEnv } from '../git-env.ts';
 import { flushDirectory } from '../fs-durable.ts';
 import { digest, sha256 } from './digest.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
-import { PHYSICAL_ROOT_MARKER } from './root-metadata.ts';
+import { OWNERSHIP_MARKER_GLOBS, PHYSICAL_ROOT_MARKER } from './root-metadata.ts';
 
-export { PHYSICAL_ROOT_MARKER, isPhysicalRootMetadata } from './root-metadata.ts';
+export { OWNERSHIP_MARKER_GLOBS, PHYSICAL_ROOT_MARKER, isPhysicalRootMetadata } from './root-metadata.ts';
 const RESERVATION_PREFIX = '.gbrain-owner-';
+/**
+ * Appends the marker globs to the exclude file of every Git checkout holding
+ * `directories` (resolved with `git rev-parse --git-path`, so a linked
+ * worktree writes its shared file). Idempotent; a repository-local file, never
+ * committed; a missing trailing newline is repaired first. Best effort: an
+ * unreadable checkout or a read-only git dir leaves the stamp in place and the
+ * push deny list as the backstop.
+ */
+export function excludeOwnershipMarkers(directories: readonly string[]): void {
+  const written = new Set<string>();
+  for (const directory of directories) {
+    let exclude: string;
+    try {
+      if (!statSync(directory).isDirectory()) continue;
+      const path = execFileSync('git', ['-C', directory, 'rev-parse', '--git-path', 'info/exclude'],
+        { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv() }).toString().trim();
+      if (!path) continue;
+      exclude = resolve(directory, path);
+    } catch { continue; }
+    if (written.has(exclude)) continue;
+    written.add(exclude);
+    try {
+      mkdirSync(dirname(exclude), { recursive: true });
+      const body = existsSync(exclude) ? readFileSync(exclude, 'utf8') : '';
+      const present = new Set(body.split('\n').map(line => line.trim()));
+      const missing = OWNERSHIP_MARKER_GLOBS.filter(glob => !present.has(glob));
+      if (!missing.length) continue;
+      appendFileSync(exclude, `${body.length && !body.endsWith('\n') ? '\n' : ''}${missing.join('\n')}\n`);
+    } catch { /* best effort; the push deny list refuses a tracked marker */ }
+  }
+}
 export interface PhysicalRootReservation {
   version: 1; token: string; brainId: string; worktreeId: string; hostId: string;
   root: string; coordinationPath: string; initialDevice: string | null; initialInode: string | null; initialBirth: string | null;
@@ -47,16 +80,56 @@ function createPrivate(path: string, value: unknown): boolean {
   return true;
 }
 export function readPhysicalRootReservation(path: string): PhysicalRootReservation | null {
-  const root = canonicalFilesystemPath(path);
+  return readReservationRecord(canonicalFilesystemPath(path));
+}
+/** #5914: the reservation written for `recorded` as it was recorded, even when that path now resolves elsewhere through a symlink. */
+export function readRecordedPhysicalRootReservation(recorded: string): PhysicalRootReservation | null {
+  return readReservationRecord(recorded);
+}
+/** Whether `path` is `root` or lies under it (both canonical). */
+export function coordinationPathInsideRoot(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`);
+}
+function readReservationRecord(root: string, allowInsideLock = false): PhysicalRootReservation | null {
   const value = readPrivate(physicalRootReservationPath(root)) as PhysicalRootReservation | null;
   if (value === null) return null;
   if (value.version !== 1 || ![value.token,value.brainId,value.worktreeId,value.hostId].every(uuid)
     || value.root !== root || typeof value.coordinationPath !== 'string' || !isAbsolute(value.coordinationPath) || value.coordinationPath.includes('\0')
     || ![value.initialDevice,value.initialInode,value.initialBirth].every(part => part === null || typeof part === 'string' && /^\d+$/.test(part))) throw physicalRootError();
-  const lockRelative = relative(root, value.coordinationPath);
-  if (canonicalFilesystemPath(value.coordinationPath) !== value.coordinationPath
-    || !isAbsolute(lockRelative) && lockRelative !== '..' && !lockRelative.startsWith(`..${sep}`)) throw physicalRootError('The stable coordination lock must live outside the canonical checkout.');
+  if (canonicalFilesystemPath(value.coordinationPath) !== value.coordinationPath) throw physicalRootError();
+  if (!allowInsideLock && coordinationPathInsideRoot(root, value.coordinationPath)) throw physicalRootError('The stable coordination lock must live outside the canonical checkout. '
+    + 'A reservation an older release wrote with its lock inside the checkout (GBRAIN_HOME inside the source root) is repaired by the next claim of this checkout on the host that reserved it; do not delete it.');
   return value;
+}
+/** #6766: the reservation an older release wedged with its lock inside the checkout (every other field valid), or null. */
+export function readWedgedPhysicalRootReservation(path: string): PhysicalRootReservation | null {
+  const root = canonicalFilesystemPath(path);
+  const value = readReservationRecord(root, true);
+  return value && coordinationPathInsideRoot(root, value.coordinationPath) ? value : null;
+}
+/** The guard every wedged-reservation repairer of `root` takes: beside the reservation, so it never depends on the coordination env. */
+export function reservationRepairGuardPath(root: string): string {
+  return `${physicalRootReservationPath(canonicalFilesystemPath(root))}.repair.lock`;
+}
+/**
+ * #6766: rewrite only the coordinationPath of a wedged reservation. The caller holds the repair guard and verified the
+ * brain, host and absence of a worktree row; the record is re-read and compared by digest before the atomic rename.
+ */
+export function repairReservationCoordinationPath(path: string, expected: PhysicalRootReservation, coordinationPath: string): void {
+  const root = canonicalFilesystemPath(path);
+  if (expected.root !== root || canonicalFilesystemPath(coordinationPath) !== coordinationPath || coordinationPathInsideRoot(root, coordinationPath)) {
+    throw physicalRootError('The repaired coordination lock must be a canonical path outside the canonical checkout.');
+  }
+  replacePrivate(physicalRootReservationPath(root), { ...expected, coordinationPath }, () => {
+    const current = readReservationRecord(root, true);
+    if (!current || digest(current) !== digest(expected)) {
+      const error = physicalRootError('The ownership reservation changed while its coordination lock was being repaired; run the claim again.');
+      error.detail = 'stale_record';
+      throw error;
+    }
+  });
+  if (readPhysicalRootReservation(root)?.coordinationPath !== coordinationPath) throw physicalRootError('The repaired ownership reservation contains unexpected bytes.');
 }
 export function readPhysicalRootStamp(root: string): PhysicalRootStamp | null {
   const value = readPrivate(join(root, PHYSICAL_ROOT_MARKER)) as PhysicalRootStamp | null;
@@ -105,17 +178,65 @@ export function assertNoPhysicalRootOverlap(root: string): void {
 export function writePhysicalRootStamp(directory: string, reservation: PhysicalRootReservation): void {
   const info = statSync(directory, { bigint: true });
   if (!info.isDirectory()) throw physicalRootError();
-  const stamp: PhysicalRootStamp = { version: 1, token: reservation.token, brainId: reservation.brainId, worktreeId: reservation.worktreeId,
-    root: reservation.root, device: info.dev.toString(), inode: info.ino.toString(), birth: info.birthtimeNs.toString() };
-  createPrivate(join(directory, PHYSICAL_ROOT_MARKER), stamp);
+  const stampFor = (live: { dev: bigint; ino: bigint; birthtimeNs: bigint }): PhysicalRootStamp => ({ version: 1, token: reservation.token, brainId: reservation.brainId,
+    worktreeId: reservation.worktreeId, root: reservation.root, device: live.dev.toString(), inode: live.ino.toString(), birth: live.birthtimeNs.toString() });
+  const marker = join(directory, PHYSICAL_ROOT_MARKER);
+  createPrivate(marker, stampFor(info));
+  // #6501 belt-and-braces: the stamp records what the directory reports after the marker landed in it.
+  const after = statSync(directory, { bigint: true });
+  if (after.dev !== info.dev || after.ino !== info.ino || after.birthtimeNs !== info.birthtimeNs) replacePrivate(marker, stampFor(after));
   assertPhysicalRootStamp(directory, reservation);
+  excludeOwnershipMarkers([directory, reservation.root, dirname(reservation.root)]);
+}
+/**
+ * #6501: how far a persisted directory birth stamp may sit from the live
+ * `birthtimeNs` and still name the same directory. APFS reports a freshly
+ * created directory's birth time tens of nanoseconds apart between the
+ * process that created it and later processes (one Apple-Silicon timebase
+ * tick), which left every write to such a root refused forever. 1 µs is 20x
+ * the reported drift and far below anything a removed-and-recreated directory
+ * can land in; everything else about the stamp (owner token, brain, worktree,
+ * root, inode, device) still has to agree exactly.
+ */
+export const PHYSICAL_BIRTH_TOLERANCE_NS = 1_000n;
+/**
+ * Whether a persisted birth stamp names the live directory. Equal strings
+ * always match (so `'0'` against a filesystem that reports no birth time
+ * keeps working); a malformed stamp, or a zero on either side against a
+ * non-zero on the other, fails closed; otherwise the two may differ by at
+ * most PHYSICAL_BIRTH_TOLERANCE_NS. Persisted-stamp comparisons only: the
+ * in-process path-race check, the staging identity and the prepared-record
+ * digest compare exactly, because they guard a running operation.
+ */
+export function samePhysicalBirth(stored: string | null | undefined, live: bigint): boolean {
+  if (typeof stored !== 'string' || !/^\d{1,30}$/.test(stored)) return false;
+  const value = BigInt(stored);
+  if (value === live) return true;
+  if (value === 0n || live === 0n) return false;
+  return (value > live ? value - live : live - value) <= PHYSICAL_BIRTH_TOLERANCE_NS;
+}
+/** The #5914 exit for a directory recreated at its recorded path; filled with the source and root by lockWorktree (ownership.ts). */
+export function physicalRootDirectoryChangedError(): OperationError {
+  const error = physicalRootError('The checkout directory at the recorded root is not the one this owner stamped (its inode or birth time changed) while the owner token, brain, worktree, root and device still match. '
+    + 'Inspect writer status and use the deliberate self-transfer that confirms a relocated root to re-stamp this same path.');
+  error.detail = 'physical_root_directory_changed';
+  error.suggestion = 'On the brain host, run gbrain sources writer status <source> and note admin_state, then gbrain sources writer transfer prepare <source> --self-transfer --confirm-relocated-root '
+    + '--admin-intent writer_transfer_prepare --expected-state <admin_state>, then gbrain sources writer transfer accept <source> --path <root> --expected-epoch <epoch> --manifest <manifest digest printed by prepare> '
+    + '--self-transfer --confirm-relocated-root --admin-intent writer_transfer_accept --expected-state <admin_state from a fresh status>. Never remove the ownership markers to claim this path.';
+  return error;
 }
 /** directory may be a verified staging directory; its stamp always names the final root. */
 export function assertPhysicalRootStamp(directory: string, reservation: PhysicalRootReservation): void {
   const value = readPrivate(join(directory, PHYSICAL_ROOT_MARKER)) as PhysicalRootStamp | null;
   const info = statSync(directory, { bigint: true });
   if (!value || value.version !== 1 || value.token !== reservation.token || value.brainId !== reservation.brainId || value.worktreeId !== reservation.worktreeId
-    || value.root !== reservation.root || value.inode !== info.ino.toString() || value.birth !== info.birthtimeNs.toString()) throw physicalRootError();
+    || value.root !== reservation.root) throw physicalRootError();
+  if (value.inode !== info.ino.toString() || !samePhysicalBirth(value.birth, info.birthtimeNs)) {
+    // #6501 door parity with the device change below: a well-formed stamp whose directory identity alone moved names the #5914 exit;
+    // a malformed birth stamp is a damaged record, not a recreated directory, and keeps the generic refusal.
+    if (value.device === info.dev.toString() && typeof value.birth === 'string' && /^\d+$/.test(value.birth)) throw physicalRootDirectoryChangedError();
+    throw physicalRootError();
+  }
   if (value.device !== info.dev.toString()) {
     if (typeof value.device === 'string' && /^\d+$/.test(value.device)) {
       const error = physicalRootError('The filesystem device identifier changed while the other checkout identity fields still match. Inspect writer status and use deliberate self-transfer to re-stamp this same root.');
@@ -134,18 +255,38 @@ export function assertPhysicalRootStamp(directory: string, reservation: Physical
 export function physicalRootDeviceChange(stamp: PhysicalRootStamp, reservation: Pick<PhysicalRootReservation, 'token' | 'brainId' | 'worktreeId' | 'root'>,
   info: { dev: bigint; ino: bigint; birthtimeNs: bigint }): { from: string; to: string } | null {
   if (stamp.token !== reservation.token || stamp.brainId !== reservation.brainId || stamp.worktreeId !== reservation.worktreeId
-    || stamp.root !== reservation.root || stamp.inode !== info.ino.toString() || stamp.birth !== info.birthtimeNs.toString()
+    || stamp.root !== reservation.root || stamp.inode !== info.ino.toString() || !samePhysicalBirth(stamp.birth, info.birthtimeNs)
     || info.birthtimeNs === 0n || stamp.device === info.dev.toString()) return null;
   return { from: stamp.device, to: info.dev.toString() };
 }
-function replacePrivate(path: string, value: unknown): void {
+function replacePrivate(path: string, value: unknown, beforeRename?: () => void): void {
   const temporary = `${path}.${randomUUID()}.tmp`;
   let created = false;
   try {
     created = createPrivate(temporary, value);
     if (!created || digest(readPrivate(temporary)) !== digest(value)) throw physicalRootError('The re-stamped ownership record contains unexpected bytes.');
+    beforeRename?.();
     renameSync(temporary, path); created = false; flushDirectory(dirname(path));
   } finally { if (created) try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } }
+}
+/**
+ * #5914: compare-and-swap of the outside-root reservation for a deliberate
+ * relocation (recreated directory, moved checkout). The caller holds the
+ * outside-root native lock and verified database ownership. A reservation
+ * already equal to `next` is a no-op; one that matches neither `expected` nor
+ * `next` was changed by someone else and refuses with detail `stale_record`.
+ */
+export function replacePhysicalRootReservation(root: string, expected: PhysicalRootReservation, next: PhysicalRootReservation): void {
+  if (next.root !== root || expected.root !== root || next.token !== expected.token || next.worktreeId !== expected.worktreeId || next.brainId !== expected.brainId) throw physicalRootError();
+  const current = readPhysicalRootReservation(root);
+  if (current && digest(current) === digest(next)) return;
+  if (!current || digest(current) !== digest(expected)) {
+    const error = physicalRootError('The ownership reservation changed since this relocation was prepared; prepare it again from a fresh writer status.');
+    error.detail = 'stale_record';
+    throw error;
+  }
+  replacePrivate(physicalRootReservationPath(root), next);
+  if (digest(readPhysicalRootReservation(root)) !== digest(next)) throw physicalRootError('The re-stamped ownership reservation contains unexpected bytes.');
 }
 /** Caller holds the outside-root native lock and verified database ownership; only the device fields change. */
 export function restampPhysicalRootDevice(root: string, reservation: PhysicalRootReservation, stamp: PhysicalRootStamp, change: { from: string; to: string }): void {
@@ -172,6 +313,59 @@ export function adoptTransferredRootStamp(directory: string, reservation: Physic
     renameSync(temporary, path); flushDirectory(directory);
   } finally { if (created) try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } }
   assertPhysicalRootStamp(directory, reservation);
+  excludeOwnershipMarkers([directory, reservation.root, dirname(reservation.root)]);
+}
+/**
+ * #5914: the identity check a release that publishes nothing needs. The
+ * outside-root reservation must name this worktree (and coordination path),
+ * and a stamp, when one is readable, must carry the reservation's token; the
+ * inode and birth time of a recreated directory are not compared. Callers
+ * hold the native lock.
+ */
+export function assertPhysicalRootReservation(path: string, identity: { worktreeId: string; coordinationPath?: string | null }): void {
+  try {
+    const reservation = readPhysicalRootReservation(path);
+    if (!reservation || reservation.worktreeId !== identity.worktreeId || identity.coordinationPath && reservation.coordinationPath !== identity.coordinationPath) throw physicalRootError();
+    const stamp = existsSync(path) ? readPhysicalRootStamp(path) : null;
+    if (stamp && (stamp.token !== reservation.token || stamp.worktreeId !== reservation.worktreeId || stamp.brainId !== reservation.brainId)) throw physicalRootError();
+  } catch (error) { if (error instanceof OperationError) throw error; throw physicalRootError(); }
+}
+/**
+ * #5914 (P1.3c): the recorded root now resolves through a symlink to `target`.
+ * Verifies the moved checkout is this same worktree (reservation under the old
+ * name and stamp inside the real directory agree on token, brainId and
+ * worktreeId; the stamp names the old root) and returns both records.
+ */
+export function inspectRelocatedPhysicalRoot(recorded: string, target: string, identity: { worktreeId: string; coordinationPath?: string | null }):
+  { reservation: PhysicalRootReservation; stamp: PhysicalRootStamp } {
+  try {
+    if (recorded === target || realpathSync(recorded) !== target || realpathSync(target) !== target) throw physicalRootError();
+    const reservation = readRecordedPhysicalRootReservation(recorded), stamp = readPhysicalRootStamp(target);
+    if (!reservation || !stamp || reservation.worktreeId !== identity.worktreeId || identity.coordinationPath && reservation.coordinationPath !== identity.coordinationPath
+      || stamp.token !== reservation.token || stamp.worktreeId !== reservation.worktreeId || stamp.brainId !== reservation.brainId || stamp.root !== recorded) throw physicalRootError();
+    return { reservation, stamp };
+  } catch (error) { if (error instanceof OperationError) throw error; throw physicalRootError(); }
+}
+/**
+ * #5914 (P1.3c): moves the ownership records of a verified relocation to the
+ * real directory: the reservation is written under the new `sha256(root)`
+ * name, the stamp is rewritten to name the new root from the live directory,
+ * then the old reservation is removed. Caller holds the native lock and the
+ * topology transaction; `inspectRelocatedPhysicalRoot` ran first.
+ */
+export function relocatePhysicalRoot(recorded: string, target: string, records: { reservation: PhysicalRootReservation; stamp: PhysicalRootStamp }): PhysicalRootReservation {
+  const info = statSync(target, { bigint: true });
+  const reservation: PhysicalRootReservation = { ...records.reservation, root: target,
+    initialDevice: info.dev.toString(), initialInode: info.ino.toString(), initialBirth: info.birthtimeNs.toString() };
+  const existing = readPhysicalRootReservation(target);
+  if (existing && digest(existing) !== digest(reservation)) throw physicalRootError('Another reservation already names the relocated directory.');
+  if (!existing && !createPrivate(physicalRootReservationPath(target), reservation)) throw physicalRootError();
+  replacePrivate(join(target, PHYSICAL_ROOT_MARKER), { ...records.stamp, root: target, device: info.dev.toString(), inode: info.ino.toString(), birth: info.birthtimeNs.toString() });
+  assertPhysicalRootStamp(target, reservation);
+  try { unlinkSync(physicalRootReservationPath(recorded)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  flushDirectory(dirname(physicalRootReservationPath(recorded)));
+  excludeOwnershipMarkers([target, dirname(target)]);
+  return reservation;
 }
 export function assertPhysicalRoot(path: string, identity: { worktreeId: string; coordinationPath?: string | null }): void {
   try {

@@ -242,6 +242,9 @@ describe('runUpgrade target verification (#4366)', () => {
     writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\necho "gbrain ${opts.observedVersion}"\n`);
     chmodSync(join(bin, 'clawhub'), 0o755);
     chmodSync(join(bin, 'gbrain'), 0o755);
+    // #6662: verify-target probes the release tag with `git ls-remote`; report it published, offline.
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\ncase "$1" in ls-remote) exit 0;; esac\nexec ${JSON.stringify(Bun.which('git') ?? '/usr/bin/git')} "$@"\n`);
+    chmodSync(join(bin, 'git'), 0o755);
     if (opts.recordGitAndBun) {
       for (const tool of ['git', 'bun']) {
         writeFileSync(join(bin, tool), `#!/bin/sh\necho "$(pwd)|$*" >> "${join(home, 'calls.log')}"\nexit 0\n`);

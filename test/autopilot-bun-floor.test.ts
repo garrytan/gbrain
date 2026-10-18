@@ -53,7 +53,8 @@ function harness(label: string): Harness {
   const argvLog = join(root, 'argv.log');
   writeFileSync(argvLog, '');
   writeFileSync(join(shims, 'bun'), '#!/usr/bin/env bash\necho "$FAKE_BUN_VERSION"\n', { mode: 0o755 });
-  writeFileSync(join(shims, 'gbrain'), `#!/usr/bin/env bash\nprintf 'gbrain %s\\n' "$*" >> "${argvLog}"\nexit "\${FAKE_GBRAIN_EXIT:-0}"\n`, { mode: 0o755 });
+  // #6828: a swap is confirmed by the version it left on disk, so `--version` reports the target (a real swap) and is not logged as a swap call.
+  writeFileSync(join(shims, 'gbrain'), `#!/usr/bin/env bash\nif [ "$1" = "--version" ]; then [ "\${FAKE_GBRAIN_EXIT:-0}" = 0 ] && echo "gbrain ${TARGET}"; exit "\${FAKE_GBRAIN_EXIT:-0}"; fi\nprintf 'gbrain %s\\n' "$*" >> "${argvLog}"\nexit "\${FAKE_GBRAIN_EXIT:-0}"\n`, { mode: 0o755 });
   return { root, home, shims, argvLog };
 }
 

@@ -66,7 +66,7 @@ describe('E-N1: session-end GC keeps un-ingested corpus files up to 3x retention
     const ceiling = aged('ancient-waiting.txt', 95, false);
     const fresh = aged('fresh-waiting.txt', 2, false);
     await sessionEnd();
-    expect(existsSync(join(corpus(), 'sess-new.txt'))).toBe(true);
+    expect(existsSync(join(corpus(), 'sourced', 'sess-new.src-_unresolved.txt'))).toBe(true); // #6268: the spool
     expect(existsSync(extracted)).toBe(false);
     expect(existsSync(waiting)).toBe(true);
     expect(existsSync(fresh)).toBe(true);
@@ -108,5 +108,39 @@ describe('E-N1: doctor memory_writeback names the un-extracted backlog before it
     const check = await buildMemoryWritebackCheck(engine);
     expect(check.status).toBe('ok');
     expect(check.details?.corpus_backlog).toMatchObject({ pending: 1, past_retention: 0 });
+  });
+});
+
+describe('#6611 SessionEnd GC and legacy corpus sessions', () => {
+  test('a legacy session source record in the spool survives while its top-level .txt exists, and is reaped after', async () => {
+    const legacy = aged('legacy-session-abc.txt', 1, false);
+    const spool = join(corpus(), 'sourced');
+    mkdirSync(spool, { recursive: true });
+    const record = join(spool, 'legacy-session-abc.source.json');
+    writeFileSync(record, JSON.stringify({ source_id: 'default', tier: 'operator' }));
+    const past = new Date(Date.now() - 11 * 60_000);
+    utimesSync(record, past, past);
+    await sessionEnd();
+    expect(existsSync(legacy)).toBe(true);
+    expect(existsSync(record)).toBe(true);
+    rmSync(legacy);
+    utimesSync(record, past, past);
+    await sessionEnd();
+    expect(existsSync(record)).toBe(false);
+  });
+
+  test('gcCorpusArtifacts counts a session live when its .txt is in any of the live-session dirs', async () => {
+    const { gcCorpusArtifacts } = await import('../src/core/context/corpus-segments.ts');
+    const spool = join(corpus(), 'sourced');
+    mkdirSync(spool, { recursive: true });
+    writeFileSync(join(corpus(), 'legacy-xyz.txt'), 'user: hello\n');
+    const record = join(spool, 'legacy-xyz.source.json');
+    writeFileSync(record, '{}');
+    const past = new Date(Date.now() - 11 * 60_000);
+    utimesSync(record, past, past);
+    gcCorpusArtifacts(spool, 30 * DAY, [], [spool, corpus()]);
+    expect(existsSync(record)).toBe(true);
+    gcCorpusArtifacts(spool, 30 * DAY, []);
+    expect(existsSync(record)).toBe(false);
   });
 });

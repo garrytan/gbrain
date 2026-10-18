@@ -447,6 +447,14 @@
             "<anonymous>"
           ],
           "method": "get",
+          "path": "/admin/api/ops"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
           "path": "/admin/api/full-stats"
         },
         {
@@ -1156,6 +1164,14 @@
           ],
           "method": "get",
           "path": "/admin/api/health-indicators"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/ops"
         },
         {
           "handlers": [

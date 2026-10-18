@@ -24,8 +24,14 @@
 import type { BrainEngine } from '../engine.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { foldNonDecomposingLatin } from '../latin-fold.ts';
-import { isUndefinedTableError } from '../utils.ts';
+import { slugifySegment } from '../sync.ts';
+
+/** Lazy: the mentions graph stays out of the OpenClaw plugin's static import graph. */
+const siblingCanonical: typeof import('../mentions/siblings.ts').siblingCanonical = async (...args) =>
+  (await import('../mentions/siblings.ts')).siblingCanonical(...args);
+import { isMissingSchemaObject } from '../utils.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { rankingLinkSql } from '../link-ranking-policy.ts';
 
 /**
  * Canonicalize a free-form entity reference to a page slug.
@@ -34,7 +40,10 @@ import { privatePagesFilterFragment } from '../search/private-visibility.ts';
  *   1. If `raw` is already a page slug shape (contains a "/" or matches an
  *      exact pages.slug row in this source), return it untouched. A mention
  *      that is exactly one live page's own name (slug basename) resolves to
- *      it next, before any other page's alias.
+ *      it next, before any other page's alias, and so does (#6925) a
+ *      slug-shaped organization reference's one live page under another
+ *      organization directory (`companies/x` → `orgs/x`). Then an
+ *      unambiguous alias.
  *   2. Resolve a bare name only when prefix expansion finds one candidate,
  *      or one candidate whose title is exactly that name.
  *   3. For multi-token input, take a fuzzy candidate within the source only
@@ -43,8 +52,9 @@ import { privatePagesFilterFragment } from '../search/private-visibility.ts';
  *      hyphen-collapse. NOT prefixed with a directory — caller decides
  *      whether to prefix `people/`, `companies/`, etc.
  *
- * Returns null when raw is empty or whitespace-only. Non-empty input always
- * produces a non-null slug — the fallback path is the floor.
+ * Returns null when raw is empty, whitespace-only, or holds no letter or
+ * number (the fallback would mint an empty slug). Any other input produces a
+ * non-null slug: the fallback path is the floor.
  */
 export async function resolveEntitySlug(
   engine: BrainEngine,
@@ -59,7 +69,7 @@ export async function resolveEntitySlug(
   //    a row exactly), use it.
   if (looksLikeSlug(trimmed)) {
     const exact = await tryExactSlug(engine, source_id, trimmed);
-    if (exact) return exact;
+    if (exact) return exact.retired ? (await followRetirement(engine, source_id, exact.slug))?.slug ?? fallbackSlugify(trimmed) : exact.slug;
   }
 
   // 1.25. Exact own name: a live page whose slug basename IS the mention wins
@@ -73,6 +83,9 @@ export async function resolveEntitySlug(
   //      page_aliases hit resolves BEFORE prefix expansion / fuzzy — the
   //      alias table is curated ground truth ("saoirse" → people/saoirse-x)
   //      while fuzzy is a guess. Live-page verified (page_aliases has no FK).
+  const orgVariant = await tryOrgDirVariant(engine, source_id, trimmed);
+  if (orgVariant) return orgVariant;
+
   const aliased = await tryAliasExact(engine, source_id, trimmed);
   if (aliased) return aliased;
 
@@ -106,17 +119,49 @@ export async function resolveEntitySlug(
  * corrupts a well-formed slug (`people/alice-example` → `people-alice-example`)
  * into one no page can ever have — and the flattened slug never resolves, so
  * every re-extraction re-mints it. Path-shaped input is slugified PER SEGMENT
- * (identity for already-well-formed slugs); display names keep plain slugify.
+ * (identity for already-well-formed slugs).
+ *
+ * #6691: a segment whose letters the ASCII slugify would delete (Cyrillic,
+ * CJK, any non-Latin script) takes the page-slug grammar sync mints
+ * (`slugifySegment`), so `Мария` lands on `мария`, not `''`. Latin names keep
+ * the ASCII form (`o-brien`, `soren`). Null when nothing is left.
  */
-function fallbackSlugify(trimmed: string): string {
-  if (trimmed.includes('/')) {
-    return trimmed.split('/').map(slugify).filter(Boolean).join('/');
-  }
-  return slugify(trimmed);
+function fallbackSlugify(trimmed: string): string | null {
+  const slug = trimmed.split('/').map(fallbackSegment).filter(Boolean).join('/');
+  return slug || null;
+}
+
+function fallbackSegment(segment: string): string {
+  return /[\p{L}\p{N}]/u.test(foldForSlug(segment).replace(/[a-z0-9]/g, '')) ? slugifySegment(segment) : slugify(segment);
 }
 
 const IDENTITY_TYPES = new Set(['person', 'company', 'fund', 'organization']);
 const IDENTITY_DIRS = ['people/', 'companies/', 'funds/', 'orgs/', 'organizations/'];
+/** #6925: directories that hold the same organization pages, so `companies/x`, `orgs/x` and `organizations/x` name one org. */
+const ORG_DIRS = ['companies', 'orgs', 'organizations'];
+
+function sameEntityDir(a: string | null, b: string | null): boolean {
+  return a === b || (a !== null && b !== null && ORG_DIRS.includes(a) && ORG_DIRS.includes(b));
+}
+
+/** #6925: the same slug under the other organization directories; empty for any other slug. */
+function orgDirVariants(raw: string): string[] {
+  const slug = fallbackSlugify(raw.trim());
+  const [dir, name, ...rest] = slug?.split('/') ?? [];
+  if (!name || rest.length || !ORG_DIRS.includes(dir)) return [];
+  return ORG_DIRS.filter(d => d !== dir).map(d => `${d}/${name}`);
+}
+
+/** #6925: the one live page a slug-shaped organization reference names under another organization directory. */
+async function tryOrgDirVariant(engine: BrainEngine, source_id: string, raw: string): Promise<string | null> {
+  const variants = orgDirVariants(raw);
+  if (!variants.length) return null;
+  const rows = await engine.executeRaw<{ slug: string }>(
+    'SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])', [source_id, variants]);
+  const live = await canonicalPages(engine, source_id, rows.map(r => r.slug));
+  return live.length === 1 ? live[0].slug : null;
+}
+
 const NAME_NOISE_TOKENS = new Set(['the', 'inc', 'llc', 'ltd', 'co', 'corp', 'corporation', 'plc', 'gmbh']);
 
 /** True for pages that name one real-world person, company, fund or organization. */
@@ -152,6 +197,115 @@ export function sameEntityName(reference: string, candidateTitle: string | null 
 }
 
 /**
+ * #6898: a page that hands its identity to another page. Frontmatter
+ * `canonical: false`, a `superseded_by` or `merged_into` (the concept-merge
+ * record, cycle/concept-redirects.ts) target, or a `status` that names the
+ * page an alias or a redirect (`historical-retired-alias`). A status that
+ * describes the entity itself (`retired`, `archived`, `merged`, `superseded`)
+ * does not retire the page: a person who retired is still that person's page,
+ * and a merged company or a superseded decision is still a record of its own
+ * unless it names a target.
+ */
+export function retiredPageSql(p: string): string {
+  return `(lower(COALESCE(${p}.frontmatter->>'canonical', '')) IN ('false', 'no')
+    OR btrim(COALESCE(${p}.frontmatter->>'superseded_by', '')) <> ''
+    OR btrim(COALESCE(${p}.frontmatter->>'merged_into', '')) <> ''
+    OR lower(COALESCE(${p}.frontmatter->>'status', '')) ~ '(^|[^a-z])(alias|redirect|redirected)([^a-z]|$)')`;
+}
+
+const MAX_RETIREMENT_HOPS = 5;
+
+/** A frontmatter redirect value as a slug: `[[people/x|X]]`, `people/x.md` and `/people/x` are `people/x`. */
+function redirectSlug(value: string): string | null {
+  const slug = value.trim().replace(/^\[\[/, '').replace(/\]\]$/, '').split('|')[0].trim().replace(/\.md$/i, '').replace(/^\/+/, '');
+  return slug || null;
+}
+
+/**
+ * #6898: the live page that answers for `slug`. A page that is not retired
+ * answers for itself; a retired page hands over to its `superseded_by` (else
+ * `merged_into`) target in the same source, hop by hop up to
+ * MAX_RETIREMENT_HOPS. Null when the chain has no target, reaches a missing,
+ * deleted or (with `privacy`) unreadable page, cycles, or runs too long: the
+ * caller refuses rather than guess. The target is a human-written redirect,
+ * so it is followed whatever its type; the strict resolver still applies its
+ * fact-entity check to the page it lands on.
+ */
+export async function followRetirement(
+  engine: BrainEngine,
+  source_id: string,
+  slug: string,
+  privacy = '',
+): Promise<{ slug: string; type: string | null } | null> {
+  const seen = new Set<string>();
+  let current: string | null = slug;
+  while (current && !seen.has(current) && seen.size <= MAX_RETIREMENT_HOPS) {
+    seen.add(current);
+    const [row]: Array<{ slug: string; type: string | null; retired: boolean; target: string | null }> = await engine.executeRaw(
+      `SELECT p.slug, p.type, ${retiredPageSql('p')} AS retired,
+              COALESCE(NULLIF(btrim(p.frontmatter->>'superseded_by'), ''), NULLIF(btrim(p.frontmatter->>'merged_into'), '')) AS target
+         FROM pages p
+        WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ${privacy}
+        LIMIT 1`,
+      [source_id, current],
+    );
+    if (!row) return null;
+    if (!row.retired) return { slug: row.slug, type: row.type };
+    current = row.target ? redirectSlug(row.target) : null;
+  }
+  return null;
+}
+
+/** #6898: the distinct live pages that answer for `slugs` (see followRetirement); unfollowable ones drop out. */
+async function canonicalPages(
+  engine: BrainEngine,
+  source_id: string,
+  slugs: string[],
+  privacy = '',
+): Promise<Array<{ slug: string; type: string | null }>> {
+  const out = new Map<string, { slug: string; type: string | null }>();
+  for (const slug of new Set(slugs)) {
+    const page = await followRetirement(engine, source_id, slug, privacy);
+    if (page) out.set(page.slug, page);
+  }
+  return [...out.values()];
+}
+
+/**
+ * #6898: the normalized alias spellings a reference may be stored under.
+ * `/`, `-`, `_` and whitespace separate the same name words, so
+ * `Alice Example`, `alice_example` and `alice-example` meet whichever one
+ * the page declared. A slug-shaped reference (`people/alice-example`) names
+ * its last segment. The literal normalized form comes first.
+ */
+function aliasSpellings(raw: string): { literal: string; folded: string[]; dir: string | null } {
+  const literal = normalizeAlias(raw);
+  const segments = looksLikeSlug(raw.trim()) ? literal.split('/') : [literal];
+  const tokens = segments[segments.length - 1].split(/[\s/_-]+/u).filter(Boolean);
+  const folded = tokens.length ? [...new Set([' ', '-', '_'].map(sep => tokens.join(sep)))].filter(s => s !== literal) : [];
+  return { literal, folded, dir: segments.length > 1 ? segments[segments.length - 2] : null };
+}
+
+/**
+ * Slugs of the pages whose page_aliases row carries the reference: the
+ * literal spelling's hits when it has any, else the separator-folded
+ * spellings'. A folded hit for a slug-shaped reference must sit in the same
+ * directory (`projects/acme-example` never lands on a `companies/` alias);
+ * the organization directories count as one (#6925: `companies/acme-example`
+ * reaches an `orgs/` page's `acme example` alias).
+ * Throws what resolveAliases throws.
+ */
+async function aliasHitSlugs(engine: BrainEngine, source_id: string, raw: string): Promise<string[]> {
+  const { literal, folded, dir } = aliasSpellings(raw);
+  if (!literal) return [];
+  const hits = await engine.resolveAliases([literal, ...folded], { sourceId: source_id });
+  const exact = (hits.get(literal) ?? []).map(h => h.slug);
+  if (exact.length) return exact;
+  const parentDir = (slug: string) => slug.split('/').slice(-2, -1)[0] ?? null;
+  return folded.flatMap(s => hits.get(s) ?? []).map(h => h.slug).filter(slug => dir === null || sameEntityDir(parentDir(slug), dir));
+}
+
+/**
  * Alias-exact arm (v0.46.15, #3730): unambiguous single-slug page_aliases hit,
  * verified against LIVE pages — page_aliases has no FK to pages, so stale
  * alias rows for deleted/renamed pages linger (outside-voice R2-8).
@@ -163,19 +317,13 @@ export function sameEntityName(reference: string, candidateTitle: string | null 
  */
 let aliasExactWarned = false;
 async function tryAliasExact(engine: BrainEngine, source_id: string, raw: string): Promise<string | null> {
-  const norm = normalizeAlias(raw);
-  if (!norm) return null;
   try {
-    const hits = (await engine.resolveAliases([norm], { sourceId: source_id })).get(norm) ?? [];
+    const hits = await aliasHitSlugs(engine, source_id, raw);
     if (!hits.length) return null;
-    const rows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[])`,
-      [source_id, [...new Set(hits.map((h) => h.slug))]],
-    );
-    const live = [...new Set(rows.map((r) => r.slug))];
-    return live.length === 1 ? live[0] : null;
+    const live = await canonicalPages(engine, source_id, hits);
+    return live.length === 1 ? live[0].slug : await siblingCanonical(engine, source_id, live.map(p => p.slug));
   } catch (err) {
-    if (!isUndefinedTableError(err) && !aliasExactWarned) {
+    if (!isMissingSchemaObject(err, 'table', 'page_aliases') && !aliasExactWarned) {
       aliasExactWarned = true;
       console.error(`[gbrain] alias-exact resolution degraded (falling through to fuzzy): ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -217,8 +365,9 @@ async function findExactBasenameCandidates(
 ): Promise<Array<{ slug: string }>> {
   const token = slugify(raw);
   if (raw.includes('/') || !token.includes('-')) return [];
+  let rows: Array<{ slug: string }>;
   try {
-    return await engine.executeRaw<{ slug: string }>(
+    rows = await engine.executeRaw<{ slug: string }>(
       `SELECT slug FROM pages
         WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])
         LIMIT 2`,
@@ -227,6 +376,7 @@ async function findExactBasenameCandidates(
   } catch {
     return [];
   }
+  return canonicalPages(engine, source_id, rows.map(r => r.slug));
 }
 
 /**
@@ -268,16 +418,25 @@ export async function resolveEntitySlugWithSource(
   // Mirror resolveEntitySlug's resolution chain but tag each branch.
   if (looksLikeSlug(trimmed)) {
     const exact = await tryExactSlug(engine, source_id, trimmed);
-    if (exact) return { slug: exact, source: 'exact_page' };
+    if (exact) {
+      const canonical = exact.retired ? (await followRetirement(engine, source_id, exact.slug))?.slug : exact.slug;
+      return canonical ? { slug: canonical, source: 'exact_page' } : fallbackResult(trimmed);
+    }
   }
 
   const basenames = await findExactBasenameCandidates(engine, source_id, trimmed);
   if (basenames.length === 1) return { slug: basenames[0].slug, source: 'fuzzy_match' };
 
+  const orgVariant = await tryOrgDirVariant(engine, source_id, trimmed);
+  if (orgVariant) return { slug: orgVariant, source: 'fuzzy_match' };
+
   const aliased = await tryAliasExact(engine, source_id, trimmed);
   if (aliased) return { slug: aliased, source: 'alias_exact' };
 
-  if (basenames.length > 1) return { slug: fallbackSlugify(trimmed), source: 'fallback_slugify' };
+  if (basenames.length > 1) {
+    const sibling = await siblingCanonical(engine, source_id, basenames.map(b => b.slug));
+    return sibling ? { slug: sibling, source: 'fuzzy_match' } : fallbackResult(trimmed);
+  }
 
   if (isBareName(trimmed)) {
     const expanded = await tryUnambiguousPrefixExpansion(engine, source_id, trimmed);
@@ -287,7 +446,12 @@ export async function resolveEntitySlugWithSource(
     if (fuzzy) return { slug: fuzzy, source: 'fuzzy_match' };
   }
 
-  return { slug: fallbackSlugify(trimmed), source: 'fallback_slugify' };
+  return fallbackResult(trimmed);
+}
+
+function fallbackResult(trimmed: string): ResolveResult | null {
+  const slug = fallbackSlugify(trimmed);
+  return slug ? { slug, source: 'fallback_slugify' } : null;
 }
 
 /**
@@ -330,42 +494,53 @@ export async function resolveStrictEntityReference(
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($2::text[]) ${privacy}`,
     [source_id, [...new Set(slugs)]],
   );
-  const pick = (rows: Array<{ slug: string; type: string | null }>, arm: StrictResolutionArm): StrictResolution | null => {
-    if (rows.length > 1) return { slug: null, miss: 'ambiguous' };
-    if (rows.length === 0) return null;
-    return isFactEntityPage(rows[0].slug, rows[0].type) ? { slug: rows[0].slug, arm } : { slug: null, miss: 'not_entity' };
+  // The source pack's linkable entity types (accounts, CRM records, ...) are fact entities too.
+  let linkable: Set<string> | null = null;
+  const isEntity = async (r: { slug: string; type: string | null }) => {
+    if (isFactEntityPage(r.slug, r.type)) return true;
+    linkable ??= new Set((await (await import('../mentions/policy.ts')).loadLinkableTypes(engine, source_id).catch(() => ({ types: [] as string[] }))).types);
+    return r.type != null && linkable.has(r.type);
+  };
+  const pick = async (found: Array<{ slug: string; type: string | null }>, arm: StrictResolutionArm): Promise<StrictResolution | null> => {
+    if (found.length === 0) return null;
+    // #6898: a retired page answers through its superseded_by target, which must be readable too.
+    const rows = await canonicalPages(engine, source_id, found.map(r => r.slug), privacy);
+    if (rows.length === 0) return { slug: null, miss: 'not_entity' };
+    if (rows.length > 1) {
+      const sibling = await siblingCanonical(engine, source_id, rows.map(r => r.slug), { excludePrivate: opts.excludePrivate });
+      return sibling ? { slug: sibling, arm } : { slug: null, miss: 'ambiguous' };
+    }
+    return await isEntity(rows[0]) ? { slug: rows[0].slug, arm } : { slug: null, miss: 'not_entity' };
   };
 
   if (looksLikeSlug(trimmed)) {
-    const exact = pick(await live([trimmed]), 'exact_page');
+    const exact = await pick(await live([trimmed]), 'exact_page');
     if (exact) return exact;
   }
   const token = slugify(trimmed);
   if (!trimmed.includes('/') && token.includes('-')) {
-    const basename = pick(await live([...PREFIX_EXPANSION_DIRS, 'concepts'].map(dir => `${dir}/${token}`)), 'basename');
+    const basename = await pick(await live([...PREFIX_EXPANSION_DIRS, 'concepts'].map(dir => `${dir}/${token}`)), 'basename');
     if (basename) return basename;
   }
-  const norm = normalizeAlias(trimmed);
-  if (norm) {
-    try {
-      const hits = (await engine.resolveAliases([norm], { sourceId: source_id })).get(norm) ?? [];
-      const aliased = pick(await live(hits.map(h => h.slug)), 'alias_exact');
-      if (aliased) return aliased;
-    } catch (err) {
-      if (!isUndefinedTableError(err)) throw err;
-    }
+  const orgVariant = await pick(await live(orgDirVariants(trimmed)), 'basename');
+  if (orgVariant) return orgVariant;
+  try {
+    const aliased = await pick(await live(await aliasHitSlugs(engine, source_id, trimmed)), 'alias_exact');
+    if (aliased) return aliased;
+  } catch (err) {
+    if (!isMissingSchemaObject(err, 'table', 'page_aliases')) throw err;
   }
   if (opts.sameName && !isBareName(trimmed)) {
     try {
       const rows = await engine.executeRaw<{ slug: string; title: string; type: string | null }>(
         `SELECT p.slug, p.title, p.type FROM pages p
-          WHERE p.source_id = $1 AND p.deleted_at IS NULL ${privacy}
+          WHERE p.source_id = $1 AND p.deleted_at IS NULL ${privacy} AND NOT ${retiredPageSql('p')}
             AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
           ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
           LIMIT 5`,
         [source_id, trimmed.toLowerCase(), token],
       );
-      const named = pick(rows.filter(row => isFactEntityPage(row.slug, row.type) && sameEntityName(trimmed, row.title, row.slug)), 'same_name');
+      const named = await pick(rows.filter(row => isFactEntityPage(row.slug, row.type) && sameEntityName(trimmed, row.title, row.slug)), 'same_name');
       if (named) return named;
     } catch (err) {
       if (!isMissingTrigramError(err)) throw err;
@@ -488,13 +663,14 @@ export async function findPrefixCandidates(
       connection_count: number;
     }>(
       `SELECT p.slug,
-              ((SELECT COUNT(*)::int FROM links WHERE to_page_id = p.id)
-               + (SELECT COUNT(*)::int FROM links WHERE from_page_id = p.id)
+              ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${rankingLinkSql('l')})
+               + (SELECT COUNT(*)::int FROM links l WHERE l.from_page_id = p.id AND ${rankingLinkSql('l')})
                + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
                 AS connection_count
        FROM pages p
        WHERE p.source_id = $1
          AND p.deleted_at IS NULL
+         AND NOT ${retiredPageSql('p')}
          AND p.slug LIKE ANY($2::text[])
        ORDER BY connection_count DESC, p.slug ASC
        LIMIT 10`,
@@ -530,14 +706,14 @@ async function tryUnambiguousPrefixExpansion(
   try {
     const dirs = await engine.executeRaw<{ dir: string }>(
       `SELECT DISTINCT split_part(slug, '/', 1) AS dir FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE ANY($2::text[])
+        WHERE source_id = $1 AND deleted_at IS NULL AND NOT ${retiredPageSql('pages')} AND slug LIKE ANY($2::text[])
         LIMIT 2`,
       [source_id, patterns],
     );
     if (dirs.length !== 1) return null;
     const rows = await engine.executeRaw<{ slug: string; title: string | null }>(
       `SELECT slug, title FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL
+        WHERE source_id = $1 AND deleted_at IS NULL AND NOT ${retiredPageSql('pages')}
           AND slug LIKE ANY($2::text[]) AND lower(title) = lower($3)
         LIMIT 3`,
       [source_id, patterns, raw.trim()],
@@ -587,13 +763,14 @@ async function tryPrefixExpansion(
         // directly. Even on a pathological prefix matching 1000+ pages,
         // work is bounded per-candidate, not whole-table.
         `SELECT p.slug,
-                ((SELECT COUNT(*)::int FROM links WHERE to_page_id = p.id)
-                 + (SELECT COUNT(*)::int FROM links WHERE from_page_id = p.id)
+                ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${rankingLinkSql('l')})
+                 + (SELECT COUNT(*)::int FROM links l WHERE l.from_page_id = p.id AND ${rankingLinkSql('l')})
                  + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
                   AS connection_count
          FROM pages p
          WHERE p.source_id = $1
            AND p.deleted_at IS NULL
+           AND NOT ${retiredPageSql('p')}
            AND p.slug LIKE $2
          ORDER BY connection_count DESC, p.slug ASC
          LIMIT 5`,
@@ -631,14 +808,17 @@ async function tryExactSlug(
   engine: BrainEngine,
   source_id: string,
   candidate: string,
-): Promise<string | null> {
+): Promise<{ slug: string; retired: boolean } | null> {
   // A database error propagates: degrading to the fallback slug would
   // silently attribute the caller's facts to a different entity.
-  const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT slug FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1`,
+  const exact = (retired: boolean) => engine.executeRaw<{ slug: string }>(
+    `SELECT slug FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL AND ${retired ? '' : 'NOT'} ${retiredPageSql('pages')} LIMIT 1`,
     [source_id, candidate],
   );
-  return rows[0]?.slug ?? null;
+  const [live] = await exact(false);
+  if (live) return { slug: live.slug, retired: false };
+  const [retired] = await exact(true);
+  return retired ? { slug: retired.slug, retired: true } : null;
 }
 
 async function tryFuzzyMatch(
@@ -662,6 +842,7 @@ async function tryFuzzyMatch(
        FROM pages
        WHERE source_id = $1
          AND deleted_at IS NULL
+         AND NOT ${retiredPageSql('pages')}
          AND (
            lower(title) % $2
            OR slug ILIKE '%' || $3 || '%'
@@ -710,17 +891,15 @@ export function slugify(raw: string): string {
   // and the sweep below would DELETE them: "Đăng Example" slugged to
   // "ang-example". Fold after the strip so composed forms reduce in one pass
   // ("ǿ" → "ø" → "o").
-  const folded = foldNonDecomposingLatin(
-    raw
-      .toLowerCase()
-      .normalize('NFKD')
-      // NFKD decomposes accents into combining marks (U+0300..U+036F);
-      // strip them before replacing the rest with hyphens so "è" → "e",
-      // not "e" + "-".
-      .replace(/[̀-ͯ]/g, ''),
-  );
-  return folded
+  return foldForSlug(raw)
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+/** Lowercase, accent marks stripped, stroke letters folded: what `slugify` keeps `[a-z0-9]` from. */
+function foldForSlug(raw: string): string {
+  // NFKD decomposes accents into combining marks (U+0300..U+036F); strip them
+  // before replacing the rest with hyphens so "è" → "e", not "e" + "-".
+  return foldNonDecomposingLatin(raw.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, ''));
 }

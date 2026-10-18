@@ -14,7 +14,7 @@
  */
 
 import { describe, test, expect, afterEach } from 'bun:test';
-import { resolveLiveRerankerModel } from '../src/commands/models.ts';
+import { probeRerankerReachability, resolveLiveRerankerModel } from '../src/commands/models.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 /**
@@ -47,14 +47,14 @@ describe('resolveLiveRerankerModel — divergence fix', () => {
     expect(resolved).toBe('llama-server-reranker:qwen3-reranker-4b');
   });
 
-  test('returns the mode-bundle default when no override is set (balanced enables voyage:rerank-2.5)', async () => {
+  test('returns the mode-bundle default when no override is set (balanced enables voyage:rerank-3-lite)', async () => {
     // balanced mode bundle has reranker_enabled: true + reranker_model:
-    // 'voyage:rerank-2.5' baked in (v0.48.2 flip). Pre-fix this case
+    // 'voyage:rerank-3-lite' baked in. Pre-fix this case
     // returned undefined; post-fix doctor sees what search actually uses.
     configureGateway({ env: {} });
     const engine = makeEngineStub({});
     const resolved = await resolveLiveRerankerModel(engine);
-    expect(resolved).toBe('voyage:rerank-2.5');
+    expect(resolved).toBe('voyage:rerank-3-lite');
   });
 
   test('returns undefined when reranker is explicitly disabled via config', async () => {
@@ -93,7 +93,38 @@ describe('resolveLiveRerankerModel — divergence fix', () => {
     const resolved = await resolveLiveRerankerModel(engine);
     // balanced mode bundle is the safety fallback when search.mode is unset
     // (and here, every config read failed) — and balanced enables
-    // voyage:rerank-2.5 by default (v0.48.2).
-    expect(resolved).toBe('voyage:rerank-2.5');
+    // voyage:rerank-3-lite by default.
+    expect(resolved).toBe('voyage:rerank-3-lite');
+  });
+});
+
+describe('probeRerankerReachability — discrimination (#6381)', () => {
+  const engine = makeEngineStub({ 'search.reranker.model': 'llama-server-reranker:qwen3-reranker-0.6b', 'search.reranker.enabled': 'true' });
+  type Rerank = NonNullable<Parameters<typeof probeRerankerReachability>[1]>['rerank'];
+  const stub = (scores: Array<{ index: number; relevanceScore: number }>, seen?: { documents?: string[] }): Rerank =>
+    (async (input: { documents: string[] }) => { if (seen) seen.documents = input.documents; return scores; }) as unknown as Rerank;
+
+  test('a broken conversion that scores both passages near zero is a config finding with the doc fix', async () => {
+    configureGateway({ env: {} });
+    const r = await probeRerankerReachability(engine, { rerank: stub([{ index: 0, relevanceScore: 1e-28 }, { index: 1, relevanceScore: 3e-29 }]) });
+    expect(r?.status).toBe('config');
+    expect(r?.message).toContain('unrelated passage as high as a relevant one');
+    expect(r?.fix).toContain('docs/ai-providers/llama-server-reranker.md');
+  });
+
+  test('a reranker that ranks the relevant passage clearly higher is ok; the probe sends one relevant and one unrelated passage', async () => {
+    configureGateway({ env: {} });
+    const seen: { documents?: string[] } = {};
+    const r = await probeRerankerReachability(engine, { rerank: stub([{ index: 1, relevanceScore: 0.01 }, { index: 0, relevanceScore: 0.97 }], seen) });
+    expect(r?.status).toBe('ok');
+    expect(seen.documents).toHaveLength(2);
+  });
+
+  test('an inverted ranking and a response missing a passage are config findings', async () => {
+    configureGateway({ env: {} });
+    expect((await probeRerankerReachability(engine, { rerank: stub([{ index: 0, relevanceScore: 0.1 }, { index: 1, relevanceScore: 0.9 }]) }))?.status).toBe('config');
+    const missing = await probeRerankerReachability(engine, { rerank: stub([{ index: 0, relevanceScore: 0.9 }]) });
+    expect(missing?.status).toBe('config');
+    expect(missing?.message).toContain('did not return a score for both');
   });
 });

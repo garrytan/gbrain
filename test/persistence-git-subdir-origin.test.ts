@@ -105,8 +105,8 @@ test('legacy git-root origins sync, are repaired in place on import, survive ful
 test('a legacy origin that could name two files refuses with a reason id instead of guessing', async () => isolated(async engine => {
   const f = await fixture(engine, { 'a.md': '---\ntitle: A\n---\nRoot body.\n', 'sub/a.md': '---\ntitle: Nested\n---\nNested body.\n' }, { scope: 'sub' });
   expect((await sync(engine, f)).status).toBe('first_sync');
-  await engine.executeRaw("UPDATE pages SET source_path='sub/a.md' WHERE source_id=$1 AND slug='a'", [f.id]);
   await engine.executeRaw("UPDATE pages SET source_path=NULL WHERE source_id=$1 AND slug='sub/a'", [f.id]);
+  await engine.executeRaw("UPDATE pages SET source_path='sub/a.md' WHERE source_id=$1 AND slug='a'", [f.id]);
   writeFileSync(join(f.root, 'a.md'), '---\ntitle: A\n---\nChanged root body.\n');
   commit(f.repo, 'change root file');
   const refused = await sync(engine, f).then(() => null, (error: unknown) => error as { code?: string; detail?: string });

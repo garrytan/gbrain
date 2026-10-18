@@ -9,7 +9,8 @@ import { OperationError, opError } from '../core/ops/contract.ts';
 import { readFix } from '../core/ops/op-fix.ts';
 import { maybeDelegateLocalAdministration, persistenceConfigForBrain } from '../core/persistence/local-client.ts';
 import { PersistenceIpcTransportError } from '../core/persistence/ipc.ts';
-import { SYNC_BOOLEAN_FLAGS, SYNC_VALUE_FLAGS, validateSyncWireParams } from '../core/persistence/sync-wire.ts';
+import { SYNC_BOOLEAN_FLAGS, SYNC_CLIENT_FLAGS, SYNC_VALUE_FLAGS, validateSyncWireParams } from '../core/persistence/sync-wire.ts';
+import { SYNC_FLAGS, type SyncFlagSpec } from '../core/sync-flags.ts';
 import { deriveDelegatedTimeoutSeconds } from './sync-delegate.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
 import { setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
@@ -28,13 +29,16 @@ export async function parsePersistenceSyncArgs(args:string[],cwd=process.cwd()) 
   const options:Record<string,unknown>={};
   for(let i=0;i<args.length;i++) {
     const arg=args[i];
-    const boolean=SYNC_BOOLEAN_FLAGS[arg as keyof typeof SYNC_BOOLEAN_FLAGS];
+    const boolean=SYNC_BOOLEAN_FLAGS[arg];
     if(boolean){options[boolean]=true;continue;}
-    if(['--json','--yes','--no-hard-deadline'].includes(arg))continue;
-    if(['--timeout','--hard-deadline'].includes(arg)){if(!args[++i]||args[i].startsWith('--'))throw invalid(`${arg} requires a value.`,`Give ${arg} a duration right after it, e.g. ${arg} 10m.`);continue;}
-    const key=SYNC_VALUE_FLAGS[arg as keyof typeof SYNC_VALUE_FLAGS];
+    // The client's own flags (output, deadlines) and the ones a PGLite owner has no use for (--lanes: no bulk lanes).
+    if(SYNC_CLIENT_FLAGS.has(arg)){
+      if((SYNC_FLAGS as Record<string,SyncFlagSpec>)[arg]!.arity==='value'&&(!args[++i]||args[i].startsWith('--')))throw invalid(`${arg} requires a value.`,`Give ${arg} its value right after it, e.g. ${arg==='--lanes'?`${arg} 4`:`${arg} 10m`}.`);
+      continue;
+    }
+    const key=SYNC_VALUE_FLAGS[arg];
     if(!key)throw invalid(`Unsupported owner-delegated sync option: ${arg.split('=')[0]}.`,
-      `Remove ${arg.split('=')[0]}; while the running serve holds the brain, sync runs inside it and accepts ${[...Object.keys(SYNC_BOOLEAN_FLAGS),...Object.keys(SYNC_VALUE_FLAGS),'--timeout','--hard-deadline','--json','--yes'].join(', ')}.`);
+      `Remove ${arg.split('=')[0]}; while the running serve holds the brain, sync runs inside it and accepts ${[...Object.keys(SYNC_BOOLEAN_FLAGS),...Object.keys(SYNC_VALUE_FLAGS),...SYNC_CLIENT_FLAGS].join(', ')}.`);
     const value=args[++i];if(!value||value.startsWith('--'))throw invalid(`${arg} requires a value.`,`Give ${arg} its value right after it, as ${arg} VALUE.`);
     if(key==='exclude'||key==='includeHidden')options[key]=[...(options[key] as string[]??[]),value];
     else options[key]=key==='repoPath'?resolve(cwd,value):value;

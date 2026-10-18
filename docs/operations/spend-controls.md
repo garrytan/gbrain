@@ -158,7 +158,8 @@ line naming the cap, its source and how to remove it, e.g.
 | [Fence model repair (Tier 3)](#fence-model-repair-tier-3) | `fences.repair.max_usd_per_page` / `fences.repair.max_usd_per_day` | `0.30` / `1.00` | refuses the call: a page whose estimate is over the per-page cap or over today's remainder in the durable USD ledger (`llm_repair`/`fences`, per UTC day across every process) waits as `budget_exhausted`, and `gbrain repair fences --apply` stops there with exit 1. `--max-usd <n>` lowers a run's cap, never raises it | `gbrain config set fences.repair.llm false` (`0` on a cap = no model spend) | **not** consulted |
 | Dream `synthesize` per-run budget | `dream.synthesize.budget_usd` | `5` | defers the transcript and the rest of the run before submission (estimate: prompt size + child output cap, x `max_turns` in agentic mode) | `unlimited` (`0` = submit nothing) | **not** consulted |
 | Dream `synthesize` daily submission cap | `dream.synthesize.max_submissions_per_source_per_day` | `0` (off) | skips whole files; a failed count query submits nothing that run | `0` | **not** consulted |
-| Dream `BudgetMeter` phases (auto_think, drift, propose/grade takes, calibration) | `dream.auto_think.budget`, `dream.drift.budget`, `cycle.<phase>.budget_usd` | per phase | refuses the next submit past the cap | `unlimited` (`0` = spend nothing) | **not** consulted |
+| Dream `BudgetMeter` phases (drift, propose/grade takes, calibration) | `dream.drift.budget`, `cycle.<phase>.budget_usd` | per phase | refuses the next submit past the cap | `unlimited` (`0` = spend nothing) | **not** consulted |
+| Pinned-question refreshes (`standing_questions` phase, `questions_pin`, `questions_refresh`) | `cycle.standing_questions.budget_usd`, `cycle.standing_questions.max_per_cycle`; an MCP refresh is also capped by `consent.preapprove.paid.max_usd_per_run` | per run | refuses the refresh before any model call (`blocked_reason: budget_exhausted`) | `$1.00`, 5 pins per cycle (`0` = spend nothing) | an MCP-created pin stays inactive until the owner activates it or this preapproval exists |
 
 Dream `BudgetMeter` phases meter a model missing from the pricing table at a
 Sonnet-tier fallback rate instead of letting it run uncapped; local model
@@ -180,7 +181,16 @@ The maintenance run's `fence_repair` phase and `gbrain repair fences --apply`
 send a malformed facts or takes fence that only a rewrite can realign to the
 repair model. Only the fence header and the rows it must realign leave the
 machine, never valid rows or the rest of the page. Every other fence repair
-is free.
+is free. The same caps and the same daily ledger govern the rest of the
+content-repair lane (#6377): the tail classifier (an unclosed fence whose
+trailing lines hold a pipe; the fence region and those lines leave the
+machine) and the slug-conflict judgment (`content_repair` phase,
+`gbrain repair slug-conflicts`; both pages' frontmatter, headings, first 60
+lines and the lines mentioning the other slug leave the machine). The model
+chooses among coded answers and writes no text. `models.content_repair`
+overrides the slug-conflict model; unset, it follows `models.fence_repair`,
+then the content-repair eval's measured list (`anthropic:claude-opus-5-5`,
+`openai:gpt-6.1-sol`, `anthropic:claude-sonnet-5-5`, first with a key).
 
 - **Model.** `models.fence_repair` when set (any model, priced or not, always
   runs). Unset, the first model the fence-repair eval measured as accurate
@@ -307,9 +317,12 @@ gbrain config set autopilot.auto_drain.enabled false          # stop all automat
 What leaves the machine while it is on: the page text of each extracted email
 thread or calendar event (message bodies, subjects, participants as rendered on
 the page, up to `cycle.extract_atoms.max_input_chars`) is sent to the
-configured `extract_atoms` chat model (`models.dream.extract_atoms`, a
-utility-tier model by default), under the caps above. Atoms already extracted
-stay; opting out only stops new extraction.
+configured `extract_atoms` chat model (`models.dream.extract_atoms`, else
+`models.tier.utility`, else the built-in utility-tier default), under the caps above. Atoms already extracted
+stay; opting out only stops new extraction. A page longer than that cap is read
+once up to the cap: its head atoms are kept, the phase reports it under
+`input_truncated` with a stderr line, and the page is not marked complete; it
+is skipped (not re-spent) until you raise the cap or the page changes.
 
 ### Life Chronicle: automatic event extraction
 

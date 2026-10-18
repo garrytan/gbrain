@@ -1,6 +1,9 @@
 /**
  * doctor-connectors e2e (PGLite) — D3.2: re-auth-needed / stalled-sync / drift,
  * gated on a credential + auto_sync. A manual-lane user is NEVER nagged.
+ * #6387: unresolved conversations warn "archive incomplete" (doctor and
+ * `connectors status`); a legacy Claude entry only `--full` can retry carries
+ * an ask-first fix.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -10,7 +13,8 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { connectorsHealthCheck } from '../../src/commands/doctor/checks/connectors.ts';
 import { saveCredential } from '../../src/core/connectors/credentials.ts';
-import { authErrorAtKey, autoSyncKey, lastSyncAtKey } from '../../src/core/connectors/config-keys.ts';
+import { authErrorAtKey, autoSyncKey, connectorSourceKey, lastSyncAtKey } from '../../src/core/connectors/config-keys.ts';
+import { runConnectorStatus } from '../../src/commands/connectors/status.ts';
 
 let engine: PGLiteEngine;
 let tmp: string;
@@ -75,5 +79,39 @@ describe('connectorsHealthCheck', () => {
     const c = await connectorsHealthCheck(engine);
     expect(c.status).toBe('warn');
     expect(c.message).toMatch(/stall/i);
+  });
+
+  test('unresolved conversations → warn: archive incomplete, retried automatically, no fix needed', async () => {
+    saveCred('2026-08-25T00:00:00.000Z');
+    await engine.setConfig(connectorSourceKey('chatgpt', 'default', 'failed'),
+      JSON.stringify({ 'conv-1': { attempts: 3, updatedAt: '2026-07-01T00:00:00.000Z', nextRetryAt: '2026-10-11T00:00:00.000Z' } }));
+    const c = await connectorsHealthCheck(engine);
+    expect(c.status).toBe('warn');
+    expect(c.message).toContain('chatgpt: 1 unresolved conversation(s) — archive incomplete');
+    expect(c.fix).toBeUndefined();
+  });
+
+  test('a legacy Claude failure without an organization → ask-first --full fix; status lists it', async () => {
+    saveCredential({ provider: 'claude', strategy: 'browser-session', cookie: 'sessionKey=x', savedAt: '2026-08-25T00:00:00.000Z' });
+    await engine.setConfig(connectorSourceKey('claude', 'default', 'failed'),
+      JSON.stringify({ 'conv-legacy': { attempts: 3, updatedAt: '2026-07-01T00:00:00.000Z' } }));
+    const c = await connectorsHealthCheck(engine);
+    expect(c.status).toBe('warn');
+    expect(c.message).toContain('archive incomplete');
+    expect(c.fix?.argv).toEqual(['gbrain', 'connectors', 'sync', 'claude', '--full', '--source', 'default']);
+    expect(c.fix?.consent).toEqual(['credentials']);
+
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (msg: string) => { lines.push(msg); };
+    try {
+      await runConnectorStatus(engine, ['claude', '--json']);
+    } finally {
+      console.log = orig;
+    }
+    const out = JSON.parse(lines.join('\n'));
+    expect(out.providers[0].unresolved).toEqual([
+      { id: 'conv-legacy', attempts: 3, updated_at: '2026-07-01T00:00:00.000Z', next_retry_at: null, needs_full_sync: true },
+    ]);
   });
 });

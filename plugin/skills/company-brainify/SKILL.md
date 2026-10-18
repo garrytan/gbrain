@@ -352,10 +352,18 @@ cd "$STAGING"
 # ... Phase 4 greps against $STAGING ...
 
 git init -b main
-git add -A && git commit -m "Initial import — sanitized team brain"
+git add -A && git commit -m "Initial import — sanitized team brain"  # gbrain-allow-shared-tree-git: first commit of a fresh single-writer export repo
 git remote add origin <TEAM_REPO_URL>
-git push -u origin main
+gbrain git commit-push --push-only
 ```
+
+The first commit is plain git because `$STAGING` is a brand-new repo only
+this run writes. The push goes through `gbrain git commit-push --push-only`:
+it pushes to `origin/main` and fails loudly if the push does not land. On a
+non-zero exit, stop and tell the user what the error says: usually
+`git_push_unavailable` (check the team repo URL and credentials, then rerun
+it), or a team repo that already has commits (this export needs an empty
+one; ask the user before going further). Never force-push it.
 
 Only when a shared repo ALREADY exists with sensitive history in it do you
 need the purge below.
@@ -378,11 +386,17 @@ cd "$WORK/shared"
 # Apply the sanitized tree, then COMMIT it BEFORE the mirror clone. A mirror
 # captures COMMITTED state only; if the clean tree lives only in volatile
 # staging during the rewrite window, a crash loses the sanitization work.
-# Committing makes the clean state durable and recoverable.
+# Committing makes the clean state durable and recoverable; pushing it means
+# the remote stops serving the sensitive current versions even if the purge
+# below is declined. Only the sanitized directories are committed. On a
+# non-zero exit stop: retry once on commit_lock_busy; on integrate_conflict
+# someone changed the shared repo meanwhile, so ask the user before going on.
 for d in people meetings daily companies projects analysis; do
   [ -d "$STAGING/$d" ] && rsync -a "$STAGING/$d/" "./$d/"   # or sanitize in place here
 done
-git add -A && git commit -m "Sanitize: strip sensitive content before history purge"
+SANITIZED=""
+for d in people meetings daily companies projects analysis; do [ -d "$d" ] && SANITIZED="$SANITIZED $d"; done
+gbrain git commit-push -m "Sanitize: strip sensitive content before history purge" -- $SANITIZED
 
 # Mirror-clone backup = the recoverability line on the card. Capture the path
 # in a variable NOW and reuse it verbatim at purge time — a run crossing
@@ -440,7 +454,7 @@ the agent following this skill must not skip it.
 **Step 3 — purge (only after the explicit typed yes).** Requires
 `git filter-repo` (not bundled with git; install separately). **Run this ONLY
 in the shared-repo work dir from Step 1 (`cd "$WORK/shared"`). NEVER run
-`git filter-repo` or `git push --force` in `sync.repo_path` — the personal
+`git filter-repo` or `git push --force` in `sync.repo_path` — the personal <!-- gbrain-allow-shared-tree-git: warns against a force push in the personal brain -->
 brain's history must stay intact.** The commands below reuse `$WORK` and
 `$BACKUP_PATH` from Step 1; they never recompute a date-stamped path.
 
@@ -493,7 +507,7 @@ after=$(for d in $PURGE_DIRS; do [ -d "$d" ] && find "$d" -type f; done | wc -l 
 git -C "$BACKUP_PATH" log -1 >/dev/null \
   || { echo "backup missing/unreadable — ABORT, do not force-push"; exit 1; }
 
-git push --force origin main
+git push --force origin main  # gbrain-allow-shared-tree-git: the confirmed history purge of a private single-writer clone (data-loss-gate answered)
 ```
 
 **Step 4 — log it (to the PERSONAL brain, NEVER the shared repo).** Per

@@ -344,6 +344,37 @@ export interface RunCrossModalOpts {
    * substitution still run, in batch mode even with an injected `runEval`.
    */
   useConfiguredGateway?: boolean;
+  /**
+   * #6486: the brain's `models.eval.cross_modal.slot_{a,b,c}` pins, read
+   * only when some slot has no `--slot-*-model` flag. `src/cli/main.ts`
+   * passes a fail-open probe-only read of the configured brain; a reader
+   * that throws (no brain, brain busy) leaves the defaults in place.
+   */
+  slotConfig?: () => Promise<Partial<Record<'A' | 'B' | 'C', string>>>;
+}
+
+type SlotFlags = Pick<ParsedArgs, 'slotAModel' | 'slotBModel' | 'slotCModel'>;
+type SlotPins = Partial<Record<'A' | 'B' | 'C', string>>;
+
+/** Per slot: `--slot-<x>-model` flag → brain pin → DEFAULT_SLOTS (#6486). */
+export function resolveSlotModels(flags: SlotFlags, pins: SlotPins): SlotConfig[] {
+  const pin = (id: 'A' | 'B' | 'C') => pins[id]?.trim() || undefined;
+  return [
+    { id: 'A', model: flags.slotAModel ?? pin('A') ?? DEFAULT_SLOTS[0]!.model },
+    { id: 'B', model: flags.slotBModel ?? pin('B') ?? DEFAULT_SLOTS[1]!.model },
+    { id: 'C', model: flags.slotCModel ?? pin('C') ?? DEFAULT_SLOTS[2]!.model },
+  ];
+}
+
+/** The pins to consult: none when every slot is flagged, and a throwing reader counts as no pins. */
+async function readSlotPins(flags: SlotFlags, read: RunCrossModalOpts['slotConfig']): Promise<SlotPins> {
+  if (!read || (flags.slotAModel && flags.slotBModel && flags.slotCModel)) return {};
+  try {
+    return await read();
+  } catch (err) {
+    process.stderr.write(`[eval cross-modal] could not read models.eval.cross_modal.slot_* from the brain (${err instanceof Error ? err.message : String(err)}); using the default slots.\n`);
+    return {};
+  }
 }
 
 export async function runEvalCrossModal(args: string[], opts: RunCrossModalOpts = {}): Promise<number> {
@@ -396,11 +427,8 @@ export async function runEvalCrossModal(args: string[], opts: RunCrossModalOpts 
   const receiptDir = parsed.receiptDir ?? gbrainPath('eval-receipts');
   const maxTokens = parsed.maxTokens ?? 4000;
 
-  let slots: SlotConfig[] = [
-    { id: 'A', model: parsed.slotAModel ?? DEFAULT_SLOTS[0]!.model },
-    { id: 'B', model: parsed.slotBModel ?? DEFAULT_SLOTS[1]!.model },
-    { id: 'C', model: parsed.slotCModel ?? DEFAULT_SLOTS[2]!.model },
-  ];
+  const pins = await readSlotPins(parsed, opts.slotConfig);
+  let slots: SlotConfig[] = resolveSlotModels(parsed, pins);
 
   // Configure the AI gateway. Without this, every chat() call throws
   // "AI gateway is not configured" because the cli.ts no-DB branch skips
@@ -419,7 +447,7 @@ export async function runEvalCrossModal(args: string[], opts: RunCrossModalOpts 
   // #4636: swap unusable frontier defaults for the configured chat model
   // (before the cost estimate so the banner prices what actually runs).
   slots = substituteUnavailableDefaultSlots(slots, {
-    A: parsed.slotAModel, B: parsed.slotBModel, C: parsed.slotCModel,
+    A: parsed.slotAModel ?? pins.A, B: parsed.slotBModel ?? pins.B, C: parsed.slotCModel ?? pins.C,
   });
 
   // Cost estimate (T11=B).
@@ -738,11 +766,8 @@ async function runBatchMode(parsed: ParsedArgs, opts: RunCrossModalOpts): Promis
   const maxTokens = parsed.maxTokens ?? 4000;
   const maxUsd = parsed.maxUsd ?? 5.0;
 
-  let slots: SlotConfig[] = [
-    { id: 'A', model: parsed.slotAModel ?? DEFAULT_SLOTS[0]!.model },
-    { id: 'B', model: parsed.slotBModel ?? DEFAULT_SLOTS[1]!.model },
-    { id: 'C', model: parsed.slotCModel ?? DEFAULT_SLOTS[2]!.model },
-  ];
+  const pins = await readSlotPins(parsed, opts.slotConfig);
+  let slots: SlotConfig[] = resolveSlotModels(parsed, pins);
 
   // v0.40.1.0 Track D (codex CDX-2): --limit must be >= 1. Passing
   // --limit 0 would let an empty result fall through to PASS with
@@ -795,7 +820,7 @@ async function runBatchMode(parsed: ParsedArgs, opts: RunCrossModalOpts): Promis
     }
     // #4636: swap unusable frontier defaults for the configured chat model.
     slots = substituteUnavailableDefaultSlots(slots, {
-      A: parsed.slotAModel, B: parsed.slotBModel, C: parsed.slotCModel,
+      A: parsed.slotAModel ?? pins.A, B: parsed.slotBModel ?? pins.B, C: parsed.slotCModel ?? pins.C,
     });
   }
 

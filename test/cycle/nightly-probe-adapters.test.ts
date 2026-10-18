@@ -127,7 +127,7 @@ describe('nightly-probe-adapters: argv shape regression (codex round-2 #1)', () 
     const fs = require('node:fs');
     const source = fs.readFileSync(path, 'utf-8');
     // longmemeval adapter: first positional arg is fixturePath, then --output outputPath.
-    expect(source).toContain("[args.fixturePath, '--output', args.outputPath, '--no-embed-cache']");
+    expect(source).toContain("[args.fixturePath, '--output', args.outputPath, '--no-embed-cache', '--reader-mode', 'direct']");
   });
 
   test('runLongMemEvalForProbe passes the live search config snapshot via RunOpts', () => {
@@ -161,12 +161,12 @@ describe('nightly-probe-adapters: model routes reach the eval commands', () => {
     {
       name: 'with routes: --model carries the reader, RunOpts.extractorModel the extractor',
       modelRoutes: ROUTES,
-      argv: ['/f.jsonl', '--output', '/w/lme.jsonl', '--no-embed-cache', '--model', 'claude-cli:claude-opus-5-5'],
+      argv: ['/f.jsonl', '--output', '/w/lme.jsonl', '--no-embed-cache', '--reader-mode', 'direct', '--model', 'claude-cli:claude-opus-5-5'],
       runOpts: { searchConfigSnapshot: SNAPSHOT, exitOnError: false, extractorModel: 'claude-cli:claude-sonnet-5' },
     },
     {
-      name: 'no routes: the pre-#5872 call (embed cache off, C-N5)',
-      argv: ['/f.jsonl', '--output', '/w/lme.jsonl', '--no-embed-cache'],
+      name: 'no routes: the pre-#5872 call (embed cache off, C-N5; direct reader, #6627)',
+      argv: ['/f.jsonl', '--output', '/w/lme.jsonl', '--no-embed-cache', '--reader-mode', 'direct'],
       runOpts: { searchConfigSnapshot: SNAPSHOT, exitOnError: false },
     },
   ];

@@ -52,9 +52,9 @@ async function seed(engine: BrainEngine, slug: string, seal = true) {
 async function embedCurrent(engine: BrainEngine, slug: string) {
   const prepared = (await readProjectionSnapshot(engine, slug, sourceId))!;
   const vector = new Float32Array(1536); vector[0] = 0.75;
-  expect(await installPageEmbeddings(engine, prepared, prepared.chunks.map(c => ({
+  expect((await installPageEmbeddings(engine, prepared, prepared.chunks.map(c => ({
     chunk_index: c.chunk_index, chunk_source: c.chunk_source, chunk_text: c.chunk_text, embedding: vector,
-  })))).toBe(true);
+  })))).complete).toBe(true);
   return engine.getChunks(slug, { sourceId, includeEmbedding: true });
 }
 
@@ -209,7 +209,7 @@ test('a column switch after context validation cannot redirect vectors into the 
         });
         const vector = new Float32Array(1536); vector[0] = 0.75;
         if (installation === 'embeddings') {
-          expect(await installPageEmbeddings(raced, origin, [{ ...chunk(body), embedding: vector }])).toBe(true);
+          expect((await installPageEmbeddings(raced, origin, [{ ...chunk(body), embedding: vector }])).complete).toBe(true);
         } else {
           await installPageProjection(raced, origin, [{ ...chunk(body), embedding: vector }], { seal: true });
         }
@@ -317,7 +317,7 @@ test('queued Markdown rebuild retains ordered fenced code metadata and canonical
   }
 });
 
-test('queued Markdown rebuild honors embed-skip and quarantine without retaining stale chunks', async () => {
+test('queued Markdown rebuild honors embed-skip and quarantine without retaining stale chunks (#6722: embed_skip keeps keyword chunks)', async () => {
   for (const engine of engines) {
     for (const marker of ['embed_skip', 'quarantine']) {
       const slug = `disposition-${marker}`;
@@ -328,7 +328,13 @@ test('queued Markdown rebuild honors embed-skip and quarantine without retaining
       await engine.upsertChunks(slug, [chunk('stale-projection-sentinel')], { sourceId });
       const before = (await engine.readPageSnapshot(slug, { sourceId }))!;
       expect((await rebuildPendingPageProjections(engine, 100)).rebuilt).toBeGreaterThan(0);
-      expect(await engine.getChunks(slug, { sourceId, includeUnsealed: true })).toEqual([]);
+      const rebuilt = await engine.getChunks(slug, { sourceId, includeUnsealed: true });
+      if (marker === 'quarantine') expect(rebuilt).toEqual([]);
+      else {
+        expect(rebuilt.map(c => c.chunk_text).join('\n')).toContain('Prose.');
+        expect(rebuilt.some(c => c.chunk_text.includes('stale-projection-sentinel'))).toBe(false);
+        expect(rebuilt.every(c => c.embedding == null)).toBe(true);
+      }
       const after = (await engine.readPageSnapshot(slug, { sourceId }))!;
       expect(after.revision).toBe(before.revision);
       expect(after.page.compiled_truth).toBe(before.page.compiled_truth);

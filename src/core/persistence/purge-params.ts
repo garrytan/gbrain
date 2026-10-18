@@ -9,6 +9,9 @@ export function assertPurgeParams(params: Record<string, unknown>, remote: boole
   if (params.purge !== undefined && typeof params.purge !== 'boolean') {
     throw opError('invalid_params', 'purge must be a boolean.', `Pass purge: true (CLI: gbrain delete ${slug ?? '<slug>'} --purge).`);
   }
+  if (params.retention !== undefined && (params.retention !== true || params.purge !== true || remote !== false)) {
+    throw opError('invalid_params', 'retention is internal to the trusted local retention purge.', 'Omit retention; gbrain pages purge-deleted sets it.');
+  }
   if (params.purge === true && remote !== false) {
     throw opError('permission_denied', 'purge is only available to the local CLI.',
       `Remote callers soft-delete only (omit purge; restore_page can undo it for 72h). To remove the page immediately the user runs \`gbrain delete ${slug ?? '<slug>'} --purge\` on the brain host.`,

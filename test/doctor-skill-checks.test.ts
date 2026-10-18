@@ -24,6 +24,7 @@ import {
   skillCurrencyCheck,
   skillPreconditionsCheck,
 } from '../src/commands/doctor/skill-checks.ts';
+import { assertLegacySkillFilesystemWrite } from '../src/core/skillpack/writer-guard.ts';
 import {
   SKILLS_MANIFEST_FILENAME,
   computeSkillsManifest,
@@ -132,6 +133,23 @@ describe('skillCurrencyCheck', () => {
     expect(check.message).toContain('`gbrain skillpack sync`');
     const details = check.details as { new: string[]; drifted: string[] };
     expect(details.new.length).toBeGreaterThan(0);
+  });
+
+  // #5606: on a managed canonical worktree `skillpack sync` is refused, so the hint names the coordinator route instead.
+  test('a managed workspace is pointed at import_skill_proposal, never at `gbrain skillpack sync`', () => {
+    const workspace = makeDir('gbrain-currency-managed-');
+    const skillsDir = join(workspace, 'skills');
+    mkdirSync(skillsDir, { recursive: true });
+    writeFileSync(join(workspace, '.gbrain-managed'), JSON.stringify({ managed: true, version: 1 }));
+    const check = skillCurrencyCheck(skillsDir);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('managed canonical worktree');
+    expect(check.message).toContain('import_skill_proposal');
+    expect(check.message).not.toContain('Add them with `gbrain skillpack sync`');
+    let refusal: unknown;
+    try { assertLegacySkillFilesystemWrite(join(skillsDir, 'brain-ops', 'SKILL.md')); } catch (error) { refusal = error; }
+    expect(refusal).toMatchObject({ code: 'skill_bundle_required', suggestion: expect.stringContaining('gbrain call --source <source> import_skill_proposal') });
+    expect((refusal as { message: string }).message).toContain('reference --apply-clean-hunks');
   });
 });
 

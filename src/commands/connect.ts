@@ -37,7 +37,7 @@ import { harnessAdapter } from '../core/harness/registry.ts';
  *   - generic: prints the connector fields for any other MCP client.
  */
 
-import { execFileSync } from 'child_process';
+import { execFileSync } from '../core/spawn.ts';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { ConnectProbeResult } from '../core/connect-probe.ts';

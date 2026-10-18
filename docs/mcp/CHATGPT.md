@@ -118,7 +118,8 @@ chat: the server must expose a `search`/`fetch` tool PAIR, where every
 `{ id, title, text, url, metadata }`. GBrain ships both:
 
 - `search` results carry an opaque, versioned `id` identifying the hit's
-  source and slug alongside the native fields. `query` uses the same IDs.
+  source and slug alongside the native fields. `query` uses the same IDs;
+  its fact rows (`result_type: "fact"`) carry no `id` and are not fetchable.
 - Pass the `id` unchanged to `fetch`; do not replace it with the slug or
   construct it from the current source. `fetch` returns the OpenAI shape — `text` is the
   page's full canonical markdown, `url` is a stable `gbrain://page/...`

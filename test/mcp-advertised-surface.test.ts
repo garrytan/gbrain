@@ -91,6 +91,39 @@ describe('stdio session', () => {
     });
   }, 120_000);
 
+  test('search rows carry id when fetch is callable: callable full / advertised starter yes, a starter session only after request_tools widens it', async () => {
+    const rowsOf = (res: unknown) => JSON.parse((res as { content: Array<{ text: string }> }).content[0].text) as Array<Record<string, unknown>>;
+    const advertise = await gbrain(['config', 'set', 'mcp.advertised_surface', 'starter']);
+    expect(advertise.code).toBe(0);
+    try {
+      await session([], async (client) => {
+        const listed = (await client.listTools()).tools.map(t => t.name);
+        expect(listed).toContain('search');
+        expect(listed).not.toContain('fetch');
+        const put = await client.callTool({ name: 'put_page', arguments: { slug: 'notes/lean-id', content: '---\ntype: note\ntitle: Lean id\n---\nThe quokka ledger lives here.\n' } });
+        expect(put.isError).toBeFalsy();
+        const rows = rowsOf(await client.callTool({ name: 'search', arguments: { query: 'quokka ledger' } }));
+        expect(rows.length).toBeGreaterThan(0);
+        expect(rows.every(r => typeof r.id === 'string')).toBe(true);
+      });
+      await session(['--surface', 'starter'], async (client) => {
+        const before = rowsOf(await client.callTool({ name: 'search', arguments: { query: 'quokka ledger' } }));
+        expect(before.length).toBeGreaterThan(0);
+        expect(before.some(r => 'id' in r)).toBe(false);
+        expect(before.every(r => typeof r.slug === 'string' && typeof r.source_id === 'string')).toBe(true);
+        const widen = await client.callTool({ name: 'request_tools', arguments: { surface: 'full' } });
+        expect(widen.isError).toBeFalsy();
+        const after = rowsOf(await client.callTool({ name: 'search', arguments: { query: 'quokka ledger' } }));
+        expect(after.every(r => typeof r.id === 'string')).toBe(true);
+        const fetched = await client.callTool({ name: 'fetch', arguments: { id: after[0].id } });
+        expect(fetched.isError).toBeFalsy();
+      });
+    } finally {
+      const restore = await gbrain(['config', 'set', 'mcp.advertised_surface', 'verbs']);
+      expect(restore.code).toBe(0);
+    }
+  }, 180_000);
+
   test('the callable ceiling still blocks', async () => {
     await session(['--surface', 'verbs'], async (client) => {
       const put = await client.callTool({ name: 'put_page', arguments: { slug: 'notes/blocked', content: 'x' } });

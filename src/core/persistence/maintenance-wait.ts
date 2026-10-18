@@ -12,7 +12,7 @@ import { isTerminal, type WriteRequest } from './model.ts';
 export const MAINTENANCE_WRITE_WAIT_MS = 30_000;
 /**
  * Maintenance publishes that run outside a MaintenanceWriteWait job budget
- * (managed facts, connector checkpoints, grandfathering, projection reindex)
+ * (connector checkpoints, grandfathering, projection reindex)
  * wait this long for their accepted write before reporting `write_pending`.
  */
 export const MAINTENANCE_PUBLISH_WAIT_MS = 5_000;

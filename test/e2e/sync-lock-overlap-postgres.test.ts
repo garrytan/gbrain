@@ -1,15 +1,21 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import postgres from '#postgres'
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { makeGitFixture } from '../helpers/git-fixture.ts';
+import { setupDB, teardownDB } from './helpers.ts';
 
 const databaseUrl = process.env.DATABASE_URL;
 const cli = resolve(import.meta.dir, '../../src/cli.ts');
 
 describe.skipIf(!databaseUrl)('sync lock overlap on Postgres', () => {
+  // The CLI `init` below must meet an existing, classic (unmanaged) brain:
+  // on a fresh database it activates managed persistence, whose sync refuses
+  // a Git pull and publishes through the coordinator instead of this lock.
+  beforeAll(async () => { await setupDB(); });
+  afterAll(async () => { await teardownDB(); });
   test('held owner excludes every contender, releases, and permits a later sync', async () => {
     assertSafeE2eDatabaseUrl(databaseUrl!);
     const count = Number(process.env.NUM_PARALLEL ?? 4);

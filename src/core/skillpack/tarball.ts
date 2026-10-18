@@ -19,7 +19,7 @@
  */
 
 import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
-import { spawnSync } from 'child_process';
+import { spawnSync } from '../spawn.ts';
 import { createHash } from 'crypto';
 import {
   existsSync,

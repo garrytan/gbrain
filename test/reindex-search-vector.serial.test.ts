@@ -23,7 +23,7 @@ interface MockState {
 function makeMockEngine(state: MockState): BrainEngine {
   const config = state.config ?? (state.config = new Map());
   const order = state.order ?? (state.order = []);
-  return {
+  const engine = {
     executeRaw: async (sql: string) => {
       state.calls.push(sql);
       order.push(sql);
@@ -34,6 +34,11 @@ function makeMockEngine(state: MockState): BrainEngine {
       }
       return [];
     },
+    runMigration: async (_version: number, sql: string) => {
+      state.calls.push(sql);
+      order.push(sql);
+    },
+    transaction: async <T>(fn: (tx: BrainEngine) => Promise<T>) => fn(engine),
     getConfig: async (key: string) => config.get(key) ?? null,
     setConfig: async (key: string, value: string) => {
       order.push(`set:${key}`);
@@ -44,6 +49,27 @@ function makeMockEngine(state: MockState): BrainEngine {
       return config.delete(key) ? 1 : 0;
     },
   } as unknown as BrainEngine;
+  return engine;
+}
+
+/**
+ * The facts keyword index swap the command ends with (facts/fts-index.ts on a non-Postgres engine with no index yet): 10
+ * statements, including buildIndexOnline's row estimate for its notice and its ANALYZE of facts after the build.
+ */
+function expectFactsSwap(calls: string[], lang: string): void {
+  expect(calls.map(sql => sql.trim().split(/\s+/).slice(0, 6).join(' '))).toEqual([
+    'SELECT i.indisvalid AS valid, pg_get_indexdef(i.indexrelid) AS',
+    'SELECT i.indisvalid AS valid, pg_get_indexdef(i.indexrelid) AS',
+    'SELECT to_regclass($1) IS NOT NULL AS',
+    'SELECT GREATEST(reltuples, 0)::bigint AS rows FROM',
+    'CREATE INDEX IF NOT EXISTS idx_facts_fts_next',
+    'ANALYZE facts',
+    'DROP INDEX IF EXISTS idx_facts_fts_old',
+    'ALTER INDEX IF EXISTS idx_facts_fts RENAME',
+    'ALTER INDEX idx_facts_fts_next RENAME TO idx_facts_fts',
+    'DROP INDEX IF EXISTS idx_facts_fts_old',
+  ]);
+  expect(calls[4]).toContain(`USING gin (to_tsvector('${lang}'::regconfig`);
 }
 
 const MARKER = 'fts.reindex_in_progress';
@@ -121,8 +147,9 @@ describe('runReindexSearchVector', () => {
     expect(result.chunksUpdated).toBe(200);
 
     // 1 inventory + 2 CREATE + 2 backfill batches (mock returns no rows, so
-    // the keyset loop terminates after the first batch per table) = 5 calls
-    expect(state.calls.length).toBe(5);
+    // the keyset loop terminates after the first batch per table) + the facts
+    // keyword index swap (10) = 15 calls
+    expect(state.calls.length).toBe(15);
     expect(state.calls[1]).toContain('CREATE OR REPLACE FUNCTION update_page_search_vector');
     expect(state.calls[1]).toContain("to_tsvector('pt_br'");
     expect(state.calls[2]).toContain('CREATE OR REPLACE FUNCTION update_chunk_search_vector');
@@ -134,6 +161,7 @@ describe('runReindexSearchVector', () => {
     // proconfig): both recreated bodies pin search_path.
     expect(state.calls[1]).toContain('SET search_path = pg_catalog, public');
     expect(state.calls[2]).toContain('SET search_path = pg_catalog, public');
+    expectFactsSwap(state.calls.slice(5), 'pt_br');
   });
 
   test('default english language still recreates + backfills (no shortcut here)', async () => {
@@ -148,7 +176,7 @@ describe('runReindexSearchVector', () => {
 
     expect(result.status).toBe('ok');
     expect(result.language).toBe('english');
-    expect(state.calls.length).toBe(5);
+    expect(state.calls.length).toBe(15);
 
     // Trigger recreates (calls 1, 2) and chunks backfill (call 4) embed the
     // language literal. Pages backfill (call 3) is UPDATE-to-self that
@@ -158,6 +186,7 @@ describe('runReindexSearchVector', () => {
     expect(state.calls[2]).toContain("'english'");
     expect(state.calls[3]).toMatch(/UPDATE pages/);
     expect(state.calls[4]).toContain("'english'");
+    expectFactsSwap(state.calls.slice(5), 'english');
   });
 
   test('SQL injection attempt falls back to english', async () => {
@@ -279,7 +308,7 @@ describe('runReindexSearchVector', () => {
       expect([...state.config!.keys()]).toEqual([]);
       // The existing executeRaw shape is untouched (config goes through
       // get/set/unsetConfig, not executeRaw).
-      expect(state.calls.length).toBe(5);
+      expect(state.calls.length).toBe(15);
     });
 
     test('resumes the chunks backfill from the persisted checkpoint when the marker matches the language', async () => {

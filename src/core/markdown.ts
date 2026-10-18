@@ -201,7 +201,7 @@ export function frontmatterBodyOffset(content: string): number {
  * colon-bearing titles themselves.
  */
 function quoteAmbiguousFrontmatterScalars(content: string, quoted?: Array<{ key: string; index: number; original: string; replacement: string }>): string {
-  const fenceMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/);
+  const fenceMatch = content.match(QUOTE_FENCE_RE);
   if (!fenceMatch) return content;
   const fenceBody = fenceMatch[1]!;
   const closer = fenceMatch[2]!;
@@ -210,25 +210,40 @@ function quoteAmbiguousFrontmatterScalars(content: string, quoted?: Array<{ key:
   const fixedBody = fenceBody
     .split('\n')
     .map((line, index) => {
-      // Top-level `key: value` only — indented lines (list items, nested
-      // maps) never match this anchor, so they pass through untouched.
-      const kv = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*):[ \t]+(.+)$/);
-      if (!kv) return line;
-      const key = kv[1]!;
-      const value = kv[2]!;
-      // Already quoted, a flow collection, or a block-scalar indicator —
-      // caller already handled quoting correctly; leave it alone.
-      if (/^['"[{|>]/.test(value)) return line;
-      // The ambiguous cases gray-matter/js-yaml chokes on: an embedded
-      // ": " (looks like a nested mapping key) or a trailing ":".
-      if (!value.includes(': ') && !value.endsWith(':')) return line;
-      const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-      quoted?.push({ key, index, original: line, replacement: `${key}: "${escaped}"` });
-      return `${key}: "${escaped}"`;
+      const fix = quoteAmbiguousFrontmatterLine(line);
+      if (!fix) return line;
+      quoted?.push({ key: fix.key, index, original: line, replacement: fix.replacement });
+      return fix.replacement;
     })
     .join('\n');
 
   return `---\n${fixedBody}\n---${closer}${rest}`;
+}
+
+const QUOTE_FENCE_RE = /^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/;
+
+/** The pre-quote pass's fence in `lifted`: 'none' without a bare `---` opener line, 'closed' when it closes inside `lifted`. */
+export function frontmatterQuoteFence(lifted: string): 'none' | 'closed' | 'open' {
+  if (!/^---\r?\n/.test(lifted)) return 'none';
+  return QUOTE_FENCE_RE.test(lifted) ? 'closed' : 'open';
+}
+
+/** The pre-quote pass's rewrite of one fence line: `key: "value"`, or null when the line stays as it is. */
+export function quoteAmbiguousFrontmatterLine(line: string): { key: string; replacement: string } | null {
+  // Top-level `key: value` only — indented lines (list items, nested
+  // maps) never match this anchor, so they pass through untouched.
+  const kv = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*):[ \t]+(.+)$/);
+  if (!kv) return null;
+  const key = kv[1]!;
+  const value = kv[2]!;
+  // Already quoted, a flow collection, or a block-scalar indicator —
+  // caller already handled quoting correctly; leave it alone.
+  if (/^['"[{|>]/.test(value)) return null;
+  // The ambiguous cases gray-matter/js-yaml chokes on: an embedded
+  // ": " (looks like a nested mapping key) or a trailing ":".
+  if (!value.includes(': ') && !value.endsWith(':')) return null;
+  const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return { key, replacement: `${key}: "${escaped}"` };
 }
 
 /**
@@ -280,18 +295,24 @@ function inferTitleFromEmbeddedFrontmatter(body: string): string {
   const m = body.match(/^\s*---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
   if (!m) return '';
   for (const line of m[1]!.split('\n')) {
-    const kv = line.match(/^title:[ \t]+(.+?)[ \t\r]*$/);
-    if (!kv) continue;
-    let value = kv[1]!;
-    if (
-      (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
-      (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
-    ) {
-      value = value.slice(1, -1);
-    }
-    return value.trim();
+    const value = embeddedTitleLineValue(line);
+    if (value !== null) return value;
   }
   return '';
+}
+
+/** The `title:` value of one line of an embedded leading fence block, or null. */
+export function embeddedTitleLineValue(line: string): string | null {
+  const kv = line.match(/^title:[ \t]+(.+?)[ \t\r]*$/);
+  if (!kv) return null;
+  let value = kv[1]!;
+  if (
+    (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
+    (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
+  ) {
+    value = value.slice(1, -1);
+  }
+  return value.trim();
 }
 
 export function parseMarkdown(
@@ -299,6 +320,38 @@ export function parseMarkdown(
   filePath?: string,
   opts?: ParseOpts,
 ): ParsedMarkdown {
+  const head = parseMarkdownHead(content, opts);
+  const { compiled_truth, timeline } = splitBody(head.body);
+  return {
+    frontmatter: comparableFrontmatter(head.frontmatter),
+    compiled_truth: compiled_truth.trim(),
+    timeline: timeline.trim(),
+    ...parsedMarkdownFields(head, () => inferTitleFromBody(head.body) || inferTitleFromEmbeddedFrontmatter(head.body), filePath, opts),
+  };
+}
+
+/** #6729: parseMarkdown's title from the content alone (frontmatter, first H1, embedded fence), with no filename fallback; '' when none. */
+export function explicitMarkdownTitle(content: string): string {
+  const head = parseMarkdownHead(content);
+  return coerceFrontmatterString(head.frontmatter.title).trim() || inferTitleFromBody(head.body) || inferTitleFromEmbeddedFrontmatter(head.body);
+}
+
+/**
+ * What parseMarkdown reads before the body split. `lifted` and `safeContent` are the strings the frontmatter
+ * readers saw; page-body/body-scan.ts checks that a bounded file head reads the same as the whole file.
+ */
+export type ParsedMarkdownFields = Omit<ParsedMarkdown, 'frontmatter' | 'compiled_truth' | 'timeline'>;
+export interface ParsedMarkdownHead {
+  frontmatter: Record<string, unknown>;
+  body: string;
+  lifted: string;
+  safeContent: string;
+  errors: ParseValidationError[];
+  warnings: ParseValidationWarning[];
+  recovery?: FrontmatterRecovery;
+}
+
+export function parseMarkdownHead(content: string, opts?: ParseOpts): ParsedMarkdownHead {
   const errors: ParseValidationError[] = [];
 
   // gray-matter is forgiving: it returns empty data + original content for
@@ -388,9 +441,12 @@ export function parseMarkdown(
   // get a usable shape.
   const frontmatter = (parsed?.data ?? {}) as Record<string, unknown>;
   const body = parsed?.content ?? content;
+  return { frontmatter, body, lifted, safeContent, errors, warnings, recovery };
+}
 
-  const { compiled_truth, timeline } = splitBody(body);
-
+/** ParsedMarkdown's head-derived fields; `bodyTitle` (first H1, then an embedded fence `title:`) only without a frontmatter title. */
+export function parsedMarkdownFields(head: ParsedMarkdownHead, bodyTitle: () => string, filePath?: string, opts?: ParseOpts): ParsedMarkdownFields {
+  const { frontmatter, errors, warnings, recovery } = head;
   // #1948/#1939: frontmatter values can be non-strings (YAML coerces `title: 123`
   // → number, a bare date → Date). The `as string` cast used to lie: a truthy
   // non-string flowed downstream typed as string and crashed the first
@@ -410,24 +466,11 @@ export function parseMarkdown(
   // #4526: an embedded leading fence block's `title:` outranks only the
   // humanized-filename fallback — it rescues pages the pre-fix parse left
   // with their frontmatter stuck in the body, without overriding real titles.
-  const title =
-    coerceFrontmatterString(frontmatter.title).trim() ||
-    inferTitleFromBody(body) ||
-    inferTitleFromEmbeddedFrontmatter(body) ||
-    inferTitle(filePath);
+  const title = coerceFrontmatterString(frontmatter.title).trim() || bodyTitle() || inferTitle(filePath);
   const tags = extractTags(frontmatter);
   const slug = coerceFrontmatterString(frontmatter.slug) || inferSlug(filePath);
 
-  const cleanFrontmatter = { ...frontmatter };
-  delete cleanFrontmatter.type;
-  delete cleanFrontmatter.title;
-  delete cleanFrontmatter.tags;
-  delete cleanFrontmatter.slug;
-
-  const result: ParsedMarkdown = {
-    frontmatter: cleanFrontmatter,
-    compiled_truth: compiled_truth.trim(),
-    timeline: timeline.trim(),
+  const result: ParsedMarkdownFields = {
     slug,
     type,
     typeExplicit: explicitType !== '',
@@ -481,7 +524,7 @@ export interface ContentHold {
 export function contentSizeHold(byteLength: number, maxBytes: number, codeFile = false): ContentHold | null {
   if (byteLength <= maxBytes) return null;
   return { code: 'file_too_large', message: codeFile ? `Code file too large (${byteLength} bytes)`
-    : `Content too large (${byteLength} bytes, max ${maxBytes}). Split the content into smaller files or remove large embedded assets.` };
+    : `Content too large (${byteLength} bytes, max ${maxBytes}). Every page under that limit is stored and searchable; leave this file out of the source, or split it into files under the limit.` };
 }
 
 const HOLD_GUIDANCE: Record<InvalidFrontmatterReason, string> = {
@@ -547,6 +590,22 @@ export function classifyImportHold(parsed: ParsedMarkdown, ctx: {
   return null;
 }
 
+/** The NULL_BYTES finding for the first NUL on 1-based `line`. */
+export function nullBytesError(line: number): ParseValidationError {
+  return { code: 'NULL_BYTES', message: 'Content contains null bytes (likely binary corruption)', line };
+}
+
+/** The validator's fence over `content.split('\n')`: first non-empty line, whether it opens, and the line closing it (-1: none). */
+export function validatorFrontmatterFence(lines: readonly string[]): { firstNonEmpty: number; opens: boolean; closeLine: number } {
+  let firstNonEmpty = 0;
+  while (firstNonEmpty < lines.length && lines[firstNonEmpty]!.trim().length === 0) firstNonEmpty++;
+  if (firstNonEmpty === lines.length) return { firstNonEmpty: -1, opens: false, closeLine: -1 };
+  const opens = /^---(?:\s*(?:yaml|yml|json))?\s*$/i.test(lines[firstNonEmpty]!.trim());
+  let closeLine = firstNonEmpty + 1;
+  while (opens && closeLine < lines.length && lines[closeLine]!.trim() !== '---') closeLine++;
+  return { firstNonEmpty, opens, closeLine: opens && closeLine < lines.length ? closeLine : -1 };
+}
+
 /**
  * Inspect raw content for the 7 frontmatter validation classes that gray-matter
  * silently accepts. Mutates `errors` in place. The order of checks is
@@ -567,24 +626,11 @@ function collectValidationErrors(
 ): void {
   // 1. NULL_BYTES — binary corruption indicator.
   const nullIdx = content.indexOf('\x00');
-  if (nullIdx >= 0) {
-    const line = content.slice(0, nullIdx).split('\n').length;
-    errors.push({
-      code: 'NULL_BYTES',
-      message: 'Content contains null bytes (likely binary corruption)',
-      line,
-    });
-  }
+  if (nullIdx >= 0) errors.push(nullBytesError(content.slice(0, nullIdx).split('\n').length));
 
   // 2. MISSING_OPEN — first non-empty line must be `---`.
   const lines = content.split('\n');
-  let firstNonEmpty = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim().length > 0) {
-      firstNonEmpty = i;
-      break;
-    }
-  }
+  const { firstNonEmpty, opens, closeLine } = validatorFrontmatterFence(lines);
   if (firstNonEmpty === -1) {
     // Empty file: treat as MISSING_OPEN. Don't run other structural checks.
     errors.push({
@@ -594,7 +640,7 @@ function collectValidationErrors(
     });
     return;
   }
-  if (!/^---(?:\s*(?:yaml|yml|json))?\s*$/i.test(lines[firstNonEmpty].trim())) {
+  if (!opens) {
     errors.push({
       code: 'MISSING_OPEN',
       message: 'Frontmatter must start with --- on the first non-empty line',
@@ -605,14 +651,7 @@ function collectValidationErrors(
     return;
   }
 
-  // 3. MISSING_CLOSE — find the next `---` after the opener.
-  let closeLine = -1;
-  for (let i = firstNonEmpty + 1; i < lines.length; i++) {
-    if (lines[i].trim() === '---') {
-      closeLine = i;
-      break;
-    }
-  }
+  // 3. MISSING_CLOSE — the next `---` after the opener.
   if (closeLine === -1) {
     // No closing fence found. Surface the first heading-shaped line as a
     // hint for where the parser thinks the frontmatter went off the rails —
@@ -857,31 +896,48 @@ export function findTimelineSplitIndex(lines: string[]): number {
   // A sentinel quoted inside a fenced code block (a markdown example) is not
   // a separator. Mispaired fences (see MarkdownCodeMap) leave every candidate
   // live, as before.
-  return findLineOutsideFencedCode(lines, (i) => isTimelineSentinelLine(lines, i));
+  const firstContent = firstContentLineIndex(lines);
+  return findLineOutsideFencedCode(lines, (i) => isTimelineSentinelLine(lines, i, firstContent));
 }
 
-function isTimelineSentinelLine(lines: string[], i: number): boolean {
-  const trimmed = lines[i].trim();
+/**
+ * Index of the first line holding a non-whitespace character, or
+ * `lines.length`. `lines.slice(0, i).join('\n').trim()` is empty exactly when
+ * `i <= firstContentLineIndex(lines)`, so the sentinel rules ask "does the
+ * prefix above line i have content?" in O(1) instead of re-joining every line
+ * above each candidate (O(n^2) on chat exports separated by `---`).
+ */
+function firstContentLineIndex(lines: readonly string[]): number {
+  let i = 0;
+  while (i < lines.length && lines[i]!.trim().length === 0) i++;
+  return i;
+}
 
-  if (trimmed === '<!-- timeline -->' || trimmed === '<!--timeline-->') {
-    return true;
-  }
+function isTimelineSentinelLine(lines: string[], i: number, firstContent: number): boolean {
+  const kind = timelineSentinelKind(lines[i].trim());
+  if (kind === 'marker') return true;
 
-  if (trimmed === '--- timeline ---' || /^---\s+timeline\s+---$/i.test(trimmed)) {
-    return true;
-  }
-
-  if (trimmed === '---') {
-    const beforeContent = lines.slice(0, i).join('\n').trim();
-    if (beforeContent.length === 0) return false;
+  if (kind === 'dash') {
+    if (i <= firstContent) return false;
 
     for (let j = i + 1; j < lines.length; j++) {
       const next = lines[j].trim();
       if (next.length === 0) continue;
-      return /^##\s+(timeline|history)\s*$/i.test(next);
+      return isTimelineHeadingAfterDash(next);
     }
   }
   return false;
+}
+
+/** A trimmed sentinel line: a marker, or a `---` ('dash') that counts only after content and before isTimelineHeadingAfterDash. */
+export function timelineSentinelKind(trimmed: string): 'marker' | 'dash' | null {
+  if (trimmed === '<!-- timeline -->' || trimmed === '<!--timeline-->') return 'marker';
+  if (trimmed === '--- timeline ---' || /^---\s+timeline\s+---$/i.test(trimmed)) return 'marker';
+  return trimmed === '---' ? 'dash' : null;
+}
+
+export function isTimelineHeadingAfterDash(trimmed: string): boolean {
+  return /^##\s+(timeline|history)\s*$/i.test(trimmed);
 }
 
 /** A timeline entry line: a bullet whose text starts with a 4-digit year
@@ -903,17 +959,16 @@ const DATED_BULLET_RE = /^\s*[-*+]\s+\**\d{4}\b/;
  * included, next H2 excluded) or null.
  */
 function findBareTimelineSection(lines: string[]): { start: number; end: number } | null {
+  const firstContent = firstContentLineIndex(lines);
   let inFence = false;
   for (let i = 0; i < lines.length; i++) {
-    const fence = /^\s*(`{3,}|~{3,})/.exec(lines[i]);
-    if (fence) {
+    if (FENCE_TOGGLE_RE.test(lines[i])) {
       inFence = !inFence;
       continue;
     }
     if (inFence) continue;
-    if (!/^##\s+(timeline|history)\b/i.test(lines[i].trim())) continue;
-    const beforeContent = lines.slice(0, i).join('\n').trim();
-    if (beforeContent.length === 0) continue;
+    if (!isBareTimelineHeading(lines[i])) continue;
+    if (i <= firstContent) continue;
 
     // Lookahead: section extent + timeline shape. Any non-blank line that is
     // neither a dated bullet nor a continuation of one (incl. fence openers)
@@ -922,17 +977,30 @@ function findBareTimelineSection(lines: string[]): { start: number; end: number 
     let datedBullets = 0;
     let shaped = true;
     for (let j = i + 1; j < lines.length; j++) {
-      const trimmed = lines[j].trim();
-      if (/^##\s+\S/.test(trimmed)) { end = j; break; }
-      if (trimmed.length === 0) continue;
-      if (DATED_BULLET_RE.test(lines[j])) { datedBullets++; continue; }
-      if (datedBullets > 0 && /^\s{2,}\S/.test(lines[j])) continue; // wrapped bullet
+      const step = bareTimelineSectionLine(lines[j], datedBullets);
+      if (step === 'end') { end = j; break; }
+      if (step === 'bullet') datedBullets++;
+      if (step !== 'other') continue;
       shaped = false;
       break;
     }
     if (shaped && datedBullets > 0) return { start: i, end };
   }
   return null;
+}
+
+export function isBareTimelineHeading(raw: string): boolean {
+  return /^##\s+(timeline|history)\b/i.test(raw.trim());
+}
+
+/** A line after a bare timeline heading: the next H2 ends the section, 'other' disqualifies the heading. */
+export function bareTimelineSectionLine(raw: string, datedBullets: number): 'end' | 'blank' | 'bullet' | 'wrap' | 'other' {
+  const trimmed = raw.trim();
+  if (/^##\s+\S/.test(trimmed)) return 'end';
+  if (trimmed.length === 0) return 'blank';
+  if (DATED_BULLET_RE.test(raw)) return 'bullet';
+  if (datedBullets > 0 && /^\s{2,}\S/.test(raw)) return 'wrap';
+  return 'other';
 }
 
 /**
@@ -1163,17 +1231,24 @@ function inferTypeWithPrefixes(
 function inferTitleFromBody(body: string): string {
   let inFence = false;
   for (const raw of body.split('\n')) {
-    const fence = /^\s*(`{3,}|~{3,})/.exec(raw);
-    if (fence) {
+    if (FENCE_TOGGLE_RE.test(raw)) {
       inFence = !inFence;
       continue;
     }
     if (inFence) continue;
-    // Exactly one leading `#`, then whitespace, then the heading text.
-    const m = /^#(?!#)\s+(.+?)\s*$/.exec(raw);
-    if (m) return m[1].replace(/\s+#+\s*$/, '').trim();
+    const title = h1TitleLineValue(raw);
+    if (title !== null) return title;
   }
   return '';
+}
+
+/** A line that toggles the simple fence state of inferTitleFromBody and findBareTimelineSection. */
+export const FENCE_TOGGLE_RE = /^\s*(`{3,}|~{3,})/;
+
+/** The title an H1 line gives (exactly one leading `#`, whitespace, then the heading text), or null. */
+export function h1TitleLineValue(raw: string): string | null {
+  const m = /^#(?!#)\s+(.+?)\s*$/.exec(raw);
+  return m ? m[1]!.replace(/\s+#+\s*$/, '').trim() : null;
 }
 
 function inferTitle(filePath?: string): string {
@@ -1212,6 +1287,21 @@ import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep as pathSep } from 'node:path';
 
 /** Options for serializePageToMarkdown. */
+/**
+ * #6454: the four top-level frontmatter keys the parser lifts into page
+ * columns (`type`, `title`, `tags`, `slug`) and drops from
+ * `ParsedMarkdown.frontmatter`. A file can never carry them into the stored
+ * frontmatter, so a stored copy of one of them (older imports kept them) is
+ * not drift: every file-versus-database comparison and every render strips
+ * them first, top-level only; nested user keys are left alone.
+ */
+export const RESERVED_FRONTMATTER_KEYS = ['type', 'title', 'tags', 'slug'] as const;
+export function comparableFrontmatter(frontmatter: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const clean: Record<string, unknown> = { ...(frontmatter ?? {}) };
+  for (const key of RESERVED_FRONTMATTER_KEYS) delete clean[key];
+  return clean;
+}
+
 export interface SerializePageOpts {
   /** Frontmatter fields merged on top of page.frontmatter at render time.
    *  Use this to stamp provenance (`ingested_via: 'webhook'`), identity
@@ -1240,8 +1330,12 @@ export function serializePageToMarkdown(
   tags: string[],
   opts: SerializePageOpts = {},
 ): string {
+  // #6454: the columns are the page's type, title and tags; a stored reserved key (older imports kept
+  // them) never overrides them in the rendered file. A stored `slug` still reaches the #5966 stamp rule, which
+  // replaces one that names another identity with the page's slug.
+  const stored = page.frontmatter ?? {};
   const frontmatter: Record<string, unknown> = {
-    ...((page.frontmatter ?? {}) as Record<string, unknown>),
+    ...slugStampedFrontmatter(page.slug, { ...comparableFrontmatter(stored), ...(stored.slug !== undefined ? { slug: stored.slug } : {}) }),
     ...(opts.frontmatterOverrides ?? {}),
   };
   return serializeMarkdown(
@@ -1254,6 +1348,22 @@ export function serializePageToMarkdown(
       tags,
     },
   );
+}
+
+/**
+ * #5966 (W14 P1.7): the one slug rule every render follows. A slug the file
+ * path cannot derive (a doubled hyphen, which `slugifyPath` collapses to one) is
+ * stamped as `slug:` so every path-derived reader (sync, reconcile, repair)
+ * finds the page again; a `frontmatter.slug` naming another identity is
+ * replaced by the page slug (the export rule, #3772). The stamp is
+ * digest-neutral: `parseMarkdown` drops `frontmatter.slug`, so canonical
+ * fields compare equal with or without it.
+ */
+export function slugStampedFrontmatter(slug: string | undefined, frontmatter: Record<string, unknown>): Record<string, unknown> {
+  if (typeof slug !== 'string' || slug === '') return frontmatter;
+  const declared = frontmatter.slug;
+  if (slugifyPath(slug + '.md') !== slug || (declared !== undefined && declared !== slug)) return { ...frontmatter, slug };
+  return frontmatter;
 }
 
 /**
@@ -1319,11 +1429,26 @@ function safeSlugDirSegments(rawSlug: string | null | undefined): string[] | nul
   return segments.slice(0, -1);
 }
 
+/**
+ * The segments of `localPath` below its nearest ancestor holding `.git` (`[]`
+ * when `localPath` is that Git root), or null when no ancestor holds one. A
+ * caller resolving many pages of one source computes it once and passes it to
+ * `resolveSourceLocalFilePath` as `gitScope`.
+ */
+export function sourceGitScope(localPath: string): string[] | null {
+  const absoluteLocalPath = resolve(localPath);
+  for (let cursor = absoluteLocalPath; ; cursor = dirname(cursor)) {
+    if (existsSync(join(cursor, '.git'))) return splitLocalPathSegments(relative(cursor, absoluteLocalPath));
+    if (dirname(cursor) === cursor) return null;
+  }
+}
+
 export function resolveSourceLocalFilePath(
   localPath: string,
   rawSourcePath: string | null | undefined,
   pageSlug?: string | null,
   slugRootMode?: 'git-root' | 'source-root',
+  gitScope?: string[] | null,
 ): string | null {
   if (!rawSourcePath) return null;
   const value = rawSourcePath.trim();
@@ -1335,21 +1460,14 @@ export function resolveSourceLocalFilePath(
   const absoluteLocalPath = resolve(localPath);
   let sourceScopeSegments: string[] = [];
   let resolvedSegments = sourceSegments;
-  let cursor = absoluteLocalPath;
-  while (true) {
-    if (existsSync(join(cursor, '.git'))) {
-      const scope = splitLocalPathSegments(relative(cursor, absoluteLocalPath));
-      sourceScopeSegments = scope;
-      const scoped = scope.length > 0 && scope.every((segment, index) => segment === sourceSegments[index]);
-      if (scoped && (slugRootMode !== 'source-root'
-        || !!pageSlug && resolveSlugForPath(sourceSegments.slice(scope.length).join('/')) === pageSlug)) {
-        resolvedSegments = sourceSegments.slice(scope.length);
-      }
-      break;
+  const scope = gitScope === undefined ? sourceGitScope(localPath) : gitScope;
+  if (scope) {
+    sourceScopeSegments = scope;
+    const scoped = scope.length > 0 && scope.every((segment, index) => segment === sourceSegments[index]);
+    if (scoped && (slugRootMode !== 'source-root'
+      || !!pageSlug && resolveSlugForPath(sourceSegments.slice(scope.length).join('/')) === pageSlug)) {
+      resolvedSegments = sourceSegments.slice(scope.length);
     }
-    const parent = dirname(cursor);
-    if (parent === cursor) break;
-    cursor = parent;
   }
   const directPath = join(absoluteLocalPath, ...resolvedSegments);
   if (existsSync(directPath)) return directPath;

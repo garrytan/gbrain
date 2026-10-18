@@ -21,7 +21,11 @@ import {
   pendingCoreNotices, readCoreSettings, renderCorePage,
 } from '../core/core-memory.ts';
 import { serializePageToMarkdown } from '../core/markdown.ts';
+import { wholeBodySnapshot } from '../core/persistence/segmented-apply.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { CORE_SUBCOMMANDS, ROUTERS, subcommandHelpRequested } from '../cli/subcommands.ts';
+
+export { CORE_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
 
 /** Core is opt-in: marking a page does nothing for sessions until the owner turns delivery on. */
 const CORE_OFF_HINT = 'Core memory is off (the default), so sessions do not load it yet. If the user wants it always loaded: gbrain config set memory.core.enabled true';
@@ -37,6 +41,10 @@ const USAGE = `Usage: gbrain core <list|show|status|add|remove|diff|ack|init|sug
   init    [--source <id>] [--slug <slug>]
   suggest [--source <id>] [--apply] [--json]
 Docs: ${CORE_DOCS}`;
+
+export function printUsage(): void {
+  console.log(USAGE);
+}
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -60,7 +68,8 @@ function fail(message: string, next?: string): void {
 
 /** Rewrites a page's core marking through put_page as the local owner. */
 async function setMarking(engine: BrainEngine, sourceId: string, slug: string, marking: { core: boolean; priority?: number }): Promise<'changed' | 'unchanged' | 'missing'> {
-  const snap = await engine.readPageSnapshot(slug, { sourceId });
+  // Wave B: a page stored in segments is read back whole up to 24 MiB and written as a normal put; a larger one refuses.
+  const snap = await wholeBodySnapshot(engine, await engine.readPageSnapshot(slug, { sourceId }), marking.core ? 'core add' : 'core remove');
   if (!snap || snap.page.deleted_at) return 'missing';
   const fm = { ...((snap.page.frontmatter ?? {}) as Record<string, unknown>) };
   const was = isCoreFrontmatter(fm);
@@ -125,7 +134,9 @@ function lineDiff(before: string, after: string): string {
 }
 
 export async function runCore(engine: BrainEngine, args: string[]): Promise<void> {
-  const sub = args[0];
+  // cli.ts answers help before dispatch (#6114 router); this covers direct callers.
+  if (subcommandHelpRequested(args, ROUTERS.core)) { printUsage(); return; }
+  const sub = args[0] as (typeof CORE_SUBCOMMANDS)[number] | undefined;
   const json = args.includes('--json');
   const sourceId = flag(args, '--source') ?? 'default';
   const slug = positional(args);
@@ -193,9 +204,9 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
       if (!slug) { fail('diff needs a page slug.', 'gbrain core diff <slug> [--source <id>]'); return; }
       const [oldest] = await engine.executeRaw<{ base_text: string | null; actor: string; created_at: string }>(
         `SELECT base_text, actor, created_at::text AS created_at FROM core_edit_notices WHERE source_id = $1 AND slug = $2 AND acked_at IS NULL ORDER BY id LIMIT 1`, [sourceId, slug]);
-      const snap = await engine.readPageSnapshot(slug, { sourceId });
-      const current = snap ? renderCorePage({ source_id: sourceId, slug, title: snap.page.title, compiled_truth: snap.page.compiled_truth }) : '';
       if (!oldest) { print({ pending: false }, () => `No unacknowledged remote edits to ${sourceId}:${slug}.`); return; }
+      const snap = await wholeBodySnapshot(engine, await engine.readPageSnapshot(slug, { sourceId }), 'core diff');
+      const current = snap ? renderCorePage({ source_id: sourceId, slug, title: snap.page.title, compiled_truth: snap.page.compiled_truth }) : '';
       print({ pending: true, since: oldest.created_at, actor: oldest.actor, before: oldest.base_text, after: current, revision: snap?.revision ?? null },
         () => `Remote edits to ${sourceId}:${slug} since ${oldest.created_at} (first by ${oldest.actor}):\n${lineDiff(oldest.base_text ?? '', current)}\n\nIf this is fine: gbrain core ack --source ${sourceId} ${slug} --revision ${snap?.revision ?? 'latest'}`);
       return;
@@ -253,8 +264,8 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
       return;
     }
     default:
-      console.log(USAGE);
-      if (sub && sub !== '--help' && sub !== '-h' && sub !== 'help') setCliExitVerdict(1);
+      printUsage();
+      if (sub) setCliExitVerdict(1);
   }
 }
 

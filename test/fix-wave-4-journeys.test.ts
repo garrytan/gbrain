@@ -16,7 +16,7 @@
  * `fetch`), plus the checkpoint-validation statement timeout that PGLite cannot
  * raise. Wall time per journey is printed for the PR body, not asserted.
  */
-import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, expect, spyOn, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -49,6 +49,7 @@ const { engines, source, home } = fixture;
 const env = fixture.env;
 beforeAll(fixture.setup, 120_000);
 afterAll(fixture.teardown);
+afterEach(() => __setEmbedTransportForTests(null));
 
 class CliExit extends Error { constructor(readonly code: number) { super(`process.exit(${code})`); } }
 
@@ -202,6 +203,7 @@ test('journey (b): orphan-bindings, from the doctor finding to a clear finding, 
 }), 240_000);
 
 test('journey (b): connector-fences, from the sync refusal to a sync that carries the fence, in four commands', async () => withEnv(env, async () => {
+  embedStub();
   const fence = '<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n'
     + '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|\n'
     + '| 1 | Ships weekly | fact | 1.0 | world | high | 2026-01-01 |  | remember |  |\n<!--- gbrain:facts:end -->';
@@ -280,7 +282,7 @@ test('journey (c): a checkpoint timeout with a dropped index recovers with the r
     } finally { restore(); }
     expect(refused.text).toContain('checkpoint_validation_timeout');
     expect((await j.run(engine, printed(refused.text, 'gbrain repair request-indexes'))).exit).toBe(0);
-    const retried = await j.run(engine, printed(refused.text, `gbrain sync --source ${id} --no-pull --retry-failed`));
+    const retried = await j.run(engine, printed(refused.text, `gbrain sync --source ${id} --no-pull`));
     expect(retried.exit).toBe(0);
     expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND state<>'committed' AND state<>'failed'", [id])).toEqual([]);
     expect((await engine.getPage('a', { sourceId: id }))?.title).toBe('a');

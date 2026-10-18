@@ -12,11 +12,19 @@
  * its identity from a frontmatter `slug:` follows the same rule through the
  * held-file path; path-derived import slugs, `validateSlug` and every internal
  * stored-identity reader are unchanged.
+ *
+ * The same admission refuses a new identity whose file name no supported
+ * platform can store (GBRA-130 B-5, B-12: a Windows reserved device name such
+ * as `companies/aux`, or a segment over the 240-byte file-name budget;
+ * portable-slug.ts), naming the portable slug to write instead. A live page
+ * already holding such a slug keeps accepting updates with an advisory, and a
+ * replayed request never reaches this check.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { ContentRefusal } from '../import-screen.ts';
 import { opError, type OperationContext, type OperationError } from '../ops/contract.ts';
 import { opTransport, readFix } from '../ops/op-fix.ts';
+import { slugPortabilityProblem, type SlugPortabilityProblem } from '../portable-slug.ts';
 
 const MARKDOWN_SUFFIX = /(\.mdx?)+$/i;
 
@@ -39,15 +47,35 @@ function refusal(ctx: OperationContext, bare: string): OperationError {
     });
 }
 
+function portabilityRefusal(ctx: OperationContext, slug: string, problem: SlugPortabilityProblem): OperationError {
+  const cli = opTransport(ctx) === 'cli';
+  const what = problem.reason === 'reserved_name' ? `"${problem.segment}" is a name Windows reserves for a device`
+    : `"${problem.segment.slice(0, 24)}…" is longer than the 240-byte file-name budget`;
+  return opError('invalid_params', `New page slugs must be portable file names: ${what}.`,
+    cli ? `Write the page as ${problem.suggestion}: gbrain put ${problem.suggestion}`
+      : `Call put_page again with slug "${problem.suggestion}" and the same content.`, {
+      detail: 'slug_not_portable',
+      why: 'Each slug segment becomes a file or directory name on disk and in exports, and that name cannot be stored on every supported platform.',
+      fix: {
+        ...readFix('Checks whether the portable slug already holds a page before writing it there.',
+          { argv: ['gbrain', 'get', problem.suggestion], mcp: { tool: 'get_page', arguments: { slug: problem.suggestion } } }),
+        verify: { argv: ['gbrain', 'get', problem.suggestion], mcp: { tool: 'get_page', arguments: { slug: problem.suggestion } } },
+      },
+    });
+}
+
 /**
- * Refuses a new suffixed slug; for a live exact-identity page returns the
- * advisory to attach to the response. Null for every other slug.
+ * Refuses a new suffixed or unportable slug; for a live exact-identity page
+ * returns the advisory to attach to the response. Null for every other slug.
  */
 export function suffixedSlugAdmission(ctx: OperationContext, slug: string, liveExactRow: boolean): string | null {
   const bare = bareSlugOf(slug);
-  if (bare === null) return null;
-  if (!liveExactRow) throw refusal(ctx, bare);
-  return `This page's slug ends in .md, which new pages cannot use. To move it, put_page its content under "${bare}", then delete_page "${slug}".`;
+  const problem = slugPortabilityProblem(bare ?? slug);
+  if (bare === null && problem === null) return null;
+  if (!liveExactRow) throw bare !== null ? refusal(ctx, bare) : portabilityRefusal(ctx, slug, problem!);
+  const target = problem?.suggestion ?? bare!;
+  const why = bare !== null ? 'ends in .md, which new pages cannot use' : 'is not a portable file name, which new pages need';
+  return `This page's slug ${why}. To move it, put_page its content under "${target}", then delete_page "${slug}".`;
 }
 
 
@@ -58,7 +86,8 @@ async function liveExactRow(engine: BrainEngine, sourceId: string, slug: string)
 
 /** Dry-run form: reads the exact `(source_id, slug)` row itself. */
 export async function suffixedSlugDryRun(ctx: OperationContext, sourceId: string, slug: string): Promise<void> {
-  if (bareSlugOf(slug) === null) return;
+  const bare = bareSlugOf(slug);
+  if (bare === null && slugPortabilityProblem(slug) === null) return;
   suffixedSlugAdmission(ctx, slug, await liveExactRow(ctx.engine, sourceId, slug.toLowerCase()));
 }
 

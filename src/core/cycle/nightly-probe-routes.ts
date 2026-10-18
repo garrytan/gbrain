@@ -72,18 +72,46 @@ export class NightlyProbeModelRoutesError extends Error {
   }
 }
 
+/**
+ * The judge-slot pins `models.eval.cross_modal.slot_{a,b,c}`, alias-expanded;
+ * unset and blank keys are absent. The one reader for the nightly probe and
+ * `gbrain eval cross-modal` (#6486), so the two cannot resolve a pin
+ * differently.
+ */
+export async function readCrossModalSlotConfig(engine: ConfigReader): Promise<Partial<Record<NightlyProbeSlotId, string>>> {
+  const slots: Partial<Record<NightlyProbeSlotId, string>> = {};
+  for (const [id, key] of Object.entries(NIGHTLY_PROBE_SLOT_KEYS) as Array<[NightlyProbeSlotId, string]>) {
+    const value = (await engine.getConfig(key))?.trim();
+    if (value) slots[id] = await resolveAlias(engine, value);
+  }
+  return slots;
+}
+
+/**
+ * `gbrain eval cross-modal`'s slot reader (#6486): opens the brain through
+ * `connect` (the CLI passes a probe-only connect, which starts no migration),
+ * reads the pins and closes it. Called only when a slot has no flag; the
+ * caller treats a throw (no brain, brain busy) as "no pins", so the command
+ * stays usable before `gbrain init`.
+ */
+export async function readCrossModalSlotConfigFrom(
+  connect: () => Promise<ConfigReader & { disconnect(): Promise<void> }>,
+): Promise<Partial<Record<NightlyProbeSlotId, string>>> {
+  const engine = await connect();
+  try {
+    return await readCrossModalSlotConfig(engine);
+  } finally {
+    await engine.disconnect().catch(() => {});
+  }
+}
+
 export async function resolveNightlyProbeModelRoutes(
   engine: ConfigReader,
 ): Promise<NightlyProbeModelRoutes> {
   try {
     const reader = await resolveModelDetailed(engine, NIGHTLY_PROBE_READER_ROUTE);
     const extractor = await resolveModelDetailed(engine, NIGHTLY_PROBE_EXTRACTOR_ROUTE);
-    const slots: NightlyProbeModelRoutes['slots'] = {};
-    for (const [id, key] of Object.entries(NIGHTLY_PROBE_SLOT_KEYS) as Array<[NightlyProbeSlotId, string]>) {
-      const value = (await engine.getConfig(key))?.trim();
-      if (value) slots[id] = await resolveAlias(engine, value);
-    }
-    return { reader, extractor, slots };
+    return { reader, extractor, slots: await readCrossModalSlotConfig(engine) };
   } catch (err) {
     throw new NightlyProbeModelRoutesError(err);
   }

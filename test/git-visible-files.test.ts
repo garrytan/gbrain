@@ -26,7 +26,7 @@ import { execFileSync } from 'child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, isAbsolute } from 'path';
-import { collectGitVisibleFiles } from '../src/core/git-visible-files.ts';
+import { collectGitVisibleFiles, gitLsFiles, withGitListingCache } from '../src/core/git-visible-files.ts';
 
 const cleanups: string[] = [];
 afterAll(() => {
@@ -174,5 +174,41 @@ describe('collectGitVisibleFiles — acceptRelPath callback', () => {
     expect(result).not.toBeNull();
     expect(result!).toContain(join(repo, 'sub', 'dir', 'file.md'));
     expect(result!).not.toContain(join(repo, 'top.md'));
+  });
+});
+
+describe('withGitListingCache — doctor-scoped ls-files memo (GBRA-68)', () => {
+  const md = (rel: string) => rel.endsWith('.md');
+
+  test('inside the scope a listing is reused; outside it every call lists again', async () => {
+    const repo = makeRepo('gbrain-f6-cache-');
+    writeFileSync(join(repo, 'a.md'), '# a\n');
+    git(repo, ['add', '-A']);
+    git(repo, ['commit', '-q', '-m', 'init']);
+    const before = collectGitVisibleFiles(repo, md);
+
+    await withGitListingCache(async () => {
+      expect(collectGitVisibleFiles(repo, md)).toEqual(before);
+      writeFileSync(join(repo, 'b.md'), '# b\n');
+      await Promise.resolve();
+      expect(collectGitVisibleFiles(repo, md)).toEqual(before);
+      expect(gitLsFiles(repo, ['--others', '--exclude-standard', '-z', '--', '*.md'])).toBe('b.md\0');
+    });
+
+    expect(collectGitVisibleFiles(repo, md)).toEqual([join(repo, 'a.md'), join(repo, 'b.md')]);
+    await withGitListingCache(async () => {
+      expect(collectGitVisibleFiles(repo, md)).toEqual([join(repo, 'a.md'), join(repo, 'b.md')]);
+    });
+  });
+
+  test('a failed listing is cached as null inside the scope', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-f6-cache-nogit-'));
+    cleanups.push(dir);
+    await withGitListingCache(async () => {
+      expect(collectGitVisibleFiles(dir, md)).toBeNull();
+      git(dir, ['init', '-q', '-b', 'main']);
+      expect(collectGitVisibleFiles(dir, md)).toBeNull();
+    });
+    expect(collectGitVisibleFiles(dir, md)).toEqual([]);
   });
 });

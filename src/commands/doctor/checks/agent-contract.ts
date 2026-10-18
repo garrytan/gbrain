@@ -6,13 +6,18 @@
  * suggestion-less envelopes, unattended runs refused for consent, derived
  * spend caps exhausted, or a `--json` command that printed no document. The
  * fix is the exact preapproval command when one would have let the run
- * proceed. Engine-free, read-only; the log never holds params or messages.
+ * proceed. #6758: on a warn, `details.builds` splits the counted events by
+ * the build that recorded them, and `details.incident` is `historical` when
+ * none came from this build (they age out of the window), with `since` the
+ * oldest one.
+ * Engine-free, read-only; the log never holds params or messages.
  */
 import { readAgentContractEvents, type AgentContractEvent } from '../../../core/agent-contract-log.ts';
 import { PREAPPROVE_PAID_MAX_USD_PER_RUN, PREAPPROVE_PERSISTENT_INSTALL, preapprovalCommand } from '../../../core/consent-preapproval.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import type { Check } from '../../doctor.ts';
 import { doctorVerify } from '../check-fix.ts';
+import { VERSION } from '../../../version.ts';
 import type { DoctorEntry } from '../context.ts';
 
 const NAME = 'agent_contract';
@@ -73,8 +78,17 @@ export function agentContractCheck(events: readonly Event[], now = Date.now()): 
     return { name: NAME, status: 'ok', message: `No agent dead ends in the last ${AGENT_CONTRACT_WINDOW_DAYS} days (${recent.length} non-success event(s) logged).`, details };
   }
   const fix = paidRefused.length || capped.length ? preapprovePaid() : installRefused.length ? preapproveInstall() : undefined;
+  const counted = [...new Set([...faults, ...refused, ...capped, ...noDoc])];
+  const versions = [...new Set(counted.flatMap((e) => e.version && e.version !== VERSION ? [e.version] : []))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const builds = { this_build: counted.filter((e) => e.version === VERSION).length, other_builds: counted.filter((e) => e.version && e.version !== VERSION).length,
+    unknown_build: counted.filter((e) => !e.version).length, versions };
+  const incident = { scope: builds.this_build > 0 ? 'current' : 'historical', since: counted.reduce((min, e) => (e.ts < min ? e.ts : min), counted[0]!.ts) };
+  const range = versions.length > 1 ? `${versions[0]} to ${versions.at(-1)}` : versions[0];
+  const elsewhere = [builds.other_builds ? `${builds.other_builds} of ${counted.length} were recorded by another gbrain build (${range})` : '',
+    builds.unknown_build ? `${builds.unknown_build} by a build that did not record its version` : ''].filter(Boolean).join(' and ');
+  const history = elsewhere ? ` ${elsewhere}; recheck after upgrading, or once they age out of the ${AGENT_CONTRACT_WINDOW_DAYS}-day window.` : '';
   return {
-    name: NAME, status: 'warn', message: `Last ${AGENT_CONTRACT_WINDOW_DAYS} days: ${parts.join('; ')}.`, details,
+    name: NAME, status: 'warn', message: `Last ${AGENT_CONTRACT_WINDOW_DAYS} days: ${parts.join('; ')}.${history}`, details: { ...details, builds, incident },
     ...(fix ? { fix } : { fix_unavailable_reason: 'operator_judgement' as const }),
   };
 }

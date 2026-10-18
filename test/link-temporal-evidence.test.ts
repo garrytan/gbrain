@@ -5,6 +5,7 @@
  */
 import { describe, test, expect } from 'bun:test';
 import { deriveTemporalEvidence, rowKey, normalizeLinkTarget, type OwnedRow } from '../src/core/link-temporal-evidence.ts';
+import { setPackRelationSemantics } from '../src/core/link-validity.ts';
 
 const alice = 'people/alice-example';
 const row = (to: string, link_type: string, extra: Partial<OwnedRow> = {}): OwnedRow => ({ from_slug: alice, to_slug: to, link_type, link_source: 'markdown', ...extra });
@@ -78,6 +79,32 @@ describe('frontmatter since/until', () => {
     const r = row('companies/acme-example', 'works_at', { link_source: 'frontmatter', origin_field: 'company' });
     const ev = derive('', '', [r], { company: [{ name: 'Acme', since: '2021-04', until: '2024-02-15' }] });
     expect(ev.transitions.map(t => `${t.kind}:${t.occurred_on}:${t.date_precision}:${t.producer}`)).toEqual(['start:2021-04-01:month:frontmatter', 'end:2024-02-15:day:frontmatter']);
+  });
+
+  test('targets sharing a slug prefix: each object dates only its exact target when several match', () => {
+    const page = 'contracts/msa-example-amendment-2';
+    const msa = { from_slug: page, to_slug: 'contracts/msa-example', link_type: 'amends', link_source: 'frontmatter', origin_field: 'amends' };
+    const renewal = { ...msa, to_slug: 'contracts/msa-example-renewal' };
+    const fm = { amends: [{ name: 'MSA Example', since: '2026-11-01' }, { name: 'MSA Example Renewal', since: '2027-03-01' }] };
+    setPackRelationSemantics(new Map([['amends', 'event']]));
+    let ev;
+    try { ev = deriveTemporalEvidence({ slug: page, compiled_truth: '', timeline: '', frontmatter: fm }, [msa, renewal]); }
+    finally { setPackRelationSemantics(new Map()); }
+    expect(ev.transitions.map(t => `${t.to_slug}:${t.kind}:${t.occurred_on}`).sort()).toEqual([
+      'contracts/msa-example-renewal:start:2027-03-01',
+      'contracts/msa-example:start:2026-11-01',
+    ]);
+  });
+
+  test('a single prefix match still dates its target; two prefix-only matches date nothing', () => {
+    const r = row('companies/acme-example', 'works_at', { link_source: 'frontmatter', origin_field: 'company' });
+    expect(brief(derive('', '', [r], { company: [{ name: 'Acme', since: '2021-04' }, { name: 'Widget', since: '2022-01' }] }).transitions))
+      .toEqual(['acme-example:works_at:start:2021-04-01:frontmatter']);
+    expect(derive('', '', [r], { company: [{ name: 'Acme', since: '2021-04' }, { name: 'Acme Example', since: '2022-01' }] }).transitions
+      .map(t => t.occurred_on)).toEqual(['2022-01-01']);
+    expect(derive('', '', [row('companies/acme-example-labs', 'works_at', { link_source: 'frontmatter', origin_field: 'company' })], {
+      company: [{ name: 'Acme', since: '2021-04' }, { name: 'Acme Example', since: '2022-01' }],
+    }).transitions).toEqual([]);
   });
 });
 

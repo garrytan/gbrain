@@ -11,12 +11,20 @@
  * credential belongs to is checked separately against the connector state
  * pin (`connector-state.ts`), because excluded credential fields can change
  * which account a sweep reads.
+ *
+ * #6561: a leaf a parser starts emitting with a default that preserves the
+ * earlier behavior (Google `contactsDir: 'people'`) declares that default as
+ * `elideWhen`, and is left out of the digest while it holds it, so unchanged
+ * sources keep the pre-field checkpoint key. Releases that hashed the default
+ * wrote checkpoints under the non-elided digest; it stays addressable as an
+ * alias (`aliasDigests`, `connectorCheckpointKeys`) so those rows are loaded
+ * by the upgrade migration and never orphaned.
  */
 import { digest } from './digest.ts';
 import { parseGoogleSourceConfig } from '../google/source-config.ts';
 import { parseGitHubSourceConfig } from '../github-source-config.ts';
 import type { GitHubSourceConfig } from '../github-source.ts';
-import type { GoogleSourceConfig } from '../google/types.ts';
+import { DEFAULT_CONTACTS_DIR, type GoogleSourceConfig } from '../google/types.ts';
 
 export type ConnectorKind = 'google' | 'github';
 
@@ -25,7 +33,9 @@ export const CONNECTOR_SOURCE_KINDS: readonly ConnectorKind[] = ['google', 'gith
 export function isConnectorSourceKind(kind: unknown): kind is ConnectorKind { return CONNECTOR_SOURCE_KINDS.includes(kind as ConnectorKind); }
 export type ConnectorConfig = GoogleSourceConfig | GitHubSourceConfig;
 type LeafClass = 'identity' | 'excluded';
-type Rule = LeafClass | ((config: GitHubSourceConfig) => LeafClass);
+/** An identity leaf left out of the digest while it holds the default it was introduced with (#6561). */
+interface ElidedLeaf { elideWhen: unknown }
+type Rule = LeafClass | ElidedLeaf | ((config: GitHubSourceConfig) => LeafClass);
 
 const underAuto = (config: GitHubSourceConfig): LeafClass => config.scope === 'auto' ? 'identity' : 'excluded';
 
@@ -34,10 +44,11 @@ const underAuto = (config: GitHubSourceConfig): LeafClass => config.scope === 'a
  * output and fails on a leaf missing here; an unlisted leaf still joins the
  * identity at runtime, never the exclusion list.
  */
-export const CONNECTOR_LEAF_RULES: { google: Record<string, LeafClass>; github: Record<string, Rule> } = {
+export const CONNECTOR_LEAF_RULES: { google: Record<string, LeafClass | ElidedLeaf>; github: Record<string, Rule> } = {
   google: {
-    account: 'identity', services: 'identity', historyDays: 'identity', calendarId: 'identity', dir: 'identity',
-    access: 'excluded', tokenCommand: 'excluded', tokenEnv: 'excluded',
+    account: 'identity', services: 'identity', historyDays: 'identity', futureDays: 'identity', calendarId: 'identity', dir: 'identity',
+    contactsDir: { elideWhen: DEFAULT_CONTACTS_DIR },
+    access: 'excluded', tokenCommand: 'excluded', tokenEnv: 'excluded', loopsExcludeLabels: 'excluded',
   },
   github: {
     scope: 'identity', repos: 'identity', dir: 'identity',
@@ -62,22 +73,31 @@ export function connectorConfigLeaves(config: object): Record<string, unknown> {
   return leaves;
 }
 
+const leafRule = (kind: ConnectorKind, path: string): Rule | undefined => (CONNECTOR_LEAF_RULES[kind] as Record<string, Rule>)[path];
+
 export function classifyConnectorLeaf(kind: ConnectorKind, config: ConnectorConfig, path: string): LeafClass | undefined {
-  const rule = (CONNECTOR_LEAF_RULES[kind] as Record<string, Rule>)[path];
-  return typeof rule === 'function' ? rule(config as GitHubSourceConfig) : rule;
+  const rule = leafRule(kind, path);
+  if (typeof rule === 'function') return rule(config as GitHubSourceConfig);
+  return typeof rule === 'object' ? 'identity' : rule;
 }
 
-/** The identity-bearing leaves, canonicalized: set-valued lists sorted and de-duplicated. */
-export function connectorIdentityLeaves(kind: ConnectorKind, config: ConnectorConfig): Record<string, unknown> {
+/**
+ * The identity-bearing leaves, canonicalized: set-valued lists sorted and de-duplicated. An elided leaf holding
+ * its default is left out unless `elide` is false (the digest releases before #6561 computed).
+ */
+export function connectorIdentityLeaves(kind: ConnectorKind, config: ConnectorConfig, elide = true): Record<string, unknown> {
   const identity: Record<string, unknown> = {};
   for (const [path, value] of Object.entries(connectorConfigLeaves(config))) {
     if (classifyConnectorLeaf(kind, config, path) === 'excluded') continue;
+    const rule = leafRule(kind, path);
+    if (elide && typeof rule === 'object' && value === rule.elideWhen) continue;
     identity[path] = (path === 'services' || path === 'repos') && Array.isArray(value) ? [...new Set(value.map(String))].sort() : value;
   }
   return identity;
 }
 
-export interface ConnectorIdentity { kind: ConnectorKind; config: ConnectorConfig; digest: string }
+/** `digest` addresses the checkpoint; `aliasDigests` are earlier releases' digests of the same config (#6561). */
+export interface ConnectorIdentity { kind: ConnectorKind; config: ConnectorConfig; digest: string; aliasDigests: string[] }
 
 export function parseConnectorConfig(kind: ConnectorKind, raw: Record<string, unknown>, localPath: string | null): ConnectorConfig {
   return kind === 'google' ? parseGoogleSourceConfig(raw, localPath ?? '') : parseGitHubSourceConfig(raw, localPath ?? '');
@@ -86,11 +106,23 @@ export function parseConnectorConfig(kind: ConnectorKind, raw: Record<string, un
 /** The parsed connector config plus its identity digest. The raw config is never an identity. */
 export function connectorIdentity(kind: ConnectorKind, raw: Record<string, unknown>, localPath: string | null): ConnectorIdentity {
   const config = parseConnectorConfig(kind, raw, localPath);
-  return { kind, config, digest: digest({ kind, identity: connectorIdentityLeaves(kind, config) }) };
+  const canonical = digest({ kind, identity: connectorIdentityLeaves(kind, config) });
+  const interim = digest({ kind, identity: connectorIdentityLeaves(kind, config, false) });
+  return { kind, config, digest: canonical, aliasDigests: interim === canonical ? [] : [interim] };
+}
+
+/** True when `configHash` (frozen on an admitted write) names this identity under its canonical or an alias digest. */
+export function connectorIdentityMatches(identity: Pick<ConnectorIdentity, 'digest' | 'aliasDigests'>, configHash: string): boolean {
+  return configHash === identity.digest || identity.aliasDigests.includes(configHash);
 }
 
 export function connectorCheckpointKey(sourceId: string, incarnation: string, identity: Pick<ConnectorIdentity, 'kind' | 'digest'>): string {
   return digest({ sourceId, incarnation, connector: identity.kind, identity: identity.digest });
+}
+
+/** Every key a source's checkpoint may live under: the canonical key first, then its alias keys. */
+export function connectorCheckpointKeys(sourceId: string, incarnation: string, identity: Pick<ConnectorIdentity, 'kind' | 'digest' | 'aliasDigests'>): string[] {
+  return [identity.digest, ...identity.aliasDigests].map(d => connectorCheckpointKey(sourceId, incarnation, { kind: identity.kind, digest: d }));
 }
 
 /** Legacy and current connector intent namespaces; every filter on connector kinds uses these. */

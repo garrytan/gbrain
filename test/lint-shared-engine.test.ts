@@ -36,7 +36,7 @@ describe('runLintCore engine reuse (issue #1678)', () => {
       kind: 'postgres' as const,
       // Model the shared engine's source-root lookup and lock bookkeeping;
       // neither operation opens another pool or changes the reuse counters.
-      executeRaw: async () => [],
+      executeRaw: async (sql: string) => sql.includes('FROM persistence_brain') ? [{ enabled: false }] : [], // #6482: the strict mode reader needs one well-formed unmanaged row.
       sql: async (parts: TemplateStringsArray, ...params: unknown[]) => {
         const statement = parts.join('?');
         if (statement.includes('INSERT INTO gbrain_cycle_locks')) return [{ id: params[0], fence: 'test-fence' }];

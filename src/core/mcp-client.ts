@@ -20,16 +20,21 @@
 import { randomUUID } from 'node:crypto';
 import { isPersistenceIpcMutation } from './persistence/ipc.ts';
 import { replayWhilePending } from './persistence/write-wait.ts';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { anySignal } from './abort-check.ts';
-import { canonicalCodeFor } from './error-catalogue.ts';
 import type { GBrainConfig } from './config.ts';
 import { discoverOAuth, mintClientCredentialsToken } from './remote-mcp-probe.ts';
-import { isWriteErrorCode, isWriteReceipt, isWriteRequestId, publicWriteReceipt, type WriteErrorCode, type WriteReceipt } from './persistence/types.ts';
+import { isWriteErrorCode, isWriteReceipt, isWriteRequestId, publicWriteReceipt } from './persistence/types.ts';
 import { GBRAIN_CLIENT_HEADER, GBRAIN_THIN_CLIENT_NAME } from '../mcp/result-rows.ts';
 import { VERSION } from '../version.ts';
+import { RemoteMcpError, extractResponseMeta, type RemoteMcpErrorDetail } from './remote-mcp-error.ts';
+
+// The error class and the envelope-meta readers live in remote-mcp-error.ts so
+// a local CLI command can name them without loading this module's MCP SDK graph.
+export { RemoteMcpError, extractResponseMeta, ignoredRemoteParams } from './remote-mcp-error.ts';
+export type { RemoteMcpErrorReason, RemoteMcpErrorDetail } from './remote-mcp-error.ts';
 
 interface CachedToken {
   access_token: string;
@@ -50,100 +55,6 @@ export function _clearMcpClientTokenCache(): void {
 }
 
 /**
- * Stable union of failure reasons. The CLI dispatcher (cli.ts thin-client
- * routing branch, v0.31.1) uses an exhaustive TS switch over this union to
- * produce canned, actionable user messages — adding a new variant fails
- * compilation until every dispatcher knows what to render.
- *
- * v0.31.1 additions:
- *  - `kind` sub-tag on `network` errors distinguishes 'unreachable' /
- *    'timeout' / 'aborted' so callers can render the right hint.
- *  - `code` field on `tool_error` carries the MCP server's `error.code` (when
- *    present) so the dispatcher can map missing-scope etc. to pinpoint hints.
- */
-export type RemoteMcpErrorReason =
-  | 'config'
-  | 'discovery'
-  | 'auth'
-  | 'auth_after_refresh'
-  /** OAuth /token answered 429; `detail.retry_after_s` carries its Retry-After. */
-  | 'rate_limited'
-  /** OAuth /token failed after discovery succeeded (non-auth HTTP status or bad body). */
-  | 'token'
-  | 'network'
-  | 'tool_error'
-  | 'parse';
-
-export interface RemoteMcpErrorDetail {
-  status?: number;
-  mcp_url?: string;
-  /** v0.31.1: sub-tag for network errors (timeout vs aborted vs generic). */
-  kind?: 'timeout' | 'aborted' | 'unreachable';
-  /** v0.31.1: server-supplied error code on tool_error (e.g. 'missing_scope'). */
-  code?: string;
-  /** Seconds the server asked us to wait before minting again (rate_limited). */
-  retry_after_s?: number;
-  /** An accepted mutation's receipt survives the transport's tool-error wrapper. */
-  write_request?: WriteReceipt;
-  write_error?: WriteErrorCode;
-  /** Retained even when no acknowledgment proves whether the write was accepted. */
-  request_id?: string;
-  submission_status?: 'unknown' | 'not_sent';
-  message?: string;
-  suggestion?: string;
-  protocol_version?: 1;
-  server_detail?: string;
-  docs?: string;
-  /** Agent contract v1: canonical registry code (`code`) when it differs from or adds to the wire `error` (kept in `code` above). */
-  canonical_code?: string;
-  reason?: string;
-  why?: string;
-  /** Rendered fix as the server sent it (`next` included). */
-  fix?: Record<string, unknown>;
-  /** Notices from the envelope's `notices` key (error results carry exactly one block). */
-  notices?: Array<Record<string, unknown>>;
-  contract_version?: 1;
-}
-
-export class RemoteMcpError extends Error {
-  constructor(
-    public readonly reason: RemoteMcpErrorReason,
-    message: string,
-    public readonly detail?: RemoteMcpErrorDetail,
-  ) {
-    super(message);
-    this.name = 'RemoteMcpError';
-  }
-
-  /** Mutation error output shares the CLI/IPC envelope without inventing a receipt. */
-  toJSON() {
-    const detail = this.detail;
-    const unknown = detail?.submission_status === 'unknown';
-    const wire = detail?.code ?? 'unavailable';
-    return {
-      error: wire,
-      code: detail?.canonical_code ?? canonicalCodeFor(wire),
-      message: detail?.message ?? this.message,
-      ...(detail?.request_id ? { request_id: detail.request_id } : {}),
-      ...(detail?.submission_status ? { submission_status: detail.submission_status } : {}),
-      ...(unknown ? { detail: 'delivery_unknown' } : detail?.server_detail ? { detail: detail.server_detail } : {}),
-      suggestion: detail?.suggestion ?? (detail?.request_id
-        ? `${unknown ? 'Submission state is unknown. ' : ''}Retry the same operation and arguments with request_id ${detail.request_id}; do not generate a replacement ID.`
-        : 'Inspect the remote connection before retrying.'),
-      ...(detail?.protocol_version === 1 ? { protocol_version: 1 } : {}),
-      ...(detail?.docs ? { docs: detail.docs } : {}),
-      ...(detail?.write_request ? { write_request: publicWriteReceipt(detail.write_request) } : {}),
-      ...(detail?.write_error ? { write_error: detail.write_error } : {}),
-      ...(detail?.reason ? { reason: detail.reason } : {}),
-      ...(detail?.why ? { why: detail.why } : {}),
-      ...(detail?.fix ? { fix: detail.fix } : {}),
-      ...(detail?.notices?.length ? { notices: detail.notices } : {}),
-      ...(detail?.contract_version === 1 ? { contract_version: 1 } : {}),
-    };
-  }
-}
-
-/**
  * B5 (#5949): a 429 on the /token mint is the host's mint budget, not a
  * connectivity fault: code `rate_limited`, a provider-side wait, and the
  * read-only check to run once the wait is over.
@@ -159,6 +70,28 @@ function rateLimitedMintDetail(retryAfterS: number | undefined): RemoteMcpErrorD
       why: `Retry after ${wait}; remote doctor confirms the token mint works again.`, requires_exclusive: false,
     },
   };
+}
+
+type HttpClientSdk = typeof import('@modelcontextprotocol/sdk/client/index.js')
+  & typeof import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+let httpClientSdk: HttpClientSdk | undefined;
+
+/**
+ * The SDK's client + Streamable HTTP transport, loaded by the first remote
+ * call (buildClient). Only thin-client calls use them, so a local CLI command
+ * never pays for their import graph.
+ */
+async function loadHttpClientSdk(): Promise<HttpClientSdk> {
+  httpClientSdk ??= {
+    ...(await import('@modelcontextprotocol/sdk/client/index.js')),
+    ...(await import('@modelcontextprotocol/sdk/client/streamableHttp.js')),
+  };
+  return httpClientSdk;
+}
+
+/** A transport error: only possible once loadHttpClientSdk has loaded the transport that throws it. */
+function isStreamableHttpError(e: unknown): e is StreamableHTTPError {
+  return httpClientSdk !== undefined && e instanceof httpClientSdk.StreamableHTTPError;
 }
 
 /**
@@ -204,7 +137,7 @@ export function toRemoteMcpError(e: unknown, mcpUrl: string, signal?: AbortSigna
       {
         mcp_url: mcpUrl,
         kind: 'unreachable',
-        ...(e instanceof StreamableHTTPError && e.code !== undefined && e.code > 0
+        ...(isStreamableHttpError(e) && e.code !== undefined && e.code > 0
           ? { status: e.code } : {}),
       },
     );
@@ -345,6 +278,7 @@ async function getAccessToken(config: GBrainConfig, force = false, signal?: Abor
  * them in fetch so cancellation covers HTTP bodies as well as SDK requests.
  */
 async function buildClient(mcpUrl: string, accessToken: string, signal?: AbortSignal): Promise<Client> {
+  const { Client, StreamableHTTPClientTransport } = await loadHttpClientSdk();
   const transport = new StreamableHTTPClientTransport(new URL(mcpUrl), {
     requestInit: {
       headers: {
@@ -511,7 +445,7 @@ export async function callRemoteTool(
       // Application errors can contain arbitrary text (including client IDs
       // with "401"). Only a rejected HTTP request authorizes a replay.
       signal.throwIfAborted();
-      if (!(e instanceof StreamableHTTPError) || e.code !== 401) throw e;
+      if (!isStreamableHttpError(e) || e.code !== 401) throw e;
       submitted = false; // This attempt was explicitly refused, not accepted.
       // Drop cached token and retry once with a fresh mint.
       tokenCache.delete(remote.mcp_url);
@@ -533,7 +467,7 @@ export async function callRemoteTool(
       } catch (e2) {
         if (e2 instanceof RemoteMcpError && e2.detail?.write_request) throw e2;
         signal.throwIfAborted();
-        if (e2 instanceof StreamableHTTPError && e2.code === 401) {
+        if (isStreamableHttpError(e2) && e2.code === 401) {
           submitted = false;
           tokenCache.delete(remote.mcp_url);
           throw new RemoteMcpError(
@@ -557,6 +491,43 @@ export async function callRemoteTool(
         ? { submission_status: submitted ? 'unknown' as const : 'not_sent' as const } : {}),
       ...(toolName === 'remember' || toolName === 'forget' ? { protocol_version: 1 as const } : {}),
     });
+  } finally {
+    cleanup();
+  }
+}
+
+/** One tool a remote serve lists for this token: its name and the parameter names its input schema declares. */
+export interface RemoteToolListing { name: string; params: string[] }
+
+/**
+ * #6696 B2: the tools a remote serve lists for this client's token (tools/list
+ * already filters by the token's scope and surface). Lets the thin client send
+ * a parameter only to a serve that advertises it. Same token handling as
+ * `callRemoteTool`: a cached token, one refresh on an HTTP 401.
+ */
+export async function listRemoteTools(config: GBrainConfig, opts: CallRemoteToolOptions = {}): Promise<RemoteToolListing[]> {
+  const remote = requireRemoteMcp(config);
+  const { signal, cleanup } = buildAbortController(opts);
+  const list = async (token: string): Promise<RemoteToolListing[]> => {
+    const client = await buildClient(remote.mcp_url, token, signal);
+    try {
+      const { tools } = await client.listTools(undefined, buildMcpRequestOptions(opts, signal));
+      return tools.map((t) => ({ name: t.name, params: Object.keys((t.inputSchema as { properties?: Record<string, unknown> } | undefined)?.properties ?? {}) }));
+    } finally {
+      try { await client.close(); } catch { /* best-effort */ }
+    }
+  };
+  try {
+    try {
+      return await list(await getAccessToken(config, false, signal));
+    } catch (e) {
+      signal.throwIfAborted();
+      if (!isStreamableHttpError(e) || e.code !== 401) throw e;
+      tokenCache.delete(remote.mcp_url);
+      return await list(await getAccessToken(config, true, signal));
+    }
+  } catch (e) {
+    throw toRemoteMcpError(e, remote.mcp_url, signal);
   } finally {
     cleanup();
   }
@@ -615,38 +586,3 @@ export function extractNotices(res: unknown): Array<Record<string, unknown>> {
   return out;
 }
 
-/**
- * T15/FOV-1: read the response-level `_meta` from a tool-call envelope
- * (see docs/protocol/MCP_META_CHANNELS.md). Old servers simply lack the
- * field — callers must treat undefined as "no meta", never as an error.
- */
-export function extractResponseMeta(res: unknown): Record<string, unknown> | undefined {
-  const meta = (res as { _meta?: unknown } | undefined)?._meta;
-  if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
-    return meta as Record<string, unknown>;
-  }
-  return undefined;
-}
-
-/**
- * Params the server reported it ignored (WP3 warn mode): `_meta.warnings`
- * entries with code `unknown_param`, plus the model-visible warning blocks
- * after content[0] for transports that drop `_meta`. Empty for hosts that
- * predate unknown-parameter warnings, which cannot be detected.
- */
-export function ignoredRemoteParams(res: unknown): string[] {
-  const names = new Set<string>();
-  const warnings = extractResponseMeta(res)?.warnings;
-  if (Array.isArray(warnings)) {
-    for (const w of warnings as Array<{ code?: unknown; param?: unknown }>) {
-      if (w?.code === 'unknown_param' && typeof w.param === 'string') names.add(w.param);
-    }
-  }
-  const content = (res as { content?: unknown[] } | undefined)?.content;
-  for (const block of Array.isArray(content) ? content.slice(1) : []) {
-    const text = (block as { text?: unknown })?.text;
-    if (typeof text !== 'string') continue;
-    for (const m of text.matchAll(/^(?:why: )?warning: unknown parameter "([^"]+)" ignored/gm)) names.add(m[1]);
-  }
-  return [...names];
-}

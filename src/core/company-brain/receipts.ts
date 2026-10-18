@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { isWriteRequestId } from '../persistence/types.ts';
+import { readManagedMode } from '../persistence/ownership.ts';
 import { opError, type OpErrorOpts } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { RegistryCode } from '../error-registry.ts';
@@ -116,9 +117,9 @@ function sanitizedDiagnostic(value: unknown): SourceIngestionDiagnostic {
 
 async function lockScope(tx: BrainEngine, input: SourceIngestionScope & { fence: SourceIngestionFence }): Promise<void> {
   validateScope(input);
-  const [brain] = await tx.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1 FOR SHARE');
+  const managed = await readManagedMode(tx, { lock: 'share' });
   if (!input.fence || !['managed', 'unmanaged'].includes(input.fence.mode)) fail('receipt_fence_required', 'An explicit ingestion authority fence is required.', internal, { fix: statusFix(input.sourceId) });
-  if (brain?.enabled && input.fence.mode !== 'managed') fail('receipt_fence_required', 'Managed ingestion requires its worktree owner and topology fence.',
+  if (managed && input.fence.mode !== 'managed') fail('receipt_fence_required', 'Managed ingestion requires its worktree owner and topology fence.',
     `This brain uses managed persistence: run the connect or ${resume(input.sourceId)} on the host that owns source ${input.sourceId}'s worktree, so the ingestion carries its owner fence.`,
     { fix: ownerFix(input.sourceId), docs: RESUME_DOCS });
   if (input.fence.mode === 'managed') {

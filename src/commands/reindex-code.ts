@@ -344,7 +344,7 @@ export async function runReindexCode(
     }
   }
 
-  if (reindexed > 0) await refreshProjectionStatistics(engine);
+  if (reindexed > 0) await refreshProjectionStatistics(engine, reindexed);
   if (budgetExhausted) {
     // Partial-progress result: surfaces what got reindexed before the cap
     // fired. The CLI wrapper translates this into a clear user-facing

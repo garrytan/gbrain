@@ -237,3 +237,20 @@ describe('dream --drain stop contract (#5809)', () => {
   });
 });
 
+
+describe('dream --drain budget stop (#6425)', () => {
+  test('names the spend, the cap and the raise-cap command; --json carries a structured notice', async () => {
+    nextResult = baseResult({ stopped: 'budget', remaining: 2, batches: 2, spent_usd: 0.0151, budget_usd: 0.03 });
+    const human = await runDrainCaptured([]);
+    expect(human.exitCode).toBe(11);
+    expect(human.stderr).toContain('[drain] stopped: budget; spent $0.0151 of the $0.03 per-run cap (cycle.extract_atoms.budget_usd); 2 page(s) remaining. '
+      + 'Rerun: gbrain dream --drain --window 300, or raise the cap: gbrain config set cycle.extract_atoms.budget_usd <usd>');
+    const json = await runDrainCaptured(['--json']);
+    const payload = JSON.parse(json.stdout.find(l => l.trim().startsWith('{'))!);
+    expect(payload).toMatchObject({ stopped: 'budget', spent_usd: 0.0151, budget_usd: 0.03, resume_command: 'gbrain dream --drain --window 300' });
+    expect(payload.notices).toEqual([expect.objectContaining({ code: 'atom_drain_budget', kind: 'info', contract_version: 1,
+      fix: expect.objectContaining({ argv: ['gbrain', 'config', 'set', 'cycle.extract_atoms.budget_usd', '<USD>'], consent: ['paid'], next: 'ask_user',
+        verify: { argv: ['gbrain', 'config', 'get', 'cycle.extract_atoms.budget_usd'] } }) })]);
+    expect(payload.notices[0].why).toContain('$0.0151 of $0.03');
+  });
+});

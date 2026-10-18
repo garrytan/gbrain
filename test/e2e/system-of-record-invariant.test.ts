@@ -389,7 +389,7 @@ ${remoteBody}`, { noEmbed: true, sourceId: 'default', remote: true });
   // page authored with the `## Facts` fence below `<!-- timeline -->` — the
   // LLM-composed shape the issue describes — imported through the actual
   // production write path (importFromContent → parseMarkdown → splitBody).
-  test('a fence written below the sentinel really does land in page.timeline via splitBody, and extract_facts preserves the existing index instead of wiping it', async () => {
+  test('a fence written below the sentinel really does land in page.timeline via splitBody, and extract_facts reads it there instead of wiping the index (#6686)', async () => {
     const slug = 'people/real-split-fence';
     const fenceRows = `| 1 | REAL_SPLIT_FACT | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`;
 
@@ -448,8 +448,9 @@ ${fenceRows}
     expect(moved?.compiled_truth ?? '').not.toContain('gbrain:facts:begin');
     expect(moved?.timeline ?? '').toContain('gbrain:facts:begin');
 
+    // #6686 (D8): a lone timeline fence is the page's fence, so the reconcile reads it in place and keeps the row.
     const r = await runExtractFacts(engine, { slugs: [slug] });
-    expect(r.warnings.some(w => w.includes('FACTS_FENCE_BELOW_SENTINEL'))).toBe(true);
+    expect(r.warnings).toEqual([]);
     expect(r.factsDeleted).toBe(0);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

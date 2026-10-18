@@ -13,6 +13,7 @@
  */
 
 import { embedBatch } from './embedding.ts';
+import { isSingleInputOverLengthError } from './embed-overlength-classify.ts';
 import { isEmbeddingZeroNormError, type EmbeddingZeroNormError } from './ai/embedding-guard.ts';
 import { serr } from './console-prefix.ts';
 import { noteEmbedApiResponse } from './embed-stall.ts';
@@ -276,6 +277,7 @@ export async function embedBatchKeepingUsable(texts: string[], opts: EmbedBatchW
  */
 export function isEmbedRetriableError(e: unknown): boolean {
   if (isEmbeddingZeroNormError(e)) return false; // #4616: terminal per item, never retried
+  if (isSingleInputOverLengthError(e)) return false; // #6772: the same input fails again, even behind a 5xx
   const msg = e instanceof Error ? e.message : String(e);
   return (
     detect429FromCause(e) ||
@@ -316,6 +318,7 @@ export function transientBackoffMs(attempt: number, rng: () => number = Math.ran
  */
 export function isTransientNetworkEmbedError(e: unknown): boolean {
   if (isEmbeddingZeroNormError(e)) return false;
+  if (isSingleInputOverLengthError(e)) return false;
   const TRANSIENT_CODES = /^(DNS_ETIMEOUT|ETIMEOUT|ETIMEDOUT|ESOCKETTIMEDOUT|ECONNRESET|EPIPE|ECONNABORTED|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT|UND_ERR_SOCKET)$/;
   let cur: unknown = e;
   for (let depth = 0; depth < 5 && cur !== undefined && cur !== null; depth++) {

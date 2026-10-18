@@ -15,6 +15,7 @@ import { cliDiagnostic, fixtureDiagnostic } from '../helpers/fixture-diagnostics
 import { initializeFixtures, fixtures, selectFixtureHost, assertConservation, type HarnessConfig } from '../../scripts/persistence/harness.ts';
 import { acquireWorktree } from '../../src/core/persistence/ownership.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
+import { trueUpRequests } from '../../src/core/persistence/receipt-true-up.ts';
 
 const url = process.env.DATABASE_URL;
 const oldBinary = process.env.GBRAIN_TEST_OLD_BINARY;
@@ -32,6 +33,33 @@ describe.skipIf(!url)('authenticated PostgreSQL HTTP accepted-write liveness', (
   let oauthSecret: string;
   let stderr = '';
   const content = (text: string) => `---\ntitle: Synthetic note\ntype: note\n---\n\n${text}`;
+  // #6696 (A1): a request keeps its whole reservation until its last effect settles, then gives back what its receipt does not keep.
+  // Settle the requests under test and run the (idempotent) true-up, so their own shrink lands before the first ledger read.
+  const settle = async (clientRequestIds: string[]) => {
+    const ids = (await pg.engine.executeRaw<{ id: string }>('SELECT id FROM persistence_requests WHERE request_id=ANY($1::uuid[])', [clientRequestIds])).map(row => row.id);
+    await waitFor(async () => (await pg.engine.executeRaw("SELECT 1 FROM persistence_effects WHERE request_id=ANY($1::uuid[]) AND state IN ('queued','running') LIMIT 1", [ids])).length === 0,
+      { timeoutMs: 45000, label: 'request effects settled' });
+    await trueUpRequests(pg.engine, ids);
+  };
+  // Another write's true-up can still land at any time: a write made before an owner SIGKILL may hold an effect the dead owner
+  // claimed, which settles only when its 2-minute lease expires. So the counters and every request's reservation are read in ONE
+  // statement (one snapshot; a true-up changes both in one transaction), and `expectChargedNothing` requires request ids unchanged
+  // and receipt bytes changed by exactly the reservations given back between the two reads: nothing charged, nothing lost.
+  type Ledger = { counters: Array<{ key: string; lifetime_ids: string; terminal_bytes: string }>; reservations: Record<string, { bytes: string; principal: string }> };
+  const ledger = async (): Promise<Ledger> => (await pg.engine.executeRaw<Ledger>(`SELECT
+      (SELECT json_agg(json_build_object('key',key,'lifetime_ids',lifetime_ids::text,'terminal_bytes',terminal_bytes::text) ORDER BY key COLLATE "C") FROM persistence_counters) AS counters,
+      (SELECT COALESCE(json_object_agg(id,json_build_object('bytes',terminal_reservation::text,'principal','principal:'||principal_kind||':'||principal_id)),'{}'::json) FROM persistence_requests) AS reservations`))[0]!;
+  const expectChargedNothing = (before: Ledger, after: Ledger) => {
+    const freed = new Map<string, bigint>();
+    for (const [id, row] of Object.entries(after.reservations)) {
+      const prior = before.reservations[id];
+      expect({ id, admittedSince: prior === undefined }).toEqual({ id, admittedSince: false });
+      const delta = BigInt(prior!.bytes) - BigInt(row.bytes);
+      expect({ id, grew: delta < 0n }).toEqual({ id, grew: false });
+      for (const key of ['brain', row.principal]) freed.set(key, (freed.get(key) ?? 0n) + delta);
+    }
+    expect(after.counters).toEqual(before.counters.map(row => ({ ...row, terminal_bytes: String(BigInt(row.terminal_bytes) - (freed.get(row.key) ?? 0n)) })));
+  };
 
   function cli(args: string[]): string {
     const result = spawnSync('bun', ['--no-env-file', 'run', 'src/cli.ts', ...args], { env, encoding: 'utf8', timeout: 60000 });
@@ -162,7 +190,8 @@ describe.skipIf(!url)('authenticated PostgreSQL HTTP accepted-write liveness', (
     const replacement = clients[index];
     await committed(replacement, put.request_id);
     await committed(replacement, memory.request_id);
-    const before = await pg.engine.executeRaw('SELECT key,lifetime_ids,terminal_bytes FROM persistence_counters ORDER BY key');
+    await settle([put.request_id, memory.request_id]);
+    const before = await ledger();
     const snapshot = await pg.engine.readPageSnapshot(put.slug, { sourceId: source.id });
     expect(snapshot?.page.compiled_truth).toBe(`Original ${auth} fixture`);
     expect(readFileSync(join(source.root, `${put.slug}.md`), 'utf8')).toContain(`Original ${auth} fixture`);
@@ -172,7 +201,7 @@ describe.skipIf(!url)('authenticated PostgreSQL HTTP accepted-write liveness', (
       { fact: memory.fact, source: memory.provenance, source_id: source.id },
     ]);
     expect((await call(replacement, 'put_page', { ...put, content: content('Changed intent') })).body.error).toBe('idempotency_conflict');
-    expect(await pg.engine.executeRaw('SELECT key,lifetime_ids,terminal_bytes FROM persistence_counters ORDER BY key')).toEqual(before);
+    expectChargedNothing(before, await ledger());
     await assertConservation(pg.engine);
   }, 90000);
 
@@ -355,7 +384,7 @@ describe.skipIf(!url)('authenticated PostgreSQL HTTP accepted-write liveness', (
       expect(exclusion).not.toBeNull();
       await exclusion!.release();
       expect((await pg.engine.readPageSnapshot(slug, { sourceId: source.id }))!.revision).toBe(before.revision);
-      const counters = await pg.engine.executeRaw('SELECT key,lifetime_ids,terminal_bytes FROM persistence_counters ORDER BY key');
+      const counters = await ledger();
       await assertConservation(pg.engine);
       if (boundary === 'running') await pg.engine.transaction(async tx => {
         await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol','2',true)");
@@ -380,7 +409,10 @@ describe.skipIf(!url)('authenticated PostgreSQL HTTP accepted-write liveness', (
       expect((await call(successor, 'put_page', args)).body.revision).toBe(done.revision);
       expect(await pg.engine.executeRaw('SELECT id FROM persistence_requests WHERE request_id=$1::uuid', [args.request_id])).toEqual([{ id: retained.id }]);
       expect(await pg.engine.executeRaw('SELECT id FROM page_versions WHERE page_id=$1', [before.page.id])).toHaveLength(versions.length + 1);
-      expect(await pg.engine.executeRaw('SELECT key,lifetime_ids,terminal_bytes FROM persistence_counters ORDER BY key')).toEqual(counters);
+      // The handoff charges nothing twice: since the retained snapshot, receipt bytes moved only by true-ups (this request's and any
+      // earlier write's) and no request id was minted.
+      await settle([args.request_id]);
+      expectChargedNothing(counters, await ledger());
       await assertConservation(pg.engine);
     }, 90000);
   }

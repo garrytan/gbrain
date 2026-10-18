@@ -9,10 +9,11 @@ import { assertLegacyEngineMigration, assertUnmanagedCanonicalWriter } from '../
  */
 
 import { opError } from '../core/ops/contract.ts';
+import { ItemRun } from '../core/item-failure.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { loadConfig, saveConfig, toEngineConfig, gbrainPath, effectiveEnvDatabaseUrl, type GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import type { EngineConfig, Page } from '../core/types.ts';
+import type { EffectiveDateSource, EngineConfig, Page, PageKind } from '../core/types.ts';
 import { writeFileSync, readFileSync, existsSync, unlinkSync, statSync, mkdirSync, renameSync } from 'fs';
 import { createHash } from 'crypto';
 import { resolve, dirname } from 'path';
@@ -26,7 +27,9 @@ import { registerCleanup } from '../core/process-cleanup.ts';
 import { autopilotPausedMarkerPath, autopilotLockPath, markerHolderAlive, MIGRATE_PAUSE_MARKER_PREFIX } from '../core/autopilot-paths.ts';
 export { MIGRATE_PAUSE_MARKER_PREFIX };
 import { listLiveLocks } from '../core/db-lock.ts';
-import { queuePageProjection } from '../core/page-state/projections.ts';
+import { drainProjections, queuePageProjection } from '../core/page-state/projections.ts';
+import { carryChunkMetadata } from '../core/embed-stale.ts';
+import { normalizeAliasList } from '../core/search/alias-normalize.ts';
 
 interface MigrateOpts {
   targetEngine: 'postgres' | 'pglite';
@@ -245,7 +248,8 @@ async function factsColumns(engine: BrainEngine): Promise<string[]> {
  */
 export interface MigrateSimpleTableResult {
   copied: number;
-  failed: number;
+  /** Rows the target refused, with the classified code and the database's reason; any of them blocks the engine switch. */
+  failed: Array<{ id: string; code: string; reason: string }>;
   table_missing: boolean;
 }
 
@@ -268,9 +272,9 @@ export async function copyMigrationSimpleTable(
     }
   };
   const sourceCols = await colsOf(source);
-  if (sourceCols.length === 0) return { copied: 0, failed: 0, table_missing: true };
+  if (sourceCols.length === 0) return { copied: 0, failed: [], table_missing: true };
   const targetColSet = new Set(await colsOf(target));
-  if (targetColSet.size === 0) return { copied: 0, failed: 0, table_missing: true };
+  if (targetColSet.size === 0) return { copied: 0, failed: [], table_missing: true };
   const cols = sourceCols.filter((c) => targetColSet.has(c));
 
   const rows = await source.executeRaw<Record<string, unknown>>(
@@ -279,14 +283,19 @@ export async function copyMigrationSimpleTable(
   await target.executeRaw(`DELETE FROM ${table}`);
   const insertSql = `INSERT INTO ${table} (${cols.map((c) => `"${c}"`).join(', ')})
     VALUES (${cols.map((c, i) => (c === 'evidence' ? `$${i + 1}::text::jsonb` : `$${i + 1}`)).join(', ')})`;
-  const result: MigrateSimpleTableResult = { copied: 0, failed: 0, table_missing: false };
+  const result: MigrateSimpleTableResult = { copied: 0, failed: [], table_missing: false };
+  // GBRA-130 A-31: a refused row is recorded with its reason (it blocks the switch); a run-scoped failure (lost
+  // connection, failed transaction) or a systemic run (most rows refused) stops the copy instead.
+  const run = new ItemRun('migrate_engine.loop_rows');
   for (const raw of rows) {
     const row = nullifyUndefinedColumns(raw);
     try {
       await target.executeRaw(insertSql, cols.map((c) => row[c]));
       result.copied++;
-    } catch {
-      result.failed++;
+      run.succeed();
+    } catch (error) {
+      const failure = run.fail(`${table}:${String(row.id)}`, error);
+      result.failed.push({ id: String(row.id), code: failure.code, reason: failure.message });
     }
     onRow?.();
   }
@@ -484,6 +493,9 @@ export interface PageCopyCounts {
   raw_data: number;
 }
 
+/** Queue reasons the migration rebuilds before its flip: pages it copied sealed, and earlier attempts that failed. */
+const MIGRATION_PROJECTION_REASONS = ['engine_migration', 'rebuild_failed'] as const;
+
 export async function copyPageToTarget(
   source: BrainEngine,
   target: BrainEngine,
@@ -496,6 +508,13 @@ export async function copyPageToTarget(
   // Verbatim copy — the source engine's row is authoritative, so a
   // legitimately blank body (image page, deliberate clear) must land even
   // when a re-run's target row already holds an older non-empty body.
+  // #6286: the full row travels: origin, kind and provenance columns `Page` does not carry are read from the source row.
+  const [row] = await source.executeRaw<{ page_kind: PageKind | null; source_path: string | null; effective_date: Date | string | null; effective_date_source: EffectiveDateSource | null;
+    import_filename: string | null; source_kind: string | null; source_uri: string | null; ingested_via: string | null; ingested_at: Date | string | null; sealed: boolean }>(
+    `SELECT page_kind,source_path,effective_date,effective_date_source,import_filename,source_kind,source_uri,ingested_via,ingested_at,
+            text_projection_revision IS NOT DISTINCT FROM knowledge_revision AS sealed
+       FROM pages WHERE slug=$1 AND source_id=$2`, [page.slug, page.source_id ?? 'default']);
+  const asDate = (value: Date | string | null | undefined) => value == null ? null : value instanceof Date ? value : new Date(value);
   await target.putPage(page.slug, nullifyUndefinedColumns({
     type: page.type,
     title: page.title,
@@ -503,7 +522,10 @@ export async function copyPageToTarget(
     timeline: page.timeline,
     frontmatter: page.frontmatter,
     content_hash: page.content_hash,
+    ...(row ? { page_kind: row.page_kind ?? undefined, source_path: row.source_path, effective_date: asDate(row.effective_date), effective_date_source: row.effective_date_source,
+      import_filename: row.import_filename, source_kind: row.source_kind, source_uri: row.source_uri, ingested_via: row.ingested_via } : {}),
   }), { ...sourceOpts, allowEmptyOverwrite: true });
+  await target.setPageAliases(page.slug, page.source_id ?? 'default', normalizeAliasList(page.frontmatter?.aliases));
 
   // #4527: putPage stamps created_at/updated_at with now() (PageInput has no
   // timestamp fields), so without this every migrated page loses its
@@ -512,13 +534,14 @@ export async function copyPageToTarget(
   // timestamps directly; COALESCE keeps the putPage-stamped value if the
   // source engine ever hands back a NULL (never expected, but a copy must
   // not null out a NOT NULL column).
-  if (page.created_at != null || page.updated_at != null) {
+  if (page.created_at != null || page.updated_at != null || row?.ingested_at != null) {
     await target.executeRaw(
       `UPDATE pages
           SET created_at = COALESCE($1, created_at),
-              updated_at = COALESCE($2, updated_at)
+              updated_at = COALESCE($2, updated_at),
+              ingested_at = COALESCE($5::timestamptz, ingested_at)
         WHERE slug = $3 AND source_id = $4`,
-      [page.created_at ?? null, page.updated_at ?? null, page.slug, page.source_id ?? 'default'],
+      [page.created_at ?? null, page.updated_at ?? null, page.slug, page.source_id ?? 'default', asDate(row?.ingested_at)],
     );
   }
 
@@ -526,11 +549,12 @@ export async function copyPageToTarget(
   // projection. The target rebuilds sanitized text under its new revision.
   const chunks = await source.getChunksWithEmbeddings(page.slug, { ...sourceOpts, includeUnsealed: true });
   if (chunks.length > 0) {
-    await target.upsertChunks(page.slug, chunks.map(c => ({
+    await target.upsertChunks(page.slug, chunks.map(c => carryChunkMetadata(c, {
       chunk_index: c.chunk_index,
       chunk_text: c.chunk_text,
       chunk_source: c.chunk_source,
       embedding: c.embedding || undefined,
+      embedding_image: c.embedding_image || undefined,
       model: c.model,
       token_count: c.token_count || undefined,
     })), sourceOpts);
@@ -563,7 +587,9 @@ export async function copyPageToTarget(
     await target.putRawData(page.slug, rd.source, rd.data, sourceOpts);
   }
 
-  await queuePageProjection(target, page.source_id ?? 'default', page.slug, 'engine_migration');
+  // #6286: a page sealed on the source is rebuilt on the target before the flip (MIGRATION_PROJECTION_REASONS); one
+  // the source itself had not sealed stays queued as it was, so the copy keeps its verbatim chunks and vectors.
+  await queuePageProjection(target, page.source_id ?? 'default', page.slug, row?.sealed === false ? 'engine_migration_source_unsealed' : 'engine_migration');
 
   return {
     chunks: chunks.length,
@@ -869,6 +895,19 @@ export async function assertWindowsGraduationPlatform(sourceEngine: BrainEngine,
   }
 }
 
+/** GBRA-130 A-31: prints the open-loop rows the target refused (each blocks the engine switch), sets the exit verdict, and returns how many. */
+function reportLoopRowFailures(tables: Record<string, MigrateSimpleTableResult>, opts: Pick<MigrateOpts, 'targetEngine' | 'targetPath' | 'targetUrl'>): number {
+  const failures = Object.entries(tables).flatMap(([table, r]) => r.failed.map(f => ({ table, ...f })));
+  if (failures.length === 0) return 0;
+  console.error(`\n${failures.length} open-loop row(s) FAILED to copy:`);
+  for (const f of failures.slice(0, 20)) console.error(`  - ${f.table} id ${f.id} (${f.code}): ${f.reason}`);
+  if (failures.length > 20) console.error(`  ... and ${failures.length - 20} more`);
+  const retry = ['gbrain', 'migrate', '--to', opts.targetEngine, ...(opts.targetPath ? ['--path', opts.targetPath] : []), ...(opts.targetUrl ? ['--url', '<the same connection string>'] : [])];
+  console.error(`The active engine was NOT switched. Fix the cause each reason names on the target, then re-run: ${retry.join(' ')}`);
+  setCliExitVerdict(1);
+  return failures.length;
+}
+
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
   const opts = parseArgs(args);
   await assertWindowsGraduationPlatform(sourceEngine, opts);
@@ -1049,8 +1088,9 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   const rowCounts: PageCopyCounts = { chunks: 0, tags: 0, timeline_entries: 0, raw_data: 0 };
   let linksCopied = 0;
   let factsResult: MigrateFactsResult = { copied: 0, failed: [], embeddings_dropped: 0, table_missing: false };
-  let openLoopsResult: MigrateSimpleTableResult = { copied: 0, failed: 0, table_missing: true };
-  let loopSuppressionsResult: MigrateSimpleTableResult = { copied: 0, failed: 0, table_missing: true };
+  let openLoopsResult: MigrateSimpleTableResult = { copied: 0, failed: [], table_missing: true };
+  let loopSuppressionsResult: MigrateSimpleTableResult = { copied: 0, failed: [], table_missing: true };
+  let loopRowsFailed = 0;
   let configResult: { copied: number; skipped: string[] } = { copied: 0, skipped: [] };
   try {
     sourcesCopied = await copyMigrationSources(sourceEngine, targetEngine);
@@ -1115,6 +1155,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     openLoopsResult = await copyMigrationSimpleTable(sourceEngine, targetEngine, 'open_loops', () => progress.tick(1));
     loopSuppressionsResult = await copyMigrationSimpleTable(sourceEngine, targetEngine, 'loop_suppressions', () => progress.tick(1));
     progress.finish();
+    loopRowsFailed = reportLoopRowFailures({ open_loops: openLoopsResult, loop_suppressions: loopSuppressionsResult }, opts);
     if (factsResult.failed.length > 0) {
       console.error(`\n${factsResult.failed.length} fact row(s) FAILED to copy:`);
       for (const f of factsResult.failed.slice(0, 10)) {
@@ -1153,7 +1194,22 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     // finished. Leaving the file-plane config untouched keeps the source the
     // active engine, so a retry (which resumes via the still-intact manifest)
     // is a same-shaped command, not a special case.
-    if (failures.length === 0 && factsResult.failed.length === 0) {
+    // #6286: every copied page was queued for a projection rebuild; rebuild them on the target now (keyless, no provider
+    // calls), before the flip and while autopilot is paused, so the new active brain starts sealed and its first sync
+    // does not replace chunks. A page whose rebuild fails blocks the flip like a page that failed to copy.
+    let projectionsFailed = 0;
+    if (failures.length === 0 && factsResult.failed.length === 0 && loopRowsFailed === 0) {
+      console.log('Rebuilding text projections on the target...');
+      const drained = await drainProjections(targetEngine, { reasons: MIGRATION_PROJECTION_REASONS });
+      projectionsFailed = drained.failed.length;
+      console.log(`Projections: ${drained.rebuilt} rebuilt, ${drained.superseded} superseded, ${drained.failed.length} failed, ${drained.remaining} still queued.`);
+      if (projectionsFailed) {
+        for (const f of drained.failed.slice(0, 10)) console.error(`  - ${f.source_id}/${f.slug}: ${f.reason}`);
+        console.error('The active engine was NOT switched: the target has pages whose text projection did not rebuild. Fix them (`gbrain projections drain` on the target names each next step), then re-run `gbrain migrate` to resume.');
+        setCliExitVerdict(1);
+      }
+    }
+    if (failures.length === 0 && factsResult.failed.length === 0 && loopRowsFailed === 0 && projectionsFailed === 0) {
       const existingFile = (await import('../core/config.ts')).loadConfigFileOnly() ?? ({} as GBrainConfig);
       const newConfig: GBrainConfig = {
         ...existingFile,
@@ -1205,18 +1261,19 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   const loopsRow = (label: string, r: MigrateSimpleTableResult) =>
     summaryRow(label, r.table_missing
       ? '0 (source schema predates the open-loop tables)'
-      : r.failed > 0 ? `${r.copied} (${r.failed} FAILED)` : String(r.copied));
+      : r.failed.length > 0 ? `${r.copied} (${r.failed.length} FAILED)` : String(r.copied));
   loopsRow('open loops', openLoopsResult);
   loopsRow('loop suppressions', loopSuppressionsResult);
   summaryRow('config rows', configResult.skipped.length > 0
     ? `${configResult.copied} (skipped engine-local: ${configResult.skipped.join(', ')})`
     : String(configResult.copied));
 
-  const cleanRun = failures.length === 0 && factsResult.failed.length === 0;
+  const cleanRun = failures.length === 0 && factsResult.failed.length === 0 && loopRowsFailed === 0;
   if (!cleanRun) {
     const parts = [
       failures.length > 0 ? `${migrated} of ${pagesToMigrate.length} pages copied, ${failures.length} failed (${completedSet.size} already done from a prior run)` : '',
       factsResult.failed.length > 0 ? `${factsResult.failed.length} fact row(s) failed` : '',
+      loopRowsFailed > 0 ? `${loopRowsFailed} open-loop row(s) failed` : '',
     ].filter(Boolean).join('; ');
     console.log(`\nMigration completed with errors. ${parts}. See failure list above.`);
     console.log(`Config NOT switched — still using engine: ${config.engine}. Re-run \`gbrain migrate --to ${opts.targetEngine}\` to retry; already-copied pages resume via the manifest.`);

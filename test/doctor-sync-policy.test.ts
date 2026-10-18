@@ -66,8 +66,9 @@ describe('doctor sync freshness honors automatic sync policy', () => {
     await seed('enabled-example', config);
     const result = await checkSyncFreshness(engine, { nowMs: NOW });
     expect(result.status).toBe('fail');
-    expect(result.message).toContain("'enabled-example' has never been synced");
-    expect(result.details).toEqual({ unchanged_count: 0, synced_recently_count: 0, stale_count: 1 });
+    expect(result.message).toContain("'enabled-example': no successful sync recorded");
+    expect(result.details).toEqual({ unchanged_count: 0, synced_recently_count: 0, stale_count: 1, code: 'sync_no_successful_sync',
+      no_successful_sync: [expect.objectContaining({ source_id: 'enabled-example', reason: 'no_attempt' })] });
   });
 
   test('legacy archived-column fallback also loads and honors config', async () => {

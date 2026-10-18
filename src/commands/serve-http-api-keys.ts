@@ -16,7 +16,7 @@ import { cliRenderContext, toAgentError, type Action } from '../core/agent-outpu
 import { grantFromTokenRow } from '../core/grants/model.ts';
 import { opError } from '../core/ops/contract.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
-import { ALLOWED_SCOPES_LIST, isScope } from '../core/scope.ts';
+import { ALLOWED_SCOPES_LIST, isScope, localCliOnlyScopeViolation } from '../core/scope.ts';
 import { isValidSourceId } from '../core/source-id.ts';
 import { isValidHolder } from '../core/takes-fence.ts';
 import { mintLegacyToken, revokeLegacyTokenById, TOKEN_ID_RE } from '../core/token-mint.ts';
@@ -74,6 +74,12 @@ export async function parseApiKeyMintRequest(engine: BrainEngine, body: unknown)
     throw invalid(`Unknown scope ${unknown.map(s => JSON.stringify(s)).join(', ')}. Valid scopes: ${valid}.`,
       `Resubmit with scopes from: ${valid}.`, 'A misspelled scope is refused at mint time so it never mints a key with a different grant than asked.',
       createFix(['--scopes', 'read,write'], 'Mints the same key with the default read,write scopes.'));
+  }
+  const localOnly = localCliOnlyScopeViolation(scopesParam ?? []);
+  if (localOnly) {
+    throw invalid(localOnly, 'Resubmit without memory_confirm, or ask the user to mint the key on the brain host with gbrain auth create.',
+      'Confirming memory as the owner is granted only by the local CLI, never by the admin API.',
+      { ...createFix(['--scopes', 'read,write,memory_confirm'], 'Mints the key with memory_confirm from the local CLI on the brain host.'), actor: 'user' });
   }
   const scopes = scopesParam ?? (defaultsApplied.push('scopes'), [...API_KEY_DEFAULT_SCOPES]);
 

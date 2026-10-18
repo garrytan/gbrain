@@ -24,6 +24,17 @@ test('cumulative principal and brain defaults carry 600 admissions a day for at 
   expect(bytesDays(DEFAULT_JOURNAL_LIMITS.brainTerminalBytes)).toBeGreaterThanOrEqual(365);
 });
 
+test('#6696 defaults carry an autopilot brain at 5,000 admissions a day for a year on ids and receipt bytes', () => {
+  // The growth model in docs/guides/concurrent-writes.md#growth-model: every receipt reserves 16 KiB through the
+  // 30-day window and keeps 4 KiB once compacted (measured 3.9 KB per compacted put_page).
+  const perDay = 5000, windowDays = 30, reserved = 16_384, retained = 4096;
+  const bytesDays = (limit: number) => windowDays + (limit - perDay * windowDays * reserved) / (perDay * retained);
+  expect(DEFAULT_JOURNAL_LIMITS.principalLifetimeIds).toBeGreaterThanOrEqual(2_000_000);
+  expect(DEFAULT_JOURNAL_LIMITS.brainLifetimeIds).toBeGreaterThanOrEqual(DEFAULT_JOURNAL_LIMITS.principalLifetimeIds);
+  expect(DEFAULT_JOURNAL_LIMITS.principalLifetimeIds / perDay).toBeGreaterThanOrEqual(365);
+  expect(bytesDays(DEFAULT_JOURNAL_LIMITS.principalTerminalBytes)).toBeGreaterThanOrEqual(365);
+  expect(DEFAULT_JOURNAL_LIMITS.brainTerminalBytes).toBeGreaterThanOrEqual(DEFAULT_JOURNAL_LIMITS.principalTerminalBytes);
+});
 test('configured retention compacts receipts past a backlog of unfinished effects', () => compactionSkipsUnfinishedReceipts(), 180_000);
 test('doctor warns at 80% of a cumulative cap and the refusal names the key and a value', () => capacityWarnsAndRefusalNamesTheKey(), 120_000);
 

@@ -375,6 +375,84 @@ describe('gbrain claw-test — adversarial-gate regression pins', () => {
     }
   }, 60_000);
 
+  // #6775: a phase runs in its own process group, so a timeout, an interrupt
+  // and the phase's settle stop every process it started, not just its leader.
+  const phaseGroupState = (pid: number) => spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf-8' }).stdout.trim();
+  const phaseGoneAfter = async (pid: number, ms: number) => {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      const state = phaseGroupState(pid);
+      if (!state || state.startsWith('Z')) return true;
+      if (Date.now() > deadline) return false;
+      await Bun.sleep(50);
+    }
+  };
+  /** A fake gbrain whose every invocation leaves a grandchild that ignores TERM and INT, records its pid, and waits. */
+  const writeHangingGbrain = (tmp: string, kidFile: string) => {
+    const fake = join(tmp, 'hang-group-gbrain');
+    writeFileSync(fake, '#!/bin/sh\nsh -c \'trap "" TERM INT; echo $$ > "' + kidFile + '"; exec sleep 60\' &\nwait\n', 'utf-8');
+    chmodSync(fake, 0o755);
+    return fake;
+  };
+
+  test('phase timeout stops the whole phase process group, including a grandchild that ignores SIGTERM', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'claw-test-e2e-group-'));
+    const kidFile = join(tmp, 'kid.pid');
+    let kid = 0;
+    try {
+      const fake = writeHangingGbrain(tmp, kidFile);
+      const result = spawnSync(BIN_PATH, ['claw-test', '--scenario', 'fresh-install'], {
+        cwd: REPO_ROOT,
+        env: { ...process.env, GBRAIN_HOME: tmp, GBRAIN_BIN_OVERRIDE: fake, GBRAIN_CLAW_SCENARIOS_DIR: SCENARIOS_DIR, GBRAIN_CLAW_PHASE_TIMEOUT_MS: '2000' },
+        encoding: 'utf-8',
+        timeout: 45_000,
+      });
+      expect(result.signal).toBeNull();
+      expect(result.status).toBe(1);
+      kid = Number(readFileSync(kidFile, 'utf-8').trim());
+      expect(kid).toBeGreaterThan(0);
+      expect(await phaseGoneAfter(kid, 3000)).toBe(true);
+    } finally {
+      if (kid) { try { process.kill(kid, 'SIGKILL'); } catch { /* gone */ } }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) {
+    test(signal + ' during a phase stops its process group (exit ' + code + ', no surviving descendant)', async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'claw-test-e2e-interrupt-'));
+      const kidFile = join(tmp, 'kid.pid');
+      let kid = 0;
+      let run: ReturnType<typeof Bun.spawn> | undefined;
+      try {
+        const fake = writeHangingGbrain(tmp, kidFile);
+        run = Bun.spawn([process.execPath, join(REPO_ROOT, 'src', 'cli.ts'), 'claw-test', '--scenario', 'fresh-install'], {
+          cwd: REPO_ROOT,
+          env: { ...process.env, GBRAIN_HOME: tmp, GBRAIN_BIN_OVERRIDE: fake, GBRAIN_CLAW_SCENARIOS_DIR: SCENARIOS_DIR, GBRAIN_CLAW_PHASE_TIMEOUT_MS: '60000' },
+          stdin: 'ignore',
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
+        const deadline = Date.now() + 20_000;
+        while (!existsSync(kidFile) && Date.now() < deadline) await Bun.sleep(25);
+        expect(existsSync(kidFile)).toBe(true);
+        await Bun.sleep(200);
+        kid = Number(readFileSync(kidFile, 'utf-8').trim());
+        run.kill(signal);
+        const exit = await Promise.race([run.exited, Bun.sleep(20_000).then(() => 'timeout' as const)]);
+        expect(exit).toBe(code);
+        expect(await phaseGoneAfter(kid, 3000)).toBe(true);
+        const out = await new Response(run.stdout as ReadableStream).text();
+        const runDir = out.match(/^tempdir(?: kept at)?: (.+)$/m)?.[1];
+        if (runDir) rmSync(runDir.trim(), { recursive: true, force: true });
+      } finally {
+        run?.kill('SIGKILL');
+        if (kid) { try { process.kill(kid, 'SIGKILL'); } catch { /* gone */ } }
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    }, 60_000);
+  }
+
   test('fail-closed doctor oracle: doctor exiting 0 with unparsable output FAILS the live run', () => {
     // A wrapper gbrain that answers `doctor` with a non-JSON banner and exit 0
     // — the pre-fix oracle only rejected literal "unhealthy" and passed this.

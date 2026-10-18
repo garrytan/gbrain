@@ -85,12 +85,36 @@ the VM running the machine-level items below counts only once it joins the
 pool.
 The first VM to finish setup runs the
 machine-level work first: gitleaks, `verify`, then the serial lane's
-machine-exclusive files one at a time with nothing else on that VM. After that
-it joins the pool. Items run through the `ci:local` wrappers
+machine-exclusive files and the slow lane's latency contracts
+(`run-slow-tests.sh --dry-run-list-exclusive`, the files GitHub CI runs on a
+dedicated perf runner) one at a time with nothing else on that VM. After that
+it joins the pool. Before `verify`, it uploads the incremental typecheck state
+(`node_modules/.cache/gbrain-typecheck.tsbuildinfo`, which the checkout
+tarball never carries). The orchestrator builds that state with
+`bun run typecheck` on the local checkout while the VMs boot
+(`scripts/ubicloud/typecheck-state.ts`). Cold, verify's typecheck took 81-84 s
+on a 16-vCPU VM and crossed the 120 s per-check cap on a loaded host; warm, it
+takes 16-19 s. tsc revalidates every file by content hash, so the state never
+changes the result. When the local checkout's `node_modules` is a symlink (a
+worktree sharing another checkout's install), tsc records node_modules files by
+their real path outside the checkout; the uploaded copy
+(`<run>/typecheck.tsbuildinfo`) re-roots them under the checkout's own
+`node_modules`, or the state would not apply on the VM and its typecheck would run
+cold. The run log says whether verify's typecheck ran warm or cold, and the local
+build's output is in `logs/local-typecheck.log`. Items run through the `ci:local` wrappers
 (`scripts/ubicloud/ci-item.sh`): `run-unit-shard.sh`, `run-serial-tests.sh` and
 `run-slow-tests.sh` accept explicit file arguments for this purpose, and
 `run-e2e.sh` runs each E2E file against its slot's own server and pooler. The
-unit, serial and slow lanes run with database URLs unset. Tests run natively as
+unit, serial and slow lanes run with database URLs unset. The `pg-arms` lane
+runs every file in `test/postgres-unit-arms.txt` the way persistence-validation's
+`unit-postgres-arms` step does (`bun --no-env-file test --timeout=120000`,
+`GBRAIN_TEST_ALLOW_DATABASE_URL=1`, no timeout multiplier) against the slot's
+own empty `gbrain_arms_test` database. The summary sums its measured durations over
+that job's `ARM_SHARDS` partition (14 shards), and a shard over the step's 20-minute timeout
+fails the run, since GitHub would cut that shard off mid-list. The committed
+weights must also fit each shard twice over with a minute to spare
+(`ARM_SHARD_BUDGET_MS`, 570 s), because a slow runner ran the files 1.3-2x
+their mined weights. Tests run natively as
 a non-root user on Ubuntu 24.04, the same OS as the CI runners, instead of as
 root in the `oven/bun` container.
 

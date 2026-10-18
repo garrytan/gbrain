@@ -77,6 +77,17 @@ test('recovering clones share principal and brain outstanding quotas with ordina
   expect((await counters(engine, 'brain')).outstanding_count).toBe(0);
 }), 120_000);
 
+test('#6696 (A6): a lifecycle receipt past a cumulative cap refuses write_quota_exhausted with the host raise', () => fixture(async (engine, _home, principal, worktree) => {
+  await engine.setConfig('persistence.limits.brain_lifetime_ids', '0');
+  await expect(record(engine, principal, worktree, { operation: 'reclone', sourceId: 'quota-source' })).rejects.toMatchObject({ code: 'write_quota_exhausted',
+    reason: 'lifetime_ids', detail: 'brain_lifetime_ids', fix: { actor: 'host_admin', argv: ['gbrain', 'config', 'set', 'persistence.limits.brain_lifetime_ids', expect.stringMatching(/^\d+$/)] } });
+  await engine.setConfig('persistence.limits.brain_lifetime_ids', '10');
+  await engine.setConfig('persistence.limits.principal_terminal_bytes', '100');
+  await expect(record(engine, principal, worktree, { operation: 'reclone', sourceId: 'quota-source' })).rejects.toMatchObject({ code: 'write_quota_exhausted',
+    reason: 'terminal_bytes', detail: 'principal_terminal_bytes' });
+  expect(await engine.executeRaw('SELECT id FROM persistence_topology_changes')).toHaveLength(0);
+}), 120_000);
+
 test('normalized intent bytes are exact and release once even after principal revocation', () => fixture(async (engine, _home, principal, worktree) => {
   const intent = { operation: 'reclone', sourceId: 'quota-source', ignored: undefined, config: { note: 'Example café' } };
   const bytes = jsonBytes(intent);

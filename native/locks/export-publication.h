@@ -125,7 +125,7 @@ static unsigned long export_verify(export_handle *handle, export_dir *dir) {
 #endif
 }
 
-static unsigned long export_write(os_handle handle, const void *data, size_t length) {
+static unsigned long export_write_all(os_handle handle, const void *data, size_t length) {
   const char *cursor = data;
   while (length) {
     size_t amount = length > 0x40000000 ? 0x40000000 : length;
@@ -140,7 +140,12 @@ static unsigned long export_write(os_handle handle, const void *data, size_t len
     cursor += written;
     length -= (size_t)written;
   }
-  return export_flush(handle);
+  return 0;
+}
+
+static unsigned long export_write(os_handle handle, const void *data, size_t length) {
+  unsigned long error = export_write_all(handle, data, length);
+  return error ? error : export_flush(handle);
 }
 
 static bool export_component(const char *name) {
@@ -441,12 +446,56 @@ failed:
   return export_fail(env, "begin", error);
 }
 
-static napi_value publish_export_file(napi_env env, napi_callback_info info) {
+#define EXPORT_COPY_BYTES (1024 * 1024)
+
+/* Copies a regular file the caller staged (an absolute path, opened without following a leaf link) in bounded reads. */
+static unsigned long export_copy(os_handle target, const char *source) {
+  char *buffer = malloc(EXPORT_COPY_BYTES);
+  if (!buffer) return export_invalid();
+  unsigned long error = 0;
+#ifdef _WIN32
+  wchar_t *wide = export_wide(source);
+  if (!wide) { free(buffer); return export_invalid(); }
+  os_handle input = CreateFileW(wide, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+      FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+  free(wide);
+  if (input == INVALID_LOCK_HANDLE) error = export_error();
+  BY_HANDLE_FILE_INFORMATION info;
+  if (!error && !GetFileInformationByHandle(input, &info)) error = export_error();
+  if (!error && (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) error = export_invalid();
+  while (!error) {
+    DWORD got = 0;
+    if (!ReadFile(input, buffer, EXPORT_COPY_BYTES, &got, NULL)) { error = export_error(); break; }
+    if (!got) break;
+    error = export_write_all(target, buffer, got);
+  }
+#else
+  os_handle input = source[0] == '/' ? open(source, O_RDONLY | O_NOFOLLOW | O_CLOEXEC) : INVALID_LOCK_HANDLE;
+  if (input == INVALID_LOCK_HANDLE) error = source[0] == '/' ? export_error() : export_invalid();
+  struct stat info;
+  if (!error && fstat(input, &info) != 0) error = export_error();
+  if (!error && !S_ISREG(info.st_mode)) error = export_invalid();
+  while (!error) {
+    long got = read(input, buffer, EXPORT_COPY_BYTES);
+    if (got < 0) { if (errno == EINTR) continue; error = export_error(); break; }
+    if (!got) break;
+    error = export_write_all(target, buffer, (size_t)got);
+  }
+#endif
+  unsigned long close_error = export_close_file(input);
+  free(buffer);
+  if (!error) error = close_error;
+  return error ? error : export_flush(target);
+}
+
+/* Publishes argv[2], a Buffer, or with `from_path` the absolute path of a staged regular file copied in bounded reads. */
+static napi_value publish_export(napi_env env, napi_callback_info info, bool from_path) {
   napi_value argv[3];
   export_handle *handle = export_get(env, info, 3, argv);
   if (!handle) return NULL;
   if (!handle->root || handle->failed || handle->completed) return export_fail(env, "inactive handle", 0);
   char *path = export_string(env, argv[1]);
+  char *source = from_path ? export_string(env, argv[2]) : NULL;
   void *data = NULL;
   size_t length = 0;
   bool buffer = false;
@@ -455,15 +504,15 @@ static napi_value publish_export_file(napi_env env, napi_callback_info info) {
   os_handle temporary = INVALID_LOCK_HANDLE;
   bool published = false;
   if ((error = export_verify(handle, handle->root))) goto failed;
-  if (!path || !strcmp(path, EXPORT_MARKER) ||
+  if (!path || !strcmp(path, EXPORT_MARKER) || (from_path ? !source :
       napi_is_buffer(env, argv[2], &buffer) != napi_ok || !buffer ||
-      napi_get_buffer_info(env, argv[2], &data, &length) != napi_ok) { error = export_invalid(); goto failed; }
+      napi_get_buffer_info(env, argv[2], &data, &length) != napi_ok)) { error = export_invalid(); goto failed; }
   char *leaf = NULL;
   parent = export_walk(handle->root, path, &leaf, &error);
   if (!parent) goto failed;
   temporary = export_create(parent, handle->temporary, &error);
   if (temporary == INVALID_LOCK_HANDLE) goto failed;
-  if ((error = export_write(temporary, data, length))) goto failed;
+  if ((error = from_path ? export_copy(temporary, source) : export_write(temporary, data, length))) goto failed;
   if ((error = export_verify(handle, parent))) goto failed;
   if ((error = export_publish(parent, handle->temporary, leaf, temporary))) goto failed;
   published = true;
@@ -483,8 +532,17 @@ failed:
   unsigned long close_error = export_close_dirs(parent, handle->root);
   if (!error) error = close_error;
   free(path);
+  free(source);
   if (error) { handle->failed = true; return export_fail(env, "publish", error); }
   return export_undefined(env);
+}
+
+static napi_value publish_export_file(napi_env env, napi_callback_info info) {
+  return publish_export(env, info, false);
+}
+
+static napi_value publish_export_file_from(napi_env env, napi_callback_info info) {
+  return publish_export(env, info, true);
 }
 
 static void export_uncomplete(export_handle *handle) {

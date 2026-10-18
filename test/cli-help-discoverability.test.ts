@@ -408,6 +408,7 @@ describe('D3: shadowed handler help and curated help are reachable', () => {
     founder: 'Usage: gbrain founder scorecard <entity-slug>',
     'graph-query': 'Usage: gbrain graph-query <slug>',
     mounts: 'gbrain mounts',
+    recall: 'Usage: gbrain recall [<entity>] [options]',
     think: 'Usage: gbrain think',
   };
   for (const [command, marker] of Object.entries(SELF_HELP_MARKERS)) {
@@ -426,5 +427,18 @@ describe('D3: shadowed handler help and curated help are reachable', () => {
       expect(stdout).toContain(flag);
     }
     expect(stdout).toContain('[consent: destructive]');
+  });
+});
+
+describe('#6606 — `gbrain --help` lists the memory verbs agents save facts with', () => {
+  test('remember, recall and forget have their own section; capture points at remember for facts', async () => {
+    const { stdout, exitCode } = await help(['--help']);
+    expect(exitCode).toBe(0);
+    const memory = stdout.slice(stdout.indexOf('MEMORY ('), stdout.indexOf('\nPAGES'));
+    expect(memory).toContain('remember "<fact>" --entity <slug>');
+    expect(memory).toContain('pushed into new agent sessions');
+    expect(memory).toContain('recall [<entity>] [--query <q>]');
+    expect(memory).toContain('forget <fact-id>');
+    expect(stdout).toMatch(/capture \[content\][^\n]*\(a page;\n\s+a fact to recall later is `remember`\)/);
   });
 });

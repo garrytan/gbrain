@@ -16,12 +16,13 @@
  * for the full design rationale (D1–D23 decisions).
  */
 
-import { spawn } from 'child_process';
+import { spawn } from '../core/spawn.ts';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync, appendFileSync, chmodSync, cpSync, lstatSync } from 'fs';
 import { join, resolve, basename, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { tmpdir } from 'os';
 import { randomBytes } from 'crypto';
+import { registerCleanup } from '../core/process-cleanup.ts';
 import { logFriction, frictionDir, frictionFile } from '../core/friction.ts';
 import { loadScenario, listScenarios, readBrief, type ScenarioConfig } from '../core/claw-test/scenarios.ts';
 import { parseProgressEvents, verifyExpectedPhases } from '../core/claw-test/progress-tail.ts';
@@ -799,7 +800,15 @@ function invokeGbrain(
 ): Promise<PhaseOutcome> {
   return new Promise((resolvePromise) => {
     const start = Date.now();
-    const child = spawn(bin, argv, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
+    // #6775: on POSIX the phase leads its own process group, so every stop
+    // (timeout, interrupt, settle) reaches what it started too: a grandchild
+    // that ignores SIGTERM, or one that outlives the leader holding the pipes.
+    const grouped = process.platform !== 'win32';
+    const child = spawn(bin, argv, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], shell: false, detached: grouped });
+    const signalPhase = (signal: NodeJS.Signals | 0): boolean => {
+      if (!child.pid) return false;
+      try { process.kill(grouped ? -child.pid : child.pid, signal); return true; } catch { return false; }
+    };
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout?.on('data', (b: Buffer) => stdout.push(b));
@@ -810,16 +819,37 @@ function invokeGbrain(
     // SIGKILL if it lingers.
     let timedOut = false;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
+    const escalate = () => { if (!killTimer) killTimer = setTimeout(() => signalPhase('SIGKILL'), 10_000); };
     const wallClockTimer = setTimeout(() => {
       timedOut = true;
-      try { child.kill('SIGTERM'); } catch { /* already gone */ }
-      killTimer = setTimeout(() => {
-        try { child.kill('SIGKILL'); } catch { /* already gone */ }
-      }, 10_000);
+      signalPhase('SIGTERM');
+      escalate();
     }, SUBPROCESS_TIMEOUT_MS);
+    // A group of its own no longer receives the terminal's Ctrl-C, and
+    // process-cleanup deliberately leaves SIGINT to commands, so relay it: the
+    // first SIGINT is forwarded (SIGKILL after the grace), a second kills.
+    let interrupts = 0;
+    const onSigint = () => {
+      interrupts++;
+      if (interrupts > 1) { signalPhase('SIGKILL'); return; }
+      signalPhase('SIGINT');
+      escalate();
+    };
+    process.on('SIGINT', onSigint);
+    // SIGTERM/SIGHUP and crashes exit through process-cleanup's pass (3 s
+    // deadline): stop the group there before the harness exits.
+    const releaseCleanup = registerCleanup('claw-test phase process group', async () => {
+      if (!signalPhase('SIGTERM')) return;
+      for (let waited = 0; waited < 1_500 && signalPhase(0); waited += 100) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      if (signalPhase(0)) signalPhase('SIGKILL');
+    });
     const clearTimers = () => {
       clearTimeout(wallClockTimer);
       if (killTimer) clearTimeout(killTimer);
+      process.off('SIGINT', onSigint);
+      releaseCleanup();
     };
 
     let settled = false;
@@ -827,6 +857,8 @@ function invokeGbrain(
       if (settled) return;
       settled = true;
       clearTimers();
+      // The leader is gone; whatever it left in its group goes with it.
+      if (grouped) signalPhase('SIGKILL');
       let stderrText = Buffer.concat(stderr).toString('utf-8');
       if (timedOut) stderrText += `\nharness: killed after ${SUBPROCESS_TIMEOUT_MS}ms phase timeout`;
       const stdoutText = Buffer.concat(stdout).toString('utf-8');

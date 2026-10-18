@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
-import { captureRetrievalMeta, formatResult, resetRetrievalMetaForTests } from '../src/cli.ts';
+import { captureRetrievalMeta, formatResult, resetRetrievalMetaForTests } from '../src/cli/main.ts';
 
 afterEach(() => resetRetrievalMetaForTests());
 

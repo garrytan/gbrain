@@ -17,12 +17,14 @@ import {
   HISTORICAL_ARRAY_ORDER,
   RegistryError,
   registryOrder,
+  renderLatest,
   renderRegistry,
   scaffold,
   scanMigrations,
 } from '../../scripts/build-schema-migrations.ts';
 import { baseMigrations } from '../../scripts/check-schema-migration-order.ts';
-import { MIGRATIONS } from '../../src/core/migrate.ts';
+import { LATEST_VERSION, MIGRATIONS } from '../../src/core/migrate.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const REPO = resolve(import.meta.dir, '..', '..');
 const DIR = join(REPO, 'src/core/schema-migrations');
@@ -55,6 +57,12 @@ describe('committed registry', () => {
   test('is exactly what the generator produces from the directory', () => {
     // test-reads-source-ok[structural]: generated-file freshness contract.
     expect(readFileSync(join(DIR, 'registry.generated.ts'), 'utf8')).toBe(renderRegistry(scanMigrations(DIR)));
+  });
+
+  test('latest.generated.ts is what the generator produces and equals migrate.ts LATEST_VERSION', () => {
+    // test-reads-source-ok[structural]: generated-file freshness contract.
+    expect(readFileSync(join(DIR, 'latest.generated.ts'), 'utf8')).toBe(renderLatest(scanMigrations(DIR)));
+    expect(LATEST_SCHEMA_VERSION).toBe(LATEST_VERSION);
   });
 
   test('covers every migration file once, uses static imports only, and keeps master order', () => {
@@ -148,6 +156,20 @@ describe('generator diagnostics (FAIL/Why/Fix/See)', () => {
     expect(stale.stderr).toContain('Fix:  bun run build:schema-migrations');
     expect(run().status).toBe(0);
     expect(run('--check').status).toBe(0);
+  });
+
+  test('the latest-version file tracks the highest migration and --check catches it stale', () => {
+    const d = fixture({ 'v002-a.ts': mig(2, 'a'), 'v178-b.ts': mig(178, 'b') });
+    const run = (...args: string[]) => spawnSync('bun', [GENERATOR, '--dir', d, ...args], { encoding: 'utf8' });
+    expect(run().status).toBe(0);
+    expect(readFileSync(join(d, 'latest.generated.ts'), 'utf8')).toContain('export const LATEST_SCHEMA_VERSION = 178;');
+    writeFileSync(join(d, 'v179-c.ts'), mig(179, 'c'));
+    writeFileSync(join(d, 'registry.generated.ts'), renderRegistry(scanMigrations(d)));
+    const stale = run('--check');
+    expect(stale.status).toBe(1);
+    expect(stale.stderr).toContain('latest.generated.ts is stale');
+    expect(run().status).toBe(0);
+    expect(readFileSync(join(d, 'latest.generated.ts'), 'utf8')).toContain('export const LATEST_SCHEMA_VERSION = 179;');
   });
 });
 

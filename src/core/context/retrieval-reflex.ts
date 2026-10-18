@@ -27,6 +27,11 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import type { TrustTier } from '../trust/tier.ts';
+import type { ReadEligibility } from '../eligibility/policy.ts';
+import { proactiveEligibility } from '../eligibility/registry.ts';
+import { pageActivationVerdicts, pageKey } from '../eligibility/activation.ts';
+import { renderTrustedInline, trustFields, type TrustFields } from '../eligibility/labels.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { CJK_SLUG_CHARS } from '../cjk.ts';
 import { escapeLikePattern } from '../search/sql-ranking.ts';
@@ -37,7 +42,13 @@ import { redactFindings } from '../secret-scan.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import type { EntityCandidate } from './entity-salience.ts';
 import { reflexPointerRationale } from './reflex-rationale.ts';
+import { preferEntityTitleMatches } from './title-matches.ts';
 import { logVolunteerEventsFireAndForget, volunteerEventRowsFrom } from './volunteer-events.ts';
+import { boundedProjectedPrefix } from '../page-window/document.ts';
+import { boundedBodyPrefixSql, boundedRawPrefix, overlaidBoundedRows } from '../page-window/bounded-lead.ts';
+
+/** Large pages: candidate rows carry a bounded body prefix (the synopsis reads only its first sentence). */
+const PREFIX_SQL = boundedBodyPrefixSql('p');
 
 export { reflexPointerRationale } from './reflex-rationale.ts';
 
@@ -65,7 +76,7 @@ async function weakTitleHits(engine: BrainEngine, sourceIds: string[], privacySq
   if (!norms.length) return [];
   try {
     const rows = await engine.executeRaw<PageRow>(
-      `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, p.compiled_truth
+      `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
          FROM pages p
         WHERE p.deleted_at IS NULL ${privacySql}
           AND p.source_id = ANY($1::text[])
@@ -130,6 +141,11 @@ export interface ReflexPointer {
    * recover the source candidate.
    */
   matchedNorm?: string;
+  /** #5575 A6: the page's trust tier and short write origin (rendered as a compact label). */
+  trust_tier?: TrustTier;
+  origin?: string;
+  /** #5575 CEO-20: the page carries an unconfirmed instruction-family flag (kept under `trust.agent_activation=allow`). */
+  unconfirmed?: true;
 }
 
 export interface PointerBlock {
@@ -184,6 +200,14 @@ export interface ResolvePointersOpts {
    * via resolveExcludePrivatePages) passes false.
    */
   excludePrivate?: boolean;
+  /**
+   * #5575 (CEO-20, ENG-8): the proactive eligibility the enclosing surface
+   * resolved (read floor plus activation control). Absent: the resolver
+   * applies the `retrieval_reflex` surface policy itself (fail-closed).
+   */
+  eligibility?: ReadEligibility;
+  /** #5575 DX-10: receives the page keys (`source_id:slug`) of deliverable pointers activation control withheld. */
+  onWithheld?: (keys: string[]) => void;
 }
 
 export interface PageRow {
@@ -389,7 +413,7 @@ export async function resolveEntitiesToPointers(
     // class ("Labs", "Systems" as pseudo-surnames).
     rows = useSurnameArm
       ? await engine.executeRaw<PageRow>(
-          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, p.compiled_truth
+          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
              FROM pages p
             WHERE p.deleted_at IS NULL ${privacySql}
               AND p.source_id = ANY($1::text[])
@@ -400,7 +424,7 @@ export async function resolveEntitiesToPointers(
           [sourceIds, titlesLc, exactSlugs, slugSuffixes, surnamePatterns],
         )
       : await engine.executeRaw<PageRow>(
-          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, p.compiled_truth
+          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
              FROM pages p
             WHERE p.deleted_at IS NULL ${privacySql}
               AND p.source_id = ANY($1::text[])
@@ -419,7 +443,7 @@ export async function resolveEntitiesToPointers(
   if (aliasOnly.length) {
     try {
       const extra = await engine.executeRaw<PageRow>(
-        `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, p.compiled_truth
+        `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
            FROM pages p
           WHERE p.deleted_at IS NULL ${privacySql} AND p.source_id = ANY($1::text[]) AND p.slug = ANY($2::text[])`,
         [sourceIds, aliasOnly.map((p) => p.slug)],
@@ -503,7 +527,7 @@ export async function resolveEntitiesToPointers(
     if (cjkNorms.length) {
       try {
         const cjkRows = await engine.executeRaw<PageRow>(
-          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, p.compiled_truth
+          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
              FROM pages p
             WHERE p.deleted_at IS NULL ${privacySql}
               AND p.source_id = ANY($1::text[])
@@ -536,12 +560,12 @@ export async function resolveEntitiesToPointers(
     rowByKey.set(keyOf(r.source_id, r.slug), r); push(r.slug, r.source_id, 'weak-title', (r.title ?? '').toLowerCase());
   }
 
-  // Build pointers in confidence order, applying suppression + cap.
+  const trust = await gatePointerCandidates(engine, resolved, opts); // #5575 gate; then pointers by confidence, suppression + cap
   const suppression = opts.suppression ?? 'slug-and-title';
   const pointers: ReflexPointer[] = [];
-  for (const { slug, source_id, arm, matchedNorm } of resolved) {
+  for (const { slug, source_id, arm, matchedNorm } of await preferEntityTitleMatches(engine, resolved, m => rowByKey.get(keyOf(m.source_id, m.slug)), m => trust.has(pageKey(m)), slugToNorm)) {
     const row = rowByKey.get(keyOf(source_id, slug));
-    if (!row) continue;
+    if (!row || !trust.has(pageKey({ source_id, slug }))) continue;
     // Suppression: already present in PRIOR context. The current turn is
     // deliberately excluded from priorContextText. Under windowing
     // ('slug-only', codex D7) only the slug counts — a slug appears in prior
@@ -555,13 +579,34 @@ export async function resolveEntitiesToPointers(
       }
     }
     const display = displayForRow(row, displayByNorm);
-    const synopsis = safeSynopsis(row);
-    pointers.push({ display, slug, source_id, synopsis, arm, confidence: ARM_CONFIDENCE[arm], matchedNorm });
+    const synopsis = safeSynopsis((await overlaidBoundedRows(engine, [row]))[0]!);
+    pointers.push({ display, slug, source_id, synopsis, arm, confidence: ARM_CONFIDENCE[arm], matchedNorm, ...trust.get(pageKey({ source_id, slug })) });
     if (pointers.length >= maxPointers) break;
   }
 
   if (!pointers.length) return null;
   return { pointers, text: renderPointerBlock(pointers) };
+}
+
+/**
+ * #5575 (CEO-20, A6): one query over every resolved candidate page. Returns
+ * the label fields of the pages a pointer may name; pages below the floor or
+ * unreadable are absent (fail-closed), and activation-suppressed pages are
+ * absent and reported through `opts.onWithheld`.
+ */
+async function gatePointerCandidates(engine: BrainEngine, resolved: ReadonlyArray<{ source_id: string; slug: string }>,
+  opts: ResolvePointersOpts): Promise<Map<string, TrustFields>> {
+  const policy = opts.eligibility ?? await proactiveEligibility({ engine }, 'retrieval_reflex');
+  const verdicts = await pageActivationVerdicts(engine, resolved.map(r => ({ source_id: r.source_id, slug: r.slug })), policy).catch(() => null);
+  const out = new Map<string, TrustFields>();
+  const withheld: string[] = [];
+  for (const [key, v] of verdicts ?? []) {
+    if (v.belowFloor) continue;
+    if (v.suppressed) withheld.push(key.replace('\u0000', ':'));
+    else out.set(key, { ...trustFields(v.tier, v.origin), ...(v.unconfirmed ? { unconfirmed: true as const } : {}) });
+  }
+  if (withheld.length) opts.onWithheld?.(withheld);
+  return out;
 }
 
 /** Recover a display label: prefer the matched candidate surface, else the page title. */
@@ -600,7 +645,11 @@ export function safeSynopsis(
   if (typeof fmSummary === 'string' && fmSummary.trim()) {
     return clip(collapse(redactFindings(fmSummary, { highEntropy: true }).text), maxLen);
   }
-  const body = row.compiled_truth ?? '';
+  // Large pages: only a bounded prefix is sanitized. World-only reads take
+  // the sanitized projection's prefix; a trusted widening keeps private rows
+  // through the strip below, which drops a fence the cut leaves open.
+  const body = keepVisibility.length === 1 && keepVisibility[0] === 'world'
+    ? boundedProjectedPrefix(row.compiled_truth) : boundedRawPrefix(row.compiled_truth);
   if (!body) return '';
   const stripped = redactFindings(stripFactsFence(stripTakesFence(body), { keepVisibility }), { highEntropy: true }).text;
   // Drop frontmatter block, markdown headings, and blank lines; first real prose line.
@@ -636,11 +685,19 @@ export function renderPointerBlock(pointers: ReflexPointer[]): string {
     'details — do not answer from memory.',
     '',
   ];
-  for (const p of pointers) {
-    const syn = p.synopsis ? ` — ${p.synopsis}` : '';
-    lines.push(`- **${p.display}** → \`${p.slug}\`${syn} (use get_page before relying on details)`);
-  }
+  for (const p of pointers) lines.push(renderPointerLine(p));
   return lines.join('\n');
+}
+
+/**
+ * One pointer list item. #5575 A6: a labeled pointer carries its compact
+ * trust label before the synopsis (an external page's synopsis is wrapped
+ * inline as data); an unlabeled one renders as before.
+ */
+export function renderPointerLine(p: Pick<ReflexPointer, 'display' | 'slug' | 'synopsis' | 'trust_tier' | 'origin' | 'unconfirmed'>): string {
+  const trusted = p.trust_tier ? ` ${renderTrustedInline(p.synopsis, { trust_tier: p.trust_tier, origin: p.origin ?? 'legacy', ...(p.unconfirmed ? { unconfirmed: true as const } : {}) })}` : '';
+  const syn = p.trust_tier ? (trusted ? ` —${trusted}` : '') : p.synopsis ? ` — ${p.synopsis}` : '';
+  return `- **${p.display}** → \`${p.slug}\`${syn} (use get_page before relying on details)`;
 }
 
 /**

@@ -45,7 +45,7 @@
 import { readdirSync, lstatSync, statSync } from 'fs';
 import { join, relative } from 'path';
 import type { BrainEngine } from './engine.ts';
-import { pathToSlug } from './sync.ts';
+import { pathToSlug, unsyncableReason } from './sync.ts';
 import { readSlugRootMode } from './sync-anchor.ts';
 import { git } from './sync-git.ts';
 
@@ -271,7 +271,13 @@ export async function findMisroutedPages(
     }
 
     // Convert FS paths to canonical slugs (lowercased, extension stripped).
-    const slugs = Array.from(new Set(files.map(f => pathToSlug(prefix + f.relPath))));
+    // Sync refuses metafiles (root AGENTS.md/CLAUDE.md, README.md, ...), pruned
+    // dirs and malformed names, so they never become pages in this source and
+    // a same-slug page on default is not a misroute (#6681).
+    const slugs = Array.from(new Set(files
+      .map(f => prefix + f.relPath)
+      .filter(path => unsyncableReason(path, { strategy: 'markdown' }) === null)
+      .map(path => pathToSlug(path))));
     const existenceMap = await batchProbeExistence(engine, slugs, src.id);
 
     for (const slug of slugs) {

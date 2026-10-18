@@ -69,7 +69,7 @@ async function fixture(e: BrainEngine, count: number) {
 type ImportRow = { slug: string; state: string; blocked_reason: string | null; error_code: string | null; preparation_attempts: number; error_message: string | null };
 const imports = (e: BrainEngine, source: string) => e.executeRaw<ImportRow>(
   `SELECT slug,state,blocked_reason,error_code,preparation_attempts,error_message FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence`, [source]);
-const ORIGIN_CHECK_SQL = 'SELECT id,slug,source_path FROM pages WHERE source_id=$1 AND ';
+const ORIGIN_CHECK_SQL = 'SELECT id,slug,source_path,deleted_at FROM pages WHERE source_id=$1 AND ';
 
 /** The lock holder: another session holding `pages` ACCESS EXCLUSIVE in an open transaction until `drop()`. */
 async function holdPagesLock(url: string) {

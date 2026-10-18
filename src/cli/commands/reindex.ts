@@ -48,6 +48,20 @@ export async function run(engine: BrainEngine, args: string[]): Promise<void> {
     }
     return;
   }
+  if (args.includes('--oversized')) {
+    const { runOversizedBackfill, formatOversizedBackfillReceipt } = await import('../../core/oversized-backfill.ts');
+    const value = (flag: string) => { const at = args.indexOf(flag); return at >= 0 ? args[at + 1] : undefined; };
+    const limit = value('--limit');
+    const receipt = await runOversizedBackfill(engine, {
+      dryRun: args.includes('--dry-run'),
+      ...(value('--source') ? { sourceId: value('--source') } : {}),
+      ...(limit ? { limit: Number(limit) } : {}),
+    });
+    if (args.includes('--json')) console.log(JSON.stringify(receipt, null, 2));
+    else for (const line of formatOversizedBackfillReceipt(receipt)) console.log(line);
+    if (receipt.failed.length) setCliExitVerdict(1);
+    return;
+  }
   if (args.includes('--vectors')) {
     await (await import('../../commands/reindex-vectors.ts')).runReindexVectors(engine, args); // #4616
     return;

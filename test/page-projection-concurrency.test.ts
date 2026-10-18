@@ -96,12 +96,12 @@ test('delayed embeddings cannot replace new chunks at the same indices', async (
     await engine.putPage('embedding-race', page('After embedding'), { sourceId });
     const current = (await readProjectionSnapshot(engine, 'embedding-race', sourceId, { allowUnsealed: true }))!;
     await installPageProjection(engine, current, chunk('After embedding'), { seal: true });
-    expect(await installPageEmbeddings(engine, prepared, chunk('Before embedding'))).toBe(false);
+    expect(await installPageEmbeddings(engine, prepared, chunk('Before embedding'))).toEqual({ installed: 0, complete: false });
     expect((await engine.getChunks('embedding-race', { sourceId }))[0].chunk_text).toBe('After embedding');
     // Even an unchanged logical revision cannot accept a stale chunk layout.
     const sameRevision = (await readProjectionSnapshot(engine, 'embedding-race', sourceId))!;
     await installPageProjection(engine, sameRevision, chunk('A re-chunked snapshot'), { seal: true });
-    expect(await installPageEmbeddings(engine, sameRevision, chunk('After embedding'))).toBe(false);
+    expect(await installPageEmbeddings(engine, sameRevision, chunk('After embedding'))).toEqual({ installed: 0, complete: false });
   }
 });
 
@@ -112,7 +112,7 @@ test('embedding completion updates only vectors and rejects an indexing-context 
     await installPageProjection(engine, (await readProjectionSnapshot(engine, 'embedding-completion', sourceId, { allowUnsealed: true }))!, chunk('Stable text'), { seal: true });
     const prepared = (await readProjectionSnapshot(engine, 'embedding-completion', sourceId))!;
     const vector = new Float32Array(1536); vector[0] = 1;
-    expect(await installPageEmbeddings(engine, prepared, [{ ...chunk('Stable text')[0], embedding: vector }])).toBe(true);
+    expect((await installPageEmbeddings(engine, prepared, [{ ...chunk('Stable text')[0], embedding: vector }])).complete).toBe(true);
     const current = (await readProjectionSnapshot(engine, 'embedding-completion', sourceId))!;
     expect(current.chunks.map(c => [c.id,c.chunk_text,c.chunk_index])).toEqual(prepared.chunks.map(c => [c.id,c.chunk_text,c.chunk_index]));
     const [stored] = await engine.executeRaw<{ hash: string; matches: boolean }>('SELECT embedded_text_hash AS hash,embedded_text_hash=md5(chunk_text) AS matches FROM content_chunks WHERE id=$1', [current.chunks[0].id]);
@@ -120,7 +120,7 @@ test('embedding completion updates only vectors and rejects an indexing-context 
     const old = await engine.getConfig('contextual_retrieval.mode');
     try {
       await engine.setConfig('contextual_retrieval.mode', 'projection-test-changed');
-      expect(await installPageEmbeddings(engine, prepared, [{ ...chunk('Stable text')[0], embedding: vector }])).toBe(false);
+      expect(await installPageEmbeddings(engine, prepared, [{ ...chunk('Stable text')[0], embedding: vector }])).toEqual({ installed: 0, complete: false });
     } finally {
       if (old !== null) await engine.setConfig('contextual_retrieval.mode', old);
       else await engine.executeRaw("DELETE FROM config WHERE key='contextual_retrieval.mode'");
@@ -136,14 +136,14 @@ test('embedding completion stamps the captured full model and rejects a runtime 
       await installPageProjection(engine, (await readProjectionSnapshot(engine, 'embedding-model', sourceId, { allowUnsealed: true }))!, chunk('Model provenance'), { seal: true });
       const prepared = (await readProjectionSnapshot(engine, 'embedding-model', sourceId))!;
       const vector = new Float32Array(1536); vector[0] = 1;
-      expect(await installPageEmbeddings(engine, prepared, [{ ...chunk('Model provenance')[0], embedding: vector }])).toBe(true);
+      expect((await installPageEmbeddings(engine, prepared, [{ ...chunk('Model provenance')[0], embedding: vector }])).complete).toBe(true);
       const [stored] = await engine.executeRaw<{ model: string }>('SELECT model FROM content_chunks WHERE id=$1', [prepared.chunks[0].id]);
       expect(stored.model).toBe('openai:text-embedding-3-small');
       configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: {} });
-      expect(await installPageEmbeddings(engine, prepared, [{ ...chunk('Model provenance')[0], embedding: vector }])).toBe(false);
+      expect(await installPageEmbeddings(engine, prepared, [{ ...chunk('Model provenance')[0], embedding: vector }])).toEqual({ installed: 0, complete: false });
       expect((await engine.executeRaw<{ model: string }>('SELECT model FROM content_chunks WHERE id=$1', [prepared.chunks[0].id]))[0].model).toBe(stored.model);
       const current = (await readProjectionSnapshot(engine, 'embedding-model', sourceId))!;
-      expect(await installPageEmbeddings(engine, current, [{ ...chunk('Model provenance')[0], embedding: vector, model: 'fixture:explicit-model' }])).toBe(true);
+      expect((await installPageEmbeddings(engine, current, [{ ...chunk('Model provenance')[0], embedding: vector, model: 'fixture:explicit-model' }])).complete).toBe(true);
       expect((await engine.executeRaw<{ model: string }>('SELECT model FROM content_chunks WHERE id=$1', [prepared.chunks[0].id]))[0].model).toBe('fixture:explicit-model');
     }
   } finally { resetGateway(); }

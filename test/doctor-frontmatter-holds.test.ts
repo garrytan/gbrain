@@ -78,7 +78,7 @@ async function each(run: (engine: BrainEngine) => Promise<void>) {
       try { await run(engine); }
       finally {
         await disposePersistenceConsumer(engine);
-        for (const key of ['sync.holds', 'sync.hold_escalate_count']) await engine.unsetConfig(key);
+        await engine.unsetConfig('sync.holds');
         await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
         await engine.executeRaw("UPDATE sources SET local_path=NULL WHERE id LIKE 'fmh-%'");
         await engine.executeRaw("DELETE FROM op_checkpoints WHERE op LIKE 'sync-hold%' OR op LIKE 'managed-sync%'");
@@ -166,8 +166,7 @@ test('holds and repairable files: the plan says explicit_kind_required with the 
   expect(banner).toContain(`[AGENT]   git_held_files: 2 (explicit_kind_required; preview with: ${preview})`);
   expect(banner).not.toMatch(/--apply|--yes/);
 
-  await engine.setConfig('sync.hold_escalate_count', '1');
-  const escalated = await gitHeldFilesCheck(engine);
+  const escalated = await withEnv({ GBRAIN_SYNC_HOLD_ESCALATE_COUNT: '1' }, () => gitHeldFilesCheck(engine));
   expect(escalated.status).toBe('fail');
   expect(escalated.message).toContain(`Escalated: ${s.id} hold more than 1 files`);
 }), 240_000);

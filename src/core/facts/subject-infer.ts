@@ -107,8 +107,16 @@ const SENTENCE_OPENERS = new Set([
   'favorite', 'favourite', 'birthday', 'anniversary', 'allergic', 'vegetarian', 'vegan', 'lives', 'lived', 'works', 'worked',
 ]);
 
-/** Slugs written verbatim in the fact text ("people/alice-example owns the checklist"). */
-const SLUG_IN_TEXT_RE = /(?<![\w/-])[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)+(?![\w/-])/g;
+/**
+ * Slugs written verbatim in the fact text ("people/alice-example owns the checklist", "people/例子").
+ * Segments use the lowercase page-slug letters the strict resolver's exact arm accepts (combining
+ * marks are not among them, so a marked literal is never a literal). A literal glued to further
+ * letters or marks on either side is not a literal, so "people/alice-example未知" never resolves to
+ * its ASCII prefix.
+ */
+const SLUG_SEG = '[\\p{Ll}\\p{Lm}\\p{Lo}\\p{N}][\\p{Ll}\\p{Lm}\\p{Lo}\\p{N}_-]*';
+const SLUG_EDGE = '[\\p{L}\\p{M}\\p{N}_/-]';
+const SLUG_IN_TEXT_RE = new RegExp(`(?<!${SLUG_EDGE})${SLUG_SEG}(?:/${SLUG_SEG})+(?!${SLUG_EDGE})`, 'gu');
 
 /** Two distinct entities already make the subject unknown; more resolution is wasted work. */
 const DISTINCT_ENTITY_LIMIT = 2;

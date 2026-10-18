@@ -3,6 +3,7 @@
 Start by choosing the setup you need:
 
 - **Add memory to the agent you already use (recommended):** [Grok Bot](guides/grok-bot.md), [Muse](guides/muse.md), or [Codex / Claude Code](tutorials/connect-coding-agent.md). Keep the existing identity; start keyless, without a personal-agent repository.
+- **Don't want to run anything yourself:** [gbrain.io](https://gbrain.io/?ref=install-md) is hosted GBrain, the easiest start for a first agent or a team.
 - **Connect to your existing hosted brain:** [private handoff and harness access](guides/hosted-harness-access.md). Provision on the host, install in the client environment.
 
 
@@ -94,7 +95,7 @@ For shared / large / multi-machine deployments (a team or company brain with mul
 Optional provider setup: API keys live in `~/.gbrain/config.json` (file plane) or env vars (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`). Set them only after choosing the capability and approving its text disclosure and cost. Vendor API keys (and `database_url`/`database_path`) are file-plane routed, so `gbrain config set <KEY> <value>` writes where the pipeline reads it:
 
 ```bash
-export VOYAGE_API_KEY=pa-...          # default embedding (voyage-4) + reranker (rerank-2.5) — one key
+export VOYAGE_API_KEY=pa-...          # default embedding (voyage-4) + reranker (rerank-3-lite) — one key
 export OPENAI_API_KEY=sk-...          # alternative embeddings; also powers automatic fact extraction + chat models
 export ANTHROPIC_API_KEY=sk-ant-...   # automatic fact extraction + chat models; also improves search via query expansion
 ```

@@ -45,12 +45,48 @@ export class MigrationBudgetRefusal extends Error {
   }
 }
 
-export async function assertMigrationLeases(engine: BrainEngine, locks: DbLockHandle[]) {
+/** Lease options for `assertMigrationLeases`: `rowLock: false` checks ownership without holding the lease rows (#6587). */
+export interface MigrationLeaseCheck { rowLock?: boolean }
+export type MigrationLeaseAssert = (tx?: BrainEngine, lease?: MigrationLeaseCheck) => Promise<void>;
+
+/**
+ * The migration still owns every lease. By default the lease rows stay `FOR SHARE` until the transaction
+ * ends, so a steal (an ON CONFLICT update after expiry) waits for the commit; that lock also blocks the
+ * migration's own heartbeat refresh, so it belongs only at the end of a transaction (#6587,
+ * `withMigrationLeaseTransaction`). `rowLock: false` checks without holding them.
+ */
+export async function assertMigrationLeases(engine: BrainEngine, locks: DbLockHandle[], lease: MigrationLeaseCheck = {}) {
   if (!locks.length) return;
   const owned = await engine.executeRaw<{ id: string; token: string }>(`SELECT id,acquisition_token::text AS token
-    FROM gbrain_cycle_locks WHERE id=ANY($1::text[]) AND ttl_expires_at>now() ORDER BY id FOR SHARE`, [locks.map(lock => lock.id)]);
+    FROM gbrain_cycle_locks WHERE id=ANY($1::text[]) AND ttl_expires_at>now() ORDER BY id${lease.rowLock === false ? '' : ' FOR SHARE'}`, [locks.map(lock => lock.id)]);
   if (owned.length !== locks.length || locks.some(lock => !owned.some(row => row.id === lock.id && row.token === lock.acquisitionToken))) {
     throw new Error('Migration lease lost; authorization debit and provider dispatch refused');
+  }
+}
+
+const isDeadlock = (error: unknown) => typeof error === 'object' && error !== null && (error as { code?: unknown }).code === '40P01';
+
+/**
+ * #6587: one migration transaction whose work (the retained-vector census, an invalidation) can run for
+ * minutes. The lease is checked without a row lock first, so the 15 s heartbeat can refresh it meanwhile,
+ * and checked again with `FOR SHARE` right before commit, so a lease lost or stolen during the work rolls
+ * the transaction back and a steal cannot land before the commit. `deadlockRetries` reruns a work function
+ * with no side effects outside the transaction when Postgres picks it as a deadlock victim (40P01) against
+ * concurrent writers; mutating work passes 0.
+ */
+export async function withMigrationLeaseTransaction<T>(engine: BrainEngine, assertOwned: MigrationLeaseAssert | undefined,
+  work: (tx: BrainEngine) => Promise<T>, opts: { deadlockRetries?: number } = {}): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await engine.transaction(async tx => {
+        await assertOwned?.(tx, { rowLock: false });
+        const result = await work(tx);
+        await assertOwned?.(tx);
+        return result;
+      });
+    } catch (error) {
+      if (attempt >= (opts.deadlockRetries ?? 0) || !isDeadlock(error)) throw error;
+    }
   }
 }
 

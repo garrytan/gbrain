@@ -27,6 +27,8 @@ import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
+import { projectionEligibleSql } from '../eligibility/sql.ts';
+import type { ReadEligibility } from '../eligibility/policy.ts';
 
 /** The engine's batch retry wrapper (audit JSONL + backoff + reconnect live on the engine). */
 export type BatchRetry = <T>(
@@ -59,11 +61,14 @@ async function _addTakesBatchOnce(exec: SqlExecutor, rowsIn: TakeBatchInput[]): 
     // Weight clamp/round + NUL-stripping live in buildTakeRows (shared w/ PGLite).
     // NOTE: ON CONFLICT here is DO UPDATE (not DO NOTHING) — an intra-batch
     // duplicate (page_id, row_num) errors, identical to the pre-#1861 unnest path.
+    // A stored row that already holds the values is left unwritten (no trigger,
+    // no updated_at bump) and still counts: every row is inserted, updated or
+    // already current, else the statement throws.
     const { rows, weightClamped } = buildTakeRows(rowsIn);
     if (weightClamped > 0) {
       process.stderr.write(`[takes] TAKES_WEIGHT_CLAMPED: ${weightClamped} row(s) had weight outside [0,1]; clamped\n`);
     }
-    const result = await executeRawJsonb(
+    await executeRawJsonb(
       exec,
       `INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, superseded_by, active)
        SELECT v.page_id, v.row_num, v.claim, v.kind, v.holder, v.weight,
@@ -87,11 +92,13 @@ async function _addTakesBatchOnce(exec: SqlExecutor, rowsIn: TakeBatchInput[]): 
          superseded_by = EXCLUDED.superseded_by,
          active        = EXCLUDED.active,
          updated_at    = now()
-       RETURNING 1`,
+       WHERE (takes.claim, takes.kind, takes.holder, takes.weight, takes.since_date, takes.until_date, takes.source, takes.superseded_by, takes.active)
+         IS DISTINCT FROM (EXCLUDED.claim, EXCLUDED.kind, EXCLUDED.holder, EXCLUDED.weight, EXCLUDED.since_date, EXCLUDED.until_date,
+           EXCLUDED.source, EXCLUDED.superseded_by, EXCLUDED.active)`,
       [],
       [{ rows }],
     );
-    return result.length;
+    return rows.length;
   }
 
   /**
@@ -279,6 +286,11 @@ export async function sweepContradictionCache(exec: SqlExecutor): Promise<number
     return result.affectedRows;
   }
 
+/** #5575: the read-eligibility predicate over the takes alias `t` when a read op passes a policy. */
+function takeEligibility(policy: ReadEligibility | undefined) {
+  return policy ? sqlFragment` AND ${trustedSql(projectionEligibleSql('takes', 't', policy))}` : sqlFragment``;
+}
+
 export async function listTakes(exec: LegacyUnscopedRead, opts: TakesListOpts = {}): Promise<Take[]> {
     const limit = clampSearchLimit(opts.limit, 100, 500);
     const offset = Math.max(0, Math.floor(opts.offset ?? 0));
@@ -311,7 +323,7 @@ export async function listTakes(exec: LegacyUnscopedRead, opts: TakesListOpts = 
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
         )
-        ${sourceFilter}
+        ${sourceFilter}${takeEligibility(opts.eligibility)}
       ORDER BY
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'weight'      THEN t.weight     END DESC NULLS LAST,
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date'  THEN t.since_date END DESC NULLS LAST,
@@ -321,7 +333,7 @@ export async function listTakes(exec: LegacyUnscopedRead, opts: TakesListOpts = 
     return rows.map((r) => takeRowToTake(r as Record<string, unknown>));
   }
 
-export async function searchTakes(exec: LegacyUnscopedRead, query: string, opts: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[] } = {}): Promise<TakeHit[]> {
+export async function searchTakes(exec: LegacyUnscopedRead, query: string, opts: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: ReadEligibility } = {}): Promise<TakeHit[]> {
     const limit = clampSearchLimit(opts.limit, 30, 100);
     const sourceFilter = opts.sourceIds && opts.sourceIds.length > 0
       ? sqlFragment`AND p.source_id = ANY(${opts.sourceIds}::text[])`
@@ -341,7 +353,7 @@ export async function searchTakes(exec: LegacyUnscopedRead, query: string, opts:
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
         )
-        ${sourceFilter}
+        ${sourceFilter}${takeEligibility(opts.eligibility)}
       ORDER BY score DESC, t.weight DESC
       LIMIT ${limit}
     `)).rows;
@@ -354,7 +366,7 @@ export async function searchTakes(exec: LegacyUnscopedRead, query: string, opts:
 export async function searchTakesVector(
   exec: LegacyUnscopedRead,
     embedding: Float32Array,
-    opts: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[] } = {},
+    opts: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: ReadEligibility } = {},
   ): Promise<TakeHit[]> {
     const limit = clampSearchLimit(opts.limit, 30, 100);
     const vec = `[${Array.from(embedding).join(',')}]`;
@@ -376,7 +388,7 @@ export async function searchTakesVector(
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
         )
-        ${sourceFilter}
+        ${sourceFilter}${takeEligibility(opts.eligibility)}
       ORDER BY t.embedding <=> ${vec}::vector
       LIMIT ${limit}
     `)).rows;

@@ -406,7 +406,8 @@ describe('e2e — mixed-case fixture, stub embed transport, synthetic receipt', 
     expect(row.clause_split.probes).toEqual([]);
 
     // Summary + cache receipt (3 pages + the question = 4 misses on a cold cache; hybridSearch's
-    // own embed of the same question text is the 1 hit).
+    // own embed of the same question text is served by the gateway's in-process query-embed
+    // cache, so it never reaches this cache).
     const s = result.summary;
     expect(s.misses).toBe(1);
     expect(s.rerun_hit_count).toBe(1);
@@ -416,7 +417,7 @@ describe('e2e — mixed-case fixture, stub embed transport, synthetic receipt', 
     expect(s.split_membership.halfA430).toBe(1);
     expect(s.split_membership.halfB430).toBe(0);
     expect(s.pins).toEqual({ mode: 'balanced', reranker: false, autocut: false, expansion_variant_budget: null });
-    expect(s.cache).toEqual({ path: cachePath, hits: 1, misses: 4, bypassed: 0, infra_faults: 0 });
+    expect(s.cache).toEqual({ path: cachePath, hits: 0, misses: 4, bypassed: 0, infra_faults: 0 });
     expect(transport.calls).toBeGreaterThan(0);
 
     // Markdown renders the itemization for the miss.
@@ -424,13 +425,14 @@ describe('e2e — mixed-case fixture, stub embed transport, synthetic receipt', 
     expect(md).toContain('| mc-2 | multi-session | decision430, halfA430 | Sess_MULTI_a, Sess_MULTI_b | Sess_MULTI_b |');
     expect(md).toContain('Sess_MULTI_b*: 2/—/—/2;2/—/2 [rerun_hit]');
 
-    // Second pass: every page + question embed is now a cache hit (like-for-like vectors, D9).
+    // Second pass: every page + question embed that reaches this cache is now a hit
+    // (like-for-like vectors, D9); hybridSearch's repeat of the question again stays in-process.
     const again = await runDiagnostics({
       engine, receipt, questions, splits,
       pins: { mode: 'balanced', reranker: false, autocut: false, expansionVariantBudget: null },
       embedCachePath: cachePath, embedTransport: fakeTransport,
     });
-    expect(again.summary.cache).toEqual({ path: cachePath, hits: 5, misses: 0, bypassed: 0, infra_faults: 0 });
+    expect(again.summary.cache).toEqual({ path: cachePath, hits: 4, misses: 0, bypassed: 0, infra_faults: 0 });
     expect(again.rows[0].golds.find(g => g.session_id === 'Sess_MULTI_b')!.ranks).toEqual(b.ranks);
   }, 120_000);
 

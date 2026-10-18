@@ -219,14 +219,21 @@ expert-routed types.)
 
 ### Phase 7 — Commit (preserve the change)
 
-If the pack is in source control, commit:
+If the pack is in source control, commit and push only the pack file:
 
 ```
 cd ~/.gbrain/schema-packs/mine
-git add pack.json
-git commit -m "schema: add researcher + paper types + authored link"
-git push
+gbrain git commit-push -m "schema: add researcher + paper types + authored link" -- pack.json
 ```
+
+It takes the checkout's writer lock and merges a rejected push without
+rebasing, so it is safe when other agents share the checkout. On a non-zero
+exit: retry once on `commit_lock_busy`; on `integrate_conflict` stop and ask
+the user which version of `pack.json` wins; on `git_push_unavailable` the
+remote is unreachable (the commit is saved; rerun with `--push-only` later) or,
+when the pack repo has no remote at all, nothing was committed: commit just the
+pack locally with `git add pack.json && git commit -m "<msg>" -- pack.json`. Never fall back to
+stash, `pull --rebase` or a plain push ([outcomes](https://github.com/garrytan/gbrain/blob/master/docs/guides/shared-checkout-git.md#outcomes)).
 
 If the brain daemon is running (`gbrain serve --http`), other processes
 pick up the change within 1 second (stat-mtime TTL gate in

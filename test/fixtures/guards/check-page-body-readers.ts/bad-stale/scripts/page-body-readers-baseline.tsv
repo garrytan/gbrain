@@ -1,0 +1,3 @@
+# fixture baseline
+src/core/reader.ts	readBody	field	INLINE	inline by construction
+src/core/reader.ts	removed	call:putPage	SEGW	

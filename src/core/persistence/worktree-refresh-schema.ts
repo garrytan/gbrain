@@ -45,13 +45,13 @@ export const ACTIVE_REFRESH_STATES_SQL = "('draining','fenced','merged','syncing
 export const CHECKOUT_EFFECT_KINDS_SQL = "('git','withdrawal-mirror')";
 
 /**
- * Claim predicate for a row aliased `alias` with a `worktree_id` column: while
+ * Claim predicate for a row aliased `alias` whose `column` (default `worktree_id`) names the worktree: while
  * a refresh holds the checkout fence (`fenced`, `merged`) or its HEAD is
  * unverified (`recovery_required`), nothing on that worktree is claimed.
  * `draining` and `syncing` keep claiming, so queued work drains and the
  * refresh's own managed sync publishes.
  */
-export function refreshFenceClear(alias: string): string {
-  return `NOT EXISTS (SELECT 1 FROM persistence_worktree_refreshes fence WHERE fence.worktree_id=${alias}.worktree_id
+export function refreshFenceClear(alias: string, column = 'worktree_id'): string {
+  return `NOT EXISTS (SELECT 1 FROM persistence_worktree_refreshes fence WHERE fence.worktree_id=${alias}.${column}
         AND fence.state IN ('fenced','merged','recovery_required'))`;
 }

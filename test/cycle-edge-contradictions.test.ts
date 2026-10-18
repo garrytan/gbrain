@@ -111,6 +111,64 @@ describe('edge_contradictions', () => {
     expect(parseEdgeJudgeOutput('{"pairs":[{"a":1,"b":2,"conflict":true,"confidence":2}]}', 2)).toEqual([{ a: 1, b: 2, conflict: true, confidence: 1 }]);
   });
 
+  describe('judge errors retry with a bounded backoff (#6311)', () => {
+    const age = () => engine.executeRaw(`UPDATE link_edge_proposals SET updated_at = now() - interval '25 hours' WHERE status = 'error'`);
+    const errorRows = () => engine.executeRaw<{ status: string; detail: string }>(`SELECT status, detail FROM link_edge_proposals ORDER BY id`);
+
+    test('a transient error is skipped inside the backoff, then the next verdict replaces it', async () => {
+      await engine.setConfig('dream.edge_contradictions.mode', 'propose');
+      await seed(DATED);
+      calls = 0;
+      await runPhaseEdgeContradictions(engine, { judge: counting(async () => { throw new Error('upstream 529 overloaded'); }) });
+      expect((await errorRows())[0]).toMatchObject({ status: 'error', detail: 'attempt 1/3; Error: upstream 529 overloaded' });
+      await runPhaseEdgeContradictions(engine, { judge: counting(conflict) });
+      expect(calls).toBe(1);
+      await age();
+      const r = await runPhaseEdgeContradictions(engine, { judge: counting(conflict) });
+      expect(calls).toBe(2);
+      expect(r.totals).toMatchObject({ proposed: 1 });
+      expect((await proposals()).map(p => p.status)).toEqual(['proposed']);
+    });
+
+    test('three failed attempts hold the pair; no fourth call until retry --all-held', async () => {
+      await engine.setConfig('dream.edge_contradictions.mode', 'propose');
+      await seed(DATED);
+      calls = 0;
+      const failing = counting(async () => null);
+      for (let i = 0; i < 3; i++) { await runPhaseEdgeContradictions(engine, { judge: failing }); await age(); }
+      expect(calls).toBe(3);
+      expect((await errorRows())[0].detail).toStartWith('held after 3 attempts; malformed');
+      await runPhaseEdgeContradictions(engine, { judge: failing });
+      expect(calls).toBe(3);
+      const { runEdgeProposals } = await import('../src/commands/edge-proposals.ts');
+      const log = console.log; console.log = () => {};
+      try { await runEdgeProposals(engine, ['retry', '--all-held']); } finally { console.log = log; }
+      await runPhaseEdgeContradictions(engine, { judge: counting(conflict) });
+      expect(calls).toBe(4);
+      expect((await proposals()).map(p => p.status)).toEqual(['proposed']);
+    });
+
+    test('a non-error row is never replaced', async () => {
+      await seed(DATED);
+      await runPhaseEdgeContradictions(engine, { judge: async () => [{ a: 1, b: 2, conflict: false, confidence: 0.9 }] });
+      await engine.executeRaw(`UPDATE link_edge_proposals SET updated_at = now() - interval '25 hours'`);
+      calls = 0;
+      await runPhaseEdgeContradictions(engine, { judge: counting(conflict) });
+      expect(calls).toBe(0);
+      expect((await proposals()).map(p => p.status)).toEqual(['compatible']);
+    });
+
+    test('the stored detail is the error class and a redacted message of at most 200 characters', async () => {
+      await seed(DATED);
+      const key = 'sk-ant-api03-' + 'Ab1Cd2Ef3Gh4'.repeat(8) + 'AA';
+      await runPhaseEdgeContradictions(engine, { judge: async () => { throw new TypeError(`bad key ${key} ` + 'x'.repeat(400)); } });
+      const [row] = await errorRows();
+      expect(row.detail).toStartWith('attempt 1/3; TypeError: ');
+      expect(row.detail).not.toContain(key);
+      expect(row.detail.length).toBeLessThanOrEqual('attempt 1/3; TypeError: '.length + 200);
+    });
+  });
+
   test('zero budget spends nothing', async () => {
     await seed(DATED);
     await engine.setConfig('dream.edge_contradictions.max_usd', '0');

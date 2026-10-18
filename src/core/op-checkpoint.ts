@@ -493,7 +493,11 @@ export function syncFingerprint(p: { sourceId?: string; lastCommit: string }): s
  * census (candidates and scan cursors), paid fence-repair attempt claims
  * and memos, and uncommitted legacy fence-repair notices of a live source
  * incarnation leave only on resolution (or with
- * the incarnation), and connector hold-retry requests never expire (#5988).
+ * the incarnation), and connector hold-retry requests and stuck-recovery
+ * resolution audit entries never expire (#5988, #6650); a managed purge's
+ * tombstone failure records and parks (#6741, purge-parks.ts) leave only with
+ * their tombstone, its purge or a rearm; an open #6729 rename-identity downgrade
+ * record stays until its pair is settled or its old page is restored or purged.
  */
 export async function purgeStaleCheckpoints(
   engine: BrainEngine,
@@ -509,6 +513,10 @@ export async function purgeStaleCheckpoints(
          WHERE updated_at < now() - ($1 || ' days')::interval
            AND op NOT IN ('managed-atoms','managed-atoms-generation','managed-connector','managed-connector-retry','managed-connector-state','managed-connector-migration')
            AND op<>'connector-hold-retry'
+           AND op<>'stuck-recovery-resolution'
+           AND op<>'purge-deleted-park'
+           AND NOT (op='sync-identity-downgrade' AND completed_keys->0->>'disposition' IS NULL AND EXISTS (
+             SELECT 1 FROM pages p WHERE p.id::text=op_checkpoints.fingerprint AND p.deleted_at=(op_checkpoints.completed_keys->0->>'old_deleted_at')::timestamptz))
            AND NOT (op IN ('sync-hold','sync-hold-retry','sync-import-provenance','sync-hold-summary','sync-conversions','${FENCE_CANDIDATE_OP}','${FENCE_SCAN_OP}','${FENCE_REPAIR_ATTEMPT_OP}','${FENCE_UNCOMMITTED_OP}')
              AND NOT (op='sync-hold-summary' AND COALESCE((completed_keys->0->>'count')::int,0)=0)
              AND EXISTS (SELECT 1 FROM sources s WHERE s.id=op_checkpoints.completed_keys->0->>'source_id'

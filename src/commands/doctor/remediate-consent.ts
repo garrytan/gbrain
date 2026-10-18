@@ -13,6 +13,9 @@
  * - `destructive` (repairs): `--yes --expect <plan_hash>`, where plan_hash
  *   binds the brain, the repair kinds and their pending counts, the job
  *   steps and the parameters. A changed plan re-asks (`preview_changed`).
+ *   Kinds marked `approval: 'unbound'` (planner-stats: live server
+ *   statistics, no stored record changed) are left out, so an autoanalyze
+ *   between preview and run does not void the approval.
  *
  * A resume reuses the checkpoint's manifest (brain, cap, steps), so it binds
  * no new plan hash; it still needs `--yes` for the effects it continues.
@@ -24,6 +27,7 @@ import type { Effect } from '../../core/agent-output.ts';
 import { brainRoutingArgs } from '../../core/brain-resolver.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import type { RemediationPlan } from '../../core/remediation/types.ts';
+import { repairSpec } from '../../core/repair/registry.ts';
 
 export interface RemediateFlags {
   targetScore: number;
@@ -72,7 +76,7 @@ export function remediationSelection(brainId: string, plan: RemediationPlan | nu
     operation: 'doctor --remediate',
     records: [
       ...(plan?.plan ?? []).map(step => ({ id: `job:${step.id}` })),
-      ...(plan?.repair_steps ?? []).map(step => ({ id: step.id, revision: step.affected })),
+      ...(plan?.repair_steps ?? []).filter(step => repairSpec(step.kind).approval !== 'unbound').map(step => ({ id: step.id, revision: step.affected })),
     ],
     parameters: { target_score: flags.targetScore, include_repairs: true, no_embed: flags.noEmbed, plan_computed: plan !== null },
     effects: ['paid', 'destructive'],

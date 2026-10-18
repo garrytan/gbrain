@@ -69,31 +69,35 @@ import { createGlobalLlmHaltTracker, haltedClassOf, providerContentBlockReason, 
 import { importFromContent } from '../import-file.ts';
 import { derivedWriteThrough } from './derived-write-through.ts';
 import { serializeMarkdown } from '../markdown.ts';
-import { truncateUtf8 } from '../text-safe.ts';
-import { corpusTextForExtraction } from '../context/corpus-segments.ts';
+import { DEFAULT_EXTRACT_MAX_INPUT_CHARS, extractAtomsInput, inputTruncatedLine, recordPartialDisposition, releasePartialDispositions, resolveExtractAtomsInputCap, stampTranscriptTombstone, type ExtractAtomsInput, type ExtractAtomsItem } from './extract-atoms-input.ts';
+import { commitExtractionPlan, readPageWatermark } from '../extraction-watermark.ts';
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
 import type { MaintenanceWriteWait } from '../persistence/maintenance-wait.ts';
 import { connectorAtomExclusionSql } from './connector-atoms.ts';
 import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate, settleExtractAtomsCostGate } from './extract-atoms-cost-gate.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
-import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { classifyRunStop, providerHaltReason, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { abortableSleep } from '../retry.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
-import { resolveTierDefault } from '../model-config.ts';
-import { isUndefinedTableError, warnOncePerProcess } from '../utils.ts';
+import { resolveAlias, resolveTierDefault } from '../model-config.ts';
+import { isMissingSchemaObject, warnOncePerProcess } from '../utils.ts';
 import { utcDate } from './cycle-date.ts';
+import { atomSourceDate } from './atom-source-date.ts';
 import { normalizeForGrounding } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 import { managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, MANAGED_ATOM_DISCOVERY_SQL, type AtomOrigin } from '../persistence/atom-maintenance.ts';
 import { effectiveVisibility } from '../search/private-visibility.ts';
 import { OperationError } from '../ops/contract.ts';
+import { isOpPageSlug } from '../ops/context.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
-import { AtomPageStateError, completeAtomReceipts, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
+import { AtomPageStateError, completeAtomReceipts, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { deriveTrust, lowerDerivedPage } from '../trust/taint.ts';
+import { derivedGateInput } from '../trust/derived-gate.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
 import { parseAtomsOutcome } from './extract-atoms-parse.ts';
 export { parseAtomsOutcome, parseAtomsResponse, type AtomsParseOutcome } from './extract-atoms-parse.ts';
@@ -103,15 +107,11 @@ const DEFAULT_BUDGET_USD = 0.3;
 // cycle.extract_atoms.* config keys (max_input_chars — with the #4529
 // legacy alias max_source_chars — plus max_output_tokens / pacing_ms).
 // Exported so tests pin the defaults instead of re-hardcoding the literals.
-export const DEFAULT_EXTRACT_MAX_INPUT_CHARS = 50_000;
+// The input cap and the cut live in extract-atoms-input.ts (#6503).
+export { DEFAULT_EXTRACT_MAX_INPUT_CHARS };
 export const DEFAULT_EXTRACT_MAX_OUTPUT_TOKENS = 4096;
 
-/**
- * gbrain#4148: consecutive same-content failures of a content-deterministic
- * class (malformed model output or provider content block) before the page is tombstoned so the
- * backlog floor can clear. A content edit resets the streak.
- */
-export const MAX_DETERMINISTIC_FAILURES = 3;
+export { MAX_DETERMINISTIC_FAILURES };
 
 /**
  * Transient provider/infra failure shapes — retryable, never counted.
@@ -138,6 +138,10 @@ const SYNTHESIS_OUTPUT_TYPES = new Set<string>(['atom', 'concept']);
 
 const PAGE_DISCOVERY_BUDGET = 50;
 const MIN_PAGE_CHARS_FOR_EXTRACTION = 500;
+/** `compiled_truth` has >= `param` characters: octet_length reads a TOASTed size from its header and a character is
+ *  1-4 bytes, so only bodies of param..4x param bytes are decompressed (length() decompressed all: 1.3 s at 50k). */
+const minCompiledTruthChars = (param: string) =>
+  `(octet_length(p.compiled_truth) >= 4 * ${param} OR (octet_length(p.compiled_truth) >= ${param} AND length(p.compiled_truth) >= ${param}))`;
 // Source pages whose frontmatter declares a `raw` payload pointer hold raw
 // import data, not extractable prose. Extraction on them yields zero atoms,
 // so no atom row is ever written and they re-enter discovery + the doctor
@@ -147,18 +151,22 @@ const MIN_PAGE_CHARS_FOR_EXTRACTION = 500;
 const RAW_SOURCE_HOLDER_EXCLUSION_SQL =
   `AND NOT (p.type = 'source' AND COALESCE(p.frontmatter ? 'raw', false))`;
 
+// #6503: a partial row (the page was cut at the input cap) is skipped like a
+// tombstone until releasePartialDispositions clears it under a raised cap.
 const PAGE_SCAN_STATE_EXCLUSION_SQL = `AND NOT EXISTS (
   SELECT 1 FROM extract_atoms_page_state scan
   WHERE scan.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
-    AND scan.page_id=p.id AND scan.content_hash=p.content_hash AND scan.tombstoned
+    AND scan.page_id=p.id AND scan.content_hash=p.content_hash AND (scan.tombstoned OR scan.partial_input_chars IS NOT NULL)
 )`;
 
 /**
- * Pure allowlist policy: the legacy floor UNION the pack's `extractable: true`
- * types, MINUS synthesis outputs. Exported for unit tests; keep I/O-free.
+ * Pure allowlist policy: the legacy floor (minus floor types the pack declares not extractable, #5756: the floor
+ * covers only types the pack is silent about) UNION the pack's `extractable: true` types, MINUS synthesis outputs.
+ * Exported for unit tests; keep I/O-free.
  */
-export function unionExtractableTypes(packExtractable: Iterable<string>): string[] {
+export function unionExtractableTypes(packExtractable: Iterable<string>, packExcluded: Iterable<string> = []): string[] {
   const types = new Set<string>(LEGACY_EXTRACTABLE_TYPES);
+  for (const t of packExcluded) types.delete(t);
   for (const t of packExtractable) types.add(t);
   for (const t of SYNTHESIS_OUTPUT_TYPES) types.delete(t);
   return [...types];
@@ -172,17 +180,17 @@ export function unionExtractableTypes(packExtractable: Iterable<string>): string
  * back to the legacy floor.
  */
 async function resolveExtractableTypes(): Promise<string[]> {
-  let packExtractable: Iterable<string> = [];
+  let packExtractable: Iterable<string> = [], packExcluded: Iterable<string> = [];
   try {
     const { loadConfig } = await import('../config.ts');
     const { loadActivePack } = await import('../schema-pack/load-active.ts');
-    const { extractableTypesFromPack } = await import('../schema-pack/extractable.ts');
+    const { extractableTypesFromPack, nonExtractableTypesFromPack } = await import('../schema-pack/extractable.ts');
     const resolved = await loadActivePack({ cfg: loadConfig(), remote: false });
-    packExtractable = extractableTypesFromPack(resolved.manifest);
+    packExtractable = extractableTypesFromPack(resolved.manifest); packExcluded = nonExtractableTypesFromPack(resolved.manifest);
   } catch {
     // Pack unavailable (test seams, bootstrap) — legacy floor only.
   }
-  return unionExtractableTypes(packExtractable);
+  return unionExtractableTypes(packExtractable, packExcluded);
 }
 
 export interface ExtractAtomsOpts {
@@ -410,7 +418,7 @@ export async function discoverExtractablePages(
       AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
       AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
       ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
-      AND length(COALESCE(p.compiled_truth, '')) >= $3
+      AND ${minCompiledTruthChars('$3')}
       ${MANAGED_ATOM_DISCOVERY_SQL}
       ${PAGE_SCAN_STATE_EXCLUSION_SQL}
       ${connectorExclusion}
@@ -494,7 +502,7 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
-           AND length(COALESCE(p.compiled_truth, '')) >= $3
+           AND ${minCompiledTruthChars('$3')}
            ${MANAGED_ATOM_DISCOVERY_SQL}
            ${PAGE_SCAN_STATE_EXCLUSION_SQL}
            ${connectorExclusion}
@@ -512,7 +520,7 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
-           AND length(COALESCE(p.compiled_truth, '')) >= $2
+           AND ${minCompiledTruthChars('$2')}
            ${MANAGED_ATOM_DISCOVERY_SQL}
            ${PAGE_SCAN_STATE_EXCLUSION_SQL}
            ${connectorExclusion}
@@ -606,7 +614,8 @@ export function transcriptStateKey(filePath: string, contentHash16: string): str
  * per-file probes, same fail-soft posture (on error return empty, i.e. treat
  * everything as live and re-attempt, which is the pre-v146 behaviour).
  *
- * Only TOMBSTONED rows are returned. A row carrying an in-progress failure
+ * Only TOMBSTONED rows and partial rows (#6503: cut at the input cap, skipped
+ * until the cap rises) are returned. A row carrying an in-progress failure
  * streak (fail_count 1 or 2) is deliberately still live: those items must keep
  * being retried until the streak reaches MAX_DETERMINISTIC_FAILURES, exactly as
  * a page with `atoms_fail_count` below the bound stays in the page backlog.
@@ -622,13 +631,13 @@ export async function tombstonedTranscriptsForHashes(
       `SELECT file_path, content_hash
          FROM extract_atoms_transcript_state
         WHERE source_id = $1
-          AND tombstoned
+          AND (tombstoned OR partial_input_chars IS NOT NULL)
           AND content_hash = ANY($2::text[])`,
       [sourceId, contentHash16s],
     );
     return new Set(rows.map(r => transcriptStateKey(r.file_path, r.content_hash)));
   } catch (err) {
-    if (isUndefinedTableError(err)) {
+    if (isMissingSchemaObject(err, 'table', 'extract_atoms_transcript_state')) {
       // Un-migrated brain: the table lands with v146. Once per process, not a
       // full error line on every cycle until the operator migrates.
       warnOncePerProcess('extract_atoms.transcript_state_missing',
@@ -641,33 +650,31 @@ export async function tombstonedTranscriptsForHashes(
   }
 }
 
+export const EXTRACT_ATOMS_MODEL_KEY = 'models.dream.extract_atoms';
+
 /**
- * The exact two-step model resolution `runPhaseExtractAtoms` uses:
- * `models.dream.extract_atoms` DB config wins if set (same plain-`||`
- * truthiness as always — a whitespace-only value IS "configured"), else the
- * key-aware `resolveTierDefault('utility')`. Deliberately NOT
- * `resolveModel()`'s fuller chain (which also honors `models.tier.utility`,
- * `models.default`, and an env var) — extract_atoms has never read those, and
- * unifying the two behaviors is a separate, larger change. Exported so
- * `gbrain models` can report the actual routing instead of a generic chain
- * that can diverge from it in partially-configured installs; `source` comes
- * from the SAME call as `model` so the report's attribution can never
- * disagree with the resolved value. Fail-soft: a throwing config read routes
- * to the tier default (the same end state runPhaseExtractAtoms's config-read
- * try/catch has always produced).
+ * The model resolution `runPhaseExtractAtoms` uses, shared with the
+ * `gbrain models` row so the two cannot diverge (`source` and `label` come
+ * from the SAME call as `model`). Chain (#6675, decision D3 option B):
+ * `models.dream.extract_atoms` > `models.tier.utility` > the key-aware
+ * `resolveTierDefault('utility')`. `models.default` and `GBRAIN_MODEL` are
+ * deliberately skipped: a frontier generic default must not become the model
+ * of the highest-volume dream phase (its cost cap prices the utility tier).
+ * Values are trimmed and alias-resolved like `resolveModelDetailed`'s steps.
+ * Fail-soft: a throwing config read routes to the tier default.
  */
 export async function resolveExtractAtomsModelWithSource(
   engine: BrainEngine,
-): Promise<{ model: string; source: 'config' | 'tier_default' }> {
-  let configuredModel: string | null = null;
+): Promise<{ model: string; source: 'config' | 'tier_config' | 'tier_default'; label?: string }> {
   try {
-    configuredModel = await engine.getConfig('models.dream.extract_atoms');
+    const own = (await engine.getConfig(EXTRACT_ATOMS_MODEL_KEY))?.trim();
+    if (own) return { model: await resolveAlias(engine, own), source: 'config', label: `config: ${EXTRACT_ATOMS_MODEL_KEY}` };
+    const tier = (await engine.getConfig('models.tier.utility'))?.trim();
+    if (tier) return { model: await resolveAlias(engine, tier), source: 'tier_config', label: 'config: models.tier.utility' };
   } catch {
     // Fail-soft — fall through to the tier default.
   }
-  return configuredModel
-    ? { model: configuredModel, source: 'config' }
-    : { model: resolveTierDefault('utility'), source: 'tier_default' };
+  return { model: resolveTierDefault('utility'), source: 'tier_default' };
 }
 
 /** String-returning wrapper for runtime callers (`runPhaseExtractAtoms`). */
@@ -732,6 +739,11 @@ export async function runPhaseExtractAtoms(
       // No transcripts available — phase no-ops cleanly.
     }
   }
+
+  // #6503: the input cap is read before discovery so the partial dispositions
+  // a raised cap supersedes are released and their items offered in this run.
+  const maxInputChars = await resolveExtractAtomsInputCap(engine);
+  if (!opts.dryRun) await releasePartialDispositions(engine, sourceId, maxInputChars);
 
   // 1b. Get pages (test seam OR production discovery).
   //     _pages === undefined triggers discovery; _pages: [] suppresses it
@@ -891,10 +903,10 @@ export async function runPhaseExtractAtoms(
   const dateGrounding = await isConsumerDateGroundingOn(engine, 'atoms');
   let budgetCap = DEFAULT_BUDGET_USD;
   let explicitBudget = false; // operator SET cycle.extract_atoms.budget_usd
-  // #4529/#4540: the per-item input/output caps were hardcoded (slice(0, 50_000) +
-  // maxTokens: 4096). Operators on small-context or thinking models need to
-  // shrink/grow both without a code change; defaults are unchanged.
-  let maxInputChars = DEFAULT_EXTRACT_MAX_INPUT_CHARS;
+  // #4529/#4540: the per-item output cap was hardcoded (maxTokens: 4096).
+  // Operators on small-context or thinking models need to shrink/grow it
+  // without a code change; the default is unchanged. The input cap was read
+  // above (extract-atoms-input.ts).
   let maxOutputTokens = DEFAULT_EXTRACT_MAX_OUTPUT_TOKENS;
   let pacingMs = 0;
   try {
@@ -903,21 +915,6 @@ export async function runPhaseExtractAtoms(
     if (configuredBudget) {
       const n = Number(configuredBudget);
       if (Number.isFinite(n) && n > 0) { budgetCap = n; explicitBudget = true; }
-    }
-    // #4529: legacy input-cap key (its own floor of 500 chars, as landed).
-    // Read FIRST so the newer #4540 max_input_chars key below wins when
-    // both are set — they name the same knob.
-    const configuredMaxSourceChars = await engine.getConfig('cycle.extract_atoms.max_source_chars');
-    if (configuredMaxSourceChars) {
-      const n = Number(configuredMaxSourceChars);
-      if (Number.isFinite(n) && n >= 500) maxInputChars = Math.floor(n);
-    }
-    const configuredMaxInput = await engine.getConfig('cycle.extract_atoms.max_input_chars');
-    if (configuredMaxInput) {
-      const n = Number(configuredMaxInput);
-      // Floor of 1000 chars: below that the extractor sees a fragment too
-      // small to yield atoms and every page burns budget for nothing.
-      if (Number.isFinite(n) && n >= 1_000) maxInputChars = Math.floor(n);
     }
     const configuredMaxOutput = await engine.getConfig('cycle.extract_atoms.max_output_tokens');
     if (configuredMaxOutput) {
@@ -935,7 +932,7 @@ export async function runPhaseExtractAtoms(
     }
   } catch {
     // Keep safe defaults on any config-read failure: key-aware utility-tier
-    // model, $0.30 cap, default input cap (max_input_chars).
+    // model, $0.30 cap, default output cap.
   }
   // A cap is enforceable only when the tracker can price every call under it:
   // the extraction chat model AND the embed route importFromContent calls.
@@ -994,30 +991,15 @@ export async function runPhaseExtractAtoms(
   // say are "retryable, never counted" — see that regex's doc comment.
   let hardFailureCount = 0;
   let writesPending = 0; // #5601: accepted atom batches still publishing (progress, not failures)
+  let heldFailed = 0;
+  let inputTruncated = 0; // #6503: items cut at the input cap this run (partial disposition, see extract-atoms-input.ts)
 
   async function stampAtomsScanHash(item: AtomPageInput): Promise<void> {
     await writeAtomPageState(engine, sourceId, item, 'complete');
   }
-
-  /**
-   * Stamp the transcript-side tombstone (v146). The file-backed mirror of
-   * `stampAtomsScanHash`: transcripts have no frontmatter, and their discovery
-   * is gated ONLY by `atomsExistingForHashes`, so a transcript that yields no
-   * atom row has nothing to mark it done and is re-attempted every cycle.
-   * Row is (source_id, file_path, content_hash)-keyed, so an edited transcript
-   * is a different row and re-eligibilizes automatically.
-   */
-  async function stampTranscriptTombstone(filePath: string, contentHash: string): Promise<void> {
-    try {
-      await engine.executeRaw(
-        `INSERT INTO extract_atoms_transcript_state
-           (source_id, file_path, content_hash, fail_count, tombstoned, updated_at)
-         VALUES ($1, $2, $3, 0, TRUE, now())
-         ON CONFLICT (source_id, file_path, content_hash)
-         DO UPDATE SET tombstoned = TRUE, updated_at = now()`,
-        [sourceId, filePath, contentHash.slice(0, 16)],
-      );
-    } catch { /* fail-soft: transcript stays rediscoverable */ }
+  /** Large pages A7: a page's watermark moves past the text this item read once its writes committed (a pending batch keeps the old one). */
+  async function commitAtomsWatermark(item: ExtractAtomsItem, input: ExtractAtomsInput, published: readonly { state: string }[]): Promise<void> {
+    if (item.kind === 'page' && item.identity && input.plan && published.every(receipt => receipt.state === 'committed')) await commitExtractionPlan(engine, item.identity.pageId, input.plan);
   }
 
   /**
@@ -1054,7 +1036,7 @@ export async function runPhaseExtractAtoms(
         // A strike that never lands means this transcript never tombstones and
         // re-spends budget forever (#4916's class) — say so. A missing table
         // was already warned once by the tombstone check above.
-        if (!isUndefinedTableError(err)) {
+        if (!isMissingSchemaObject(err, 'table', 'extract_atoms_transcript_state')) {
           console.error(`[extract_atoms] transcript failure-count write failed for ${item.filePath}: ${err instanceof Error ? err.message : String(err)}`);
         }
         return null;
@@ -1080,7 +1062,7 @@ export async function runPhaseExtractAtoms(
       await stampAtomsScanHash(item);
       tombstonedForFailures.push(item.slug);
     } else {
-      await stampTranscriptTombstone(item.filePath, item.contentHash);
+      await stampTranscriptTombstone(engine, sourceId, item.filePath, item.contentHash);
       tombstonedTranscripts.push(item.filePath);
     }
   }
@@ -1100,18 +1082,23 @@ export async function runPhaseExtractAtoms(
     // #4706: bind the cut ONCE. This is the exact text the model receives,
     // and quote provenance is verified against THIS rather than the full
     // item, so a quote can only verify against text the model actually saw.
-    // #4529/#4540: configurable input cap, cut UTF-8-safely (a bare .slice()
-    // can split a surrogate pair at the boundary); #5812 strips pastes first.
-    const promptContent = truncateUtf8(item.kind === 'transcript' ? corpusTextForExtraction(item.filePath, item.content) : item.content, maxInputChars);
+    // #6503: a cut item is extracted once from its head and gets a partial
+    // disposition instead of a completion stamp (extract-atoms-input.ts).
+    const input = extractAtomsInput(item, maxInputChars, item.kind === 'page' ? (await readPageWatermark(engine, sourceId, item.slug, 'extract_atoms')).stored : null);
+    const { promptContent, truncated } = input;
     try {
-      const origin: AtomOrigin | null = managed ? await readAtomOrigin(engine, managed, item) : null;
+      const origin: AtomOrigin | null = managed ? { ...await readAtomOrigin(engine, managed, item), ...(truncated ? { partialInputChars: maxInputChars } : {}) } : null;
+      const sourcePage = item.kind === 'page' ? await engine.getPage(item.slug, { sourceId }) : null;
+      const contentDate = await atomSourceDate(engine, sourcePage); // #6720: captured with the input, before inference
       const visibility = origin?.visibility ?? effectiveVisibility(item.kind === 'transcript' ? { kind: 'transcript' } // #5525
-        : { kind: 'page', page: await engine.getPage(item.slug, { sourceId }) });
+        : { kind: 'page', page: sourcePage });
       throwIfAborted(opts.signal, 'extract_atoms');
-      if (!opts.dryRun && managed && origin && await resumeManagedAtoms(engine, managed, origin)) {
-        duplicatesSkipped++;
-        continue;
-      }
+      const resumed = !opts.dryRun && managed && origin ? await resumeManagedAtoms(engine, managed, origin) : 'run';
+      if (resumed === 'done') { duplicatesSkipped++; continue; }
+      if (resumed === 'held') { heldFailed++; continue; } // #6325: settled after repeated failures; doctor lists it
+      const cutLine = truncated ? inputTruncatedLine(originLabel, input, maxInputChars) : null; // A7: a complete appended-tail read prints nothing
+      if (cutLine) { inputTruncated++; console.error(cutLine); } // counted only for a model call
+
       const result = await chat({
         model: extractModel,
         ...atomsPrompt(dateGrounding, originLabel, promptContent),
@@ -1160,9 +1147,12 @@ export async function runPhaseExtractAtoms(
         // row is (source_id, file_path, content_hash)-keyed, so editing the
         // file re-eligibilizes it — which is what makes the permanence safe.
         if (!opts.dryRun) {
-          if (managed && origin) writeRequests.push(...await publishManagedAtoms(engine, managed, origin, []));
-          else if (item.kind === 'page') await stampAtomsScanHash(item);
-          else await stampTranscriptTombstone(item.filePath, item.contentHash);
+          const published = managed && origin ? await publishManagedAtoms(engine, managed, origin, []) : [];
+          writeRequests.push(...published);
+          if (!origin && truncated) await recordPartialDisposition(engine, sourceId, item, maxInputChars);
+          else if (!origin && item.kind === 'page') await stampAtomsScanHash(item);
+          else if (!origin && item.kind === 'transcript') await stampTranscriptTombstone(engine, sourceId, item.filePath, item.contentHash);
+          await commitAtomsWatermark(item, input, published);
         }
         if (item.kind === 'transcript') transcriptsProcessed++;
         else pagesProcessed++;
@@ -1187,7 +1177,6 @@ export async function runPhaseExtractAtoms(
         // write below). Page-kind items only — transcripts are files, not
         // pages, so there is no from-endpoint to link.
         const provenanceLinks: LinkBatchInput[] = [];
-        const sourcePage = item.kind === 'page' ? await engine.getPage(item.slug, { sourceId }) : null;
         const undatedDate = sourcePage?.created_at ? utcDate(new Date(sourcePage.created_at)) : 'undated';
         for (const atom of atoms) {
           const srcRef = item.kind === 'transcript' ? item.filePath : item.slug;
@@ -1239,7 +1228,7 @@ export async function runPhaseExtractAtoms(
           const md = serializeMarkdown(
             {
               atom_type: atom.atom_type,
-              ...originFrontmatter,
+              ...originFrontmatter, ...(contentDate ? { date: contentDate } : {}),
               // Provisional until the whole item's atoms persist (see above).
               source_hash: `pending:${hash16}`,
               visibility, ...(origin ? { managed_extraction: true } : {}),
@@ -1250,16 +1239,15 @@ export async function runPhaseExtractAtoms(
               ...(atom.emotional_register && { emotional_register: atom.emotional_register }),
               extracted_at: new Date().toISOString(),
               extracted_by: 'extract_atoms-v0.41.2.1',
+              dream_generated: true, // #5211: the flag every anti-loop guard keys on
             },
             atom.body,
             '',
             { type: 'atom', title: atom.title, tags: [] },
           );
           if (managed) managedAtoms.push({ slug, content: md, links: [] });
-          else await importFromContent(engine, slug, md, {
-              sourceId, preserveGateMarkers: true,
-              noEmbed: !isAvailable('embedding'),
-            });
+          else { const taint = await deriveTrust(engine, item.kind === 'page' ? [{ table: 'pages', sourceId, slug: item.slug }] : [], { channel: 'derive:atoms' }); // #5575 I2/B3: gated and stamped at the origin's taint
+            await importFromContent(engine, slug, md, { sourceId, preserveGateMarkers: true, noEmbed: !isAvailable('embedding'), writeGate: derivedGateInput(taint.trust) }).then(() => lowerDerivedPage(engine, taint, sourceId, slug)); }
           importedSlugs.push(slug);
           if (item.kind === 'page') {
             provenanceLinks.push({
@@ -1301,6 +1289,7 @@ export async function runPhaseExtractAtoms(
           writeRequests.push(...published);
           if (published.some(receipt => receipt.state !== 'committed')) writesPending++;
           totalAtomsExtracted += managedAtoms.length;
+          await commitAtomsWatermark(item, input, published);
         } else {
         if (provenanceLinks.length > 0) {
           await engine.addLinksBatch(provenanceLinks, { auditSite: 'cycle.extract_atoms.provenance' }); // gbrain-allow-direct-insert: atom-provenance edges derived from the extraction itself (no markdown body to reconcile from)
@@ -1310,16 +1299,13 @@ export async function runPhaseExtractAtoms(
         // source page. A crash between flip and stamp degrades to the legacy
         // atom-rows-mean-done semantics — safe, not lossy.
         throwIfAborted(opts.signal, 'extract_atoms');
-        await completeAtomReceipts(engine, sourceId, importedSlugs, hash16, item.kind === 'page' ? item : undefined);
-        // C-14: atoms are keyed by LLM-chosen titles, which drift between
-        // extractions. Once this extraction is complete, retire the atoms an
-        // earlier extraction of the same source produced that this one did not.
-        const retired = await retireStaleAtoms(engine, sourceId, item.kind === 'page'
-          ? { key: 'source_slug', value: item.slug } : { key: 'source_path', value: item.filePath }, hash16, importedSlugs);
+        // #6503: a cut item keeps its atoms provisional (`pending:<hash>`, the upsert path when it runs
+        // again), retires nothing and records its partial disposition instead of a completion stamp.
+        const retired = truncated ? [] : await completeUnmanagedItem(engine, sourceId, item, hash16, importedSlugs);
         await atomFiles?.(importedSlugs, retired);
-        if (item.kind === 'page') {
-          await stampAtomsScanHash(item);
-        }
+        if (truncated) await recordPartialDisposition(engine, sourceId, item, maxInputChars);
+        else if (item.kind === 'page') await stampAtomsScanHash(item);
+        await commitAtomsWatermark(item, input, []);
         }
       } else {
         totalAtomsExtracted += atoms.length; // count for dry-run reporting
@@ -1418,7 +1404,7 @@ export async function runPhaseExtractAtoms(
       kind: 'atoms',
       source_id: sourceId,
       cost_delta: estimatedSpendUsd,
-      ...classifyRunStop({ deadline_hit: stoppedEarly, error: hardFailureCount > 0 }),
+      ...classifyRunStop({ deadline_hit: stoppedEarly, error: hardFailureCount > 0 ? providerHaltReason(abortedGlobalError) ?? 'item_error' : false }),
     });
   }
 
@@ -1442,7 +1428,8 @@ export async function runPhaseExtractAtoms(
       (failures.length > 0 ? ` (${failures.length} failed)` : '') +
       (transcriptsSkipped + pagesSkipped > 0
         ? ` (${transcriptsSkipped + pagesSkipped} budget-skipped)`
-        : ''),
+        : '') +
+      (inputTruncated > 0 ? ` (${inputTruncated} input-truncated: the model did not read the tail)` : ''),
     details: {
       atoms_extracted: totalAtomsExtracted,
       transcripts_processed: transcriptsProcessed,
@@ -1453,6 +1440,8 @@ export async function runPhaseExtractAtoms(
       pages_skipped_budget: pagesSkipped,
       duplicates_skipped: duplicatesSkipped,
       write_pending: writesPending,
+      held_failed: heldFailed,
+      input_truncated: inputTruncated,
       failures,
       ...(managed ? { write_requests: writeRequests } : {}),
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
@@ -1467,6 +1456,20 @@ export async function runPhaseExtractAtoms(
       dry_run: opts.dryRun ?? false,
     },
   };
+}
+
+/**
+ * Completion receipt: flip provisional → real in one statement (only after
+ * every atom AND provenance edge persisted). C-14: atoms are keyed by
+ * LLM-chosen titles, which drift between extractions, so once this extraction
+ * is complete, retire the atoms an earlier extraction of the same source
+ * produced that this one did not. Returns the retired slugs.
+ */
+async function completeUnmanagedItem(engine: BrainEngine, sourceId: string,
+  item: { kind: 'transcript'; filePath: string } | ({ kind: 'page' } & AtomPageInput), hash16: string, importedSlugs: string[]): Promise<string[]> {
+  await completeAtomReceipts(engine, sourceId, importedSlugs, hash16, item.kind === 'page' ? item : undefined);
+  return retireStaleAtoms(engine, sourceId, item.kind === 'page'
+    ? { key: 'source_slug', value: item.slug } : { key: 'source_path', value: item.filePath }, hash16, importedSlugs);
 }
 
 /**
@@ -1507,10 +1510,12 @@ async function retireStaleAtoms(
  * same normalizer the FS-import path uses) and RE-STRIPS a trailing dash after
  * the 60-char truncation — the cut can land on a hyphen and re-introduce one.
  * Two writers disagreeing on that trailing dash (`…would` vs `…would-`) was the
- * "trailing-dash twin" duplicate bug.
+ * "trailing-dash twin" duplicate bug. #6804: leading dots are dropped too
+ * (`.example domains` → `example-domains`); slugifySegment keeps them and the
+ * page grammar (validatePageSlug) refuses a dot-led segment.
  */
 function atomSlugStem(title: string): string {
-  return slugifySegment(title).slice(0, 60).replace(/-+$/g, '') || 'untitled';
+  return slugifySegment(title).replace(/^[.-]+/, '').slice(0, 60).replace(/-+$/g, '') || 'untitled';
 }
 
 /**
@@ -1575,6 +1580,9 @@ function atomSlug(title: string, srcRef: string, sourcePageSlug?: string, undate
  *      live bound atoms once per run into `pageAtomTitles`; exactly one match
  *      on the JS-lowercased title (SQL LOWER() differs for some non-ASCII
  *      titles) is adopted, while zero or several mint the new-shape slug.
+ *      #6804: an atom an older build minted under a slug the page grammar
+ *      refuses (dot-led) is never adopted; the new slug lands and the
+ *      reconciliation retires the old atom.
  * Every read is scoped to the write's source (unscoped-check/scoped-write).
  */
 async function resolvePageAtomSlug(
@@ -1601,7 +1609,7 @@ async function resolvePageAtomSlug(
     for (const row of rows) titles.set(row.title.toLowerCase(), [...(titles.get(row.title.toLowerCase()) ?? []), row.slug]);
     pageAtomTitles.set(sourcePageSlug, titles);
   }
-  const variants = titles.get(title.toLowerCase()) ?? [];
+  const variants = (titles.get(title.toLowerCase()) ?? []).filter(isOpPageSlug);
   return variants.length === 1 ? variants[0]! : slug;
 }
 

@@ -1,7 +1,7 @@
 import type { BrainEngine } from './engine.ts';
 import { embed, getEmbeddingDimensions, getEmbeddingModel } from './ai/gateway.ts';
 import { withAIInvocationGuard } from './ai/invocation-guard.ts';
-import { BudgetTracker, loadPricingOverrides } from './budget/budget-tracker.ts';
+import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from './budget/budget-tracker.ts';
 import { assertEmbeddingEnabled, readFactsEmbeddingDim } from './embedding-dim-check.ts';
 import type { GBrainConfig } from './config.ts';
 import { redactConnectionInfo } from './audit/redact-connection-info.ts';
@@ -21,6 +21,8 @@ import { eligibleFactEmbedding, staleFactEmbedding } from './facts/embedding-ide
 export interface EmbedFactsOpts extends EmbedFactsOptions {
   signal?: AbortSignal;
   assertOwned?: (tx: BrainEngine) => Promise<void>;
+  /** Internal full migration: drain the finite census under the migration's lease and signal, with no wall-clock budget. */
+  migrationDrain?: { signal: AbortSignal; assertOwned: (tx: BrainEngine) => Promise<void> };
 }
 
 export interface EmbedFactsResult {
@@ -35,7 +37,7 @@ export interface EmbedFactsResult {
   failure_samples: string[];
   cost_usd: number;
   cost_estimated: boolean;
-  stopped: 'preview' | 'complete' | 'limit' | 'aborted' | 'failed';
+  stopped: 'preview' | 'complete' | 'limit' | 'time_budget' | 'aborted' | 'failed';
 }
 
 interface PendingFact {
@@ -47,11 +49,11 @@ interface PendingFact {
 const eligible = `f.source_id = $1 AND ${eligibleFactEmbedding} AND ${staleFactEmbedding}`;
 
 export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts, selectedConfig: GBrainConfig | null = null): Promise<EmbedFactsResult> {
-  const { signal: externalSignal, assertOwned, ...wireOptions } = opts;
-  opts = { ...validateEmbedFactsOptions(wireOptions), signal: externalSignal, assertOwned };
-  const maxFacts = opts.maxFacts ?? 100;
+  const { signal: externalSignal, assertOwned, migrationDrain, ...wireOptions } = opts;
+  opts = { ...validateEmbedFactsOptions(wireOptions), signal: migrationDrain?.signal ?? externalSignal,
+    assertOwned: migrationDrain?.assertOwned ?? assertOwned };
   const batchSize = opts.batchSize ?? 100;
-  const budgetMs = opts.budgetMs ?? 60_000;
+  const budgetMs = migrationDrain ? undefined : opts.budgetMs ?? 60_000;
   const dryRun = opts.dryRun === true || opts.yes !== true;
   const verified = currentVerifiedLocalWriter();
   if (verified && (verified.remote || verified.principal.kind !== 'local_cli' || verified.grant.slugPrefixes !== null
@@ -85,6 +87,7 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
     return { count: Number(row.count), lastId: row.last_id };
   };
   const initial = await census();
+  const maxFacts = migrationDrain ? initial.count : opts.maxFacts ?? 100;
   const result: EmbedFactsResult = {
     source_id: opts.sourceId, dryRun, total_stale: initial.count,
     would_embed: dryRun ? Math.min(initial.count, maxFacts) : 0,
@@ -116,10 +119,14 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
     label: 'embed.facts', maxCostUsd: opts.maxCostUsd, maxRuntimeMs: budgetMs,
     pricingOverrides: await loadPricingOverrides(engine),
   });
-  const signal = AbortSignal.any([AbortSignal.timeout(budgetMs), ...(opts.signal ? [opts.signal] : [])]);
+  const budgetTimer = budgetMs === undefined ? null : AbortSignal.timeout(budgetMs);
+  const signal = AbortSignal.any([...(budgetTimer ? [budgetTimer] : []), ...(opts.signal ? [opts.signal] : [])]);
+  const budgetStop = (error?: unknown) => opts.signal?.aborted !== true
+    && (budgetTimer?.aborted === true || error instanceof BudgetExhausted && error.reason === 'runtime');
   const maxTokens = resolveMaxChunkTokens();
   let afterId = '0';
   while (result.attempted < maxFacts) {
+    if (budgetStop()) { result.stopped = 'time_budget'; break; }
     if (signal.aborted) { result.stopped = 'aborted'; result.failures++; break; }
     const batch = await engine.executeRaw<PendingFact>(
       `SELECT f.id::text, f.fact, f.xmin::text AS version FROM facts f
@@ -190,6 +197,7 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
       }
       afterId = batch[batch.length - 1].id;
     } catch (error) {
+      if (budgetStop(error)) { result.stopped = 'time_budget'; break; }
       result.failures += batch.length;
       result.failure_samples.push(redactUrlsInText(redactConnectionInfo(
         redactFindings(error instanceof Error ? error.message : String(error), { highEntropy: true }).text,

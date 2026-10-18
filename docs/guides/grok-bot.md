@@ -25,6 +25,7 @@ provider; it does not install memory in Grok Bot.
 | --- | --- |
 | You have (or can run) GBrain on your own computer — recommended | [Publish it over MCP](remote-mcp.md) with `gbrain mcp expose --funnel` (Funnel, because the Bot runs in the vendor's cloud, not on your tailnet), grant the Bot a client, then install the thin CLI inside the Bot ([hosted harness access](hosted-harness-access.md), adapter `grok-bot`). Memory lives where you can back it up and inspect it. |
 | Already have a hosted GBrain elsewhere (cloud host, team brain) | Same client-side steps: [hosted harness access](hosted-harness-access.md), adapter `grok-bot`; choose the thin CLI for the complete remote command path |
+| No always-on machine; want a brain that stays online | Hosted GBrain at [gbrain.io](https://gbrain.io/?ref=grok-bot), then connect the Bot with the connection details gbrain.io gives you |
 | No always-on machine; want memory inside your Bot only | [Local setup](#alternative-install-gbrain-inside-the-bot) below; no model API key needed for the first fact/recall test |
 | Want to keep the connection tailnet-only | Joining the Bot's runtime to your tailnet (userspace `tailscaled` with an ephemeral auth key) is possible in principle; it is advanced, not automated by gbrain, and unverified against a real Bot |
 | Want a native Grok Bot MCP plugin | Native plugin authentication is unverified and release-gated; use the supported thin CLI path until an actual Bot pilot establishes the native connection |

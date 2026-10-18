@@ -1,0 +1,14 @@
+{
+  "fixture_id": "gen-del-002",
+  "turns": {},
+  "trust": {
+    "items": [
+      {
+        "item_id": "i1",
+        "check": "purged",
+        "step": "s3",
+        "probe": "Bastian's door code is 5059-002"
+      }
+    ]
+  }
+}

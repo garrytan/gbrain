@@ -266,6 +266,20 @@ describe('durable delegated provider accounting', () => {
     const rows = await engine.executeRaw<{ status: string; actual_cents: string }>('SELECT status,actual_cents::text FROM mcp_spend_reservations');
     expect(rows[0].status).toBe('settled'); expect(Number(rows[0].actual_cents)).toBeCloseTo(0.0105, 4);
   });
+  it('delegated local calls honor registered prices while retaining finite caps', async () => {
+    const previous = await engine.getConfig('pricing.overrides');
+    await engine.setConfig('pricing.overrides', '{"litellm:quality":{"input":0,"output":0}}');
+    try {
+      const ctx = await ownedJob(0.05);
+      let calls = 0;
+      await owned(ctx, () => invokeAI({ ...CALL, model: 'litellm:quality' }, async () => { calls++; return result(); }, sdkInvocationUsage));
+      const rows = await engine.executeRaw<{ status: string; actual_cents: string }>('SELECT status,actual_cents::text FROM mcp_spend_reservations');
+      expect(calls).toBe(1);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].status).toBe('settled');
+      expect(Number(rows[0].actual_cents)).toBe(0);
+    } finally { await engine.setConfig('pricing.overrides', previous ?? '{}'); }
+  });
   it('finite caps refuse unknown prices or absent enforced bounds before IO', async () => {
     const ctx = await ownedJob(1); let calls = 0;
     for (const call of [{ ...CALL, model: 'custom:unpriced' }, { ...CALL, maxInputTokens: undefined }, { ...CALL, kind: 'rerank' as const }]) {

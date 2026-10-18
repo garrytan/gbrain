@@ -9,8 +9,13 @@
 // (T6/T7) when hardcoded sites get refactored. This file pins the
 // module's internal contracts.
 
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import * as fs from 'node:fs';
+import { closeSync, ftruncateSync, mkdtempSync, openSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
+import { loadPackFromFile, SchemaPackLoaderError } from '../src/core/schema-pack/loader.ts';
 import {
   buildAliasGraph,
   expandClosure,
@@ -376,6 +381,61 @@ name: hashy`;
   test('strips comments', () => {
     const result = parseYamlMini('# top comment\nname: value # inline comment') as Record<string, unknown>;
     expect(result.name).toBe('value');
+  });
+
+  // #6432 (wave 14 P1.2): quoted scalars decode their escapes, so what the
+  // emitter writes reads back as the same string.
+  test.each([
+    ['double-quoted JSON escapes decode', 'r: "\\\\b"', '\\b'],
+    ['escaped quote then backslash', 'r: "a\\\\\\"b"', 'a\\"b'],
+    ['escaped quote inside', 'r: "x\\"#y"', 'x"#y'],
+    ['single-quoted doubles the quote', "r: 'it''s'", "it's"],
+    ['hash inside single quotes is content', "r: 'a # b'", 'a # b'],
+    ['hash inside double quotes is content', 'r: "a # b"', 'a # b'],
+    ['comment after a closing double quote is stripped', 'r: "a" # c', 'a'],
+    ['comment after a closing single quote is stripped', "r: 'a' # c", 'a'],
+    ['tab and newline escapes', 'r: "t\\tn\\n"', 't\tn\n'],
+    ['unicode escape', 'r: "\\u00e9"', 'é'],
+  ])('%s', (_name, yaml, expected) => {
+    expect((parseYamlMini(yaml) as Record<string, unknown>).r).toBe(expected);
+  });
+
+  test('a double-quoted scalar outside the JSON escape subset refuses naming the line, never a raw slice', () => {
+    let err: Error | null = null;
+    try { parseYamlMini('name: ok\nr: "\\q"'); } catch (e) { err = e as Error; }
+    expect(err).not.toBeNull();
+    expect(err!.message).toContain('line 2');
+    expect(err!.message).toContain('double-quoted');
+    try { loadPackFromString('api_version: gbrain-schema-pack-v1\nname: x\nversion: 0.1.0\ndescription: "\\q"\n', 'p.yaml'); }
+    catch (e) { expect((e as SchemaPackLoaderError).code).toBe('PARSE_ERROR'); return; }
+    throw new Error('expected a PARSE_ERROR');
+  });
+});
+
+describe('loadPackFromFile size guard (#6432)', () => {
+  test('refuses PACK_TOO_LARGE from the file size before reading the bytes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-pack-size-'));
+    try {
+      const path = join(dir, 'pack.yaml');
+      const fd = openSync(path, 'w');
+      // 20 MiB sparse: the size is what the guard must read, never the bytes.
+      ftruncateSync(fd, 20 * 1024 * 1024);
+      closeSync(fd);
+      const reads = spyOn(fs, 'readFileSync');
+      try {
+        loadPackFromFile(path, { maxBytes: 10 * 1024 * 1024 });
+        throw new Error('expected PACK_TOO_LARGE');
+      } catch (e) {
+        expect((e as SchemaPackLoaderError).code).toBe('PACK_TOO_LARGE');
+        expect((e as Error).message).toContain('20.0 MiB');
+        expect((e as Error).message).toContain('schema-packs.md');
+        expect(reads.mock.calls.filter(c => c[0] === path)).toHaveLength(0);
+      } finally {
+        reads.mockRestore();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -138,8 +138,8 @@ file, not a database: there is no compare-and-swap, no row lock, no atomic
 process WILL collide — two workers read `pending`, both process the same item,
 and you pay twice for the same expensive extraction; worse, two workers writing
 the same `manifest.json` concurrently can interleave and corrupt the JSON,
-losing the whole run's state. `git pull --rebase` is NOT synchronization — it
-resolves text conflicts, it does not prevent two workers from having already
+losing the whole run's state. Git is NOT synchronization: merging two
+workers' commits resolves text, it does not stop them from having already
 done the same paid work. So the claim is made by PARTITIONING before fan-out:
 split the item list into DISJOINT shards (by `group`, or by an offset/limit
 range) and hand each worker its own shard. No two workers ever look at the same
@@ -178,9 +178,11 @@ When fanning out processing across chunks/workers/subagents:
 When many workers run concurrently, having them all write one JSON races.
 Instead each writes `worker-<id>-progress.json` with
 `{"processed_ids": [], "stats": {}}`; a merge step folds them into the
-master manifest. (Proven at 20 workers on an email-takeout ingest.) For low
-parallelism (<=4 chunks), direct per-item JSON updates with a
-`git pull --rebase` before each commit is simpler and fine.
+master manifest. (Proven at 20 workers on an email-takeout ingest.) Low
+parallelism (<=4 chunks) is no exception: workers sharing one checkout still
+write per-worker files, because a shared `manifest.json` both races on disk
+and conflicts at commit time. Each worker commits only its own files with
+`scripts/brain-commit-push.sh "<msg>" <its files>`, never with a repo-wide add.
 
 ## Periodic commit during long runs
 
@@ -190,8 +192,17 @@ per [conventions/cron-via-minions.md](../conventions/cron-via-minions.md) —
 a recurring shell job shaped like:
 
 ```bash
-gbrain jobs submit shell --params '{"cmd": "cd <brain-repo> && git add projects/<pipeline-name> <output-dirs> && git commit -m \"<pipeline-name> ingest checkpoint\" && git push"}'
+gbrain jobs submit shell --params '{"cmd": "cd <brain-repo> && gbrain git commit-push -m \"<pipeline-name> ingest checkpoint\" -- projects/<pipeline-name> <output-dirs>"}'
 ```
+
+`gbrain git commit-push` (or the brain's `scripts/brain-commit-push.sh`)
+takes the checkout's writer lock, commits only the named paths, and merges a
+rejected push without touching other workers' files. A failed checkpoint
+fails the job; read its error: retry once on `commit_lock_busy`, and stop and
+tell the user on `integrate_conflict` or `writer_coordinator_required` (a
+managed brain: checkpoint pages through `put_page` instead). Never fall back to
+stash, `pull --rebase` or a plain push
+([shared-checkout git](https://github.com/garrytan/gbrain/blob/master/docs/guides/shared-checkout-git.md#outcomes)).
 
 Shell jobs require the WORKER to be started with `gbrain jobs work --allow-shell-jobs`
 (or `GBRAIN_ALLOW_SHELL_JOBS=1` exported on the worker) — see
@@ -202,8 +213,9 @@ the daemon lane anyway (the worker's environment decides, not the submitter's).
 
 Pre-commit hooks (privacy/durability) intentionally run on checkpoint
 commits — a checkpoint that bypasses them can bank unlintable content.
-Stage explicit paths, never `git add -A` (sweeps unrelated churn). Remove
-the schedule when the job completes.
+Name explicit paths; a repo-wide add sweeps up other writers' unrelated
+churn, which is why `commit-push` refuses to run without paths. Remove the
+schedule when the job completes.
 
 ## Hard rules
 

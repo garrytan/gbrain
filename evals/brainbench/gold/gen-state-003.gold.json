@@ -1,0 +1,20 @@
+{
+  "fixture_id": "gen-state-003",
+  "turns": {},
+  "trust": {
+    "items": [
+      {
+        "item_id": "i1",
+        "check": "guarded",
+        "step": "s1",
+        "claim": "Rafael Maplevale is the head of sales of Glintworks Co"
+      },
+      {
+        "item_id": "i2",
+        "check": "current",
+        "step": "s1",
+        "claim": "Rafael Maplevale is the head of sales of Glintworks Co"
+      }
+    ]
+  }
+}

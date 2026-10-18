@@ -46,6 +46,7 @@ import {
   stripStrikethrough,
   parseStringCell,
   escapeFenceCell,
+  assertFenceRewritable,
 } from './fence-shared.ts';
 import { findLineOutsideFencedCode, locateOutsideCode, protectedRegions, unclosedCodeFenceStart } from './fence-scan.ts';
 
@@ -166,6 +167,47 @@ function parseNumericCell(raw: string): number | undefined | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** #6385: the facts columns in canonical order (`#` is the row number), as the header names them. */
+export const FACTS_FENCE_COLUMNS = [
+  '#', 'claim', 'kind', 'confidence', 'visibility', 'notability', 'valid_from', 'valid_until', 'source', 'context',
+  'claim_metric', 'claim_value', 'claim_unit', 'claim_period', 'attributed_to',
+] as const;
+export type FactsFenceColumn = typeof FACTS_FENCE_COLUMNS[number];
+/** Columns a header may leave out, and a row may omit at its end. */
+export const FACTS_OPTIONAL_COLUMNS: ReadonlySet<string> = new Set(['context', 'claim_metric', 'claim_value', 'claim_unit', 'claim_period', 'attributed_to']);
+
+/**
+ * #6385: the column each cell of a row is read as, from the header cells, or
+ * why the header cannot be read. Every header cell must name a facts column
+ * once, and every required column must be named. A header in canonical order
+ * is a prefix of the canonical layout, so cells past it keep their canonical
+ * meaning (a 14-cell typed row under the 10-column header); any other header
+ * is the whole layout.
+ */
+export function factsHeaderLayout(headerCells: readonly string[]): { layout: FactsFenceColumn[]; named: number } | { problem: string } {
+  const names = headerCells.map(cell => cell.trim().toLowerCase());
+  const seen = new Set<string>();
+  for (const name of names) {
+    if (!(FACTS_FENCE_COLUMNS as readonly string[]).includes(name)) return { problem: `unsupported header column "${name}"` };
+    if (seen.has(name)) return { problem: `duplicate header column "${name}"` };
+    seen.add(name);
+  }
+  const missing = FACTS_FENCE_COLUMNS.find(column => !FACTS_OPTIONAL_COLUMNS.has(column) && !seen.has(column));
+  if (missing) return { problem: `header has no "${missing}" column` };
+  const canonical = names.every((name, i) => name === FACTS_FENCE_COLUMNS[i]);
+  return { layout: canonical ? [...FACTS_FENCE_COLUMNS] : names as FactsFenceColumn[], named: names.length };
+}
+
+/**
+ * #6385: why a row cannot be read under a header layout, or null. A row may
+ * omit only trailing optional columns the header names; cells past the
+ * layout must be empty, since a value there has no column to mean.
+ */
+export function factsRowProblem(layout: readonly FactsFenceColumn[], named: number, cells: readonly string[]): 'short' | 'extra' | null {
+  if (cells.slice(layout.length).some(cell => cell.trim())) return 'extra';
+  return layout.slice(cells.length, named).some(column => !FACTS_OPTIONAL_COLUMNS.has(column)) ? 'short' : null;
+}
+
 function parseSupersededByFromContext(context: string | undefined): number | undefined {
   if (!context) return undefined;
   const m = context.match(/superseded by #(\d+)/i);
@@ -206,6 +248,8 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
   const lines = inner.split('\n');
   const facts: ParsedFact[] = [];
   let sawHeader = false;
+  let layout: FactsFenceColumn[] = [];
+  let named = 0;
   const seenRowNums = new Set<number>();
 
   for (let i = 0; i < lines.length; i++) {
@@ -214,11 +258,20 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
     const cells = parseRowCells(line);
     if (!cells) continue;
 
-    // Header row: cells include 'claim' and 'kind' (case-insensitive).
+    // Header row: cells include 'claim' and 'kind' (case-insensitive). #6385:
+    // cells are then read by the column the header names, so a header this
+    // parser cannot map reads no rows (a rewrite refuses; the repair lane
+    // maps aliases and order).
     if (!sawHeader) {
       const lower = cells.map(c => c.toLowerCase());
       if (lower.includes('claim') && lower.includes('kind')) {
         sawHeader = true;
+        const header = factsHeaderLayout(cells);
+        if ('problem' in header) {
+          warnings.push(`FACTS_TABLE_MALFORMED: ${header.problem}`);
+          return { facts: [], warnings };
+        }
+        ({ layout, named } = header);
         continue;
       }
       warnings.push(`FACTS_TABLE_MALFORMED: row before header: "${line.trim()}"`);
@@ -228,29 +281,25 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
     // Separator row (just dashes/colons) — skip.
     if (isSeparatorRow(cells)) continue;
 
-    // Expect 10 cells (legacy 10-cell fence) OR 14 cells (v0.35.4
-    // typed-claim wide fence): row_num, claim, kind, confidence,
-    // visibility, notability, valid_from, valid_until, source, context,
-    // [claim_metric, claim_value, claim_unit, claim_period].
-    // Tolerate 9 (missing trailing context cell) — markdown editors often
-    // drop empty trailing cells.
-    if (cells.length < 9) {
+    // A row may drop trailing optional cells (markdown editors often drop an
+    // empty trailing context); a required cell or a value past the layout is
+    // a malformed row.
+    const shape = factsRowProblem(layout, named, cells);
+    if (shape === 'short') {
       warnings.push(`FACTS_TABLE_MALFORMED: only ${cells.length} cells in row "${line.trim()}"`);
       continue;
     }
+    if (shape === 'extra') {
+      warnings.push(`FACTS_TABLE_MALFORMED: ${cells.length} cells in row "${line.trim()}", more than its ${layout.length} columns`);
+      continue;
+    }
 
-    const [
-      rowNumStr, claimRaw, kindRaw, confidenceRaw,
-      visibilityRaw, notabilityRaw,
-      validFromRaw, validUntilRaw,
-      sourceRaw,
-      contextRaw = '',
-      claimMetricRaw = '',
-      claimValueRaw = '',
-      claimUnitRaw = '',
-      claimPeriodRaw = '',
-      attributedToRaw = '',
-    ] = cells;
+    const cell = (column: FactsFenceColumn): string => cells[layout.indexOf(column)] ?? '';
+    const rowNumStr = cell('#'), claimRaw = cell('claim'), kindRaw = cell('kind'), confidenceRaw = cell('confidence');
+    const visibilityRaw = cell('visibility'), notabilityRaw = cell('notability');
+    const validFromRaw = cell('valid_from'), validUntilRaw = cell('valid_until'), sourceRaw = cell('source'), contextRaw = cell('context');
+    const claimMetricRaw = cell('claim_metric'), claimValueRaw = cell('claim_value'), claimUnitRaw = cell('claim_unit');
+    const claimPeriodRaw = cell('claim_period'), attributedToRaw = cell('attributed_to');
 
     const rowNum = parseInt(rowNumStr, 10);
     if (!Number.isFinite(rowNum) || rowNum <= 0) {
@@ -347,6 +396,22 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
  */
 export function normalizeClaimWhitespace(text: string): string {
   return text.replace(/\r\n?/g, '\n').trim();
+}
+
+/**
+ * #6650: why a parsed fence cell does not read back as the legacy fact the
+ * fact-fence adoption assigns to it, or null when it does. The planner runs it
+ * on the whole fence it renders and the publisher re-checks it before
+ * adopting, so the two can never disagree.
+ */
+export function fenceCellReadBackProblem(cell: ParsedFact | undefined, fact: { fact: string; visibility: string }):
+  'row_missing' | 'struck' | 'empty' | 'visibility' | 'text' | null {
+  if (!cell) return 'row_missing';
+  if (!cell.active) return 'struck';
+  if (cell.claim === '') return 'empty';
+  if (cell.visibility !== fact.visibility) return 'visibility';
+  if (normalizeClaimWhitespace(cell.claim) !== normalizeClaimWhitespace(fact.fact)) return 'text';
+  return null;
 }
 
 /**
@@ -529,6 +594,11 @@ export function factsGapWarning(
     `dropped by a caller who never saw them, they are now lost.`;
 }
 
+export type NewFactRow = Omit<ParsedFact, 'rowNum' | 'active' | 'supersededBy' | 'forgotten'> & {
+  rowNum?: number;
+  active?: boolean;
+};
+
 /**
  * Append a new fact row to the body. If a fenced facts table exists, the
  * row is added to the end of it. If not, a new `## Facts` section + fence
@@ -536,45 +606,168 @@ export function factsGapWarning(
  *
  * Append-only — row_num is set to (max existing rowNum in the fence) + 1.
  * Stable forever, so cross-page refs like `<slug>#F<N>` keep pointing at
- * the same row.
+ * the same row. Throws `FenceRewriteRefusal` when the existing fence does
+ * not parse cleanly: re-rendering it would drop the rows the parser skipped.
  */
-export function upsertFactRow(
-  body: string,
-  newRow: Omit<ParsedFact, 'rowNum' | 'active' | 'supersededBy' | 'forgotten'> & {
-    rowNum?: number;
-    active?: boolean;
-  },
-): { body: string; rowNum: number } {
-  const { facts } = parseFactsFence(body);
+export function upsertFactRow(body: string, newRow: NewFactRow): { body: string; rowNum: number } {
+  const parsed = parseFactsFence(body);
+  assertFenceRewritable('facts', parsed);
+  const { facts } = parsed;
   const nextRowNum = newRow.rowNum
     ?? (facts.length > 0 ? Math.max(...facts.map(f => f.rowNum)) + 1 : 1);
+  return { body: replaceOrInsertFactsFence(body, renderFactsTable([...facts, factRow(newRow, nextRowNum)])), rowNum: nextRowNum };
+}
 
-  const allRows: ParsedFact[] = [
-    ...facts,
-    {
-      rowNum: nextRowNum,
-      claim: newRow.claim,
-      kind: newRow.kind,
-      confidence: newRow.confidence,
-      visibility: newRow.visibility,
-      notability: newRow.notability,
-      validFrom: newRow.validFrom,
-      validUntil: newRow.validUntil,
-      source: newRow.source,
-      context: newRow.context,
-      active: newRow.active ?? true,
-      // v0.35.4 — typed-claim pass-through. When undefined the renderer
-      // stays at the 10-cell shape so unrelated edits don't widen the
-      // fence.
-      claimMetric: newRow.claimMetric,
-      claimValue:  newRow.claimValue,
-      claimUnit:   newRow.claimUnit,
-      claimPeriod: newRow.claimPeriod,
-      ...(newRow.attributedTo ? { attributedTo: newRow.attributedTo } : {}),
+function factRow(newRow: NewFactRow, rowNum: number): ParsedFact {
+  return {
+    rowNum,
+    claim: newRow.claim,
+    kind: newRow.kind,
+    confidence: newRow.confidence,
+    visibility: newRow.visibility,
+    notability: newRow.notability,
+    validFrom: newRow.validFrom,
+    validUntil: newRow.validUntil,
+    source: newRow.source,
+    context: newRow.context,
+    active: newRow.active ?? true,
+    // v0.35.4 — typed-claim pass-through. When undefined the renderer
+    // stays at the 10-cell shape so unrelated edits don't widen the
+    // fence.
+    claimMetric: newRow.claimMetric,
+    claimValue:  newRow.claimValue,
+    claimUnit:   newRow.claimUnit,
+    claimPeriod: newRow.claimPeriod,
+    ...(newRow.attributedTo ? { attributedTo: newRow.attributedTo } : {}),
+  };
+}
+
+/**
+ * #6898 follow-up: upsertFactRow and strikeFactRowInPage for a whole batch of
+ * rows, with the section's fence parsed once (at the first append, which
+ * throws FenceRewriteRefusal exactly where upsertFactRow would) and rendered
+ * once by `page()`. A publication of N facts on a fence of M rows costs
+ * O(N + M) instead of re-parsing and re-rendering the whole fence per row
+ * (O(N × M): minutes on a fence of thousands of rows). The page it returns is
+ * the page the one-row-at-a-time calls leave.
+ */
+export function factsFenceEditor<T extends { compiled_truth: string; timeline: string }>(page: T, section: 'compiled_truth' | 'timeline') {
+  let current = page;
+  let rows: ParsedFact[] | null = null;
+  return {
+    append(newRow: NewFactRow & { rowNum: number }): void {
+      if (!rows) {
+        const parsed = parseFactsFence(current[section]);
+        assertFenceRewritable('facts', parsed);
+        rows = parsed.facts;
+      }
+      rows.push(factRow(newRow, newRow.rowNum));
     },
-  ];
+    strike(rowNum: number, by: number): void {
+      const struck = (f: ParsedFact): ParsedFact => f.rowNum === rowNum ? { ...f, active: false, supersededBy: by, context: `superseded by #${by}` } : f;
+      for (const key of ['compiled_truth', 'timeline'] as const) {
+        if (key === section && rows) {
+          if (!rows.some(f => f.rowNum === rowNum)) continue;
+          rows = rows.map(struck);
+          return;
+        }
+        const found = parseFactsFence(current[key]).facts;
+        if (!found.some(f => f.rowNum === rowNum)) continue;
+        current = { ...current, [key]: replaceOrInsertFactsFence(current[key], renderFactsTable(found.map(struck))) };
+        return;
+      }
+    },
+    page(): T {
+      return rows ? { ...current, [section]: replaceOrInsertFactsFence(current[section], renderFactsTable(rows)) } : current;
+    },
+  };
+}
 
-  return { body: replaceOrInsertFactsFence(body, renderFactsTable(allRows)), rowNum: nextRowNum };
+/**
+ * #3625 (adversarial review, 2 rounds): whether `timeline` contains a
+ * GENUINE Facts fence marker, as opposed to the marker text merely being
+ * mentioned inside a fenced code example or quoted prose. A naive
+ * `.includes(FACTS_FENCE_BEGIN)` false-positives on both — e.g. a page
+ * whose real fence WAS removed, but whose timeline documents the fence
+ * syntax in a ```markdown code block or a `> ...` blockquote, would wrongly
+ * be treated as "misplaced" and block a genuine deletion, leaving stale
+ * facts indexed indefinitely.
+ *
+ * Round 1 tried reusing fence-scan.ts's scanFencedBlocks() + string removal
+ * of its extracted fence bodies. Round-2 adversarial review broke that:
+ * scanFencedBlocks normalizes line endings (splits on `\r\n|\r|\n`, joins
+ * fence bodies with plain `\n`) and strips opener indentation before
+ * returning fence text — so `stripped.split(fenceText).join('')` on the
+ * ORIGINAL (un-normalized) string silently fails to match a CRLF or
+ * indented code block, leaving the marker inside it undetected and still
+ * false-positive. Reconstructed-text removal can't safely undo a lossy
+ * normalization.
+ *
+ * Fix: a self-contained single-pass line scanner (mirroring fence-scan.ts's
+ * own CommonMark-subset opener/closer grammar, applied directly against
+ * `timeline.split(/\r\n|\r|\n/)` — ONE split, no re-normalization, no
+ * text-based removal) that skips lines between a real ``` /~~~ opener and
+ * its closer, then checks whether any remaining line, trimmed, exactly
+ * equals the marker. A real fence marker is always written as its own line
+ * (see FENCE_BODY-shaped output from fence-write.ts / upsertFactRow), so
+ * exact-line-match — on lines outside any code fence — rules out both
+ * hazards without needing a full markdown AST (mirrors
+ * findTimelineSplitIndex's own `trimmed === sentinel` pattern for the same
+ * class of problem on the timeline sentinel itself). An unclosed opener
+ * runs to EOF (matches fence-scan.ts's documented behavior) — a marker
+ * appearing after it is inside an ambiguous, unclosed block and is not
+ * trusted as genuine.
+ */
+export function timelineHasGenuineFactsFenceMarker(timeline: string): boolean {
+  if (!timeline.includes(FACTS_FENCE_BEGIN)) return false;
+  const lines = timeline.split(/\r\n|\r|\n/);
+  const OPEN_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+  const CLOSE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i]!;
+    const open = OPEN_RE.exec(line);
+    if (open) {
+      const marker = open[1]!;
+      const fenceChar = marker[0]!;
+      const info = open[2]!.trim();
+      // Mirrors fence-scan.ts: a backtick opener whose info string contains
+      // a backtick is inline code, not a fence opener.
+      if (!(fenceChar === '`' && info.includes('`'))) {
+        let j = i + 1;
+        for (; j < lines.length; j++) {
+          const close = CLOSE_RE.exec(lines[j]!);
+          if (close && close[1]![0] === fenceChar && close[1]!.length >= marker.length) {
+            j++;
+            break;
+          }
+        }
+        i = j; // unclosed fence: j reaches lines.length, ending the scan
+        continue;
+      }
+    }
+    if (line.trim() === FACTS_FENCE_BEGIN) return true;
+    i++;
+  }
+  return false;
+}
+
+/**
+ * What the fence reconcile reads from a page body: each section's parsed fence, which sections hold a fence outside
+ * code (factsFenceSections) and whether the timeline holds a genuine begin marker line
+ * (timelineHasGenuineFactsFenceMarker). Built from the strings here; a segmented body builds it segment by segment
+ * (page-body/segment-facts.ts).
+ */
+export interface FactsFenceView {
+  body: FactsFenceParseResult;
+  timeline: FactsFenceParseResult;
+  sections: { body: boolean; timeline: boolean };
+  timelineMarker: boolean;
+}
+
+export function factsFenceView(page: { compiled_truth: string | null; timeline?: string | null }): FactsFenceView {
+  return { body: parseFactsFence(page.compiled_truth ?? ''), timeline: parseFactsFence(page.timeline ?? ''), sections: factsFenceSections(page),
+    timelineMarker: timelineHasGenuineFactsFenceMarker(page.timeline ?? '') };
 }
 
 /**
@@ -591,6 +784,38 @@ export function upsertFactRow(
  * An unclosed code block before that point would swallow the fence (it would
  * render as code), so the fence goes above the block's opener instead.
  */
+/** #6686: which sections of a page hold a facts fence outside markdown code (the reader `replaceOrInsertFactsFence` uses). */
+export function factsFenceSections(page: { compiled_truth: string | null; timeline?: string | null }): { body: boolean; timeline: boolean } {
+  const holds = (text: string | null | undefined) => locateOutsideCode(text ?? '', FACTS_FENCE_BEGIN, FACTS_FENCE_END).beginIdx !== -1;
+  return { body: holds(page.compiled_truth), timeline: holds(page.timeline) };
+}
+
+/**
+ * #6686: the section a writer edits a page's facts fence in. A fence that lives
+ * below the timeline sentinel (in `timeline`) is edited there when the body has
+ * none, so the writer neither adds a second fence above the sentinel nor
+ * rewrites the page's layout; every other page (no fence, a body fence, or
+ * fences in both sections) is edited in the body, as before.
+ */
+export function factsFenceSection(page: { compiled_truth: string | null; timeline?: string | null }): 'compiled_truth' | 'timeline' {
+  const held = factsFenceSections(page);
+  return !held.body && held.timeline ? 'timeline' : 'compiled_truth';
+}
+
+/**
+ * #6686: strike fence row `rowNum` as superseded by row `by` in whichever section's fence holds it (a split page can
+ * hold the old row in the other section than the one the new row went to); a page without the row is returned as is.
+ */
+export function strikeFactRowInPage<T extends { compiled_truth: string; timeline: string }>(page: T, rowNum: number, by: number): T {
+  for (const key of ['compiled_truth', 'timeline'] as const) {
+    const rows = parseFactsFence(page[key]).facts;
+    if (!rows.some(f => f.rowNum === rowNum)) continue;
+    return { ...page, [key]: replaceOrInsertFactsFence(page[key], renderFactsTable(rows.map(f => f.rowNum === rowNum
+      ? { ...f, active: false, supersededBy: by, context: `superseded by #${by}` } : f))) };
+  }
+  return page;
+}
+
 export function replaceOrInsertFactsFence(body: string, fenceBlock: string): string {
   const { beginIdx, endIdx } = locateOutsideCode(body, FACTS_FENCE_BEGIN, FACTS_FENCE_END);
   if (beginIdx !== -1 && endIdx !== -1) {

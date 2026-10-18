@@ -34,6 +34,7 @@ import {
 } from '../src/core/backup/status-file.ts';
 import { surfaceSource } from './helpers/source-surface.ts';
 import * as snapshot from '../src/core/backup/snapshot.ts';
+import { pgliteBackupPreflight } from '../src/core/backup/preflight.ts';
 import * as fs from 'node:fs';
 
 /** The exact literal thrown by src/core/pglite-engine.ts on lock contention.
@@ -526,6 +527,25 @@ describe('runBackupCli create — failure diagnostic for message-less errors (#5
       expect(out).toContain('Backup failed with no error message (ErrnoError, code EIO).');
       expect(out).not.toContain('hunter2-secret');
     }
+  });
+
+  test('#6649: a preflight refusal keeps its own code, fix and legacy reason instead of becoming storage_error', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'g6649-cli-'));
+    try {
+      const refusal = pgliteBackupPreflight(dir, join(dir, 'elsewhere', 'brain.pglite'), () => 0)!;
+      for (const json of [true, false]) {
+        const r = await failCreate(refusal, json);
+        expect(r.exitCode).toBe(1);
+        if (json) {
+          const doc = JSON.parse(r.stdout.trim());
+          expect(doc).toMatchObject({ ok: false, reason: 'unmanaged_database_path', code: 'unmanaged_database_path', class: 'host_only' });
+          expect(doc.fix).toMatchObject({ next: 'ask_user', verify: { argv: ['gbrain', 'doctor', '--json'] } });
+          expect(doc.fix.user_message).toContain('stop every gbrain writer');
+        } else {
+          expect(r.stderr).toContain('Error [unmanaged_database_path]');
+        }
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   test('an error message keeps its text with URL credentials redacted; retryable is preserved', async () => {

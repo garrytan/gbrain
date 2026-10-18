@@ -63,6 +63,27 @@ export async function ownerDatabaseDiagnostic(engine: Pick<BrainEngine, 'execute
     .map(key => [key, decimal(row.counters![key])])) : null };
 }
 
+/**
+ * How the server's connection slots were spent when a Postgres gate failed:
+ * counts per database class (this harness's fixtures or everything else),
+ * backend state and wait class, next to `max_connections`. A pooler holding
+ * a passed run's connections shows up as idle fixture backends; no database
+ * name, query text or client address leaves the server.
+ */
+export async function connectionDiagnostic(admin: { unsafe(query: string): Promise<Iterable<Record<string, unknown>>> }) {
+  const rows = [...await admin.unsafe(`
+    SELECT current_setting('max_connections') AS max_connections,
+      CASE WHEN datname LIKE 'gbrain_persistence_test_%' THEN 'fixture' ELSE 'other' END AS databases,
+      count(DISTINCT datname)::text AS database_count, coalesce(state, 'none') AS state,
+      coalesce(wait_event_type, 'none') AS wait_event_type, count(*)::text AS backends
+    FROM pg_stat_activity WHERE backend_type = 'client backend'
+    GROUP BY 2, 4, 5 ORDER BY 2, 4, 5 LIMIT 32`)];
+  return { max_connections: decimal(rows[0]?.max_connections ?? null),
+    backends: rows.reduce((sum, row) => sum + Number(row.backends), 0),
+    groups: rows.map(row => ({ databases: diagnosticCode(row.databases), database_count: decimal(row.database_count),
+      state: diagnosticCode(String(row.state).replaceAll(' ', '_')), wait_event_type: diagnosticCode(row.wait_event_type), backends: decimal(row.backends) })) };
+}
+
 export function retentionMetadata(scratch: string, databases: string[]) {
   // Only names created by this harness can appear in an executable cleanup command.
   if (!databases.every(name => /^gbrain_persistence_test_[0-9a-f]{32}$/.test(name))) throw new Error('Invalid retained fixture database name');

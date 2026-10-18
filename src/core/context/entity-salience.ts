@@ -132,6 +132,11 @@ export function isCommonCapitalizedWord(token: string): boolean {
   return COMMON_WORDS.has(token.toLowerCase());
 }
 
+/** True for hard stopwords (pronouns, articles, auxiliaries) that are never an entity. */
+export function isStopword(token: string): boolean {
+  return STOPWORDS.has(token.toLowerCase());
+}
+
 const HANDLE_RE = /@([A-Za-z0-9_]{2,})/g;
 // Capitalized token runs: an uppercase-initial word, up to 4 tokens total.
 // A token allows internal letters/digits/apostrophes/hyphens, plus internal

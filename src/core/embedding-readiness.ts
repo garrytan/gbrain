@@ -2,6 +2,11 @@ import type { BrainEngine } from './engine.ts';
 import { readProjectionSnapshot, queuePageProjection, preparePageProjection, installPageProjection } from './page-state/projections.ts';
 import { quoteIdentifier, resolveActiveEmbeddingColumnFromEngine } from './search/embedding-column.ts';
 import { QUARANTINE_FILTER_FRAGMENT } from './quarantine.ts';
+import { isMultimodalEnabled } from './sync.ts';
+import { buildSegmentedProjection } from './page-body/projection.ts';
+
+/** A segmented page with a body: its projection (`buildSegmentedProjection`) owes chunk rows even when it has none yet. */
+const SEGMENTED_BODY = `(p.body_storage = 'segmented' AND p.body_bytes > 0)`;
 
 export async function countArchivedEmbeddingWork(engine: BrainEngine, opts: { sourceId?: string; signature?: string; includeNullSignature?: boolean; includeUnsealed?: boolean } = {}, activeColumn?: string | null): Promise<number> {
   const column = activeColumn === undefined ? (await resolveActiveEmbeddingColumnFromEngine(engine)).name : activeColumn;
@@ -14,7 +19,7 @@ export async function countArchivedEmbeddingWork(engine: BrainEngine, opts: { so
         OR EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND (${vector} IS NULL
           OR c.embedded_text_hash <> md5(c.chunk_text)
           OR ($2::text IS NOT NULL AND (p.embedding_signature <> $2 OR ($3::boolean AND p.embedding_signature IS NULL)))))
-        OR ((p.compiled_truth <> '' OR p.timeline <> '') AND ${QUARANTINE_FILTER_FRAGMENT}
+        OR ((p.compiled_truth <> '' OR p.timeline <> '' OR ${SEGMENTED_BODY}) AND ${QUARANTINE_FILTER_FRAGMENT}
           AND NOT EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=p.id)))`,
   [opts.sourceId ?? null, opts.signature ?? null, opts.includeNullSignature ?? false, opts.includeUnsealed ?? false]);
   if (!Number.isSafeInteger(row?.n) || row.n < 0) throw new Error('Cannot determine archived embedding work.');
@@ -30,16 +35,16 @@ async function pendingProjectionWhere(engine: BrainEngine, opts: ProjectionScope
   if (opts.stale) {
     const column = quoteIdentifier((await resolveActiveEmbeddingColumnFromEngine(engine)).name);
     params.push(opts.stale.signature ?? null, opts.stale.includeNullSignature ?? false);
-    eligible = `AND EXISTS(SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND (
+    eligible = `AND (${SEGMENTED_BODY} OR EXISTS(SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND (
       c.${column} IS NULL OR c.embedded_text_hash <> md5(c.chunk_text)
-      OR ($3::text IS NOT NULL AND (p.embedding_signature <> $3 OR ($4::boolean AND p.embedding_signature IS NULL)))))`;
+      OR ($3::text IS NOT NULL AND (p.embedding_signature <> $3 OR ($4::boolean AND p.embedding_signature IS NULL))))))`;
   }
   const where = `p.deleted_at IS NULL
     AND NOT (COALESCE(p.frontmatter,'{}'::jsonb) ? 'embed_skip')
     AND p.text_projection_revision IS DISTINCT FROM p.knowledge_revision
     AND ($1::text IS NULL OR p.source_id=$1)
     ${opts.activeSourcesOnly ? 'AND NOT s.archived' : ''}
-    AND (NOT $2::boolean OR EXISTS(SELECT 1 FROM content_chunks c WHERE c.page_id=p.id)) ${eligible}`;
+    AND (NOT $2::boolean OR ${SEGMENTED_BODY} OR EXISTS(SELECT 1 FROM content_chunks c WHERE c.page_id=p.id)) ${eligible}`;
   return { where, params };
 }
 
@@ -68,7 +73,9 @@ export async function reportBlockedProjections(engine: BrainEngine, opts: Projec
   const sourceArg = opts.sourceId ? ` --source ${opts.sourceId}` : '';
   samples.push(`${blocked} page(s) still need a text projection, so their chunks were not embedded (${named.map(page => `${page.source_id}:${page.slug}`).join(', ')}${more}); every other stale chunk was embedded. `
     + (pages.some(page => page.page_kind !== 'markdown' && page.page_kind !== 'code')
-      ? `Image and media pages are rebuilt only by their importer: run gbrain embed --stale --images${sourceArg} (needs GBRAIN_EMBEDDING_MULTIMODAL=true) or gbrain sync --full${sourceArg}. ` : '')
+      ? isMultimodalEnabled()
+        ? `Image pages are sealed only by gbrain projections drain (importer-attested images, keyless; preview with gbrain projections drain --dry-run) or by their importer; this run's image sweep (images: missing_samples) could not rebuild the rest: restore their source files, then run gbrain embed --stale${sourceArg} again; gbrain doctor --only text_projection_readiness --json counts each class. `
+        : `Image pages are sealed only by gbrain projections drain (importer-attested images, keyless; preview with gbrain projections drain --dry-run) or by their importer: set GBRAIN_EMBEDDING_MULTIMODAL=true so gbrain embed --stale${sourceArg} sweeps the rest (preview with gbrain embed --stale --images --dry-run${sourceArg}); gbrain doctor --only text_projection_readiness --json counts each class. ` : '')
     + 'Rerun gbrain embed --stale to retry bounded projection recovery.');
   return new Set(pages.map(page => `${page.source_id}::${page.slug}`));
 }
@@ -84,13 +91,15 @@ export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { s
   };
   let rebuilt = 0;
   let blocked = await countBlocked();
-  // #6223: a keyset cursor visits each candidate once, so a batch of pages
-  // only their importer can rebuild (image/media) never hides repairable pages
-  // behind it, and a catch-up run cannot retry the same batch forever.
+  // #6223: a keyset cursor visits each candidate once, so a catch-up run
+  // cannot retry the same batch forever. #6803: it walks only the kinds a
+  // rebuild can build; image pages stay counted as blocked (their seal is the
+  // importer's or `gbrain projections drain`'s), never queued or re-stamped.
   let afterPageId = 0;
   while (opts.repair && blocked > 0 && !opts.signal?.aborted && Date.now() < (opts.deadline ?? Infinity)) {
     const rows = await engine.executeRaw<{ id: number; slug: string; source_id: string }>(`SELECT p.slug,p.source_id,p.id FROM pages p
       JOIN sources s ON s.id=p.source_id WHERE ${where} AND NOT s.archived AND p.id>$${params.length + 1}
+        AND (p.page_kind IN ('markdown','code') OR p.body_storage='segmented')
       ORDER BY p.id LIMIT $${params.length + 2}`, [...params, afterPageId, limit]);
     if (!rows.length) break;
     afterPageId = Number(rows[rows.length - 1]!.id);
@@ -99,6 +108,11 @@ export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { s
       await opts.assertOwned?.();
       try {
         if (await readProjectionSnapshot(engine, row.slug, row.source_id)) continue;
+        const [segmented] = await engine.executeRaw(`SELECT 1 FROM pages WHERE id=$1 AND body_storage='segmented'`, [row.id]);
+        if (segmented) {
+          if ((await buildSegmentedProjection(engine, { sourceId: row.source_id, slug: row.slug })).sealed) rebuilt++;
+          continue;
+        }
         const queued = await engine.transaction(async tx => {
           await opts.assertOwned?.(tx);
           await tx.lockPageKeys([{ sourceId: row.source_id, slug: row.slug }]);

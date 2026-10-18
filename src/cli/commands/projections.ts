@@ -13,6 +13,7 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
     return;
   }
   const json = args.includes('--json');
+  const dryRun = args.includes('--dry-run');
   const { OperationError } = await import('../../core/ops/contract.ts');
   const { reportPersistenceCliError } = await import('../../commands/persistence-delegate.ts');
   const refuse = async (error: InstanceType<typeof OperationError>) => {
@@ -21,7 +22,7 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
   };
   const limitAt = args.indexOf('--limit');
   const limitValue = limitAt === -1 ? undefined : args[limitAt + 1];
-  const known = new Set(['drain', '--json', '--limit', ...(limitValue === undefined ? [] : [limitValue])]);
+  const known = new Set(['drain', '--json', '--dry-run', '--limit', ...(limitValue === undefined ? [] : [limitValue])]);
   const unknown = args.find(arg => !known.has(arg));
   if (args[0] !== 'drain' || unknown !== undefined) {
     await refuse(new OperationError('invalid_params', `Unknown projections argument '${unknown ?? args[0]}'.`,
@@ -45,27 +46,38 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
   const config = persistenceConfigForBrain(loadConfig(), brainId, brainId === 'host' ? [] : loadMounts());
   if (config?.engine === 'pglite' && config.database_path && !config.database_url) {
     const holder = inspectLockHolder(config.database_path);
-    if (holder.held) { await refuse(projections.projectionOwnerResidentError(holder, config.database_path, brainId)); return; }
+    if (holder.held) {
+      // #6803: the preview counts come from the resident's own projection_status (null: an older resident, or none listening).
+      const { persistenceSocketPathForConfig, requestPersistenceProjectionStatus } = await import('../../core/persistence/ipc.ts');
+      const socketPath = persistenceSocketPathForConfig(config);
+      const status = socketPath ? await requestPersistenceProjectionStatus(socketPath).catch(() => null) : null;
+      await refuse(projections.projectionOwnerResidentError(holder, config.database_path, brainId, status));
+      return;
+    }
   }
 
   const { createProgress } = await import('../../core/progress.ts');
   const { cliOptsToProgressOptions } = await import('../../core/cli-options.ts');
   const engine = await ctx.connectEngine();
+  if (dryRun) {
+    // #6803: the preview reads the queue and rebuilds nothing.
+    try {
+      const preview = await projections.previewProjectionDrain(engine, limit ?? 50);
+      await writeStdoutFinal((json ? JSON.stringify(preview) : projections.formatDrainPreview(preview)) + '\n');
+    } finally {
+      await finishCliTeardown({ engine });
+    }
+    return;
+  }
   try {
-    const result = await projections.drainProjections(engine, { limit, progress: createProgress(cliOptsToProgressOptions(getCliOptions())) });
+    const result = await projections.drainProjections(engine, { limit, media: true, progress: createProgress(cliOptsToProgressOptions(getCliOptions())) });
     if (json) {
-      const { limited: _limited, ...payload } = result;
-      await writeStdoutFinal(JSON.stringify(payload) + '\n');
+      await writeStdoutFinal(JSON.stringify(result) + '\n');
     } else {
       for (const failure of result.failed) {
         console.error(`failed: ${failure.source_id}/${failure.slug}: ${failure.reason}\n  next: ${projections.projectionFailureNextAction(failure)}`);
       }
-      const summary = `projections drain: ${result.rebuilt} rebuilt, ${result.superseded} superseded, ${result.failed.length} failed, ${result.remaining} remaining.`;
-      const tail = result.remaining === 0 ? ' The projection backlog is empty.'
-        : result.limited ? ` Stopped at --limit ${limit}; run \`gbrain projections drain\` again to continue.`
-          : result.failed.length ? ' Failed pages stay queued; fix them as shown above, then run `gbrain projections drain` again.'
-            : ' Rows queued during this run are left for the next run or the resident owner.';
-      await writeStdoutFinal(summary + tail + '\n');
+      await writeStdoutFinal(projections.formatDrainResult(result, limit) + '\n');
     }
     if (result.failed.length) setCliExitVerdict(1);
   } finally {

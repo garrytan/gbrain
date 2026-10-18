@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Worker } from 'node:worker_threads';
@@ -9,6 +9,7 @@ import { startPersistenceIpcServer } from '../../src/core/persistence/ipc.ts';
 const [mode, path, output, barrier] = process.argv.slice(2);
 if (process.platform !== 'win32' || !mode || !path || !output) throw new Error('Windows IPC fixture arguments required');
 const addon = process.arch === 'x64' ? require('../../native/locks/prebuilds/win32-x64.node') : require('../../native/locks/prebuilds/win32-arm64.node');
+function publish(value: string) { writeFileSync(`${output}.partial`, value); renameSync(`${output}.partial`, output); }
 async function keepAlive() { await new Promise<void>(done => { process.stdin.once('data', () => done()); process.stdin.once('end', done); process.stdin.resume(); }); }
 if (mode === 'finalize') {
   (() => { const handle = addon.openIpcMutex(path); if (!addon.tryLock(handle)) throw new Error('Initial fixture claim refused'); })();
@@ -18,7 +19,7 @@ if (mode === 'finalize') {
     const next = addon.openIpcMutex(path); acquired = addon.tryLock(next); addon.close(next);
   }
   if (!acquired) throw new Error('Finalizer did not release the mutex on its owner thread');
-  writeFileSync(output, 'released');
+  publish('released');
 } else if (mode === 'copied-addon') {
   const copy = join(dirname(output), 'second-addon.node');
   copyFileSync(new URL(`../../native/locks/prebuilds/win32-${process.arch}.node`, import.meta.url), copy);
@@ -29,14 +30,14 @@ if (mode === 'finalize') {
   addon.close(firstHandle);
   if (!second.tryLock(secondHandle)) throw new Error('Copied addon could not acquire after release');
   second.close(secondHandle);
-  writeFileSync(output, 'released');
+  publish('released');
 } else if (mode === 'worker') {
   const worker = new Worker(new URL('./windows-ipc-mutex-worker.ts', import.meta.url), { workerData: path });
   const [result] = await once(worker, 'message'); if (result !== 'acquired') throw new Error('Worker claim failed');
   if (await tryAcquireNativeIpcMutex(path)) throw new Error('Worker did not retain its claim');
   await worker.terminate();
   const next = await tryAcquireNativeIpcMutex(path); if (!next) throw new Error('Worker cleanup retained its claim');
-  await next.release(); writeFileSync(output, 'released');
+  await next.release(); publish('released');
 } else {
   const opened = mode === 'abandoned' ? addon.openIpcMutex(path) : undefined;
   writeFileSync(`${output}.ready`, 'ready');
@@ -45,7 +46,7 @@ if (mode === 'finalize') {
     ? await startPersistenceIpcServer(path, { brainId: '10000000-0000-4000-8000-000000000001', dispatch: async () => ({}) })
     : mode === 'abandoned' ? (addon.tryLock(opened) ? { release: async () => addon.close(opened) } : null)
       : await tryAcquireNativeIpcMutex(path);
-  writeFileSync(output, lock ? 'acquired' : 'busy');
+  publish(lock ? 'acquired' : 'busy');
   if (lock) { await keepAlive(); if ('server' in lock) lock.close(); else await lock.release(); }
   else if (opened) addon.close(opened);
 }

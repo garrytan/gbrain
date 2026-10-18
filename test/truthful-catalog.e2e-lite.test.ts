@@ -206,6 +206,7 @@ function expectedVisibleSet(cell: Cell): Set<string> {
   const scopes = cell.scopes ?? LEGACY_DEFAULT_SCOPES;
   for (const op of operations) {
     if (op.localOnly) continue;                                  // D7: network transport
+    if (op.cliOnly) continue;                                    // F5: owner-only CLI ops are never listed on MCP
     if (cell.surface === 'verbs' && op.verb !== true) continue;  // frozen verb surface
     if (cell.surface === 'starter' && !STARTER_OPS.has(op.name)) continue;
     const scopeOk = hasScope(scopes, op.scope ?? 'read')
@@ -222,15 +223,17 @@ function expectedVisibleSet(cell: Cell): Set<string> {
 /**
  * The serve-http ListTools computation, composed from the exact seams the
  * real handler uses (serve-http.ts POST /mcp → ListToolsRequestSchema):
- * surface filter after the localOnly filter, then scope (+ agentCallable
- * carve-out), bound-client predicate, publish gates.
+ * surface filter after the localOnly filter, then isCallable's cliOnly
+ * exclusion (F5), scope (+ agentCallable carve-out), bound-client predicate,
+ * publish gates.
  */
 async function oauthToolsList(cell: Cell): Promise<Set<string>> {
   const mcpOperations = filterOpsForSurface(operations.filter(op => !op.localOnly), cell.surface);
   const gateDisabled = await disabledOpsForPublishGates(engine, null);
   const auth = cellAuth(cell);
   const visible = mcpOperations.filter(op =>
-    operationScopesAllowed(auth.scopes, op)
+    !op.cliOnly
+    && operationScopesAllowed(auth.scopes, op)
     && opAllowedForBoundClient(auth, op)
     && !gateDisabled.has(op.name));
   return new Set(visible.map(o => o.name));

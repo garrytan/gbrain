@@ -12,10 +12,15 @@
  * between runs is seen and a pass that ends reports current counts. While a later pass is in progress, a clean
  * finished pass is trusted until a newer timeline row is written. A truncated
  * run with neither is a lower bound and is never reported as clean.
+ *
+ * Segmented pages (Wave B) are not classified: `gbrain repair timeline` cannot
+ * re-publish them, so their database-side rows are counted separately
+ * (`segmented_pages`, `segmented_rows`), named, reported as kept, and never
+ * drive the warning or the repair recommendation.
  */
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
-import { recountTimelinePages, scanTimelineHistory } from '../../../core/repair/timeline.ts';
+import { recountTimelinePages, scanTimelineHistory, segmentedTimelineNote, segmentedTimelinePages } from '../../../core/repair/timeline.ts';
 
 const PAGE_CAP = 2_000;
 const TIME_BUDGET_MS = 10_000;
@@ -68,6 +73,9 @@ export async function timelineHistoryCheck(engine: BrainEngine, sourceId?: strin
       runs: state.runs + 1,
     };
     const multiRun = pass.runs > 1;
+    const segmented = await segmentedTimelinePages(engine, sources);
+    const segmentedDetails = segmented.pages ? { segmented_pages: segmented.pages, segmented_rows: segmented.rows, segmented_sample: segmented.sample } : {};
+    const segmentedNote = segmented.pages ? ` Also: ${segmentedTimelineNote(segmented)}` : '';
 
     if (!scan.truncated) {
       if (prior) {
@@ -75,31 +83,32 @@ export async function timelineHistoryCheck(engine: BrainEngine, sourceId?: strin
           last: { ...pass, max_entry: state.started_max_entry, completed_at: new Date().toISOString() } });
       }
       const details = { materializable_rows: pass.materializable, kept_unrenderable_rows: pass.unrenderable, pages_affected: pass.affected,
-        pages_inspected: pass.inspected, count: 'exact', truncated: false, repair: 'timeline', ...(multiRun ? { pass_runs: pass.runs } : {}) };
+        pages_inspected: pass.inspected, count: 'exact', truncated: false, repair: 'timeline', ...(multiRun ? { pass_runs: pass.runs } : {}), ...segmentedDetails };
       const across = multiRun ? ` (full pass across ${pass.runs} doctor runs)` : '';
       if (pass.materializable > 0) {
         return { name, status: 'warn', details, message: `${pass.materializable} timeline row(s) on ${pass.affected} page(s) exist only in the database${across}. `
-          + `Preview: gbrain repair timeline — apply: gbrain repair timeline --apply` + (pass.unrenderable ? `. ${pass.unrenderable} other row(s) cannot round-trip and are kept as-is.` : '') };
+          + `Preview: gbrain repair timeline — apply: gbrain repair timeline --apply` + (pass.unrenderable ? `. ${pass.unrenderable} other row(s) cannot round-trip and are kept as-is.` : '') + segmentedNote };
       }
-      return { name, status: 'ok', details, message: pass.unrenderable
+      return { name, status: 'ok', details, message: (pass.unrenderable
         ? `No materializable database-only timeline rows${across}; ${pass.unrenderable} row(s) cannot round-trip through their page and are kept as-is (informational).`
-        : `Every timeline row has a bullet in its page (${pass.inspected} page(s) inspected${multiRun ? ` across ${pass.runs} doctor runs` : ''}).` };
+        : segmented.pages ? `No materializable database-only timeline rows on inline pages (${pass.inspected} page(s) inspected${multiRun ? ` across ${pass.runs} doctor runs` : ''}).`
+          : `Every timeline row has a bullet in its page (${pass.inspected} page(s) inspected${multiRun ? ` across ${pass.runs} doctor runs` : ''}).`) + segmentedNote };
     }
 
     await saveState(engine, key, { ...state, ...pass, cursor: scan.cursor, found: counted.map(p => p.id).slice(0, FOUND_CAP) });
     const details = { materializable_rows: pass.materializable, kept_unrenderable_rows: pass.unrenderable, pages_affected: pass.affected,
-      pages_inspected: pass.inspected, count: 'lower_bound', truncated: true, repair: 'timeline', pass_runs: pass.runs, resumes_after_page_id: scan.cursor };
+      pages_inspected: pass.inspected, count: 'lower_bound', truncated: true, repair: 'timeline', pass_runs: pass.runs, resumes_after_page_id: scan.cursor, ...segmentedDetails };
     const coverage = ` (this pass has inspected ${pass.inspected} page(s) over ${pass.runs} run(s) and resumes on the next doctor run; counts are a lower bound)`;
     if (pass.materializable > 0) {
       return { name, status: 'warn', details, message: `at least ${pass.materializable} timeline row(s) on ${pass.affected} page(s) exist only in the database${coverage}. `
-        + `Preview: gbrain repair timeline — apply: gbrain repair timeline --apply` + (pass.unrenderable ? `. ${pass.unrenderable} other row(s) cannot round-trip and are kept as-is.` : '') };
+        + `Preview: gbrain repair timeline — apply: gbrain repair timeline --apply` + (pass.unrenderable ? `. ${pass.unrenderable} other row(s) cannot round-trip and are kept as-is.` : '') + segmentedNote };
     }
     const last = state.last;
     if (last && last.materializable === 0 && maxEntry <= last.max_entry) {
       return { name, status: 'ok', details: { ...details, last_full_pass: { pages_inspected: last.inspected, runs: last.runs, completed_at: last.completed_at } },
-        message: `No materializable database-only timeline rows: the last full pass (${last.inspected} page(s), completed ${last.completed_at}) found none and no timeline row has been written since; the next pass is in progress.` };
+        message: `No materializable database-only timeline rows: the last full pass (${last.inspected} page(s), completed ${last.completed_at}) found none and no timeline row has been written since; the next pass is in progress.${segmentedNote}` };
     }
-    return { name, status: 'warn', details, message: `Timeline history scan incomplete${coverage}; run \`gbrain repair timeline\` for the full count now.` };
+    return { name, status: 'warn', details, message: `Timeline history scan incomplete${coverage}; run \`gbrain repair timeline\` for the full count now.${segmentedNote}` };
   } catch (e) {
     return { name, status: 'warn', message: `timeline history check skipped: ${e instanceof Error ? e.message : String(e)}`,
       details: { count: 'lower_bound', truncated: true, health: 'unknown' } };

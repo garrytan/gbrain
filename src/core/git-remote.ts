@@ -15,47 +15,15 @@ import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts'
  * reachable only via Tailscale, set GBRAIN_ALLOW_PRIVATE_REMOTES=1; loud
  * stderr warning at use site is the operator's signal.
  */
-import { execFileSync } from 'child_process';
+import { execFileSync } from './spawn.ts';
 import { lstatSync, existsSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { isAbsolute, join } from 'path';
 import { isInternalUrl } from './url-safety.ts';
 import { execFileBounded } from './bounded-child-exec.ts';
-
-/**
- * Git CLI accepts two flag positions:
- *   git [global -c flags] <subcommand> [subcommand flags] [args]
- *
- * Global flags (the `-c key=value` config overrides) MUST come before the
- * subcommand. Subcommand-specific flags (like `--no-recurse-submodules`)
- * MUST come after the subcommand. Mixing the two positions makes git fail
- * with `unknown option` (exit 129). Pre-v0.34 the single GIT_SSRF_FLAGS
- * constant spliced both positions before the verb; real git rejected the
- * subcommand flag but the test harness used a fake-git script that didn't
- * validate, so every remote-source clone/pull broke silently in production.
- *
- * Split into two constants so the call-site spread is unambiguous and the
- * type/name signal the position rule.
- */
-
-/**
- * Global git config flags. Spread BEFORE the subcommand verb.
- * - http.followRedirects=false: closes DNS rebinding via redirect chains
- * - protocol.file.allow=never: no local-file URLs (defense in depth)
- * - protocol.ext.allow=never: no external helpers (`git-remote-foo`)
- */
-export const GIT_SSRF_FLAGS = [
-  '-c', 'http.followRedirects=false',
-  '-c', 'protocol.file.allow=never',
-  '-c', 'protocol.ext.allow=never',
-] as const;
-
-/**
- * Subcommand-level flags. Spread AFTER the subcommand verb (clone/pull).
- * - --no-recurse-submodules: .gitmodules cannot become a second fetch surface
- */
-export const GIT_SSRF_SUBCOMMAND_FLAGS = [
-  '--no-recurse-submodules',
-] as const;
+import { gitChildEnv } from './git-env.ts';
+import { GIT_SSRF_FLAGS, GIT_SSRF_SUBCOMMAND_FLAGS, GIT_ENV, GIT_ENV_AUTH, durableSsrfFlags } from './git-transport.ts';
+export { GIT_SSRF_FLAGS, GIT_SSRF_SUBCOMMAND_FLAGS, buildGitEnv, GIT_ENV, GIT_ENV_AUTH, durableSsrfFlags } from './git-transport.ts';
+import { pullShared, acquireCommitLockAsync } from './git/commit-push.ts';
 
 export type RemoteUrlErrorCode =
   | 'invalid_url'
@@ -162,55 +130,6 @@ function gitErrorDetail(e: unknown): string {
 }
 
 /**
- * Build the strict no-prompt git env for the current (or given) platform.
- *
- * POSIX: confine to the gbrain SSRF model — no credential helpers, no SSH
- * askpass, no GUI prompts (`/bin/false` fails any askpass invocation fast).
- *
- * win32 (#1315): `/bin/false` does not exist, so pointing GIT_ASKPASS at it
- * makes every authed operation die with a confusing "could not run askpass"
- * spawn error instead of failing auth cleanly. Drop both askpass overrides
- * there and set `SSH_ASKPASS_REQUIRE=never` (OpenSSH 8.4+) so ssh never
- * pops a GUI prompt; `GIT_TERMINAL_PROMPT=0` remains the no-terminal-prompt
- * guard on every platform.
- *
- * Pure + platform-parameterized so the win32 shape is unit-testable on
- * POSIX CI (no Windows runner exists).
- */
-export function buildGitEnv(
-  platform: NodeJS.Platform = process.platform,
-): Record<string, string> {
-  const env: Record<string, string> = {
-    GIT_TERMINAL_PROMPT: '0',
-    GCM_INTERACTIVE: 'never',
-  };
-  if (platform === 'win32') {
-    env.SSH_ASKPASS_REQUIRE = 'never';
-  } else {
-    env.GIT_ASKPASS = '/bin/false';
-    env.SSH_ASKPASS = '/bin/false';
-  }
-  return env;
-}
-
-export const GIT_ENV = buildGitEnv();
-
-/**
- * Auth-capable git env for the durability push/probe paths (v0.42.44).
- *
- * Read-only clone/pull keep the strict GIT_ENV (askpass=/bin/false) so they can
- * never prompt. But push, push-probe, and the durability cron's authed fetch
- * MUST be able to consult the repo's configured credential helper (repo-scoped
- * `store`/`osxkeychain`) — a `/bin/false` askpass would defeat that. We drop the
- * askpass overrides but KEEP `GIT_TERMINAL_PROMPT=0` so a *missing* credential
- * fails fast instead of hanging a non-interactive cron forever.
- */
-export const GIT_ENV_AUTH = {
-  GIT_TERMINAL_PROMPT: '0',
-  GCM_INTERACTIVE: 'never',
-} as const;
-
-/**
  * Clone a remote git repo with SSRF-defensive flags.
  * - destDir must NOT exist or must be empty.
  * - Default --depth=1 (no history); pass {depth: 0} for full clone.
@@ -250,7 +169,7 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
     execFileSync('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: opts.timeoutMs ?? 600_000,
-      env: { ...process.env, ...GIT_ENV },
+      env: gitChildEnv({ ...GIT_ENV }),
     });
   } catch (e) {
     throw new GitOperationError(
@@ -276,17 +195,35 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
  */
 export async function pullRepo(repoPath: string, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<void> {
   assertManagedFilesystemWrite(repoPath);
-  const argv = ['-C', repoPath, ...durableSsrfFlags(), 'pull', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--ff-only'];
-  const run = await execFileBounded('git', argv, {
+  const fail = (reason: string, error: unknown): never => {
+    throw new GitOperationError('pull', `git pull failed in ${repoPath}: ${reason}`, error);
+  };
+  // #6530: fetch outside the writer lock, then fast-forward under it with
+  // autostash off, so a shared checkout is never stashed or moved mid-commit.
+  const fetch = await execFileBounded('git', ['-C', repoPath, ...durableSsrfFlags(), 'fetch', ...GIT_SSRF_SUBCOMMAND_FLAGS], {
     timeout: opts.timeoutMs ?? 300_000,
-    env: { ...process.env, ...GIT_ENV },
+    env: gitChildEnv({ ...GIT_ENV }),
     signal: opts.signal,
   });
-  if (!run.error) return;
   // execFile hands stderr back beside the error rather than on it, so lead
   // with it here to keep the #1315 stderr-first message.
-  const reason = run.stderr.trim() || run.error.message;
-  throw new GitOperationError('pull', `git pull failed in ${repoPath}: ${reason}`, run.error);
+  if (fetch.error) fail(fetch.stderr.trim() || fetch.error.message, fetch.error);
+  let lock: { release(): Promise<void> };
+  try {
+    lock = await acquireCommitLockAsync(repoPath, undefined, opts.signal);
+  } catch (e) {
+    return fail((e as Error).message, opts.signal?.aborted ? Object.assign(new Error('pull stopped'), { code: 'ABORT_ERR' }) : e);
+  }
+  try {
+    const merge = await execFileBounded('git', ['-C', repoPath, '-c', 'core.hooksPath=/dev/null', '-c', 'merge.autoStash=false', 'merge', '--ff-only', '--quiet', '@{upstream}'], {
+      timeout: opts.timeoutMs ?? 300_000,
+      env: gitChildEnv({ ...GIT_ENV }),
+      signal: opts.signal,
+    });
+    if (merge.error) fail(merge.stderr.trim() || merge.error.message, merge.error);
+  } finally {
+    await lock.release();
+  }
 }
 
 /**
@@ -320,7 +257,7 @@ export function fetchRemote(repoPath: string, branch: string, opts: { timeoutMs?
     execFileSync('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: opts.timeoutMs ?? 30_000,
-      env: { ...process.env, ...GIT_ENV },
+      env: gitChildEnv({ ...GIT_ENV }),
     });
   } catch (e) {
     throw new GitOperationError(
@@ -364,7 +301,7 @@ export function validateRepoState(
     const out = execFileSync('git', ['-C', repoPath, 'remote', 'get-url', 'origin'], {
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 10_000,
-      env: { ...process.env, ...GIT_ENV },
+      env: gitChildEnv({ ...GIT_ENV }),
     });
     remoteUrl = out.toString().trim();
   } catch {
@@ -379,7 +316,7 @@ export function validateRepoState(
         execFileSync('git', ['-C', repoPath, 'rev-parse', '--git-dir'], {
           stdio: ['ignore', 'pipe', 'pipe'],
           timeout: 10_000,
-          env: { ...process.env, ...GIT_ENV },
+          env: gitChildEnv({ ...GIT_ENV }),
         });
         return 'healthy';
       } catch {
@@ -409,7 +346,7 @@ export function isInsideGitRepo(path: string): boolean {
     execFileSync('git', ['-C', path, 'rev-parse', '--show-toplevel'], {
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 10_000,
-      env: { ...process.env, ...GIT_ENV },
+      env: gitChildEnv({ ...GIT_ENV }),
     });
     return true;
   } catch {
@@ -434,7 +371,7 @@ function emptyTreeOid(path: string): string {
     input: '',
     stdio: ['pipe', 'pipe', 'pipe'],
     timeout: 10_000,
-    env: { ...process.env, ...GIT_ENV },
+    env: gitChildEnv({ ...GIT_ENV }),
   }).toString().trim();
 }
 
@@ -464,7 +401,7 @@ export function hasTrackedContent(path: string): boolean {
     const out = execFileSync('git', ['-C', path, 'rev-parse', '--verify', 'HEAD:./'], {
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 10_000,
-      env: { ...process.env, ...GIT_ENV },
+      env: gitChildEnv({ ...GIT_ENV }),
     });
     return out.toString().trim() !== emptyTreeOid(path);
   } catch {
@@ -476,23 +413,6 @@ export function hasTrackedContent(path: string): boolean {
 // Used by the brain-repo durability feature (`gbrain sources harden/pull`) and
 // the DB-free pull cron. These are the auth-capable, rebase-aware counterparts
 // to the strict read-only `pullRepo` (which stays `--ff-only` for `sync.ts`).
-
-/**
- * Global SSRF flags for the durability fetch/pull/push paths. Identical to
- * GIT_SSRF_FLAGS except `protocol.file.allow` honors the env escape hatch
- * `GBRAIN_GIT_ALLOW_FILE_TRANSPORT=1` (mirrors GBRAIN_ALLOW_PRIVATE_REMOTES) so
- * self-hosted local-filesystem remotes — and the test suite — can use the file
- * transport. Default stays `never`. These ops act on an ALREADY-validated origin
- * (set + checked at clone time); `http.followRedirects=false` is the live guard.
- */
-export function durableSsrfFlags(): string[] {
-  const fileAllow = process.env.GBRAIN_GIT_ALLOW_FILE_TRANSPORT === '1' ? 'always' : 'never';
-  return [
-    '-c', 'http.followRedirects=false',
-    '-c', `protocol.file.allow=${fileAllow}`,
-    '-c', 'protocol.ext.allow=never',
-  ];
-}
 
 /** Run a git subcommand, returning trimmed stdout. Throws GitOperationError. */
 function runGit(
@@ -510,7 +430,7 @@ function runGit(
       {
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: opts.timeoutMs ?? 120_000,
-        env: { ...process.env, ...(opts.env ?? GIT_ENV) },
+        env: gitChildEnv({ ...(opts.env ?? GIT_ENV) }),
       },
     );
     return out.toString().trim();
@@ -532,96 +452,89 @@ export function isWorkingTreeDirty(repoPath: string): boolean {
 export function detectDefaultBranch(repoPath: string): string {
   try {
     const sym = execFileSync('git', ['-C', repoPath, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], {
-      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }),
     }).toString().trim();
     if (sym.startsWith('origin/')) return sym.slice('origin/'.length);
     if (sym) return sym;
   } catch { /* origin/HEAD not set — fall through */ }
   try {
     const cur = execFileSync('git', ['-C', repoPath, 'rev-parse', '--abbrev-ref', 'HEAD'], {
-      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }),
     }).toString().trim();
     if (cur && cur !== 'HEAD') return cur;
   } catch { /* detached or no commits */ }
   return 'main';
 }
 
+/** True if the git-dir entry `name` (a state file or directory) exists; false when git cannot be asked. */
+function gitStateExists(repoPath: string, name: string): boolean {
+  try {
+    const p = execFileSync('git', ['-C', repoPath, 'rev-parse', '--git-path', name], {
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }),
+    }).toString().trim();
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- `p` is git's own answer to `rev-parse --git-path <literal>` for the checkout at repoPath (MERGE_HEAD, rebase-merge, rebase-apply); no caller passes user input, and the result is only tested for existence.
+    return existsSync(isAbsolute(p) ? p : join(repoPath, p));
+  } catch { return false; }
+}
+
 /** True if a rebase is mid-flight (rebase-merge or rebase-apply state dir exists). */
 function rebaseInProgress(repoPath: string): boolean {
-  for (const name of ['rebase-merge', 'rebase-apply']) {
-    try {
-      const p = execFileSync('git', ['-C', repoPath, 'rev-parse', '--git-path', name], {
-        stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
-      }).toString().trim();
-      const abs = p.startsWith('/') ? p : join(repoPath, p);
-      if (existsSync(abs)) return true;
-    } catch { /* ignore */ }
-  }
-  return false;
+  return ['rebase-merge', 'rebase-apply'].some(name => gitStateExists(repoPath, name));
 }
 
 export type PullOutcome =
   | { status: 'up_to_date' }
   | { status: 'advanced'; from: string; to: string }
   | { status: 'skipped_dirty' }
+  | { status: 'skipped_busy' }
   | { status: 'conflict_aborted'; detail: string };
 
+/** How `divergenceSafePull` reconciles local commits with origin (#5429): `sources.config.pull_strategy`, default `rebase`. */
+export const PULL_STRATEGIES = ['rebase', 'merge'] as const;
+export type PullStrategy = (typeof PULL_STRATEGIES)[number];
+export function isPullStrategy(value: unknown): value is PullStrategy {
+  return typeof value === 'string' && (PULL_STRATEGIES as readonly string[]).includes(value);
+}
+/** The strategy a source's parsed `config` records; anything else is the default. */
+export function pullStrategyOf(config: Record<string, unknown> | null | undefined): PullStrategy {
+  return isPullStrategy(config?.pull_strategy) ? config.pull_strategy : 'rebase';
+}
+
 /**
- * Divergence-safe pull: `fetch` + `pull --rebase`, never leaving a mid-rebase.
+ * Divergence-safe pull for a checkout other writers share (#6530). Delegates
+ * to `pullShared` (src/core/git/commit-push.ts): fetch outside the writer
+ * lock, then under `brain-commit.lock` fast-forward, or merge diverged history
+ * IN MEMORY and fast-forward to the merge. Nothing rebases, stashes or resets
+ * the working tree, and no rebase or merge state can be left behind.
  *
- *  - Dirty working tree  → `skipped_dirty` (NORMAL mid-session state, not an
- *    error; never auto-stashes, never touches in-progress edits).
- *  - Rebase conflict     → `git rebase --abort`, verify no rebase state remains,
- *    return `conflict_aborted` ("manual attention needed"). Never throws past
- *    this — the repo is always left clean (possibly un-advanced).
+ *  - Any local edit → `skipped_dirty` (the unattended rule: never move files
+ *    under a writer mid-edit), checked before and again under the lock.
+ *  - Another writer holds the lock → `skipped_busy`; the next run catches up.
+ *  - Both sides changed a file → `conflict_aborted`; nothing changed.
  *
- * Auth-capable (GIT_ENV_AUTH) so it works against private remotes via the
- * repo's configured credential helper. SSRF flags applied on every call.
+ * `strategy` is kept for callers and `sources set-pull-strategy`; since #6530
+ * both strategies integrate by merge (the shared tree is never rebased).
+ * Auth-capable and SSRF-hardened through the same transport flags as before.
  */
 export function divergenceSafePull(
   repoPath: string,
   branch: string,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; strategy?: PullStrategy } = {},
 ): PullOutcome {
   assertManagedFilesystemWrite(repoPath);
-  const timeoutMs = opts.timeoutMs ?? 300_000;
-
-  if (isWorkingTreeDirty(repoPath)) return { status: 'skipped_dirty' };
-
-  const before = runGit(repoPath, [], 'rev-parse', ['HEAD'], 'pull', { timeoutMs: 10_000 });
-  const ssrf = durableSsrfFlags();
-
-  runGit(repoPath, ssrf, 'fetch', [...GIT_SSRF_SUBCOMMAND_FLAGS, 'origin', branch], 'pull', {
-    timeoutMs, env: { ...GIT_ENV_AUTH },
-  });
-
   try {
-    runGit(repoPath, ssrf, 'pull', [...GIT_SSRF_SUBCOMMAND_FLAGS, '--rebase', 'origin', branch], 'pull', {
-      timeoutMs, env: { ...GIT_ENV_AUTH },
-    });
+    const r = pullShared(repoPath, { requireClean: true, remoteBranch: branch, fetchTimeoutMs: opts.timeoutMs ?? 300_000 });
+    if (r.status === 'advanced') return { status: 'advanced', from: r.from!, to: r.to! };
+    if (r.status === 'skipped_dirty' || r.status === 'lagging') return { status: 'skipped_dirty' };
+    return { status: 'up_to_date' };
   } catch (e) {
-    // Abort any half-applied rebase so the tree is never left mid-rebase.
-    try {
-      execFileSync('git', ['-C', repoPath, 'rebase', '--abort'], {
-        stdio: 'ignore', timeout: 30_000, env: { ...process.env, ...GIT_ENV },
-      });
-    } catch { /* best-effort */ }
-    // If state STILL remains, try once more, then report regardless.
-    if (rebaseInProgress(repoPath)) {
-      try {
-        execFileSync('git', ['-C', repoPath, 'rebase', '--abort'], {
-          stdio: 'ignore', timeout: 30_000, env: { ...process.env, ...GIT_ENV },
-        });
-      } catch { /* best-effort */ }
+    const code = (e as { code?: string }).code;
+    if (code === 'commit_lock_busy') return { status: 'skipped_busy' };
+    if (code === 'integrate_conflict' || code === 'git_operation_in_progress' || code === 'git_detached_head') {
+      return { status: 'conflict_aborted', detail: `pull on ${branch} conflicted and was not applied: ${(e as Error).message} — manual attention needed` };
     }
-    return {
-      status: 'conflict_aborted',
-      detail: `pull --rebase on ${branch} conflicted; rebase aborted — manual attention needed (${(e as Error).message.slice(0, 120)})`,
-    };
+    throw new GitOperationError('pull', `git pull failed in ${repoPath}: ${(e as Error).message}${(e as { suggestion?: string }).suggestion ? ` ${(e as { suggestion?: string }).suggestion}` : ''}`, e);
   }
-
-  const after = runGit(repoPath, [], 'rev-parse', ['HEAD'], 'pull', { timeoutMs: 10_000 });
-  return before === after ? { status: 'up_to_date' } : { status: 'advanced', from: before, to: after };
 }
 
 export type PushProbeResult =
@@ -646,7 +559,7 @@ export function pushProbe(
     execFileSync(
       'git',
       ['-C', repoPath, ...durableSsrfFlags(), 'push', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--dry-run', 'origin', `HEAD:${branch}`],
-      { stdio: ['ignore', 'pipe', 'pipe'], timeout: opts.timeoutMs ?? 60_000, env: { ...process.env, ...GIT_ENV_AUTH } },
+      { stdio: ['ignore', 'pipe', 'pipe'], timeout: opts.timeoutMs ?? 60_000, env: gitChildEnv({ ...GIT_ENV_AUTH }) },
     );
     return { ok: true };
   } catch (e) {

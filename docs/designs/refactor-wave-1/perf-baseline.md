@@ -101,6 +101,12 @@ bun scripts/bench-refactor-wave-1.ts --backend pgbouncer \
   --admin-url postgresql://postgres@127.0.0.1:5434/postgres --binary bin/gbrain --json > pgbouncer-1.json
 ```
 
+`--phases import,timings` runs every bench query through the `search` and
+`query` operations and fails unless each response's `_meta.retrieval.timings`
+leaves `0 <= total_ms - sum(stages_ms) <= 10%` of `total_ms`; each result set is
+digested so two trees can be compared (`--results-only` records digests on a
+tree without timings).
+
 Drop `--json` for the human table. Local ports above are the docker containers
 from docs/TESTING.md's E2E lifecycle (`pg` on 5434, `pgb` on 6434). On the VM
 the URLs were `127.0.0.1:15433/gbrain_test` (direct) and

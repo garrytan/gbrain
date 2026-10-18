@@ -15,9 +15,10 @@ import type { Link, PageReadPolicy } from '../types.ts';
 import type { Notice } from '../agent-output.ts';
 import { canonicalTypeOf, loadSourcePack } from '../mentions/policy.ts';
 import {
-  decodeCursor, readReferrerPage, referrerTypes, PAGE_DEFAULT_LIMIT, PAGE_MAX_LIMIT, type ReferenceRow, type ReferrerScope,
+  canonicalRecordTypes, decodeCursor, readPageStatusByRef, readReferrerPage, referrerTypes, PAGE_DEFAULT_LIMIT, PAGE_MAX_LIMIT, type ReferenceRow, type ReferrerScope,
 } from '../mentions/referrers.ts';
 import { mentionCoverageNotice, readMentionCoverage, type MentionCoverage } from '../mentions/coverage.ts';
+import { readEntityReferencesConfig, readRowPageStatus } from '../entity-references-config.ts';
 
 export interface BacklinkPage {
   rows: ReferenceRow[];
@@ -97,7 +98,28 @@ export async function readBacklinkPage(ctx: OperationContext, p: Record<string, 
   if (!resolved) return { rows: [], total: 0, truncated: false, cursor: null, coverage };
   const type = typeof p.type === 'string' && p.type ? p.type : undefined;
   if (type) await assertKnownType(ctx, resolved.scope, type);
-  return { ...await readReferrerPage(ctx.engine, resolved.scope, { type, limit, cursor }), coverage };
+  // F1: a record type's continuation rows carry the same record metadata as the record view (membership unchanged).
+  const recordMetadata = type !== undefined && canonicalRecordTypes((await readEntityReferencesConfig(ctx.engine)).recordTypes, resolved.scope.pack)
+    .includes(canonicalTypeOf(type, resolved.scope.pack));
+  const pageStatus = !recordMetadata && await readRowPageStatus(ctx.engine);
+  return { ...await readReferrerPage(ctx.engine, resolved.scope, { type, limit, cursor, recordMetadata, pageStatus }), coverage };
+}
+
+/**
+ * F3 (`entity.row_page_status`, default on): each link row carries its
+ * referring page's frontmatter `status` as `page_status` when set. The link's
+ * own `status` (the relationship's temporal state) and the `status` input
+ * filter are unchanged.
+ */
+export async function withLinkPageStatus(ctx: OperationContext, policy: () => Promise<PageReadPolicy>, links: Link[]): Promise<Array<Link & { page_status?: string }>> {
+  if (!links.length || !(await readRowPageStatus(ctx.engine))) return links;
+  const excludePrivate = (await policy()).excludePrivate === true;
+  const status = await readPageStatusByRef(ctx.engine, links.map(l => ({ source_id: l.from_source_id, slug: l.from_slug })), { excludePrivate })
+    .catch(() => new Map<string, string>());
+  return links.map(l => {
+    const value = status.get(`${l.from_source_id}:${l.from_slug}`);
+    return value ? { ...l, page_status: value } : l;
+  });
 }
 
 /**

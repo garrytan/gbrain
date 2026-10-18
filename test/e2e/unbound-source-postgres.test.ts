@@ -377,3 +377,60 @@ d('#5254 Postgres put_page to an unbound filesystem source', () => {
   });
 
 });
+
+// #6608: remember onto an existing entity page of an unbound source follows the
+// same rule as put_page. It refused every case with the generic
+// writer-inspection hint (no detail, no opt-in), so no fact could be saved
+// about any existing page of an unbound classic Postgres source. remember is a
+// frozen MEMORY_VERBS v1 verb: its wire code stays `unavailable` with
+// `write_error: owner_unavailable`, and the detail and fix ride along.
+d('#6608 Postgres remember onto a page of an unbound filesystem source', () => {
+  const entity = 'notes/entity-example';
+  async function createDatabaseOnlyEntity(): Promise<void> {
+    await engine.setConfig('persistence.unbound_write', 'database_only');
+    expect((await put('An entity written database-only.', entity)).payload.state).toBe('committed');
+  }
+  const remember = (fact: string) => dispatch('remember', { fact, entity, provenance: 'unbound-source test', request_id: randomUUID() });
+
+  test('with the opt-in, the fact is fenced into the database-only page body', async () => {
+    await createDatabaseOnlyEntity();
+    const saved = await remember('Entity Example prefers tea.');
+    expect(saved.response.isError, JSON.stringify(saved.payload)).not.toBe(true);
+    expect(saved.payload.state).toBe('committed');
+    expect(saved.payload.write_through).toMatchObject({ written: false, skipped: 'unbound_source' });
+    const [fact] = await engine.executeRaw<{ row_num: number | null; source_markdown_slug: string | null }>(
+      "SELECT row_num, source_markdown_slug FROM facts WHERE source_id='default' AND entity_slug=$1", [entity]);
+    expect(fact).toEqual({ row_num: 1, source_markdown_slug: entity });
+    const page = await engine.getPage(entity, { sourceId: 'default' });
+    expect(page?.compiled_truth).toContain('Entity Example prefers tea.');
+    expect(page?.source_path ?? null).toBeNull();
+    expect(await classification(entity)).toBe('unbound_source');
+    expect(existsSync(join(root, `${entity}.md`))).toBe(false);
+  });
+
+  test('a page with a recorded canonical file refuses with the bind branch only', async () => {
+    await createDatabaseOnlyEntity();
+    await engine.executeRaw("UPDATE pages SET source_path=$2 WHERE source_id='default' AND slug=$1", [entity, `${entity}.md`]);
+    const refused = await remember('Entity Example prefers juice.');
+    expect(refused.payload.error).toBe('unavailable');
+    expect(refused.payload.write_error).toBe('owner_unavailable');
+    expect(refused.payload.detail).toBe('unbound_source');
+    expect(refused.payload.fix.next).toBe('ask_user');
+    expect(refused.payload.suggestion).toContain('came from a canonical file');
+    expect(refused.payload.suggestion).not.toContain('gbrain config set persistence.unbound_write database_only');
+    expect((await engine.executeRaw("SELECT 1 FROM facts WHERE source_id='default' AND entity_slug=$1", [entity])).length).toBe(0);
+  });
+
+  test('without the opt-in, the refusal names it instead of the generic owner hint', async () => {
+    await createDatabaseOnlyEntity();
+    await engine.executeRaw("DELETE FROM config WHERE key='persistence.unbound_write'");
+    const refused = await remember('Entity Example prefers coffee.');
+    expect(refused.payload.error).toBe('unavailable');
+    expect(refused.payload.write_error).toBe('owner_unavailable');
+    expect(refused.payload.detail).toBe('unbound_source');
+    expect(refused.payload.retryable).toBe(false);
+    expect(refused.payload.fix.next).toBe('ask_user');
+    expect(refused.payload.docs).toBe(docsUrl(DOCS));
+    expect(refused.payload.suggestion).toContain('gbrain config set persistence.unbound_write database_only');
+  });
+});

@@ -35,6 +35,9 @@ import { sanitizeForJsonb } from '../batch-rows.ts';
 import { connectorStateKey } from '../persistence/connector-state.ts';
 import { LOOPS_EXTRACT_ENQUEUE_CEILING, LOOPS_EXTRACT_JOB, LOOPS_EXTRACT_WINDOW_DAYS, isLoopsExtractionEnabled, loopExtractionEligibility } from './loops-extract.ts';
 import { openDueGraceHold, type ThreadLoopVerdict } from './loop-detect.ts';
+import { NO_EXCLUSION, type LoopsExclusionPolicy } from './loops-exclusion.ts';
+import { muteRecheckThreads } from '../loops/loops-store.ts';
+import { loopsSpendGate } from './loops-spend.ts';
 import type { GmailThreadData, GoogleSourceState, LoopGraceHold } from './types.ts';
 
 export const GRACE_HOLDS_CAP = 2_000;
@@ -49,9 +52,9 @@ type Log = (msg: string) => void;
 
 /** Records or clears one thread's grace hold from its fresh detection verdict. */
 export function recordGraceVerdict(state: GoogleSourceState, thread: GmailThreadData, verdict: ThreadLoopVerdict,
-  slug: string | null, myAddresses: Set<string>, log: Log): void {
+  slug: string | null, myAddresses: Set<string>, log: Log, exclusion: LoopsExclusionPolicy = NO_EXCLUSION): void {
   const holds = state.loop_grace_holds ??= {};
-  if (verdict.held && loopExtractionEligibility(thread, myAddresses).eligible) {
+  if (verdict.held && loopExtractionEligibility(thread, myAddresses, exclusion).eligible) {
     // Message prose reaches the connector checkpoint's jsonb: sanitize it as the page render does.
     const spec = verdict.held.spec;
     holds[thread.threadId] = { due_ms: verdict.held.untilMs, slug, rev: thread.messages[thread.messages.length - 1]?.id ?? null,
@@ -98,6 +101,60 @@ export async function seedGraceBackfill(engine: BrainEngine, sourceId: string, s
   return seeded;
 }
 
+/**
+ * #5012: queues threads for a re-fetch through the grace-hold path (a due hold
+ * with no spec). Every sweep: threads with loops an unmute queued for
+ * re-check. Once: the newest thread of each of the WITHHELD_BACKFILL_SENDERS
+ * senders with the most open reply-owed loops, so the withheld-senders record
+ * covers loops opened before the automated-mail rule existed. `walkFromMs` is
+ * the lower bound of an unfinished backfill walk: that walk runs after the
+ * grace settle and fetches threads active since then itself, so they are not
+ * queued twice.
+ */
+export async function seedLoopRechecks(engine: BrainEngine, sourceId: string, state: GoogleSourceState, log: Log, now = Date.now(), walkFromMs: number | null = null): Promise<number> {
+  const holds = state.loop_grace_holds ??= {};
+  const seed = (rows: Array<{ thread_id: string; page_slug: string | null }>) => rows.reduce((n, r) => {
+    if (holds[r.thread_id]) return n;
+    holds[r.thread_id] = { due_ms: now, slug: r.page_slug, rev: null, spec: null };
+    return n + 1;
+  }, 0);
+  const rechecks = seed(await muteRecheckThreads(engine, sourceId));
+  let backfill = 0;
+  if (!state.loop_automated_backfill_done) {
+    backfill = seed(await engine.executeRaw<{ thread_id: string; page_slug: string | null }>(
+      `SELECT DISTINCT ON (counterparty_email) thread_id, page_slug, n, last_activity_at FROM (
+         SELECT counterparty_email, thread_id, page_slug, last_activity_at,
+                count(*) OVER (PARTITION BY counterparty_email) AS n
+           FROM open_loops
+          WHERE source_id = $1 AND status = 'open' AND loop_type = 'unanswered_inbound'
+            AND counterparty_email IS NOT NULL AND thread_id IS NOT NULL) l
+        ORDER BY counterparty_email, last_activity_at DESC`, [sourceId])
+      .then((rows) => (rows as Array<{ thread_id: string; page_slug: string | null; n: number; last_activity_at: Date | string | null }>)
+        .sort((a, b) => Number(b.n) - Number(a.n)).slice(0, WITHHELD_BACKFILL_SENDERS)
+        .filter((r) => walkFromMs == null || r.last_activity_at == null || new Date(r.last_activity_at).getTime() < walkFromMs + DAY_MS)));
+    state.loop_automated_backfill_done = true;
+  }
+  pruneGraceHolds(holds, log);
+  if (rechecks + backfill > 0) log(`[google] loop re-checks queued: ${rechecks} unmuted thread(s), ${backfill} sender backfill thread(s)`);
+  return rechecks + backfill;
+}
+
+export const WITHHELD_BACKFILL_SENDERS = 500;
+export const WITHHELD_SENDERS_CAP = 2_000;
+
+/** #5012: keeps the per-sender record of withheld reply-owed loops current with one fresh verdict. */
+export function recordWithheldVerdict(state: GoogleSourceState, verdict: ThreadLoopVerdict, now = Date.now()): void {
+  const record = state.loop_withheld_senders ??= {};
+  for (const spec of verdict.open) if (spec.loopType === 'unanswered_inbound') delete record[spec.counterpartyEmail];
+  if (!verdict.withheld) return;
+  const key = sanitizeForJsonb(verdict.withheld.counterpartyEmail);
+  const prior = record[key];
+  record[key] = { reason: verdict.withheld.reason, count: (prior?.count ?? 0) + 1, last_ms: now };
+  const keys = Object.keys(record);
+  if (keys.length <= WITHHELD_SENDERS_CAP) return;
+  for (const k of keys.sort((a, b) => record[a].last_ms - record[b].last_ms).slice(0, keys.length - WITHHELD_SENDERS_CAP)) delete record[k];
+}
+
 export type GraceRefetch = (threadId: string) => Promise<'ok' | 'gone' | 'failed'>;
 
 /**
@@ -108,7 +165,7 @@ export type GraceRefetch = (threadId: string) => Promise<'ok' | 'gone' | 'failed
  */
 export async function settleDueGraceHolds(ctx: {
   engine: BrainEngine; sourceId: string; state: GoogleSourceState; log: Log; signal?: AbortSignal;
-  processed: Set<string>; refetch: GraceRefetch; now?: number;
+  processed: Set<string>; refetch: GraceRefetch; now?: number; exclusion?: LoopsExclusionPolicy;
 }): Promise<{ opened: number; refetched: number; deferred: number } | 'aborted'> {
   const holds = ctx.state.loop_grace_holds ?? {};
   const now = ctx.now ?? Date.now();
@@ -117,7 +174,10 @@ export async function settleDueGraceHolds(ctx: {
   for (const [tid, hold] of due) {
     if (ctx.signal?.aborted) return 'aborted';
     if (hold.spec && hold.slug && await pageRevision(ctx.engine, ctx.sourceId, hold.slug) === hold.rev) {
-      if (await openDueGraceHold(ctx.engine, ctx.sourceId, tid, hold.spec, hold.slug)) result.opened++;
+      // #5445: an unresolved exclusion keeps the hold (and its spec) for the next sweep; nothing is published.
+      const outcome = await openDueGraceHold(ctx.engine, ctx.sourceId, tid, hold.spec, hold.slug, ctx.exclusion ?? NO_EXCLUSION);
+      if (outcome === 'deferred') { result.deferred++; continue; }
+      if (outcome === 'opened') result.opened++;
       delete holds[tid];
       continue;
     }
@@ -221,6 +281,8 @@ export async function runLoopsCatchup(ctx: {
   myAddresses: Set<string>; fetchThread: (threadId: string) => Promise<GmailThreadData | null>; now?: number;
   /** Pages this sweep already queues through the normal enqueue. */
   inFlight: Set<string>;
+  /** #5445: the sweep's resolved label exclusion; unresolved fails closed for every candidate. */
+  exclusion?: LoopsExclusionPolicy;
 }): Promise<LoopsEnqueueReport | null> {
   if (ctx.state.loops_catchup?.done) return null;
   const now = ctx.now ?? Date.now();
@@ -229,8 +291,14 @@ export async function runLoopsCatchup(ctx: {
     return { enqueued: 0, deferred: 0, skipped_reason: reason };
   };
   if (!(await isLoopsExtractionEnabled(ctx.engine))) return skip('extraction_disabled', 'loops.extraction_enabled is off');
+  const exclusion = ctx.exclusion ?? NO_EXCLUSION;
+  if (exclusion.unresolved.length > 0) {
+    return skip('excluded_label_unresolved', `loop exclusion labels ${exclusion.unresolved.map((t) => JSON.stringify(t)).join(', ')} did not resolve`);
+  }
   const { isAvailable } = await import('../ai/gateway.ts');
   if (!isAvailable('chat')) return skip('chat_unavailable', 'no configured chat model / API key');
+  const spend = await loopsSpendGate(ctx.engine, now);
+  if (!spend.ok) return skip(spend.reason, spend.message);
 
   const cu = ctx.state.loops_catchup ??= { version: 1, floor_ms: now - LOOPS_EXTRACT_WINDOW_DAYS * DAY_MS, retried: [], done: false };
   const pages = await ctx.engine.executeRaw<{ slug: string; thread_id: string; date: string }>(
@@ -252,7 +320,7 @@ export async function runLoopsCatchup(ctx: {
   const settle = (slug: string, rev: number, outcome: string) => recordLoopsExtractOutcome(ctx.engine, ctx.sourceId, slug, { rev, outcome, catchup: true });
   const enqueue = async (c: { slug: string; thread_id: string; rev: number }, key: string) => {
     await queue.add(LOOPS_EXTRACT_JOB, { slug: c.slug, sourceId: ctx.sourceId, threadId: c.thread_id, newestMs: c.rev, catchup: true },
-      { priority: 6, idempotency_key: key });
+      { priority: 6, idempotency_key: key }, { spendAuthorization: spend.record });
     budget--;
     report.enqueued++;
   };
@@ -288,7 +356,7 @@ export async function runLoopsCatchup(ctx: {
       continue;
     }
     if (!thread) { await settle(c.slug, c.rev, 'skipped:thread_not_found'); continue; }
-    const verdict = loopExtractionEligibility(thread, ctx.myAddresses);
+    const verdict = loopExtractionEligibility(thread, ctx.myAddresses, exclusion);
     if (!verdict.eligible) { await settle(c.slug, c.rev, `skipped:ineligible_${verdict.reason}`); continue; }
     await enqueue(c, key);
     unsettled++;

@@ -27,6 +27,8 @@ export interface EmbedBackfillScope {
   sourceId?: string;
   /** Slug lists, facts and images have no cheap pre-flight estimate. */
   unestimated?: boolean;
+  /** `--images`: the run spends with the multimodal embedding model and, when OCR is on, the OCR model. */
+  images?: boolean;
 }
 
 /**
@@ -60,15 +62,27 @@ export async function embeddingProviderIsFree(model?: string): Promise<boolean> 
   }
 }
 
-/** True when an embed run would spend: embeddings on, a paid embedding provider with credentials. */
-export async function embedWouldSpend(engine: BrainEngine): Promise<boolean> {
+/**
+ * True when an embed run would spend: embeddings on, a paid embedding provider
+ * with credentials. An image run (fix wave 13 P1.18) also spends with the
+ * multimodal model and, when OCR is on, the OCR model, even when the text
+ * provider is free; an unreadable model counts as paid.
+ */
+export async function embedWouldSpend(engine: BrainEngine, opts: { images?: boolean } = {}): Promise<boolean> {
   const { embeddingsDisabled } = await import('./embedding-disabled.ts');
   if (await embeddingsDisabled(engine)) return false;
   try {
-    const { isAvailable } = await import('./ai/gateway.ts');
-    return isAvailable('embedding') && !(await embeddingProviderIsFree());
+    const { isAvailable, getImageOcrModel } = await import('./ai/gateway.ts');
+    if (isAvailable('embedding') && !(await embeddingProviderIsFree())) return true;
+    if (!opts.images) return false;
+    const { multimodalEmbeddingModel } = await import('./ai/multimodal-model.ts');
+    const multimodal = multimodalEmbeddingModel();
+    if (multimodal && !(await embeddingProviderIsFree(multimodal))) return true;
+    if (process.env.GBRAIN_EMBEDDING_IMAGE_OCR !== 'true') return false;
+    const ocr = getImageOcrModel();
+    return isAvailable('expansion', ocr) && !(await embeddingProviderIsFree(ocr));
   } catch {
-    return false;
+    return opts.images === true;
   }
 }
 
@@ -109,7 +123,7 @@ export async function requireEmbedBackfillConsent(engine: BrainEngine, opts: {
   args: readonly string[];
   scope: EmbedBackfillScope;
 }): Promise<Authorization | null> {
-  if (!(await embedWouldSpend(engine))) return null;
+  if (!(await embedWouldSpend(engine, { images: opts.scope.images === true }))) return null;
   const est = await estimateEmbedBackfillUsd(engine, opts.scope);
   const cost = est === null ? 'its cost could not be estimated in advance' : `it is estimated at $${est.toFixed(4)}`;
   const auth = await requireConsent({

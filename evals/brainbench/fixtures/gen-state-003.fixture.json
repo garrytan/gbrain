@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-state-003",
+  "suites": [
+    "state-resolution"
+  ],
+  "category": "state-resolution",
+  "trust_steps": [
+    {
+      "step_id": "s1",
+      "actor": "owner",
+      "op": "write_file",
+      "slug": "people/rafael-maplevale",
+      "content": "---\ntitle: Rafael Maplevale\ntype: person\naliases: [rafael]\n---\n\n# Rafael Maplevale\n\nRafael Maplevale is the founder of Glintworks Co.\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|\n| 1 | Rafael Maplevale is the head of sales of Glintworks Co | fact | 1.0 | world | medium | 2026-01-01 |  | owner |  |\n<!--- gbrain:facts:end -->\n"
+    },
+    {
+      "step_id": "s2",
+      "actor": "remote_agent",
+      "op": "forget",
+      "target": "s1",
+      "target_claim": "Rafael Maplevale is the head of sales of Glintworks Co"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Where is Rafael Maplevale now and what is their role?"
+    }
+  ]
+}

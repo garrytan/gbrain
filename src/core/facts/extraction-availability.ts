@@ -14,7 +14,8 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { CapabilityReport } from '../capability.ts';
-import { isAvailable } from '../ai/gateway.ts';
+import { createHash } from 'node:crypto';
+import { getEmbeddingModel, isAvailable } from '../ai/gateway.ts';
 import { getFactsExtractionModel } from './extract.ts';
 
 /** The resolved extraction model and whether the gateway can serve it. A
@@ -35,4 +36,21 @@ export async function extractionAvailableForEngine(
 ): Promise<boolean> {
   if (capabilityOverride) return capabilityOverride.extraction.available;
   return (await resolveExtractionAvailability(engine)).available;
+}
+
+/**
+ * #6785: a fingerprint of the extraction configuration (the resolved model,
+ * its provider, and whether the chat and embedding models are servable),
+ * never a key or other value. A corpus window capped after repeated failures
+ * is retried once when it changes.
+ */
+export async function extractionConfigFingerprint(engine: BrainEngine): Promise<string> {
+  const { model, available } = await resolveExtractionAvailability(engine);
+  let embedding: { model: string | null; available: boolean } = { model: null, available: false };
+  try {
+    const m = getEmbeddingModel();
+    embedding = { model: m, available: isAvailable('embedding', m) };
+  } catch { /* gateway unconfigured: no embedding model */ }
+  const provider = model.includes(':') ? model.slice(0, model.indexOf(':')) : null;
+  return createHash('sha256').update(JSON.stringify({ model, provider, chat: available, embedding })).digest('hex').slice(0, 16);
 }

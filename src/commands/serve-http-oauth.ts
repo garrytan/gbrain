@@ -496,15 +496,17 @@ export function mountOAuthConsent(app: Express, provider: GBrainOAuthProvider, r
     const id = String(req.params.id);
     const body = req.body;
     if (!body || typeof body !== 'object' || Array.isArray(body)
-      || Object.keys(body).some(key => key !== 'decision' && key !== 'csrf')
+      || Object.keys(body).some(key => key !== 'decision' && key !== 'csrf' && key !== 'source_id')
       || (body.decision !== 'approve' && body.decision !== 'deny')
+      || (body.source_id !== undefined && (body.decision !== 'approve' || typeof body.source_id !== 'string'))
       || typeof body.csrf !== 'string' || !/^[a-f0-9]{64}$/.test(body.csrf)
       || !safeHexEqual(body.csrf, csrfFor(req, id))) {
       res.status(403).json({ error: 'invalid_consent', message: 'Reload this request and review it again before approving.' });
       return;
     }
     try {
-      res.json({ redirectUrl: await provider.grants.decide(id, body.decision === 'approve') });
+      res.json({ redirectUrl: await provider.grants.decide(id, body.decision === 'approve',
+        body.source_id === undefined ? undefined : { sourceId: body.source_id }) });
     } catch (error) { handleError(res, error); }
   });
 }

@@ -64,7 +64,7 @@ export interface CaptureContext {
   latency_ms: number;
   /** OperationContext.remote — true for MCP callers, false for local CLI. */
   remote: boolean;
-  /** The `expand` flag as requested by the caller (query-only; null for search). */
+  /** The raw `expand` param the caller passed (query-only): null when unset (the mode decided) and for search. What ran is `meta.expansion_applied`. */
   expand_enabled: boolean | null;
   /** The `detail` flag as requested (query-only). */
   detail: 'low' | 'medium' | 'high' | null;

@@ -1,4 +1,14 @@
 /**
+ * #6317 (B2, T2): a live preparation owned by another process on this host no
+ * longer stops the drain at its allowance (that stop turned #6298's
+ * run-continuing containment into a `blocked` exit for every caller); the
+ * drain prints the stall line naming the owner from the allowance on and
+ * stops `drain_stalled` with `cause: owner_wedged_here` only past the ceiling
+ * or when the owner's heartbeat row says it is wedged, with `retry_after_ms`
+ * to the ceiling. A lapsed head a consumer here can reclaim gets exactly one
+ * more window. The same-process check compares the nonce. A foreign-host
+ * owner and an overdue publication keep the allowance stop.
+ *
  * #6278 (B4): the drain's no-progress detector is claim-aware. Its fingerprint
  * keys on state, blocked reason, head id/state and the head claim's
  * phase/step/since, never on the lease columns every renewal bumps (before
@@ -41,8 +51,10 @@ const done = (total = 10): SyncResult => ({ ...base, managedCursor: { index: tot
 const RESUME = 'gbrain sync --source s --no-pull';
 const stall = { request_id: 'r', state: 'queued', blocked_reason: null, head_request_id: 'h', head_state: 'running', claimable_here: false, owner_is_this_host: true };
 const claim = (over: Partial<DrainClaim> = {}): DrainClaim => ({ phase: 'preparing', step: 'origin_check', waiting_on: 'db', step_age_ms: 45_000, claim_age_ms: 50_000, lapsed: false,
-  owner_pid: null, allowance_ms: 150_000, ...over });
-const probeWith = (c: DrainClaim | null, key = 'same'): StallProbe => ({ blockedHead: async () => null, fingerprint: async () => ({ key, stall, claim: c }) });
+  owner_pid: null, owner_kind: null, owner_nonce: null, last_sql: null, allowance_ms: 150_000, ceiling_ms: 600_000, ...over });
+const probeWith = (c: DrainClaim | null, key = 'same', extra: Partial<StallProbe> = {}): StallProbe => ({ blockedHead: async () => null, fingerprint: async () => ({ key, stall, claim: c }), ...extra });
+const foreign = { ...stall, owner_is_this_host: false };
+const foreignProbe = (c: DrainClaim | null): StallProbe => ({ blockedHead: async () => null, fingerprint: async () => ({ key: 'same', stall: foreign, claim: c }) });
 
 describe('claim-aware no-progress window', () => {
   test('a healthy preparation longer than the 30 s window and shorter than its budget is not cut off', async () => {
@@ -54,15 +66,89 @@ describe('claim-aware no-progress window', () => {
     expect(result.drain).toMatchObject({ outcome: 'synced', passes: 12 });
   });
 
-  test('a live preparation past its allowance, owned elsewhere, stops blocked as drain_stalled with cause, step and wait cause', async () => {
-    const result = await runDrain({ pass: async () => pending(2), probe: probeWith(claim({ step_age_ms: 160_000, owner_pid: process.pid + 1 })), pauseMs: 1, stallMs: 20 });
+  test('a live preparation past its allowance, owned on another host, stops blocked as drain_stalled with cause, step and wait cause', async () => {
+    const result = await runDrain({ pass: async () => pending(2), probe: foreignProbe(claim({ step_age_ms: 160_000, owner_pid: process.pid + 1, owner_kind: 'serve' })), pauseMs: 1, stallMs: 20 });
     expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled',
-      stall: { cause: 'preparation_overdue', step: 'origin_check', waiting_on: 'db', phase: 'preparing', stalled_seconds: 160 } });
+      stall: { cause: 'preparation_overdue', step: 'origin_check', waiting_on: 'db', phase: 'preparing', stalled_seconds: 160, owner_pid: process.pid + 1, owner_kind: 'serve' } });
     const next = drainNext(result, RESUME, 's')!;
-    expect(next).toMatchObject({ command: 'gbrain sources writer status s', safe_to_loop: false, docs: 'docs/guides/write-refusals.md#drain-stalled' });
+    expect(next).toMatchObject({ command: 'gbrain sources writer status s', safe_to_loop: false, docs: 'docs/guides/write-refusals.md#drain-stalled', code: 'drain_stalled', cause: 'preparation_overdue' });
     expect(next.why).toContain('stuck at step origin_check, waiting on db');
     expect(next.why).toContain('renewing the claim past the preparation budget');
     expect(formatDrainSummary(result, RESUME, 's').join('\n')).toContain('step=origin_check, waiting_on=db, cause=preparation_overdue');
+  });
+
+  describe('#6317 (B2, T2): a same-host owner that renews a preparing claim forever', () => {
+    const other = { owner_pid: process.pid + 1, owner_kind: 'serve', owner_nonce: 'other-nonce', last_sql: { label: 'SELECT pages', age_ms: 155_000 } };
+
+    test('past the allowance but inside the ceiling the drain keeps running (the containment, not a blocked exit) and the stall line names the owner and the triple', async () => {
+      const err = captureStderr();
+      try {
+        let passes = 0;
+        // Eight passes past the 150 s allowance: before #6317 the fourth pass stopped the drain as drain_stalled / preparation_overdue.
+        const result = await runDrain({ announce: true, progressMs: 30, pass: async () => { await new Promise(r => setTimeout(r, 12)); return ++passes < 8 ? pending(2) : done(); },
+          probe: probeWith(claim({ step_age_ms: 160_000, claim_age_ms: 165_000, ...other })), pauseMs: 1, stallMs: 20 });
+        expect(result.drain).toMatchObject({ outcome: 'synced', passes: 8 });
+        expect(err.stalled().length).toBeGreaterThanOrEqual(1);
+        expect(err.stalled()[0]).toContain('stalled 160s on origin_check (waiting on db) · held by serve pid ' + (process.pid + 1) + ' · last_sql SELECT pages 155s ago · past the 2m30s allowance; the root is freed at the 10m00s ceiling');
+      } finally { err.restore(); }
+    });
+
+    test('past the ceiling it stops drain_stalled / owner_wedged_here naming the owner pid, within 2x the window, with the restart as the fix', async () => {
+      const started = Date.now();
+      const result = await runDrain({ pass: async () => pending(2), probe: probeWith(claim({ step_age_ms: 600_000, claim_age_ms: 610_000, ...other })), pauseMs: 1, stallMs: 20 });
+      expect(Date.now() - started).toBeLessThan(2 * 20 + 500);
+      expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled', retry_after_ms: 0,
+        stall: { cause: 'owner_wedged_here', owner_pid: process.pid + 1, owner_kind: 'serve', owner_nonce: 'other-nonce', step: 'origin_check', waiting_on: 'db', past_ceiling: true, ceiling_ms: 600_000, last_sql: { label: 'SELECT pages' } } });
+      const next = drainNext(result, RESUME, 's')!;
+      expect(next).toMatchObject({ code: 'drain_stalled', cause: 'owner_wedged_here', safe_to_loop: false, retry_after_ms: 0, command: 'gbrain sources writer status --source s --json' });
+      expect(next.fix).toMatchObject({ next: 'tell_user_to_run', actor: 'host_admin' });
+      expect(next.fix!.user_message).toContain(`pid ${process.pid + 1}`);
+      expect(next.why).toContain(`held by the serve pid ${process.pid + 1} on this host, past the 10m00s ceiling`);
+      expect(formatDrainSummary(result, RESUME, 's').join('\n')).toContain(`last_sql=SELECT pages (155s ago), cause=owner_wedged_here, owner=serve pid ${process.pid + 1}`);
+      expect(drainJsonFields(result, RESUME, 's')).toMatchObject({ outcome: 'blocked', next: { fix: { next: 'tell_user_to_run' } } });
+    });
+
+    test('an owner whose heartbeat row is wedged stops the drain before the ceiling with retry_after_ms to it and a rerunnable fix (safe to loop)', async () => {
+      const owner = async () => ({ kind: 'serve', pid: process.pid + 1, nonce: 'other-nonce', mode: 'full', live: true, restart_required: true, root_barrier_age_ms: null });
+      const result = await runDrain({ pass: async () => pending(2), probe: probeWith(claim({ step_age_ms: 160_000, claim_age_ms: 200_000, ...other }), 'same', { owner }), pauseMs: 1, stallMs: 20 });
+      expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled', stall: { cause: 'owner_wedged_here', past_ceiling: false, owner_row: { restart_required: true } } });
+      expect(result.drain!.retry_after_ms).toBeGreaterThan(390_000);
+      expect(result.drain!.retry_after_ms).toBeLessThanOrEqual(400_000);
+      const next = drainNext(result, RESUME, 's')!;
+      expect(next).toMatchObject({ safe_to_loop: true, command: RESUME, cause: 'owner_wedged_here' });
+      // `wait` derives only from a provider actor (agent-output.ts deriveNext); a wedged owner is not one, so the agent reruns after retry_after_ms.
+      expect(next.fix).toMatchObject({ next: 'run', actor: 'agent', command: RESUME });
+      expect(next.fix!.verify?.argv).toEqual(['gbrain', 'sources', 'writer', 'status', '--source', 's', '--json']);
+      expect(next.why).toContain('reports restart_required');
+      // A live, healthy row keeps the drain running.
+      let passes = 0;
+      const healthy = async () => ({ ...await owner(), restart_required: false, root_barrier_age_ms: 10_000 });
+      const kept = await runDrain({ pass: async () => (++passes < 8 ? pending(2) : done()), probe: probeWith(claim({ step_age_ms: 160_000, claim_age_ms: 200_000, ...other }), 'same', { owner: healthy }), pauseMs: 1, stallMs: 20 });
+      expect(kept.drain).toMatchObject({ outcome: 'synced', passes: 8 });
+    });
+
+    test('a stamp with this pid but another nonce is another process (pid reuse), never preparation_abandoned', async () => {
+      const result = await runDrain({ pass: async () => pending(2), probe: probeWith(claim({ step_age_ms: 700_000, claim_age_ms: 700_000, owner_pid: process.pid, owner_nonce: 'not-ours', owner_kind: 'sync' })), pauseMs: 1, stallMs: 20 });
+      expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled', stall: { cause: 'owner_wedged_here', owner_pid: process.pid } });
+    });
+
+    test('a lapsed head a consumer here can reclaim gets exactly one extra window, then drain_stalled / owner_missing; without one it stops at once', async () => {
+      let reclaimable = true;
+      const probe = probeWith(claim({ lapsed: true, step_age_ms: 5_000 }), 'same', { reclaimableHere: async () => reclaimable });
+      const startedAt = Date.now();
+      const extended = await runDrain({ pass: async () => pending(2), probe, pauseMs: 1, stallMs: 40 });
+      const endedAt = Date.now();
+      expect(extended.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled', stall: { cause: 'owner_missing' } });
+      // Two windows of 40 ms (three passes each at least), not one. Each window runs from the probe after a pass, so the bound is on the drain's wall time, not on pass timestamps.
+      expect(endedAt - startedAt).toBeGreaterThanOrEqual(80);
+      expect(extended.drain!.passes).toBeGreaterThanOrEqual(6);
+      reclaimable = false;
+      const at = Date.now();
+      const immediate = await runDrain({ pass: async () => pending(2), probe, pauseMs: 1, stallMs: 40 });
+      expect(immediate.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled', stall: { cause: 'owner_missing' } });
+      expect(Date.now() - at).toBeLessThan(80 + 300);
+      expect(drainNext(immediate, RESUME, 's')!.why).toContain('no consumer here reclaimed it');
+    });
   });
 
   test('a preparation this process owns past its allowance ends the drain resumable as preparation_abandoned (exit 0, safe to loop)', async () => {
@@ -113,7 +199,11 @@ describe('drainClaimOf', () => {
     // The stamp claim-phase.ts writes: the pid lives under `owner`, and the step has its own `step_since`.
     const c = drainClaimOf({ head_state: 'running', head_claim_phase: stamp({ step: 'origin_check', step_since: '2026-10-07T11:59:30Z', waiting_on: 'pool', owner: { kind: 'sync', pid: 4242, version: '0.60.109.0' } }),
       head_token: 't', head_lapsed: false, head_kind: 'managed_sync_import' }, budgets, now);
-    expect(c).toEqual({ phase: 'preparing', step: 'origin_check', waiting_on: 'pool', step_age_ms: 30_000, claim_age_ms: 120_000, lapsed: false, owner_pid: 4242, allowance_ms: 120_000 + STALL_GRACE_MS });
+    expect(c).toEqual({ phase: 'preparing', step: 'origin_check', waiting_on: 'pool', step_age_ms: 30_000, claim_age_ms: 120_000, lapsed: false, owner_pid: 4242, owner_kind: 'sync', owner_nonce: null, last_sql: null,
+      allowance_ms: 120_000 + STALL_GRACE_MS, ceiling_ms: 600_000 });
+    // #6317: the nonce and the last statement ride the stamp when the owner recorded them.
+    expect(drainClaimOf({ head_state: 'running', head_claim_phase: stamp({ owner: { kind: 'serve', pid: 7, version: 'v', nonce: 'n1' }, last_sql: { label: 'SELECT pages', at: '2026-10-07T11:59:50Z' } }),
+      head_token: 't', head_lapsed: false, head_kind: 'managed_sync_import' }, budgets, now)).toMatchObject({ owner_pid: 7, owner_kind: 'serve', owner_nonce: 'n1', last_sql: { label: 'SELECT pages', age_ms: 10_000 } });
     // A stamp without `step_since` falls back to the phase's `since`; a pre-release top-level `pid` is still read.
     expect(drainClaimOf({ head_state: 'running', head_claim_phase: stamp({ step: 'origin_check', pid: 4243 }), head_token: 't', head_lapsed: false, head_kind: 'managed_sync_import' }, budgets, now))
       .toMatchObject({ step_age_ms: 60_000, owner_pid: 4243 });
@@ -121,6 +211,10 @@ describe('drainClaimOf', () => {
       .toMatchObject({ phase: 'publishing', step: null, waiting_on: 'unknown', allowance_ms: 300_000 + STALL_GRACE_MS });
     // The ceiling caps the allowance.
     expect(drainClaimOf({ head_state: 'running', head_claim_phase: stamp(), head_token: 't', head_lapsed: false, head_kind: 'managed_sync_import' }, { ...budgets, ceilingMs: 60_000 }, now)!.allowance_ms).toBe(60_000 + STALL_GRACE_MS);
+  });
+  test('#6650: an undispatched group follower\'s stamp (owner, no phase) is unstamped for the stall window and still names its owner', () => {
+    expect(drainClaimOf({ head_state: 'running', head_claim_phase: { token: 't', owner: { kind: 'sync', pid: 9, version: 'v', nonce: 'n9' } }, head_token: 't', head_lapsed: false, head_kind: 'managed_sync_import' }, budgets, now))
+      .toMatchObject({ phase: null, step: null, owner_pid: 9, owner_nonce: 'n9' });
   });
 
   test('an older owner\'s stamp, a stamp of another claim, or no stamp read as null/unknown, never inferred; a lapsed lease is reported', () => {
@@ -170,10 +264,35 @@ describe('engineStallProbe fingerprint', () => {
 });
 
 /** Captures the drain's stderr lines (`serr` writes through console.error without a source prefix). */
-function captureStderr(): { lines: string[]; stalled: () => string[]; restore(): void } {
-  const lines: string[] = [];
-  const spy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => { lines.push(args.map(String).join(' ')); });
-  return { lines, stalled: () => lines.filter(line => line.includes('· stalled ')), restore: () => spy.mockRestore() };
+function captureStderr(): { lines: string[]; stalled: () => string[]; stalledAt: () => Array<{ line: string; at: number }>; restore(): void } {
+  const lines: string[] = [], at: number[] = [];
+  const spy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => { lines.push(args.map(String).join(' ')); at.push(Date.now()); });
+  const stalledAt = () => lines.flatMap((line, i) => line.includes('· stalled ') ? [{ line, at: at[i]! }] : []);
+  return { lines, stalled: () => stalledAt().map(entry => entry.line), stalledAt, restore: () => spy.mockRestore() };
+}
+/** One head read of the stall probe: when it started and when it settled (the line it feeds prints right after it settles). */
+interface HeadRead { startedAt: number; settledAt: number }
+/** Wraps a probe's `head` so every read's start and settle times are kept, in settle order. */
+function headReadsOf(probe: StallProbe): { probe: StallProbe; list: HeadRead[] } {
+  const list: HeadRead[] = [];
+  const head = probe.head;
+  if (!head) return { probe, list };
+  return { list, probe: { ...probe, head: async () => {
+    const startedAt = Date.now();
+    try { return await head(); } finally { list.push({ startedAt, settledAt: Date.now() }); }
+  } } };
+}
+/**
+ * The stall lines that belong to the park: each line is attributed to the latest head read settled at or before it was
+ * printed, and counts only when that read started after `parkedAt`. A read in flight across the stamp shows the state
+ * before it (a true "preparing" line), so counting lines by position misattributes it to the park.
+ */
+function parkedStallLines(lines: ReadonlyArray<{ line: string; at: number }>, reads: ReadonlyArray<HeadRead>, parkedAt: number): string[] {
+  if (!parkedAt) return [];
+  return lines.flatMap(({ line, at }) => {
+    const read = [...reads].reverse().find(entry => entry.settledAt <= at);
+    return read && read.startedAt >= parkedAt ? [line] : [];
+  });
 }
 const until = async (check: () => boolean, ms: number) => { const end = Date.now() + ms; while (!check() && Date.now() < end) await new Promise(r => setTimeout(r, 10)); return check(); };
 const committed = { phase: 'managed_sync.page_committed' } as Parameters<NonNullable<Parameters<typeof runDrain>[0]['onProgress']>>[0];
@@ -242,6 +361,21 @@ describe('live stall line during a pass (B6)', () => {
       await closePostgres?.(); rmSync(home, { recursive: true, force: true });
     });
 
+    test('forced probe: a head read in flight across the park stamp prints a true "preparing" line that is not the park\'s first line', () => {
+      // The master flake (#6271's unit-lane arm): read 1 starts before the stamp, settles after it, and its line prints after
+      // the park snapshot. Counting lines by position took that line as the parked member's; attributing by read start does not.
+      const parkedAt = 1_000;
+      const reads: HeadRead[] = [{ startedAt: 990, settledAt: 1_005 }, { startedAt: 1_010, settledAt: 1_020 }];
+      const lines = [{ line: '[sync] 1/3 processed · stalled 0s on preparing', at: 1_006 }, { line: '[sync] 1/3 processed · stalled 1s on origin_check (waiting on db) · allowed 2m', at: 1_021 }];
+      const byPosition = lines.map(entry => entry.line);
+      expect(byPosition[0]).toMatch(/on preparing$/);
+      expect(parkedStallLines(lines, reads, parkedAt)).toEqual([lines[1]!.line]);
+      // A line before the park, or with no settled read behind it, is never the park's.
+      expect(parkedStallLines([{ line: lines[0]!.line, at: 900 }], reads, parkedAt)).toEqual([]);
+      expect(parkedStallLines(lines, [], parkedAt)).toEqual([]);
+      expect(parkedStallLines(lines, reads, 0)).toEqual([]);
+    });
+
     test('the line names the parked member\'s step within about two intervals, then the sync finishes once it is released', () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
       for (const engine of engines) {
         const id = `live-${randomUUID().replace(/-/g, '').slice(0, 20)}`, root = join(home, id);
@@ -256,22 +390,25 @@ describe('live stall line during a pass (B6)', () => {
         await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
         let release!: () => void;
         const released = new Promise<void>(resolve => { release = resolve; });
-        let parkedAt = 0, linesBeforePark = 0;
+        let parkedAt = 0;
         const err = captureStderr();
-        // Lines printed before the park (a request still queued at startup) are not the parked member's.
-        const parkedLines = () => err.stalled().slice(linesBeforePark);
+        // A stall line comes from a head read; only a read that started after the park can show the parked member's stamp.
+        // A read started before the stamp committed and settled after it prints a true-at-read-time "preparing" line, so the
+        // lines are attributed to their read's start, never counted by position (#6355 fold-in: the master flake on #6271).
+        const probe = engineStallProbe(engine, id);
+        const reads = headReadsOf(probe);
+        const parkedLines = () => parkedStallLines(err.stalledAt(), reads.list, parkedAt);
         // The first member parks in preparation, honouring its signal; the stamp gains the step a preparer would enter (the keys a renewal writes).
         installFaultHook(async (at, detail) => {
           if (at !== 'consumer:preparing' || detail.sourceId !== id || parkedAt) return;
           await engine.executeRaw(`UPDATE persistence_requests SET claim_phase = claim_phase || '{"step":"origin_check","waiting_on":"db"}'::jsonb WHERE request_id=$1::uuid`, [detail.requestId]);
           parkedAt = Date.now();
-          linesBeforePark = err.stalled().length;
           await new Promise<void>(resolve => { void released.then(resolve); detail.signal?.addEventListener('abort', () => resolve(), { once: true }); });
         });
         try {
           const bulk = await resolveBulkSettings(await preparationConfigView(engine), false);
           expect(bulk.enabled).toBe(engine.kind === 'postgres');
-          const drain = runDrain({ announce: true, progressMs: PROGRESS, probe: engineStallProbe(engine, id), bulk: { enabled: bulk.enabled, reason: bulk.reason },
+          const drain = runDrain({ announce: true, progressMs: PROGRESS, probe: reads.probe, bulk: { enabled: bulk.enabled, reason: bulk.reason },
             pass: (signal, onProgress) => performManagedSync(engine, { sourceId: id, noPull: true, noEmbed: true, noExtract: true, signal, onProgress, ...(bulk.enabled ? { bulk } : {}) }) });
           expect(await until(() => parkedAt > 0, 30_000)).toBe(true);
           const seen = await until(() => parkedLines().length > 0, 10 * PROGRESS);

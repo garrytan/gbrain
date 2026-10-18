@@ -16,6 +16,7 @@ import { MinionWorker } from '../../src/core/minions/worker.ts';
 import type { MinionJobContext } from '../../src/core/minions/types.ts';
 import { registerBuiltinHandlers } from '../../src/commands/jobs.ts';
 import { withEnv } from './with-env.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const FACT = 'A worker-specific preference is to review plans weekly.';
 const BODY = 'A synthetic meeting record describes a weekly planning preference. '.repeat(8);
@@ -38,7 +39,7 @@ export async function exerciseFactsWorkerConfig(engine: BrainEngine): Promise<vo
         embeddedTexts.push(...values);
         return { embeddings: values.map(() => [1, ...Array(1535).fill(0)]) };
       }) as never);
-      await engine.setConfig('version', '162');
+      await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
       await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
       await engine.putPage('people/example', { type: 'person', title: 'Example entity', compiled_truth: 'A searchable narrative remains on this registered entity.' }, { sourceId });
       await engine.executeRaw("INSERT INTO oauth_clients(client_id,client_secret_hash,client_name,scope,source_id) VALUES('worker-config-client','fixture-hash','example-client','read write',$1)", [sourceId]);

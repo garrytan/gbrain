@@ -323,9 +323,9 @@ describe('embed --stale chunkless-page safety net (end-to-end)', () => {
             })));
             const newer = (await readProjectionSnapshot(engine, slug, 'default'))!;
             const vector = new Float32Array(DIMS); vector[0] = 0.75;
-            expect(await installPageEmbeddings(engine, newer, newer.chunks.map(c => ({
+            expect((await installPageEmbeddings(engine, newer, newer.chunks.map(c => ({
               chunk_index: c.chunk_index, chunk_source: c.chunk_source, chunk_text: c.chunk_text, embedding: vector,
-            })))).toBe(true);
+            })))).complete).toBe(true);
             current = await engine.getChunks(slug, { includeEmbedding: true });
           }
           return result;

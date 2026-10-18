@@ -29,7 +29,7 @@ const get_recent_salience: Operation = {
     limit: { type: 'number', description: 'Max results (default 20).' },
     slugPrefix: {
       type: 'string',
-      description: "Slug prefix, e.g. 'wiki/people'.",
+      description: 'Slug prefix.',
     },
     recency_bias: {
       type: 'string',

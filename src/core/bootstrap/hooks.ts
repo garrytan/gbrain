@@ -24,6 +24,7 @@
  * (and GBRAIN_HOME when isolated) ride the registration itself.
  */
 
+import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { atomicWriteTextFile } from './atomic-write.ts';
@@ -117,6 +118,14 @@ export interface WriteClaudeHooksOpts {
    * key); harness-looking entries outside it survive and get a note.
    */
   identity?: HarnessHookIdentity;
+  /**
+   * Hash-keyed ownership (`gbrain setup`): when set, an entry is ours only
+   * when its `hookEntryHash` is in this set. A marker match alone never
+   * replaces or removes an entry, so a user-edited marked hook survives and
+   * is listed in `preserved`; an unmarked entry with an owned hash (the host
+   * dropped the marker) is still ours.
+   */
+  ownedEntryHashes?: ReadonlySet<string>;
 }
 
 export interface WriteClaudeHooksResult {
@@ -133,6 +142,8 @@ export interface WriteClaudeHooksResult {
   notes: string[];
   /** Seat label rendered into the new commands ('' for none). */
   seat: string;
+  /** With `ownedEntryHashes`: marked entries kept because their hash is not owned. */
+  preserved: Array<{ event: string; hash: string }>;
 }
 
 export interface RemoveClaudeHooksResult {
@@ -145,6 +156,8 @@ export interface RemoveClaudeHooksResult {
   unmarked: Array<{ event: string; why: string }>;
   /** Events holding a harness-looking entry that is not this install's; never deleted. */
   unowned: string[];
+  /** With `ownedEntryHashes`: marked entries kept because their hash is not owned. */
+  preserved: Array<{ event: string; hash: string }>;
 }
 
 /** Who may claim an UNMARKED harness hook entry: the launchers, sources and
@@ -179,6 +192,20 @@ type SettingsObject = Record<string, unknown>;
 
 export function claudeSettingsPath(workspaceDir: string): string {
   return join(workspaceDir, CLAUDE_SETTINGS_FILE_RELPATH);
+}
+
+/**
+ * The ownership hash of one hook command entry: sha256 over its `type`,
+ * `command` and `timeout`, the keys the host keeps when it rewrites the
+ * file. The `_gbrain` marker and any other key are excluded, so a dropped
+ * marker keeps the hash and an edited command or timeout changes it. Null
+ * for anything that is not a command entry.
+ */
+export function hookEntryHash(entry: unknown): string | null {
+  if (typeof entry !== 'object' || entry === null) return null;
+  const e = entry as Record<string, unknown>;
+  if (e.type !== 'command' || typeof e.command !== 'string') return null;
+  return createHash('sha256').update(JSON.stringify([e.type, e.command, e.timeout ?? null])).digest('hex');
 }
 
 /**
@@ -452,11 +479,13 @@ function stripOurEntries(
   groups: unknown[],
   marker: string = GBRAIN_HOOK_MARKER_VALUE,
   owned?: { event: string; identity: HarnessHookIdentity },
-): { kept: unknown[]; removed: number; unmarked: string[]; unowned: number } {
+  ownedHashes?: ReadonlySet<string>,
+): { kept: unknown[]; removed: number; unmarked: string[]; unowned: number; preserved: string[] } {
   const kept: unknown[] = [];
   let removed = 0;
   const unmarked: string[] = [];
   let unowned = 0;
+  const preserved: string[] = [];
   for (const group of groups) {
     if (typeof group !== 'object' || group === null || !Array.isArray((group as HookMatcherGroup).hooks)) {
       kept.push(group); // structurally foreign — never touch
@@ -465,6 +494,12 @@ function stripOurEntries(
     const g = group as HookMatcherGroup;
     const before = g.hooks!.length;
     const filtered = g.hooks!.filter((h) => {
+      if (ownedHashes) {
+        const hash = hookEntryHash(h);
+        if (hash !== null && ownedHashes.has(hash)) return false;
+        if (hash !== null && isOurs(h, marker)) preserved.push(hash);
+        return true;
+      }
       if (isOurs(h, marker)) return false;
       if (!owned) return true;
       const c = classifyHarnessHook(h, owned.event, owned.identity);
@@ -483,7 +518,7 @@ function stripOurEntries(
       kept.push(group);
     }
   }
-  return { kept, removed, unmarked, unowned };
+  return { kept, removed, unmarked, unowned, preserved };
 }
 
 /**
@@ -630,6 +665,7 @@ export function writeClaudeHooksAt(
     : opts.env;
   let removedPrior = 0;
   const installed: Array<{ event: ClaudeHookEvent; command: string }> = [];
+  const preserved: Array<{ event: string; hash: string }> = [];
 
   // [X3] Convergence: strip OUR marker from EVERY event in the file first —
   // not just the requested subset — so a re-run with fewer events (e.g.
@@ -638,7 +674,8 @@ export function writeClaudeHooksAt(
   for (const event of Object.keys(hooks)) {
     const groups = hooks[event];
     if (!Array.isArray(groups)) continue; // structurally foreign — never touch
-    const { kept, removed, unowned } = stripOurEntries(groups, marker, opts.identity && { event, identity: opts.identity });
+    const { kept, removed, unowned, preserved: kept_ } = stripOurEntries(groups, marker, opts.identity && { event, identity: opts.identity }, opts.ownedEntryHashes);
+    preserved.push(...kept_.map((hash) => ({ event, hash })));
     removedPrior += removed;
     if (unowned > 0) {
       notes.push(
@@ -695,7 +732,7 @@ export function writeClaudeHooksAt(
   }
   atomicWriteJson(settingsPath, settings, opts.freshMode);
 
-  return { settingsPath, installed, removedPrior, backupPath, brokenBackupPath, notes, seat: env.GBRAIN_SEAT ?? '' };
+  return { settingsPath, installed, removedPrior, backupPath, brokenBackupPath, notes, seat: env.GBRAIN_SEAT ?? '', preserved };
 }
 
 /**
@@ -790,7 +827,7 @@ export function writeCommittedClaudeHooks(
     );
   }
 
-  return { settingsPath, installed, removedPrior, backupPath, brokenBackupPath, notes, seat: '' };
+  return { settingsPath, installed, removedPrior, backupPath, brokenBackupPath, notes, seat: '', preserved: [] };
 }
 
 /**
@@ -803,10 +840,10 @@ export function writeCommittedClaudeHooks(
 export function removeClaudeHooksAt(
   settingsPath: string,
   marker: string = GBRAIN_HOOK_MARKER_VALUE,
-  opts: { identity?: HarnessHookIdentity; dryRun?: boolean } = {},
+  opts: { identity?: HarnessHookIdentity; dryRun?: boolean; ownedEntryHashes?: ReadonlySet<string> } = {},
 ): RemoveClaudeHooksResult {
   const nothing = (note: string): RemoveClaudeHooksResult =>
-    ({ settingsPath, removed: 0, backupPath: null, notes: [note], unmarked: [], unowned: [] });
+    ({ settingsPath, removed: 0, backupPath: null, notes: [note], unmarked: [], unowned: [], preserved: [] });
   if (!existsSync(settingsPath)) return nothing('no settings file — nothing to remove');
   let settings: SettingsObject;
   try {
@@ -832,11 +869,13 @@ export function removeClaudeHooksAt(
   let removed = 0;
   const unmarked: Array<{ event: string; why: string }> = [];
   const unowned: string[] = [];
+  const preserved: Array<{ event: string; hash: string }> = [];
   for (const event of Object.keys(hooks)) {
     const groups = hooks[event];
     if (!Array.isArray(groups)) continue; // structurally foreign — never touch
-    const strip = stripOurEntries(groups, marker, opts.identity && { event, identity: opts.identity });
+    const strip = stripOurEntries(groups, marker, opts.identity && { event, identity: opts.identity }, opts.ownedEntryHashes);
     const { kept, removed: n } = strip;
+    preserved.push(...strip.preserved.map((hash) => ({ event, hash })));
     removed += n;
     unmarked.push(...strip.unmarked.map((why) => ({ event, why })));
     if (strip.unowned > 0) unowned.push(event);
@@ -857,7 +896,7 @@ export function removeClaudeHooksAt(
     copyFileSync(settingsPath, backupPath);
     atomicWriteJson(settingsPath, settings);
   }
-  return { settingsPath, removed, backupPath, notes: [], unmarked, unowned };
+  return { settingsPath, removed, backupPath, notes: [], unmarked, unowned, preserved };
 }
 
 /**
@@ -934,6 +973,7 @@ export function removeClaudeHooks(workspaceDir: string): RemoveClaudeHooksResult
     notes,
     unmarked: [],
     unowned: [],
+    preserved: [],
   };
 }
 

@@ -263,7 +263,19 @@ const READ_ONLY_SUBCOMMANDS = new Set(['config get', 'sources list', 'sources st
   // Engine graduation: --status and --plan are zero-mutation (pre-connect; no schema migration, no target DDL).
   'migrate --status', 'migrate --plan',
   // Reads the pack resolution only; never connects without a configured brain (#6090).
-  'schema active']);
+  'schema active',
+  // #6317: trusted-local writer administration reads (owners, running claims, consumers, movement); `sources writer claim|transfer|deactivate` stay mutating.
+  'sources writer status', 'sources writer movement',
+  // #6650: the terminal-failure drill-down and the sync operator status only read receipts and cursors.
+  'sources writer failures', 'sync status',
+  // GBRA-130 A-25: `--failed` lists held propose_takes pages from the failure ledger; it never extracts or writes.
+  'takes propose --failed',
+  // #6466: `--list` returns before the orchestration lock and never runs an orchestrator or writes the ledger.
+  'apply-migrations --list',
+  // #6661: [X12] --status takes no lock, makes no home dir and writes no receipt; it probes the serve over HTTP.
+  'bootstrap harness --status',
+  // #6803: the stale-extraction preview returns before any write and reports the terminal counts (actionable, mention_due).
+  'extract --stale --dry-run']);
 
 function tsFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -419,7 +431,7 @@ export function scan(root: string = ROOT): Hit[] {
             if (!ts.isPropertyAssignment(p) || propName(p) !== 'argv' || !ts.isArrayLiteralExpression(p.initializer)) continue;
             const words = p.initializer.elements.map(e => stringText(e));
             if (words[0] !== 'gbrain' || words[1] === undefined) continue;
-            if (!readOnly.has(words[1]!) && !READ_ONLY_SUBCOMMANDS.has(`${words[1]} ${words[2]}`)) add('verify-not-read-only', p);
+            if (!readOnly.has(words[1]!) && !READ_ONLY_SUBCOMMANDS.has(`${words[1]} ${words[2]}`) && !READ_ONLY_SUBCOMMANDS.has(`${words[1]} ${words[2]} ${words[3]}`)) add('verify-not-read-only', p);
           }
         }
       }

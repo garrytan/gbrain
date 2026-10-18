@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile } from '../spawn.ts';
 import { lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { AgentInstallError, assertNoSymlinks } from '../agent-install/state.ts';
@@ -92,6 +92,8 @@ export async function protectNewBackupPath(path: string, kind: 'directory' | 'fi
       || before.birthtimeNs !== after.birthtimeNs
       || (kind === 'directory' ? readdirSync(path).length !== 0 : after.size !== 0n || after.nlink !== 1n)) throw new Error('Private path verification failed');
   } catch {
-    throw new AgentInstallError('private_backup_path_unavailable', 'Windows could not establish owner-only backup access (plus SYSTEM). No payload was written to this new path. Use a new private destination on a local filesystem with Windows ACL support, ensure built-in Windows PowerShell is available and permitted, then retry. Existing files and parent permissions were not changed.');
+    // #5312 B(i): the text names what was observed (protection attempted and verified by the script above, and it
+    // did not hold here), not a categorical rule about drive roots; the user profile is the destination that works.
+    throw new AgentInstallError('private_backup_path_unavailable', "This destination's permissions prevented GBrain from establishing owner-only access (plus SYSTEM); use a new path inside your user profile. No payload was written to this new path. The destination must be on a local filesystem with Windows ACL support, with built-in Windows PowerShell available and permitted. Existing files and parent permissions were not changed.");
   }
 }

@@ -18,11 +18,11 @@ import type { BrainEngine } from '../../core/engine.ts';
 import { serr } from '../../core/console-prefix.ts';
 import { currentCompanyBrainSync } from '../../core/company-brain/profile.ts';
 import { RECOVERY_VERSION } from '../../core/frontmatter-recovery.ts';
-import { MAX_FILE_SIZE, contentRefusalFromReceipt, isContentRefusal, type ContentRefusal } from '../../core/import-screen.ts';
+import { importSizeLimit, contentRefusalFromReceipt, isContentRefusal, type ContentRefusal } from '../../core/import-screen.ts';
 import { slugConflictHoldMessage, type ImportResult } from '../../core/import-file.ts';
 import { classifyImportHold, parseMarkdown } from '../../core/markdown.ts';
 import { readSourceFileSync } from '../../core/minions/source-filesystem.ts';
-import { maintenanceTransaction } from '../../core/persistence/attribution.ts';
+import { maintenanceBeliefTransaction } from '../../core/belief/writers.ts';
 import type { SyncRename } from '../../core/persistence/sync-discovery.ts';
 import {
   addRecovered, buildHoldReport, clearGitHold, clearGitHoldRetryPaths, gitHoldItem, holdRescreenDue, readGitHoldRetryPaths, readGitSourceHolds,
@@ -31,6 +31,7 @@ import {
 import { DEFAULT_SOURCE_ID, hasMalformedPathSegment, isCodeFilePath, resolveSlugForPath, sanitizePathForDisplay, slugifyPath } from '../../core/sync.ts';
 import type { SyncActivePack } from './sync-run.ts';
 import { isPathContained } from '../../core/path-confine.ts';
+import { bindOrigin } from '../../core/persistence/origin-guard.ts';
 
 /** The file at a repo-relative path from git or a hold row, or null when it is missing or resolves outside the source root. */
 function fileUnderRoot(root: string, path: string): string | null {
@@ -85,7 +86,7 @@ export async function openLegacyHolds(engine: BrainEngine, sourceId: string | un
 
 /** sha256 of the exact string legacy import reads (BOM stripped), or null when the file is over the size limit. */
 function readImportContent(filePath: string): { content: string; upstreamVersion: string } | null {
-  if (lstatSync(filePath).size > MAX_FILE_SIZE) return null;
+  if (lstatSync(filePath).size > importSizeLimit(filePath)) return null;
   const content = readSourceFileSync(filePath, 'utf-8').replace(/^\uFEFF/, '');
   return { content, upstreamVersion: createHash('sha256').update(content).digest('hex') };
 }
@@ -138,7 +139,7 @@ export function screenLegacyFile(filePath: string, relPath: string, activePack?:
   } catch {
     return { refusal: null, upstreamVersion: null };
   }
-  if (!read) return { refusal: { code: 'file_too_large', message: `File too large (${lstatSync(filePath).size} bytes, max ${MAX_FILE_SIZE}).` }, upstreamVersion: null };
+  if (!read) return { refusal: { code: 'file_too_large', message: `File too large (${lstatSync(filePath).size} bytes, max ${importSizeLimit(filePath)}).` }, upstreamVersion: null };
   if (hasMalformedPathSegment(relPath) || isCodeFilePath(relPath)) return { refusal: null, upstreamVersion: read.upstreamVersion };
   const parsed = parseMarkdown(read.content, relPath, { validate: true, ...(activePack ? { activePack } : {}) });
   const refusal = classifyImportHold(parsed, { expectedSlug: slugifyPath(relPath) || null, slugConflictMessage: (_found, expected) => slugConflictHoldMessage(relPath, expected) });
@@ -154,6 +155,8 @@ export function legacyRefusal(result: Pick<ImportResult, 'status' | 'error' | 'r
   if (result.refusal) return result.refusal.code === 'invalid_fence' ? null : result.refusal;
   const error = result.error ?? '';
   if (/^Content rejected by sanity gate: /.test(error)) return { code: 'content_rejected', message: error };
+  if (/^purged_content: /.test(error)) return { code: 'purged_content', message: error };
+  if (/^Refused by the write gate: /.test(error)) return { code: 'write_gate_rejected', message: error };
   const typed = isContentRefusal('invalid_params', error) ? contentRefusalFromReceipt('invalid_params', error) : null;
   if (!typed || typed.code === 'invalid_fence') return null;
   const { suggestion: _suggestion, ...refusal } = typed;
@@ -351,9 +354,10 @@ export async function moveHeldRenames(engine: BrainEngine, holds: LegacyHolds | 
       continue;
     }
     try {
-      await maintenanceTransaction(engine, async tx => {
-        if (await tx.updateSlug(origin.slug, resolveSlugForPath(record.path), { sourceId: holds.sourceId }) === 0) return;
-        await tx.executeRaw('UPDATE pages SET source_path=$1 WHERE id=$2 AND source_id=$3', [record.path, origin.pageId, holds.sourceId]);
+      const slug = resolveSlugForPath(record.path);
+      await maintenanceBeliefTransaction(engine, { sourceId: holds.sourceId, slugs: [origin.slug, slug], op: 'sync_rename' }, async tx => {
+        if (await tx.updateSlug(origin.slug, slug, { sourceId: holds.sourceId }) === 0) return;
+        await bindOrigin(tx, { sourceId: holds.sourceId, pageId: origin.pageId, sourcePath: record.path });
       });
     } catch { /* the walk imports the file as an ordinary add; the old page stays until a full walk proves it gone */ }
   }

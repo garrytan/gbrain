@@ -43,12 +43,15 @@ function stubEngine(counts: ProbeCounts): BrainEngine {
     if (sql.includes('FROM takes')) return counts.takes ?? 0;
     if (sql.includes('FROM links')) return counts.linked ?? 0;
     if (sql.includes('timeline_entries')) return counts.timeline ?? 0;
-    if (sql.includes("type IN ('person'")) return counts.entities ?? 0;
+    if (sql.includes('p.type = ANY(')) return counts.entities ?? 0;
     // 6th probe: SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL
     return counts.pages ?? 0;
   };
   return {
+    // #4772: the entity counts resolve the active pack first (no overrides: gbrain-base).
+    getConfig: async () => null,
     executeRaw: async (sql: string) => {
+      if (sql.includes('FROM config c')) return [];
       const r = route(sql);
       if (r instanceof Error) throw r;
       return [{ count: r }];

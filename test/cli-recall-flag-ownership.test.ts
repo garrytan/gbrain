@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildFlagRegistry } from '../scripts/generate-flag-registry.ts';
-import { validateCommandFlags } from '../src/cli.ts';
+import { validateCommandFlags } from '../src/cli/main.ts';
 import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 

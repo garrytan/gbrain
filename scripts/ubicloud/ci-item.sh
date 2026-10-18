@@ -8,6 +8,8 @@
 #   unit     scripts/run-unit-shard.sh FILE    (DATABASE_URL unset)
 #   serial   scripts/run-serial-tests.sh FILE  (DATABASE_URL unset)
 #   slow     scripts/run-slow-tests.sh FILE    (DATABASE_URL unset)
+#   pg-arms  FILE's PostgreSQL arm, exactly as persistence-validation's
+#            unit-postgres-arms step runs it, against this slot's gbrain_arms_test database
 #   e2e      scripts/run-e2e.sh FILE against this slot's own postgres + pgbouncer
 #            (backend-matrix files also run through the slot's pgbouncer)
 #   verify   check-bun-test-timeout.sh + bun run verify (no FILE)
@@ -44,6 +46,11 @@ run_item() {
     unit) bash scripts/run-unit-shard.sh "$1" ;;
     serial) bash scripts/run-serial-tests.sh "$1" ;;
     slow) bash scripts/run-slow-tests.sh "$1" ;;
+    pg-arms)
+      env -u GBRAIN_TEST_TIMEOUT_MULTIPLIER -u GBRAIN_TEST_EXPORT_SCALE_PAGES \
+        DATABASE_URL="$pg/gbrain_arms_test" GBRAIN_TEST_ALLOW_DATABASE_URL=1 \
+        bun --no-env-file test --timeout=120000 "$1"
+      ;;
     e2e)
       DATABASE_URL="$pg/gbrain_test" \
       GBRAIN_PGBOUNCER_URL="$pgb/gbrain_pgbouncer_test" \

@@ -10,6 +10,7 @@ import { invalidatePackCache } from './schema-pack/registry.ts';
 import { ownsAttendanceInference } from './schema-pack/link-inference.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { applyAttendanceDelta } from './derived-links.ts';
+import { unmanagedBeliefPoint } from './belief/projection-point.ts';
 
 export const ATTENDANCE_REPAIR_PARSER = `attendance-repair-v2:${LINK_EXTRACTOR_VERSION_TS}`;
 export const ATTENDANCE_REPAIR_LIMIT = 250;
@@ -320,6 +321,7 @@ export async function applyAttendanceRepair(engine: BrainEngine, preview: Attend
   for (const approved of pending) {
     const end = approved ? preview.window.findIndex(page => page.id === approved.page.id) + 1 : preview.window.length;
     const segment = preview.window.slice(pagesProcessed, end);
+    const beliefs = approved ? unmanagedBeliefPoint(preview.sourceId, [approved.page.slug], 'attendance_repair') : null;
     const result = await engine.transaction(async tx => {
       await tx.executeRaw("SET LOCAL lock_timeout='5s'");
       await tx.executeRaw("SET LOCAL statement_timeout='10s'");
@@ -360,7 +362,7 @@ export async function applyAttendanceRepair(engine: BrainEngine, preview: Attend
         return { created: 0, removed: 0, replayed: 1 };
       }
       if (attendanceRepairHash(prepared.result) !== attendanceRepairHash(approved)) throw new Error('Attendance edges or resolution changed; preview again');
-      const delta = await applyAttendanceDelta(tx, approved.page, approved.remove, prepared.additions);
+      const delta = await beliefs!.run(tx, () => applyAttendanceDelta(tx, approved.page, approved.remove, prepared.additions));
       if ((await ontology(tx, preview.sourceId)).hash !== preview.ontology) throw new Error('Attendance ontology changed during repair');
       const after = await readEdges(tx, approved.page.id);
       if (!approved.reason && after.count > MAX_EDGES) throw new Error('Attendance delta exceeded its edge bound');
@@ -368,6 +370,7 @@ export async function applyAttendanceRepair(engine: BrainEngine, preview: Attend
         VALUES ($1,$2,($3::jsonb)->'keys')`, [CHECKPOINT_OP, key], [{ keys: [attendanceRepairHash([after.edges, after.count])] }]);
       return { ...delta, replayed: 0 };
     });
+    await beliefs?.commit(engine);
     pagesProcessed = end;
     if (approved) { committed++; originId = approved.page.id; }
     created += result.created; removed += result.removed; replayed += result.replayed;

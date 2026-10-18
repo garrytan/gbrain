@@ -285,6 +285,18 @@ describe('relink model tier', () => {
     expect(calls.length).toBe(1);
   });
 
+  test('the judge asks with thinking off, so a reasoning model still answers (#6419)', async () => {
+    await importFromContent(engine, 'projects/apollo-example', '---\ntitle: Apollo Example\ntype: project\n---\n\n# Apollo Example\n', { noEmbed: true });
+    const id = await unlinked('the apollo example launch slipped two weeks');
+    __setChatTransportForTests(async (o: ChatOpts) => o.thinking === 'off'
+      ? answer(['apollo example'])
+      : { ...answer([]), text: '', stopReason: 'length' } as ChatResult);
+    const report = await relink({ llm: true });
+    expect(report.skipped.model_unparseable ?? 0).toBe(0);
+    expect(report.linked_by_tier.model).toBe(1);
+    expect((await row(id)).entity_slug).toBe('projects/apollo-example');
+  });
+
   test('a provider failure is model_unavailable and not memoized', async () => {
     const id = await unlinked('the launch slipped two weeks');
     __setChatTransportForTests(async () => { throw new Error('provider down'); });

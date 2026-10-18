@@ -62,7 +62,7 @@ Heuristic link-type inference (`attended`, `works_at`, `invested_in`, `founded`,
 
 ## Cross-encoder reranker: 60% top-1 reshuffle
 
-The reranker is on for the `balanced` and `tokenmax` mode bundles, off for `conservative`. The mode-bundle default is Voyage `rerank-2.5` (`DEFAULT_RERANKER_MODEL`, same `VOYAGE_API_KEY` as the embedding default); a brain with no `search.reranker.model` row reranks with it. Without the key, search fails open in RRF order: the gateway skips the HTTP call (`RerankError('no_key')`), writes ONE audit row per process, prints nothing, and stamps `reranker_skipped (no_key)` on the search meta — `gbrain search --explain` shows it, `gbrain search modes` prints a `Reranker:` readiness line, and `gbrain doctor`'s `reranker_health` names the fix (`export VOYAGE_API_KEY=…` or `gbrain config set search.reranker.enabled false`). Keyed installs without a Voyage key get reranking explicitly disabled at init. The retained query-cache key includes `reranker_model`; persisted result reuse is disabled until every response dependency can be verified. On a real-corpus benchmark across 20 queries, the cross-encoder reshuffled **60% of top-1 results** after the hybrid + RRF + graph stack (historical measurement on the retired hosted reranker, not Voyage; original identifiers are preserved at Git revision `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29`, retained on 2026-09-23). The Voyage default's paired LongMemEval numbers live in [`docs/eval-bench.md`](../eval-bench.md#public-benchmarks-longmemeval).
+The reranker is on for the `balanced` and `tokenmax` mode bundles, off for `conservative`. The mode-bundle default is Voyage `rerank-3-lite` (`DEFAULT_RERANKER_MODEL`, same `VOYAGE_API_KEY` as the embedding default); a brain with no `search.reranker.model` row reranks with it, and a brain with one keeps its own model. It replaced `rerank-2.5` after gbrain-evals #148 (v0.10.93) measured 60% lower rerank cost at 50 candidates × 1,400 tokens with quality within noise; `gbrain config set search.reranker.model voyage:rerank-2.5` switches a brain back. Without the key, search fails open in RRF order: the gateway skips the HTTP call (`RerankError('no_key')`), writes ONE audit row per process, prints nothing, and stamps `reranker_skipped (no_key)` on the search meta — `gbrain search --explain` shows it, `gbrain search modes` prints a `Reranker:` readiness line, and `gbrain doctor`'s `reranker_health` names the fix (`export VOYAGE_API_KEY=…` or `gbrain config set search.reranker.enabled false`). Keyed installs without a Voyage key get reranking explicitly disabled at init. The retained query-cache key includes `reranker_model`; persisted result reuse is disabled until every response dependency can be verified. On a real-corpus benchmark across 20 queries, the cross-encoder reshuffled **60% of top-1 results** after the hybrid + RRF + graph stack (historical measurement on the retired hosted reranker, not Voyage; original identifiers are preserved at Git revision `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29`, retained on 2026-09-23). The Voyage default's paired LongMemEval numbers live in [`docs/eval-bench.md`](../eval-bench.md#public-benchmarks-longmemeval).
 
 The mechanical reason: hybrid ranking is locally optimal per strategy but globally suboptimal. A cross-encoder reranker reads the query + each candidate document jointly, with full attention. It catches the cases where the vector + keyword + graph signals all agreed on a document that's semantically related but topically wrong.
 
@@ -92,7 +92,10 @@ written up in [`RETRIEVAL_MAXPOOL_INCIDENT.md`](../incidents/RETRIEVAL_MAXPOOL_I
   bounded loop (×4 per step, at most 3 escalations). SQL candidate limits and
   offsets are independent of `ef_search`; supported pgvector versions use
   `relaxed_order` iterative scans with bounded visits (`ef_search` is still
-  sized to the candidate pool). Relaxed order keeps a closer candidate the
+  sized to the candidate pool; each pooled attempt may visit 20,000 index
+  tuples, so a source or visibility filter covering a tenth of the brain fills
+  its candidate window instead of stopping at the first few hundred eligible
+  chunks). Relaxed order keeps a closer candidate the
   scan finds after farther ones, which strict order drops, so a selective
   source or visibility filter fills more of its true neighbours; output order
   never reaches callers because the inner `ORDER BY distance` and the pooled
@@ -173,12 +176,13 @@ outvote it on small-k retrieval.
 
 Budget-normalized weighted RRF, composed in `src/core/search/fusion-lists.ts`. Every vector list is a role-tagged arm (`original` | `variant` | `clause` | `image`) — tagged objects, never a positional convention, so a failed arm or a fell-open image branch can't mis-tag a list. The `original` arm always fuses at weight 1; the non-empty `variant`/`clause` arms share ONE total weight budget, `search.expansion_variant_budget` (`weight_i = b / n_voting_arms`, each row scored `weight / (k + rank)`), so total expansion influence is exactly `b` however many variants the LLM produced. `null`, the default in all three mode bundles, is equal-weight fusion (every list weight 1). A budget in (0, 4] is set with `gbrain config set search.expansion_variant_budget <b>`, per call via `HybridSearchOpts.expansionVariantBudget`, or pinned per eval arm with `gbrain eval longmemeval --expansion-variant-budget <b>` (sweep it against frozen `--expansion-replay` variants so cells differ only in `b`). Arithmetic: two variants agreeing on a distractor at rank 0 tie the original's rank-0 vote exactly at `b = 1.0`; equal weighting with two variants is ≈ `b = 2.0`; `b = 0.5` subordinates them. The knob is a no-op when expansion is off and folds into the query-cache key (`evb=`). Measured 2026-09-06 with recorded Haiku variants replayed at every budget: the mechanism is real — strict `recall_all@5` rises from 255/470 at equal weighting to 394/470 at budget 0.25 — but its pre-registered rule (≥ plain hybrid − 2 on the 430-question decision set, no type losing > 1) failed at every budget (0.25: −43; plain hybrid 439/470), so every bundle sets `expansion_variant_budget: null` and the knob is an operator lever. The receipts point at a trigger rather than a weight (expand only when the original query's evidence is weak) as the next mechanism to pre-register.
 
-The mode bundles retain a core-library `expansion` default (`tokenmax` true;
-`balanced` and `conservative` false). It applies only when a library caller
-leaves `expansion` unset and supplies an `expandFn`. Shipped operations set
-their own policy: `query` requests expansion in every mode, with
-`expand: false` / `--no-expand` as the explicit opt-out; `search` never
-expands. Neither inherits `search.expansion`. Keyless and image-only paths
+The mode bundles carry an `expansion` default, false in all three (`tokenmax`
+turned it off after the 2026-10-14 expansion-latency eval: `query` p50 fell
+from 2,022 to 227 ms with retrieval unchanged). It applies when a caller leaves
+`expansion` unset and supplies an `expandFn`. The `query` operation leaves it
+unset unless the caller passes `expand`, so `query` does not expand by default;
+`expand: true` / `--expand` forces it and `expand: false` / `--no-expand`
+skips it. `search` never expands; `search.expansion` overrides the mode default for `query` only. Keyless and image-only paths
 skip expansion, and `expansion_applied` reports actual variant use. The
 [search-mode guide](../guides/search-modes.md) is the authoritative rule for
 defaults, overrides and provider costs; `gbrain search modes` prints the
@@ -194,13 +198,13 @@ relational recall arm remains available.
 intent classify (query-intent.ts — deterministic, no LLM)
        │
        ▼
-expansion (query: requested by default in every mode; --no-expand opts out;
-           search: off; keyless and image-only paths skip it)
+expansion (query: the mode's default, off in all three; --expand forces,
+           --no-expand skips; search: off; keyless and image-only paths skip it)
        │
        ▼
 hybrid recall + fusion:
    ├── vector  (HNSW on chunk embeddings, per-page max-pool)
-   ├── keyword (BM25 via tsvector)
+   ├── keyword (BM25 via tsvector; text indexed through gbrain_fts_input)
    ├── title-phrase arm
    ├── relational (typed-edge recall arm — relational queries only; 2-3
    │      relationship questions walk typed hop chains when
@@ -217,10 +221,13 @@ hybrid recall + fusion:
 graph augment (optional two-pass structural expansion — walkDepth > 0)
        │
        ▼
-deduplication (4-layer: per-page cap, same-page Jaccard, type diversity)
+deduplication (4-layer: per-page cap, same-page Jaccard, type diversity;
+   with search.diverse_pool_depth N > 0, one row per session — off by default,
+   src/core/search/diverse-pool.ts)
        │
        ▼
-reranker (cross-encoder — balanced/tokenmax; fail-open)
+reranker (cross-encoder — balanced/tokenmax; fail-open; reads
+   reranker.top_n_in rows, at least N with search.diverse_pool_depth)
        │
        ▼
 feedback (use-attributed page weights × the ordering score, bounded ±λ;
@@ -249,6 +256,17 @@ limit slice → token-budget enforcement (per mode bundle)
        ▼
 results (+ retrieval-confidence grade in query-op meta — crag.ts)
 ```
+
+**CJK/Latin boundaries in the keyword index (#6370).** Postgres' default
+parser reads Han, Kana and Hangul as letters, so `升级PostgreSQL17后查询Redis7`
+would be one lexeme and an ASCII query for `Redis7` would miss it. Every
+indexing `to_tsvector` (both trigger functions, the page seal, the import seal
+and `reindex-search-vector`) and the title arm's `websearch_to_tsquery` read
+their text through `gbrain_fts_input()` (`src/core/fts-language.ts`), which
+inserts a space at each CJK↔ASCII-letter/digit boundary. It is a no-op on text
+without CJK, so non-CJK vectors are byte-identical. Pure-CJK queries still take
+the raw-text CJK keyword path. The `fts_cjk_boundary` migration rebuilds only
+the rows whose text holds such a boundary.
 
 Per-arm fail-open has one deliberate exception: when BOTH lexical arms
 (`searchKeyword` + `searchTitles`) come back empty because of an ACCESS-class
@@ -296,6 +314,37 @@ Two cross-cutting seams sit around the pipeline rather than inside it:
   `crag.ts`), so default-shape callers never pay a second expansion call for
   a near-identical candidate set. `search.crag_think=true` (local callers)
   escalates a still-weak result to `think`.
+- **Entity-anchored retrieval (default off).** With `search.entity_anchoring=true`,
+  a `query` or `search` that asks for a current state ("now", "currently",
+  "latest" and similar) and names exactly one readable entity page by title
+  gets that page first, then the pages that link to it or name it, newest
+  first (`src/core/search/entity-anchor.ts`). The function is shared with
+  pinned-question refresh. Detection is deterministic, with no model call.
+  Added rows are re-authorized through `getChunkWindows`. The row count and
+  token budget stay what the caller asked for, and anchored rows take at most
+  half the rows. It is skipped with `offset`, type, date, language or symbol
+  filters. Verdict and gates: `docs/eval/decisions/entity-anchoring-query/`.
+- **Facts arm in `query` (default on).** `query` adds up to three active
+  saved facts that match the question (by the query embedding it already
+  computed, by shared terms or by a named entity) as fact rows in spare
+  capacity only: free slots under the caller's row count, and what the page
+  rows leave of the token budget. A page row is never displaced. It also marks
+  a page row `superseded_claim` when a newer fact covers its typed claim
+  (`src/core/search/facts-arm.ts`). A fact row is never page-shaped: it carries
+  `result_type: "fact"`, `fact_id` and a `follow_up` recall call, no `slug` or
+  `id`, and `page_slug` only when the caller can read the entity page. No model
+  call. In the B2 corrections suite
+  with correction-dated writes it lifted forget-then-remember from 92% to 100%
+  correct. `search.query_facts_arm=false` turns it off. Verdict and gates:
+  `docs/eval/decisions/query-facts-arm/`.
+- **Temporal fact reserve (default off).** With `search.temporal_fact_reserve=true`,
+  a `query` with a deterministic temporal cue (when, before, after, how long,
+  since, until, ordinal-time words, ISO dates, month names) and a token budget
+  (`token_budget`, or the one evidence delivery resolves) gives facts ranked by
+  the question (cosine + term share, +0.1 for a real date) up to 15% of the
+  budget and 30% of the rows. They render with their date header, oldest first
+  after the pages, in place of the facts arm. No model call. Gates:
+  `docs/eval/decisions/temporal-fact-reserve/`.
 
 ### Use-attributed feedback
 
@@ -344,6 +393,39 @@ pages at the top as the pin allows, where an unpinned run would place one at
 `limit`. Turn it off per brain with `gbrain config set search.relational_rerank_pin off`.
 The knob folds into the query-cache key (`rrp=`).
 
+### Breadth-first graph walks
+
+Since v0.60.294.0 every graph walk (`traverse_graph`, `gbrain graph`, the graph
+context `think` gathers) is breadth-first. Each page is visited once, at its
+shortest distance from the start page, and each edge comes back once, one hop
+past its shallower walked endpoint. The old walk followed every possible route,
+so a densely linked cluster multiplied the work with every hop (a 12-page
+clique at depth 5 took 22 s before a 20,000-path cap bounded it) and returned
+the same page and edge again at every depth some route reached it.
+
+What that changes for you:
+
+- **Faster on the graphs that were slow.** On Postgres, a depth-5 walk over a
+  12-page clique dropped from 44–91 ms to 4–9 ms, and walks from a 400-spoke hub
+  got 1.8x to 4x faster (`scripts/bench-graph-walk.ts`, medians, against v0.60.292.0).
+- **Complete answers.** The old cap counted routes, so a busy neighbourhood
+  could stop the walk before it reached deeper pages. The new cap counts
+  visited pages (20,000, shallowest first), so a walk reaches every page within
+  its depth unless the brain itself is that large.
+- **Cleaner output.** No repeated pages or edges at deeper depths, so an
+  agent's context holds each relationship once and `gbrain graph` prints each
+  edge once.
+- **Same safety.** Soft delete, private pages and private link origins, source
+  scope, link type and temporal policy still apply at every hop: a page the
+  caller may not read never relays a walk (`test/traverse-bfs.test.ts`).
+
+The walk is one SQL statement on both engines: a recursive CTE whose rows are
+whole layers (`bfsWalkCtes` in `src/core/engine-sql/links.ts`). Walks that reach
+most of a large graph in both directions are still dominated by turning tens
+of thousands of edges into results before the 5,000-row cap, about half a
+second on a 10,000-page, 60,000-link graph; speeding that projection up is
+open work.
+
 ### Multi-hop relationship chains
 
 A question that chains two or three relationships ("who founded the companies
@@ -381,6 +463,15 @@ survives carries the page's `relational` field. Only answers count toward the
 relational re-pin and the page-1 evidence slot; intermediate and origin pages
 never claim them. The planner keys fold into the query-cache key only when on
 (`rp=1`, `ro=1`). Guide: [multi-hop relationship questions](../guides/multi-hop.md).
+
+### Link types that take no part in ranking
+
+Every reader that turns links into a ranking signal (backlink and adjacency
+boosts, relational fanout and chain hops, chain hub degree, enrich order,
+canonical entity picks, generated-page demotion, entity anchoring) skips the
+link types in `NON_RANKING_LINK_TYPES` (`src/core/link-ranking-policy.ts`):
+today `amends`. Those edges stay ordinary references in graph reads and cards.
+Guide: [amendments](../guides/temporal-edges.md#amendments-the-amends-link).
 
 ### Metadata boost gate: vector-only voters keep the vector order
 
@@ -514,6 +605,9 @@ code metadata without spending on embeddings."* Search and query report
 `projection_readiness` for empty and nonempty results. `projection_pending`
 means visible pages lack a current revision seal; `projection_status_unknown`
 means the diagnostic could not establish readiness. Neither is a clean miss.
+`projection_by_design` means the only unsealed pages in scope are
+protected-OCR images (or pages of an archived source), which stay out of the
+index by design: nothing is pending and no repair applies.
 The CLI names these states; `--json` retains its result-array format and sends
 incompleteness notices to stderr. MCP carries them in `_meta.retrieval`.
 

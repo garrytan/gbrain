@@ -4,7 +4,7 @@ import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { msysToNativePath } from '../path-confine.ts';
 import { defaultCloneDir, type AddSourceOpts, type SourceRow } from '../sources-ops.ts';
-import { DEFAULT_CALENDAR_ID } from '../google/types.ts';
+import { googleTuningConfig } from '../google/source-config.ts';
 import { runManagedSourceLifecycle, type SourceLifecycleInput } from './source-lifecycle.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { WRITE_ERROR_CODES, type WriteErrorCode } from './types.ts';
@@ -41,7 +41,7 @@ export function managedSourceAddInput(opts:AddSourceOpts):SourceLifecycleInput{
   if(opts.google){
     const google=opts.google;path=resolve(msysToNativePath(google.dir));
     config={kind:'google',g_account:google.account,g_services:google.services.join(','),g_history_days:google.historyDays,
-      ...(google.calendarId&&google.calendarId!==DEFAULT_CALENDAR_ID?{g_calendar_id:google.calendarId}:{}),
+      ...googleTuningConfig(google),
       ...(google.access&&google.access!=='vault'?{g_access:google.access}:{}),...(google.tokenCommand?{g_token_command:google.tokenCommand}:{}),
       ...(google.tokenEnv?{g_token_env:google.tokenEnv}:{}),g_managed:path===defaultCloneDir(`${opts.id}-google`),federated:opts.federated??true};
   }

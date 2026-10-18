@@ -165,6 +165,18 @@ describe('buildBrainTools', () => {
     expect(res).toBeDefined();
   });
 
+  test('execute() on get_page include_content returns the body once (#6297)', async () => {
+    await engine.putPage('notes/payload-example', { type: 'note', title: 'Payload example', compiled_truth: 'Distinctive body text for the payload test.', timeline: '' });
+    const tools = buildBrainTools({ subagentId: 42, engine, config });
+    const getPage = tools.find(t => t.name === 'brain_get_page')!;
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+    const res = await getPage.execute({ slug: 'notes/payload-example', include_content: true }, ctx) as Record<string, unknown>;
+    expect(String(res.content)).toContain('Distinctive body text');
+    expect(res).not.toHaveProperty('compiled_truth');
+    expect(res).not.toHaveProperty('timeline');
+    expect(JSON.stringify(res).split('Distinctive body text').length - 1).toBe(1);
+  });
+
   test('execute() on put_page with valid namespace slug succeeds', async () => {
     const tools = buildBrainTools({ subagentId: 42, engine, config });
     const putPage = tools.find(t => t.name === 'brain_put_page');
@@ -337,7 +349,9 @@ describe('brain_put_page pins undeclared model-authored types (#4852)', () => {
       ]) {
         const error = await tool.execute({ slug: 'wiki/personal/patterns/rejected', content, request_id: randomUUID() },
           { engine, jobId: 1, remote: true }).then(() => null, error => error);
-        expect(error).toMatchObject({ code, writeRequest: { state: 'failed' } });
+        // Invalid YAML fails its admitted request; an over-ceiling body is refused before admission (no request).
+        if (code === 'request_too_large') expect(error).toMatchObject({ code, writeRequest: undefined });
+        else expect(error).toMatchObject({ code, writeRequest: { state: 'failed' } });
         expect(error.message).not.toContain('private_marker');
         expect(await engine.getPage('wiki/personal/patterns/rejected', { sourceId: 'default' })).toBeNull();
       }

@@ -1,17 +1,20 @@
 /** Degradation-stamp helpers shared by hybridSearch, its stages and hybridSearchCached. */
 import type { DegradedStage, DegradedStageEntry, DegradedReason } from '../../types.ts';
 import type { TokenBudgetMeta } from '../token-budget.ts';
+import { isStatementTimeoutError } from '../../retry-matcher.ts';
 
 /**
  * WP2/T3 — classify an embed/vector failure as a timeout vs a provider
  * error for the enumerated degraded[] reason codes (D6). Matches both the
  * embedQueryBounded deadline rejection and AbortSignal.timeout's
- * TimeoutError/AbortError. The raw error text never rides the wire — it
+ * TimeoutError/AbortError, and a Postgres statement timeout (SQLSTATE 57014,
+ * the keyword and title arms' `SET LOCAL statement_timeout`). The raw error text never rides the wire — it
  * goes to stderr via warnOncePerProcess only.
  */
 export function isTimeoutError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   if (/deadline \d+ms exceeded/.test(err.message)) return true;
+  if (isStatementTimeoutError(err)) return true;
   return err.name === 'TimeoutError' || err.name === 'AbortError';
 }
 

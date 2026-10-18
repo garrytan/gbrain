@@ -55,6 +55,8 @@ const HELP_WITHOUT_BRAIN = [
   'core',
   // #6114: router commands print their usage from cli.ts before dispatch (src/cli/router-help.ts).
   'config',
+  // Cat 41 run 4: recall's usage (incl. --question) prints before the engine.
+  'recall',
 ];
 
 /**
@@ -67,6 +69,10 @@ const HELP_WITHOUT_BRAIN = [
 const STILL_NEEDS_A_BRAIN: string[] = [];
 
 async function runHelp(command: string): Promise<{ code: number; out: string }> {
+  return runCli([command, '--help']);
+}
+
+async function runCli(argv: string[]): Promise<{ code: number; out: string }> {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-nobrain-'));
   // An empty GBRAIN_HOME is not enough: loadConfig also honours
   // GBRAIN_DATABASE_URL and DATABASE_URL (config.ts:550-551), so a developer
@@ -78,7 +84,7 @@ async function runHelp(command: string): Promise<{ code: number; out: string }> 
   // --no-env-file: bun auto-loads .env from cwd, and GBRAIN_DATABASE_URL is
   // honored unconditionally, so a developer's local .env would put back
   // exactly what the deletes above removed.
-  const proc = Bun.spawn(['bun', '--no-env-file', 'run', 'src/cli.ts', command, '--help'], {
+  const proc = Bun.spawn(['bun', '--no-env-file', 'run', 'src/cli.ts', ...argv], {
     cwd: REPO,
     env,
     stdout: 'pipe',
@@ -146,6 +152,41 @@ describe('--help without a configured brain', () => {
       expect(out.toLowerCase()).toContain(command.split('-')[0]);
     }, 30_000);
   }
+
+  // #6521: a subcommand's help must answer brainless too. SELF_HELP_WITHOUT_ENGINE dispatches the handler with a
+  // null engine and trusts it to answer help first; `core list --help` ran `list` against null ("null is not an
+  // object (evaluating 'exec.executeRaw')", exit 1) and `loops show --help` exited 2 ("needs a loop id"). `core`
+  // and `loops` are routers now (cli.ts prints their usage before dispatch, src/cli/router-help.ts); `transcripts`
+  // keeps per-subcommand help, so its handler answers the flag for `status`/`audit-secrets`. The explicit table
+  // is the fail-first; the ROUTERS walk in test/helpers/cli-help-gate.ts is the ratchet afterwards.
+  const SUBCOMMAND_HELP_WITHOUT_BRAIN: Array<{ argv: string[]; usage: string }> = [
+    { argv: ['core', 'list', '--help'], usage: 'Usage: gbrain core' },
+    { argv: ['core', 'status', '--help'], usage: 'Usage: gbrain core' },
+    { argv: ['core', 'init', '--help'], usage: 'Usage: gbrain core' },
+    { argv: ['core', 'suggest', '-h'], usage: 'Usage: gbrain core' },
+    { argv: ['core', 'add', 'x', '--help'], usage: 'Usage: gbrain core' },
+    { argv: ['core', 'add', 'help'], usage: 'Usage: gbrain core' },
+    { argv: ['loops', 'list', '--help'], usage: 'gbrain loops —' },
+    { argv: ['loops', 'show', '--help'], usage: 'gbrain loops —' },
+    { argv: ['loops', 'done', '--help'], usage: 'gbrain loops —' },
+    { argv: ['loops', 'drop', '-h'], usage: 'gbrain loops —' },
+    { argv: ['loops', 'mute', '--help'], usage: 'gbrain loops —' },
+    { argv: ['loops', 'unmute', 'help'], usage: 'gbrain loops —' },
+    { argv: ['transcripts', 'status', '--help'], usage: 'gbrain transcripts' },
+    { argv: ['transcripts', 'audit-secrets', '--help'], usage: 'gbrain transcripts' },
+  ];
+  test('subcommand help answers brainless (#6521: core, loops, transcripts status)', async () => {
+    const results = await Promise.all(SUBCOMMAND_HELP_WITHOUT_BRAIN.map(async c => ({ ...c, ...(await runCli(c.argv)) })));
+    for (const r of results) {
+      const label = r.argv.join(' ');
+      expect(r.out, label).not.toContain('No brain configured');
+      expect(r.out, label).not.toContain('internal_error');
+      expect(r.out, label).not.toContain('null is not an object');
+      expect(r.out, label).not.toContain('needs a loop id');
+      expect(r.out, label).toContain(r.usage);
+      expect(r.code, label).toBe(0);
+    }
+  }, 120_000);
 
   test('the known-unfixed set is exactly what it claims', async () => {
     // Concurrently: seven sequential CLI spawns is most of this file's wall

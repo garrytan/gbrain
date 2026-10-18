@@ -18,7 +18,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { loadActivePackBestEffort } from './best-effort.ts';
 import type { OperationContext } from '../operations.ts';
-import { isUndefinedTableError } from '../utils.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 import { storedTypeMissesPack, type TypeUsagePack } from './type-usage.ts';
 
 export interface StatsOpts {
@@ -185,7 +185,7 @@ async function fetchCountRows(engine: BrainEngine, opts: StatsOpts): Promise<Raw
     // false "100% coverage" + a starved `schema suggest`. Surface
     // everything that is not a missing-table error so the real failure
     // is visible instead of hidden behind a fake zero.
-    if (isUndefinedTableError(err)) return [];
+    if (isMissingSchemaObject(err, 'table', 'pages')) return [];
     throw err;
   }
 }
@@ -227,7 +227,7 @@ async function detectDeadPrefixes(
       } catch (err) {
         // #2466: only skip on the genuine "no pages table yet" case;
         // rethrow any other engine error so it isn't silently masked.
-        if (isUndefinedTableError(err)) continue;
+        if (isMissingSchemaObject(err, 'table', 'pages')) continue;
         throw err;
       }
     }

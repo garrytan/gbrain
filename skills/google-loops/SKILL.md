@@ -101,8 +101,16 @@ Testing-mode expiry — publishing to Production is the real fix.
 gbrain waiting --json        # the killer output: ranked people waiting
 gbrain loops done <id>       # user handled it
 gbrain loops drop <id>       # user is not going to do it
-gbrain loops mute sender <email>   # never track this sender again
+gbrain loops mute sender <email>   # never track this sender again (closes its open reply-owed loops)
+gbrain loops unmute sender <email> # undo; the loops it closed are re-checked on the next sync
+gbrain loops drop sender <email> --dry-run   # preview closing one sender's reply-owed loops
 ```
+
+- `waiting` may end with `withheld_noise`: open reply-owed loops from senders
+  whose mail is automated (bank or shipping alerts). Show the user each
+  `preview_command`, run it (`--dry-run` changes nothing), and drop only after
+  the user agrees: a drop cannot be undone. Offer `loops mute sender` when the
+  user wants a stop they can reverse.
 
 - `waiting` REFUSES on stale data (no successful sync in 24h) and names the
   exact fix (`gbrain sync --source <id>`). Run the sync, then retry. Only

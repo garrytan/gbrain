@@ -219,6 +219,17 @@ export const CONFORMANCE_CASES: ConformanceCase[] = [
     expect: [{ path: 'expired', equals: false }],
   },
   {
+    name: 'remember of the forgotten claim is refused invalid_params with a suggestion (a withdrawn object, when present, is schema-valid)',
+    verb: 'remember',
+    params: {
+      fact: 'conformance {{marker}}: expiring fact',
+      provenance: 'conformance run {{marker}}',
+      entity: 'people/conformance-{{marker}}',
+    },
+    expectErrorCode: 'invalid_params',
+    expectSuggestion: true,
+  },
+  {
     name: 'forget unknown id returns not_found with a suggestion',
     verb: 'forget',
     params: { id: '999999999' },

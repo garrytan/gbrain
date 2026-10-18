@@ -10,19 +10,25 @@ import { join, relative } from 'node:path';
 
 const root = join(import.meta.dir, '..');
 const REVIEWED: Record<string, string> = {
+  'src/core/belief/backfill.ts': 'reads historical takes only and skips reservation rows (TAKE_RESERVATION_SOURCE); it renders nothing',
+  'src/core/belief/purge.ts': 'collects historical take claims to redact; a reservation carries no claim, and it renders nothing',
   'src/core/cycle/concept-publication.ts': 'compares rows of fence blocks it copies verbatim, reservations included',
   'src/core/cycle/extract-takes.ts': 'projects takes only; a reserved number has no take, so rebuild prunes its stale index row',
   'src/core/cycle/grade-takes.ts': 'looks up live fence rows by number; a reserved number is not a gradeable take',
   'src/core/extract-takes-from-pages.ts': 'dedupes held claims against live takes only',
+  'src/core/facts/purge-overlay.ts': 're-renders through renderTakesFence with the fence\'s reservations plus the purged rows\' numbers, so a purged number is never reused (like takes remove)',
   'src/core/fence-repair/content.ts': 'reads warnings only (clean or not)',
   'src/core/fence-repair/import-step.ts': 'hidden rows feed allocation, which nextFreeRowNum already bases on every raw fence row',
   'src/core/fence-repair/page-checks.ts': 'a reserved number used twice in one fence is a parser collision warning',
   'src/core/fence-repair/refusal.ts': 'same warning and collision checks as page-checks',
+  'src/core/page-body/segment-takes.ts': 'parses a segmented body\'s fence for extract-takes and the canonical projection, which project takes only; it never re-renders, so a reservation stays a reservation',
   'src/core/persistence/canonical-projections.ts': 'projects takes only, so a reservation projects no row and its old row is deleted',
   'src/core/persistence/takes-prepare.ts': 'allocates with nextFreeRowNum, re-renders through upsertTakeRow/supersedeRow/replaceFence, and remove adds the reservation',
+  'src/core/repair/accepted-takes.ts': 'reads the archived row at a removed take\'s number (reservations are never takes) and requires the live fence to reserve that number; it re-renders with renderTakesFence keeping every other reservation',
   'src/core/repair/connector-fences.ts': 'moves fence blocks verbatim, reservations included',
   'src/core/repair/take-supersession.ts': 're-renders through replaceFence, which keeps the reservations of the body it replaces',
   'src/core/shared-skills/migration-projection.ts': 'compares stored takes with fence takes; neither holds a reservation',
+  'src/core/trust/held-removals.ts': 'looks up the live fence row at a held take\'s number; a reserved number has no take, so the accept deletes the held row',
   'src/core/takes-write.ts': 'replaceFence, upsertTakeRow and supersedeRow keep reservations; round-trip checks count takes only',
 };
 

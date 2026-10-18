@@ -18,6 +18,7 @@ import { assertNoSymlinks, checkedRoot, confinedPath, sha256, privateWrite } fro
 import { installSharedSkillsConnection } from './shared-skills.ts';
 import type { SharedSkillsToolCaller } from '../shared-skills/adapter.ts';
 import { harnessSharedSkillsRoot } from './status.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 export interface InstallOptions { harness: string; name?: string; root?: string; configPath?: string; remove?: boolean;
   sharedSkills?: HarnessCredentials['shared_skills']; toolCaller?: SharedSkillsToolCaller; nativeSkillsDir?: string; credentialsFile?: string; freshToken?: boolean }
@@ -46,7 +47,7 @@ function nativeEntry(path: string, format: string, name: string): unknown {
 /** The Git working tree whose next commit would include `path`, or null when it is ignored or outside every tree. */
 function committingGitTree(path: string): string | null {
   const git = (args: string[]) => execFileSync('git', ['-C', dirname(path), ...args],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV } }).trim();
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }) }).trim();
   let tree: string;
   try { tree = git(['rev-parse', '--show-toplevel']); } catch { return null; }
   try { git(['check-ignore', '-q', '--', path]); return null; } catch { return tree; }

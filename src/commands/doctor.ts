@@ -135,7 +135,9 @@ export {
   buildMemoryVerbsCheck,
   buildRetrievalReflexCheck,
 } from './doctor/checks/verbs-reflex.ts';
-import type { DoctorContext } from './doctor/context.ts';
+import type { DoctorContext, DoctorTier } from './doctor/context.ts';
+import { doctorRunSummary, parseDoctorTier, startDoctorDeadline, tierFields, type DoctorDeadline, type DoctorRunSummary } from './doctor/budget.ts';
+export { doctorRunSummary, type DoctorRunSummary } from './doctor/budget.ts';
 import { runDoctorRegistry, parseOnlyChecks } from './doctor/registry.ts';
 import { finalizeCheckFixes, fixLine, unknownScoreCategories, type CheckAgentFields } from './doctor/check-fix.ts';
 import { throttleDoctorHeartbeat } from './doctor/heartbeat.ts';
@@ -173,6 +175,10 @@ export interface Check extends CheckAgentFields {
    * Source of truth: `src/core/doctor-categories.ts`.
    */
   category?: CheckCategory;
+  /** #6696 B1: wall time of the registry entry that produced this check. */
+  elapsed_ms?: number;
+  /** Wave B decision #10: pages stored in segments this whole-body check did not read; only when > 0 (`withSkippedSegmented`). */
+  skipped_segmented?: number;
 }
 
 /**
@@ -237,6 +243,12 @@ export interface DoctorReport {
   capped_by?: string[];
   /** E10: category scores that are not evidence because their checks did not run (e.g. `brain` when the DB was unreachable). */
   unknown_scores?: Array<'brain'>;
+  /** #6696 B1, only with `--tier` / `--budget-ms`: the tier, whether every check is known, the unknown ones, wall time, budget (null: none). */
+  tier?: DoctorTier;
+  complete?: boolean;
+  unknown_sections?: string[];
+  elapsed_ms?: number;
+  budget_ms?: number | null;
 }
 
 function _penaltyScore(checks: Check[]): number {
@@ -264,7 +276,7 @@ function _penaltyScore(checks: Check[]): number {
  */
 export function computeDoctorReport(
   checks: Check[],
-  extras?: { engine?: 'postgres' | 'pglite'; db_url_source?: DbUrlSource | null; render?: RenderContext },
+  extras?: { engine?: 'postgres' | 'pglite'; db_url_source?: DbUrlSource | null; render?: RenderContext; run?: DoctorRunSummary },
 ): DoctorReport {
   const tagged = finalizeCheckFixes(checks, extras?.render).map((c) =>
     c.category ? c : { ...c, category: categorizeCheck(c.name) },
@@ -298,6 +310,7 @@ export function computeDoctorReport(
     ...(extras?.db_url_source !== undefined ? { db_url_source: extras.db_url_source } : {}),
     ...(capped_by.length ? { capped_by } : {}),
     ...(unknownScoreCategories(tagged).length ? { unknown_scores: unknownScoreCategories(tagged) } : {}),
+    ...(extras?.run ? tierFields(tagged, extras.run) : {}),
   };
 }
 
@@ -381,6 +394,9 @@ export async function buildChecks(
   // `connection` check — without it, a total outage produced NO connection
   // entry at all, which is exactly the field smoke-test branches on.
   connectError?: unknown,
+  // #6696: the run's deadline (started by the CLI before connecting) and a remote caller's readable sources.
+  deadline: DoctorDeadline = startDoctorDeadline(args),
+  remoteScope: { sourceIds?: string[] } = {},
 ): Promise<Check[]> {
   const jsonOutput = args.includes('--json');
   const fastMode = args.includes('--fast');
@@ -455,6 +471,9 @@ export async function buildChecks(
     schemaVersion: 0,
     connectionFailed: false,
     only: parseOnlyChecks(args),
+    tier: parseDoctorTier(args),
+    deadline,
+    ...(remoteScope.sourceIds ? { sourceIds: remoteScope.sourceIds } : {}),
   };
 
   return runDoctorRegistry(ctx);
@@ -484,6 +503,7 @@ export async function runDoctor(
   // db-availability loop: the connect error from the CLI's dead-DB fallback,
   // threaded to buildChecks for the synthesized `connection` check (2c-bis).
   connectError?: unknown,
+  deadline: DoctorDeadline = startDoctorDeadline(args),
 ) {
   const jsonOutput = args.includes('--json');
   const locksMode = args.includes('--locks');
@@ -497,11 +517,12 @@ export async function runDoctor(
   }
 
   if (args.includes('--probe') && !(await (await import('./doctor/probe-consent.ts')).authorizeProviderProbe(engine, args, jsonOutput))) return;
-  const checks = await buildChecks(engine, args, dbSource, connectError);
-  const hasFail = outputResults(checks, jsonOutput, { engine: engine?.kind, db_url_source: dbSource ?? null });
+  const checks = await buildChecks(engine, args, dbSource, connectError, deadline);
+  const run = doctorRunSummary(args, deadline);
+  const hasFail = outputResults(checks, jsonOutput, { engine: engine?.kind, db_url_source: dbSource ?? null, run });
 
-  // Features teaser (non-JSON, non-failing only)
-  if (!jsonOutput && !hasFail && engine) {
+  // Features teaser (non-JSON, non-failing only; never under the ops deadline)
+  if (!jsonOutput && !hasFail && engine && run?.tier !== 'ops') {
     try {
       const { featuresTeaserForDoctor } = await import('./features.ts');
       const teaser = await featuresTeaserForDoctor(engine);
@@ -530,7 +551,7 @@ export function doctorProgressOptions(jsonOutput: boolean) {
 function outputResults(
   checks: Check[],
   json: boolean,
-  extras?: { engine?: 'postgres' | 'pglite'; db_url_source?: DbUrlSource | null },
+  extras?: { engine?: 'postgres' | 'pglite'; db_url_source?: DbUrlSource | null; run?: DoctorRunSummary },
 ): boolean {
   // v0.41.19.0 — render goes through computeDoctorReport so the human
   // output, JSON output, and remote MCP envelope all share one shape.
@@ -594,6 +615,7 @@ function outputResults(
   console.log(`Ops checks:    ${report.category_scores.ops}/100`);
   console.log(`Meta checks:   ${report.category_scores.meta}/100`);
   if (brainScoreLine) console.log(brainScoreLine);
+  if (report.tier) console.log(`Tier: ${report.tier}, ${report.complete ? 'complete' : `incomplete (unknown: ${report.unknown_sections!.join(', ')})`}, ${report.elapsed_ms} ms${report.budget_ms ? ` of ${report.budget_ms} ms` : ''}`);
   console.log('');
 
   if (hasFail) {

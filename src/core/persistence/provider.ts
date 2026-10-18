@@ -8,11 +8,11 @@ import { dispatchToolCall } from '../../mcp/dispatch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import { startPersistenceConsumer, assertPersistenceAccepting } from './service.ts';
 import { isWriteErrorCode, isWriteReceipt } from './types.ts';
-import type { PersistenceIpcProvider } from './ipc.ts';
+import { LOCAL_CLI_OWNER_OPERATIONS, type PersistenceIpcProvider } from './ipc.ts';
 import { runPersistenceAdministration } from './administration.ts';
 import { boundedWriteWaitMs } from './write-wait.ts';
 export { residentPersistenceConfig } from './local-client.ts';
-import { projectionBacklog } from '../page-state/projections.ts';
+import { startProjectionStatusCache } from '../page-state/projection-status.ts';
 import { trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 
@@ -37,7 +37,8 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
   }
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
   startPersistenceConsumer(engine, config);
-  return { brainId: brain.brain_id, projectionStatus: () => projectionBacklog(engine), dispatch: request => withVerifiedLocalRegistration(engine, request.registration, async verified => {
+  const projectionStatus = startProjectionStatusCache(engine);
+  return { brainId: brain.brain_id, projectionStatus: () => projectionStatus.read(), dispatch: request => withVerifiedLocalRegistration(engine, request.registration, async verified => {
     assertPersistenceAccepting(engine);
     if (request.brain_id !== brain.brain_id) {
       throw opError('permission_denied', 'This registration belongs to a different brain.',
@@ -46,7 +47,8 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
     }
     const operation = operations.find(op => op.name === request.operation);
     const localSkillAdministration = !verified.remote && verified.principal.kind === 'local_cli'
-      && ['get_skill_policy', 'set_skill_policy', 'get_skill_retention', 'prune_skill_revisions', 'retain_skill_revision', 'import_skill_proposal'].includes(request.operation);
+      && (['get_skill_policy', 'set_skill_policy', 'get_skill_retention', 'prune_skill_revisions', 'retain_skill_revision', 'import_skill_proposal'].includes(request.operation)
+        || LOCAL_CLI_OWNER_OPERATIONS.has(request.operation));
     if (!operation || (!localSkillAdministration && !hasScope(verified.grant.scopes, operation.scope ?? 'read'))
       || (verified.remote && !operationScopesAllowed(verified.grant.scopes, operation))
       || (verified.grant.operations !== null && !verified.grant.operations.includes(operation.name))) {
@@ -80,6 +82,8 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
     const localCliLocalOnly = !verified.remote && verified.principal.kind === 'local_cli' && LOCAL_CLI_LOCAL_ONLY_OPS.has(request.operation);
     const writeWaitMs = boundedWriteWaitMs(request.write_wait_ms);
     const result = await dispatchToolCall(engine, request.operation, params, {
+      // #6696 (A5): a verified local registration is the user's CLI or agent, as on the in-process entry points.
+      admissionOrigin: 'interactive',
       config, remote: verified.remote, transport: verified.remote || localSkillAdministration || localCliLocalOnly ? 'stdio' : undefined, sourceId, auth,
       ...(writeWaitMs !== undefined ? { writeWaitMs } : {}),
       ...(unrestricted ? {} : { localFederatedSourceIds: verified.grant.sourceIds }),

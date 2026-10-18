@@ -25,19 +25,29 @@
  * and the ceiling. Without a deadline (switch off, a clock from an older
  * caller) or on PGLite (one in-process connection, no other session to wait
  * on) the engine is returned as it is.
+ *
+ * #6317 (C1): the same wrapper records each statement's label on the clock
+ * (`recordClaimSql`) before issuing it, so the claim stamp's `last_sql` names
+ * the read a parked preparation is waiting on.
  */
-import type { BrainEngine } from '../engine.ts';
-import type { ClaimPhaseClock } from './claim-phase.ts';
+import type { BrainEngine, ReservedConnection } from '../engine.ts';
+import { PoolCapacityError } from '../pool-budget.ts';
+import { recordClaimSql, type ClaimPhaseClock } from './claim-phase.ts';
 import { registerEngineView, viewedEngine } from './switches.ts';
 
 /** The SQLSTATEs a bounded read ends with when its server-side bound passes. */
 const DEADLINE_SQLSTATES = new Set(['57014', '55P03']);
 
-/** The error a bounded read rejects with at its bound; `code` is what `preparationAbortReason` reads. */
+/**
+ * The error a bounded read rejects with at its bound; `code` is what `preparationAbortReason` reads. `sqlstate` is
+ * null when the read was refused before it was sent because the budget had already run out.
+ */
 export class PreparationDeadlineError extends Error {
   readonly code = 'preparation_deadline';
-  constructor(readonly step: string | null, readonly sqlstate: string, cause: unknown) {
-    super(`The preparation read${step ? ` at step ${step}` : ''} did not finish within its budget (the server ended it, SQLSTATE ${sqlstate}).`, { cause });
+  constructor(readonly step: string | null, readonly sqlstate: string | null, cause?: unknown) {
+    super(sqlstate
+      ? `The preparation read${step ? ` at step ${step}` : ''} did not finish within its budget (the server ended it, SQLSTATE ${sqlstate}).`
+      : `The preparation read${step ? ` at step ${step}` : ''} was not sent: its budget had already run out.`, { cause });
     this.name = 'PreparationDeadlineError';
   }
 }
@@ -54,20 +64,41 @@ export function isStatementTimeout(error: unknown): error is { code: string } {
   return typeof code === 'string' && DEADLINE_SQLSTATES.has(code);
 }
 
+const SHARED_READ = Symbol('gbrain.shared-read');
+/**
+ * Flip lane C: the failure of a read several preparations share (group-publish.ts `preparationReads`), handed to every member
+ * waiting on it. It ran without any member's bound, so it is no member's own statement: a bounded member never reads it as
+ * its deadline, and the coordinator charges it once, to the first member that settles with it (`chargedSharedReads`); the
+ * other members waiting on the same failure are released uncounted.
+ */
+export function sharedReadFailure(error: unknown): unknown {
+  if (!(error instanceof Error)) return error;
+  return Object.assign(new Error(error.message, { cause: error }), { code: (error as { code?: unknown }).code, [SHARED_READ]: true });
+}
+export function isSharedReadFailure(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { [SHARED_READ]?: true })[SHARED_READ] === true;
+}
+
 /** The engine a preparer reads through: raw statements bounded by the clock's remaining budget, everything else untouched. */
 export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undefined): BrainEngine {
   const deadlineAt = clock?.deadlineAt;
   if (deadlineAt === undefined || engine.kind !== 'postgres') return engine;
   return registerEngineView(new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return async (sql: string, params?: unknown[], opts?: { signal?: AbortSignal; timeoutMs?: number }) => {
+      recordClaimSql(clock, sql);
       if (opts?.signal) return target.executeRaw(sql, params, opts);
+      // A read issued past the deadline is refused here: sent with the 1 ms floor, a fast one would finish and the deadline would go unseen.
+      if (Date.now() >= deadlineAt) {
+        if (clock!.signal?.aborted) throw clock!.signal.reason;
+        throw new PreparationDeadlineError(clock!.step, null);
+      }
       try {
         // The clock's signal ends only the wait for a free connection (a saturated pool); the statement itself ends at the bound.
         return await target.executeRaw(sql, params, { ...opts, timeoutMs: Math.max(1, deadlineAt - Date.now()), ...(clock!.signal ? { signal: clock!.signal } : {}) });
       } catch (error) {
         // A connection the engine discarded after the budget's cancel (a pooler that never completed the round-trip) is the deadline too.
         const discarded = isConnectionEnd(error) && (clock!.signal?.aborted || Date.now() >= deadlineAt);
-        if (!isStatementTimeout(error) && !discarded) throw error;
+        if (isSharedReadFailure(error) || (!isStatementTimeout(error) && !discarded)) throw error;
         if (clock!.signal?.aborted) throw clock!.signal.reason;
         throw new PreparationDeadlineError(clock!.step, (error as { code: string }).code, error);
       }
@@ -75,4 +106,88 @@ export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undef
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } }), viewedEngine(engine));
+}
+
+/** How far a session statement's bound may differ from its own before the session sets `statement_timeout` again. */
+export const BOUNDED_SESSION_SLACK_MS = 25;
+/**
+ * GBRA-75 wave 9: runs `fn` with a view of `engine` whose bounded raw reads (`executeRaw` with `timeoutMs`, which
+ * `boundedReads` issues) share one transaction on one reserved ordinary-pool connection: `BEGIN` and
+ * `SET LOCAL statement_timeout` once, then each read, then `COMMIT` when `fn` settles, instead of a
+ * `BEGIN; SET LOCAL; read; COMMIT` per read. The bound stays per statement and server-side: before a read whose own
+ * bound differs from the one in force by more than BOUNDED_SESSION_SLACK_MS, the session sets it again in the same
+ * pipeline, so a statement waiting on a relation lock still ends on the server at its budget (within the slack).
+ * A read that fails ends the transaction (a rollback); reads the failure aborted (25P02) run again in a new one,
+ * so each read sees the outcome it would have alone. A read issued after `fn` settled, by a preparation the
+ * caller abandoned, takes the per-read path. Unbounded statements and everything else go to `engine`. On PGLite,
+ * or when the pool has no long-hold capacity left, `fn` gets `engine` itself; inside a session (a waiver run's,
+ * sync-run.ts `waiveRun`), `fn` joins it.
+ */
+export async function withBoundedReadSession<T>(engine: BrainEngine, fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
+  if (engine.kind !== 'postgres' || sessionViews.has(engine)) return fn(engine);
+  let started = false;
+  try {
+    return await engine.withReservedConnection(async conn => {
+      started = true;
+      const session = new BoundedReadSession(conn, engine);
+      try { return await fn(session.view); } finally { await session.close(); }
+    }, { route: 'ordinary' });
+  } catch (error) {
+    if (!started && error instanceof PoolCapacityError) return fn(engine);
+    throw error;
+  }
+}
+
+/** Views a session hands out: a screen run inside a waiver run's session joins it instead of opening its own. */
+const sessionViews = new WeakSet<object>();
+class BoundedReadSession {
+  readonly view: BrainEngine;
+  private open = false;
+  private closed = false;
+  private generation = 0;
+  private boundMs = 0;
+  constructor(private readonly conn: ReservedConnection, private readonly engine: BrainEngine) {
+    this.view = registerEngineView(new Proxy(engine, { get: (target, key) => {
+      if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal; timeoutMs?: number }) =>
+        opts?.timeoutMs === undefined ? target.executeRaw(sql, params, opts) : this.run(sql, params, opts.timeoutMs, 0);
+      const value = Reflect.get(target, key, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } }), viewedEngine(engine));
+    sessionViews.add(this.view);
+  }
+
+  private async run<T>(sql: string, params: unknown[] | undefined, timeoutMs: number, retries: number): Promise<T[]> {
+    if (this.closed || retries > 2) return this.engine.executeRaw<T>(sql, params, { timeoutMs });
+    const ms = Math.max(1, Math.ceil(timeoutMs));
+    const generation = this.generation;
+    const steps: Promise<unknown>[] = [];
+    if (!this.open) {
+      this.open = true;
+      steps.push(this.conn.executeRaw('BEGIN'));
+      steps.push(this.conn.executeRaw(`SET LOCAL statement_timeout = ${ms}`));
+      this.boundMs = ms;
+    } else if (Math.abs(this.boundMs - ms) > BOUNDED_SESSION_SLACK_MS) {
+      steps.push(this.conn.executeRaw(`SET LOCAL statement_timeout = ${ms}`));
+      this.boundMs = ms;
+    }
+    const read = this.conn.executeRaw<T>(sql, params, { prepare: true });
+    const settled = await Promise.allSettled([...steps, read]);
+    const failed = settled.find((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
+    if (!failed) return (settled[settled.length - 1] as PromiseFulfilledResult<T[]>).value;
+    if (this.generation === generation) {
+      this.generation++;
+      this.open = false;
+      void this.conn.executeRaw('ROLLBACK').catch(() => {});
+    }
+    if (isConnectionEnd(failed.reason)) this.closed = true;
+    else if ((failed.reason as { code?: unknown } | null)?.code === '25P02') return this.run(sql, params, timeoutMs, retries + 1);
+    throw failed.reason;
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    if (!this.open) return;
+    this.open = false;
+    await this.conn.executeRaw('COMMIT').catch(() => {});
+  }
 }

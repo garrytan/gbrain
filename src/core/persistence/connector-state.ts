@@ -40,6 +40,29 @@ export interface ConnectorRunCounts {
   stopped_on_wait_budget: boolean;
   dropped_upstream: number;
   finished_at: string;
+  /** #6831: items the pages guard refused as purged content this run; each was skipped and the run went on. */
+  purged_skipped?: number;
+}
+
+/** #6831: one connector item whose content matches a page purge tombstone, skipped instead of written. */
+export interface ConnectorPurgedItem {
+  slug: string;
+  /** The refused receipt, or null when the item was screened out before admission. */
+  request_id: string | null;
+  at: string;
+}
+
+/**
+ * #6831: the last connector run that ended on an error instead of finishing.
+ * `consecutive` counts runs in a row that ended this way; a run that finishes clears it.
+ */
+export interface ConnectorRunFailure {
+  code: string;
+  message: string;
+  slug: string | null;
+  request_id: string | null;
+  at: string;
+  consecutive: number;
 }
 
 export type UpgradeRecovery = 'resumed' | 'rewalking_once' | 'none';
@@ -61,10 +84,32 @@ export interface ConnectorState {
    * connector sources that have one; checkpoint-row existence never counts.
    */
   first_attempt_at?: string | null;
+  /**
+   * #6803: the last account check refused with `connector_account_changed`.
+   * Autopilot skips the source (unavailable-path) while the connector config
+   * still digests to `config_digest`; a sync that passes the check clears it.
+   */
+  account_mismatch?: ConnectorAccountMismatch | null;
+  /** #6831: the most recent purged items connector runs skipped (newest first, at most CONNECTOR_PURGED_LIMIT). */
+  purged_items?: ConnectorPurgedItem[];
+  /** #6831: set while the source's connector runs keep ending on an error; cleared by a run that finishes. */
+  last_failure?: ConnectorRunFailure | null;
+}
+
+/** #6831: how many skipped purged items the state row keeps. */
+export const CONNECTOR_PURGED_LIMIT = 20;
+/** #6831: this many connector runs in a row that ended on an error read as a stopped source in `sources status` and doctor. */
+export const CONNECTOR_STOPPED_RUNS = 3;
+
+export interface ConnectorAccountMismatch {
+  at: string;
+  detail: 'account_changed' | 'account_unresolved';
+  /** `connectorConfigDigest` of the config the refused run read (credential settings included). */
+  config_digest: string;
 }
 
 export const emptyConnectorState = (): ConnectorState => ({ version: 1, account: null, pinned_at: null, continuity_unverified: false,
-  pending: [], upgrade_recovery: 'none', resumed_from: null, last_run: null, first_attempt_at: null });
+  pending: [], upgrade_recovery: 'none', resumed_from: null, last_run: null, first_attempt_at: null, account_mismatch: null, purged_items: [], last_failure: null });
 
 export function connectorStateKey(sourceId: string, incarnation: string): string {
   return digest({ sourceId, incarnation });
@@ -156,3 +201,4 @@ export function describeConnectorAccount(account: ConnectorAccount): string {
   return [account.installationId !== null ? `installation ${account.installationId}` : null, account.login ? `login ${account.login}` : null]
     .filter(Boolean).join(', ') || 'no installation or login';
 }
+

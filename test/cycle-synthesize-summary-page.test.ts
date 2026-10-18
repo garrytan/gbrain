@@ -9,13 +9,17 @@
  * and names the provenance query that recovers the complete child set.
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { __testing } from '../src/core/cycle/synthesize.ts';
 import type { PageInput } from '../src/core/types.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { lintContent } from '../src/commands/lint.ts';
+import { parseMarkdown } from '../src/core/markdown.ts';
 
 type SummaryWriter = (
   engine: BrainEngine,
@@ -71,6 +75,15 @@ async function renderSummary(writtenSlugs: string[]): Promise<{ body: string; ma
   }
 }
 
+describe('dream-cycle summary temporal frontmatter (#6773)', () => {
+  // Contributed by @lubosxyz (#6773): dream provenance keys are not temporal keys, so the summary failed missing-created.
+  test('the summary records created as its own cycle date and passes lint', async () => {
+    const { markdown } = await renderSummary(['wiki/originals/ideas/example-output']);
+    expect(parseMarkdown(markdown).frontmatter.created).toBe('2026-08-20');
+    expect(lintContent(markdown, 'dream-cycle-summaries/2026-08-20.md')).toEqual([]);
+  });
+});
+
 describe('dream-cycle summary graph bounds (#4337)', () => {
   test('more than 2,000 outputs produce one deterministic bounded sample with recoverable provenance', async () => {
     const slugs = Array.from(
@@ -123,7 +136,7 @@ describe('dream-cycle summary graph bounds (#4337)', () => {
     expect(overCap.body).toContain('## Page sample (20 of 21)');
     expect(overCap.body).not.toContain('## Pages\n');
     expect(overCap.body).toContain('## Full output provenance');
-    expect(overCap.body).toContain('The complete 21-page set');
+    expect(overCap.body).toContain('records the first cycle that wrote a page');
     expect(overCap.body.match(/\[\[/g)).toHaveLength(20);
     // Lexicographic sample: output-00..output-19 stay, output-20 is the one dropped.
     expect(overCap.body).not.toContain('[[wiki/originals/ideas/output-20]]');
@@ -144,5 +157,56 @@ describe('dream-cycle summary graph bounds (#4337)', () => {
     expect(body).not.toContain('## Full output provenance');
     expect(body.match(/\[\[/g)).toHaveLength(3);
     for (const slug of slugs) expect(body).toContain(`[[${slug}]]`);
+  });
+});
+
+// #6642: `dream_cycle_date` is first-write provenance (stampDreamProvenance keeps
+// the first cycle), so the summary's recovery query misses pages an earlier cycle
+// wrote first. The summary states first-write semantics, reports the count that
+// query returns, and counts the rewritten pages separately.
+describe('dream-cycle summary provenance counts (#6642)', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+  beforeEach(async () => {
+    await resetPgliteState(engine);
+  });
+
+  test('a >20-output summary reports the recovery query count and the pages rewritten from earlier cycles', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-dream-summary-6642-'));
+    try {
+      const date = '2026-10-13';
+      const slugs = Array.from({ length: 24 }, (_, i) => `wiki/personal/reflections/output-${String(i).padStart(2, '0')}`);
+      for (const [i, slug] of slugs.entries()) {
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'body', frontmatter: { dream_generated: true } });
+        await __testing.stampDreamProvenance(engine, [{ slug, source_id: 'default' }], i < 3 ? '2026-10-10' : date);
+      }
+      // The rewrite in this cycle keeps each page's first-write stamp.
+      await __testing.stampDreamProvenance(engine, slugs.map(slug => ({ slug, source_id: 'default' })), date);
+      const stamps = await engine.executeRaw<{ d: string; n: number }>(
+        `SELECT frontmatter->>'dream_cycle_date' AS d, count(*)::int AS n FROM pages WHERE slug = ANY($1::text[]) GROUP BY 1 ORDER BY 1`, [slugs]);
+      expect(stamps).toEqual([{ d: '2026-10-10', n: 3 }, { d: date, n: 21 }]);
+
+      const summarySlug = `dream-cycle-summaries/${date}`;
+      await (__testing as unknown as { writeSummaryPage: SummaryWriter }).writeSummaryPage(engine, brainDir, summarySlug, date, slugs, [{ jobId: 1, status: 'completed' }]);
+      const body = (await engine.getPage(summarySlug))!.compiled_truth;
+      const [query] = await engine.executeRaw<{ n: number }>(
+        `SELECT count(*)::int AS n FROM pages WHERE source_id = 'default' AND deleted_at IS NULL
+           AND frontmatter->>'dream_generated' = 'true' AND frontmatter->>'dream_cycle_date' = $1 AND slug <> $2`, [date, summarySlug]);
+      expect(query.n).toBe(21);
+      expect(body).toContain('**Pages written:** 24.');
+      expect(body).toContain('`dream_cycle_date` records the first cycle that wrote a page');
+      expect(body).toContain(`returns ${query.n} page(s)`);
+      expect(body).toContain('3 of the 24 pages written this cycle were first written by an earlier cycle');
+      expect(body).not.toContain('The complete 24-page set');
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+    }
   });
 });

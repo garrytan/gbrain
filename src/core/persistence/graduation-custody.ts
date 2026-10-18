@@ -98,14 +98,15 @@ export function currentProcessIdentity(): Pick<IntentMarker, 'pid' | 'bootId' | 
 /**
  * Whether the marker's requesting process is still running. `unknown` when
  * the marker comes from another boot or PID namespace (another host on a
- * shared filesystem, or a container); callers then treat the kernel lock as
- * the authority (an acquirable lock means the run is gone).
+ * shared filesystem, or a container), or recorded a boot id / PID namespace
+ * this process cannot read for itself (#6774: an unavailable probe proves no
+ * match); callers then treat the kernel lock as the authority (an acquirable
+ * lock means the run is gone). A marker that recorded neither keeps the pid check.
  */
 export function markerLiveness(marker: IntentMarker): 'alive' | 'dead' | 'unknown' {
   if (marker.pid === process.pid) return isGraduationRunInProcess(marker.runId) ? 'alive' : 'dead';
-  const bootId = readBootId(), pidNs = readPidNs();
-  if (marker.bootId && bootId && marker.bootId !== bootId) return 'unknown';
-  if (marker.pidNs && pidNs && marker.pidNs !== pidNs) return 'unknown';
+  if (marker.bootId && marker.bootId !== readBootId()) return 'unknown';
+  if (marker.pidNs && marker.pidNs !== readPidNs()) return 'unknown';
   if (!isProcessAlive(marker.pid)) return 'dead';
   if (marker.processStart) {
     const start = processStartTime(marker.pid);

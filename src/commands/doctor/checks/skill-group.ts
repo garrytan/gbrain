@@ -121,6 +121,7 @@ async function runRetrievalReflex(ctx: DoctorContext): Promise<Check[]> {
 export const retrievalReflexEntry: DoctorEntry = {
   name: 'retrieval_reflex_health',
   emits: ['retrieval_reflex_health', 'volunteer_channels', 'memory_verbs_usage'],
+  engineChecks: ['volunteer_channels'],
   run: runRetrievalReflex,
 };
 
@@ -207,7 +208,7 @@ function printAutoFixReport(report: AutoFixReport, dryRun: boolean, jsonOutput: 
   const label = dryRun ? 'fixes proposed' : 'fixes applied';
   console.log(`${n} ${label}${s > 0 ? `, ${s} skipped:` : '.'}`);
   for (const sk of report.skipped) {
-    const hint = sk.reason === 'working_tree_dirty' ? ' (run `git stash` first)' : '';
+    const hint = sk.reason === 'working_tree_dirty' ? ' (commit or discard your edits to those files first)' : '';
     console.log(`  - ${sk.skillPath}: ${sk.reason}${hint}`);
   }
   if (dryRun && n > 0) console.log('\nRun without --dry-run to apply.');

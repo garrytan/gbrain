@@ -1,14 +1,18 @@
 import { spawnSync } from 'node:child_process';
+import { PoolStallWatch } from '../core/postgres-engine/pool-stall-watch.ts';
+import { installRestartRequiredExit, recordServeTransport, resolveRestartRequiredExitSeconds, SERVE_RESTART_REQUIRED_EXIT_ENV } from './serve-health.ts';
+import { SERVE_UNHEALTHY_EXIT_CODE } from '../core/exit-codes.ts';
 import type { BrainEngine } from '../core/engine.ts';
 // C10: `--fail-fast` / GBRAIN_SERVE_FAIL_FAST=1 — exit with the classified envelope instead of status-only/degraded mode (decided in src/cli.ts's connect path; F4's status mode consults it too).
 export { serveFailFastRequested, writeServeFailFastEnvelope } from '../core/serve-fail-fast.ts';
 import { isEngineDegraded as isEngineDegradedForServe } from '../core/degraded-marker.ts';
 import { startMcpServer, stdioRpcsInFlightCount, resolveMcpStdioSourceScope } from '../mcp/server.ts';
 import { VERB_NAMES } from '../core/verbs.ts';
-import { parseTokenTtl } from './auth.ts';
 import { RESIDENT_POOL_FLOOR } from '../core/pg-access-classify.ts';
 import { redirectStdoutLoggingToStderr } from '../core/console-prefix.ts';
 import { startFactsDrainScheduler, type FactsDrainScheduler, type FactsDrainSchedulerOpts } from '../core/facts/drain-scheduler.ts';
+import { startMovementWatch, type MovementWatch } from '../core/persistence/sync-movement.ts';
+import { startServeHeadWatcher } from '../core/serve-head-watcher.ts';
 import { onForwardProgress } from '../core/forward-progress.ts';
 import { graduationHandoffRequested, writeServeGraduationEnvelope } from '../core/persistence/graduation-serve-guard.ts';
 import {
@@ -245,6 +249,21 @@ export async function runServe(
     console.error(`[gbrain serve] ignoring GBRAIN_SURFACE="${resolved.invalidEnv}" (use verbs | starter | full)`);
   }
   console.error(`[gbrain serve] surface=${surface} (source: ${SURFACE_SOURCE_LABEL[resolved.source]})`);
+  void (await import('../core/serve-behavior-notice.ts')).logServeBehaviorNotice(engine, loadConfig());
+  // #6543 (A6): serve's stuck, desync and recovery events go to the pool-recovery audit `doctor --only pool_reap_health` reads.
+  if (engine.kind === 'postgres') {
+    const { logPoolRecovery } = await import('../core/audit/pool-recovery-audit.ts');
+    (await import('../core/pool-gauge.ts')).setPoolIncidentAudit((kind, detail) => logPoolRecovery(kind, undefined, detail));
+  }
+  // #6383: the pool stall line (Postgres only; the watch reports nothing for an engine without pool numbers).
+  if (engine.kind === 'postgres') new PoolStallWatch(engine, (line) => console.error(line)).start();
+  // #6543: the read pool's transport facts, logged once and kept for /health?deep=1; the opt-in unhealthy exit.
+  if (engine.kind === 'postgres') void recordServeTransport(engine, (line) => console.error(line));
+  const restartRequiredExitSeconds = resolveRestartRequiredExitSeconds(process.env[SERVE_RESTART_REQUIRED_EXIT_ENV]);
+  if (restartRequiredExitSeconds !== null) {
+    installRestartRequiredExit(engine, restartRequiredExitSeconds, { log: (line) => console.error(line), exit: opts.exit ?? ((code: number) => { process.exit(code); }) });
+    console.error(`[gbrain serve] ${SERVE_RESTART_REQUIRED_EXIT_ENV}=${restartRequiredExitSeconds}: exits ${SERVE_UNHEALTHY_EXIT_CODE} after persistence_restart_required holds that long (at most 3 self-exits per hour)`);
+  }
   // #4768: stdio read-only access ceiling. HTTP refuses it: per-token grants
   // (auth rescope-token --operations / rescope-client) are its operation control.
   const access = parseAccessFlag(args);
@@ -275,6 +294,8 @@ export async function runServe(
     const port = portIdx >= 0 ? parseInt(args[portIdx + 1]) || 3131 : 3131;
 
     const ttlIdx = args.indexOf('--token-ttl');
+    // auth.ts reaches the whole operations graph; only --http needs it.
+    const { parseTokenTtl } = await import('./auth.ts');
     const tokenTtl = ttlIdx >= 0 ? parseTokenTtl(args[ttlIdx + 1] ?? '', 'Omit the flag for the 3600-second default.') : 3600;
 
     // #1353: --enable-dcr-insecure opts into the consent-bypassing
@@ -570,6 +591,21 @@ function installFactsDrain(engine: BrainEngine, opts: ServeOptions, deps: StdioL
   });
 }
 
+/**
+ * #6317 (B4): the facts drain plus the movement watch (one `[gbrain notice]`
+ * when a managed source's sync data stops moving; reader in
+ * persistence/sync-movement.ts), stopped together at shutdown. #6858 ask 6:
+ * the on-commit HEAD watcher (`sync.on_commit`, core/serve-head-watcher.ts)
+ * stops with them, before shutdownDelegatedSync aborts the sync it started.
+ */
+function installResidentTickers(engine: BrainEngine, opts: ServeOptions, deps: StdioLifecycleDeps, shuttingDown: () => boolean): { stop(): Promise<void> } {
+  const factsDrain = installFactsDrain(engine, opts, deps, shuttingDown);
+  // The watch keeps its own unref'd timer: the injected lifecycle timers are the parent watchdog's and the idle sweep's, which tests count.
+  const movementWatch: MovementWatch = startMovementWatch(engine, { log: deps.log });
+  const headWatcher = startServeHeadWatcher(engine, { log: deps.log });
+  return { stop: async () => { const settled = headWatcher.stop(); movementWatch.stop(); await settled; await factsDrain?.stop(); } };
+}
+
 function installStdioLifecycle(
   engine: BrainEngine,
   args: string[],
@@ -590,7 +626,7 @@ function installStdioLifecycle(
   let parentWatchdog: unknown = null;
   let idleSweepTimer: unknown = null;
   let activateIdleActivityTracking = (): void => {};
-  let factsDrain: FactsDrainScheduler | null = null;
+  let factsDrain: { stop(): Promise<void> } | null = null;
   const beginShutdown = (reason: string): void => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -851,8 +887,8 @@ function installStdioLifecycle(
     (idleSweepTimer as { unref?: () => void } | null)?.unref?.();
   }
 
-  // Automatic facts drain (Lane D): see installFactsDrain.
-  factsDrain = installFactsDrain(engine, opts, deps, () => shuttingDown);
+  // Automatic facts drain (Lane D) and the #6317 movement watch: see installResidentTickers.
+  factsDrain = installResidentTickers(engine, opts, deps, () => shuttingDown);
 
   // Optional idle-timeout safety net. Default OFF; opt-in via
   // `--stdio-idle-timeout <seconds>`. The flag is for the rare case where

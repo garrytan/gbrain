@@ -44,6 +44,8 @@ import {
 } from '../core/model-config.ts';
 import { resolveExtractAtomsModelWithSource } from '../core/cycle/extract-atoms.ts';
 import { resolveFenceRepairModelWithSource } from '../core/fence-repair/model.ts';
+import { resolveContentRepairModelWithSource } from '../core/content-repair/llm.ts';
+import { resolveFactsExtractionModel } from '../core/facts/extract.ts';
 import {
   NIGHTLY_PROBE_EXTRACTOR_ROUTE,
   NIGHTLY_PROBE_READER_ROUTE,
@@ -81,7 +83,7 @@ interface PerTaskModelRoute {
    * chain visible rather than implying full resolveModel() coverage — can
    * never disagree with the resolved value.
    */
-  narrowResolver?: (engine: BrainEngine) => Promise<{ model: string; source: 'config' | 'tier_default' | 'measured' }>;
+  narrowResolver?: (engine: BrainEngine) => Promise<{ model: string; source: 'config' | 'tier_config' | 'tier_default' | 'measured'; label?: string }>;
 }
 
 const PER_TASK_KEYS: PerTaskModelRoute[] = [
@@ -101,7 +103,7 @@ const PER_TASK_KEYS: PerTaskModelRoute[] = [
     narrowResolver: resolveExtractAtomsModelWithSource,
   },
   { key: 'models.drift',                    tier: 'reasoning', description: 'Drift LLM judge (v0.29 scaffold)' },
-  { key: 'models.auto_think',               tier: 'deep',      description: 'Auto-think question answering' },
+  { key: 'models.standing_questions',       tier: 'deep',      description: 'Pinned-question answers (standing_questions phase, questions_pin/refresh)' },
   { key: 'models.think',                    tier: 'deep',      description: '`gbrain think` synthesis op' },
   {
     key: 'models.fence_repair',
@@ -109,8 +111,23 @@ const PER_TASK_KEYS: PerTaskModelRoute[] = [
     description: 'Model repair (Tier 3) of malformed facts/takes fence rows; unset: the first measured model with a key, else none (off)',
     narrowResolver: async engine => { const r = await resolveFenceRepairModelWithSource(engine); return { model: r.model ?? 'none', source: r.source }; },
   },
+  {
+    key: 'models.content_repair',
+    tier: 'deep',
+    description: 'Slug-conflict judgment of the content-repair lane (#6377); unset: models.fence_repair, else the first measured model with a key, else none (off)',
+    narrowResolver: async engine => { const r = await resolveContentRepairModelWithSource(engine); return { model: r.model ?? 'none', source: r.source === 'measured' ? 'measured' : 'config' }; },
+  },
   { key: 'models.subagent',                 tier: 'subagent',  description: '`gbrain agent run` subagent loop' },
-  { key: 'facts.extraction_model',          tier: 'reasoning', description: 'Real-time facts extraction during sync' },
+  {
+    key: 'facts.extraction_model',
+    tier: 'reasoning',
+    description: 'Real-time facts extraction during sync; unset: claude-haiku-5-5 when the reasoning tier resolves through Anthropic',
+    narrowResolver: async engine => {
+      const r = await resolveFactsExtractionModel(engine);
+      if (r.source === 'measured_default') return { model: r.model, source: 'measured' };
+      return { model: r.model, source: r.source === 'config_key' ? 'config' : 'tier_default', label: sourceLabel(r.source, { configKey: 'facts.extraction_model', tier: 'reasoning' }, 'tier.reasoning') };
+    },
+  },
   { key: 'models.eval.longmemeval',         tier: 'reasoning', description: 'LongMemEval benchmark answer-gen' },
   { key: 'models.eval.contradictions_judge', tier: 'utility',  description: 'Contradiction probe judge (v0.34 temporal-aware)' },
   { key: 'models.expansion',                tier: 'utility',   description: 'Query expansion for hybrid search' },
@@ -229,8 +246,8 @@ async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
       // ONE resolver call feeds both the resolved model and the attribution,
       // so the label can never disagree with what `resolved` actually
       // reflects (previously a separate getConfig truthiness re-check).
-      const { model: resolved, source: narrowSource } = await narrowResolver(engine);
-      const source = narrowSource === 'config' ? `config: ${key}` : narrowSource === 'measured' ? 'measured default' : `tier.${tier} (caller-specific)`;
+      const { model: resolved, source: narrowSource, label } = await narrowResolver(engine);
+      const source = label ?? (narrowSource === 'config' ? `config: ${key}` : narrowSource === 'measured' ? 'measured default' : `tier.${tier} (caller-specific)`);
       const newer = narrowSource === 'config' ? newerAvailable(resolved, key) : undefined;
       per_task.push({ key, tier, resolved, source, description, ...(newer ? { newer_available: newer } : {}) });
       continue;
@@ -613,6 +630,14 @@ async function probeRerankerConfig(engine: BrainEngine): Promise<ProbeResult> {
  * when set — so a CPU-only local reranker's cold-start warmup doesn't
  * cause the probe to false-fail with `network`/timeout.
  */
+/** #6381: one relevant and one unrelated passage; a working cross-encoder separates them by a clear margin. */
+const RERANK_PROBE = {
+  query: 'What is the capital of France?',
+  relevant: 'Paris is the capital of France.',
+  unrelated: 'Bananas are a yellow fruit.',
+} as const;
+const RERANK_PROBE_MIN_MARGIN = 0.1;
+
 export async function probeRerankerReachability(engine: BrainEngine, deps: ProbeDeps = {}): Promise<ProbeResult | null> {
   const modelStr = await resolveLiveRerankerModel(engine);
   if (!modelStr) return null;
@@ -631,18 +656,34 @@ export async function probeRerankerReachability(engine: BrainEngine, deps: Probe
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(new Error(`probe timed out after ${probeTimeoutMs}ms`)), probeTimeoutMs);
     try {
-      await rerank({
+      const results = await rerank({
         model: modelStr,
-        query: 'probe',
-        documents: ['probe document'],
+        query: RERANK_PROBE.query,
+        documents: [RERANK_PROBE.relevant, RERANK_PROBE.unrelated],
         signal: controller.signal,
         timeoutMs: probeTimeoutMs,
       });
+      const relevant = results.find(r => r.index === 0)?.relevanceScore;
+      const unrelated = results.find(r => r.index === 1)?.relevanceScore;
+      const discriminates = Number.isFinite(relevant) && Number.isFinite(unrelated)
+        && (relevant as number) - (unrelated as number) > RERANK_PROBE_MIN_MARGIN;
+      if (!discriminates) {
+        return {
+          model: modelStr,
+          touchpoint: 'reranker_config',
+          status: 'config',
+          message: Number.isFinite(relevant) && Number.isFinite(unrelated)
+            ? `reachable, but it scores an unrelated passage as high as a relevant one (${relevant} vs ${unrelated})`
+            : 'reachable, but it did not return a score for both probe passages',
+          elapsed_ms: Date.now() - start,
+          fix: 'The model is likely a broken GGUF conversion; see docs/ai-providers/llama-server-reranker.md step 2.',
+        };
+      }
       return {
         model: modelStr,
         touchpoint: 'reranker_config',
         status: 'ok',
-        message: 'reachable',
+        message: 'reachable; ranks a relevant passage above an unrelated one',
         elapsed_ms: Date.now() - start,
       };
     } finally {

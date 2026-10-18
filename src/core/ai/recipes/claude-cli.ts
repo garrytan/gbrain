@@ -56,6 +56,7 @@ export const claudeCli: Recipe = {
       // Cheap model first: `providers explain` / init auto-pick advertise
       // models[0] for this touchpoint (same convention as the openai recipe).
       models: [
+        'claude-haiku-5-5',
         'claude-haiku-4-5-20251001',
         'claude-fable-5',
         'claude-fable-5-1',
@@ -87,6 +88,7 @@ export const claudeCli: Recipe = {
         'claude-sonnet-5-5',
         'claude-sonnet-5',
         'claude-sonnet-4-6',
+        'claude-haiku-5-5',
         'claude-haiku-4-5-20251001',
       ],
       supports_tools: true,

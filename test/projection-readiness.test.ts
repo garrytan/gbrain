@@ -129,7 +129,8 @@ describe('canonical projection readiness', () => {
     await seed('code');
     const pending = await checkProjectionReadiness(engine, { sourceId: 'source-a' });
     expect(pending.status).toBe('warn');
-    expect(pending.details).toEqual({ readiness: 'projection_pending', ready: false });
+    expect(pending.details).toEqual({ readiness: 'projection_pending', ready: false, pending: 1, failed: 0, sealable: 0, sealable_with_visual: 0,
+      reimport: 0, ocr_required: 0, protected: 0, archived: 0, oldest_age_seconds: expect.any(Number), as_of: expect.any(String) });
     expect(JSON.stringify(pending)).not.toContain('source-a');
     const unknown = await checkProjectionReadiness({ executeRaw: async () => { throw new Error('private connection'); } } as any);
     expect(unknown.status).toBe('warn');

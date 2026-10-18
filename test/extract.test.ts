@@ -140,6 +140,14 @@ describe('extractLinksFromFile', () => {
     expect(related[0].to_slug).toBe('90-people/nicolai');
   });
 
+  it('frontmatter related: to an Obsidian path or a dotted slug resolves on the fs resolver (#6701, #6623)', async () => {
+    const content = '---\nrelated: ["[[sources/voice/2030-01-01 1200 Call with Mira]]", companies/acme.io]\ntype: concept\n---\nContent.';
+    const allSlugs = new Set(['wiki/note', 'sources/voice/2030-01-01-1200-call-with-mira', 'companies/acme.io']);
+    const links = await extractLinksFromFile(content, 'wiki/note.md', allSlugs, { includeFrontmatter: true });
+    expect(links.filter(l => l.link_type === 'related_to').map(l => l.to_slug).sort())
+      .toEqual(['companies/acme.io', 'sources/voice/2030-01-01-1200-call-with-mira']);
+  });
+
   it('frontmatter extraction is default OFF (back-compat)', async () => {
     // Without includeFrontmatter, fs-source no longer auto-extracts frontmatter.
     // Matches db-source behavior. User opts in with --include-frontmatter flag.

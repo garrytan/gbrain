@@ -16,7 +16,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { extractStaleFromDB } from '../src/commands/extract.ts';
-import { countMentionDuePages, runMentionPass } from '../src/core/mentions/pass.ts';
+import { MENTION_EXTRACTOR_VERSION, countMentionDuePages, runMentionPass } from '../src/core/mentions/pass.ts';
 import { buildGazetteer } from '../src/core/by-mention.ts';
 import { readMentionCoverage } from '../src/core/mentions/coverage.ts';
 import { mentionIndexUpgradeNotice } from '../src/core/mentions/upgrade-notice.ts';
@@ -108,7 +108,44 @@ describe('the stale sweep links mentions by default', () => {
   });
 });
 
+describe('short codes the entity page declares for itself', () => {
+  test('"Also called JOF in my notes" makes JOF a name: mails and note titles that say JOF link to the company, only as written', async () => {
+    await page(engine, 'companies/joffrey-foods', 'company', 'Joffrey Foods', 'Also called JOF in my notes. Procurement: Arjun Example.');
+    await page(engine, 'mail/m1', 'email', 'Re: pilot kickoff', 'From: Kofi Example (JOF)\nCould we push the pilot kickoff?');
+    await page(engine, 'notes/call', 'note', 'Call with JOF', 'The right number is $26 per seat.');
+    await page(engine, 'notes/lower', 'note', 'n2', 'we said jof as a joke');
+    await page(engine, 'notes/other', 'note', 'n3', 'Widget Co, also called JOF by some, is unrelated.');
+    await sweep(engine);
+    expect(await derivedAliases(engine, 'companies/joffrey-foods')).toEqual(['declared:jof (cs)']);
+    expect(await derivedAliases(engine, 'notes/other')).toEqual([]);
+    expect(await mentionLinks(engine)).toEqual(['mail/m1 -> companies/joffrey-foods', 'notes/call -> companies/joffrey-foods', 'notes/other -> companies/joffrey-foods']);
+  });
+
+  test('a stoplisted code on the own page never becomes a name', async () => {
+    await page(engine, 'companies/acme-example', 'company', 'Acme Example', 'Also called IT internally.');
+    await page(engine, 'notes/n1', 'note', 'n1', 'Ask IT about the laptop.');
+    await sweep(engine);
+    expect(await derivedAliases(engine, 'companies/acme-example')).toEqual([]);
+    expect(await mentionLinks(engine)).toEqual([]);
+  });
+});
+
 describe('reconcile scope, off switch and failure', () => {
+  test('a name only inside an HTML comment never links, and a row an older scanner wrote from a comment is removed on upgrade (#6740)', async () => {
+    await page(engine, 'companies/acme', 'company', 'Acme Example', 'A company.');
+    await page(engine, 'notes/n1', 'note', 'n1', 'Weekly notes.\n<!--- acme example:facts:begin -->\n<!--- acme example:facts:end -->');
+    await sweep(engine);
+    expect(await mentionLinks(engine)).toEqual([]);
+    // The release before the comment mask (the previous MENTION_EXTRACTOR_VERSION) wrote this row and stamped the page scanned.
+    await engine.addLinksBatch([{ from_slug: 'notes/n1', to_slug: 'companies/acme', link_type: 'mentions', link_source: 'mentions', context: 'Acme Example' } as never]);
+    await engine.executeRaw(`UPDATE page_mention_state SET mention_version = $1 WHERE page_id = (SELECT id FROM pages WHERE slug = 'notes/n1')`, [MENTION_EXTRACTOR_VERSION - 1]);
+    expect(await mentionLinks(engine)).toEqual(['notes/n1 -> companies/acme']);
+    const r = await sweep(engine);
+    expect(await mentionLinks(engine)).toEqual([]);
+    expect(r.mentions?.removed).toBe(1);
+    expect(await countMentionDuePages(engine)).toBe(0);
+  });
+
   test('typed_ner rows survive a reconcile and an off/on cycle while an obsolete plain mention goes', async () => {
     await page(engine, 'companies/acme', 'company', 'Acme Example', 'A company.');
     await page(engine, 'people/alice', 'person', 'Alice Example', 'Alice works at Acme Example.');

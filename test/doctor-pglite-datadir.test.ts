@@ -22,6 +22,7 @@ import { computePgliteDataDirCheck } from '../src/commands/doctor.ts';
 import { OPS_CHECK_NAMES } from '../src/core/doctor-categories.ts';
 import { inspectPgliteDataDir } from '../src/core/pglite-repair.ts';
 import type { PgliteDirDiagnosis } from '../src/core/pglite-repair.ts';
+import { deadPid } from './helpers/dead-pid.ts';
 
 function tmp(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -190,7 +191,7 @@ describe('inspectPgliteDataDir — synthetic on-disk layouts', () => {
   test('(c) full fake layout + stale postmaster.pid → wal-corruption-likely', () => {
     const dir = join(tmp('gbrain-inspect-c-'), 'brain.pglite');
     makeFakeLayout(dir);
-    writeFileSync(join(dir, 'postmaster.pid'), '99999\n');
+    writeFileSync(join(dir, 'postmaster.pid'), `${deadPid()}\n`); // a fixed 99999 can be a live process on a busy VM
     const diagnosis = inspectPgliteDataDir(dir);
     expect(diagnosis.verdict).toBe('wal-corruption-likely');
     expect(diagnosis.postmasterPid).toBe(true);

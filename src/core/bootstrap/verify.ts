@@ -28,8 +28,11 @@
  */
 
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { managedFilesystemRootFor } from '../persistence/filesystem-guard.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
+import { unpurgePage } from '../persistence/page-purge.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
+import { pendingReceiptOf, pollCommand, resolveCliWriteWaitMs, WRITE_WAIT_ENV } from '../persistence/write-wait.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -49,6 +52,7 @@ import {
   PUSH_DENY_GLOBS, SECRET_SCAN_REFUSAL_DOCS, verifyRemotePrivacy, readPushStatuses, summarizePushStatuses,
 } from '../workspace-push.ts';
 import { shellQuote } from '../mcp-registration.ts';
+import { OWNERSHIP_MARKER_GLOBS } from '../persistence/root-metadata.ts';
 import { FACTS_DEFAULT_VISIBILITY_KEY } from '../facts/visibility.ts';
 import { byteFloors } from './render.ts';
 import { CLAUDE_HOOK_EVENTS, claudeUserSettingsPath } from './host-specs.ts';
@@ -66,6 +70,7 @@ import {
   startResolveIpcServer,
 } from '../context/resolve-ipc.ts';
 import { assembleTurnContext } from '../context/turn-context.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -133,16 +138,26 @@ function findOp(name: string): Operation {
   return op;
 }
 
-function localCtx(engine: BrainEngine, sourceId: string, log?: (l: string) => void): OperationContext {
+export function localCtx(engine: BrainEngine, sourceId: string, log?: (l: string) => void): OperationContext {
   const sink = log ?? (() => {});
+  const config = (loadConfigFileOnly() ?? { engine: 'pglite' }) as GBrainConfig;
   return {
     engine,
-    config: (loadConfigFileOnly() ?? { engine: 'pglite' }) as GBrainConfig,
+    config,
     logger: { info: sink, warn: sink, error: sink },
     dryRun: false,
     remote: false,
     sourceId,
+    writeWaitMs: resolveCliWriteWaitMs({ config }),
   };
+}
+
+/** The roundtrip detail for a failed probe write: an admitted, still-pending write names its request and the next step. */
+export function putPageFailureDetail(error: unknown, waitMs: number | undefined): string {
+  const receipt = pendingReceiptOf(error);
+  if (!receipt) return `put_page failed: ${(error as Error).message}`;
+  return `put_page was admitted but is still pending after ${Math.round((waitMs ?? 0) / 1000)}s (request ${receipt.request_id}); `
+    + `check it with \`${pollCommand(receipt.request_id)}\`, or raise ${WRITE_WAIT_ENV} and rerun gbrain bootstrap verify`;
 }
 
 // ---------------------------------------------------------------------------
@@ -193,6 +208,11 @@ async function sweepProbeLeftovers(engine: BrainEngine, ws: string, sourceId: st
  * engine primitives. A managed brain (#5280) purges each probe through the
  * coordinator (`delete_page --purge`, bound to its revision, which also removes
  * its canonical file) and removes the probe facts in a coordinated transaction.
+ * #6634: the probe bodies are constant, so a purge tombstone would refuse the
+ * next run's put_page as `purged_content`; each probe's tombstones (page, and
+ * the fact/take purges of the same request) are cleared through the host-only
+ * unpurge path after its purge, and on every sweep, which also clears leftovers
+ * of earlier runs. Probe pages are not user content.
  */
 async function removeProbes(engine: BrainEngine, ws: string, sourceId: string): Promise<string[]> {
   const warnings: string[] = [];
@@ -208,6 +228,11 @@ async function removeProbes(engine: BrainEngine, ws: string, sourceId: string): 
       }
     } catch (e) {
       warnings.push(`${slug}: ${(e as Error).message}`);
+    }
+    try {
+      await unpurgePage(localCtx(engine, sourceId), { slug, source_id: sourceId });
+    } catch {
+      /* page_purges may not exist on a pre-migration brain — doctor_green names that */
     }
     if (managed) continue;
     try {
@@ -326,6 +351,7 @@ export function checkWritebackContract(ws: string): VerifyCheck {
 function trackedWorkspaceFiles(ws: string): { files: string[]; via: 'git' | 'fallback' } {
   try {
     const out = execFileSync('git', ['-C', ws, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
+      env: gitChildEnv(),
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 15_000,
       maxBuffer: 16 * 1024 * 1024,
@@ -370,13 +396,25 @@ function checkSecretScan(ws: string): VerifyCheck {
   }
 }
 
-function checkDenyGlobs(ws: string): VerifyCheck {
+const OWNERSHIP_DENY_GLOBS: readonly string[] = [...OWNERSHIP_MARKER_GLOBS, '.gbrain-bootstrap.lock/**'];
+
+export function checkDenyGlobs(ws: string): VerifyCheck {
   const id = 'deny_globs';
   try {
     const { files, via } = trackedWorkspaceFiles(ws);
     const matches = files.filter((f) => PUSH_DENY_GLOBS.some((g) => matchesGlob(g, f)));
     if (via === 'git' && matches.length > 0) {
-      return { id, ok: false, detail: `deny-glob matches among candidate files: ${matches.slice(0, 10).join(', ')} — remove from the index (git rm --cached) before any push` };
+      // #5186: an ownership marker or bootstrap lock that is merely on disk (a root
+      // stamped before the exclude rule, a concurrent run's lock) is not a finding:
+      // `sources push` excludes it. One in the INDEX is, with `git rm --cached` as the fix.
+      const indexed = new Set(execFileSync('git', ['-C', ws, 'ls-files', '--cached', '-z'], {
+        stdio: ['ignore', 'pipe', 'ignore'], timeout: 15_000, maxBuffer: 16 * 1024 * 1024, env: gitChildEnv(),
+      }).toString().split('\0').filter((f) => f.length > 0));
+      const findings = matches.filter((f) => indexed.has(f) || !OWNERSHIP_DENY_GLOBS.some((g) => matchesGlob(g, f)));
+      if (findings.length > 0) {
+        return { id, ok: false, detail: `deny-glob matches among candidate files: ${findings.slice(0, 10).join(', ')} — remove from the index (git rm --cached) before any push` };
+      }
+      return { id, ok: true, detail: `no tracked files match the push deny list; ${matches.length} untracked ownership marker/lock file(s) stay out of every push (${matches.slice(0, 5).join(', ')})` };
     }
     return { id, ok: true, detail: via === 'git' ? 'no tracked files match the push deny list' : 'not a git repo yet — deny-glob backstop applies at push time' };
   } catch (e) {
@@ -393,6 +431,7 @@ function checkMcpJsonHygiene(ws: string): VerifyCheck {
     if (!existsSync(join(ws, '.mcp.json'))) return { id, ok: true, detail: 'no .mcp.json in the workspace' };
     try {
       execFileSync('git', ['-C', ws, 'ls-files', '--error-unmatch', '.mcp.json'], {
+        env: gitChildEnv(),
         stdio: 'ignore', timeout: 5_000,
       });
     } catch {
@@ -767,129 +806,138 @@ async function runRoundtrip(
 
   await sweepProbeLeftovers(engine, ws, sourceId);
 
-  // 1. Write both probe pages through the REAL op handler [G1].
-  let writeThroughDetail = '';
+  // #6001: the probe section runs under one try/finally so the fixed-slug
+  // probes are removed on every exit, including the early returns below.
+  // `checks` is the same array the early returns hand back, so a cleanup
+  // warning pushed in `finally` still reaches the caller.
   try {
-    await putPage.handler(ctx, { slug: VERIFY_PROBE_ENTITY_SLUG, content: PROBE_ENTITY_CONTENT });
-    const res = (await putPage.handler(ctx, { slug: VERIFY_PROBE_SLUG, content: PROBE_CONTENT })) as {
-      write_through?: { written: boolean; path?: string; skipped?: string; error?: string };
-    };
-    const wt = res.write_through;
-    const expectedFile = join(ws, 'brain', `${VERIFY_PROBE_SLUG}.md`);
-    if (wt?.written && wt.path && existsSync(wt.path)) {
-      writeThroughDetail = `file materialized at ${wt.path}`;
-      checks.push({ id: 'roundtrip', ok: true, detail: `put_page landed in DB and ${writeThroughDetail}` });
-    } else if (existsSync(expectedFile)) {
-      checks.push({ id: 'roundtrip', ok: true, detail: `put_page landed in DB and file materialized at ${expectedFile}` });
-    } else if (wt?.skipped === 'disabled_by_config') {
-      // DB-only by operator choice (`sync.write_through=false`), not a broken
-      // install: the DB write landed, so WARN and keep the remaining
-      // roundtrip-family checks — sweep/graph/search/magic-moment all run off
-      // the DB row and still prove the memory loop.
-      checks.push({
-        id: 'roundtrip',
-        ok: true,
-        warn: true,
-        detail:
-          `put_page landed in DB; no file under brain/ because sync.write_through is disabled by config — ` +
-          `agent writes stay DB-only (run \`gbrain config set sync.write_through true\` to materialize repo files)`,
-      });
-    } else {
-      // [G1] A green verify with an empty repo is impossible: name the
-      // write-through problem explicitly.
-      const why = wt?.skipped ?? wt?.error ?? 'write-through reported nothing';
-      checks.push({
-        id: 'roundtrip',
-        ok: false,
-        detail:
-          `put_page wrote the DB but NO file appeared under brain/ (write-through: ${why}). ` +
-          `The workspace source must be registered with its brain/ dir as local_path ` +
-          `(gbrain sources add ${sourceId} --path ${join(ws, 'brain')}) or agent writes never reach the repo.`,
-      });
+    // 1. Write both probe pages through the REAL op handler [G1].
+    let writeThroughDetail = '';
+    try {
+      await putPage.handler(ctx, { slug: VERIFY_PROBE_ENTITY_SLUG, content: PROBE_ENTITY_CONTENT });
+      const res = (await putPage.handler(ctx, { slug: VERIFY_PROBE_SLUG, content: PROBE_CONTENT })) as {
+        write_through?: { written: boolean; path?: string; skipped?: string; error?: string };
+      };
+      const wt = res.write_through;
+      const expectedFile = join(ws, 'brain', `${VERIFY_PROBE_SLUG}.md`);
+      if (wt?.written && wt.path && existsSync(wt.path)) {
+        writeThroughDetail = `file materialized at ${wt.path}`;
+        checks.push({ id: 'roundtrip', ok: true, detail: `put_page landed in DB and ${writeThroughDetail}` });
+      } else if (existsSync(expectedFile)) {
+        checks.push({ id: 'roundtrip', ok: true, detail: `put_page landed in DB and file materialized at ${expectedFile}` });
+      } else if (wt?.skipped === 'disabled_by_config') {
+        // DB-only by operator choice (`sync.write_through=false`), not a broken
+        // install: the DB write landed, so WARN and keep the remaining
+        // roundtrip-family checks — sweep/graph/search/magic-moment all run off
+        // the DB row and still prove the memory loop.
+        checks.push({
+          id: 'roundtrip',
+          ok: true,
+          warn: true,
+          detail:
+            `put_page landed in DB; no file under brain/ because sync.write_through is disabled by config — ` +
+            `agent writes stay DB-only (run \`gbrain config set sync.write_through true\` to materialize repo files)`,
+        });
+      } else {
+        // [G1] A green verify with an empty repo is impossible: name the
+        // write-through problem explicitly.
+        const why = wt?.skipped ?? wt?.error ?? 'write-through reported nothing';
+        checks.push({
+          id: 'roundtrip',
+          ok: false,
+          detail:
+            `put_page wrote the DB but NO file appeared under brain/ (write-through: ${why}). ` +
+            `The workspace source must be registered with its brain/ dir as local_path ` +
+            `(gbrain sources add ${sourceId} --path ${join(ws, 'brain')}) or agent writes never reach the repo.`,
+        });
+        return { checks };
+      }
+    } catch (e) {
+      checks.push({ id: 'roundtrip', ok: false, detail: putPageFailureDetail(e, ctx.writeWaitMs) });
       return { checks };
     }
-  } catch (e) {
-    checks.push({ id: 'roundtrip', ok: false, detail: `put_page failed: ${(e as Error).message}` });
-    return { checks };
-  }
 
-  // 2. Sweep — the `gbrain sweep --once` equivalent, run in-process because
-  // verify's caller holds the engine [CX2-5].
-  const caps = opts.capabilities ?? detectCapabilities();
-  try {
-    const report = await runMaintenanceSweep(engine, {
-      sourceId,
-      budgetMs: opts.sweepBudgetMs ?? 20_000,
-      capabilities: caps,
-      log: opts.log,
-    });
-    opts.log?.(`[verify] sweep: facts=${report.factsReconciled} links=${report.linksExtracted} timeline=${report.timelineExtracted}`);
-  } catch (e) {
-    checks.push({ id: 'graph_floor', ok: false, detail: `maintenance sweep failed: ${(e as Error).message}` });
-    return { checks };
-  }
-
-  // 3. Graph floor: ≥1 extracted edge, answered through the link tables.
-  try {
-    const links = await engine.getLinks(VERIFY_PROBE_SLUG, { sourceId });
-    const edge = links.find((l) => l.to_slug === VERIFY_PROBE_ENTITY_SLUG);
-    const backlinks = await engine.getBacklinks(VERIFY_PROBE_ENTITY_SLUG, { sourceId });
-    const back = backlinks.find((l) => l.from_slug === VERIFY_PROBE_SLUG);
-    if (edge && back) {
-      checks.push({ id: 'graph_floor', ok: true, detail: `entity link extracted and the edge-only query answers (probe → entity, ${links.length} outbound / ${backlinks.length} inbound)` });
-    } else {
-      checks.push({ id: 'graph_floor', ok: false, detail: `expected probe→entity edge missing after sweep (outbound: ${links.length}, inbound: ${backlinks.length}) — link extraction is not compounding the graph` });
+    // 2. Sweep — the `gbrain sweep --once` equivalent, run in-process because
+    // verify's caller holds the engine [CX2-5]. #6786: passes 1 and 2 only.
+    // The probes never need the corpus pass, and verify's engine runs without
+    // the gateway extraction would use: every pending transcript came back
+    // chat_unavailable and was marked ingested with zero facts.
+    const caps = opts.capabilities ?? detectCapabilities();
+    try {
+      const report = await runMaintenanceSweep(engine, {
+        sourceId,
+        budgetMs: opts.sweepBudgetMs ?? 20_000,
+        corpus: false,
+        log: opts.log,
+      });
+      opts.log?.(`[verify] sweep: facts=${report.factsReconciled} links=${report.linksExtracted} timeline=${report.timelineExtracted}`);
+    } catch (e) {
+      checks.push({ id: 'graph_floor', ok: false, detail: `maintenance sweep failed: ${(e as Error).message}` });
+      return { checks };
     }
-  } catch (e) {
-    checks.push({ id: 'graph_floor', ok: false, detail: `edge query failed: ${(e as Error).message}` });
-  }
 
-  // 4. get_page + search recall.
-  try {
-    await getPage.handler(ctx, { slug: VERIFY_PROBE_SLUG });
-  } catch (e) {
-    checks.push({ id: 'roundtrip', ok: false, detail: `get_page read-back failed: ${(e as Error).message}` });
-  }
-  try {
-    const result = await queryOp.handler(ctx, {
-      query: 'bootstrap verify probe lighthouse',
-      limit: 10,
-      expand: false,
-    });
-    const found = JSON.stringify(result).includes(VERIFY_PROBE_SLUG);
-    if (!found) {
-      checks.push({ id: 'roundtrip', ok: false, detail: `search did not return the probe page (${caps.search} search) — retrieval round-trip broken` });
+    // 3. Graph floor: ≥1 extracted edge, answered through the link tables.
+    try {
+      const links = await engine.getLinks(VERIFY_PROBE_SLUG, { sourceId });
+      const edge = links.find((l) => l.to_slug === VERIFY_PROBE_ENTITY_SLUG);
+      const backlinks = await engine.getBacklinks(VERIFY_PROBE_ENTITY_SLUG, { sourceId });
+      const back = backlinks.find((l) => l.from_slug === VERIFY_PROBE_SLUG);
+      if (edge && back) {
+        checks.push({ id: 'graph_floor', ok: true, detail: `entity link extracted and the edge-only query answers (probe → entity, ${links.length} outbound / ${backlinks.length} inbound)` });
+      } else {
+        checks.push({ id: 'graph_floor', ok: false, detail: `expected probe→entity edge missing after sweep (outbound: ${links.length}, inbound: ${backlinks.length}) — link extraction is not compounding the graph` });
+      }
+    } catch (e) {
+      checks.push({ id: 'graph_floor', ok: false, detail: `edge query failed: ${(e as Error).message}` });
     }
-  } catch (e) {
-    checks.push({ id: 'roundtrip', ok: false, detail: `search failed: ${(e as Error).message}` });
-  }
 
-  // 5. Magic moment [CX-P0.5]: the fence fact reconciled by the ZERO-LLM
-  // sweep pass, read back at visibility='world' (what the harness can read).
-  try {
-    const rows = await engine.executeRaw<{ fact: string }>(
-      `SELECT fact FROM facts WHERE source_id = $1 AND visibility = 'world' AND fact LIKE $2 LIMIT 1`,
-      [sourceId, `%${VERIFY_MAGIC_TOKEN}%`],
-    );
-    if (rows.length > 0) {
-      checks.push({ id: 'magic_moment', ok: true, detail: `fence-written fact recalled at visibility=world (keyless path: ${caps.mode === 'keyless' ? 'yes' : 'keyed install, same zero-LLM pass'})` });
-    } else {
-      checks.push({ id: 'magic_moment', ok: false, detail: 'the ## Facts fence fact never reached the facts index — keyless memory (agent-authored fences) is broken; check the sweep fence pass' });
+    // 4. get_page + search recall.
+    try {
+      await getPage.handler(ctx, { slug: VERIFY_PROBE_SLUG });
+    } catch (e) {
+      checks.push({ id: 'roundtrip', ok: false, detail: `get_page read-back failed: ${(e as Error).message}` });
     }
-  } catch (e) {
-    checks.push({ id: 'magic_moment', ok: false, detail: `facts read-back failed: ${(e as Error).message}` });
-  }
+    try {
+      const result = await queryOp.handler(ctx, {
+        query: 'bootstrap verify probe lighthouse',
+        limit: 10,
+        expand: false,
+      });
+      const found = JSON.stringify(result).includes(VERIFY_PROBE_SLUG);
+      if (!found) {
+        checks.push({ id: 'roundtrip', ok: false, detail: `search did not return the probe page (${caps.search} search) — retrieval round-trip broken` });
+      }
+    } catch (e) {
+      checks.push({ id: 'roundtrip', ok: false, detail: `search failed: ${(e as Error).message}` });
+    }
 
-  // 6. Delete the probes [G13] — failure is a WARNING, never a verify fail.
-  // HARD delete via the engine primitive (same as sweepProbeLeftovers): the
-  // probe is not user content and verify is a trusted local caller. The
-  // delete_page OP is a v0.26.5 SOFT delete (sets deleted_at, row stays in
-  // pages until the 72h purge) — using it here left two probe tombstones in
-  // the user's brain after every verify run, visible to include_deleted
-  // readers and pinned as residue by the Postgres e2e cleanup assertion.
-  const deleteWarnings = await removeProbes(engine, ws, sourceId);
-  if (deleteWarnings.length > 0) {
-    checks.push({ id: 'probe_cleanup', ok: false, warn: true, detail: `probe deletion incomplete: ${deleteWarnings.join('; ')}` });
+    // 5. Magic moment [CX-P0.5]: the fence fact reconciled by the ZERO-LLM
+    // sweep pass, read back at visibility='world' (what the harness can read).
+    try {
+      const rows = await engine.executeRaw<{ fact: string }>(
+        `SELECT fact FROM facts WHERE source_id = $1 AND visibility = 'world' AND fact LIKE $2 LIMIT 1`,
+        [sourceId, `%${VERIFY_MAGIC_TOKEN}%`],
+      );
+      if (rows.length > 0) {
+        checks.push({ id: 'magic_moment', ok: true, detail: `fence-written fact recalled at visibility=world (keyless path: ${caps.mode === 'keyless' ? 'yes' : 'keyed install, same zero-LLM pass'})` });
+      } else {
+        checks.push({ id: 'magic_moment', ok: false, detail: 'the ## Facts fence fact never reached the facts index — keyless memory (agent-authored fences) is broken; check the sweep fence pass' });
+      }
+    } catch (e) {
+      checks.push({ id: 'magic_moment', ok: false, detail: `facts read-back failed: ${(e as Error).message}` });
+    }
+  } finally {
+    // 6. Delete the probes [G13] — failure is a WARNING, never a verify fail.
+    // HARD delete via the engine primitive (same as sweepProbeLeftovers): the
+    // probe is not user content and verify is a trusted local caller. The
+    // delete_page OP is a v0.26.5 SOFT delete (sets deleted_at, row stays in
+    // pages until the 72h purge) — using it here left two probe tombstones in
+    // the user's brain after every verify run, visible to include_deleted
+    // readers and pinned as residue by the Postgres e2e cleanup assertion.
+    const deleteWarnings = await removeProbes(engine, ws, sourceId);
+    if (deleteWarnings.length > 0) {
+      checks.push({ id: 'probe_cleanup', ok: false, warn: true, detail: `probe deletion incomplete: ${deleteWarnings.join('; ')}` });
+    }
   }
 
   return { checks };
@@ -1010,13 +1058,24 @@ async function checkHooksSmoke(engine: BrainEngine, ws: string, sourceId: string
   }
 }
 
-function checkPushProbe(ws: string): VerifyCheck {
+export function checkPushProbe(ws: string): VerifyCheck {
   const id = 'push_probe';
   try {
     // Read through the shared per-root reader [D8/D13] — a v0.45.8+ push
     // writes push-status-<roothash>.json, not the legacy single file, so the
     // old direct read reported "no push recorded" on every fresh install.
     const entries = readPushStatuses();
+    const origin = gitOriginUrl(ws);
+    // #5606: where a push is expected (an origin or a recorded push), a managed
+    // canonical worktree is pushed by the persistence owner's Git effect;
+    // sources push is refused there, so never recommend it. A local-only
+    // managed workspace stays local-only below.
+    const managed = (entries.length > 0 || origin) ? managedFilesystemRootFor(ws) : null;
+    if (managed) {
+      const source = managed.sourceId ?? '<source>';
+      return { id, ok: true, detail: `managed canonical worktree${managed.sourceId ? ` (source ${managed.sourceId})` : ''} — page writes are committed and pushed by the persistence owner's Git effect, not by sources push; `
+        + `check \`gbrain sources writer status ${source} --json\` (git_durability) and enable with \`gbrain sources writer git-durability ${source} --enable --dry-run\` if it is off` };
+    }
     if (entries.length > 0) {
       const { failing } = summarizePushStatuses(entries);
       if (failing.length > 0) {
@@ -1027,7 +1086,6 @@ function checkPushProbe(ws: string): VerifyCheck {
       const ok = entries.find((e) => e.ok === true);
       return { id, ok: true, detail: `last workspace push succeeded (${ok?.ts ?? 'unknown time'})` };
     }
-    const origin = gitOriginUrl(ws);
     if (origin) return { id, ok: true, warn: true, detail: 'origin exists but no push recorded yet — run `gbrain sources push` once to prove the persistence path' };
     return { id, ok: true, detail: 'local-only mode — no push expected' };
   } catch (e) {

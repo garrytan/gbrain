@@ -66,8 +66,9 @@ async function discover(engine: BrainEngine, sourceId: string, ctx: {
   const pages = await engine.executeRaw<{
     id: number; slug: string; type: string; compiled_truth: string | null; frontmatter: Record<string, unknown> | null;
     effective_date: Date | string | null; effective_date_source: string | null; content_hash: string; updated_at: Date | string;
+    body_storage: 'inline' | 'segmented'; body_bytes: number | null;
   }>(
-    `SELECT p.id, p.slug, p.type, p.compiled_truth, p.frontmatter, p.effective_date, p.effective_date_source, p.content_hash, p.updated_at
+    `SELECT p.id, p.slug, p.type, coalesce(p.compiled_truth, p.truth_lead) AS compiled_truth, p.body_storage, p.body_bytes, p.frontmatter, p.effective_date, p.effective_date_source, p.content_hash, p.updated_at
        FROM pages p
       WHERE p.source_id=$1 AND p.deleted_at IS NULL AND p.content_hash IS NOT NULL AND p.updated_at >= $2::timestamptz
         AND p.type <> 'event' AND p.slug NOT LIKE 'life/%'

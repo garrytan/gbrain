@@ -10,6 +10,7 @@
 import { describe, expect, test } from 'bun:test';
 import { autoFixFrontmatter } from '../src/core/brain-writer.ts';
 import { parseMarkdown, yamlAliasesWithinLimit } from '../src/core/markdown.ts';
+import { cpuMs } from './helpers/cpu-time.ts';
 
 const fence = '---';
 function bomb(key: string, depth = 26): string {
@@ -23,25 +24,21 @@ describe('frontmatter alias bomb (W5.1 security review)', () => {
   for (const key of ['tags', 'aliases', 'related']) {
     test(`autoFixFrontmatter returns fast and rewrites nothing on a ${key}: bomb`, () => {
       const input = page(bomb(key));
-      const started = performance.now();
-      const { content } = autoFixFrontmatter(input);
-      expect(performance.now() - started).toBeLessThan(1000);
+      let content = '';
+      expect(cpuMs(() => { ({ content } = autoFixFrontmatter(input)); })).toBeLessThan(1000);
       expect(content).toBe(input);
     });
   }
 
   test('validation of a bomb in a non-tag key returns fast', () => {
-    const started = performance.now();
-    parseMarkdown(page(bomb('related')), undefined, { validate: true });
-    expect(performance.now() - started).toBeLessThan(1000);
+    expect(cpuMs(() => parseMarkdown(page(bomb('related')), undefined, { validate: true }))).toBeLessThan(1000);
   });
 
   // Pre-existing on master (not from #6157): tag extraction stringified nested
   // tag arrays, which expands the same bomb. Only scalar tags are kept.
   test('parsing a tags: bomb returns fast; nested tag arrays are not tags', () => {
-    const started = performance.now();
-    const parsed = parseMarkdown(page(bomb('tags')));
-    expect(performance.now() - started).toBeLessThan(1000);
+    let parsed!: ReturnType<typeof parseMarkdown>;
+    expect(cpuMs(() => { parsed = parseMarkdown(page(bomb('tags'))); })).toBeLessThan(1000);
     expect(parsed.tags).toEqual([]);
     expect(parseMarkdown(page('tags: [yc, 2025, "w25"]')).tags).toEqual(['yc', '2025', 'w25']);
   });

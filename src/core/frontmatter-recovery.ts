@@ -26,7 +26,7 @@ export const RECOVERY_VERSION = 1;
  * `repair/visibility.ts`, connector publication). `test/frontmatter-recovery.test.ts`
  * greps those readers so a new key cannot be missed.
  */
-export const PROTECTED_FRONTMATTER_KEYS: readonly string[] = ['visibility', 'derived_from', 'source_slug', 'synthesized_by', 'concepts', 'captured_via', 'event'];
+export const PROTECTED_FRONTMATTER_KEYS: readonly string[] = ['visibility', 'derived_from', 'source_slug', 'synthesized_by', 'concepts', 'captured_via', 'event', 'pinned_question'];
 /** Keys that decide which page a file is. A duplicate is never resolved. */
 export const IDENTITY_FRONTMATTER_KEYS: readonly string[] = ['slug', 'type', 'id', 'source_id'];
 

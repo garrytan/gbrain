@@ -1,0 +1,62 @@
+{
+  "golden": {
+    "completed.jsonl": [
+      "{\"ts\":\"<ts>\",\"version\":\"0.12.0\",\"status\":\"complete\",\"fresh_install\":true,\"installed_version\":\"<version>\",\"phases\":[{\"name\":\"fresh_install\",\"status\":\"skipped\",\"detail\":\"No-op on a brain gbrain init created at v<version>: schema current, nothing to backfill or install.\"}]}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.12.2\",\"status\":\"complete\",\"fresh_install\":true,\"installed_version\":\"<version>\",\"phases\":[{\"name\":\"fresh_install\",\"status\":\"skipped\",\"detail\":\"No-op on a brain gbrain init created at v<version>: schema current, nothing to backfill or install.\"}]}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.13.0\",\"status\":\"complete\",\"fresh_install\":true,\"installed_version\":\"<version>\",\"phases\":[{\"name\":\"fresh_install\",\"status\":\"skipped\",\"detail\":\"No-op on a brain gbrain init created at v<version>: schema current, nothing to backfill or install.\"}]}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.13.1\",\"status\":\"complete\",\"fresh_install\":true,\"installed_version\":\"<version>\",\"phases\":[{\"name\":\"fresh_install\",\"status\":\"skipped\",\"detail\":\"No-op on a brain gbrain init created at v<version>: schema current, nothing to backfill or install.\"}]}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.16.0\",\"status\":\"complete\",\"fresh_install\":true,\"installed_version\":\"<version>\",\"phases\":[{\"name\":\"fresh_install\",\"status\":\"skipped\",\"detail\":\"No-op on a brain gbrain init created at v<version>: schema current, nothing to backfill or install.\"}]}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.18.0\",\"status\":\"complete\",\"fresh_install\":true,\"installed_version\":\"<version>\",\"phases\":[{\"name\":\"fresh_install\",\"status\":\"skipped\",\"detail\":\"No-op on a brain gbrain init created at v<version>: schema current, nothing to backfill or install.\"}]}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.18.1\",\"status\":\"complete\",\"fresh_install\":true,\"installed_version\":\"<version>\",\"phases\":[{\"name\":\"fresh_install\",\"status\":\"skipped\",\"detail\":\"No-op on a brain gbrain init created at v<version>: schema current, nothing to backfill or install.\"}]}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.21.0\",\"status\":\"complete\",\"fresh_install\":true,\"installed_version\":\"<version>\",\"phases\":[{\"name\":\"fresh_install\",\"status\":\"skipped\",\"detail\":\"No-op on a brain gbrain init created at v<version>: schema current, nothing to backfill or install.\"}]}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.29.1\",\"status\":\"complete\",\"fresh_install\":true,\"installed_version\":\"<version>\",\"phases\":[{\"name\":\"fresh_install\",\"status\":\"skipped\",\"detail\":\"No-op on a brain gbrain init created at v<version>: schema current, nothing to backfill or install.\"}]}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.31.0\",\"status\":\"complete\",\"fresh_install\":true,\"installed_version\":\"<version>\",\"phases\":[{\"name\":\"fresh_install\",\"status\":\"skipped\",\"detail\":\"No-op on a brain gbrain init created at v<version>: schema current, nothing to backfill or install.\"}]}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.32.2\",\"status\":\"complete\",\"fresh_install\":true,\"installed_version\":\"<version>\",\"phases\":[{\"name\":\"fresh_install\",\"status\":\"skipped\",\"detail\":\"No-op on a brain gbrain init created at v<version>: schema current, nothing to backfill or install.\"}]}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.43.0\",\"status\":\"complete\",\"fresh_install\":true,\"installed_version\":\"<version>\",\"phases\":[{\"name\":\"fresh_install\",\"status\":\"skipped\",\"detail\":\"No-op on a brain gbrain init created at v<version>: schema current, nothing to backfill or install.\"}]}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.46.3\",\"status\":\"complete\",\"fresh_install\":true,\"installed_version\":\"<version>\",\"phases\":[{\"name\":\"fresh_install\",\"status\":\"skipped\",\"detail\":\"No-op on a brain gbrain init created at v<version>: schema current, nothing to backfill or install.\"}]}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.60.31\",\"status\":\"complete\",\"fresh_install\":true,\"installed_version\":\"<version>\",\"phases\":[{\"name\":\"fresh_install\",\"status\":\"skipped\",\"detail\":\"No-op on a brain gbrain init created at v<version>: schema current, nothing to backfill or install.\"}]}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.11.0\",\"status\":\"complete\",\"phases\":[{\"name\":\"schema\",\"status\":\"complete\"},{\"name\":\"smoke\",\"status\":\"complete\"},{\"name\":\"mode\",\"status\":\"complete\",\"detail\":\"mode=pain_triggered (default)\"},{\"name\":\"prefs\",\"status\":\"complete\"},{\"name\":\"host\",\"status\":\"complete\",\"detail\":\"rewrote 0 entries; 0 host-work TODOs emitted\"},{\"name\":\"install\",\"status\":\"skipped\",\"detail\":\"--no-autopilot-install\"},{\"name\":\"record\",\"status\":\"complete\",\"detail\":\"status=complete (ledger write in runner)\"}],\"files_rewritten\":0,\"autopilot_installed\":false}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.14.0\",\"status\":\"complete\",\"phases\":[{\"name\":\"schema\",\"status\":\"skipped\",\"detail\":\"max_stalled default already 5\"},{\"name\":\"host-work\",\"status\":\"complete\",\"detail\":\"<home>/.gbrain/migrations/pending-host-work.jsonl\"}],\"apply_migrations_pending\":true}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.22.4\",\"status\":\"complete\",\"phases\":[{\"name\":\"schema\",\"status\":\"complete\",\"detail\":\"no schema changes in v0.22.4\"},{\"name\":\"audit\",\"status\":\"complete\",\"detail\":\"0 issue(s) across 1 source(s); report at <home>/.gbrain/migrations/v0.22.4-audit.json\"},{\"name\":\"emit-todo\",\"status\":\"complete\",\"detail\":\"no issues; nothing to queue\"}]}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.28.0\",\"status\":\"complete\",\"phases\":[{\"name\":\"schema\",\"status\":\"complete\",\"detail\":\"schema v38 applied; takes + synthesis_evidence present\"},{\"name\":\"backfill\",\"status\":\"complete\",\"detail\":\"extract-takes scanned 0 pages; 0 had fenced takes; upserted 0 rows\"},{\"name\":\"rechunk-todo\",\"status\":\"complete\",\"detail\":\"queued re-chunk TODO at <home>/.gbrain/migrations/pending-host-work.jsonl (read skills/migrations/v0.28.0.md for the playbook)\"}]}",
+      "{\"ts\":\"<ts>\",\"version\":\"0.53.0\",\"status\":\"complete\",\"phases\":[{\"name\":\"content-checkpoints\",\"status\":\"complete\",\"detail\":\"Mechanical inventory is durable; publication and enrollment are NOT complete. Per-source actions remain in shared_skills.migration.v1.\",\"argv\":[\"gbrain\",\"apply-migrations\",\"--migration\",\"0.53.0\",\"--dry-run\",\"--json\"]}],\"apply_migrations_pending\":true}",
+      ""
+    ],
+    "pending-host-work.jsonl": [
+      "{\"migration\":\"0.14.0\",\"ts\":\"<ts>\",\"skill\":\"skills/migrations/v0.14.0.md\",\"reason\":\"shell-jobs adoption + autopilot cooperative wiring\"}",
+      "{\"migration\":\"0.28.0\",\"ts\":\"<ts>\",\"skill\":\"skills/migrations/v0.28.0.md\",\"reason\":\"Pages with pre-v0.28 chunks still contain fenced takes content. Re-chunk so the new chunker strip rule is applied (Codex P0 #3 fix).\",\"command\":\"gbrain reindex --markdown\",\"_key\":\"rechunk-pages-with-takes\"}",
+      ""
+    ],
+    "v0.22.4-audit.json": [
+      "{",
+      "  \"ok\": true,",
+      "  \"total\": 0,",
+      "  \"errors_by_code\": {},",
+      "  \"recoverability_by_code\": {},",
+      "  \"per_source\": [",
+      "    {",
+      "      \"source_id\": \"default\",",
+      "      \"source_path\": \"<home>/.gbrain/content/<uuid>/default\",",
+      "      \"total\": 0,",
+      "      \"errors_by_code\": {},",
+      "      \"recoverability_by_code\": {},",
+      "      \"repairable\": {",
+      "        \"files\": 0,",
+      "        \"by_code\": {},",
+      "        \"sample\": []",
+      "      },",
+      "      \"sample\": [],",
+      "      \"ignoredMissingOpen\": 0,",
+      "      \"status\": \"scanned\",",
+      "      \"files_scanned\": 3,",
+      "      \"db_page_count\": null",
+      "    }",
+      "  ],",
+      "  \"scanned_at\": \"<ts>\",",
+      "  \"partial\": false,",
+      "  \"aborted_at_source\": null",
+      "}"
+    ]
+  },
+  "normalizer": "setup-migration-ledger-v1"
+}

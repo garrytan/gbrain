@@ -11,6 +11,7 @@ import { throwIfAborted } from '../abort-check.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
 import { submissionAuthority, authorizeWrite } from './authority.ts';
 import { currentVerifiedLocalWriter, registerLocalWriter } from './identity.ts';
+import { readManagedMode } from './managed-mode.ts';
 import type { WriteAuthority } from './model.ts';
 import { writerAdminState } from './admin-intent.ts';
 
@@ -35,18 +36,14 @@ export function syncProcessingOptions(opts: SyncOpts): SyncProcessingOptions {
   return { noEmbed: opts.noEmbed === true, noExtract: opts.noExtract === true, noSchemaPack: opts.noSchemaPack === true };
 }
 export const SYNC_PROCESSING_KEYS = ['noEmbed', 'noExtract', 'noSchemaPack'] as const;
-/** The processing options a caller set itself; an unfinished cursor supplies the rest (#5632). */
-export function explicitSyncProcessing(values: Record<string, unknown>): Array<keyof SyncProcessingOptions> {
-  return SYNC_PROCESSING_KEYS.filter(key => typeof values[key] === 'boolean');
-}
 export function assertSyncDispatchActive(): void {
   assertSourceFilesystemActive(true);
   throwIfAborted(currentJobSignal());
 }
 export async function resolveSyncPersistenceMode(engine: BrainEngine, opts: SyncOpts): Promise<boolean> {
-  const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
+  const managed = await readManagedMode(engine);
   assertSyncDispatchActive();
-  if (brain?.enabled || opts.signal?.aborted) return brain?.enabled === true;
+  if (managed || opts.signal?.aborted) return managed;
   const [source] = await engine.executeRaw<{ claimed: boolean }>(`SELECT
     EXISTS(SELECT 1 FROM persistence_source_bindings WHERE source_id=s.id AND source_incarnation=s.incarnation) AS claimed
     FROM sources s WHERE s.id=$1`, [opts.sourceId ?? 'default']);
@@ -71,8 +68,7 @@ async function preActivationClaimRefusal(engine: BrainEngine, sourceId: string):
       verify: { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] }, docs: 'docs/architecture/topologies.md#deactivate-runbook' } });
 }
 export async function assertManagedSyncActive(engine: BrainEngine, lock = false): Promise<void> {
-  const [brain] = await engine.executeRaw<{ enabled: boolean }>(`SELECT enabled FROM persistence_brain WHERE singleton=1${lock ? ' FOR SHARE' : ''}`);
-  if (!brain?.enabled) throw new OperationError('writer_coordinator_required', 'Sync cannot publish through an inactive persistence coordinator.',
+  if (!await readManagedMode(engine, lock ? { lock: 'share' } : {})) throw new OperationError('writer_coordinator_required', 'Sync cannot publish through an inactive persistence coordinator.',
     'Stop older writers and review gbrain sources writer status, then explicitly activate persistence before retrying. Claiming a source alone does not exclude running legacy writers.');
 }
 export async function managedSyncAuthority(engine: BrainEngine, sourceId: string, incarnation: string, repoPath: string): Promise<SyncAuthority> {
@@ -127,9 +123,13 @@ export function validateManagedSyncOptions(opts: SyncOpts): void {
   assertDurableSyncCaller();
   const current = currentSubmissionAuthority();
   if (current?.kind !== 'remote_generic') return;
-  const allowed = new Set(['repoPath','sourceId','noPull','noEmbed','noExtract','explicitProcessing','signal','concurrency','onProgress','auto_embed_backfill']);
+  // #6706: the worker's own drain controls (never read from a remote job's data) bound the run; they cannot widen what it writes.
+  const allowed = new Set(['repoPath','sourceId','noPull','noEmbed','noExtract','drainHolder','signal','concurrency','onProgress','auto_embed_backfill',
+    'drain','deadlineAtMs','drainStartedAt','bulk','lanes','capacityPreflight']);
   if (current.grant.jobName !== 'sync' || opts.repoPath !== current.grant.canonicalRoot || opts.sourceId !== current.grant.sourceId ||
       opts.noPull !== true || opts.noEmbed !== true || opts.noExtract !== true ||
+      (opts.drain !== undefined && opts.drain !== true) || (opts.lanes !== undefined && opts.lanes !== 1) ||
+      (opts.deadlineAtMs !== undefined && !Number.isFinite(opts.deadlineAtMs)) ||
       Object.entries(opts).some(([key,value]) => value !== undefined && !allowed.has(key)) ||
       ((opts as Record<string,unknown>).auto_embed_backfill !== undefined && (opts as Record<string,unknown>).auto_embed_backfill !== false)) {
     throw opError('permission_denied', 'Sync options exceed the originally accepted remote job.',

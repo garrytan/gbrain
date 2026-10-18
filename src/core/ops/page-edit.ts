@@ -14,14 +14,14 @@ const edit_page: Operation = {
   description: 'Change part of a page: prefer this over put_page for small changes. expected_revision is the revision from get_page include_content:true. Each old_text must match exactly once; edits apply in order, all or none. Stale revision: revision_conflict.',
   params: {
     slug: { type: 'string', description: 'Page slug.', required: true },
-    expected_revision: { type: 'string', required: true, description: 'revision from get_page include_content:true.' },
+    expected_revision: { type: 'string', required: true, description: 'From get_page include_content:true.' },
     edits: {
       type: 'array', required: true,
       description: `1 to ${EDIT_PAGE_MAX_EDITS} {old_text, new_text} replacements.`,
       items: {
         type: 'object',
         properties: {
-          old_text: { type: 'string', required: true, description: 'Exact text to replace (must occur once).' },
+          old_text: { type: 'string', required: true, description: 'Exact text to replace.' },
           new_text: { type: 'string', required: true, description: 'Replacement; empty deletes.' },
         },
       },

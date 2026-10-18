@@ -159,7 +159,7 @@ const request_tools: Operation = {
   name: 'request_tools',
   idempotent: false,
   outputRedaction: 'no_stored_text',
-  description: 'More tools: no arguments lists your catalog; {tools: [names]} returns schemas; {surface} widens it (per OAuth client; stdio: this session).',
+  description: 'More tools: no arguments lists your catalog; {tools: [names]} returns schemas; {surface} widens it (per client or stdio session).',
   area: 'discovery',
   // FOV-4: callable by read OR agent scope — discovery for every token class.
   agentCallable: true,
@@ -167,7 +167,7 @@ const request_tools: Operation = {
     tools: {
       type: 'array',
       items: { type: 'string', description: 'A tool name from the catalog.' },
-      description: 'Tool names to fetch schemas for.',
+      description: 'Tool names to fetch.',
     },
     surface: {
       type: 'string',

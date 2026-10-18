@@ -18,15 +18,18 @@ import { pgliteScaleCheck } from './engine-fit.ts';
 import { checkParkedEffects } from './parked-effects.ts';
 import { checkManagedGuardSchemaDrift, checkPublicationRefusals } from './managed-guard.ts';
 import { checkWorktreeRefreshStuck } from './worktree-refresh.ts';
-import { checkPersistenceCapacity } from './persistence-capacity.ts';
+import { checkPersistenceCounterDrift } from './persistence-compaction.ts';
 import { checkPostgresCancellationDriver } from './postgres-cancellation.ts';
 import { checkProjectionReadiness } from './projection-readiness.ts';
 import type { Check } from '../../doctor.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
-import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { connectedEngine, type DoctorContext, type DoctorEntry, doctorHealth } from '../context.ts';
 import { embeddingsDisabled } from '../../../core/embedding-disabled.ts';
 import { quoteIdentifier, resolveActiveEmbeddingColumnFromEngine } from '../../../core/search/embedding-column.ts';
-import { checkError, infoCheck, keylessEnablementFix } from '../check-fix.ts';
+import { agentFix, checkError, infoCheck, keylessEnablementFix } from '../check-fix.ts';
+import type { MissingTable, MissingTablesReport } from '../../../core/schema-missing-tables.ts';
+
+const MISSING_TABLES_DOCS = 'docs/guides/repair.md#missing-tables';
 
 async function runPgvector(ctx: DoctorContext): Promise<Check[]> {
   const { progress } = ctx;
@@ -45,9 +48,9 @@ async function runPgvector(ctx: DoctorContext): Promise<Check[]> {
   checks.push(await pagesUpsertArbiterCheck(engine));
   checks.push(await checkProjectionReadiness(engine));
 
-  // 4a-bis. Managed write capacity (#5470) and parked postcommit effects (#5612).
-  progress.heartbeat('persistence_capacity');
-  checks.push(await checkPersistenceCapacity(engine), await checkParkedEffects(engine), await checkWorktreeRefreshStuck(engine));
+  // 4a-bis. Parked postcommit effects (#5612) and receipt-bytes counter drift (#6696 A10); capacity and compaction are ops entries (checks/ops-sections.ts).
+  progress.heartbeat('parked_effects');
+  checks.push(await checkPersistenceCounterDrift(engine), await checkParkedEffects(engine), await checkWorktreeRefreshStuck(engine));
   // #5983/#5974: schema drift on guarded tables and writes the database refused.
   checks.push(await checkManagedGuardSchemaDrift(engine), await checkPublicationRefusals(engine));
 
@@ -74,7 +77,7 @@ export const pgvectorEntry: DoctorEntry = {
     'postgres_cancellation_driver',
     'pages_upsert_arbiter',
     'text_projection_readiness',
-    'persistence_capacity',
+    'persistence_counter_drift',
     'parked_effects',
     'worktree_refresh_stuck',
     'managed_guard_schema_drift',
@@ -252,6 +255,15 @@ async function runSchemaVersion(ctx: DoctorContext): Promise<Check[]> {
         checks.push(checkError('schema_columns', 'verify live schema columns'));
       }
     }
+    // 6c. #6911: tables the applied migrations created that the brain no longer has (the ledger cannot see a drop).
+    // Below head too: a missing cache that a pending migration alters wedges apply-migrations with 42P01.
+    progress.heartbeat('schema_missing_tables');
+    try {
+      const { readMissingTables } = await import('../../../core/schema-missing-tables.ts');
+      checks.push({ name: 'schema_missing_tables', ...missingTablesFields(await readMissingTables(engine)) });
+    } catch (error) {
+      checks.push(checkError('schema_missing_tables', 'check for tables the applied migrations created', error));
+    }
   } catch {
     checks.push(checkError('schema_version', 'check schema version'));
   }
@@ -259,9 +271,38 @@ async function runSchemaVersion(ctx: DoctorContext): Promise<Check[]> {
   return checks;
 }
 
+/**
+ * #6911: the schema_missing_tables verdict. A missing rebuildable cache warns with the repair preview; a missing
+ * user-data table fails, because base-schema replays (init --migrate-only, upgrade, apply-migrations) recreate it
+ * empty and clear this check while the rows stay lost; any other missing table warns.
+ */
+function missingTablesFields(report: MissingTablesReport): Omit<Check, 'name'> {
+  if (report.status === 'skipped') {
+    return { status: 'ok', message: `Skipped: the brain schema is v${report.version}, newer than this client (v${report.latest}); upgrade gbrain to check it.` };
+  }
+  if (!report.missing.length) {
+    return { status: 'ok', message: report.scope === 'all_tables' ? `All ${report.checked} table(s) the applied migrations create exist.`
+      : `All ${report.checked} rebuildable cache table(s) the applied migrations create exist.` };
+  }
+  const caches = report.missing.filter(m => m.recreatable);
+  const userData = report.missing.filter(m => !m.recreatable && m.loss_kind === 'user_data');
+  const other = report.missing.filter(m => !m.recreatable && m.loss_kind !== 'user_data');
+  const names = (list: MissingTable[]) => list.map(m => m.table).join(', ');
+  const sentences = [`${report.missing.length} table(s) the applied migrations create are missing, and apply-migrations will not recreate them from the migrations that already ran`];
+  if (caches.length) sentences.push(`Rebuildable cache(s) ${names(caches)}: preview recreating them empty with gbrain repair missing-tables, then apply the printed command after the user agrees`);
+  if (userData.length) sentences.push(`${names(userData)} hold user data: restore their rows from a backup before running gbrain init --migrate-only, gbrain upgrade or apply-migrations, which recreate a base-schema table empty and clear this check while the rows stay lost (see ${MISSING_TABLES_DOCS})`);
+  if (other.length) sentences.push(`${names(other)} hold no user data: gbrain init --migrate-only recreates the ones the base schema defines; report any it does not (see ${MISSING_TABLES_DOCS})`);
+  return { status: userData.length ? 'fail' : 'warn', message: `${sentences.join('. ')}.`,
+    details: { missing: report.missing, checked: report.checked, scope: report.scope, docs: MISSING_TABLES_DOCS },
+    ...(caches.length
+      ? { fix: agentFix(['gbrain', 'repair', 'missing-tables', '--json'], 'Read-only preview: lists each rebuildable cache table it would recreate empty and prints the apply command with its hash. Apply only after the user agrees.',
+        'schema_missing_tables', { docs: MISSING_TABLES_DOCS }) }
+      : { fix_unavailable_reason: 'operator_judgement' as const }) };
+}
+
 export const schemaVersionEntry: DoctorEntry = {
   name: 'schema_version',
-  emits: ['schema_version', 'schema_columns'],
+  emits: ['schema_version', 'schema_columns', 'schema_missing_tables'],
   run: runSchemaVersion,
 };
 
@@ -395,7 +436,7 @@ async function runEmbeddings(ctx: DoctorContext): Promise<Check[]> {
       checks.push(infoCheck('embeddings', 'Not applicable: embeddings are disabled on this brain (keyword search keeps working).', 'disabled_by_choice', keylessEnablementFix()));
       return checks;
     }
-    const health = await engine.getHealth();
+    const health = await doctorHealth(ctx);
     const pct = (health.embed_coverage * 100).toFixed(0);
     // Coverage + missing now share one source (the stored vector over
     // eligible chunks), so the two numbers can no longer contradict each

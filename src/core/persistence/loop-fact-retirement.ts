@@ -155,11 +155,11 @@ export async function retireLoopFact(ctx: OperationContext, loopId: number): Pro
       "SELECT incarnation, archived, local_path, config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
     if (!source || source.archived) return { fact_expired: false, retryable: false, reason: 'source_changed' };
     const slug = fact.source_markdown_slug ?? 'memory/unattributed';
-    const target = await resolveFactWriteTarget(engine, sourceId, source);
+    const snapshot = await engine.readPageSnapshot(slug, { sourceId });
+    const target = await resolveFactWriteTarget(engine, sourceId, source, { fileBacked: Boolean(snapshot?.page.source_path), remote: ctx.remote !== false });
     if (target.kind === 'unbound') return { fact_expired: false, retryable: true, reason: 'owner_unavailable' };
     const authority = await submissionAuthority(scoped, LOOP_FACT_RETIREMENT_OPERATION, sourceId, source.incarnation, slug);
     if (target.databaseOnlyReason) authority.databaseOnlyReason = target.databaseOnlyReason;
-    const snapshot = await engine.readPageSnapshot(slug, { sourceId });
     const intent = { kind: LOOP_FACT_RETIREMENT_KIND, loop_id: loopId };
     const row = await admitWrite(engine, {
       principal, operation: LOOP_FACT_RETIREMENT_OPERATION, sourceId, sourceIncarnation: source.incarnation, slug, pageId: snapshot?.page.id ?? null,

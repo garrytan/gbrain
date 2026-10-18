@@ -20,10 +20,11 @@ import type { BrainEngine } from '../core/engine.ts';
 import { resolveGbrainBin } from '../core/gbrain-bin.ts';
 import { configReadiness, embeddingEnablement, harnessWiringEntry } from '../core/readiness.ts';
 import type { SearchMode } from '../core/search/mode.ts';
+import { costMatrixSentence } from '../core/search/mode-advice.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 
 export interface InitFirstRunInputs {
-  /** The search mode init applied and why (from the install-time picker). */
+  /** The search mode the install-time picker applied and why; absent when `--search-mode` recorded the operator's choice. */
   searchMode?: { mode: SearchMode; reason: string };
   /** The config init saved; harness wiring is read from its config-plane readiness. */
   config?: GBrainConfig | null;
@@ -35,15 +36,11 @@ export interface InitFirstRunInputs {
   surface?: McpSurface;
 }
 
-const SEARCH_MODE_COST =
-  'Per-query search payload cost at 10K queries/month (Haiku 4.5 / Sonnet 4.6 / Opus 4.7): ' +
-  'conservative $40 / $120 / $200, balanced $100 / $300 / $500, tokenmax $200 / $600 / $1,000 per month.';
-
 function searchModeDecision(applied: { mode: SearchMode; reason: string }): Decision {
   const modes: SearchMode[] = ['conservative', 'balanced', 'tokenmax'];
   return {
     id: 'search_mode',
-    question: `Which search mode should this brain use? ${SEARCH_MODE_COST}`,
+    question: `Which search mode should this brain use? ${costMatrixSentence()}`,
     options: modes.map(m => ({ id: m, label: m === applied.mode ? `${m} (applied)` : m, argv: ['gbrain', 'config', 'set', 'search.mode', m] })),
     default: applied.mode,
     default_reason: applied.reason,
@@ -112,6 +109,35 @@ export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
     kind: 'ask',
     why: 'The brain is ready. These settings were applied with defaults or need the user\'s choice; none blocks using the brain.',
     user_message: `gbrain is installed. Reply 'defaults' to keep the recommended settings (${defaults}), or tell me what to change.`,
+    decisions,
+  }];
+}
+
+/**
+ * `gbrain setup <harness>`'s form of init's bundle (read from `init --json`).
+ * Setup has already wired the harness, so `harness_wiring` is dropped, and
+ * the rest is framed as settings in effect that the user can change at any
+ * time: the agent relays them in the reply that reports the install instead
+ * of ending it on a question whose answer needs another turn (Cat 41 wave 2).
+ * Open decisions keep returning in later sessions until answered or muted.
+ */
+export function setupFirstRunNotices(initNotices: readonly unknown[], harness: string): Notice[] {
+  const bundle = initNotices.find((n): n is Notice => (n as Notice | null)?.code === 'first_run_decisions');
+  const decisions = (bundle?.decisions ?? []).filter(d => d.id !== 'harness_wiring');
+  if (decisions.length === 0) return [];
+  const searchMode = decisions.find(d => d.id === 'search_mode');
+  const inEffect = [
+    ...(searchMode ? [`search mode ${searchMode.default}`] : []),
+    ...(decisions.some(d => d.id === 'writeback') ? ['agents save only what you ask them to remember, until you turn on automatic saving (gbrain recommends salient: durable facts you state, saved with provenance)'] : []),
+  ];
+  if (inEffect.length === 0) return [];
+  return [{
+    code: 'first_run_decisions',
+    kind: 'ask',
+    why: `Setup is complete: the brain is ready and ${harness} is wired, so memory works now. These first-run settings are in effect as listed; none blocks memory or needs a new session to answer. `
+      + 'Relay them once, in the reply that reports this install, as the current settings and how to change them; do not hold the install open or end it waiting on an answer. '
+      + 'When the user picks an option, run its command. Automatic saving (`writeback`) is separate from setup\'s capture decision (Stop/SessionEnd hooks); while unanswered it comes back in a later session until the user answers or mutes it.',
+    user_message: `gbrain is set up and ${harness} is wired, so memory works now. In effect: ${inEffect.join('; ')}.${searchMode ? ` ${costMatrixSentence()}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
     decisions,
   }];
 }

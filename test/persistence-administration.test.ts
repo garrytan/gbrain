@@ -26,6 +26,33 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await disposePersistenceConsumer(engine); await engine.disconnect(); });
 
+/**
+ * #5332: a spawned CLI that never exits (or whose pipes a grandchild holds
+ * open) must FAIL this file with its teardown run, never park it. The whole
+ * drain races one timer; on expiry the child is SIGKILLed and the await
+ * rejects with the argv, so the caller's finally still closes the IPC server
+ * and releases the lock.
+ */
+async function spawnCliBounded(args: string[], cwd: string, wallMs: number) {
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, '../src/cli.ts'), ...args], {
+    cwd, env: { ...process.env, GBRAIN_NO_BANNER: '1', GBRAIN_BACKUP_CHECK: '0' }, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      try { child.kill(9); } catch { /* already exited */ }
+      reject(new Error(`gbrain ${args.join(' ')} did not exit within ${wallMs}ms (#5332)`));
+    }, wallMs);
+  });
+  try {
+    const [stdout, stderr, code] = await Promise.race([
+      Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]),
+      expiry,
+    ]);
+    return { stdout, stderr, code };
+  } finally { clearTimeout(timer); }
+}
+
 async function isolated<T>(run: (dir: string) => Promise<T>): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-admin-test-'));
   try {
@@ -146,10 +173,7 @@ describe('local writer administration', () => {
         ['auth', 'local-writer', 'list', '--json'],
         ['sources', 'writer', 'claim', 'default', '--path', dir, '--dry-run', '--json'],
       ]) {
-        const child = Bun.spawn([process.execPath, join(import.meta.dir, '../src/cli.ts'), ...args], {
-          cwd: dir, env: { ...process.env, GBRAIN_NO_BANNER: '1', GBRAIN_BACKUP_CHECK: '0' }, stdout: 'pipe', stderr: 'pipe',
-        });
-        const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+        const { stdout, stderr, code } = await spawnCliBounded(args, dir, 60_000);
         expect({ code, stderr }).toMatchObject({ code: 0 });
         const result = JSON.parse(stdout);
         if (args.includes('--probe')) expect(result.native_lock).toMatchObject({ acquired: true, released: true });
@@ -157,6 +181,15 @@ describe('local writer administration', () => {
         else expect(result).toHaveProperty('writers');
       }
     } finally { const closed = once(binding.server, 'close'); binding.close(); await closed; await releaseLock(lock); }
+  }));
+
+  test('the spawned-CLI bound fails with teardown instead of parking (forced 1 ms probe, #5332)', () => isolated(async dir => {
+    const config = { engine: 'pglite' as const, database_path: join(dir, 'db') };
+    mkdirSync(config.database_path);
+    const lock = await acquireLock(config.database_path);
+    try {
+      await expect(spawnCliBounded(['sources', 'writer', 'status', '--json'], dir, 1)).rejects.toThrow(/did not exit within 1ms \(#5332\)/);
+    } finally { await releaseLock(lock); }
   }));
 
   test('CLI parser preserves exact grant/epoch intent and rejects malformed flag combinations', () => {

@@ -18,13 +18,14 @@ import { gbrainPath, type GBrainConfig } from '../config.ts';
 import { configReadiness } from '../readiness.ts';
 import { recallStagesFor } from '../interop-notices.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from '../embed-skip.ts';
+import { renderFragment, sqlFragment, type SqlFragment } from '../engine-sql/fragment.ts';
+import { entityTypePredicateSql, resolveEntityTypes, type EntityTypeFilter } from '../schema-pack/entity-types.ts';
 
 export const LINK_COVERAGE_MIN = 0.7;
 export const TIMELINE_COVERAGE_MIN = 0.9;
 const TTL_MS = 6 * 60 * 60 * 1000;
 const REFRESH_BUDGET_MS = 3000;
 const IDLE_POLL_MS = 250;
-const ENTITY_TYPES: ReadonlySet<string> = new Set(['person', 'company', 'organization', 'entity']);
 
 /** The six counts init's nudge reports; null when that probe failed or hit the budget. */
 export interface OnboardCounts {
@@ -39,25 +40,34 @@ export interface OnboardCounts {
   partial: boolean;
   checksRan: number;
   checksAttempted: number;
+  /** #4772: `pack_unavailable` when a pack in scope did not load; the entity counts are then null (unknown), never a legacy-list read. */
+  entityTypesStatus?: 'resolved' | 'pack_unavailable';
 }
 
-const COUNT_SQL = [
-  `SELECT COUNT(*) AS count FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-           WHERE cc.embedding IS NULL AND p.deleted_at IS NULL AND ${EMBED_SKIP_FILTER_FRAGMENT}`,
-  `SELECT COUNT(*) AS count FROM pages
-           WHERE type IN ('person', 'company', 'organization', 'entity')
-             AND deleted_at IS NULL`,
-  `SELECT COUNT(*) AS count FROM pages p
-           WHERE p.type IN ('person', 'company', 'organization', 'entity')
-             AND p.deleted_at IS NULL
-             AND EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)`,
-  `SELECT COUNT(*) AS count FROM pages p
-           WHERE p.type IN ('person', 'company', 'organization', 'entity')
-             AND p.deleted_at IS NULL
-             AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id = p.id)`,
-  `SELECT COUNT(*) AS count FROM takes`,
-  `SELECT COUNT(*) AS count FROM pages WHERE deleted_at IS NULL`,
-] as const;
+/** The six counts; the three entity counts bind the active pack's entity types per source (#4772, the get_health predicate). */
+function countSql(filter: EntityTypeFilter): Array<{ text: string; params: unknown[] }> {
+  const isEntity = entityTypePredicateSql('p', filter);
+  const entity = (extra: SqlFragment) => renderFragment(sqlFragment`SELECT COUNT(*) AS count FROM pages p WHERE ${isEntity} AND p.deleted_at IS NULL${extra}`);
+  return [
+    { text: `SELECT COUNT(*) AS count FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+           WHERE cc.embedding IS NULL AND p.deleted_at IS NULL AND ${EMBED_SKIP_FILTER_FRAGMENT}`, params: [] },
+    entity(sqlFragment``),
+    entity(sqlFragment` AND EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)`),
+    entity(sqlFragment` AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id = p.id)`),
+    { text: `SELECT COUNT(*) AS count FROM takes`, params: [] },
+    { text: `SELECT COUNT(*) AS count FROM pages WHERE deleted_at IS NULL`, params: [] },
+  ];
+}
+const ENTITY_COUNT_INDEXES = new Set([1, 2, 3]);
+
+/** Whether `type` is an entity type in `sourceId` (or brain-wide) under the active pack(s); false when a pack did not load. */
+async function isEntityType(engine: BrainEngine, type: unknown, sourceId: unknown): Promise<boolean> {
+  if (typeof type !== 'string' || !type) return false;
+  const resolution = await resolveEntityTypes(engine, typeof sourceId === 'string' && sourceId ? [sourceId] : null);
+  if (resolution.status !== 'resolved') return false;
+  const { types, per_source } = resolution.filter;
+  return (per_source.find(b => b.source_id === sourceId)?.types ?? types).includes(type);
+}
 
 /**
  * Run the six counts. Parallel by default (init); with `between`, one at a
@@ -67,18 +77,23 @@ const COUNT_SQL = [
 export async function collectOnboardOpportunities(
   engine: BrainEngine, signal: AbortSignal, between?: () => Promise<void>,
 ): Promise<OnboardCounts> {
-  const run = (sql: string) => engine.executeRaw<{ count: string | number }>(sql, [], { signal });
+  const entityTypes = await resolveEntityTypes(engine, null);
+  const unavailable = entityTypes.status === 'pack_unavailable';
+  const run = async (sql: { text: string; params: unknown[] }, i: number): Promise<PromiseSettledResult<{ count: string | number }[]>> => {
+    if (unavailable && ENTITY_COUNT_INDEXES.has(i)) return { status: 'rejected', reason: new Error('entity types unknown: a schema pack did not load') };
+    return engine.executeRaw<{ count: string | number }>(sql.text, sql.params, { signal })
+      .then(value => ({ status: 'fulfilled' as const, value }), reason => ({ status: 'rejected' as const, reason }));
+  };
+  const statements = countSql(entityTypes.filter);
   let results: PromiseSettledResult<{ count: string | number }[]>[];
   if (between) {
     results = [];
-    for (const sql of COUNT_SQL) {
+    for (const [i, sql] of statements.entries()) {
       await between();
-      results.push(signal.aborted
-        ? { status: 'rejected', reason: new Error('onboard count budget exceeded') }
-        : await run(sql).then(value => ({ status: 'fulfilled' as const, value }), reason => ({ status: 'rejected' as const, reason })));
+      results.push(signal.aborted ? { status: 'rejected', reason: new Error('onboard count budget exceeded') } : await run(sql, i));
     }
   } else {
-    results = await Promise.allSettled(COUNT_SQL.map(run));
+    results = await Promise.all(statements.map(run));
   }
   const n = results.map(r => (r.status === 'fulfilled' ? (r.value.length > 0 ? Number(r.value[0].count) : 0) : null));
   const [staleChunks, entities, linkedEntities, timelineEntities, takes, pages] = n;
@@ -87,7 +102,7 @@ export async function collectOnboardOpportunities(
   return {
     staleChunks, entities, linkedEntities, timelineEntities, takes, pages,
     linkCoverage: coverage(linkedEntities), timelineCoverage: coverage(timelineEntities),
-    partial: checksRan < results.length, checksRan, checksAttempted: results.length,
+    partial: checksRan < results.length, checksRan, checksAttempted: results.length, entityTypesStatus: entityTypes.status,
   };
 }
 
@@ -309,7 +324,7 @@ function classNotice(cls: OnboardClass, s: OnboardSnapshot, render: RenderContex
 const VECTOR_MISS_STAGES: ReadonlySet<string> = new Set(['embed_unavailable', 'keyword_only_no_embedding_provider', 'embed_timeout', 'vector_arm_failed']);
 
 async function pageLacksTimeline(engine: BrainEngine, result: Record<string, unknown>): Promise<boolean> {
-  if (!ENTITY_TYPES.has(String(result.type ?? ''))) return false;
+  if (!(await isEntityType(engine, result.type, result.source_id))) return false;
   if (Array.isArray(result.timeline_entries)) return result.timeline_entries.length === 0;
   if (typeof result.id !== 'number' && typeof result.id !== 'string') return false;
   const rows = await engine.executeRaw(`SELECT 1 FROM timeline_entries WHERE page_id = $1 LIMIT 1`, [result.id]);
@@ -338,7 +353,7 @@ async function evidenceFor(cls: OnboardClass, e: CallEvidence): Promise<boolean>
       return e.op !== 'entity' || (r.found === true && card.backlink_count === 0);
     case 'timeline_coverage':
       if (e.op === 'get_timeline') return Array.isArray(e.result) && e.result.length === 0;
-      if (e.op === 'entity') return r.found === true && ENTITY_TYPES.has(String(card.entity?.type ?? '')) && !card.last_touched?.last_timeline_date;
+      if (e.op === 'entity') return r.found === true && !card.last_touched?.last_timeline_date && await isEntityType(e.engine, card.entity?.type, r.source_id);
       return pageLacksTimeline(e.engine, r);
     case 'no_takes':
       return true;

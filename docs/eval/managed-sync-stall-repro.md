@@ -40,7 +40,7 @@ every number below comes from those captures.
   `wait_event_type = Lock` / `relation`, zero committed pages, and the
   moment the lock lifts everything resumes. The hanging await is
   `assertSyncPageOrigin` in `prepareManagedSyncMutation` (step
-  `page_origin`): `SELECT id,slug,source_path FROM pages WHERE source_id=$1
+  `page_origin`): `SELECT id,slug,source_path,deleted_at FROM pages WHERE source_id=$1
   AND source_path=ANY($2::text[])`, which is simply the first `pages` read
   after the lock appeared; any other preparation read would block the same
   way. What held or queued such a lock in the reporter's environment is not
@@ -463,7 +463,7 @@ the drain's owner-pid fix. Captures under `stall-lock-b/`.
   = $1 AND deleted_at IS NULL AND (content_hash = $2 OR …)`, four
   connections), `readPageSnapshot` (`WITH chosen AS (SELECT p.* FROM pages
   …)`), the `page_projections` join, and the group-memoized origin read
-  (`SELECT id,slug,source_path FROM pages WHERE source_id=$1 AND
+  (`SELECT id,slug,source_path,deleted_at FROM pages WHERE source_id=$1 AND
   source_path=ANY($2)`, three to four connections; `preparationReads` drops
   the member's bound by design). The bound itself ran: the trace shows 2,035
   `BEGIN; SET LOCAL statement_timeout = 116000-120000` transactions in the

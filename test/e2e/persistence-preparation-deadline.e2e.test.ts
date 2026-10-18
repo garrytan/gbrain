@@ -56,7 +56,7 @@ async function fixture(e: BrainEngine, count: number) {
 }
 const imports = (e: BrainEngine, source: string) => e.executeRaw<{ slug: string; state: string; blocked_reason: string | null; error_code: string | null; preparation_attempts: number; error_message: string | null }>(
   `SELECT slug,state,blocked_reason,error_code,preparation_attempts,error_message FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence`, [source]);
-const ORIGIN_CHECK_SQL = 'SELECT id,slug,source_path FROM pages WHERE source_id=$1 AND ';
+const ORIGIN_CHECK_SQL = 'SELECT id,slug,source_path,deleted_at FROM pages WHERE source_id=$1 AND ';
 
 /**
  * Holds the origin check of `path` open until `onHold(attempt)` resolves, then lets the statement run. The statement
@@ -125,14 +125,15 @@ describe.skipIf(!hasDatabase())('managed catch-up preparation deadlines (Postgre
       expect(hold.holds()).toBe(2);
       // Time from the first cut-off attempt to the terminal receipt stays inside budget x attempts plus slack.
       expect(ended - held[0]!).toBeLessThan(BUDGET_MS * 2 + 20_000);
-      // The root kept publishing: every page before the stuck one committed; nothing after it published; the late result never did.
+      // The root kept publishing: every page before the stuck one committed; the late result never did. #6712 (one page, one
+      // fate): the pages admitted after it are never cancelled for it; each publishes on its own.
       const stuckAt = rows.findIndex(row => row.slug === stuckSlug);
       expect(stuckAt).toBeGreaterThan(0);
       expect(rows.slice(0, stuckAt).every(row => row.state === 'committed')).toBe(true);
       expect(rows.slice(0, stuckAt).every(row => row.preparation_attempts === 0)).toBe(true);
       expect(await engine.getPage(stuckSlug, { sourceId: f.id })).toBeNull();
-      for (const row of rows.slice(stuckAt + 1)) expect(await engine.getPage(row.slug, { sourceId: f.id })).toBeNull();
-      expect(rows.slice(stuckAt + 1).every(row => ['cancelled', 'queued'].includes(row.state))).toBe(true);
+      expect(rows.slice(stuckAt + 1).filter(row => !['committed', 'queued', 'running'].includes(row.state)).map(row => `${row.slug} ${row.state}`)).toEqual([]);
+      for (const row of rows.slice(stuckAt + 1).filter(row => row.state === 'committed')) expect(await engine.getPage(row.slug, { sourceId: f.id })).not.toBeNull();
       // The members behind it in its own group were released uncharged, never claim_lost.
       expect(rows.filter(row => row.blocked_reason === 'claim_lost')).toEqual([]);
       expect(rows.filter(row => row.preparation_attempts > 0).map(row => row.slug)).toEqual([stuckSlug]);

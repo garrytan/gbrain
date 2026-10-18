@@ -120,6 +120,19 @@ export function checkError(name: string, what: string, err?: unknown, opts: { st
   };
 }
 
+/**
+ * Wave B decision #10: a check whose scan reads whole page bodies skips pages
+ * stored in segments (their body columns are NULL). It reports how many with
+ * `skipped_segmented: n` and a message ending in `skipped (segmented): n`,
+ * so a segmented brain never looks healthier than it was checked to be.
+ * n = 0 returns the check unchanged.
+ */
+export function withSkippedSegmented<T extends { status: Check['status']; message: string; skipped_segmented?: number }>(check: T, n: number): T {
+  if (!n) return check;
+  return { ...check, skipped_segmented: n,
+    message: `${check.message} skipped (segmented): ${n} page(s) store their body in segments, and this check reads whole bodies, so it did not check them.` };
+}
+
 function isRendered(fix: Action | RenderedAction): fix is RenderedAction {
   return typeof (fix as RenderedAction).next === 'string';
 }

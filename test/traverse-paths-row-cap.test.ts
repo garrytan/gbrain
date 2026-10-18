@@ -18,6 +18,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { TRAVERSE_PATH_ROW_CAP } from '../src/core/engine-constants.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { DENSE_HUB_SLUG, DENSE_HUB_SPOKES, seedDenseHub } from './helpers/dense-hub.ts';
+import { cpuMsAsync } from './helpers/cpu-time.ts';
 
 let engine: PGLiteEngine;
 
@@ -45,9 +46,8 @@ function ctx(warn: (msg: string) => void): OperationContext {
 
 describe('traversePaths row cap (PGLite)', () => {
   test('a depth-3 bidirectional walk from a dense hub is bounded and flagged truncated', async () => {
-    const started = Date.now();
-    const walk = await engine.traversePathsDetailed(DENSE_HUB_SLUG, { depth: 3, direction: 'both' });
-    const elapsed = Date.now() - started;
+    let walk!: Awaited<ReturnType<typeof engine.traversePathsDetailed>>;
+    const elapsed = await cpuMsAsync(async () => { walk = await engine.traversePathsDetailed(DENSE_HUB_SLUG, { depth: 3, direction: 'both' }); });
     expect(walk.truncated).toBe(true);
     expect(walk.paths.length).toBeGreaterThan(0);
     expect(walk.paths.length).toBeLessThanOrEqual(TRAVERSE_PATH_ROW_CAP);
@@ -55,13 +55,13 @@ describe('traversePaths row cap (PGLite)', () => {
     // edges at depth 1 all survive.
     expect(walk.paths.filter(p => p.depth === 1).length).toBe(DENSE_HUB_SPOKES);
     expect(Math.max(...walk.paths.map(p => p.depth))).toBeLessThanOrEqual(3);
-    // Bounded materialization keeps the call prompt even on the WASM engine.
+    // Bounded materialization keeps the call prompt even on the WASM engine (thread CPU time: the work, not the scheduler's wait).
     expect(elapsed).toBeLessThan(60_000);
   }, 90_000);
 
   test('traversePaths (the GraphPath[] projection) honours the same cap', async () => {
     const paths = await engine.traversePaths(DENSE_HUB_SLUG, { depth: 3, direction: 'both' });
-    // Pre-cap: 5,200 deduped edges (every edge at depth 2 AND depth 3).
+    // Pre-cap: 5,200 edges (every edge of the fixture, each once).
     expect(paths.length).toBeLessThanOrEqual(TRAVERSE_PATH_ROW_CAP);
     const detailed = await engine.traversePathsDetailed(DENSE_HUB_SLUG, { depth: 3, direction: 'both' });
     expect(paths).toEqual(detailed.paths);

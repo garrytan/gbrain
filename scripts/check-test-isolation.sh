@@ -35,6 +35,13 @@
 #      connectors sync), so a reset only in afterEach still reads the
 #      previous file's verdict in its first test: edge-proposals-json-bigint
 #      failed this way three times after a shard reshuffle.
+#  R7: a file whose code calls `__unconfigureGatewayForTests(` or
+#      `_clearGatewayForTests(` must call `resetGateway(` from an
+#      afterEach/afterAll hook (or pass it as the hook: `afterEach(resetGateway)`).
+#      An unconfigured gateway is process-global too: the next file's
+#      beforeAll then sizes its PGLite schema from nothing, and a `-t`
+#      filtered run or a throw before an inline restore leaves it empty.
+#      Comments do not count either way (#6514).
 #
 # Scope:
 #  - Recursively scans `test/**/*.test.ts`.
@@ -176,7 +183,34 @@ GATEWAY_CODE_SCAN='
   }
   END { if (calls != "" && !restored) printf "%s", calls }
 '
-CANDIDATES="$(guard_candidates -E -e "$ENV_MUTATION_PATTERN" -e "$MODULE_MOCK_PATTERN" -e "$ENGINE_PATTERN" -e "$GATEWAY_PATTERN" -e "$VERDICT_PATTERN" <<< "$FILE_LIST")"
+UNCONFIGURE_PATTERN='(__unconfigureGatewayForTests|_clearGatewayForTests)[[:space:]]*\('
+# R7: same comment removal; a resetGateway call counts only inside an
+# afterEach/afterAll block (brace depth from the hook's line) or on the
+# hook line itself. Prints the unconfigure lines when no hook restore is left.
+UNCONFIGURE_CODE_SCAN='
+  in_block {
+    if (index($0, "*/") == 0) next
+    in_block = 0
+    next
+  }
+  /^[[:space:]]*\/\*/ {
+    if (index(substr($0, index($0, "/*") + 2), "*/") == 0) in_block = 1
+    next
+  }
+  {
+    code = $0
+    sub(/(^|[[:space:];,(){}])\/\/.*$/, "", code)
+    opens = gsub(/\{/, "{", code); closes = gsub(/\}/, "}", code)
+    if (in_after) { depth += opens - closes; if (code ~ /resetGateway[[:space:]]*\(/) restored = 1; if (depth <= 0) in_after = 0; next }
+    if (code ~ /after(Each|All)[[:space:]]*\(/) {
+      if (code ~ /resetGateway/) restored = 1
+      depth = opens - closes; if (depth > 0) in_after = 1; next
+    }
+    if (code ~ /(__unconfigureGatewayForTests|_clearGatewayForTests)[[:space:]]*\(/ && code !~ /import/) calls = calls NR ":" $0 "\n"
+  }
+  END { if (calls != "" && !restored) printf "%s", calls }
+'
+CANDIDATES="$(guard_candidates -E -e "$ENV_MUTATION_PATTERN" -e "$MODULE_MOCK_PATTERN" -e "$ENGINE_PATTERN" -e "$GATEWAY_PATTERN" -e "$VERDICT_PATTERN" -e "$UNCONFIGURE_PATTERN" <<< "$FILE_LIST")"
 
 violations=0
 file_count=0
@@ -258,6 +292,13 @@ while IFS= read -r f; do
       emit_violation "$f" "R6" "currentExitCode() read with no baseline; the verdict is process-global, so the first test reads whatever the previous file in the shard left. Call _resetCliExitVerdictForTests() in beforeEach (or before the run it checks), not only in afterEach" "$unbased"
     fi
   fi
+  # R7: the gateway is unconfigured but no after-hook puts the baseline back.
+  if grep -qE "$UNCONFIGURE_PATTERN" "$f" 2>/dev/null; then
+    unrestored=$(awk "$UNCONFIGURE_CODE_SCAN" "$f" 2>/dev/null || true)
+    if [ -n "$unrestored" ]; then
+      emit_violation "$f" "R7" "__unconfigureGatewayForTests()/_clearGatewayForTests() with no resetGateway() in an afterEach/afterAll hook; an empty gateway is process-global, so the next file's beforeAll sizes its schema from nothing. Add afterEach(() => resetGateway()) (an inline restore does not survive a throw or a -t filter) or rename to *.serial.test.ts" "$unrestored"
+    fi
+  fi
 done <<EOF
 $FILE_LIST
 EOF
@@ -275,6 +316,8 @@ if [ $violations -gt 0 ]; then
   echo "    puts back the preload's baseline gateway for the next file."
   echo "  - For currentExitCode(), reset the verdict in beforeEach (or right"
   echo "    before the run it checks) with _resetCliExitVerdictForTests()."
+  echo "  - For __unconfigureGatewayForTests(), call resetGateway() in"
+  echo "    afterEach or afterAll; it puts back the preload's baseline gateway."
   echo
   echo "Or, if this is a baseline file from before the lint shipped,"
   echo "add it to scripts/check-test-isolation.allowlist (with a TODO"

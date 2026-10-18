@@ -88,6 +88,7 @@ export async function runFenceRepairPhase(engine: BrainEngine | null, opts: Fenc
   const llmUsdPerRepair = v?.llm_usd_per_repair ?? null;
   const scanPartial = v?.partial ?? result.scan?.partial ?? false;
   const stopped = result.stopped;
+  const failed = result.failed.length;
   const held = Object.values(heldByReason).reduce((sum, n) => sum + n, 0);
   const manual = Object.entries(heldByReason).filter(([reason]) => FENCE_REASONS[reason as FenceReason]?.manualOnly).reduce((sum, [, n]) => sum + n, 0);
   const llmDisabled = heldByReason.llm_disabled ?? 0;
@@ -104,6 +105,7 @@ export async function runFenceRepairPhase(engine: BrainEngine | null, opts: Fenc
   const notes = [
     stopped?.reason === 'time_budget' ? `Stopped at the phase time budget (${Math.round(timeBudgetMs / 1000)} s); the next maintenance run resumes.` : '',
     stopped && stopped.reason !== 'time_budget' ? `Stopped (${stopped.reason}): ${stopped.message}` : '',
+    failed ? `${failed} item(s) refused and left unchanged (first: ${result.failed[0]!.item}, ${result.failed[0]!.reason}); the next full scan retries them.` : '',
     scanPartial ? 'The fence census scan is still partial; the next run continues it.' : '',
     llmEnabled ? '' : `Model (Tier 3) repair is off (${FENCE_REPAIR_LLM_KEY} false)${llmDisabled ? `: ${llmDisabled} fence(s) wait for it; ask the user before `
       + `turning it on (\`gbrain config set ${FENCE_REPAIR_LLM_KEY} true\`, paid) or edit them by hand` : ''}.`,
@@ -112,10 +114,10 @@ export async function runFenceRepairPhase(engine: BrainEngine | null, opts: Fenc
   const fix = stopped && stopped.reason !== 'time_budget' ? stopped.fix : manual ? previewFix('Some fences need a manual edit; the preview names each exact fix.') : undefined;
   return {
     ...base,
-    status: stopped && stopped.reason !== 'time_budget' ? 'warn' : 'ok',
+    status: (stopped && stopped.reason !== 'time_budget') || failed ? 'warn' : 'ok',
     summary: [`${parts}.`, ...notes].join(' '),
     details: {
-      mode: result.mode, candidates, repaired, repaired_by_tier: repairedByTier, held_by_reason: heldByReason,
+      mode: result.mode, candidates, repaired, failed, repaired_by_tier: repairedByTier, held_by_reason: heldByReason,
       llm_enabled: llmEnabled, llm_usd: llmUsd, llm_cap_remaining_usd: result.cost.llm_cap_remaining_usd ?? null,
       llm_repairs: v?.llm_repairs ?? 0, llm_usd_per_repair: llmUsdPerRepair, oldest_hold_at: oldestHoldAt, oldest_hold_age_hours: oldestHoldAgeHours,
       scan_partial: scanPartial, complete: result.complete, time_budget_ms: timeBudgetMs, stopped_reason: stopped?.reason ?? null,

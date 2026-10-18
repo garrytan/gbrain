@@ -35,7 +35,8 @@ import { LATEST_VERSION } from '../src/core/migrate.ts';
 import { DEFAULT_EMBEDDING_MODEL } from '../src/core/ai/defaults.ts';
 import { getRecipe } from '../src/core/ai/recipes/index.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import type { AdvisorReport } from '../src/core/advisor/types.ts';
+import { COLLECTORS } from '../src/core/advisor/run.ts';
+import type { AdvisorCollector, AdvisorFinding, AdvisorReport } from '../src/core/advisor/types.ts';
 import { withEnv, emptyHome } from './helpers/with-env.ts';
 
 /** The env key the EFFECTIVE default embedding model requires (dynamic so a
@@ -169,6 +170,99 @@ describe('runAdvisorCli exit-verdict mapping (E2 contract: 0 clean / 1 warn / 2 
       expect(report.worst).toBe('info');
       expect(run.exitCode).toBe(0);
     });
+  });
+});
+
+const CLI_THROWN_SECRET = 'connect ECONNREFUSED postgres://alice-example:hunter2@db.example.invalid:5432/brain';
+
+const throwingCollector: AdvisorCollector = {
+  id: 'throwing-check',
+  collect: async () => { throw new Error(CLI_THROWN_SECRET); },
+};
+const cleanCollector: AdvisorCollector = { id: 'clean-check', collect: async () => [] };
+const criticalCollector: AdvisorCollector = {
+  id: 'critical-check',
+  collect: async () => [{
+    id: 'crit', severity: 'critical', title: 'a critical thing', fix: { command_argv: null },
+    collector: 'critical-check', ask_user: true,
+  } satisfies AdvisorFinding],
+};
+
+/** Swap the shared COLLECTORS array contents for fn (restored in finally). */
+async function withCollectors<T>(swap: AdvisorCollector[], fn: () => Promise<T>): Promise<T> {
+  const saved = COLLECTORS.slice();
+  COLLECTORS.splice(0, COLLECTORS.length, ...swap);
+  try {
+    return await fn();
+  } finally {
+    COLLECTORS.splice(0, COLLECTORS.length, ...saved);
+  }
+}
+
+describe('runAdvisorCli collector failure (#6936: a failed check must not read healthy)', () => {
+  test('--json: a thrown collector → collector_failed warn finding, exit 1, no leaked error text', async () => {
+    await withEnv(hermeticEnv(), async () => {
+      const run = await withCollectors([throwingCollector, cleanCollector], () => runCaptured(fakeEngine(), ['--json']));
+      const report = parseReport(run.stdout);
+      expect(report.findings.map((f) => f.id)).toEqual(['collector_failed:throwing-check']);
+      expect(report.findings[0]!.fix.dispatch_id).toBeUndefined();
+      expect(report.worst).toBe('warn');
+      expect(run.exitCode).toBe(1);
+      const all = run.stdout + run.stderrLines.join('\n');
+      expect(all).not.toContain('hunter2');
+      expect(all).not.toContain('ECONNREFUSED');
+      expect(all).not.toContain('db.example.invalid');
+    });
+  });
+
+  test('human render: not healthy, names the failed check, exit 1, no leaked error text', async () => {
+    await withEnv(hermeticEnv(), async () => {
+      const run = await withCollectors([throwingCollector, cleanCollector], () => runCaptured(fakeEngine(), []));
+      expect(run.stdout).not.toContain('looks healthy');
+      expect(run.stdout).toContain('throwing-check');
+      expect(run.stdout).toContain('could not complete');
+      expect(run.exitCode).toBe(1);
+      const all = run.stdout + run.stderrLines.join('\n');
+      expect(all).not.toContain('hunter2');
+      expect(all).not.toContain('ECONNREFUSED');
+    });
+  });
+
+  test('critical from another collector still wins: worst critical, exit 2, failure also listed', async () => {
+    await withEnv(hermeticEnv(), async () => {
+      const run = await withCollectors([throwingCollector, criticalCollector], () => runCaptured(fakeEngine(), ['--json']));
+      const report = parseReport(run.stdout);
+      expect(report.findings.map((f) => f.id)).toEqual(['crit', 'collector_failed:throwing-check']);
+      expect(report.worst).toBe('critical');
+      expect(run.exitCode).toBe(2);
+    });
+  });
+
+  test('a clean run with no failures still exits 0 and renders healthy', async () => {
+    await withEnv(hermeticEnv(), async () => {
+      const human = await withCollectors([cleanCollector], () => runCaptured(fakeEngine(), []));
+      expect(human.stdout).toContain('looks healthy');
+      expect(human.exitCode).toBe(0);
+      const json = await withCollectors([cleanCollector], () => runCaptured(fakeEngine(), ['--json']));
+      expect(parseReport(json.stdout)).toMatchObject({ findings: [], worst: null });
+      expect(json.exitCode).toBe(0);
+    });
+  });
+
+  test('--apply can never run a collector_failed finding', async () => {
+    const spawnSpy = spyOn(childProcess, 'spawn');
+    try {
+      await withEnv({ ...hermeticEnv(), GBRAIN_NON_INTERACTIVE: '1' }, async () => {
+        const run = await withCollectors([throwingCollector], () =>
+          runCaptured(fakeEngine(), ['--apply', 'collector_failed:throwing-check', '--yes']),
+        );
+        expect(run.exitCode).toBe(2);
+        expect(run.stderrLines.join('\n')).toContain('No runnable finding');
+        expect(spawnSpy.mock.calls.length).toBe(0);
+      });
+    } finally {
+      spawnSpy.mockRestore();
+    }
   });
 });
 

@@ -2,14 +2,18 @@ import type { BrainEngine } from '../core/engine.ts';
 import { execSync, execFileSync, spawnSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync } from 'fs';
 import { basename, join, dirname, resolve } from 'path';
-import { parseSemver, semverGt } from '../core/semver.ts';
+import { isNewerVersion, parseSemver, semverGt } from '../core/semver.ts';
 import { jsonRequested, setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
 import { opError, type OperationError } from '../core/ops/contract.ts';
 import { writeCliError } from '../cli/cli-error.ts';
 import { VERSION } from '../version.ts';
 import type { InteractiveProbe } from '../core/interaction.ts';
-import { migrationLedgerSummary } from '../core/migration-ledger.ts';
+import { forwardProgressPast, migrationLedgerSummary, wedgedLedgerHint } from '../core/migration-ledger.ts';
+import { loadCompletedMigrations } from '../core/preferences.ts';
 import { MIGRATIONS_RUNNING_EXIT_CODE, readMigrationLockHolder } from '../core/migration-orchestration-lock.ts';
+import { loadConfig } from '../core/config.ts';
+import { clearSnooze, clearUpdateCache, writeJustUpgraded, writeSwapReceipt } from '../core/self-upgrade.ts';
+import { MOVEMENT_SUPERVISOR_STEP } from './movement-step.ts';
 import {
   BUN_FLOOR_EXIT_CODE,
   evaluateBunFloor,
@@ -182,9 +186,28 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
 
   if (!upgraded) {
     console.log('Binary: upgrade failed');
+    // #6828: an install step can fail after replacing files, so only a probe
+    // that still reads the old version proves nothing was installed.
+    const observed = verifyUpgrade();
+    if (observed && observed === oldVersion) writeSwapReceipt({ outcome: 'not_installed', from: oldVersion, installed: observed });
     return;
   }
   const newVersion = verifyUpgrade();
+  // #6828: an install step that exits 0 can install nothing (`bun update` on a
+  // moving tag whose head is already installed). A verified version that is
+  // not newer than the one running is no swap: no last_upgrade overwrite, no
+  // JUST_UPGRADED breadcrumb, no cache reset, and the receipt tells the
+  // autopilot channel not to relaunch or record known-bad. A verified version
+  // EQUAL to the running one is the no-op; an unreadable one keeps the legacy path.
+  const newParsed = parseSemver(newVersion);
+  const oldParsed = parseSemver(oldVersion);
+  const unchanged = !!newParsed && !!oldParsed && newParsed.join('.') === oldParsed.join('.');
+  if (unchanged) {
+    console.log(`No newer version was installed: still running gbrain ${newVersion}.`);
+    writeSwapReceipt({ outcome: 'not_installed', from: oldVersion, installed: newVersion });
+  } else {
+    console.log(newVersion ? `Upgrade complete. Now running: gbrain ${newVersion}` : 'Upgrade complete. Could not verify new version.');
+  }
   // #4366: a still-older resolved version means the swap never happened
   // (exact-tag Git pins make `bun update` a successful no-op). Fail loudly
   // and return BEFORE the breadcrumb/cache bookkeeping below, so the
@@ -192,14 +215,14 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   const target = opts.targetVersion;
   if (target && assessUpgradeOutcome(target, newVersion) === 'mismatch') {
     console.error(`Upgrade did not take effect: still running ${newVersion}, expected ${target}.`);
-    console.error('Exact-tag Git installs stay pinned through `bun update`. Reinstall with:');
-    console.error(`  ${bunReinstallCommand(`#v${target}`)}`);
+    const plan = planPinnedReinstall(target, oldVersion);
+    printPinnedReinstall(plan, oldVersion, 'Exact-tag Git installs stay pinned through `bun update`. Reinstall with:');
     recordUpgradeError({
       phase: 'verify-target',
       fromVersion: oldVersion,
       toVersion: target,
       error: `still running ${newVersion} after upgrade`,
-      hint: bunReinstallCommand(`#v${target}`),
+      hint: pinnedReinstallHint(plan),
     });
     setCliExitVerdict(1);
     return;
@@ -207,51 +230,55 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   // #5311: a bare `gbrain upgrade` has no target, so the check above cannot
   // fire, and on an exact-tag Git pin `bun update` is a successful no-op.
   // When the version did not change and the global install pins a tag, say
-  // so and exit non-zero instead of reporting an upgrade.
-  if (!target && method === 'bun' && newVersion && newVersion === oldVersion) {
+  // so and exit non-zero instead of reporting an upgrade. #6718: the target is
+  // the newest PUBLISHED release tag only; with none newer the hint moves the
+  // install off the pin, and the ledger row names no unpublished version.
+  if (!target && method === 'bun' && unchanged) {
     const pin = bunGlobalExactTagPin(resolveBunGlobalRoot());
     if (pin) {
-      const { pendingUpgradeVersion } = await import('../core/self-upgrade.ts');
-      const latest = pendingUpgradeVersion(oldVersion);
-      const reinstall = bunReinstallCommand(latest ? `#v${latest}` : '');
+      const plan = planPinnedReinstall(null, oldVersion);
       console.error(`Upgrade did not take effect: still running ${newVersion}, because the global install is pinned to ${pin} and \`bun update\` keeps a pinned tag.`);
-      console.error('Reinstall to move off the pin:');
-      console.error(`  ${reinstall}`);
+      printPinnedReinstall(plan, oldVersion, 'Reinstall to move off the pin:');
       recordUpgradeError({
         phase: 'verify-pin',
         fromVersion: oldVersion,
-        toVersion: latest ?? 'latest',
+        toVersion: plan.version ?? 'latest',
         error: `pinned to ${pin}; still running ${newVersion} after upgrade`,
-        hint: reinstall,
+        hint: pinnedReinstallHint(plan),
       });
       setCliExitVerdict(1);
       return;
     }
   }
-  // Save old version for post-upgrade migration detection
-  saveUpgradeState(oldVersion, newVersion);
-  // #5855: `--version` answers on any Bun, so prove the new release starts.
-  if (!postSwapSmoke(newVersion, recovery)) return;
+  if (!unchanged) {
+    // Save old version for post-upgrade migration detection
+    saveUpgradeState(oldVersion, newVersion);
+    // #5855: `--version` answers on any Bun, so prove the new release starts.
+    if (!postSwapSmoke(newVersion, recovery)) {
+      writeSwapReceipt({ outcome: 'installed_broken', from: oldVersion, installed: newVersion || null });
+      return;
+    }
 
-  // Self-upgrade breadcrumb + cache reset (covers both the full and
-  // --swap-only paths, so the autopilot silent channel benefits too):
-  //   - write just-upgraded-from so the next invocation's startup hook prints
-  //     the one-time JUST_UPGRADED confirmation;
-  //   - clear the update-check cache + snooze so a now-stale "upgrade
-  //     available" marker doesn't keep nudging after we've already applied it.
-  try {
-    const su = await import('../core/self-upgrade.ts');
-    su.writeJustUpgraded(oldVersion);
-    su.clearUpdateCache();
-    su.clearSnooze();
-  } catch {
-    /* best-effort: never block the upgrade on confirmation bookkeeping */
+    // Self-upgrade breadcrumb + cache reset (covers both the full and
+    // --swap-only paths, so the autopilot silent channel benefits too):
+    //   - write just-upgraded-from so the next invocation's startup hook prints
+    //     the one-time JUST_UPGRADED confirmation;
+    //   - clear the update-check cache + snooze so a now-stale "upgrade
+    //     available" marker doesn't keep nudging after we've already applied it.
+    try {
+      writeJustUpgraded(oldVersion);
+      clearUpdateCache();
+      clearSnooze();
+    } catch {
+      /* best-effort: never block the upgrade on confirmation bookkeeping */
+    }
+    writeSwapReceipt({ outcome: 'installed', from: oldVersion, installed: newVersion || null });
   }
 
-  // --swap-only stops here: the swap is done + smoke-verified, but the
-  // (potentially 30-min) post-upgrade is deferred to the next launch so the
-  // autopilot silent channel can swap + relaunch without freezing its tick.
-  // connectEngine's pending-migration probe + runPostUpgrade run on boot.
+  // --swap-only stops here: the swap is done + smoke-verified (or installed
+  // nothing), but the (potentially 30-min) post-upgrade is deferred to the
+  // next launch so the autopilot silent channel can swap + relaunch without
+  // freezing its tick. connectEngine's pending-migration probe + runPostUpgrade run on boot.
   if (swapOnly) {
     return;
   }
@@ -288,8 +315,10 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   } catch {
     // features scan is best-effort
   }
-  console.log(`Binary: installed ${newVersion || 'a new version (could not verify)'}`);
+  console.log(unchanged ? `Binary: no newer version installed (still ${newVersion})` : `Binary: installed ${newVersion || 'a new version (could not verify)'}`);
   console.log(migrationsLine);
+  // #6317 (I2): upgrade owns no relaunch, so the supervisor proves data movement after it restarts serve and the workers.
+  console.log(`Next: ${MOVEMENT_SUPERVISOR_STEP}`);
 }
 
 /**
@@ -375,17 +404,18 @@ function installedDespiteFailure(oldVersion: string): boolean {
 
 export async function describeMigrationFailure(error: unknown, newVersion: string): Promise<string> {
   if ((error as { status?: number }).status === MIGRATIONS_RUNNING_EXIT_CODE) {
-    const { loadConfig } = await import('../core/config.ts');
     const config = loadConfig();
     const holder = config ? await readMigrationLockHolder(config) : null;
     return `Migrations: running (host ${holder?.host ?? 'unknown'}, pid ${holder?.pid ?? 'unknown'}) in another apply-migrations. `
       + 'Wait for it to finish; `gbrain doctor` shows migration progress.';
   }
-  const wedged = newVersion ? migrationLedgerSummary(newVersion).wedged : [];
-  const command = wedged.length > 0
-    ? `${wedged.map(v => `gbrain apply-migrations --force-retry ${v}`).join(' && ')} && gbrain apply-migrations --yes`
-    : 'gbrain apply-migrations --yes';
-  return `Migrations: failed. Run: ${command}`;
+  const ledger = newVersion ? loadCompletedMigrations() : [];
+  const wedged = newVersion ? migrationLedgerSummary(newVersion).wedged.filter(v => forwardProgressPast(v, ledger) === null) : [];
+  if (wedged.length > 0) {
+    return `Migrations: wedged (${wedged.map(v => `v${v}`).join(', ')} ended partial 3+ times in a row). Fix the cause recorded in ${wedgedLedgerHint()}, then run: `
+      + `${wedged.map(v => `gbrain apply-migrations --force-retry ${v}`).join(' && ')} && gbrain apply-migrations --yes`;
+  }
+  return 'Migrations: failed. Run: gbrain apply-migrations --yes';
 }
 
 export function resolveBunGlobalRoot(): string {
@@ -411,7 +441,101 @@ export function resolveBunGlobalRoot(): string {
  * and bun.lock.
  */
 export function bunReinstallCommand(ref: string): string {
-  return `bun remove -g gbrain && bun add -g github:${GBRAIN_GITHUB_REPO}${ref}`;
+  const tag = /^#(v\d[\w.]*)$/.exec(ref)?.[1];
+  const remove = `bun remove -g gbrain && bun add -g github:${GBRAIN_GITHUB_REPO}${ref}`;
+  return tag ? `${releaseTagProbeCommand(tag)} && ${remove}` : remove;
+}
+
+const GBRAIN_GIT_URL = `https://github.com/${GBRAIN_GITHUB_REPO}`;
+
+/** #6662: the shell guard a printed reinstall runs first, so a missing tag stops it before `bun remove`. */
+function releaseTagProbeCommand(tag: string): string {
+  return `git ls-remote --exit-code --tags ${GBRAIN_GIT_URL} refs/tags/${tag}`;
+}
+
+type GitRunner = (args: string[]) => { status: number | null; stdout: string };
+const runGit: GitRunner = (args) => {
+  const r = spawnSync('git', args, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15_000 });
+  return { status: r.error ? null : r.status, stdout: r.stdout ?? '' };
+};
+
+/**
+ * #6662: whether release tag v<version> exists on GitHub. Master's VERSION is
+ * stamped before release.yml mints the tag (and superseded versions never get
+ * one), so a version can be offered whose tag 404s. `--exit-code` exits 2 when
+ * no ref matches; anything else (no git, offline, timeout) is unknown.
+ */
+export function probeReleaseTag(version: string, git: GitRunner = runGit): 'published' | 'not_published' | 'unknown' {
+  const { status } = git(['ls-remote', '--exit-code', '--tags', GBRAIN_GIT_URL, `refs/tags/v${version}`]);
+  return status === 0 ? 'published' : status === 2 ? 'not_published' : 'unknown';
+}
+
+/** #6662 (D24): the newest published `v<x>` release tag, or null when it cannot be read. */
+export function latestPublishedVersion(git: GitRunner = runGit): string | null {
+  const { status, stdout } = git(['ls-remote', '--tags', '--refs', GBRAIN_GIT_URL, 'v*']);
+  if (status !== 0) return null;
+  let best: string | null = null;
+  for (const line of stdout.split('\n')) {
+    const v = /\trefs\/tags\/v(\d+\.\d+\.\d+(?:\.\d+)?)$/.exec(line.trim())?.[1];
+    if (v && (!best || isNewerVersion(best, v))) best = v;
+  }
+  return best;
+}
+
+export interface PinnedReinstallPlan {
+  /** The tag-pinned version to reinstall, or null when no published newer release is known. */
+  version: string | null;
+  /** The requested version whose tag is confirmed missing on GitHub. */
+  unpublished: string | null;
+}
+
+/**
+ * #6662 (D24): tag-pinned installs reinstall a published tag. A requested
+ * version is kept unless its tag is confirmed missing; then (or with no
+ * request) the newest published tag newer than the running version is used.
+ */
+export function planPinnedReinstall(requested: string | null, oldVersion: string, git: GitRunner = runGit): PinnedReinstallPlan {
+  const state = requested ? probeReleaseTag(requested, git) : null;
+  if (requested && state !== 'not_published') return { version: requested, unpublished: null };
+  const published = latestPublishedVersion(git);
+  return { version: published && isNewerVersion(oldVersion, published) ? published : null, unpublished: requested };
+}
+
+/**
+ * #6662: the reinstall steps to print. The guarded one-liner works in POSIX
+ * shells and PowerShell 7; Windows PowerShell 5.1 has no `&&`, so on Windows
+ * each step is its own line. Always ends with the restore line for oldVersion.
+ */
+export function reinstallHintLines(version: string, oldVersion: string, platform: NodeJS.Platform = process.platform): string[] {
+  const tag = `v${version}`;
+  const restore = `If the add fails, restore ${oldVersion} with: bun add -g github:${GBRAIN_GITHUB_REPO}#v${oldVersion}`;
+  if (platform !== 'win32') return [bunReinstallCommand(`#${tag}`), restore];
+  return [
+    'Run these one at a time, and stop if the first one fails (the tag is not published yet):',
+    releaseTagProbeCommand(tag),
+    'bun remove -g gbrain',
+    `bun add -g github:${GBRAIN_GITHUB_REPO}#${tag}`,
+    restore,
+  ];
+}
+
+function printPinnedReinstall(plan: PinnedReinstallPlan, oldVersion: string, lead: string): void {
+  if (plan.unpublished) {
+    console.error(`v${plan.unpublished} is not published yet: its release tag is not on GitHub (tags are created after the release checks pass). Nothing was removed.`);
+  }
+  if (!plan.version) {
+    if (plan.unpublished) return console.error('Retry `gbrain upgrade` later.');
+    console.error(lead);
+    console.error(`  ${bunReinstallCommand('')}`);
+    return;
+  }
+  console.error(plan.unpublished ? `The newest published release is ${plan.version}. ${lead}` : lead);
+  for (const line of reinstallHintLines(plan.version, oldVersion)) console.error(`  ${line}`);
+}
+
+function pinnedReinstallHint(plan: PinnedReinstallPlan): string {
+  if (plan.version) return bunReinstallCommand(`#v${plan.version}`);
+  return plan.unpublished ? `v${plan.unpublished} is not published yet; retry gbrain upgrade later` : bunReinstallCommand('');
 }
 
 /**
@@ -458,10 +582,8 @@ function findBunInstallRootFromArgv(): string | null {
 function verifyUpgrade(): string {
   try {
     const output = execSync('gbrain --version', { encoding: 'utf-8', timeout: 10_000 }).trim();
-    console.log(`Upgrade complete. Now running: ${output}`);
     return output.replace(/^gbrain\s*/i, '').trim();
   } catch {
-    console.log('Upgrade complete. Could not verify new version.');
     return '';
   }
 }
@@ -539,17 +661,16 @@ function saveUpgradeState(oldVersion: string, newVersion: string) {
  * installs do.
  */
 /**
- * v0.32.3 search-lite mode banner, moved out of runPostUpgrade unchanged.
+ * The search-mode banner for a brain that never chose a mode (copy: core/search/mode-advice.ts).
  */
-async function printSearchModeUpgradeBanner(engine: BrainEngine): Promise<void> {
+export async function printSearchModeUpgradeBanner(engine: BrainEngine): Promise<void> {
   // One-shot: fires at most once per install (state persisted via `search.mode_upgrade_notice_shown`).
-  // Reframes from "behavior is regressing" to "named modes available" per [CDX-1+2+3]: the production
-  // query op still defaults expand=true and limit=20.
+  // A brain with no search.mode resolves to the default (balanced); the banner says so and relays the matrix.
   try {
     const shown = await engine.getConfig('search.mode_upgrade_notice_shown');
     const existingMode = await engine.getConfig('search.mode');
     if (shown !== 'true' && !existingMode) {
-      printSearchModeBanner();
+      await printSearchModeBanner();
       await engine.setConfig('search.mode_upgrade_notice_shown', 'true');
     }
   } catch {
@@ -713,9 +834,14 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         await (await import('../core/feedback/upgrade-notice.ts')).printRetrievalFeedbackUpgradeNotice(engine);
         // Entity mention index: [AGENT] catch-up line while pages are due (best-effort).
         await (await import('../core/mentions/upgrade-notice.ts')).printMentionIndexUpgradeNotice(engine);
+        await (await import('../core/page-state/projection-upgrade-notice.ts')).printProjectionUpgradeNotice(engine); // #6803 image projections: read-only [AGENT] drain preview
+        // Large pages: re-index pages an older gbrain stored chunkless for size (keyless-safe, time-boxed, resumable).
+        await (await import('../core/oversized-backfill.ts')).printOversizedBackfillUpgradeNotice(engine);
 
         // Temporal typed edges: one-shot [AGENT] notice (live-by-default graph reads + relationship check), best-effort.
         await (await import('../core/temporal-edges-upgrade-notice.ts')).printTemporalEdgesUpgradeNotice(engine);
+        // #5575 memory trust: [AGENT] ask_user while unclaimed sources hold legacy rows; never claims or scans (best-effort).
+        await (await import('../core/trust/claim-notice.ts')).printTrustClaimUpgradeNotice(engine);
 
         // Ambient-writeback consent ask (WP8): one-shot for EXISTING installs
         // upgrading into the feature. Personal brains only; double-gated on
@@ -888,43 +1014,15 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   } catch {
     // Fail-open per A18: never crash post-upgrade from the banner.
   }
+  // #6317 (I2): the supervisor's step; bare, so the check inherits its default window.
+  (json ? console.error : console.log)(`Next: ${MOVEMENT_SUPERVISOR_STEP}`);
   if (json) await writeJsonDocument(JSON.stringify(report));
 }
 
-/** The v0.32.3 one-shot search-mode banner post-upgrade prints (stdout; stderr under --json). */
-function printSearchModeBanner(): void {
-  console.log('');
-  console.log('═══════════════════════════════════════════════════════════════');
-  console.log('[gbrain] v0.32.3 added named search modes (conservative/balanced/tokenmax).');
-  console.log('[gbrain] Your current behavior is unchanged — the `query` op still defaults');
-  console.log('[gbrain] expand=true and limit=20, same as v0.31.x.');
-  console.log('═══════════════════════════════════════════════════════════════');
-  console.log('');
-  console.log('[AGENT] Relay this matrix to your operator and ask which mode they want.');
-  console.log('[AGENT] Recommended default: tokenmax (preserves current retrieval shape).');
-  console.log('[AGENT] Run `gbrain config set search.mode <mode>` after they decide.');
-  console.log('');
-  console.log('Per-query cost @ 10K queries/mo (typical single-user volume):');
-  console.log('');
-  console.log('                  Haiku 4.5    Sonnet 4.6   Opus 4.7');
-  console.log('                  ($1/M)       ($3/M)       ($5/M)');
-  console.log('  conservative    $40/mo       $120/mo      $200/mo');
-  console.log('  balanced        $100/mo      $300/mo      $500/mo');
-  console.log('  tokenmax        $200/mo      $600/mo      $1,000/mo');
-  console.log('');
-  console.log('  (scales linearly — multiply by 10 for 100K/mo)');
-  console.log('  25x corner-to-corner spread. Natural diagonal pairings span ~4x.');
-  console.log('');
-  console.log('To pick:');
-  console.log('  gbrain search modes              # see what is running');
-  console.log('  gbrain config set search.mode <conservative|balanced|tokenmax>');
-  console.log('  gbrain search tune               # data-driven recommendations');
-  console.log('');
-  console.log('tokenmax bumps limit to 50 (current default is 20). To preserve');
-  console.log('your EXACT current shape:');
-  console.log('  gbrain config set search.mode tokenmax');
-  console.log('  gbrain config set search.searchLimit 20');
-  console.log('');
+/** The one-shot search-mode banner post-upgrade prints for a brain with no search.mode (stdout; stderr under --json). */
+async function printSearchModeBanner(): Promise<void> {
+  const { upgradeBannerLines } = await import('../core/search/mode-advice.ts');
+  for (const line of upgradeBannerLines()) console.log(line);
 }
 
 interface PostUpgradeReport {

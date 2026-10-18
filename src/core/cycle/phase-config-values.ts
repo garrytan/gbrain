@@ -16,6 +16,15 @@ export const PROPOSE_TAKES_CALL_TIMEOUT_MIN_MS = 1_000;
 /** The gateway's default chat timeout; the gateway still races its own (shorter wins). */
 export const PROPOSE_TAKES_CALL_TIMEOUT_MAX_MS = 300_000;
 
+/** #6297: hours between completed in-cycle patterns runs; 0 turns the cadence off. */
+export const PATTERNS_MIN_INTERVAL_KEY = 'dream.patterns.min_interval_hours';
+export const PATTERNS_MIN_INTERVAL_DEFAULT_HOURS = 6;
+export const PATTERNS_MIN_INTERVAL_MAX_HOURS = 720;
+/** #6297: kilobytes of get_page results a patterns child reads in full; 0 turns the budget off. */
+export const PATTERNS_CHILD_READ_BUDGET_KEY = 'dream.patterns.child_read_budget_kb';
+export const PATTERNS_CHILD_READ_BUDGET_DEFAULT_KB = 200;
+export const PATTERNS_CHILD_READ_BUDGET_MAX_KB = 100_000;
+
 interface PhaseConfigSpec {
   /** Human range, used in the refusal and the stored-value warnings. */
   expected: string;
@@ -33,7 +42,28 @@ const finitePositive = (raw: string): number | null => {
   return text !== '' && Number.isFinite(n) && n > 0 ? n : null;
 };
 
+const wholeInRange = (raw: string, max: number): number | null => {
+  const text = raw.trim();
+  if (!/^\d+$/.test(text)) return null;
+  const n = Number(text);
+  return n <= max ? n : null;
+};
+
 const SPECS: Record<string, PhaseConfigSpec> = {
+  [PATTERNS_MIN_INTERVAL_KEY]: {
+    expected: `a number of hours from 0 to ${PATTERNS_MIN_INTERVAL_MAX_HOURS} (0 turns the cadence off)`,
+    defaultText: String(PATTERNS_MIN_INTERVAL_DEFAULT_HOURS),
+    parse(raw) {
+      const text = raw.trim();
+      const n = Number(text);
+      return text !== '' && Number.isFinite(n) && n >= 0 && n <= PATTERNS_MIN_INTERVAL_MAX_HOURS ? n : null;
+    },
+  },
+  [PATTERNS_CHILD_READ_BUDGET_KEY]: {
+    expected: `a whole number of kilobytes from 0 to ${PATTERNS_CHILD_READ_BUDGET_MAX_KB} (0 turns the budget off)`,
+    defaultText: String(PATTERNS_CHILD_READ_BUDGET_DEFAULT_KB),
+    parse: raw => wholeInRange(raw, PATTERNS_CHILD_READ_BUDGET_MAX_KB),
+  },
   [SYNTHESIZE_CONCEPTS_BUDGET_KEY]: {
     expected: 'a finite number of US dollars above 0',
     defaultText: String(SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD),

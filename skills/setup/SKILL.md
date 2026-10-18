@@ -92,6 +92,10 @@ harness subscription. This choice does not enable paid APIs or capture.
 
 If the user explicitly wants Postgres, follow [engines](https://github.com/garrytan/gbrain/blob/master/docs/ENGINES.md)
 or [postgres-adopt](../postgres-adopt/SKILL.md). `--prefer-postgres` is optional.
+Tell the user once: on Postgres, a source with a checkout starts in classic
+mode, where the checkout is the source of truth and agents save pages as
+committed files followed by `gbrain sync`; direct saves need managed mode
+([unbound sources](https://github.com/garrytan/gbrain/blob/master/docs/guides/write-refusals.md#unbound-sources-on-postgres)).
 Supabase uses a database connection string, not an anon key. Keep credentials
 private and do not copy ambient secrets into file configuration.
 

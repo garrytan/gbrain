@@ -26,7 +26,7 @@ describe('rerankerReadiness — default voyage model', () => {
   test('key present → ready, no fix', () => {
     const r = rerankerReadiness(DEFAULT_RERANKER_MODEL, { VOYAGE_API_KEY: 'pa-test' });
     expect(r.provider).toBe('voyage');
-    expect(r.modelId).toBe('rerank-2.5');
+    expect(r.modelId).toBe('rerank-3-lite');
     expect(r.recipeKnown).toBe(true);
     expect(r.hasTouchpoint).toBe(true);
     expect(r.modelListed).toBe(true);

@@ -14,11 +14,12 @@
  * generated pages that have no file yet, a bounded batch per run. A page the
  * phase retires has its file removed, so sync cannot bring it back.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../spawn.ts';
 import { relative } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { isDbOnly, loadStorageConfig } from '../storage-config.ts';
 import { deletePageThrough, resolvePageWriteTarget, writePageThrough } from '../write-through.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 export const DERIVED_WRITE_THROUGH_KEYS = {
   extract_atoms: 'cycle.extract_atoms.write_through',
@@ -37,7 +38,7 @@ export async function derivedWriteThroughEnabled(engine: BrainEngine, phase: key
 
 function gitIgnores(root: string, filePath: string): boolean {
   try {
-    execFileSync('git', ['-C', root, 'check-ignore', '-q', '--', relative(root, filePath)], { stdio: 'ignore' });
+    execFileSync('git', ['-C', root, 'check-ignore', '-q', '--', relative(root, filePath)], { env: gitChildEnv(), stdio: 'ignore' });
     return true;
   } catch {
     return false;

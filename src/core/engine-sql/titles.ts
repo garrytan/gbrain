@@ -45,15 +45,23 @@ import { searchLimitCap } from '../search/eval-pool-depth.ts';
 import { boundWebsearchQuery, buildOrFallbackWebsearchQuery } from '../search/sql-ranking.ts';
 import { buildSearchTitlesStatement, type SearchTitlesDialect } from '../search/title-statement.ts';
 import { rowToSearchResult } from '../utils.ts';
+import type { ScopedRead } from './brands.ts';
 import type { ScopedReadRunner } from './cjk-search.ts';
 
-export type { SearchTitlesDialect } from '../search/title-statement.ts';
+/**
+ * `chunkManifest` is the chunkManifestReads probe, run inside each attempt's scoped read after its settings, so the
+ * statement timeout bounds it like the title statement (#6495: a probe outside the transaction waited on a lock with
+ * no bound) and it answers for the role that read runs as. Unset reads the manifest.
+ */
+export type SearchTitlesRunDialect = Omit<SearchTitlesDialect, 'chunkManifest'> & {
+  chunkManifest?: (exec: ScopedRead) => Promise<boolean>;
+};
 
 export async function searchTitles(
   scoped: ScopedReadRunner,
   query: string,
   opts: SearchOpts | undefined,
-  dialect: SearchTitlesDialect,
+  dialect: SearchTitlesRunDialect,
 ): Promise<SearchResult[]> {
   // language/symbolKind are chunk-grain code filters with no page-grain
   // meaning; a code-scoped query gets no title candidates rather than rows
@@ -62,23 +70,19 @@ export async function searchTitles(
   if (opts?.limit && opts.limit > searchLimitCap()) {
     console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
   }
-  const statement = buildSearchTitlesStatement(query, opts, dialect);
-  const run = (queryText: string, relaxed: boolean) =>
-    scoped(async (exec) => {
-      if (dialect.statementTimeout) {
-        await exec.query(`SELECT set_config('statement_timeout', $1, true)`, [dialect.statementTimeout]);
-      }
-      const preferIndex = relaxed && dialect.relaxedPrefersIndex && !statement.safeChunks;
-      const previous = preferIndex
-        ? (await exec.query<{ enable_seqscan: string }>(`SHOW enable_seqscan`)).rows[0].enable_seqscan
-        : '';
-      if (preferIndex) await exec.query(`SELECT set_config('enable_seqscan', 'off', true)`);
-      const params = [...statement.params];
-      params[0] = queryText;
-      const { rows } = await exec.unsafe(statement.sql, params);
-      if (preferIndex) await exec.query(`SELECT set_config('enable_seqscan', $1, true)`, [previous]);
-      return rows;
-    });
+  const statementFor = (chunkManifest: boolean) => buildSearchTitlesStatement(query, opts, { ...dialect, chunkManifest });
+  const statement = statementFor(true);
+  const run = (queryText: string, relaxed: boolean) => {
+    const preferIndex = relaxed && dialect.relaxedPrefersIndex && !statement.safeChunks;
+    const settings = {
+      ...(dialect.statementTimeout ? { statement_timeout: dialect.statementTimeout } : {}),
+      ...(preferIndex ? { enable_seqscan: 'off' } : {}),
+    };
+    const params = [...statement.params];
+    params[0] = queryText;
+    return scoped(async exec => (await exec.unsafe(statementFor(await dialect.chunkManifest?.(exec) ?? true).sql, params)).rows,
+      Object.keys(settings).length ? settings : undefined);
+  };
 
   const strictQuery = statement.params[0] as string;
   const rows = await run(strictQuery, false);

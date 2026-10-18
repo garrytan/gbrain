@@ -480,6 +480,50 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
   },
 
   {
+    // Agent and harness transcripts: plain role-prefixed lines
+    // (`user: ...` / `assistant: ...`), the form chat logs and memory
+    // harnesses write. NARROW BY CONSTRUCTION like chatgpt-export: the
+    // speaker is a closed role enumeration, so prose labels (`Note:`,
+    // `Owner:`) never anchor. multi_line + continuation scoring absorbs
+    // multi-paragraph replies, and the two-speaker and preamble guards keep
+    // one illustrative pair inside an article from reading as a transcript.
+    id: 'plain-role-no-time',
+    origin: 'builtin',
+    // Matches: user: text / Assistant: text / human: text / AI: text / system: text
+    regex: /^(user|assistant|human|ai|system)\s*:\s*(.*)$/i,
+    captures: {
+      speaker_group: 1,
+      text_group: 2,
+    },
+    date_source: 'frontmatter',
+    time_format: '24h',
+    timezone_policy: 'utc_assumed_with_warn',
+    multi_line: true,
+    score_continuations_as_body: true,
+    score_continuations_min_distinct_speakers: 2,
+    score_continuations_max_preamble_lines: 5,
+    score_full_body: true,
+    quick_reject: /^(?:user|assistant|human|ai|system)\s*:/i,
+    test_positive: [
+      'user: I moved to Lisbon last month.',
+      'assistant: Congratulations on the move.',
+      'User: thanks',
+      'Human: what changed?',
+      'AI: the office moved.',
+    ],
+    test_negative: [
+      '**User:** bold shape belongs to bold-name-no-time',
+      'Username: alice',
+      'Users: plural label',
+      'Note: a prose label',
+      'Speaker A: phone-call shape',
+      'the user: inline mention',
+    ],
+    source_doc:
+      'Agent / harness transcript shape: plain `user:` / `assistant:` role prefixes with multi-line bodies',
+  },
+
+  {
     // Modern meeting-transcription tools (Circleback, Granola, Zoom)
     // emit `**Speaker Name:** message text` with NO per-line
     // timestamp. Every other built-in requires a time anchor, so this

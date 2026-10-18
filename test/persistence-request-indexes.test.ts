@@ -42,11 +42,12 @@ test('#5762 gbrain repair request-indexes rebuilds a dropped index inline on PGL
   await engine.executeRaw(`DROP INDEX ${NAMES[1]}`);
   const doctor = await requestIndexesCheck(engine);
   expect(doctor).toMatchObject({ status: 'warn', details: { count: 1, repair: 'request-indexes', docs: 'docs/guides/repair.md#request-indexes' } });
-  expect(doctor.message).toBe(`${NAMES[1]} is missing: managed sync checkpoints can time out on a large request table. Rebuild on the brain host: gbrain repair request-indexes --apply`);
+  expect(doctor.message).toBe(`${NAMES[1]} is missing: request-table reads (managed sync checkpoints, page purges, dream synthesis postprocessing) can time out on a large request table. Rebuild on the brain host: gbrain repair request-indexes --apply`);
   const scope = await resolveRepairScope(engine);
   expect(await runRepair(ctx(), requestIndexesRepair, scope, { apply: false })).toMatchObject({ affected: 1, sample: [`(brain):${NAMES[1]}`], cost: { lifetime_ids: 0, embedding_pages: 0 } });
   expect(await runRepair(ctx(), requestIndexesRepair, scope, { apply: true })).toMatchObject({ applied: 1, complete: true });
-  expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid']);
+  // #6511: the online-built set is the checkpoint pair plus the purge slug index.
+  expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid', 'valid', 'valid']);
   expect(await runRepair(ctx(), requestIndexesRepair, scope, { apply: true })).toMatchObject({ affected: 0, applied: 0 });
 }, 60_000);
 

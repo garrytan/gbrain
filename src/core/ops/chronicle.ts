@@ -208,8 +208,24 @@ const ontology_propose: Operation = {
     });
     // A managed brain commits the observation as a coordinated database-only
     // write serialized on the entity's page key; unmanaged brains write directly.
-    const managed = await coordinatedDatabaseWrite(ctx, 'ontology_propose', entitySlug, [entitySlug], merge);
-    return managed ? managed.value : merge(ctx.engine, ctx.sourceId);
+    // #5575: an agent observation never closes a more trusted stint; it is stored contested for the owner (A5).
+    const { ontologyWriteTrust, contestOntologySupersession } = await import('../trust/supersede-handlers.ts');
+    const trust = ontologyWriteTrust(ctx);
+    const guarded = async (engine: typeof ctx.engine, sourceId: string | undefined) => {
+      const result = await merge(engine, sourceId);
+      return { ...result, ...await contestOntologySupersession(engine, sourceId ?? 'default', entitySlug, String(p.dimension), result) };
+    };
+    // W1 #6783 §5.1: the observation's rows live in its provenance's stream and in the closed stint's, so those keys are held too.
+    const { ontologyStreamSlugs, beliefTransaction } = await import('../belief/writers.ts');
+    const { withWriteAttribution } = await import('../persistence/context.ts');
+    const { maintenanceAttribution } = await import('../persistence/attribution.ts');
+    const sourceId = ctx.sourceId ?? 'default';
+    const slugs = await ontologyStreamSlugs(ctx.engine, sourceId, entitySlug, String(p.dimension), typeof p.source === 'string' && p.source ? p.source : 'manual');
+    const managed = await coordinatedDatabaseWrite(ctx, 'ontology_propose', entitySlug, slugs, guarded, trust);
+    if (managed) return managed.value;
+    const attribution = { ...await maintenanceAttribution(ctx.engine), trust };
+    return beliefTransaction(ctx.engine, { sourceId, slugs, publicationId: crypto.randomUUID(), op: 'ontology_propose', remote: ctx.remote !== false },
+      tx => guarded(tx, ctx.sourceId), (tx, run) => withWriteAttribution(tx, attribution, run));
   },
   cliHints: { name: 'ontology-add', positional: ['entity', 'dimension', 'value'] },
 };

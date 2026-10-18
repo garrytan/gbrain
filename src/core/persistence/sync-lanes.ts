@@ -147,7 +147,7 @@ export function laneClaimed(state: LaneState, rows: WriteRequest[]): void { stat
 export function laneFinished(state: LaneState, rows: WriteRequest[]): void { state.claimed.delete(groupKey(rows)); state.begun.delete(groupKey(rows)); }
 
 export class LaneAbort extends Error {
-  constructor(readonly reason: 'predecessor_failed' | 'predecessor_requeued' | 'wounded' | 'order_timeout') { super(`lane ${reason}`); }
+  constructor(readonly reason: 'predecessor_requeued' | 'wounded' | 'order_timeout') { super(`lane ${reason}`); }
 }
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -155,21 +155,26 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  * Lane transactions begin in manifest order: a group whose predecessor this
  * process claimed but has not begun waits for it, so the oldest unfinished
  * group always holds a connection first (transaction-mode poolers included).
+ * Returns the group's begun mark. The caller sets it inside its transaction,
+ * once BEGIN has run, so the next group's BEGIN always comes after this one's
+ * (marking before BEGIN let two lanes race it, #6574 CI).
  */
-export async function awaitLaneBegin(state: LaneState, rows: WriteRequest[], maxMs = 10_000): Promise<void> {
+export async function awaitLaneBegin(state: LaneState, rows: WriteRequest[], maxMs = 10_000): Promise<() => void> {
   const after = predecessorOf(rows);
   const started = Date.now();
   while (after && state.claimed.has(after) && !state.begun.has(after) && Date.now() - started < maxMs) await sleep(20);
   if (after && state.claimed.has(after)) state.overlapped++;
-  state.begun.add(groupKey(rows));
+  const key = groupKey(rows);
+  return () => { state.begun.add(key); };
 }
 
 /**
  * Inside the group transaction, after its members are applied and before the
- * counters are locked: waits until the previous group committed. Each poll is
- * a fresh read of the predecessor's receipt. Throws LaneAbort when the
- * predecessor ended without committing or went back to the queue, when an
- * exclusive writer waits for the worktree's lease, or after `maxMs`.
+ * counters are locked: waits until the previous group ended. Each poll is a
+ * fresh read of the predecessor's receipt. #6712: a predecessor that ended
+ * without committing passes the turn like a committed one (its page's fate is
+ * its own). Throws LaneAbort when the predecessor went back to the queue, when
+ * an exclusive writer waits for the worktree's lease, or after `maxMs`.
  */
 export async function awaitLaneTurn(tx: BrainEngine, state: LaneState, rows: WriteRequest[], maxMs = 60_000): Promise<void> {
   const after = predecessorOf(rows);
@@ -179,8 +184,7 @@ export async function awaitLaneTurn(tx: BrainEngine, state: LaneState, rows: Wri
   for (let poll = 0; ; poll++) {
     const [prior] = await tx.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid',
       [head.principal_kind, head.principal_id, after]);
-    if (prior?.state === 'committed') return;
-    if (prior && ['failed', 'conflict', 'cancelled'].includes(prior.state)) throw new LaneAbort('predecessor_failed');
+    if (prior && ['committed', 'failed', 'conflict', 'cancelled'].includes(prior.state)) return;
     // A released (or not yet admitted) predecessor goes first: this lane gives its slot and claims back, rather than wait on it.
     if (!prior || prior.state === 'queued') throw new LaneAbort('predecessor_requeued');
     if (state.coordinationPath && leaseWounded(state.coordinationPath)) throw new LaneAbort('wounded');

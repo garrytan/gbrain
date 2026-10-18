@@ -3,6 +3,56 @@ import { isNewerVersion, isValidVersionString } from '../core/semver.ts';
 import { fetchChangelog, fetchLatestRelease } from './check-update.ts';
 import { detectInstallMethod, runUpgrade } from './upgrade.ts';
 import { writeUpdateCache } from '../core/self-upgrade.ts';
+import { loadConfig, saveConfig } from '../core/config.ts';
+import { CLEAR_NEVER_INSTALLED_APPLY, findNeverInstalledFailures } from '../core/self-upgrade-recovery.ts';
+
+/**
+ * `gbrain self-upgrade --clear-never-installed [--apply] [--json]` (#6828).
+ * Preview by default: lists each `self_upgrade.failed_versions` entry the
+ * audit proves was never installed (a no-op swap reported "swapped" and the
+ * relaunch of the same version recorded it known-bad) and the entries it
+ * keeps. `--apply` removes exactly the proven entries from the file-plane
+ * config. Reversible: `gbrain config set self_upgrade.failed_versions` puts
+ * one back. Nothing else changes and nothing is installed.
+ */
+function runClearNeverInstalled(apply: boolean, json: boolean): void {
+  const { failed, clearable } = findNeverInstalledFailures();
+  const clear = new Set(clearable.map((e) => e.version));
+  const kept = failed.filter((v) => !clear.has(v));
+  if (apply && clear.size > 0) {
+    const cfg = loadConfig();
+    if (cfg?.self_upgrade) {
+      const remaining = (cfg.self_upgrade.failed_versions ?? []).filter((v) => !clear.has(v));
+      if (remaining.length > 0) cfg.self_upgrade.failed_versions = remaining;
+      else delete cfg.self_upgrade.failed_versions;
+      saveConfig(cfg);
+    }
+  }
+  const applied = apply && clear.size > 0;
+  if (json) {
+    console.log(JSON.stringify({
+      failed_versions: failed,
+      never_installed: clearable,
+      kept,
+      applied,
+      ...(!apply && clear.size > 0 ? { next: { argv: CLEAR_NEVER_INSTALLED_APPLY } } : {}),
+    }, null, 2));
+    return;
+  }
+  if (clear.size === 0) {
+    console.log(failed.length === 0
+      ? 'No known-bad versions are recorded (self_upgrade.failed_versions is empty).'
+      : `No known-bad version is proven never installed; keeping ${failed.join(', ')}.`);
+    return;
+  }
+  console.log(applied ? 'Cleared known-bad versions that were never installed:' : 'Known-bad versions that were never installed:');
+  for (const e of clearable) {
+    console.log(`  ${e.version}: the swap at ${e.swapped_at} left ${e.running} running, and the relaunch of ${e.running} recorded ${e.version} known-bad at ${e.recorded_at}.`);
+  }
+  if (kept.length > 0) console.log(`Kept (not proven never installed): ${kept.join(', ')}`);
+  if (applied) console.log('The auto channel installs them once they are published on its release channel.');
+  else console.log(`Clear them: ${CLEAR_NEVER_INSTALLED_APPLY.join(' ')}`);
+}
 
 /**
  * `gbrain self-upgrade [--check-only] [--force] [--json] [--no-bun-floor-check]`
@@ -21,7 +71,8 @@ import { writeUpdateCache } from '../core/self-upgrade.ts';
 export async function runSelfUpgrade(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'Usage: gbrain self-upgrade [--check-only] [--force] [--json] [--no-bun-floor-check]\n\n' +
+      'Usage: gbrain self-upgrade [--check-only] [--force] [--json] [--no-bun-floor-check]\n' +
+        '       gbrain self-upgrade --clear-never-installed [--apply] [--json]\n\n' +
         'Check for and apply gbrain updates. The shared entry point used by the\n' +
         'CLI startup marker, the gbrain-upgrade agent skill, and the autopilot\n' +
         'silent channel.\n\n' +
@@ -29,8 +80,15 @@ export async function runSelfUpgrade(args: string[]): Promise<void> {
         '  --force       Apply even when not behind.\n' +
         '  --json        Machine-readable output (with --check-only).\n' +
         '  --no-bun-floor-check  Apply even when the target\'s Bun floor cannot be read or is\n' +
-        '                above this host\'s Bun. Docs: docs/guides/upgrades-auto-update.md#bun-floor',
+        '                above this host\'s Bun. Docs: docs/guides/upgrades-auto-update.md#bun-floor\n' +
+        '  --clear-never-installed  Preview the known-bad versions (self_upgrade.failed_versions) the\n' +
+        '                audit proves were never installed; --apply removes exactly those.\n' +
+        '                Docs: docs/guides/upgrades-auto-update.md#known-bad-never-installed',
     );
+    return;
+  }
+  if (args.includes('--clear-never-installed')) {
+    runClearNeverInstalled(args.includes('--apply'), args.includes('--json'));
     return;
   }
 

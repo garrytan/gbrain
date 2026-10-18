@@ -86,6 +86,31 @@ describe('unmanaged brain', () => {
   }, 120_000);
 });
 
+describe('frontmatter links to dotted slugs and Obsidian paths (#6623, #6701)', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  }, 60_000);
+  afterAll(async () => { await engine.disconnect(); }, 60_000);
+
+  test('related: to existing targets creates the edges, leaves no wanted row and the sweep settles', async () => {
+    // Titles are unrelated to the slugs so the title fuzzy step cannot mask the exact-slug step.
+    const targets = ['requests/x/template-1.0.0-alignment', 'companies/acme.io', 'sources/voice/2030-01-01-1200-call-with-mira'];
+    await engine.putPage(targets[0]!, { type: 'note', title: 'Roadmap notes', compiled_truth: 'Target.', timeline: '' });
+    await engine.putPage(targets[1]!, { type: 'company', title: 'Example Co', compiled_truth: 'Target.', timeline: '' });
+    await engine.putPage(targets[2]!, { type: 'note', title: 'Quarterly sync', compiled_truth: 'Target.', timeline: '' });
+    await engine.putPage('products/p1', { type: 'note', title: 'P1', compiled_truth: 'P1.', timeline: '',
+      frontmatter: { related: [targets[0], targets[1], 'sources/voice/2030-01-01 1200 Call with Mira'] } });
+    await extractStaleFromDB(engine, { dryRun: false, jsonMode: true, quiet: true, catchUp: true, includeFrontmatter: true });
+    expect(await engine.executeRaw(`SELECT t.slug AS target FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id
+      WHERE f.slug='products/p1' ORDER BY t.slug`)).toEqual([...targets].sort().map(target => ({ target })));
+    expect(await engine.executeRaw('SELECT target_ref FROM wanted_links')).toEqual([]);
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
+  }, 120_000);
+});
+
 describe('#6228/#6225 targets no page can have, unmanaged brain', () => {
   let engine: PGLiteEngine;
   beforeAll(async () => {

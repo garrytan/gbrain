@@ -401,3 +401,72 @@ describe('schema invalid_params hints (agent contract B3)', () => {
     expect(search.suggestion).toMatch(/^Pass `query` as a string/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #5970 — write operations reject unknown parameters in every mode
+// ---------------------------------------------------------------------------
+
+describe('write operations reject unknown parameters even in warn mode (#5970)', () => {
+  const timelineOp = operations.find(o => o.name === 'add_timeline_entry')!;
+  const searchOp = operations.find(o => o.name === 'search')!;
+
+  test('add_timeline_entry with a complete request plus `content` → invalid_params before the handler runs', async () => {
+    const original = timelineOp.handler;
+    let handlerCalls = 0;
+    timelineOp.handler = async () => { handlerCalls += 1; return { ok: true }; };
+    try {
+      const out = await dispatchToolCall(stubEngine('warn'), 'add_timeline_entry', {
+        slug: 'people/alice-example', date: '2026-04-03', summary: 'Met for coffee', content: 'A long note that belongs in detail',
+      }, DISPATCH_OPTS);
+      expect(out.isError).toBe(true);
+      const envelope = body(out);
+      expect(envelope.error).toBe('invalid_params');
+      expect(handlerCalls).toBe(0);
+      // Privacy: the key rides `suggestion` only; `message` counts and explains why writes reject.
+      expect(envelope.message).toContain('1 unknown parameter');
+      expect(envelope.message).toContain('write operations always reject unknown parameters');
+      expect(envelope.message).not.toContain('content');
+      expect(envelope.suggestion).toContain('Unknown parameter "content"');
+      expect(envelope.suggestion).toContain('did you mean "detail"');
+    } finally {
+      timelineOp.handler = original;
+    }
+  });
+
+  test('a read with an unknown key still succeeds with the warning in warn mode', async () => {
+    const original = searchOp.handler;
+    let handlerCalls = 0;
+    searchOp.handler = async () => { handlerCalls += 1; return { results: [] }; };
+    try {
+      const out = await dispatchToolCall(stubEngine('warn'), 'search', { query: 'alice', limt: 3 }, DISPATCH_OPTS);
+      expect(out.isError ?? false).toBe(false);
+      expect(handlerCalls).toBe(1);
+      expect(out._meta?.warnings).toEqual([{ code: 'unknown_param', param: 'limt', suggestion: 'limit' }]);
+    } finally {
+      searchOp.handler = original;
+    }
+  });
+
+  test('allowlisted `_meta` and `dry_run` are still accepted on a write', async () => {
+    const original = timelineOp.handler;
+    let handlerCalls = 0;
+    timelineOp.handler = async () => { handlerCalls += 1; return { ok: true }; };
+    try {
+      const out = await dispatchToolCall(stubEngine('warn'), 'add_timeline_entry', {
+        slug: 'people/alice-example', date: '2026-04-03', summary: 'Met for coffee', _meta: { session_id: 's' }, dry_run: true,
+      }, DISPATCH_OPTS);
+      expect(out.isError ?? false).toBe(false);
+      expect(handlerCalls).toBe(1);
+    } finally {
+      timelineOp.handler = original;
+    }
+  });
+
+  test('every mutating op in the manifest is covered by the rule (no write keeps the grace period)', () => {
+    const writes = operations.filter(o => o.mutating === true).map(o => o.name);
+    expect(writes).toContain('add_timeline_entry');
+    expect(writes).toContain('put_page');
+    expect(writes).toContain('remember');
+    expect(writes).not.toContain('search');
+  });
+});

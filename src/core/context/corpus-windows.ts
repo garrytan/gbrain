@@ -32,8 +32,12 @@ import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { MAX_TURN_TEXT_CHARS } from '../facts/extract.ts';
 import type { runFactsPipeline } from '../facts/backstop.ts';
+import { withAIInvocationGuard } from '../ai/invocation-guard.ts';
 import { parseCorpusTurns, type CorpusTurn } from './corpus-turns.ts';
-import { CORPUS_PROGRESS_LOCK_SUFFIX, CORPUS_PROGRESS_SUFFIX, parseWbFileName } from './corpus-segments.ts';
+import {
+  CORPUS_FAILURE_SUFFIX, CORPUS_NON_TERMINAL_SKIPS, CORPUS_PROGRESS_LOCK_SUFFIX, CORPUS_PROGRESS_SUFFIX, CORPUS_WINDOW_FAILURE_CAP,
+  corpusFileCompletion, corpusFileFinished, parseCorpusProgress, parseWbFileName, readCorpusFailure, type CorpusFailureRecord,
+} from './corpus-segments.ts';
 
 export { parseCorpusTurns, type CorpusTurn };
 
@@ -80,11 +84,28 @@ export interface CorpusProgress {
   skipped_reason?: string;
   /** #6091: hashes of turns captured or retired under writeback off; never extracted wherever they sit. */
   retired_turns?: string[];
+  /**
+   * #6268: the source (and its incarnation) this file's windows were
+   * extracted into, bound by the first window run. A resume under another
+   * source or a recreated source is refused (`source_changed`).
+   */
+  source?: CorpusProgressSource | null;
   lease: { owner: string; at: number } | null;
 }
 
+export interface CorpusProgressSource {
+  id: string;
+  incarnation: string;
+}
+
 export interface CorpusWindowRun {
-  status: 'complete' | 'partial' | 'aborted' | 'contended' | 'changed';
+  /**
+   * #6786 `unavailable`: the extractor answered a non-terminal skip (no
+   * servable model); nothing was recorded for that window. #6785 `backoff` /
+   * `dead_lettered`: the next window failed after its model call before and
+   * waits out its retry delay, or reached CORPUS_WINDOW_FAILURE_CAP.
+   */
+  status: 'complete' | 'partial' | 'aborted' | 'contended' | 'changed' | 'source_changed' | 'unavailable' | 'backoff' | 'dead_lettered';
   windowsDone: number;
   windowsRemaining: number;
   /** Cumulative across every sweep that worked on this file. */
@@ -199,27 +220,10 @@ export function resumePoint(turns: CorpusTurn[], progress: CorpusProgress | null
   return { turn, offset };
 }
 
-function isFileStat(v: unknown): v is CorpusFileStat {
-  const s = v as CorpusFileStat;
-  return !!s && typeof s === 'object' && Number.isFinite(s.size) && Number.isFinite(s.mtime_ms) && Number.isFinite(s.ino);
-}
-
-function parseProgress(text: string): CorpusProgress | null {
-  let p: CorpusProgress;
-  try { p = JSON.parse(text) as CorpusProgress; } catch { return null; }
-  if (!p || typeof p !== 'object' || p.version !== 1 || !Number.isSafeInteger(p.generation)) return null;
-  if (!Array.isArray(p.turns) || !p.turns.every((t) => t && typeof t.sha256 === 'string')) return null;
-  if (p.continuation !== null && !(p.continuation && typeof p.continuation.turn_sha256 === 'string'
-    && Number.isSafeInteger(p.continuation.stripped_offset))) return null;
-  if (p.finished !== null && !isFileStat(p.finished)) return null;
-  if (!p.totals || !Array.isArray(p.entity_slugs)) return null;
-  return p;
-}
-
 /** The progress sidecar, or null when absent or unparseable (replayed safely). I/O errors throw. */
 export async function readCorpusProgress(full: string): Promise<CorpusProgress | null> {
   try {
-    return parseProgress(await readFile(full + CORPUS_PROGRESS_SUFFIX, 'utf8'));
+    return parseCorpusProgress(await readFile(full + CORPUS_PROGRESS_SUFFIX, 'utf8'));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw e;
@@ -319,27 +323,6 @@ function resultOf(p: CorpusProgress): PipelineResult {
 }
 
 /**
- * How a corpus file that HAS an `.ingested` sidecar stands:
- *   'done'           — its `.progress` finished this exact file (stat match);
- *   'changed'        — rewritten since; re-enter (turn hashes decide resume);
- *   'legacy'         — finished before `.progress` existed and not rewritten
- *                      since (the sidecar is newer than the file): adopt;
- *   'legacy_changed' — finished before `.progress` existed, rewritten after.
- * Writeback turn files are immutable single turns: always 'done'.
- */
-export async function finishedCorpusFileState(
-  full: string,
-  name: string,
-): Promise<'done' | 'changed' | 'legacy' | 'legacy_changed'> {
-  if (parseWbFileName(name)) return 'done';
-  const st = await stat(full);
-  const progress = await readCorpusProgress(full);
-  if (progress) return sameCorpusFileStat(progress.finished, corpusFileStat(st)) ? 'done' : 'changed';
-  const ingested = await stat(full + '.ingested');
-  return ingested.mtimeMs >= st.mtimeMs ? 'legacy' : 'legacy_changed';
-}
-
-/**
  * V6 — record a file finished before windowed extraction as fully extracted
  * at its current turns, so later growth extracts only the appended turns and
  * the head is never re-sent. Writes only when no progress exists yet.
@@ -418,14 +401,204 @@ function mergeTurns(recorded: CorpusProgress['turns'], turns: CorpusTurn[]): Cor
   return [...recorded, ...added].slice(-MAX_RECORDED_TURNS);
 }
 
+/** A failed window is retried on the next sweep, then after this delay, doubling per failure (10, 20, 40 minutes). */
+export const CORPUS_WINDOW_RETRY_BASE_MS = 10 * 60_000;
+/** The failure key of a writeback turn file (one turn, one call). */
+export const CORPUS_TURN_FAILURE_KEY = 'turn';
+
+/** Where a window starts: its first turn's hash and the offset into it. Stable while the file only grows. */
+function windowKey(turns: CorpusTurn[], at: { turn: number; offset: number }): string {
+  return `${turns[at.turn]?.sha256 ?? 'end'}@${at.offset}`;
+}
+
+/**
+ * #6785: whether the window at `key` may be paid for now. A record for
+ * another window or another source incarnation does not apply. A capped
+ * window stays stopped, except once when the extraction-config fingerprint
+ * changed since its last failure.
+ */
+export function corpusFailureGate(
+  record: CorpusFailureRecord | null,
+  key: string,
+  incarnation: string | null,
+  fingerprint: string | null,
+  nowMs: number,
+): 'run' | 'backoff' | 'dead_lettered' {
+  if (!record || record.key !== key || record.source_incarnation !== incarnation) return 'run';
+  if (record.count >= CORPUS_WINDOW_FAILURE_CAP) return rearms(record, fingerprint) ? 'run' : 'dead_lettered';
+  if (record.count === 1) return 'run';
+  return nowMs < record.last_at + CORPUS_WINDOW_RETRY_BASE_MS * 2 ** (record.count - 2) ? 'backoff' : 'run';
+}
+
+function rearms(record: CorpusFailureRecord, fingerprint: string | null): boolean {
+  return !record.rearmed && record.fingerprint !== null && fingerprint !== null && record.fingerprint !== fingerprint;
+}
+
+/**
+ * #6785: whether the file's recorded failing window is backing off or
+ * stopped right now. Selection serves these files last, so stopped files
+ * never take every batch slot from healthy ones.
+ */
+export function corpusFileParked(full: string, fingerprint: string | null, nowMs: number): boolean {
+  const record = readCorpusFailure(full);
+  return !!record && corpusFailureGate(record, record.key, record.source_incarnation, fingerprint, nowMs) !== 'run';
+}
+
+/** Whether a failure record's window (`<turn sha256>@<offset>`) still lies at or after `cursor` in `turns`. */
+function failureAhead(key: string, turns: CorpusTurn[], cursor: { turn: number; offset: number }): boolean {
+  const at = key.lastIndexOf('@');
+  const sha = key.slice(0, at);
+  const offset = Number(key.slice(at + 1));
+  return turns.some((t, i) => t.sha256 === sha && (i > cursor.turn || (i === cursor.turn && offset >= cursor.offset)));
+}
+
+/**
+ * The key of the window the next run of `full` starts at (the frontier a
+ * failure record names), or null when the file or its progress is
+ * unreadable. A writeback turn file's key is always CORPUS_TURN_FAILURE_KEY.
+ */
+export async function corpusFrontierKey(full: string, name: string): Promise<string | null> {
+  if (parseWbFileName(name)) return CORPUS_TURN_FAILURE_KEY;
+  try {
+    const turns = parseCorpusTurns(await readFile(full, 'utf-8'));
+    return windowKey(turns, resumePoint(turns, await readCorpusProgress(full)));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * #6785: run one extraction; when it throws after a chat model call was
+ * admitted (the spend), count a failure against the window at `key`, then
+ * rethrow, whatever ended it (a later call the spend guard refused
+ * included). A throw before any admitted chat call (a refused first call
+ * included), an abort, or capture switched off mid-call (the next sweep
+ * retires the file) costs nothing to retry and is not counted. `paid` says
+ * whether a chat call was admitted, for a caller that must count a failure
+ * after the extraction returned.
+ */
+export async function extractUnderFailureCount<T>(
+  failure: { full: string; record: CorpusFailureRecord | null; key: string; incarnation: string | null; fingerprint: string | null; nowMs: () => number; signal?: AbortSignal },
+  extract: () => Promise<T>,
+): Promise<{ value: T; paid: boolean }> {
+  let paid = false;
+  try {
+    // Inherit: an outer guard admits first, so this one only sees admitted calls.
+    const value = await withAIInvocationGuard(async (call) => {
+      if (call.kind === 'chat') paid = true;
+      return { settle: async () => {} };
+    }, extract, { inherit: true });
+    return { value, paid };
+  } catch (e) {
+    const counts = paid && !failure.signal?.aborted && !(e instanceof Error && e.name === 'AbortError')
+      && (e as { code?: unknown } | null)?.code !== 'ambient_capture_off';
+    if (counts) {
+      await recordCorpusFailure(failure.full, failure.record, failure.key, failure.incarnation, failure.fingerprint, failure.nowMs(), e).catch(() => {});
+    }
+    throw e;
+  }
+}
+
+function failureCode(e: unknown): string {
+  const { code, reason, name } = (e ?? {}) as { code?: unknown; reason?: unknown; name?: unknown };
+  for (const v of [code, reason, name]) if (typeof v === 'string' && /^[A-Za-z][A-Za-z0-9_:-]{0,63}$/.test(v)) return v;
+  return 'error';
+}
+
+/**
+ * #6785: count one failed attempt of the window at `key` (caller holds the
+ * file's `.in-progress` claim). Another window or incarnation starts a new
+ * count; the error label never resets it. A capped window re-armed by a
+ * fingerprint change starts over once. Returns the record written.
+ */
+export async function recordCorpusFailure(
+  full: string,
+  prev: CorpusFailureRecord | null,
+  key: string,
+  incarnation: string | null,
+  fingerprint: string | null,
+  nowMs: number,
+  error: unknown,
+): Promise<CorpusFailureRecord> {
+  const same = !!prev && prev.key === key && prev.source_incarnation === incarnation;
+  const rearm = same && prev!.count >= CORPUS_WINDOW_FAILURE_CAP && rearms(prev!, fingerprint);
+  const record: CorpusFailureRecord = {
+    version: 1,
+    key,
+    source_incarnation: incarnation,
+    count: same && !rearm ? prev!.count + 1 : 1,
+    first_at: same ? prev!.first_at : nowMs,
+    last_at: nowMs,
+    last_code: failureCode(error),
+    fingerprint,
+    rearmed: same ? prev!.rearmed || rearm : false,
+  };
+  const path = full + CORPUS_FAILURE_SUFFIX;
+  const tmp = `${path}.tmp-${process.pid}`;
+  await writeFile(tmp, JSON.stringify(record) + '\n', { mode: 0o600 });
+  await rename(tmp, path);
+  return record;
+}
+
+/** Remove the failure record once its window committed. */
+export async function clearCorpusFailure(full: string): Promise<void> {
+  await rm(full + CORPUS_FAILURE_SUFFIX, { force: true });
+}
+
+/**
+ * #6785/#6786: one writeback turn file (one call, no `.progress`) under the
+ * same failure cap and non-terminal rule as a window. `complete` carries the
+ * result (the caller writes `.ingested`); `unavailable` records nothing.
+ */
+export async function runCorpusTurn(opts: {
+  full: string;
+  signal?: AbortSignal;
+  incarnation: string | null;
+  failures?: { fingerprint: string | null; now?: () => number };
+  /** Incremented before each attempted extraction, thrown or not: the caller's window budget. */
+  attempted?: { count: number };
+  extract: () => Promise<PipelineResult>;
+}): Promise<{ status: 'complete'; result: PipelineResult } | { status: 'unavailable' | 'backoff' | 'dead_lettered' }> {
+  const fingerprint = opts.failures?.fingerprint ?? null;
+  const clock = opts.failures?.now ?? Date.now;
+  const record = readCorpusFailure(opts.full);
+  const gate = corpusFailureGate(record, CORPUS_TURN_FAILURE_KEY, opts.incarnation, fingerprint, clock());
+  if (gate !== 'run') return { status: gate };
+  if (opts.attempted) opts.attempted.count++;
+  const { value: result } = await extractUnderFailureCount(
+    { full: opts.full, record, key: CORPUS_TURN_FAILURE_KEY, incarnation: opts.incarnation, fingerprint, nowMs: clock, signal: opts.signal },
+    opts.extract,
+  );
+  if (result.skipped_reason && CORPUS_NON_TERMINAL_SKIPS.includes(result.skipped_reason)) return { status: 'unavailable' };
+  if (record) await clearCorpusFailure(opts.full).catch(() => {});
+  return { status: 'complete', result };
+}
+
+/**
+ * #6786: a progress whose windows answered a non-terminal skip (pre-#6786
+ * builds recorded those turns as done) is rewound to its retired turns, so
+ * every other turn is extracted again. The source binding, retired turns,
+ * totals and entity links stay.
+ */
+function rewindNonTerminal(cur: CorpusProgress): Omit<CorpusProgress, 'generation'> {
+  if (!cur.skipped_reason || !CORPUS_NON_TERMINAL_SKIPS.includes(cur.skipped_reason)) return cur;
+  const retired = retiredTurns(cur);
+  const { skipped_reason: _dropped, ...rest } = cur;
+  return { ...rest, turns: cur.turns.filter((t) => retired.has(t.sha256)), continuation: null, finished: null };
+}
+
 /**
  * Extract up to `maxWindows` non-empty windows of `raw` (the snapshot whose
  * stat is `fileStat`), committing `.progress` after each one. `complete`
  * means every window of this snapshot is done (the caller may write
  * `.ingested`); `partial` means the cap stopped it; `aborted` means the
  * signal or budget fired (nothing uncommitted is recorded); `contended`
- * means another extractor holds the lease or advanced the progress first.
- * Transport errors throw after the lease is released.
+ * means another extractor holds the lease or advanced the progress first;
+ * `unavailable` means the extractor had no servable model (#6786: nothing is
+ * recorded, and a progress a pre-#6786 build finished that way is rewound
+ * first). Transport and write errors throw after the lease is released; each
+ * one thrown after a model call counts against its window (#6785:
+ * `backoff`, then `dead_lettered` at CORPUS_WINDOW_FAILURE_CAP).
  */
 export async function runCorpusWindows(opts: {
   full: string;
@@ -435,41 +608,66 @@ export async function runCorpusWindows(opts: {
   extract: (text: string) => Promise<PipelineResult>;
   overBudget: () => boolean;
   signal: AbortSignal;
+  /** #6268: the file's resolved source; binds on the first run, refuses a resume under another. */
+  source?: CorpusProgressSource;
+  /** #6785: the extraction-config fingerprint that may re-arm a capped window once (null: never), and the clock. */
+  failures?: { fingerprint: string | null; now?: () => number };
+  /** Incremented before each attempted window, thrown or not: the caller's window budget. */
+  attempted?: { count: number };
 }): Promise<CorpusWindowRun> {
-  const { full, fileStat, signal } = opts;
+  const { full, fileStat, signal, source } = opts;
+  const incarnation = source?.incarnation ?? null;
+  const fingerprint = opts.failures?.fingerprint ?? null;
+  const clock = opts.failures?.now ?? Date.now;
   const owner = `${process.pid}:${randomUUID()}`;
   const now = Date.now();
+  let sourceChanged = false;
   let state = await updateProgress(full, (cur) => {
+    if (source && cur?.source && (cur.source.id !== source.id || cur.source.incarnation !== source.incarnation)) {
+      sourceChanged = true;
+      return null;
+    }
     if (cur?.lease && cur.lease.owner !== owner && now - cur.lease.at < CORPUS_PROGRESS_LEASE_STALE_MS) return null;
-    return { ...(cur ?? freshProgress()), lease: { owner, at: now } };
+    return { ...(cur ? rewindNonTerminal(cur) : freshProgress()), ...(source && !cur?.source ? { source } : {}), lease: { owner, at: now } };
   });
   const turns = parseCorpusTurns(opts.raw);
   if (!state) {
     const cur = await readCorpusProgress(full).catch(() => null);
     const remaining = planCorpusWindows(turns, resumePoint(turns, cur), MAX_TURN_TEXT_CHARS, retiredTurns(cur)).filter((w) => w.text).length;
-    return { status: 'contended', windowsDone: 0, windowsRemaining: remaining, result: resultOf(cur ?? { ...freshProgress(), generation: 0 }) };
+    return { status: sourceChanged ? 'source_changed' : 'contended', windowsDone: 0, windowsRemaining: remaining, result: resultOf(cur ?? { ...freshProgress(), generation: 0 }) };
   }
 
   let cursor = resumePoint(turns, state);
   const windows = planCorpusWindows(turns, cursor, MAX_TURN_TEXT_CHARS, retiredTurns(state));
+  let failure = readCorpusFailure(full);
   let done = 0;
   let status: CorpusWindowRun['status'] = 'complete';
   let holding = true;
   try {
     for (let w = 0; w < windows.length; w++) {
       const win = windows[w];
+      const key = windowKey(turns, cursor);
+      let r: PipelineResult | null = null;
+      let paid = false;
       if (win.text) {
         if (done >= opts.maxWindows) { status = 'partial'; break; }
         if (opts.overBudget() || signal.aborted) { status = 'aborted'; break; }
+        const gate = corpusFailureGate(failure, key, incarnation, fingerprint, clock());
+        if (gate !== 'run') { status = gate; break; }
+        const text = win.text;
+        if (opts.attempted) opts.attempted.count++;
+        const attempt = await extractUnderFailureCount({ full, record: failure, key, incarnation, fingerprint, nowMs: clock, signal }, () => opts.extract(text));
+        r = attempt.value;
+        paid = attempt.paid;
+        if (r.skipped_reason && CORPUS_NON_TERMINAL_SKIPS.includes(r.skipped_reason)) { status = 'unavailable'; break; }
       }
-      const r = win.text ? await opts.extract(win.text) : null;
       if (signal.aborted) { status = 'aborted'; break; }
       const finishedTurns = turns.slice(cursor.turn, win.endOffset === null ? win.endTurn + 1 : win.endTurn);
       const isLast = w === windows.length - 1;
       const expectGen = state.generation;
       const expectLast = lastSha(state);
       const advances = finishedTurns.length > 0 || (win.endOffset ?? 0) > cursor.offset;
-      const next: CorpusProgress | null = await updateProgress(full, (cur) => {
+      const commit = updateProgress(full, (cur) => {
         if (!advances || !cur || cur.generation !== expectGen || lastSha(cur) !== expectLast || cur.lease?.owner !== owner) return null;
         const slugs = r ? [...new Set([...cur.entity_slugs, ...r.entity_slugs])].slice(-MAX_ENTITY_SLUGS) : cur.entity_slugs;
         return {
@@ -486,11 +684,31 @@ export async function runCorpusWindows(opts: {
           lease: isLast ? null : { owner, at: Date.now() },
         };
       });
-      if (!next) { status = 'contended'; break; }
+      // #6785: a paid window whose progress did not commit is paid again next time; it counts like a thrown one.
+      const countUncommitted = (e: unknown) => paid
+        ? recordCorpusFailure(full, failure, key, incarnation, fingerprint, clock(), e).catch(() => failure)
+        : Promise.resolve(failure);
+      let next: CorpusProgress | null;
+      try {
+        next = await commit;
+      } catch (e) {
+        await countUncommitted(e);
+        throw e;
+      }
+      if (!next) {
+        failure = await countUncommitted({ code: 'corpus_progress_contended' });
+        status = 'contended';
+        break;
+      }
       state = next;
       if (r) done++;
       if (isLast) holding = false;
       cursor = win.endOffset === null ? { turn: win.endTurn + 1, offset: 0 } : { turn: win.endTurn, offset: win.endOffset };
+      // This window's record, or one whose window is gone (another incarnation, or its turn no longer ahead), is done.
+      if (failure && (failure.key === key || failure.source_incarnation !== incarnation || !failureAhead(failure.key, turns, cursor))) {
+        await clearCorpusFailure(full).catch(() => {});
+        failure = null;
+      }
     }
     if (windows.length === 0) {
       const finished = await updateProgress(full, (cur) =>
@@ -515,11 +733,14 @@ export async function runCorpusWindows(opts: {
 }
 
 /**
- * The sweep's candidate list: files without `.ingested`, plus finished files
- * that changed since `.progress` recorded them (stat compare, no rehash). A
+ * The sweep's candidate list: files without a final `.ingested` (#6786: a
+ * `chat_unavailable` sidecar is not final), plus finished files that changed
+ * since `.progress` recorded them (stat compare, no rehash). A
  * pre-window `.ingested` file is adopted at its current turns (budget
  * permitting) so only later growth is extracted. Returns the candidates (at
- * most `batchLimit`) and how many files are already done.
+ * most `batchLimit`), the files `parked` says are backing off or stopped
+ * (#6785: at most `batchLimit`, served after every candidate so they never
+ * starve healthy files), and how many files are already done.
  */
 export async function selectCorpusCandidates(
   dir: string,
@@ -527,18 +748,22 @@ export async function selectCorpusCandidates(
   entrySet: Set<string>,
   batchLimit: number,
   overBudget: () => boolean,
-): Promise<{ candidates: string[]; alreadyIngested: number }> {
+  parked: (full: string) => boolean = () => false,
+): Promise<{ candidates: string[]; deferred: string[]; alreadyIngested: number }> {
   const candidates: string[] = [];
+  const deferred: string[] = [];
   let alreadyIngested = 0;
   for (const name of txtFiles) {
     const full = join(dir, name);
-    let state: Awaited<ReturnType<typeof finishedCorpusFileState>> | 'new' = 'new';
+    let state: ReturnType<typeof corpusFileCompletion> = 'pending';
     if (entrySet.has(name + '.ingested')) {
-      state = await finishedCorpusFileState(full, name).catch(() => 'changed' as const);
+      try { state = corpusFileCompletion(full, name); } catch { state = 'changed'; }
       if (state === 'legacy' && !overBudget()) await adoptFinishedCorpusFile(full).catch(() => false);
     }
-    if (state === 'done' || state === 'legacy') alreadyIngested++;
-    else if (candidates.length < batchLimit) candidates.push(name);
+    if (corpusFileFinished(state)) alreadyIngested++;
+    else if (entrySet.has(name + CORPUS_FAILURE_SUFFIX) && parked(full)) {
+      if (deferred.length < batchLimit) deferred.push(name);
+    } else if (candidates.length < batchLimit) candidates.push(name);
   }
-  return { candidates, alreadyIngested };
+  return { candidates, deferred, alreadyIngested };
 }

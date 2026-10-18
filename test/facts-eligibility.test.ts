@@ -166,3 +166,20 @@ describe('isFactsBackstopEligible — quarantined pages', () => {
     expect(isFactsBackstopEligible(slug, parsed)).toEqual({ ok: true });
   });
 });
+
+// #6557: conversation-shaped pages belong to the opt-in conversation facts pipeline; the skip says so.
+describe('isFactsBackstopEligible — conversation pipeline types', () => {
+  test.each(['conversation', 'imessage', 'imessage-daily', 'slack-thread', 'slack-dm-day', 'email-digest'])(
+    '%s skips with reason conversation_pipeline', (type) => {
+      const { parsed } = fixture({ type: type as PageType });
+      expect(isFactsBackstopEligible('conversations/2026-10-01-thread', parsed)).toEqual({ ok: false, reason: 'conversation_pipeline' });
+    });
+  test('a non-conversation ineligible type keeps its kind reason', () => {
+    const { parsed } = fixture({ type: 'person' as PageType });
+    expect(isFactsBackstopEligible('people/alice-example', parsed)).toEqual({ ok: false, reason: 'kind:person' });
+  });
+  test('a conversation page under a rescue prefix stays eligible', () => {
+    const { parsed } = fixture({ type: 'conversation' as PageType });
+    expect(isFactsBackstopEligible('meetings/2026-10-01-call', parsed)).toEqual({ ok: true });
+  });
+});

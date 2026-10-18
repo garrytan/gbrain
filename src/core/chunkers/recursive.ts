@@ -20,8 +20,8 @@
  * Lossless invariant: non-overlapping portions reassemble to original.
  */
 
-import { countCJKAwareWords, isCJKDominant, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } from '../cjk.ts';
-import { estimateEmbedTokens, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
+import { countCJKAwareWords, isCJKDominant, wordStats, concatWordStats, wordCountOf, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } from '../cjk.ts';
+import { estimateEmbedTokens, fitsEmbedTokens, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { credentialSafeProjection } from '../credential-projection.ts';
@@ -70,11 +70,29 @@ export interface ChunkOptions {
    * does not bump.
    */
   maxTokens?: number;
+  /** Record each chunk's projected UTF-8 byte span (TextChunk.byte_start/byte_end). Chunk text is unchanged. */
+  spans?: boolean;
+  /**
+   * A Markdown heading line (or a run of them) joins the running chunk only together with the piece after it;
+   * when that piece starts the next chunk, the headings start it too. Segmented pages only (segment-chunks.ts):
+   * a section appended after a full last chunk then leaves that chunk's text, and its vector, unchanged.
+   */
+  headingsLead?: boolean;
 }
 
 export interface TextChunk {
   text: string;
   index: number;
+  /**
+   * With `spans: true`: the chunk's position in the projected text it was cut
+   * from (credentialSafeProjection(sanitizeRemoteBody(text))), as UTF-8 byte
+   * offsets, end exclusive. The span starts at the chunk's first character and
+   * ends after its last one; whitespace-only runs the chunker folded away lie
+   * inside it, so the span's text equals the chunk text once whitespace is
+   * ignored. Absent when the span cannot be traced.
+   */
+  byte_start?: number;
+  byte_end?: number;
 }
 
 // The strict full-body sanitizer removes all Takes and non-world Facts. Takes content
@@ -90,6 +108,24 @@ export interface TextChunk {
 // rows go.
 
 export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
+  if (!text || text.trim().length === 0) return [];
+
+  // v0.28: strip fenced takes blocks BEFORE chunking. Takes are retrieval-
+  // accessible only via the takes table; their content must not appear in
+  // content_chunks where the per-token allow-list cannot reach.
+  //
+  // v0.32.2: also strip private facts (Codex R2-#1). World facts stay so
+  // search retains its public-knowledge surface; private rows are filtered
+  // out at the fence-row level via stripFactsFence({keepVisibility:['world']}).
+  return chunkProjectedText(credentialSafeProjection(sanitizeRemoteBody(text)), opts);
+}
+
+/**
+ * chunkText on text that is already the retrieval projection (sanitized and
+ * credential-safe): segmented pages build it per segment from stored regions
+ * (page-body/segment-chunks.ts). Spans index `stripped`.
+ */
+export function chunkProjectedText(stripped: string, opts?: ChunkOptions): TextChunk[] {
   const chunkSize = opts?.chunkSize || 300;
   const chunkOverlap = opts?.chunkOverlap || 50;
   const maxChars = opts?.maxChars || 6000;
@@ -100,37 +136,123 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
     ? Math.min(opts.maxTokens, DEFAULT_MAX_CHUNK_TOKENS)
     : DEFAULT_MAX_CHUNK_TOKENS;
 
-  if (!text || text.trim().length === 0) return [];
-
-  // v0.28: strip fenced takes blocks BEFORE chunking. Takes are retrieval-
-  // accessible only via the takes table; their content must not appear in
-  // content_chunks where the per-token allow-list cannot reach.
-  //
-  // v0.32.2: also strip private facts (Codex R2-#1). World facts stay so
-  // search retains its public-knowledge surface; private rows are filtered
-  // out at the fence-row level via stripFactsFence({keepVisibility:['world']}).
-  const stripped = credentialSafeProjection(sanitizeRemoteBody(text));
   if (!stripped || stripped.trim().length === 0) return [];
 
   const wordCount = countWords(stripped);
   if (wordCount <= chunkSize) {
     // Single-chunk path: still apply the maxChars cap.
-    const capped = capByChars(stripped.trim(), maxChars, maxTokens);
-    return capped.map((t, i) => ({ text: t, index: i }));
+    const whole = trimmedRun({ text: stripped, segs: [{ t: 0, s: 0, n: stripped.length }] });
+    return finish(stripped, capByChars(whole.text, maxChars, maxTokens).map(c => placed(whole, c)), opts?.spans === true);
   }
 
   // Recursively split, then greedily merge to target size
-  const pieces = recursiveSplit(stripped, 0, chunkSize);
-  const merged = greedyMerge(pieces, chunkSize);
+  const pieces = recursiveSplit(stripped, 0, chunkSize, 0);
+  const merged = greedyMerge(pieces, chunkSize, opts?.headingsLead === true);
   const withOverlap = applyOverlap(merged, chunkOverlap);
   // v0.32.7: hard char cap. Catches pathological CJK + whitespace-less text
   // that the word-level pipeline can't bound (a single Chinese paragraph can
   // exceed 8192 OpenAI embedding tokens at any word count).
-  const capped: string[] = [];
+  const capped: Placed[] = [];
   for (const chunk of withOverlap) {
-    capped.push(...capByChars(chunk.trim(), maxChars, maxTokens));
+    const run = trimmedRun(chunk);
+    for (const c of capByChars(run.text, maxChars, maxTokens)) capped.push(placed(run, c));
   }
-  return capped.map((t, i) => ({ text: t, index: i }));
+  return finish(stripped, capped, opts?.spans === true);
+}
+
+/** A substring of the projected text: `s` is its UTF-16 offset there. */
+interface Piece { text: string; s: number }
+/** `n` code units of a run's text at run offset `t` sit at projected offset `s`. */
+interface Seg { t: number; s: number; n: number }
+/** Text assembled from projected substrings (whitespace-only gaps may be folded away). */
+interface Run { text: string; segs: Seg[] }
+/** A run slice: `at` is its offset in the run's text. */
+interface Slice { text: string; at: number }
+interface Placed { text: string; start: number | null; end: number | null }
+
+/**
+ * @internal Work the span bookkeeping does, for the linearity test: seg entries
+ * visited or copied (`segs`) and steps the UTF-8 offset walk takes
+ * (`units`). Counts, not time, so a busy machine cannot move them.
+ */
+export const spanWork = { segs: 0, units: 0 };
+
+function runOffset(run: Run, t: number): number | null {
+  for (const seg of run.segs) {
+    spanWork.segs++;
+    if (t >= seg.t && t < seg.t + seg.n) return seg.s + (t - seg.t);
+  }
+  return null;
+}
+
+function placed(run: Run, c: Slice): Placed {
+  if (c.text.length === 0) return { text: c.text, start: null, end: null };
+  const start = runOffset(run, c.at);
+  const last = runOffset(run, c.at + c.text.length - 1);
+  return { text: c.text, start, end: last === null ? null : last + 1 };
+}
+
+function trimmedRun(run: Run): Run {
+  const text = run.text.trim();
+  const lead = run.text.length - run.text.trimStart().length;
+  return lead === 0 && text.length === run.text.length ? run : sliceRun(run, lead, lead + text.length);
+}
+
+function sliceRun(run: Run, from: number, to: number): Run {
+  spanWork.segs += run.segs.length;
+  const segs: Seg[] = [];
+  for (const seg of run.segs) {
+    const a = Math.max(from, seg.t);
+    const b = Math.min(to, seg.t + seg.n);
+    if (a < b) segs.push({ t: a - from, s: seg.s + (a - seg.t), n: b - a });
+  }
+  return { text: run.text.slice(from, to), segs };
+}
+
+function joinRuns(a: Run, b: Run): Run {
+  spanWork.segs += a.segs.length + b.segs.length;
+  return { text: a.text + b.text, segs: [...a.segs, ...b.segs.map(seg => ({ ...seg, t: seg.t + a.text.length }))] };
+}
+
+/** Chunks with indexes, plus UTF-8 spans in the projected text when asked for (one pass over it). */
+function finish(stripped: string, chunks: Placed[], spans: boolean): TextChunk[] {
+  const out: TextChunk[] = chunks.map((c, i) => ({ text: c.text, index: i }));
+  if (!spans) return out;
+  const wanted: number[] = [];
+  for (const c of chunks) if (c.start !== null && c.end !== null) wanted.push(c.start, c.end);
+  const bytes = utf16ToUtf8Offsets(stripped, wanted);
+  chunks.forEach((c, i) => {
+    if (c.start === null || c.end === null) return;
+    out[i].byte_start = bytes.get(c.start);
+    out[i].byte_end = bytes.get(c.end);
+  });
+  return out;
+}
+
+/** UTF-8 byte offset of each UTF-16 offset (offsets inside a surrogate pair count from the pair start). */
+export function utf16ToUtf8Offsets(text: string, offsets: readonly number[]): Map<number, number> {
+  const sorted = [...new Set(offsets)].sort((a, b) => a - b);
+  const out = new Map<number, number>();
+  let bytes = 0;
+  let i = 0;
+  let walked = 0;
+  for (const target of sorted) {
+    while (i < target && i < text.length) {
+      walked++;
+      const c = text.charCodeAt(i);
+      if (c < 0x80) bytes += 1;
+      else if (c < 0x800) bytes += 2;
+      else if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length) {
+        const d = text.charCodeAt(i + 1);
+        if (d >= 0xdc00 && d <= 0xdfff) { if (i + 1 === target) { out.set(target, bytes); } bytes += 4; i += 2; continue; }
+        bytes += 3;
+      } else bytes += 3;
+      i++;
+    }
+    if (!out.has(target)) out.set(target, bytes);
+  }
+  spanWork.units += walked;
+  return out;
 }
 
 /**
@@ -164,8 +286,9 @@ function capByChars(
   maxChars: number,
   maxTokens: number = DEFAULT_MAX_CHUNK_TOKENS,
   knownEst?: number,
-): string[] {
+): Slice[] {
   if (text.length === 0) return [];
+  if (knownEst === undefined && text.length <= maxChars && fitsEmbedTokens(text, maxTokens)) return [{ text, at: 0 }];
   const est = knownEst ?? probeEmbedTokens(text);
   const window = est <= maxTokens
     ? maxChars
@@ -174,9 +297,9 @@ function capByChars(
     // Emitting the text whole is the one path that skips the per-slice
     // re-check below, so a PROBED estimate has to be confirmed exactly first:
     // a sparse ASCII head can under-read a dense CJK tail.
-    if (knownEst !== undefined || text.length <= DENSITY_PROBE_CHARS) return [text];
+    if (knownEst !== undefined || text.length <= DENSITY_PROBE_CHARS) return [{ text, at: 0 }];
     const exact = estimateEmbedTokens(text);
-    return exact <= maxTokens ? [text] : capByChars(text, maxChars, maxTokens, exact);
+    return exact <= maxTokens ? [{ text, at: 0 }] : capByChars(text, maxChars, maxTokens, exact);
   }
   // The stride keeps its nominal window-minus-overlap value. Evening the
   // windows out (as the header-budget hard split does) is WRONG here: that
@@ -187,20 +310,22 @@ function capByChars(
   // that trade and is the behavior this loop has always had.
   const overlap = Math.min(500, Math.floor(window / 10));
   const stride = Math.max(1, window - overlap);
-  const out: string[] = [];
+  const out: Slice[] = [];
   let i = 0;
   while (i < text.length) {
     const end = safeSplitIndex(text, Math.min(text.length, i + window));
-    const slice = text.slice(i, end).trim();
+    const raw = text.slice(i, end);
+    const slice = raw.trim();
+    const at = i + raw.length - raw.trimStart().length;
     if (slice.length > 0) {
-      const sliceEst = estimateEmbedTokens(slice);
+      const sliceEst = fitsEmbedTokens(slice, maxTokens) ? 0 : estimateEmbedTokens(slice);
       if (sliceEst > maxTokens) {
         // Denser than the text average — re-derive locally, reusing the exact
         // figure just measured (it also guarantees window < slice.length, so
         // the recursion strictly shrinks).
-        out.push(...capByChars(slice, maxChars, maxTokens, sliceEst));
+        for (const part of capByChars(slice, maxChars, maxTokens, sliceEst)) out.push({ text: part.text, at: at + part.at });
       } else {
-        out.push(slice);
+        out.push({ text: slice, at });
       }
     }
     if (end >= text.length) break;
@@ -229,29 +354,29 @@ function probeEmbedTokens(text: string): number {
   return Math.ceil((estimateEmbedTokens(head) * text.length) / head.length);
 }
 
-function recursiveSplit(text: string, level: number, target: number): string[] {
+function recursiveSplit(text: string, level: number, target: number, base: number): Piece[] {
   if (level >= DELIMITERS.length) {
     // Level 4: split on whitespace
-    return splitOnWhitespace(text, target);
+    return splitOnWhitespace(text, target, base);
   }
 
   const delimiters = DELIMITERS[level];
   if (delimiters.length === 0) {
-    return splitOnWhitespace(text, target);
+    return splitOnWhitespace(text, target, base);
   }
 
-  const pieces = splitAtDelimiters(text, delimiters);
+  const pieces = splitAtDelimiters(text, delimiters, base);
 
   // If splitting didn't help (only 1 piece), try next level
   if (pieces.length <= 1) {
-    return recursiveSplit(text, level + 1, target);
+    return recursiveSplit(text, level + 1, target, base);
   }
 
   // Check if any piece is still too large, recurse deeper
-  const result: string[] = [];
+  const result: Piece[] = [];
   for (const piece of pieces) {
-    if (countWords(piece) > target) {
-      result.push(...recursiveSplit(piece, level + 1, target));
+    if (countWords(piece.text) > target) {
+      result.push(...recursiveSplit(piece.text, level + 1, target, piece.s));
     } else {
       result.push(piece);
     }
@@ -262,43 +387,45 @@ function recursiveSplit(text: string, level: number, target: number): string[] {
 
 /**
  * Split text at delimiter boundaries, preserving delimiters at the end
- * of the piece that precedes them (lossless).
+ * of the piece that precedes them (lossless). Each delimiter's next
+ * occurrence is searched once and reused until the cursor passes it, so the
+ * scan is linear in the text.
+ *
+ * @internal exported for the differential test.
  */
-function splitAtDelimiters(text: string, delimiters: string[]): string[] {
-  const pieces: string[] = [];
-  let remaining = text;
+export function splitAtDelimiters(text: string, delimiters: string[], base: number): Array<{ text: string; s: number }> {
+  const pieces: Piece[] = [];
+  const next = delimiters.map(() => -2);
+  let pos = 0;
 
-  while (remaining.length > 0) {
+  while (pos < text.length) {
     let earliest = -1;
     let earliestDelim = '';
 
-    for (const delim of delimiters) {
-      const idx = remaining.indexOf(delim);
+    for (let d = 0; d < delimiters.length; d++) {
+      if (next[d] !== -1 && next[d] < pos) next[d] = text.indexOf(delimiters[d], pos);
+      const idx = next[d];
       if (idx !== -1 && (earliest === -1 || idx < earliest)) {
         earliest = idx;
-        earliestDelim = delim;
+        earliestDelim = delimiters[d];
       }
     }
 
     if (earliest === -1) {
-      pieces.push(remaining);
+      pieces.push({ text: text.slice(pos), s: base + pos });
       break;
     }
 
     // Include the delimiter with the preceding text
-    const piece = remaining.slice(0, earliest + earliestDelim.length);
+    const end = earliest + earliestDelim.length;
+    const piece = text.slice(pos, end);
     if (piece.trim().length > 0) {
-      pieces.push(piece);
+      pieces.push({ text: piece, s: base + pos });
     }
-    remaining = remaining.slice(earliest + earliestDelim.length);
+    pos = end;
   }
 
-  // Handle trailing content
-  if (remaining.trim().length > 0 && !pieces.includes(remaining)) {
-    // Already added above
-  }
-
-  return pieces.filter(p => p.trim().length > 0);
+  return pieces.filter(p => p.text.trim().length > 0);
 }
 
 /**
@@ -308,16 +435,16 @@ function splitAtDelimiters(text: string, delimiters: string[]): string[] {
  * boundaries so we still bound chunk size and the chunker makes forward
  * progress. The downstream maxChars cap tightens this further.
  */
-function splitOnWhitespace(text: string, target: number): string[] {
-  const words = text.match(/\S+\s*/g) || [];
+function splitOnWhitespace(text: string, target: number, base: number): Piece[] {
+  const words = [...text.matchAll(/\S+\s*/g)];
 
   // No whitespace tokens, OR a single token longer than `target` chars
   // (greedy /\S+/g returns a CJK paragraph as one "word"). Slice by char.
   const noUsefulWhitespace =
-    words.length === 0 || (words.length === 1 && words[0].length > target);
+    words.length === 0 || (words.length === 1 && words[0][0].length > target);
   if (noUsefulWhitespace) {
     if (text.trim().length === 0) return [];
-    const pieces: string[] = [];
+    const pieces: Piece[] = [];
     const charsPerPiece = Math.max(1, target);
     // Cursor advances to wherever safeSplitIndex actually cut, so no astral
     // pair (emoji, non-BMP CJK) is halved and no code unit is skipped or
@@ -327,17 +454,21 @@ function splitOnWhitespace(text: string, target: number): string[] {
       let end = safeSplitIndex(text, Math.min(text.length, i + charsPerPiece));
       if (end <= i) end = Math.min(text.length, i + 2);
       const slice = text.slice(i, end);
-      if (slice.trim().length > 0) pieces.push(slice);
+      if (slice.trim().length > 0) pieces.push({ text: slice, s: base + i });
       i = end;
     }
     return pieces;
   }
 
-  const pieces: string[] = [];
+  // Consecutive matches are contiguous, so a run of words is one substring.
+  const pieces: Piece[] = [];
   for (let i = 0; i < words.length; i += target) {
-    const slice = words.slice(i, i + target).join('');
+    const first = words[i];
+    const last = words[Math.min(i + target, words.length) - 1];
+    const from = first.index!;
+    const slice = text.slice(from, last.index! + last[0].length);
     if (slice.trim().length > 0) {
-      pieces.push(slice);
+      pieces.push({ text: slice, s: base + from });
     }
   }
   return pieces;
@@ -345,25 +476,50 @@ function splitOnWhitespace(text: string, target: number): string[] {
 
 /**
  * Greedily merge adjacent pieces until each chunk is near the target size.
- * Avoids creating chunks larger than target * 1.5.
+ * Avoids creating chunks larger than target * 1.5. The running chunk's word
+ * stats grow with it (concatWordStats), so each piece is counted once instead
+ * of recounting the whole chunk on every merge.
  */
-function greedyMerge(pieces: string[], target: number): string[] {
+const HEADING_PIECE = /^#{1,6}[ \t][^\n]*$/;
+const isHeadingPiece = (p: Piece) => HEADING_PIECE.test(p.text.trim());
+
+function greedyMerge(pieces: Piece[], target: number, headingsLead = false): Run[] {
   if (pieces.length === 0) return [];
 
-  const result: string[] = [];
-  let current = pieces[0];
+  const result: Run[] = [];
+  const limit = Math.ceil(target * 1.5);
+  const runOf = (p: Piece): Run => ({ text: p.text, segs: [{ t: 0, s: p.s, n: p.text.length }] });
+  let current = runOf(pieces[0]);
+  let currentStats = wordStats(current.text);
 
   for (let i = 1; i < pieces.length; i++) {
-    const combined = current + pieces[i];
-    if (countWords(combined) <= Math.ceil(target * 1.5)) {
-      current = combined;
+    const pieceStats = wordStats(pieces[i].text);
+    const combinedStats = concatWordStats(currentStats, pieceStats);
+    // A run of heading pieces is checked once, at its first piece, together with the piece after the run.
+    let leads = false;
+    if (headingsLead && isHeadingPiece(pieces[i]) && !isHeadingPiece(pieces[i - 1])) {
+      let runStats = combinedStats;
+      let j = i + 1;
+      for (; j < pieces.length && isHeadingPiece(pieces[j]); j++) runStats = concatWordStats(runStats, wordStats(pieces[j].text));
+      if (j < pieces.length) runStats = concatWordStats(runStats, wordStats(pieces[j].text));
+      leads = j < pieces.length && wordCountOf(runStats) > limit;
+    }
+    if (!leads && wordCountOf(combinedStats) <= limit) {
+      // `current` is this loop's own run: extend it in place (copying its segs per merge is quadratic in
+      // pieces per chunk), and grow the last seg when the piece follows it directly in the projected text.
+      const last = current.segs[current.segs.length - 1];
+      if (last.s + last.n === pieces[i].s) last.n += pieces[i].text.length;
+      else current.segs.push({ t: current.text.length, s: pieces[i].s, n: pieces[i].text.length });
+      current.text += pieces[i].text;
+      currentStats = combinedStats;
     } else {
       result.push(current);
-      current = pieces[i];
+      current = runOf(pieces[i]);
+      currentStats = pieceStats;
     }
   }
 
-  if (current.trim().length > 0) {
+  if (current.text.trim().length > 0) {
     result.push(current);
   }
 
@@ -374,14 +530,20 @@ function greedyMerge(pieces: string[], target: number): string[] {
  * Apply sentence-aware trailing overlap.
  * The last N words of chunk[i] are prepended to chunk[i+1].
  */
-function applyOverlap(chunks: string[], overlapWords: number): string[] {
+function applyOverlap(chunks: Run[], overlapWords: number): Run[] {
   if (chunks.length <= 1 || overlapWords <= 0) return chunks;
 
-  const result: string[] = [chunks[0]];
+  const result: Run[] = [chunks[0]];
 
   for (let i = 1; i < chunks.length; i++) {
-    const prevTrailing = extractTrailingContext(chunks[i - 1], overlapWords);
-    result.push(prevTrailing + chunks[i]);
+    const prev = chunks[i - 1];
+    const prevTrailing = extractTrailingContext(prev.text, overlapWords);
+    // The trailing context is always a suffix of the previous chunk; a run
+    // whose suffix cannot be traced keeps its text and loses its span.
+    const tail = prev.text.endsWith(prevTrailing)
+      ? sliceRun(prev, prev.text.length - prevTrailing.length, prev.text.length)
+      : { text: prevTrailing, segs: [] };
+    result.push(joinRuns(tail, chunks[i]));
   }
 
   return result;

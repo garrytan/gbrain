@@ -23,7 +23,7 @@ import {
   DEFAULT_SOURCE_ID,
   RENAME_SENTINEL_PREFIX,
 } from '../../core/sync.ts';
-import { CHUNKER_VERSION } from '../../core/chunkers/code.ts';
+import { chunkerStamp } from '../../core/chunkers/code.ts';
 import { autoConcurrency } from '../../core/sync-concurrency.ts';
 import { slog, serr } from '../../core/console-prefix.ts';
 import { newestCommitMs } from '../../core/source-health.ts';
@@ -160,7 +160,7 @@ export async function performFullSync(
     await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(gitContextRoot), gitContextRoot);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
-    await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+    await writeChunkerVersion(engine, opts.sourceId, chunkerStamp());
   };
 
   const fullGate = await applySyncFailureGate({
@@ -219,6 +219,10 @@ export async function performFullSync(
     }
   }
 
+  // #6722: a full sync walked every page of the source, so its large and embed_skip pages are all reported.
+  const { readPageSizeStates, addSizeState } = await import('../../core/page-embedding-budget.ts');
+  const sizeStates = (await readPageSizeStates(engine, fullSourceId, null))
+    .reduce<import('../../core/page-embedding-budget.ts').SyncSizeStates | undefined>((tally, state) => addSizeState(tally, state), undefined);
   return {
     status: 'first_sync',
     fromCommit: null,
@@ -230,6 +234,7 @@ export async function performFullSync(
     chunksCreated: result.chunksCreated,
     embedded,
     pagesAffected: [],
+    ...(sizeStates ? { size_states: sizeStates } : {}),
     // Warning aggregates ride the result for worker/JSON consumers — a full
     // sync that only prints to a daemon's stderr hides them from cron
     // topologies (codex re-review; same rationale as the incremental path).

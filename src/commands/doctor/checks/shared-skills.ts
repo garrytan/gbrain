@@ -3,6 +3,7 @@ import { readSharedSkillsSourceView } from '../../../core/shared-skills/source-o
 import { SHARED_SKILLS_OPT_OUT_DOCS } from '../../../core/shared-skills/setup-source-policy.ts';
 import type { Check } from '../../doctor.ts';
 import { agentFix } from '../check-fix.ts';
+import { isMissingSchemaObject } from '../../../core/utils.ts';
 
 /**
  * Sources opted out of shared-skills adoption (`config.shared_skills=false`)
@@ -28,7 +29,7 @@ export async function checkSharedSkillsSources(engine: BrainEngine): Promise<Che
         'Shows the parked bound and the three ways to resume (raise the bound, opt out, or shrink and release); it changes nothing.', 'shared_skills_sources', { docs: SHARED_SKILLS_OPT_OUT_DOCS }),
     };
   } catch (error) {
-    if (/does not exist|no such table/i.test(String(error))) return null;
+    if (isMissingSchemaObject(error, 'column', ['archived', 'incarnation'])) return null;
     return { name: 'shared_skills_sources', status: 'warn', fix_unavailable_reason: 'check_errored',
       message: `Shared-skills source settings could not be read: ${error instanceof Error ? error.message : String(error)}. Health is unknown.` };
   }

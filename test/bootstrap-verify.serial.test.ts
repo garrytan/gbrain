@@ -331,6 +331,53 @@ describe('verifyWorkspace — write-through disabled by config', () => {
   }, 240_000);
 });
 
+describe('verifyWorkspace — pending corpus transcripts (#6786)', () => {
+  test('a keyed report in a process that cannot serve the extraction model leaves pending transcripts pending', async () => {
+    const corpusDir = mkdtempSync(join(tmpdir(), 'gb-verify-corpus-'));
+    const spool = join(corpusDir, 'sourced');
+    mkdirSync(spool, { recursive: true });
+    const transcript = join(spool, 'sess-verify-example.src-workspace.txt');
+    writeFileSync(transcript, '[user]\nI keep a written log of every product decision.\n\n[assistant]\nNoted.\n');
+    const KEYED: CapabilityReport = { embeddings: { available: false }, extraction: { available: true, provider: 'anthropic' }, search: 'keyword-only', mode: 'keyed' };
+    await engine.setConfig('dream.synthesize.session_corpus_dir', corpusDir);
+    try {
+      // verify's engine never configures the gateway, so no extraction model is servable.
+      const res = await verifyWorkspace(engine, ws, { sourceId: 'workspace', gbrainHomeDir: home, capabilities: KEYED });
+      expect(check(res.checks, 'graph_floor')[0].ok).toBe(true);
+      expect(existsSync(`${transcript}.ingested`)).toBe(false);
+      expect(existsSync(`${transcript}.progress`)).toBe(false);
+    } finally {
+      await engine.unsetConfig('dream.synthesize.session_corpus_dir');
+      rmSync(corpusDir, { recursive: true, force: true });
+    }
+  }, 240_000);
+});
+
+describe('verifyWorkspace — probe cleanup on an early roundtrip exit (#6001)', () => {
+  test('a roundtrip that fails before its cleanup step still removes both probe pages', async () => {
+    // A DIRECTORY where the second probe's file must go: the entity probe lands (row + file), the
+    // probe page's put_page throws, the roundtrip FAILS at step 1 and returns early, which used to
+    // skip removeProbes and leave the entity probe behind.
+    const inTheWay = join(ws, 'brain', `${VERIFY_PROBE_SLUG}.md`);
+    mkdirSync(inTheWay, { recursive: true });
+    try {
+      const res = await verifyWorkspace(engine, ws, { sourceId: 'workspace', gbrainHomeDir: home, capabilities: KEYLESS, skipHooksSmoke: true });
+      const rt = check(res.checks, 'roundtrip');
+      expect(rt.some((c) => !c.ok && c.detail.includes('put_page failed'))).toBe(true);
+      expect(res.checks.filter((c) => c.id === 'graph_floor')).toEqual([]);
+      expect(res.checks.filter((c) => c.id === 'probe_cleanup')).toEqual([]);
+      const probeRows = await engine.executeRaw<{ n: string }>(
+        `SELECT count(*)::text AS n FROM pages WHERE source_id = 'workspace' AND slug = ANY($1::text[])`,
+        [[VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG]],
+      );
+      expect(probeRows[0].n).toBe('0');
+      expect(existsSync(join(ws, 'brain', `${VERIFY_PROBE_ENTITY_SLUG}.md`))).toBe(false);
+    } finally {
+      rmSync(inTheWay, { recursive: true, force: true });
+    }
+  }, 240_000);
+});
+
 describe('verifyWorkspace — engine-plane side effects', () => {
   test('[CX-P1.1] facts.default_visibility: unset → set to world; explicit private → untouched', async () => {
     const e2 = new PGLiteEngine();
@@ -647,4 +694,95 @@ describe('verifyWorkspace — managed brain (#5280)', () => {
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     }
   }, 240_000);
+});
+
+describe('verifyWorkspace — managed brain, repeated runs (#6634)', () => {
+  // Adapted from PR #6634 (@Masashi-Ono0611). The probe bodies stay constant; verify clears its own purge tombstones
+  // instead of carrying a per-run nonce, so page_purges does not grow by a row per probe per run.
+  test('verify can roundtrip twice after purging both probe pages, leaving no probe tombstones', async () => {
+    await claimWorktree(engine, 'workspace', join(ws, 'brain'));
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    const probeTombstones = async () => ({
+      pages: (await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM page_purges WHERE source_id = 'workspace' AND slug = ANY($1::text[])`,
+        [[VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG]]))[0]!.n,
+      facts: (await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM fact_purges WHERE source_id = 'workspace' AND request_id IN (
+        SELECT request_id FROM persistence_requests WHERE source_id = 'workspace' AND operation = 'delete_page' AND slug = ANY($1::text[]))`,
+        [[VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG]]))[0]!.n,
+    });
+    try {
+      const opts = { sourceId: 'workspace', gbrainHomeDir: home, capabilities: KEYLESS, skipHooksSmoke: true };
+      const first = await verifyWorkspace(engine, ws, opts);
+      expect(check(first.checks, 'roundtrip').filter((c) => !c.ok)).toEqual([]);
+      expect(await probeTombstones()).toEqual({ pages: 0, facts: 0 });
+
+      const second = await verifyWorkspace(engine, ws, opts);
+      const secondRoundtrip = check(second.checks, 'roundtrip');
+      expect(secondRoundtrip.length).toBeGreaterThan(0);
+      expect(secondRoundtrip.filter((c) => !c.ok)).toEqual([]);
+      expect(await probeTombstones()).toEqual({ pages: 0, facts: 0 });
+      const refused = await engine.executeRaw(`SELECT 1 FROM persistence_requests WHERE source_id = 'workspace' AND error_code = 'purged_content'
+          AND slug = ANY($1::text[])`, [[VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG]]);
+      expect(refused).toEqual([]);
+    } finally {
+      await disposePersistenceConsumer(engine);
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    }
+  }, 240_000);
+
+  test('probe tombstones an earlier verify left behind are swept before the probes are written', async () => {
+    await claimWorktree(engine, 'workspace', join(ws, 'brain'));
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    // Keep a copy of every tombstone verify clears, so the test can put back exactly what an older verify left.
+    await engine.executeRaw(`CREATE TABLE w6634_kept (LIKE page_purges)`);
+    await engine.executeRaw(`CREATE FUNCTION w6634_keep() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN INSERT INTO w6634_kept SELECT OLD.*; RETURN OLD; END $$`);
+    await engine.executeRaw(`CREATE TRIGGER w6634_keep BEFORE DELETE ON page_purges FOR EACH ROW EXECUTE FUNCTION w6634_keep()`);
+    try {
+      const opts = { sourceId: 'workspace', gbrainHomeDir: home, capabilities: KEYLESS, skipHooksSmoke: true };
+      expect(check((await verifyWorkspace(engine, ws, opts)).checks, 'roundtrip').filter((c) => !c.ok)).toEqual([]);
+      await engine.executeRaw(`DROP TRIGGER w6634_keep ON page_purges`);
+      await engine.executeRaw(`INSERT INTO page_purges SELECT * FROM w6634_kept`);
+      const left = await engine.executeRaw<{ slug: string }>(`SELECT slug FROM page_purges WHERE source_id = 'workspace' AND slug = ANY($1::text[])`,
+        [[VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG]]);
+      expect(new Set(left.map((r) => r.slug))).toEqual(new Set([VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG]));
+      const second = await verifyWorkspace(engine, ws, opts);
+      expect(check(second.checks, 'roundtrip').filter((c) => !c.ok)).toEqual([]);
+    } finally {
+      await engine.executeRaw(`DROP TRIGGER IF EXISTS w6634_keep ON page_purges`);
+      await engine.executeRaw(`DROP FUNCTION IF EXISTS w6634_keep()`);
+      await engine.executeRaw(`DROP TABLE IF EXISTS w6634_kept`);
+      await disposePersistenceConsumer(engine);
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    }
+  }, 240_000);
+});
+
+describe('bootstrap verify write wait (#6356)', () => {
+  test('the probe ctx waits as long as a CLI write: 30 s by default, GBRAIN_WRITE_WAIT_MS when set', async () => {
+    const verify = await import('../src/core/bootstrap/verify.ts') as Record<string, unknown>;
+    const localCtx = verify.localCtx as (engine: unknown, sourceId: string) => OperationContext;
+    expect(typeof localCtx).toBe('function');
+    const saved = process.env.GBRAIN_WRITE_WAIT_MS;
+    try {
+      delete process.env.GBRAIN_WRITE_WAIT_MS;
+      expect(localCtx({}, 'default').writeWaitMs).toBe(30_000);
+      process.env.GBRAIN_WRITE_WAIT_MS = '45000';
+      expect(localCtx({}, 'default').writeWaitMs).toBe(45_000);
+    } finally {
+      if (saved === undefined) delete process.env.GBRAIN_WRITE_WAIT_MS; else process.env.GBRAIN_WRITE_WAIT_MS = saved;
+    }
+  });
+
+  test('an admitted, still-pending probe write names its request and the poll command', async () => {
+    const verify = await import('../src/core/bootstrap/verify.ts') as Record<string, unknown>;
+    const detail = verify.putPageFailureDetail as (e: unknown, waitMs: number | undefined) => string;
+    expect(typeof detail).toBe('function');
+    const pending = { message: 'write pending', toJSON: () => ({ error: 'write_pending', write_request: { request_id: '0b6f6f0e-2c1a-4d8e-9f3a-5e2b7c9d1a44', state: 'queued', retry_after_ms: 1000 } }) };
+    const text = detail(pending, 30_000);
+    expect(text).toContain('still pending after 30s');
+    expect(text).toContain('0b6f6f0e-2c1a-4d8e-9f3a-5e2b7c9d1a44');
+    expect(text).toContain('gbrain write-request -- 0b6f6f0e-2c1a-4d8e-9f3a-5e2b7c9d1a44');
+    expect(text).toContain('GBRAIN_WRITE_WAIT_MS');
+    expect(detail(new Error('boom'), 30_000)).toBe('put_page failed: boom');
+  });
 });

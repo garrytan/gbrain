@@ -376,7 +376,17 @@ export async function planMasterRed(client: GitHubClient, repo: string, run: Run
   if (counted.length > window.length) state.rebuilt = `${counted.length - window.length} older unevaluated run(s) were not read (more than ${MAX_FOLD} pending)`;
   for (const r of window) {
     const key = r.id * 1000 + r.run_attempt;
-    const ev = cache.get(key) ?? await collectEvidence(client, r, opts);
+    let ev = cache.get(key);
+    if (!ev) {
+      try {
+        ev = await collectEvidence(client, r, opts);
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 0;
+        if (r.id === run.id || status < 500) throw e;
+        console.log(`::warning::nightly-watch skipped ${r.name} run ${r.id} attempt ${r.run_attempt}: GitHub kept failing (${status}) after retries (${inert(e instanceof Error ? e.message : String(e), 200)}). It is not evaluated; the newer runs are.`);
+        continue;
+      }
+    }
     cache.set(key, ev);
     const before = state.status;
     state = applyRun(state, r, ev);

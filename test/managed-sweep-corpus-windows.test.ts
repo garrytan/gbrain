@@ -14,6 +14,7 @@
  *
  * Runs on PGLite; also on Postgres when DATABASE_URL is set (testBackends).
  */
+import { spoolPath } from './helpers/corpus-spool.ts';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
@@ -110,7 +111,7 @@ test('managed: every window commits its own coordinated facts batch; a resume su
         await expect(engine.executeRaw(`INSERT INTO facts(source_id,fact,kind,source,visibility) VALUES($1,'uncoordinated','fact','test','private')`,
           [sourceId])).rejects.toThrow(/writer_coordinator_required/);
 
-        const file = join(corpusDir, 'managed-session.txt');
+        const file = spoolPath(corpusDir, 'managed-session.txt', sourceId);
         writeFileSync(file, corpus(3));
         const sweep = () => runMaintenanceSweep(engine, { sourceId, capabilities: KEYED, budgetMs: 120_000 });
         const batches = async () => engine.executeRaw<{ n: string }>(
@@ -167,7 +168,7 @@ test('managed: facts from a session file written 8 days ago are dated that day',
         await disposePersistenceConsumer(engine);
         await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
 
-        const file = join(corpusDir, 'backdated-session.txt');
+        const file = spoolPath(corpusDir, 'backdated-session.txt', sourceId);
         writeFileSync(file, corpus(1));
         const written = new Date(Date.now() - 8 * 86_400_000);
         utimesSync(file, written, written);

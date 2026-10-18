@@ -42,14 +42,22 @@ export class FrontmatterLanguageError extends Error {
   }
 }
 
-/** Parse data only. There is deliberately no pluggable engine or evaluator. */
-export function parseDataFrontmatter(input: string): DataFrontmatter {
+/**
+ * Where parseDataFrontmatter finds the block: the input without its BOM and,
+ * for a fenced input, the language, the block text and the body after the
+ * closing fence (`content` null when the fence never closes). Throws
+ * FrontmatterLanguageError for a language selector other than YAML or JSON.
+ */
+export function scanDataFrontmatter(input: string): {
+  original: string;
+  fenced: { language: string; block: string; content: string | null } | null;
+} {
   const original = input.replace(/^\uFEFF/, '');
   // Preserve ordinary body whitespace; lift leading blank lines only for a fence.
   const lifted = original.replace(/^(?:[\t ]*\r?\n)+(?=---)/, '');
   const opening = /^---([^\r\n]*)(?:\r?\n|$)/.exec(lifted);
   if (!opening || opening[1]!.startsWith('-') || opening[1]!.trimEnd().endsWith('---')) {
-    return { data: {}, content: original, hasFrontmatter: false };
+    return { original, fenced: null };
   }
   const language = opening[1]!.trim().toLowerCase();
   if (language !== '' && language !== 'yaml' && language !== 'yml' && language !== 'json') {
@@ -59,7 +67,21 @@ export function parseDataFrontmatter(input: string): DataFrontmatter {
   const closing = /^---[\t ]*(?:\r?\n|$)/m.exec(rest);
   // Match the established parser's missing-close behavior: parse the remaining
   // block and let the higher-level markdown validator report MISSING_CLOSE.
-  const block = closing ? rest.slice(0, closing.index) : rest;
+  return {
+    original,
+    fenced: {
+      language,
+      block: closing ? rest.slice(0, closing.index) : rest,
+      content: closing ? rest.slice(closing.index + closing[0].length) : null,
+    },
+  };
+}
+
+/** Parse data only. There is deliberately no pluggable engine or evaluator. */
+export function parseDataFrontmatter(input: string): DataFrontmatter {
+  const { original, fenced } = scanDataFrontmatter(input);
+  if (!fenced) return { data: {}, content: original, hasFrontmatter: false };
+  const { language, block } = fenced;
   let value: unknown;
   try {
     value = block.trim() === '' ? {} : language === 'json' ? JSON.parse(block) : load(block, { schema: FRONTMATTER_SCHEMA });
@@ -74,7 +96,7 @@ export function parseDataFrontmatter(input: string): DataFrontmatter {
   }
   return {
     data: (value ?? {}) as Record<string, unknown>,
-    content: closing ? rest.slice(closing.index + closing[0].length) : '',
+    content: fenced.content ?? '',
     hasFrontmatter: true,
   };
 }

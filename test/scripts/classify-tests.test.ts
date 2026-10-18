@@ -4,7 +4,9 @@
  * attribution rule gets a direct fixture — no filesystem needed.
  */
 import { describe, test, expect } from 'bun:test';
-import { classifyFile } from '../../scripts/classify-tests.ts';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { classifyFile, generate } from '../../scripts/classify-tests.ts';
 
 describe('classify-tests detectors', () => {
   test('repo-anchored readFileSync binding attributes the referencing suite', () => {
@@ -141,4 +143,11 @@ describe('classify-tests detectors', () => {
     ].join('\n');
     expect(classifyFile('test/fake.test.ts', src).rows).toHaveLength(0);
   });
+});
+
+describe('structural-suites manifest', () => {
+  test('scripts/structural-suites.tsv matches a fresh classification of the test tree', () => {
+    const committed = readFileSync(join(import.meta.dir, '..', '..', 'scripts', 'structural-suites.tsv'), 'utf-8');
+    expect(committed).toBe(generate().tsv);
+  }, 60_000);
 });

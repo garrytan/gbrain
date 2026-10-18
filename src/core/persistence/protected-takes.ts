@@ -26,5 +26,5 @@ export function preserveProtectedTakes(incoming:string,stored:string):string {
   if(!before.read) throw opError('invalid_params','This page quotes a takes fence inside markdown code, so a remote replacement cannot preserve it.',
     'Ask the user to replace this page with a local write (gbrain put on the brain host), or send the page with only the prose you mean to change through a scoped edit.',
     { why: 'Remote reads hide the quoted fence; re-appending it at the end of the page would move it out of the code block and turn the example into a live takes fence.' });
-  return `${incoming.trimEnd()}\n\n${before.text}\n`;
+  return `${incoming.trimEnd()}\n\n${before.text}`;
 }

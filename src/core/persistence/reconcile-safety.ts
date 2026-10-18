@@ -12,3 +12,10 @@ export function stabilizeSafetyAssessments(frontmatter: Record<string, unknown>,
     else if (assessmentAt) frontmatter[key] = { ...marker, assessed_at: assessmentAt };
   }
 }
+
+/** The gate's own assessments (re-derived from the bytes on every import) are database state, never a reason to rewrite or refuse a canonical file. */
+export function withoutSafetyAssessments(frontmatter: Record<string, unknown>): Record<string, unknown> {
+  const rest = { ...frontmatter };
+  for (const key of RECONCILE_SAFETY_KEYS) delete rest[key];
+  return rest;
+}

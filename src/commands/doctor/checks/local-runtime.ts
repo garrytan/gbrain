@@ -8,9 +8,10 @@
  */
 
 import { loadCompletedMigrations } from '../../../core/preferences.ts';
-import { indexCompletedEntries, isFreshInstallStamp, migrationLedgerSummary, trailingPartialCount } from '../../../core/migration-ledger.ts';
+import { MIGRATION_OPT_OUT_KEYS, declinedMigrations, indexCompletedEntries, isFreshInstallStamp, migrationLedgerSummary, trailingPartialCount } from '../../../core/migration-ledger.ts';
 import { VERSION } from '../../../version.ts';
 import { pendingFreshInstallCheck } from './pending-fresh-install.ts';
+import { autopilotInstallPendingCheck } from './autopilot-install-pending.ts';
 import { compareVersions } from '../../migrations/index.ts';
 import { bootstrapDoctorChecks } from '../bootstrap-checks.ts';
 import { buildMemorableRelayCheck } from './integrations-memorable.ts';
@@ -104,6 +105,7 @@ async function runConnectors(ctx: DoctorContext): Promise<Check[]> {
 export const connectorsEntry: DoctorEntry = {
   name: 'connectors',
   emits: ['connectors', 'dream_paid_loop'],
+  engineChecks: ['connectors', 'dream_paid_loop'],
   run: runConnectors,
 };
 
@@ -126,10 +128,14 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
   // schema clearly advanced. Without this, every install that went through
   // a v0.11.0 stopgap and then upgraded carries the "MINIONS HALF-INSTALLED"
   // flag forever, even on installs that have been at v0.22+ for months.
+  // #6466: a migration the brain's config declines is reported as such,
+  // never as pending, partial or wedged.
+  const declined = engine ? await declinedMigrations(engine).catch(() => new Set<string>()) : new Set<string>();
   try {
     const completed = loadCompletedMigrations();
     const byVersion = new Map<string, { complete: boolean; partial: boolean; ran: boolean }>();
     for (const entry of completed) {
+      if (declined.has(entry.version)) continue;
       const seen = byVersion.get(entry.version) ?? { complete: false, partial: false, ran: false };
       if (entry.status === 'complete') seen.complete = true;
       if (entry.status === 'complete' && !isFreshInstallStamp(entry)) seen.ran = true;
@@ -175,9 +181,18 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
     // past were skipped, not merely not reached yet. Versions above the newest
     // run are the next apply-migrations' ordinary work and stay quiet here.
     const newestRun = completedVersions.reduce<string | null>((a, v) => (a === null || compareVersions(v, a) > 0 ? v : a), null);
-    const pending = completed.length === 0 ? [] : migrationLedgerSummary(VERSION).pending.filter(v =>
+    const pending = completed.length === 0 ? [] : migrationLedgerSummary(VERSION, declined).pending.filter(v =>
       (newestRun !== null && compareVersions(v, newestRun) < 0) || history.get(v)?.at(-1)?.status === 'retry');
 
+    if (declined.size > 0) {
+      const keys = [...declined].map(v => `${MIGRATION_OPT_OUT_KEYS[v]}=false`);
+      checks.push({
+        name: 'minions_migration',
+        status: 'ok',
+        message: `Declined by config: ${[...declined].join(', ')} (${keys.join(', ')}); apply-migrations skips it on every machine using this brain. Turn one back on: gbrain config set <key> true`,
+        details: { declined: [...declined] },
+      });
+    }
     if (wedged.length > 0) {
       // The wedged set is a STRICT subset of the stuck set, so a wedged
       // version is also stuck. Surface the force-retry hint instead of the
@@ -206,6 +221,8 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
       const setup = pendingFreshInstallCheck();
       if (setup) checks.push(setup);
     }
+    const skippedInstall = autopilotInstallPendingCheck();
+    if (skippedInstall) checks.push(skippedInstall);
     // Note: the "no preferences.json but schema is v7+" case is detected
     // in the DB section below (needs schema version).
   } catch (e) {

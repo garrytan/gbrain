@@ -18,6 +18,18 @@ BEGIN;
 ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_source_slug_key;
 ALTER TABLE pages ADD CONSTRAINT pages_slug_key UNIQUE (slug);
 
+-- v230's trust-generation triggers fire on pages.source_id changes, so they
+-- depend on the column. Pre-v0.18 brains had no such triggers; the walk
+-- forward re-creates them when v230 runs again.
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT tgname, tgrelid::regclass AS tbl FROM pg_trigger
+            WHERE tgname LIKE 'trust\_generation\_%' AND NOT tgisinternal LOOP
+    EXECUTE format('DROP TRIGGER %I ON %s', r.tgname, r.tbl);
+  END LOOP;
+END $$;
+
 DROP INDEX IF EXISTS idx_pages_source_id;
 ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
 

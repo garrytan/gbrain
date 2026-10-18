@@ -24,7 +24,7 @@ import {
   checkUndeclaredDbOnlyPages,
   checkDbOnlyCollectorCollision,
 } from '../../src/commands/doctor.ts';
-import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
+import { hasDatabase, setupDB, teardownDB, getEngine, getConn } from './helpers.ts';
 import { operations } from '../../src/core/operations.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -212,6 +212,7 @@ describePg('engine parity: identical seeds, identical check results (PGLite vs P
 
   afterAll(async () => {
     if (pglite) await pglite.disconnect();
+    await getConn().unsafe(`DELETE FROM sources WHERE id = 'parity-src'`);
     await teardownDB();
   }, 60_000);
 

@@ -27,6 +27,7 @@ import type { BrainEngine } from './../engine.ts';
 import type { RemediationStep } from '../remediation-step.ts';
 import { loadOrphanPolicyOverrides, shouldExcludeFromOrphanReporting } from '../orphan-policy.ts';
 import { LINK_COVERAGE_FEATURE, TIMELINE_COVERAGE_FEATURE, visibleEntityCoverageSql } from './checks.ts';
+import { resolveEntityTypes } from '../schema-pack/entity-types.ts';
 
 export type MetricName =
   | 'orphan_count'
@@ -99,7 +100,10 @@ export async function captureMetric(
       case 'entity_link_coverage':
       case 'timeline_coverage': {
         const feature = metric === 'entity_link_coverage' ? LINK_COVERAGE_FEATURE : TIMELINE_COVERAGE_FEATURE;
-        const [row] = await engine.executeRaw<{ sample_size: number; matched: number }>(visibleEntityCoverageSql(feature));
+        const entityTypes = await resolveEntityTypes(engine, null);
+        if (entityTypes.status === 'pack_unavailable') return null;
+        const sql = visibleEntityCoverageSql(feature, entityTypes.filter);
+        const [row] = await engine.executeRaw<{ sample_size: number; matched: number }>(sql.text, sql.params);
         const population = Number(row?.sample_size ?? 0);
         // An empty population is vacuously covered.
         return population === 0 ? 1 : Number(row?.matched ?? 0) / population;

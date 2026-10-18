@@ -341,6 +341,15 @@ function mountAdminOverviewApi(app: Express, ctx: ServeHttpContext): void {
     }
   });
 
+  // #6696 B2: the full ops snapshot (doctor ops tier + capacity view), cached 60 s per engine (doctor/ops-snapshot.ts).
+  app.get('/admin/api/ops', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      res.json(await (await import('./doctor/ops-snapshot.ts')).cachedOpsSnapshot(engine));
+    } catch {
+      res.status(503).json({ error: 'service_unavailable' });
+    }
+  });
+
   // Full engine stats. v0.28.10 moved this off /health (which is now liveness
   // only — see probeLiveness) so dashboards needing page_count / chunk_count
   // / etc. authenticate as admin and call this endpoint. probeHealth races

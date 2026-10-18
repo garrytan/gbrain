@@ -31,8 +31,9 @@
  * require A to be an ancestor of B (unlike a rev-walk or `A...B` merge-base).
  * That is the #1970 property this module preserves.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from './spawn.ts';
 import { buildSyncManifest, type SyncManifest } from './sync.ts';
+import { gitChildEnv } from './git-env.ts';
 
 /** Runs a git subcommand in `repoPath` and returns trimmed stdout (throws on failure). */
 export type GitRunner = (repoPath: string, args: string[]) => string;
@@ -43,6 +44,7 @@ export type GitRunner = (repoPath: string, args: string[]) => string;
 // would ENOBUFS-crash the sync with no log line).
 const DEFAULT_GIT_RUNNER: GitRunner = (repoPath, args) =>
   execFileSync('git', ['-c', 'core.quotepath=false', '-C', repoPath, ...args], {
+    env: gitChildEnv(),
     encoding: 'utf-8',
     timeout: 30_000,
     maxBuffer: 100 * 1024 * 1024,
@@ -61,6 +63,18 @@ export function _setGitRunnerForTests(fn: GitRunner | null): void {
 
 function unique<T>(items: T[]): T[] {
   return [...new Set(items)];
+}
+
+/** Merges a working-tree manifest into a commit-range manifest (paths deduplicated; renames and #6729 downgrades appended). */
+export function mergeSyncManifests(into: SyncManifest, from: SyncManifest): SyncManifest {
+  const downgradedRenames = [...(into.downgradedRenames ?? []), ...(from.downgradedRenames ?? [])];
+  return {
+    added: unique([...into.added, ...from.added]),
+    modified: unique([...into.modified, ...from.modified]),
+    deleted: unique([...into.deleted, ...from.deleted]),
+    renamed: [...into.renamed, ...from.renamed],
+    ...(downgradedRenames.length ? { downgradedRenames } : {}),
+  };
 }
 
 /**
@@ -142,12 +156,5 @@ export function computeSyncDelta(
       : opts.detached
         ? buildDetachedWorkingTreeManifest(repoPath, run)
         : null;
-  if (detached) {
-    manifest.added = unique([...manifest.added, ...detached.added]);
-    manifest.modified = unique([...manifest.modified, ...detached.modified]);
-    manifest.deleted = unique([...manifest.deleted, ...detached.deleted]);
-    manifest.renamed = [...manifest.renamed, ...detached.renamed];
-  }
-
-  return { status: 'ok', manifest };
+  return { status: 'ok', manifest: detached ? mergeSyncManifests(manifest, detached) : manifest };
 }

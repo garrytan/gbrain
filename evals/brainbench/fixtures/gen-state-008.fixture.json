@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-state-008",
+  "suites": [
+    "state-resolution"
+  ],
+  "category": "state-resolution",
+  "trust_steps": [
+    {
+      "step_id": "s1",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Halcyon Quillfeather moved to Austin",
+      "entity": "people/halcyon-quillfeather"
+    },
+    {
+      "step_id": "s2",
+      "actor": "owner",
+      "op": "confirm",
+      "target": "s1"
+    },
+    {
+      "step_id": "s3",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Halcyon Quillfeather moved to Oslo",
+      "entity": "people/halcyon-quillfeather",
+      "target": "s1"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Where is Halcyon Quillfeather now and what is their role?"
+    }
+  ]
+}

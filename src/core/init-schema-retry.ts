@@ -1,5 +1,6 @@
 import type { BrainEngine } from './engine.ts';
 import {
+  isLockTimeoutError,
   isRetryableConnError,
   isStatementTimeoutError,
 } from './retry-matcher.ts';
@@ -7,6 +8,8 @@ import {
 export interface InitSchemaRetryOpts {
   maxAttempts?: number;
   backoffMs?: number;
+  /** #5227: a short bounded backoff for a lock the other session will release in a moment (default 2 s). */
+  lockBackoffMs?: number;
   log?: (line: string) => void;
   _hooks?: {
     initSchema?: () => Promise<void>;
@@ -22,12 +25,18 @@ function isMigrationRetryExhausted(err: unknown): boolean {
   return err instanceof Error && err.name === 'MigrationRetryExhausted';
 }
 
+/** #5227: the typed `schema_lock_blocked` refusal, or a raw SQLSTATE 55P03 from a lock_timeout. */
+function isSchemaLockBlocked(err: unknown): boolean {
+  return (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'schema_lock_blocked') || isLockTimeoutError(err);
+}
+
 function isRetryableInitSchemaError(err: unknown): boolean {
   if (isMigrationRetryExhausted(err)) return false;
-  return isStatementTimeoutError(err) || isRetryableConnError(err);
+  return isStatementTimeoutError(err) || isRetryableConnError(err) || isSchemaLockBlocked(err);
 }
 
 function retryReason(err: unknown): string {
+  if (isSchemaLockBlocked(err)) return 'a lock another session holds (schema_lock_blocked)';
   if (isStatementTimeoutError(err)) return 'statement_timeout';
   if (isRetryableConnError(err)) return 'transient connection error';
   return 'retryable schema error';
@@ -59,8 +68,9 @@ export async function runInitSchemaWithRetry(
         throw err;
       }
 
-      log(`  [init retry ${attempt}/${maxAttempts}] schema setup hit ${retryReason(err)}; retrying in ${backoffMs}ms`);
-      await sleep(backoffMs);
+      const wait = isSchemaLockBlocked(err) ? (opts.lockBackoffMs ?? 2_000) : backoffMs;
+      log(`  [init retry ${attempt}/${maxAttempts}] schema setup hit ${retryReason(err)}; retrying in ${wait}ms`);
+      await sleep(wait);
     }
   }
 

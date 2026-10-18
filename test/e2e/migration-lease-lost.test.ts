@@ -55,13 +55,17 @@ describeE2E('migration lease lost under this runner (#6028, Postgres)', () => {
     }
   });
 
-  test('own row with a moved acquisition time: migration_lease_lost, fence mismatch, token match', async () => {
+  // #6028 (wave 14 PR4): the lease predicate matches (id, holder_pid, acquisition_token); the acquisition
+  // time is diagnostic only, so a clock or storage rewrite of acquired_at alone no longer loses the lease.
+  test('own row with a moved acquisition time alone stays held; moved time plus a rotated token reports both', async () => {
     const lock = await heldLock();
     try {
       await getConn().unsafe(`UPDATE gbrain_cycle_locks SET acquired_at = acquired_at - interval '1 second' WHERE id = $1`, [MIGRATION_ORCHESTRATION_LOCK_ID]);
+      await lock.assertHeld();
+      await getConn().unsafe('UPDATE gbrain_cycle_locks SET acquisition_token = gen_random_uuid() WHERE id = $1', [MIGRATION_ORCHESTRATION_LOCK_ID]);
       const lost = await caught(lock.assertHeld()) as LeaseLost;
       expect(lost.code).toBe('migration_lease_lost');
-      expect(lost.details).toMatchObject({ token_match: true, fence_match: false });
+      expect(lost.details).toMatchObject({ token_match: false, fence_match: false });
     } finally {
       await lock.release();
     }

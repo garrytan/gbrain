@@ -47,7 +47,7 @@ const get_ingest_log: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'retrieval',
-  description: 'Recent ingestion log entries. Use when checking what was already imported.',
+  description: 'Recent ingestion log entries: what was already imported, and when.',
   params: {
     limit: { type: 'number', description: 'Default 20.' },
   },

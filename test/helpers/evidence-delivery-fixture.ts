@@ -28,10 +28,20 @@ export const OFF_PATH_PAGES: Array<{ slug: string; body: string; timeline?: stri
   { slug: 'notes/short', body: 'A short ocelot note.' },
 ];
 
+/**
+ * Per-call stage timings (`retrieval.timings`) are additive and differ on every call; they are pinned in
+ * test/search/stage-timings-ops.test.ts, and the off path compares the rest.
+ */
+function withoutTimings(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || !('timings' in value)) return value;
+  const { timings: _timings, ...rest } = value as Record<string, unknown>;
+  return rest;
+}
+
 function ctxOf(engine: BrainEngine, meta: Record<string, unknown>[], overrides: Partial<OperationContext> = {}): OperationContext {
   return {
     engine: engine as never, config: {} as never, logger: console as never, dryRun: false, remote: false, sourceId: 'default',
-    emitResponseMeta: (key: string, value: unknown) => { meta.push({ key, value }); },
+    emitResponseMeta: (key: string, value: unknown) => { meta.push({ key, value: key === 'retrieval' ? withoutTimings(value) : value }); },
     ...overrides,
   } as OperationContext;
 }
@@ -42,7 +52,7 @@ export async function captureOffPath(engine: BrainEngine): Promise<Record<string
   const run = async (label: string, name: string, params: Record<string, unknown>, overrides: Partial<OperationContext> = {}) => {
     const meta: Record<string, unknown>[] = [];
     const result = await op(name).handler(ctxOf(engine, meta, overrides), params);
-    out[label] = JSON.stringify({ result, meta });
+    out[label] = JSON.stringify({ result, meta: meta.map(m => m.key === 'retrieval' ? { ...m, value: withoutCounts(m.value as Record<string, unknown>) } : m) });
   };
   for (const variant of [{}, { return_unit: 'chunk' }]) {
     const tag = Object.keys(variant).length ? ':chunk' : '';
@@ -64,9 +74,7 @@ export async function captureOffPath(engine: BrainEngine): Promise<Record<string
         { remote: true, transport: 'stdio', sourceId: 'default' });
       // Agent contract v1 notices (extra prefixed blocks + _meta.gbrain_notices, e.g. degraded_recall on this
       // keyless corpus) are additive and pinned in test/mcp-notice-channels.test.ts; the off path compares the rest.
-      const content = res.content.filter(c => !c.text.startsWith('[gbrain notice '));
-      const { gbrain_notices: _notices, ...meta } = res._meta ?? {};
-      out[`mcp-${name}`] = JSON.stringify({ ...res, content, ...(res._meta ? { _meta: meta } : {}) });
+      out[`mcp-${name}`] = offPathMcpBytes(res);
     }
   });
   const prompts: string[] = [];
@@ -81,21 +89,54 @@ export async function captureOffPath(engine: BrainEngine): Promise<Record<string
   return out;
 }
 
+/**
+ * One MCP result as the off path compares it: notice blocks and
+ * `_meta.gbrain_notices` removed. Which call carries a once-per-process
+ * notice depends on what ran earlier in the process (dedupe ledger, queued
+ * hop and drain notices), so a `_meta` holding only notices is dropped
+ * rather than left as `{}`.
+ */
+export function offPathMcpBytes(res: { content: { type: string; text: string }[]; _meta?: Record<string, unknown> }): string {
+  // Cat 40 Hard F2's keyword count line and fields and F4's row-date line are additive too
+  // (pinned in test/search-keyword-paging.test.ts and test/search-date-labels.test.ts).
+  const content = res.content.filter(c => !/^\[gbrain (notice |search\] |dates\] )/.test(c.text));
+  const { gbrain_notices: _notices, ...meta } = res._meta ?? {};
+  if (meta.retrieval) meta.retrieval = withoutCounts(withoutTimings(meta.retrieval) as Record<string, unknown>);
+  return JSON.stringify({ ...res, content, ...(res._meta ? { _meta: Object.keys(meta).length > 0 ? meta : undefined } : {}) });
+}
+
 const leanRetrieval = (meta: Record<string, unknown>) => ({ ...meta, rows: 'lean' });
+
+/** Cat 40 Hard F2's additive keyword count fields, compared in test/search-keyword-paging.test.ts instead. */
+function withoutCounts(meta: Record<string, unknown>): Record<string, unknown> {
+  const { keyword_total: _t, keyword_truncated: _r, keyword_total_capped: _c, ...rest } = meta;
+  return rest;
+}
+
+/** Recall's additive `facts_order` (MEMORY_VERBS v1), which every response carries right after `total`; these captures are all newest-first. */
+function withFactsOrder(payload: Record<string, unknown>): Record<string, unknown> {
+  if ('facts_order' in payload || !('total' in payload)) return payload;
+  return Object.fromEntries(Object.entries(payload).flatMap(([k, v]) => k === 'total' ? [[k, v], ['facts_order', 'newest']] : [[k, v]]));
+}
 
 /**
  * The cost wave changes remote output on purpose: C1 projects remote
  * search/query rows to lean rows (and reports `rows: "lean"` in the retrieval
- * meta), and C2 serializes MCP content[0] as compact JSON. The frozen
- * pre-feature bytes stay as captured; this applies exactly those two declared
- * transforms to them, so every other byte of the capture is still compared.
+ * meta), and C2 serializes MCP content[0] as compact JSON. Recall's question
+ * ranking adds `facts_order` to every recall response. The frozen pre-feature
+ * bytes stay as captured; this applies exactly those declared transforms to
+ * them, so every other byte of the capture is still compared.
  */
 export function withCostWave(key: string, frozen: string): string {
   const base = key.replace(/:chunk$/, '');
+  if (base === 'recall' || base === 'recall-budget') {
+    const v = JSON.parse(frozen) as { result: Record<string, unknown>; meta: unknown };
+    return JSON.stringify({ ...v, result: withFactsOrder(v.result) });
+  }
   if (base === 'search-remote') {
     const v = JSON.parse(frozen) as { result: Record<string, unknown>[]; meta: Array<{ key: string; value: Record<string, unknown> }> };
     return JSON.stringify({
-      result: v.result.map(leanRow),
+      result: v.result.map(r => leanRow(r)),
       meta: v.meta.map(m => m.key === 'retrieval' ? { key: m.key, value: leanRetrieval(m.value) } : m),
     });
   }
@@ -103,7 +144,7 @@ export function withCostWave(key: string, frozen: string): string {
   const res = JSON.parse(frozen) as { content: Array<{ type: string; text: string }>; _meta?: Record<string, Record<string, unknown>> };
   const body = JSON.parse(res.content[0].text);
   const lean = base === 'mcp-search' || base === 'mcp-query';
-  res.content[0].text = JSON.stringify(lean ? (body as Record<string, unknown>[]).map(leanRow) : body);
+  res.content[0].text = JSON.stringify(lean ? (body as Record<string, unknown>[]).map(r => leanRow(r)) : base === 'mcp-recall' ? withFactsOrder(body) : body);
   if (lean && res._meta?.retrieval) res._meta.retrieval = leanRetrieval(res._meta.retrieval);
   return JSON.stringify(res);
 }

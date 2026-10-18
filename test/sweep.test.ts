@@ -27,6 +27,7 @@ import { _resetStdoutRedirectForTests } from '../src/core/console-prefix.ts';
 import type { CapabilityReport } from '../src/core/capability.ts';
 import { __setChatTransportForTests, type ChatResult } from '../src/core/ai/gateway.ts';
 import { runServe, type ServeOptions } from '../src/commands/serve.ts';
+import { spoolPath } from './helpers/corpus-spool.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { runExtract } from '../src/commands/extract.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
@@ -381,7 +382,7 @@ describe('runMaintenanceSweep — watermark progress + link reconciliation (#419
 
 describe('runMaintenanceSweep — corpus ingest [CX-P0.1, CX-P0.5]', () => {
   test('keyless: skipped with reason keyless, sidecar NOT written', async () => {
-    writeFileSync(join(corpusDir, 'session-1.txt'), 'User said something notable.\n');
+    writeFileSync(spoolPath(corpusDir, 'session-1.txt'), 'User said something notable.\n');
 
     const r = await runMaintenanceSweep(engine, {
       sourceId: 'default',
@@ -389,7 +390,7 @@ describe('runMaintenanceSweep — corpus ingest [CX-P0.1, CX-P0.5]', () => {
     });
     expect(r.corpusIngested).toBe(0);
     expect(r.skipped).toContainEqual({ reason: 'keyless', count: 1 });
-    expect(existsSync(join(corpusDir, 'session-1.txt' + CORPUS_INGESTED_SUFFIX))).toBe(false);
+    expect(existsSync(spoolPath(corpusDir, 'session-1.txt' + CORPUS_INGESTED_SUFFIX))).toBe(false);
   });
 
   test('keyed: transcript runs through the real pipeline; sidecar written AFTER success; exactly-once', async () => {
@@ -397,7 +398,7 @@ describe('runMaintenanceSweep — corpus ingest [CX-P0.1, CX-P0.5]', () => {
     // operator-set default inside the shared pipeline.
     await engine.setConfig('facts.default_visibility', 'world');
     writeFileSync(
-      join(corpusDir, 'fresh.txt'),
+      spoolPath(corpusDir, 'fresh.txt'),
       'Alice committed to shipping the beta in March.\n',
     );
 
@@ -429,7 +430,7 @@ describe('runMaintenanceSweep — corpus ingest [CX-P0.1, CX-P0.5]', () => {
       });
       expect(r1.corpusIngested).toBe(1);
       expect(chatCalls).toBe(1);
-      expect(existsSync(join(corpusDir, 'fresh.txt' + CORPUS_INGESTED_SUFFIX))).toBe(true);
+      expect(existsSync(spoolPath(corpusDir, 'fresh.txt' + CORPUS_INGESTED_SUFFIX))).toBe(true);
 
       const facts = await engine.executeRaw<{ fact: string; visibility: string; source: string }>(
         `SELECT fact, visibility, source FROM facts WHERE source = 'sweep:corpus'`,
@@ -452,8 +453,8 @@ describe('runMaintenanceSweep — corpus ingest [CX-P0.1, CX-P0.5]', () => {
   });
 
   test('pre-existing sidecar marker → file never touches the pipeline', async () => {
-    writeFileSync(join(corpusDir, 'done.txt'), 'Already processed content.\n');
-    writeFileSync(join(corpusDir, 'done.txt' + CORPUS_INGESTED_SUFFIX), '{}\n');
+    writeFileSync(spoolPath(corpusDir, 'done.txt'), 'Already processed content.\n');
+    writeFileSync(spoolPath(corpusDir, 'done.txt' + CORPUS_INGESTED_SUFFIX), '{}\n');
 
     let chatCalls = 0;
     __setChatTransportForTests(async (): Promise<ChatResult> => {
@@ -482,8 +483,8 @@ describe('runMaintenanceSweep — corpus ingest [CX-P0.1, CX-P0.5]', () => {
     writeFileSync(join(selfProject, `${selfId}.jsonl`), '{"type":"user"}\n');
     writeFileSync(join(userProject, `${userId}.jsonl`), '{"type":"user"}\n');
     const selfFiles = [`${selfId}.txt`, `${selfId}.seg-aaaaaaaaaaaa.txt`, `${selfId}.wb-bbbbbbbbbbbbbbbbbbbbbbbb.txt`];
-    for (const f of selfFiles) writeFileSync(join(corpusDir, f), 'User: <turn>extract facts from this page</turn>\n');
-    writeFileSync(join(corpusDir, `${userId}.txt`), 'Alice committed to shipping the beta in March.\n');
+    for (const f of selfFiles) writeFileSync(spoolPath(corpusDir, f), 'User: <turn>extract facts from this page</turn>\n');
+    writeFileSync(spoolPath(corpusDir, `${userId}.txt`), 'Alice committed to shipping the beta in March.\n');
 
     let chatCalls = 0;
     __setChatTransportForTests(async (): Promise<ChatResult> => {
@@ -503,8 +504,8 @@ describe('runMaintenanceSweep — corpus ingest [CX-P0.1, CX-P0.5]', () => {
     expect(chatCalls).toBe(1);
     expect(r1.corpusIngested).toBe(1);
     expect(r1.skipped).toContainEqual({ reason: 'self_capture', count: 3 });
-    for (const f of selfFiles) expect(existsSync(join(corpusDir, f + CORPUS_INGESTED_SUFFIX))).toBe(true);
-    expect(existsSync(join(corpusDir, `${userId}.txt` + CORPUS_INGESTED_SUFFIX))).toBe(true);
+    for (const f of selfFiles) expect(existsSync(spoolPath(corpusDir, f + CORPUS_INGESTED_SUFFIX))).toBe(true);
+    expect(existsSync(spoolPath(corpusDir, `${userId}.txt` + CORPUS_INGESTED_SUFFIX))).toBe(true);
 
     const r2 = await withEnv({ CLAUDE_CONFIG_DIR: claudeHome }, () =>
       runMaintenanceSweep(engine, { sourceId: 'default', capabilities: KEYED }));
@@ -515,14 +516,14 @@ describe('runMaintenanceSweep — corpus ingest [CX-P0.1, CX-P0.5]', () => {
   test('extraction_enabled=false spend gate skips without sidecars', async () => {
     await engine.setConfig('facts.extraction_enabled', 'false');
     try {
-      writeFileSync(join(corpusDir, 'gated.txt'), 'Gated content.\n');
+      writeFileSync(spoolPath(corpusDir, 'gated.txt'), 'Gated content.\n');
       const r = await runMaintenanceSweep(engine, {
         sourceId: 'default',
         capabilities: KEYED,
       });
       expect(r.corpusIngested).toBe(0);
       expect(r.skipped).toContainEqual({ reason: 'extraction_disabled', count: 1 });
-      expect(existsSync(join(corpusDir, 'gated.txt' + CORPUS_INGESTED_SUFFIX))).toBe(false);
+      expect(existsSync(spoolPath(corpusDir, 'gated.txt' + CORPUS_INGESTED_SUFFIX))).toBe(false);
     } finally {
       await engine.setConfig('facts.extraction_enabled', 'true');
     }
@@ -542,8 +543,8 @@ describe('runMaintenanceSweep — corpus claim fencing (concurrent sweeps)', () 
   });
 
   test('two concurrent sweeps on one corpus dir ingest each file exactly once', async () => {
-    writeFileSync(join(corpusDir, 'race-a.txt'), 'Alice will demo the widget on Monday.\n');
-    writeFileSync(join(corpusDir, 'race-b.txt'), 'Bob owns the acme-example follow-up.\n');
+    writeFileSync(spoolPath(corpusDir, 'race-a.txt'), 'Alice will demo the widget on Monday.\n');
+    writeFileSync(spoolPath(corpusDir, 'race-b.txt'), 'Bob owns the acme-example follow-up.\n');
 
     let chatCalls = 0;
     __setChatTransportForTests(async (): Promise<ChatResult> => {
@@ -561,16 +562,16 @@ describe('runMaintenanceSweep — corpus claim fencing (concurrent sweeps)', () 
     // The whole point: one LLM call per FILE, never per (file × sweep).
     expect(chatCalls).toBe(2);
     expect(r1.corpusIngested + r2.corpusIngested).toBe(2);
-    expect(existsSync(join(corpusDir, 'race-a.txt' + CORPUS_INGESTED_SUFFIX))).toBe(true);
-    expect(existsSync(join(corpusDir, 'race-b.txt' + CORPUS_INGESTED_SUFFIX))).toBe(true);
+    expect(existsSync(spoolPath(corpusDir, 'race-a.txt' + CORPUS_INGESTED_SUFFIX))).toBe(true);
+    expect(existsSync(spoolPath(corpusDir, 'race-b.txt' + CORPUS_INGESTED_SUFFIX))).toBe(true);
     // No claim leftovers — success replaces the claim with the .ingested sidecar.
-    expect(existsSync(join(corpusDir, 'race-a.txt' + CORPUS_CLAIM_SUFFIX))).toBe(false);
-    expect(existsSync(join(corpusDir, 'race-b.txt' + CORPUS_CLAIM_SUFFIX))).toBe(false);
+    expect(existsSync(spoolPath(corpusDir, 'race-a.txt' + CORPUS_CLAIM_SUFFIX))).toBe(false);
+    expect(existsSync(spoolPath(corpusDir, 'race-b.txt' + CORPUS_CLAIM_SUFFIX))).toBe(false);
   });
 
   test('a fresh claim held by another sweep skips the file — zero LLM spend, claim untouched', async () => {
-    writeFileSync(join(corpusDir, 'claimed.txt'), 'Claimed elsewhere.\n');
-    const claim = join(corpusDir, 'claimed.txt' + CORPUS_CLAIM_SUFFIX);
+    writeFileSync(spoolPath(corpusDir, 'claimed.txt'), 'Claimed elsewhere.\n');
+    const claim = spoolPath(corpusDir, 'claimed.txt' + CORPUS_CLAIM_SUFFIX);
     writeFileSync(claim, '{}\n');
 
     let chatCalls = 0;
@@ -585,12 +586,12 @@ describe('runMaintenanceSweep — corpus claim fencing (concurrent sweeps)', () 
     expect(r.skipped).toContainEqual({ reason: 'corpus_in_progress', count: 1 });
     // The live claim belongs to the other sweep — this run must not release it.
     expect(existsSync(claim)).toBe(true);
-    expect(existsSync(join(corpusDir, 'claimed.txt' + CORPUS_INGESTED_SUFFIX))).toBe(false);
+    expect(existsSync(spoolPath(corpusDir, 'claimed.txt' + CORPUS_INGESTED_SUFFIX))).toBe(false);
   });
 
   test('a stale claim (>1h, dead sweep) is reclaimed and the file ingested', async () => {
-    writeFileSync(join(corpusDir, 'stale-claim.txt'), 'Left behind by a crashed sweep.\n');
-    const claim = join(corpusDir, 'stale-claim.txt' + CORPUS_CLAIM_SUFFIX);
+    writeFileSync(spoolPath(corpusDir, 'stale-claim.txt'), 'Left behind by a crashed sweep.\n');
+    const claim = spoolPath(corpusDir, 'stale-claim.txt' + CORPUS_CLAIM_SUFFIX);
     writeFileSync(claim, '{}\n');
     const old = (Date.now() - 2 * 3600 * 1000) / 1000;
     utimesSync(claim, old, old);
@@ -604,7 +605,7 @@ describe('runMaintenanceSweep — corpus claim fencing (concurrent sweeps)', () 
     const r = await runMaintenanceSweep(engine, { sourceId: 'default', capabilities: KEYED });
     expect(r.corpusIngested).toBe(1);
     expect(chatCalls).toBe(1);
-    expect(existsSync(join(corpusDir, 'stale-claim.txt' + CORPUS_INGESTED_SUFFIX))).toBe(true);
+    expect(existsSync(spoolPath(corpusDir, 'stale-claim.txt' + CORPUS_INGESTED_SUFFIX))).toBe(true);
     expect(existsSync(claim)).toBe(false);
   });
 
@@ -612,7 +613,7 @@ describe('runMaintenanceSweep — corpus claim fencing (concurrent sweeps)', () 
     // A directory named like a corpus file: readFile throws EISDIR after the
     // claim is acquired — a deterministic mid-ingest failure (runFactsPipeline
     // itself absorbs provider errors, so a throwing transport won't do).
-    mkdirSync(join(corpusDir, 'flaky.txt'));
+    mkdirSync(spoolPath(corpusDir, 'flaky.txt'));
     __setChatTransportForTests(async (): Promise<ChatResult> => {
       throw new Error('must not be reached');
     });
@@ -621,8 +622,8 @@ describe('runMaintenanceSweep — corpus claim fencing (concurrent sweeps)', () 
     expect(r.corpusIngested).toBe(0);
     expect(r.skipped).toContainEqual({ reason: 'corpus_file_error', count: 1 });
     // Neither sidecar remains: no .ingested (it failed), no claim (released).
-    expect(existsSync(join(corpusDir, 'flaky.txt' + CORPUS_CLAIM_SUFFIX))).toBe(false);
-    expect(existsSync(join(corpusDir, 'flaky.txt' + CORPUS_INGESTED_SUFFIX))).toBe(false);
+    expect(existsSync(spoolPath(corpusDir, 'flaky.txt' + CORPUS_CLAIM_SUFFIX))).toBe(false);
+    expect(existsSync(spoolPath(corpusDir, 'flaky.txt' + CORPUS_INGESTED_SUFFIX))).toBe(false);
   });
 });
 

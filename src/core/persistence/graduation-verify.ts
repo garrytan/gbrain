@@ -10,6 +10,7 @@ import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { admitWriteInTransaction, type WriteAdmission } from './journal.ts';
 import type { Principal, WriteAuthority } from './model.ts';
+import { readManagedMode } from './managed-mode.ts';
 import type {
   GraduationEngines, Inventory, InventoryEntry, ReplayProbeResult, TableReceipt, VerifyFailure, VerifyResult,
 } from './engine-graduation.types.ts';
@@ -271,8 +272,7 @@ async function chooseReplay(e: GraduationEngines, ctx: VerifyContext): Promise<R
     if (!ctx.replayCallerIntent) return { status: 'not_available', reason: 'no_caller_input' };
     requestId = newest.request_id;
   }
-  const [brain] = await e.source.executeRaw<{ enabled: unknown }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  const sourceEnabled = brain ? brain.enabled === true || brain.enabled === 't' : undefined;
+  const sourceEnabled = await readManagedMode(e.source);
   return replayProbe(e.target, requestId, ctx.replayCallerIntent, { sourceEnabled, runId: ctx.runId });
 }
 

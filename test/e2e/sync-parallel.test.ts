@@ -20,6 +20,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { execSync } from 'child_process';
 import { hasDatabase, setupDB, teardownDB, getEngine, getConn } from './helpers.ts';
+import { waitFor } from '../helpers/wait-for.ts';
 
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
@@ -89,7 +90,10 @@ describeE2E('E2E sync-parallel: T2 happy path + leak probe', () => {
     // also accepts --workers); status is 'first_sync'.
     expect(result.status).toBe('first_sync');
 
-    const after = await activeConnections();
+    // A closed client's server backend exits asynchronously, so a worker
+    // connection can still be listed for a moment after its engine closed.
+    let after = await activeConnections();
+    await waitFor(async () => (after = await activeConnections()) - before < 4, { timeoutMs: 5000, label: 'worker backends exited' }).catch(() => undefined);
 
     // Allow some slack — the helper engine + sync's normal pool stay open.
     // Worker engines (4 × 2 = 8 connections) MUST have closed; if they
@@ -175,6 +179,7 @@ describeE2E('E2E sync-parallel: T18 --timeout returns partial; last_commit uncha
 
   afterAll(async () => {
     if (repoPath) rmSync(repoPath, { recursive: true, force: true });
+    await getConn().unsafe(`DELETE FROM sources WHERE id IN ('e2e-timeout-source', 'e2e-timeout-partial')`);
     await teardownDB();
   });
 

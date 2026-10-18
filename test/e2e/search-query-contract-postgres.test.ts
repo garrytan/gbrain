@@ -27,6 +27,20 @@ import { withEnv } from '../helpers/with-env.ts';
     expect(await engine.executeRaw(`SHOW enable_seqscan`)).toEqual(before);
   });
 
+  test("search reads inside a caller's transaction restore every setting they change (#6721)", async () => {
+    // Each read sets its settings in one statement; nested, it reads the caller's values first and restores them.
+    // A nested keyword, title or count read used to leave its own statement_timeout on the caller's transaction.
+    const after = await engine.transaction(async tx => {
+      await tx.executeRaw(`SELECT set_config('jit', 'on', true), set_config('statement_timeout', '45s', true), set_config('enable_seqscan', 'on', true)`);
+      expect((await tx.searchKeyword('ordertoken impossibleterm', { sourceId: 'query-order', orFallback: true })).length).toBeGreaterThan(0);
+      await tx.searchTitles('ordertoken impossibleterm', { sourceId: 'query-order' });
+      await tx.countKeywordPages('ordertoken', { sourceId: 'query-order' });
+      await tx.searchVector(vector, { sourceId: 'query-order', limit: 3 });
+      return tx.executeRaw(`SELECT current_setting('jit') AS jit, current_setting('statement_timeout') AS timeout, current_setting('enable_seqscan') AS seqscan`);
+    });
+    expect(after).toEqual([{ jit: 'on', timeout: '45s', seqscan: 'on' }]);
+  });
+
   test('restricted runtime roles retain RLS and local settings through relaxed retries', async () => {
     await engine.executeRaw('CREATE ROLE query_contract_reader NOLOGIN');
     const tables = ['pages', 'content_chunks', 'sources'];
@@ -66,7 +80,7 @@ import { withEnv } from '../helpers/with-env.ts';
   /** Runs `check` as a reader that sees pages only from a statement where `predicate` holds. */
   async function asSettingProbeReader(predicate: string, check: (reader: PostgresEngine) => Promise<void>) {
     await engine.executeRaw('CREATE ROLE query_contract_probe NOLOGIN');
-    const tables = ['pages', 'content_chunks', 'sources', 'timeline_entries', 'config'];
+    const tables = ['pages', 'content_chunks', 'page_body_manifest', 'sources', 'timeline_entries', 'config'];
     const original = await engine.executeRaw<{ relname: string; relrowsecurity: boolean }>(`SELECT relname, relrowsecurity FROM pg_class WHERE relname = ANY($1::text[])`, [tables]);
     const reader = new PostgresEngine();
     try {

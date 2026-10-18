@@ -16,6 +16,7 @@ import { parseTakesFence } from '../takes-fence.ts';
 import { screenFenceCtx, type ContentRefusal, type FenceScreen, type ImportScreenResult } from '../import-screen.ts';
 import type { ParsedMarkdown, ParseOpts } from '../markdown.ts';
 import { VERSION } from '../../version.ts';
+import { fenceBody } from '../page-body/page-shape.ts';
 import { fencesNormalizeEnabled } from './config.ts';
 import { fenceRefusal, scanCanonicalFences, targetFenceRefusal } from './refusal.ts';
 import { effectiveVisibility } from '../search/private-visibility.ts';
@@ -86,7 +87,7 @@ export async function applyImportFences(input: Omit<Parameters<typeof resolveImp
   screen: ImportScreenResult; parsed: { compiled_truth: string; timeline: string; type: ParsedMarkdown['type']; frontmatter: ParsedMarkdown['frontmatter'] };
   existing: { id: number; compiled_truth: string; timeline?: string | null; deleted_at?: Date | null } | null;
 }): Promise<{ refused?: { slug: string; status: 'error'; chunks: 0; error: string; refusal: ContentRefusal; skip_reason: 'invalid_fence' }; fields: { fences_normalized?: FenceFix[]; fence_issues?: FenceIssueWire[] } }> {
-  const existing = input.existing && input.existing.deleted_at == null ? { id: input.existing.id, compiled_truth: input.existing.compiled_truth, timeline: input.existing.timeline ?? '' } : null;
+  const existing = input.existing && input.existing.deleted_at == null ? { id: input.existing.id, ...fenceBody(input.existing) } : null;
   const fences = await resolveImportFences({ ...input, screen: (input.screen as { fences?: FenceScreen }).fences, existing });
   if (fences.refusal) return { refused: { slug: input.slug, status: 'error', chunks: 0, error: fences.refusal.message, refusal: fences.refusal, skip_reason: 'invalid_fence' }, fields: {} };
   if (fences.page) ({ compiled_truth: input.parsed.compiled_truth, timeline: input.parsed.timeline } = fences.page);

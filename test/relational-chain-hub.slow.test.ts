@@ -8,6 +8,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runRelationalChain, linkFamily } from '../src/core/search/relational-chain.ts';
+import { cpuMsAsync } from './helpers/cpu-time.ts';
 
 let eng: PGLiteEngine;
 
@@ -32,11 +33,15 @@ afterAll(async () => {
 describe('relational chain on a 10,000-neighbor hub', () => {
   test('capped, reported, under 2 s', async () => {
     const carol = await eng.executeRaw<{ id: number }>(`SELECT id FROM pages WHERE slug = 'people/carol-example'`);
-    const started = Date.now();
-    const { rows, diagnostics } = await runRelationalChain(eng, [{ page_id: Number(carol[0].id), slug: 'people/carol-example', source_id: 'default' }], {
-      hops: [{ linkTypes: ['founded'], toward: 'object' }, { linkTypes: linkFamily('invested_in'), toward: 'subject' }], excludeAnchor: false,
-    }, {});
-    expect(Date.now() - started).toBeLessThan(2000);
+    let result!: Awaited<ReturnType<typeof runRelationalChain>>;
+    // Thread CPU time: PGLite runs on this thread, so it measures the hop's work rather than how long the scheduler made it wait.
+    const ms = await cpuMsAsync(async () => {
+      result = await runRelationalChain(eng, [{ page_id: Number(carol[0].id), slug: 'people/carol-example', source_id: 'default' }], {
+        hops: [{ linkTypes: ['founded'], toward: 'object' }, { linkTypes: linkFamily('invested_in'), toward: 'subject' }], excludeAnchor: false,
+      }, {});
+    });
+    const { rows, diagnostics } = result;
+    expect(ms).toBeLessThan(2000);
     expect(rows.filter(r => r.role === 'answer').length).toBe(100);
     expect(diagnostics.cap_hit).toEqual({ cap: 'neighbor', hop: 2 });
   }, 30_000);

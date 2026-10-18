@@ -61,11 +61,22 @@ async function waitForOrigin(bare: string, expectSha: string, ms = 30_000): Prom
 // regression test below pins that.
 
 let root: string, work: string, bare: string;
-let oldHome: string | undefined, oldGbrainHome: string | undefined;
+let oldHome: string | undefined, oldGbrainHome: string | undefined, oldPath: string | undefined;
+
+// #6530: the helper and hook delegate to `gbrain git commit-push`. Tests put a
+// `gbrain` on PATH that runs this checkout's CLI under the current bun, so
+// harden captures it (resolveGbrainCliPath) exactly as it captures a real install.
+function installGbrainShim(dir: string): void {
+  const bin = join(dir, 'gbrain-bin');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'gbrain'), `#!/usr/bin/env bash\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(join(import.meta.dir, '..', 'src', 'cli.ts'))} "$@"\n`, { mode: 0o755 });
+  process.env.PATH = `${bin}:${process.env.PATH ?? ''}`;
+}
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'bdh-'));
-  oldHome = process.env.HOME; oldGbrainHome = process.env.GBRAIN_HOME;
+  oldHome = process.env.HOME; oldGbrainHome = process.env.GBRAIN_HOME; oldPath = process.env.PATH;
+  installGbrainShim(root);
   process.env.HOME = mkdtempSync(join(root, 'home-'));
   // CX2-8: GBRAIN_HOME is a PARENT dir (config.ts semantics — `.gbrain` is
   // appended by both the TS resolver and the bash template), so the
@@ -85,6 +96,7 @@ beforeEach(async () => {
 afterEach(() => {
   if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
   if (oldGbrainHome === undefined) delete process.env.GBRAIN_HOME; else process.env.GBRAIN_HOME = oldGbrainHome;
+  process.env.PATH = oldPath;
   delete process.env.GBRAIN_GIT_ALLOW_FILE_TRANSPORT;
   rmSync(root, { recursive: true, force: true });
 });
@@ -171,9 +183,16 @@ describe('durability push remote confirmation (#5138)', () => {
   function interceptGit(script: string): NodeJS.ProcessEnv {
     const bin = join(root, 'intercept-bin');
     mkdirSync(bin);
+    // #6530: the CLI runs `git -C <root> -c k=v <sub> ...`, so match on the
+    // subcommand after the global options instead of on "$1".
     writeFileSync(join(bin, 'git'), `#!/usr/bin/env bash
 set -eu
-${script}
+GIT_SUB=""; _i=1
+while [ "$_i" -le "$#" ]; do
+  _a="\${!_i}"
+  case "$_a" in -C|-c) _i=$((_i + 2)) ;; -*) _i=$((_i + 1)) ;; *) GIT_SUB="$_a"; break ;; esac
+done
+${script.replaceAll('"$1"', '"$GIT_SUB"')}
 exec "$GBRAIN_TEST_REAL_GIT" "$@"
 `, { mode: 0o755 });
     return {
@@ -303,7 +322,13 @@ fi`);
 
     const captured = readFileSync(env.GBRAIN_TEST_PUSH_MARKER!, 'utf8').trim();
     expect(result.status).toBe(0);
-    expect(originHead(bare)).toBe(captured);
+    if (attempt === 'initial') expect(originHead(bare)).toBe(captured);
+    else {
+      // #6530: the retry publishes an in-memory merge built on the captured
+      // commit (never on the moved HEAD), so the captured commit is its parent.
+      expect(originHead(bare)).not.toBe(captured);
+      expect(git(bare, 'rev-parse', 'main^1')).toBe(captured);
+    }
     expect(git(work, 'rev-parse', 'HEAD')).not.toBe(captured);
     expect(git(bare, 'show', 'main:pending.md')).toBe('pending');
   });
@@ -363,7 +388,8 @@ fi`);
 
     expect(result.status).toBe(0);
     expect(originHead(bare)).toBe(remoteHead);
-    expect(git(work, 'rev-parse', 'HEAD')).toBe(intendedHead);
+    // #6530: the checkout catches up to the published tip (fast-forward only; the dirty file is untouched).
+    expect(git(work, 'rev-parse', 'HEAD')).toBe(remoteHead);
     expect(readFileSync(join(work, 'README.md'), 'utf8')).toBe('unrelated dirty edit\n');
     const log = readFileSync(join(process.env.HOME!, '.gbrain', 'brain-push.log'), 'utf8');
     expect(log).toContain('ok-already-on-remote main');
@@ -372,7 +398,7 @@ fi`);
     expect(getLastPushOutcome('main').status).toBe('ok');
   });
 
-  test('confirms the rebased commit when the retry push lands but reports failure', () => {
+  test('confirms the merged commit when the retry push lands but reports failure', () => {
     const remoteHead = advanceRemote();
     const env = interceptGit(`if [ "$1" = push ]; then
   if [ ! -e "$GBRAIN_TEST_PUSH_MARKER" ]; then
@@ -396,8 +422,10 @@ fi`);
 
   test('checks again after recovery fails while another pusher lands the commit', () => {
     writeFileSync(join(work, 'README.md'), 'unrelated dirty edit\n');
+    // #6530: no pull runs any more; the integrate step's fetch is where the
+    // recovery fails while another pusher lands the commit.
     const env = interceptGit(`if [ "$1" = push ]; then exit 1; fi
-if [ "$1" = pull ]; then
+if [ "$1" = fetch ]; then
   "$GBRAIN_TEST_REAL_GIT" push origin HEAD:refs/heads/main
   exit 1
 fi`);
@@ -452,7 +480,7 @@ fi`);
     expect(getLastPushOutcome('main').status).toBe('needs_attention');
   });
 
-  test('does not confirm the temporary remote HEAD of a conflicted rebase', () => {
+  test('does not confirm the remote HEAD of a conflicting integrate', () => {
     writeFileSync(join(work, 'README.md'), 'local edit\n');
     git(work, 'add', 'README.md');
     git(work, 'commit', '--amend', '--no-edit', '-q');
@@ -466,7 +494,10 @@ fi`);
     expect(git(work, 'rev-parse', 'HEAD')).toBe(localHead);
     expect(readFileSync(join(work, 'README.md'), 'utf8')).toBe('local edit\n');
     expect(existsSync(join(work, '.git', 'rebase-merge'))).toBe(false);
-    expect(readFileSync(join(process.env.HOME!, '.gbrain', 'brain-push.log'), 'utf8')).toContain('LOCAL-ONLY, NEEDS ATTENTION');
+    expect(existsSync(join(work, '.git', 'MERGE_HEAD'))).toBe(false);
+    // #6530: a same-file conflict is its own outcome (integrate_conflict), not a lost push.
+    expect(readFileSync(join(process.env.HOME!, '.gbrain', 'brain-push.log'), 'utf8')).toContain('CONFLICT, NEEDS ATTENTION');
+    expect(getLastPushOutcome('main').status).toBe('needs_attention');
   });
 });
 
@@ -616,7 +647,8 @@ describe('#4682 — push-lock timeout is fail-loud for the helper only', () => {
     const head = git(work, 'rev-parse', 'HEAD');
     expect(originHead(bare)).not.toBe(head);
 
-    const lockPath = join(git(work, 'rev-parse', '--absolute-git-dir'), 'gbrain-push.lock');
+    // #6530: pushes serialize on the publish lock (the commit lock is never held across the network).
+    const lockPath = join(git(work, 'rev-parse', '--absolute-git-dir'), 'brain-publish.lock');
     const holder = spawn('flock', [lockPath, 'sleep', '30'], { stdio: 'ignore', env: process.env });
     try {
       expect(await waitForLockHeld(lockPath)).toBe(true);
@@ -628,29 +660,30 @@ describe('#4682 — push-lock timeout is fail-loud for the helper only', () => {
         });
       } catch (e: any) { code = e.status ?? 1; }
       expect(code).not.toBe(0); // pre-fix: exit 0 with no push and no remote-head check
-      // The timeout was logged, and the commit is still NOT on origin.
+      // The unconfirmed push was logged, and the commit is still NOT on origin.
       const log = join(process.env.HOME!, '.gbrain', 'brain-push.log');
-      expect(readFileSync(log, 'utf-8')).toContain('lock-timeout main');
+      expect(readFileSync(log, 'utf-8')).toContain('LOCAL-ONLY, NEEDS ATTENTION: main');
       expect(originHead(bare)).not.toBe(head);
     } finally {
       holder.kill('SIGKILL');
     }
   }, 60_000);
 
-  test('template parity: helper renders lock-timeout rc 1, hook keeps rc 0, bodies otherwise identical', () => {
+  test('#6530: helper and hook keep their ownership banners, declare protocol 2, and never rebase, stash or reset the shared tree', () => {
     const helper = readFileSync(join(work, 'scripts', 'brain-commit-push.sh'), 'utf-8');
     const hook = readFileSync(join(work, '.git', 'hooks', 'post-commit'), 'utf-8');
-    // The helper (synchronous guarantee) fails loudly on lock timeout...
-    expect(helper).toMatch(/lock-timeout \$_branch" >>"\$_log"; return 1; \}/);
-    // ...while the hook (detached best-effort) keeps the coalescing skip.
-    expect(hook).toMatch(/lock-timeout \$_branch" >>"\$_log"; return 0; \}/);
-    // D7 stays intact: apart from that one return code, the rendered
-    // brain_push bodies are byte-identical (one template, one knob).
-    const body = (s: string): string => {
-      const m = s.match(/brain_push\(\) \{[\s\S]*?\n\}/);
-      return (m ? m[0] : '').replace(/return [01]; \}/, 'return RC; }');
-    };
-    expect(body(helper).length).toBeGreaterThan(0);
-    expect(body(helper)).toBe(body(hook));
+    expect(helper).toContain('# gbrain brain-commit-push helper (v0.42.44+)');
+    expect(hook).toContain('# gbrain brain-durability post-commit hook (v0.42.44+)');
+    for (const body of [helper, hook]) {
+      expect(body).toContain('# gbrain-protocol: 2');
+      const commands = body.split('\n').filter(line => !line.trimStart().startsWith('#') && !line.includes('echo '));
+      for (const banned of [/git pull/, /git rebase/, /git stash/, /reset --hard/, /push --force/, /--autostash(?!\S)/]) {
+        expect(commands.filter(line => banned.test(line))).toEqual([]);
+      }
+    }
+    // The helper delegates to the CLI; the hook runs the CLI captured at harden, never the committed helper.
+    expect(helper).toContain('git commit-push "$@"');
+    expect(hook).toContain('git commit-push --push-only --require-clean');
+    expect(hook).not.toContain('brain-commit-push.sh"');
   });
 });

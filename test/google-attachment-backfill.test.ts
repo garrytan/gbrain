@@ -18,12 +18,17 @@ import { sanitizeRemoteBody } from '../src/core/remote-body.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { syncLockId } from '../src/core/db-lock.ts';
+import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
 import { createConnectorFixture, options, json, settleConnectorWrites, sourceCheckpoint } from './helpers/connector-fixture.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { testWaitMs } from './helpers/wait-for.ts';
 
 const { engines, env, source, boundSource, setup, teardown } = createConnectorFixture();
-beforeAll(setup, 120_000);
-afterAll(teardown);
+// Every repair below asserts its receipt write committed, so each publish waits the fixture's slow-host settle time
+// (as settleConnectorWrites does) instead of the 5 s production publish wait, which a loaded VM overruns (write_pending).
+let restoreWriteWait = () => {};
+beforeAll(async () => { restoreWriteWait = __setMaintenanceWriteWaitForTests(testWaitMs(30_000)); await setup(); }, 120_000);
+afterAll(async () => { restoreWriteWait(); await teardown(); });
 const config = { kind: 'google', g_account: 'reader@example.com', g_services: 'gmail', g_access: 'env', g_token_env: 'CONNECTOR_TEST_TOKEN' };
 const claim = 'syntheticwithdrawalsentinel prefers amber fixtures';
 const ctx = (engine: BrainEngine, sourceId: string) => ({ engine, sourceId, config: { engine: engine.kind }, remote: false, dryRun: false, logger: { info() {}, warn() {}, error() {} } });

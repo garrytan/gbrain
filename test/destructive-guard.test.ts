@@ -35,8 +35,19 @@ import {
 } from '../src/core/destructive-guard.ts';
 
 // Tier 3 opt-out — these tests need the cold-init schema path so the v33
-// migration columns exist on the brain under test.
-delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+// migration columns exist on the brain under test. Unset for this file's
+// tests and restore afterwards: a CI shard runs hundreds of files in ONE bun
+// process (scripts/test-shard.sh), so a module-scope delete would cold-boot
+// every later engine in the shard (check:test-env-opt-ins pins this shape).
+let savedSnapshot: string | undefined;
+beforeAll(() => {
+  savedSnapshot = process.env.GBRAIN_PGLITE_SNAPSHOT;
+  delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+});
+afterAll(() => {
+  if (savedSnapshot === undefined) delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+  else process.env.GBRAIN_PGLITE_SNAPSHOT = savedSnapshot;
+});
 
 async function setupBrain(): Promise<PGLiteEngine> {
   const engine = new PGLiteEngine();
@@ -546,22 +557,31 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     expect(result.blocked).toEqual([]);
   });
 
+  // GBRA-130 A-50: a non-FK error is never read as FK-blocked. One source's own failure (57014) is blocked with its
+  // classified code and the manual purge, and the sweep continues; a run-scoped error (lost connection) still re-raises.
+  const nonFkStub = (code: string, message: string) => ({
+    async executeRaw(sql: string): Promise<Array<{ id: string }>> {
+      if (sql.includes('archive_expires_at IS NULL')) return []; // #5452 unverified-archive listing: none here
+      if (sql.includes('FROM persistence_brain')) return [{ enabled: false } as never]; // #6482: one well-formed unmanaged row
+      if (sql.trimStart().startsWith('SELECT')) return [{ id: 'boom' }];
+      throw Object.assign(new Error(message), { code }); // NOT the FK class
+    },
+  }) as never;
+
   test('gbrain#4115 — a NON-FK error re-raises instead of reading as blocked (review gap G8)', async () => {
-    const stub = {
-      async executeRaw(sql: string): Promise<Array<{ id: string }>> {
-        if (sql.trimStart().startsWith('SELECT')) return [{ id: 'boom' }];
-        const err = new Error('canceling statement due to statement timeout') as Error & { code: string };
-        err.code = '57014'; // query_canceled — NOT the FK class
-        throw err;
-      },
-    } as never;
-    await expect(purgeExpiredSources(stub)).rejects.toThrow('statement timeout');
+    await expect(purgeExpiredSources(nonFkStub('08006', 'Connection terminated unexpectedly'))).rejects.toThrow('Connection terminated');
+    const { purged, blocked } = await purgeExpiredSources(nonFkStub('57014', 'canceling statement due to statement timeout'));
+    expect(purged).toEqual([]);
+    expect(blocked.map(b => [b.id, b.code, b.fix?.next, b.fix?.command])).toEqual([['boom', 'statement_timeout', 'tell_user_to_run', 'gbrain sources purge boom --confirm-destructive']]);
+    expect(blocked[0]!.reason).toContain('statement timeout');
+    expect(blocked[0]!.reason).not.toContain('foreign key');
   });
 
   test('gbrain#4115 — a source restored between SELECT and DELETE is neither purged nor blocked (review gap G8)', async () => {
     const stub = {
       async executeRaw(sql: string): Promise<Array<{ id: string }>> {
         if (sql.includes('archive_expires_at IS NULL')) return []; // #5452 unverified-archive listing: none here
+        if (sql.includes('FROM persistence_brain')) return [{ enabled: false } as never]; // #6482: one well-formed unmanaged row
         if (sql.trimStart().startsWith('SELECT')) return [{ id: 'restored-mid-sweep' }];
         return []; // per-id DELETE re-checks the expiry predicate → 0 rows
       },
@@ -778,7 +798,7 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
     const purgeStub = {
       executeRaw: async (sql: string) => {
         if (sql.includes('oauth_clients')) sawOauthQuery = true;
-        return [];
+        return sql.includes('FROM persistence_brain') ? [{ enabled: false }] : []; // #6482: one well-formed unmanaged row
       },
     } as any;
     expect(await purgeExpiredSources(purgeStub)).toEqual({ purged: [], blocked: [] });
@@ -865,6 +885,7 @@ describe('purgeExpiredSources — clone cleanup containment', () => {
   function purgeStubFor(id: string, localPath: string) {
     return {
       executeRaw: async (sql: string) => {
+        if (sql.includes('FROM persistence_brain')) return [{ enabled: false }]; // #6482: one well-formed unmanaged row
         if (sql.trimStart().startsWith('SELECT')) {
           return [{ id, config: { kind: 'github', gh_managed: true }, local_path: localPath }];
         }

@@ -11,6 +11,8 @@ export interface ServeHealth {
   engine?: string;
   version?: string;
   detail?: string;
+  /** No HTTP response at all (refused, reset or timed out), as opposed to a non-ok answer from something listening. */
+  unreachable?: true;
 }
 
 export async function probeServeHealth(
@@ -26,7 +28,7 @@ export async function probeServeHealth(
     if (body.status !== 'ok') return { ok: false, detail: `health status: ${body.status ?? 'unknown'}` };
     return { ok: true, version: body.version, engine: body.engine };
   } catch (e) {
-    return { ok: false, detail: (e as Error).message };
+    return { ok: false, detail: (e as Error).message, unreachable: true };
   }
 }
 

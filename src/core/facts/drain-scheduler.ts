@@ -26,7 +26,7 @@ export interface FactsDrainSchedulerOpts {
   lastActivityAt?: () => number;
   /** Owner veto for this tick (delegated sync running, engine degraded, shutting down). */
   canRun?: () => boolean | Promise<boolean>;
-  setInterval?: (fn: () => void, ms: number) => unknown;
+  setInterval?: (fn: () => unknown, ms: number) => unknown;
   clearInterval?: (handle: unknown) => void;
   now?: () => number;
   log?: (line: string) => void;
@@ -71,9 +71,9 @@ export function startFactsDrainScheduler(engine: BrainEngine, opts: FactsDrainSc
     return inflight;
   };
 
-  const set = opts.setInterval ?? ((fn: () => void, ms: number) => setInterval(fn, ms));
+  const set = opts.setInterval ?? ((fn: () => unknown, ms: number) => setInterval(fn, ms));
   const clear = opts.clearInterval ?? ((h: unknown) => clearInterval(h as ReturnType<typeof setInterval>));
-  const handle = engine.kind === 'pglite' ? set(() => { void tick(); }, tickMs) : null;
+  const handle = engine.kind === 'pglite' ? set(() => tick(), tickMs) : null;
   (handle as { unref?: () => void } | null)?.unref?.();
 
   return {

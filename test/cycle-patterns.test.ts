@@ -155,6 +155,25 @@ describe('patterns provider gate (PR #2279)', () => {
     expect(r.details.reason).toBe('insufficient_cycle_budget');
   });
 
+  test('a keyed non-Anthropic model with no key skips as no_provider before any submission (#6705)', async () => {
+    await seed(reflections(3));
+    await engine.setConfig('models.dream.patterns', 'openai:gpt-5.4');
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-patterns-keyless-'));
+    try {
+      const r = await noKeys(
+        () => runPhasePatterns(engine, { brainDir: '/tmp', dryRun: false, deadlineAtMs: Date.now() + 600_000 }),
+        { GBRAIN_HOME: home },
+      );
+      expect(r.status).toBe('skipped');
+      expect(r.details.reason).toBe('no_provider');
+      expect(r.summary).toContain('OPENAI_API_KEY');
+      const [jobs] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM minion_jobs');
+      expect(jobs.n).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('a bare model id is normalized to its provider before probing', async () => {
     await seed(reflections(3));
     await engine.setConfig('models.dream.patterns', 'claude-sonnet-4-6');

@@ -57,6 +57,17 @@ export function setPackRelationSemantics(semantics: ReadonlyMap<string, 'state' 
   packSemantics = semantics;
 }
 
+/**
+ * Relation types that record when something takes effect rather than a
+ * relationship that starts and ends: their edges are never hidden for not
+ * having started (or for falling outside a `during` window). Status reads
+ * still report `not_started` and the stints; only filtering treats them like
+ * reference edges (never part of an `ended` read). docs/guides/temporal-edges.md.
+ */
+export const LIVENESS_EXEMPT_LINK_TYPES: readonly string[] = Object.freeze(['amends']);
+
+const livenessExemptSql = `lr.link_type <> ALL(ARRAY[${LIVENESS_EXEMPT_LINK_TYPES.map(t => `'${t}'`).join(', ')}]::text[])`;
+
 export function relationSemantics(linkType: string | null | undefined): RelationSemantics {
   if (!linkType) return 'reference';
   return packSemantics.get(linkType) ?? RELATION_SEMANTICS[linkType] ?? 'reference';
@@ -141,6 +152,11 @@ export interface RelationshipState {
   disputed: boolean;
   /** Present-tense assertions that a later dated end overrides. */
   staleAssertions: number;
+  /**
+   * The last end is an upper bound: only an inferred closure (producer `dream`, the nightly check's date arithmetic)
+   * dates it, so the relationship ended on or before `lastEnd`, not on it.
+   */
+  lastEndUpperBound: boolean;
 }
 
 /**
@@ -161,6 +177,8 @@ export interface RelationshipState {
  *    ended at an unknown date (no stints); undated present from another origin
  *    → disputed (kept live, flagged). With a dated start and no dated end, past
  *    assertions never close the stint: only a dated end does.
+ * 5. An inferred end (producer `dream`: the nightly check closed the stint on the date a conflicting
+ *    relationship started) is an upper bound. An explicit end of the same stint replaces it, earlier or later.
  * Event relations: [earliest dated occurrence, inf), or (-inf, inf) undated.
  */
 export function buildRelationshipState(
@@ -170,21 +188,23 @@ export function buildRelationshipState(
 ): RelationshipState {
   const undatedPresent = assertions.filter(a => a.tense === 'present').length;
   const undatedPast = assertions.filter(a => a.tense === 'past').length;
-  const events = dedupeEvents(transitions);
+  const events = semantics === 'state' ? withoutOverriddenInferredEnds(dedupeEvents(transitions)) : dedupeEvents(transitions);
   const starts = events.filter(e => e.kind === 'start').map(e => e.date);
-  const ends = events.filter(e => e.kind === 'end').map(e => e.date);
+  const ends = events.filter(e => e.kind === 'end');
+  const lastEnd = ends.at(-1) ?? null;
   const base = {
     semantics,
     firstStart: starts[0] ?? null,
     lastStart: starts.length ? starts[starts.length - 1] : null,
-    lastEnd: ends.length ? ends[ends.length - 1] : null,
+    lastEnd: lastEnd?.date ?? null,
+    lastEndUpperBound: lastEnd?.inferred === true,
     undatedPresent,
     undatedPast,
   };
 
   if (semantics === 'event') {
     const first = events.length ? events[0].date : null;
-    return { ...base, stints: [{ from: first, until: null }], disputed: false, staleAssertions: 0 };
+    return { ...base, lastEndUpperBound: false, stints: [{ from: first, until: null }], disputed: false, staleAssertions: 0 };
   }
 
   if (events.length === 0) {
@@ -222,18 +242,38 @@ function pastFromOtherOrigin(assertions: readonly AssertionEvidence[]): boolean 
   return assertions.some(a => a.tense === 'past' && !presentOrigins.has(a.originPageId));
 }
 
-function dedupeEvents(transitions: readonly TransitionEvidence[]): Array<{ kind: TransitionKind; date: string }> {
-  const seen = new Set<string>();
-  const out: Array<{ kind: TransitionKind; date: string }> = [];
+interface StateEvent { kind: TransitionKind; date: string; inferred: boolean }
+
+/** One event per (kind, date); an end is inferred only when every transition behind it is a `dream` closure. */
+function dedupeEvents(transitions: readonly TransitionEvidence[]): StateEvent[] {
+  const byKey = new Map<string, StateEvent>();
   for (const t of transitions) {
     const date = dateKey(t.occurredOn);
     if (!date) continue;
     const key = `${t.kind}:${date}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({ kind: t.kind, date });
+    const inferred = t.kind === 'end' && t.producer === 'dream';
+    const seen = byKey.get(key);
+    if (seen) seen.inferred &&= inferred;
+    else byKey.set(key, { kind: t.kind, date, inferred });
   }
-  return out.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.kind === b.kind ? 0 : a.kind === 'end' ? -1 : 1);
+  return [...byKey.values()].sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.kind === b.kind ? 0 : a.kind === 'end' ? -1 : 1);
+}
+
+/**
+ * Drops an inferred end when an explicit end closes the same stint: the explicit date is when it ended, the inferred
+ * one only bounds it. Stints are assigned in replay order (an end sorts before a start on the same day, so a same-day
+ * end and rejoin end the old stint): an end belongs to the stint the last start before it opened, or to the implicit
+ * stint before the first start.
+ */
+function withoutOverriddenInferredEnds(events: StateEvent[]): StateEvent[] {
+  const stintOf = new Map<StateEvent, number>();
+  let stint = 0;
+  for (const e of events) {
+    if (e.kind === 'start') stint++;
+    else stintOf.set(e, stint);
+  }
+  const explicit = new Set([...stintOf].filter(([e]) => !e.inferred).map(([, s]) => s));
+  return events.filter(e => !(e.kind === 'end' && e.inferred && explicit.has(stintOf.get(e)!)));
 }
 
 /** Merge touching/overlapping stints and drop empty ones (until <= from). */
@@ -363,7 +403,8 @@ function dateLiteral(date: string): string {
  * fragment composes into statements with any parameter numbering.
  *
  * A row passes when its relationship has no state row (reference type, or not
- * yet refreshed) or its state row matches the requested status.
+ * yet refreshed), its type is liveness-exempt (outside `ended` reads), or its
+ * state row matches the requested status.
  */
 export function relationshipFilterSql(linkAlias: string, opts: EdgeTemporalOpts = {}): string {
   const status = opts.status ?? 'live';
@@ -374,14 +415,14 @@ export function relationshipFilterSql(linkAlias: string, opts: EdgeTemporalOpts 
       AND lr.link_type = ${linkAlias}.link_type AND lr.scope = '${scope}'`;
   if (opts.during) {
     const range = `daterange(${dateLiteral(opts.during.from)}, ${dateLiteral(opts.during.until)})`;
-    return `NOT EXISTS (SELECT 1 FROM link_relationships lr WHERE ${probe} AND NOT (lr.valid_ranges && ${range}))`;
+    return `NOT EXISTS (SELECT 1 FROM link_relationships lr WHERE ${probe} AND ${livenessExemptSql} AND NOT (lr.valid_ranges && ${range}))`;
   }
   if (status === 'ended') {
     return `EXISTS (SELECT 1 FROM link_relationships lr WHERE ${probe} AND lr.semantics = 'state'
       AND NOT (lr.valid_ranges @> ${day}) AND (lr.first_start IS NULL OR lr.first_start <= ${day}))`;
   }
   const disputedClause = opts.asOf ? ' OR lr.disputed' : '';
-  return `NOT EXISTS (SELECT 1 FROM link_relationships lr WHERE ${probe} AND (NOT (lr.valid_ranges @> ${day})${disputedClause}))`;
+  return `NOT EXISTS (SELECT 1 FROM link_relationships lr WHERE ${probe} AND ${livenessExemptSql} AND (NOT (lr.valid_ranges @> ${day})${disputedClause}))`;
 }
 
 /** Validate op-level temporal params; returns normalized opts or an error message. */
@@ -484,10 +525,11 @@ export function annotateTemporalRow<T extends { link_type: string }>(row: T, asO
  * Used where the read is bounded (one page's edges) so callers can also count
  * what they hid.
  */
-export function edgeMatchesTemporal(row: TemporalAnnotation & { first_start?: string | null }, opts: EdgeTemporalOpts = {}): boolean {
+export function edgeMatchesTemporal(row: TemporalAnnotation & { first_start?: string | null; link_type?: string }, opts: EdgeTemporalOpts = {}): boolean {
   const status = opts.status ?? 'live';
   if (opts.disabled) return true;
   if (row.status === 'reference') return status !== 'ended';
+  if (row.link_type && LIVENESS_EXEMPT_LINK_TYPES.includes(row.link_type) && status !== 'ended') return true;
   if (opts.during) {
     if (!row.stints) return true;
     return row.stints.some(s => (s.from === null || s.from < opts.during!.until) && (s.until === null || s.until > opts.during!.from));

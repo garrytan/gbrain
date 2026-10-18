@@ -57,8 +57,14 @@ for (const writer of writers) {
     const after = (await engine.readPageSnapshot(writer.slug, { sourceId }))!;
     expect(after.page.compiled_truth).toContain('Generated body v2');
     const rows = await engine.getTimeline(writer.slug, { sourceId });
-    expect(rows.some(row => row.summary === 'User note added by hand')).toBe(writer.regenerated);
     expect(after.page.timeline.includes('User note added by hand')).toBe(writer.regenerated);
+    // W1 #6783 §12 (a): on an ordinary page the republish (stamped `unknown`, no derivation declared) drops the bullet from
+    // the text, but it may not delete the more trusted agent-written row: the row is held for the owner's decision.
+    expect(rows.some(row => row.summary === 'User note added by hand')).toBe(true);
+    const held = await engine.executeRaw<{ change: string }>(`SELECT tp.before_state->>'change' AS change FROM trust_proposals tp
+      JOIN timeline_entries t ON tp.target_table = 'timeline_entries' AND tp.target_id = t.id JOIN pages p ON p.id = t.page_id
+      WHERE p.source_id = $1 AND p.slug = $2 AND tp.status = 'pending' AND tp.action = 'forget'`, [sourceId, writer.slug]);
+    expect(held.map(h => h.change)).toEqual(writer.regenerated ? [] : ['removed']);
   }), 60_000);
 }
 

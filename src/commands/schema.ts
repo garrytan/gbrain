@@ -1025,6 +1025,10 @@ function handleMutationError(err: unknown): never {
     console.error(`Error: ${err.message}`);
     if (err.code === 'PACK_READONLY') {
       console.error('  Hint: fork the pack first, then mutate the fork.');
+    } else if (err.code === 'PACK_TOO_LARGE') {
+      console.error('  Hint: `gbrain errors schema_pack_too_large` explains the hand repair.');
+    } else if (err.code === 'EMIT_MISMATCH') {
+      console.error('  Hint: `gbrain errors schema_pack_emit_mismatch` explains what refused.');
     } else if (err.code === 'STILL_REFERENCED') {
       const refs = (err.details?.references as string[] | undefined) ?? [];
       if (refs.length > 0) console.error(`  Still referenced by: ${refs.join(', ')}`);

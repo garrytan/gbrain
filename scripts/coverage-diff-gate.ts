@@ -294,8 +294,8 @@ function main(): void {
   for (const file of scopedFiles) {
     const addedLines = changed.get(file)!;
     if (isExempt(file, exemptions)) {
-      // Exempt: reported, never gated. src/cli.ts gets its own honest tag.
-      const tag = file === "src/cli.ts" ? "[subprocess-undercount]" : "[e2e-exempt]";
+      // Exempt: reported, never gated. The CLI entry and dispatcher get their own honest tag.
+      const tag = file === "src/cli.ts" || file === "src/cli/main.ts" ? "[subprocess-undercount]" : "[e2e-exempt]";
       rows.push({ file, added: addedLines.length, covered: null, uncovered: null, uncoveredLines: [], status: tag });
       continue;
     }

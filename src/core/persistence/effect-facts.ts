@@ -8,10 +8,12 @@ import type { MinionJobStatus } from '../minions/types.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
+import { readManagedMode } from './managed-mode.ts';
 import { authorizeStoredRequest, authorizeWrite } from './authority.ts';
 import { completeEffect } from './effect-journal.ts';
 import { guardEffectSource } from './effect-recovery.ts';
 import { derivedExtractionSkip } from './derived-extraction-gate.ts';
+import { bodyUnread, isSegmentedPage } from '../page-body/page-shape.ts';
 import type { PersistenceEffect } from './effect-model.ts';
 import type { WriteRequest } from './model.ts';
 
@@ -77,7 +79,8 @@ async function extractionCompletedForPage(engine: BrainEngine, pageId: number): 
  */
 async function bodyAlreadyOffered(engine: BrainEngine, slug: string, page: ParsedPage, before: PageSnapshot | null): Promise<boolean> {
   const live = before && !before.page.deleted_at ? before.page : null;
-  if (!live || live.compiled_truth !== page.compiled_truth) return false;
+  // A segmented prior body is not compared; the extraction's watermark finds nothing appended and calls no model.
+  if (!live || isSegmentedPage(live) || bodyUnread(page) || live.compiled_truth !== page.compiled_truth) return false;
   if (!isFactsBackstopEligible(slug, live).ok) return false;
   if (!(await extractionCompletedForPage(engine, live.id))) return false;
   return !(await extractionPendingForPage(engine, live.id));
@@ -101,8 +104,7 @@ export async function prepareFactsBackstop(engine: BrainEngine, row: WriteReques
 export async function readFactsBackstopJobPage(engine: BrainEngine, data: Record<string, unknown>) {
   const slug = typeof data.slug === 'string' ? data.slug : '';
   const sourceId = typeof data.sourceId === 'string' ? data.sourceId : 'default';
-  const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  if (brain?.enabled && data.persistence_request_id === undefined) return { skipped: 'missing_write_authority' } as const;
+  if (await readManagedMode(engine) && data.persistence_request_id === undefined) return { skipped: 'missing_write_authority' } as const;
   const snapshot = await engine.readPageSnapshot(slug, { sourceId });
   if (!snapshot) return { skipped: 'page_missing' } as const;
   if (data.persistence_request_id !== undefined) {
@@ -113,7 +115,7 @@ export async function readFactsBackstopJobPage(engine: BrainEngine, data: Record
       || snapshot.revision !== data.revision) return { skipped: 'superseded' } as const;
     try { await authorizeFactsBackstop(engine, row); }
     catch (error) {
-      if (error instanceof OperationError && ['permission_denied', 'source_changed'].includes(error.code)) return { skipped: error.code } as const;
+      if (error instanceof OperationError && ['permission_denied', 'source_changed', 'page_not_found'].includes(error.code)) return { skipped: error.code } as const;
       throw error;
     }
   }
@@ -131,7 +133,7 @@ export async function dispatchFactsBackstopEffect(engine: BrainEngine, effect: P
     if (row && !skipped) {
       try { await authorizeFactsBackstop(tx, row, true); }
       catch (error) {
-        if (error instanceof OperationError && ['permission_denied', 'source_changed'].includes(error.code)) skipped = error.code;
+        if (error instanceof OperationError && ['permission_denied', 'source_changed', 'page_not_found'].includes(error.code)) skipped = error.code;
         else throw error;
       }
     }
@@ -145,7 +147,8 @@ export async function dispatchFactsBackstopEffect(engine: BrainEngine, effect: P
     // #6231: the page-write filter in force when the effect dispatches; the job keeps it across retries.
     const notabilityFilter = await resolvePageWriteNotabilityFilter(tx);
     const job = await new MinionQueue(tx).add('facts-absorb', {
-      slug: effect.data.slug, sourceId: effect.source_id, source: 'mcp:put_page', notabilityFilter,
+      // #6333: a stable per-page session (mirrors sync's `sync:<slug>`) so a re-extraction feeds the same-page shadow counter.
+      slug: effect.data.slug, sourceId: effect.source_id, source: 'mcp:put_page', sessionId: `put_page:${effect.data.slug}`, notabilityFilter,
       visibility: effect.data.visibility === 'world' ? 'world' : 'private',
       persistence_request_id: effect.request_id, page_id: effect.data.page_id, revision: effect.revision,
     }, { queue: 'default', idempotency_key: `facts-absorb:write:${effect.request_id}`, max_attempts: 5, backoff_delay: 60_000 });

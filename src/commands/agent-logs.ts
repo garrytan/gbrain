@@ -15,6 +15,7 @@ import { readSubagentAuditForJob } from '../core/minions/handlers/subagent-audit
 import type { SubagentAuditEvent } from '../core/minions/handlers/subagent-audit.ts';
 import { loadTranscriptRows, renderTranscript } from '../core/minions/transcript.ts';
 import type { SubagentMessageRow } from '../core/minions/transcript.ts';
+import { parseSince } from '../core/since.ts';
 
 export interface AgentLogsOpts {
   follow?: boolean;
@@ -144,32 +145,8 @@ async function readJobStatus(engine: BrainEngine, jobId: number): Promise<string
   return rows[0]?.status ?? null;
 }
 
-const RELATIVE_RE = /^(\d+)\s*(s|m|h|d)$/i;
-
-/** Parse `--since`. Accepts ISO-8601 or relative ("5m", "1h", "2d"). */
-export function parseSince(input: string | undefined): string | undefined {
-  if (!input) return undefined;
-  const trimmed = input.trim();
-  if (!trimmed) return undefined;
-  const rel = RELATIVE_RE.exec(trimmed);
-  if (rel) {
-    const [, nStr, unitRaw] = rel;
-    const unit = unitRaw!.toLowerCase();
-    const n = parseInt(nStr!, 10);
-    const mult = unit === 's' ? 1000
-      : unit === 'm' ? 60_000
-      : unit === 'h' ? 3_600_000
-      : 86_400_000; // 'd'
-    return new Date(Date.now() - n * mult).toISOString();
-  }
-  // Assume ISO. `new Date(input).toISOString()` both validates and
-  // normalizes; invalid ISO throws.
-  const d = new Date(trimmed);
-  if (isNaN(d.getTime())) {
-    throw new Error(`--since: could not parse "${input}" as ISO-8601 or relative (e.g. "5m", "1h")`);
-  }
-  return d.toISOString();
-}
+/** Parse `--since`. Accepts ISO-8601 or relative ("5m", "1h", "2d"); the shared parser (#6712 PR 2). */
+export { parseSince };
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {

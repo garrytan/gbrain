@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope } from '../types.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
+import { projectionClassSql } from '../page-state/projection-class.ts';
 
 export interface ProjectionReadinessScope extends PageReadScope {
   pageKind?: string;
@@ -8,8 +9,12 @@ export interface ProjectionReadinessScope extends PageReadScope {
   excludeSlugPrefixes?: string[];
 }
 
+/**
+ * `by_design` (#6803): the only unsealed pages in scope are protected-OCR images,
+ * which no repair seals (archived sources are already outside every live read).
+ */
 export interface ProjectionReadiness {
-  status: 'ready' | 'projection_pending' | 'unknown';
+  status: 'ready' | 'projection_pending' | 'by_design' | 'unknown';
   ready: boolean;
   hint?: string;
 }
@@ -93,22 +98,25 @@ async function probeUncached(
     filters.push(`LEFT(p.slug, LENGTH($${params.length}::text)) <> $${params.length}`);
   }
   try {
-    const rows = await engine.executeRaw<{ pending: boolean }>(
-      `SELECT EXISTS (
-        SELECT 1 FROM pages p
+    // One bound statement: unsealed pages that need work, then those unsealed by design (the class fragment doctor counts).
+    const unsealed = `SELECT 1 FROM pages p JOIN sources s ON s.id = p.source_id
         WHERE p.deleted_at IS NULL
           AND p.text_projection_revision IS DISTINCT FROM p.knowledge_revision
-          AND ${filters.join(' AND ')}
-      ) AS pending`,
+          AND ${filters.join(' AND ')}`;
+    const cls = projectionClassSql('p', 's');
+    const rows = await engine.executeRaw<{ pending: boolean; by_design: boolean }>(
+      `SELECT EXISTS (${unsealed} AND ${cls} NOT IN ('protected','archived')) AS pending,
+        EXISTS (${unsealed} AND ${cls} IN ('protected','archived')) AS by_design`,
       params,
     );
     if (typeof rows[0]?.pending !== 'boolean') throw new Error('Invalid readiness result');
-    return rows[0].pending
-      ? {
+    if (rows[0].pending) {
+      return {
         status: 'projection_pending', ready: false,
         hint: 'Current text projections are pending in the visible scope; results may be incomplete. Run `gbrain doctor` locally to inspect recovery. This read does not repair or embed content.',
-      }
-      : { status: 'ready', ready: true };
+      };
+    }
+    return { status: rows[0].by_design ? 'by_design' : 'ready', ready: true };
   } catch {
     return {
       status: 'unknown', ready: false,

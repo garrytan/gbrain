@@ -4,7 +4,7 @@
  * gate, the shared failure-ledger bookmark gate, and the post-advance
  * extract / facts / embed passes.
  */
-import { CHUNKER_VERSION } from '../../core/chunkers/code.ts';
+import { chunkerStamp } from '../../core/chunkers/code.ts';
 import { serr, slog } from '../../core/console-prefix.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import { clearOpCheckpoint } from '../../core/op-checkpoint.ts';
@@ -67,7 +67,7 @@ export async function finishWithoutChanges(
     // completes cleanly here).
     await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin), gitContextRoot);
     await engine.setConfig('sync.last_run', new Date().toISOString());
-    await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+    await writeChunkerVersion(engine, opts.sourceId, chunkerStamp());
     if (!company) { await clearOpCheckpoint(engine, ckpt.paths); await clearOpCheckpoint(engine, ckpt.target); }
     // A commit whose ONLY changes are malformed filenames lands here with
     // totalChanges === 0 — the anchor advances past those files forever, so
@@ -177,6 +177,10 @@ export async function finalizeIncrementalSync(
   await backstopAffectedPageFacts(run, plan);
 
   const { embedded, embedSlugs } = await embedAffectedPages(run, plan, noEmbed);
+  // #6722: the pages this run left large or embed_skip, read once after the imports.
+  const { readPageSizeStates, addSizeState } = await import('../../core/page-embedding-budget.ts');
+  const sizeStates = (await readPageSizeStates(engine, opts.sourceId ?? 'default', pagesAffected.filter(slug => !run.deletedSlugs.has(slug))))
+    .reduce<import('../../core/page-embedding-budget.ts').SyncSizeStates | undefined>((tally, state) => addSizeState(tally, state), undefined);
 
   if (malformedSkipped.length > 0) {
     serr(
@@ -205,12 +209,22 @@ export async function finalizeIncrementalSync(
     chunksCreated: run.chunksCreated,
     embedded,
     pagesAffected,
+    ...(sizeStates ? { size_states: sizeStates } : {}),
     ...(totalChanges > 100 && embedSlugs.length > 0 ? { embedDeferralReason: 'large_sync' as const } : {}),
     malformedSkipped: malformedSkipped.length,
     ...(typeWarningsEnabled && typeWarnings.length > 0 ? { type_warnings: typeWarnings } : {}),
     ...(uncommittedDrift ? { uncommitted: uncommittedDrift } : {}),
     ...(extractError ? { extract_error: extractError } : {}),
+    ...identityDowngradesOf(plan),
   };
+}
+
+/** #6729: the inexact renames this run split into a delete plus an add, in the source's origin form (recorded by `performSync`). */
+function identityDowngradesOf(plan: Pick<SyncPlan, 'manifest' | 'inScope' | 'isSelectedForRun' | 'syncOpts' | 'modePath'>): Pick<SyncResult, 'identityDowngrades'> {
+  const selected = (path: string) => plan.inScope(path) && plan.isSelectedForRun(path, plan.syncOpts);
+  const pairs = (plan.manifest.downgradedRenames ?? []).filter(pair => selected(pair.from) || selected(pair.to))
+    .map(pair => ({ ...pair, from: plan.modePath(pair.from), to: plan.modePath(pair.to) }));
+  return pairs.length ? { identityDowngrades: pairs } : {};
 }
 
 /** v0.42.x (#1794, T3): pin-reachability gate; records a `<head>` sentinel on a rewrite. */
@@ -291,7 +305,7 @@ async function applyBookmarkGate(
     await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin), gitContextRoot);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
-    await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+    await writeChunkerVersion(engine, opts.sourceId, chunkerStamp());
     if (!company) { await clearOpCheckpoint(engine, ckpt.paths); await clearOpCheckpoint(engine, ckpt.target); }
   };
 
@@ -318,6 +332,12 @@ async function applyBookmarkGate(
     commit: pin,
     skipFailed: !company && opts.skipFailed === true,
     ...(company ? { threshold: 0 } : {}),
+    // GBRA-130 A-18: files of this drain imported this run or banked by an
+    // earlier run of it (an infra code on one file while others import goes
+    // chronic, also across resumes) and the import breaker's verdict (a run
+    // where most files failed counts no attempt and auto-skips nothing).
+    imported: run.filesImported + run.bankedImports,
+    systemic: run.itemRun.systemic() !== null,
     advance,
   });
   // #3479 blocker 2 — self-heal for orphaned `<rename:…>` sentinels: a
@@ -378,6 +398,15 @@ async function applyBookmarkGate(
         `\nSync blocked: a rename left a stale duplicate that could not be removed:\n` +
         `${renameDetail || codeBreakdown}\n\n` +
         renameRemedy,
+      );
+    } else if (run.itemRun.systemic()) {
+      const fileFailCount = failedFiles.filter(f => isSkippablePath(f.path)).length;
+      serr(
+        `\nSync blocked: ${fileFailCount} file(s) failed, most of the files this run tried; this looks like ` +
+        `a shared cause, so no attempt was counted and nothing auto-skips:\n` +
+        `${codeBreakdown}\n${formatFailedFileList(failedFiles)}\n\n` +
+        `Fix the shared cause (permissions, the embedding provider, the database) and re-run 'gbrain sync', ` +
+        `or acknowledge these files with 'gbrain sync --skip-failed${opts.sourceId ? ` --source ${opts.sourceId}` : ''}'.`,
       );
     } else {
       const fileFailCount = failedFiles.filter(f => isSkippablePath(f.path)).length;

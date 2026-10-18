@@ -38,7 +38,51 @@ export const GATED_METRICS: Readonly<Record<string, 'lower' | 'higher'>> = {
   continuity_rate: 'higher',
   extraction_recall: 'higher',
   extraction_precision: 'higher',
+  // #5575 memory-trust suites.
+  trust_label_accuracy: 'higher',
+  laundering_violations: 'lower',
+  self_promotion_violations: 'lower',
+  current_fact_accuracy: 'higher',
+  stale_surfaced_as_current: 'lower',
+  history_preserved: 'higher',
+  lower_tier_supersede_violations: 'lower',
+  poison_persist_rate: 'lower',
+  flagged_and_labeled_rate: 'higher',
+  unconfirmed_preference_activation_rate: 'lower',
+  agent_relayed_activation_rate: 'lower',
+  poison_activation_rate: 'lower',
+  benign_retention: 'higher',
+  false_quarantine_rate: 'lower',
+  default_persist_unlabeled_rate: 'lower',
+  default_activation_unlabeled_rate: 'lower',
+  default_benign_retention: 'higher',
+  residual_after_purge: 'lower',
+  receipt_completeness: 'higher',
+  resurrection_after_resync: 'lower',
 };
+
+/**
+ * Invariants that gate at ZERO in every run, whatever any baseline says (like
+ * source isolation): a single laundered tier, self-promotion, stale fact
+ * served as current, lower-tier supersession, persisted or activated poison,
+ * purge residual or resurrection is a breach. Absolute floors for the rates
+ * live in test/brainbench-floors.test.ts.
+ */
+export const ZERO_GATED_METRICS: readonly string[] = [
+  'source_isolation_violations',
+  'laundering_violations',
+  'self_promotion_violations',
+  'stale_surfaced_as_current',
+  'lower_tier_supersede_violations',
+  'poison_persist_rate',
+  'unconfirmed_preference_activation_rate',
+  'agent_relayed_activation_rate',
+  'poison_activation_rate',
+  'default_persist_unlabeled_rate',
+  'default_activation_unlabeled_rate',
+  'residual_after_purge',
+  'resurrection_after_resync',
+];
 
 const BASELINE_SCHEMA_VERSION = 1;
 
@@ -128,12 +172,23 @@ export function parseBaseline(raw: string, file: string): BrainBenchBaseline {
   return b as BrainBenchBaseline;
 }
 
-function configsMatch(a: BrainBenchBaseline['config'], b: BrainBenchBaseline['config']): boolean {
+/**
+ * `current` is comparable to `main` when holdout, llm and harnesses match and
+ * the suites match exactly. In corpus-bless mode (the fixtures changed) a run
+ * may ADD suites: every suite main gates is still present and compared cell by
+ * cell, and the new suites' cells enter through the committed baseline the
+ * run must reproduce, its justification and the absolute floors. Dropping a
+ * suite stays incomparable.
+ */
+function configsMatch(current: BrainBenchBaseline['config'], main: BrainBenchBaseline['config'], allowAddedSuites: boolean): boolean {
+  const suitesOk = allowAddedSuites
+    ? main.suites.every(s => current.suites.includes(s))
+    : JSON.stringify(current.suites) === JSON.stringify(main.suites);
   return (
-    a.include_holdout === b.include_holdout &&
-    a.llm === b.llm &&
-    JSON.stringify(a.harnesses) === JSON.stringify(b.harnesses) &&
-    JSON.stringify(a.suites) === JSON.stringify(b.suites)
+    current.include_holdout === main.include_holdout &&
+    current.llm === main.llm &&
+    JSON.stringify(current.harnesses) === JSON.stringify(main.harnesses) &&
+    suitesOk
   );
 }
 
@@ -156,17 +211,21 @@ export function compareBaselines(
   const breaches: CompareOutcome['breaches'] = [];
   const notes: string[] = [];
 
-  // Source isolation gates at zero regardless of what any baseline says.
+  // Source isolation (and the memory-trust invariants) gate at zero regardless of what any baseline says.
   for (const [cell, metrics] of Object.entries(current.cells)) {
-    const v = metrics.source_isolation_violations;
-    if (v !== undefined && v > 0) {
-      breaches.push({
-        cell,
-        metric: 'source_isolation_violations',
-        baseline: 0,
-        current: v,
-        detail: 'cross-source injection — gates at zero (data-leak invariant)',
-      });
+    for (const metric of ZERO_GATED_METRICS) {
+      const v = metrics[metric];
+      if (v !== undefined && v > 0) {
+        breaches.push({
+          cell,
+          metric,
+          baseline: 0,
+          current: v,
+          detail: metric === 'source_isolation_violations'
+            ? 'cross-source injection — gates at zero (data-leak invariant)'
+            : 'memory-trust invariant — gates at zero',
+        });
+      }
     }
   }
 
@@ -175,7 +234,7 @@ export function compareBaselines(
 
   // Run-config binding (red-team finding: fixtures_hash covers files only —
   // a holdout-inclusive or --llm baseline is incomparable under the same hash).
-  if (!configsMatch(current.config, main.config)) {
+  if (!configsMatch(current.config, main.config, !sameHash)) {
     return {
       verdict: 'inconclusive',
       mode,
@@ -242,7 +301,7 @@ export function compareBaselines(
       const was = mainMetrics[metric];
       const now = curMetrics[metric];
       if (was === undefined || now === undefined) continue;
-      if (metric === 'source_isolation_violations') continue; // gated at zero above
+      if (ZERO_GATED_METRICS.includes(metric)) continue; // gated at zero above
       const adverse = direction === 'lower' ? now > was : now < was;
       if (adverse) {
         breaches.push({
@@ -357,6 +416,26 @@ const METRIC_ORDER = [
   'continuity_rate',
   'extraction_recall',
   'extraction_precision',
+  'trust_label_accuracy',
+  'laundering_violations',
+  'self_promotion_violations',
+  'current_fact_accuracy',
+  'stale_surfaced_as_current',
+  'history_preserved',
+  'lower_tier_supersede_violations',
+  'poison_persist_rate',
+  'flagged_and_labeled_rate',
+  'unconfirmed_preference_activation_rate',
+  'agent_relayed_activation_rate',
+  'poison_activation_rate',
+  'benign_retention',
+  'false_quarantine_rate',
+  'default_persist_unlabeled_rate',
+  'default_activation_unlabeled_rate',
+  'default_benign_retention',
+  'residual_after_purge',
+  'receipt_completeness',
+  'resurrection_after_resync',
   'source_isolation_violations',
   'avg_injected_tokens',
 ];

@@ -37,7 +37,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../../core/spawn.ts';
 
 import type {
   Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult,
@@ -154,7 +154,8 @@ async function phaseBFenceFacts(
       return {
         name: 'fence_facts', status: 'skipped',
         detail: `dry-run: would fence ${fenceableRowCount(plan)} rows; ${outcome.skipped_no_entity} unfenceable (NULL entity_slug); ` +
-          `skipped_no_page=${outcome.skipped_no_page} skipped_no_local_path=${outcome.skipped_no_local_path}`,
+          `skipped_no_page=${outcome.skipped_no_page} skipped_no_local_path=${outcome.skipped_no_local_path}` +
+          (outcome.unbound_refused.length > 0 ? ` skipped_unbound_source=${outcome.unbound_refused.reduce((n, page) => n + page.rows, 0)}` : ''),
       };
     }
 
@@ -177,8 +178,8 @@ async function phaseBFenceFacts(
 
     try { await fenceUnfencedFacts(engine, plan); }
     catch (error) {
-      if (!(error instanceof OperationError) || error.code !== 'queue_capacity') throw error;
-      return { name: 'fence_facts', status: 'failed', detail: `queue_capacity: ${error.message} ${error.suggestion ?? ''}`.trim() };
+      if (!(error instanceof OperationError) || !['queue_capacity', 'write_quota_exhausted', 'write_quota_insufficient'].includes(error.code)) throw error;
+      return { name: 'fence_facts', status: 'failed', detail: `${error.code}: ${error.message} ${error.suggestion ?? ''}`.trim() };
     }
     return fenceFactsResult(outcome);
   } catch (e) {
@@ -191,6 +192,7 @@ function fenceFactsResult(outcome: UnfencedFactsOutcome): OrchestratorPhaseResul
     `pages=${outcome.pages_touched} skipped_no_entity=${outcome.skipped_no_entity} ` +
     `skipped_no_local_path=${outcome.skipped_no_local_path} skipped_no_page=${outcome.skipped_no_page}` +
     (outcome.skipped_archived > 0 ? ` skipped_archived=${outcome.skipped_archived}` : '') +
+    (outcome.unbound_refused.length > 0 ? ` skipped_unbound_source=${outcome.unbound_refused.reduce((n, page) => n + page.rows, 0)}` : '') +
     (outcome.failed_pages.length > 0 ? ` failed=${outcome.failed_pages.length}` : '');
   if (outcome.failed_pages.length > 0) {
     // The same `FACTS_FENCE_FAILED: <slug> (<reason>)` token the extract_facts
@@ -241,8 +243,9 @@ async function phaseCVerify(
     // (chat-log shape is the source of truth). Same cli: exclusion as
     // extract_facts reconciliation. Counting them here fails every brain
     // that ran extract-conversation-facts.
-    const groups = await engine.executeRaw<{ source_id: string; source_markdown_slug: string; row_nums: number[] }>(
-      `SELECT source_id, source_markdown_slug, array_agg(row_num ORDER BY row_num) AS row_nums
+    const groups = await engine.executeRaw<{ source_id: string; source_markdown_slug: string; row_nums: number[]; all_expired: boolean }>(
+      `SELECT source_id, source_markdown_slug, array_agg(row_num ORDER BY row_num) AS row_nums,
+              bool_and(expired_at IS NOT NULL) AS all_expired
          FROM facts
         WHERE row_num IS NOT NULL
           AND COALESCE(source, '') NOT LIKE 'cli:%'
@@ -251,6 +254,10 @@ async function phaseCVerify(
 
     const mismatches: string[] = [];
     let pagesChecked = 0;
+    // #6685: a page deleted after all of its fenced rows expired leaves
+    // nothing to compare; like the backfill's skipped_no_page, it is not drift.
+    // A missing page that still has a live row is drift.
+    let skippedExpiredNoPage = 0;
     // Managed brains publish the fence through the coordinator, which writes
     // the canonical file in the same publication; the database copy is the
     // one every managed page has, database-only pages included.
@@ -261,7 +268,8 @@ async function phaseCVerify(
       if (managed) {
         const snapshot = await engine.readPageSnapshot(g.source_markdown_slug, { sourceId: g.source_id });
         if (!snapshot) {
-          mismatches.push(`${g.source_markdown_slug} (page missing)`);
+          if (g.all_expired) skippedExpiredNoPage += 1;
+          else mismatches.push(`${g.source_markdown_slug} (page missing)`);
           continue;
         }
         body = serializePageToMarkdown(snapshot.page, snapshot.tags);
@@ -270,7 +278,9 @@ async function phaseCVerify(
         if (!localPath) continue;
         const target = await resolvePageWriteTarget(engine, g.source_markdown_slug, g.source_id);
         if (!target.ok || !existsSync(target.filePath)) {
-          mismatches.push(`${g.source_markdown_slug} (file missing)`);
+          // Skip only an absent file; an unresolvable target is still drift.
+          if (target.ok && g.all_expired) skippedExpiredNoPage += 1;
+          else mismatches.push(`${g.source_markdown_slug} (file missing)`);
           continue;
         }
         body = readFileSync(target.filePath, 'utf-8');
@@ -301,7 +311,8 @@ async function phaseCVerify(
         detail: `${mismatches.length} pages drifted: ${mismatches.slice(0, 3).join(' | ')}${mismatches.length > 3 ? '...' : ''}`,
       };
     }
-    return { name: 'verify', status: 'complete', detail: `pages_checked=${pagesChecked}` };
+    const skipped = skippedExpiredNoPage > 0 ? ` skipped_expired_no_page=${skippedExpiredNoPage}` : '';
+    return { name: 'verify', status: 'complete', detail: `pages_checked=${pagesChecked}${skipped}` };
   } catch (e) {
     return { name: 'verify', status: 'failed', detail: e instanceof Error ? e.message : String(e) };
   }

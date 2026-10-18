@@ -87,6 +87,7 @@ import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import { evaluateQuietHours, type QuietHoursConfig } from './quiet-hours.ts';
 import { endedByShutdown, releaseUndrainedClaims, settleShutdownInterruptedJob } from './worker-shutdown.ts';
+import { isWatchdogSuspect, settleWatchdogAbort } from './watchdog-attribution.ts';
 import { readFileSync } from 'fs';
 
 /**
@@ -185,6 +186,8 @@ interface InFlightJob {
   lockTimer: ReturnType<typeof setInterval>;
   abort: AbortController;
   promise: Promise<void>;
+  /** Another job ran beside it, or it registered after a drain began: an RSS watchdog drain requeues it uncharged and marked (watchdog-attribution.ts). */
+  shared: boolean;
 }
 
 export interface ConfigurationReleaseResult {
@@ -234,8 +237,9 @@ export class MinionWorker extends EventEmitter {
 
   /** Cumulative jobs that finished (success or failure). Used in watchdog log lines. */
   private jobsCompleted = 0;
-  /** Idempotency latch for gracefulShutdown — per-job and periodic check sites can race. */
-  private gracefulShutdownFired = false;
+  /** Idempotency latch for gracefulShutdown — per-job and periodic check sites can race.
+   *  Holds the reason so launchJob can abort a claim that committed before the shutdown fired. */
+  private gracefulShutdownReason: string | null = null;
   drainForced = false; // #5062: the shutdown drain expired and running claims were handed back (`jobs work` exits 17)
   /**
    * Set true when the RSS watchdog (not a normal SIGTERM) initiated the
@@ -837,7 +841,7 @@ export class MinionWorker extends EventEmitter {
           console.log('[worker] pause marker cleared — resuming job claims.');
           this.pausedByMarkerAnnounced = false;
         }
-        if (this.inFlight.size < this.opts.concurrency) {
+        if (this.inFlight.size < this.opts.concurrency && ![...this.inFlight.values()].some(f => isWatchdogSuspect(f.job))) {
           const lockToken = `${this.workerId}:${randomUUID()}`;
           let job: MinionJob | null;
           try {
@@ -846,6 +850,7 @@ export class MinionWorker extends EventEmitter {
               this.opts.lockDuration,
               this.opts.queue,
               this.registeredNames,
+              { excludeWatchdogSuspects: this.inFlight.size > 0 },
             ).then(claimed => {
               if (claimed) {
                 this.executions.set(lockToken, { job: claimed, lockToken, stopped: true });
@@ -1068,7 +1073,7 @@ export class MinionWorker extends EventEmitter {
   private checkMemoryLimit(source: 'post-job' | 'periodic'): void {
     if (this.opts.maxRssMb <= 0) return;
     if (!this.running) return;
-    if (this.gracefulShutdownFired) return;
+    if (this.gracefulShutdownReason !== null) return;
 
     let rss = 0;
     try {
@@ -1121,10 +1126,11 @@ export class MinionWorker extends EventEmitter {
    *     waiting out the 30s drain.
    *  3. Main loop exits at the top of the next iteration.
    *  The existing 30s drain in start()'s finally then backstops genuinely
-   *  uninterruptible work. */
+   *  uninterruptible work. A claim whose UPDATE committed but whose result has
+   *  not reached the poll loop is not in `inFlight` yet; launchJob aborts it. */
   private gracefulShutdown(reason: string): void {
-    if (this.gracefulShutdownFired) return;
-    this.gracefulShutdownFired = true;
+    if (this.gracefulShutdownReason !== null) return;
+    this.gracefulShutdownReason = reason;
     if (!this.shutdownAbort.signal.aborted) {
       this.shutdownAbort.abort(new Error(reason));
     }
@@ -1460,8 +1466,10 @@ export class MinionWorker extends EventEmitter {
         } catch { /* audit best-effort */ }
       });
 
-    this.inFlight.set(job.id, { job, lockToken, lockTimer, abort, promise });
+    for (const entry of this.inFlight.values()) entry.shared = true;
+    this.inFlight.set(job.id, { job, lockToken, lockTimer, abort, promise, shared: this.inFlight.size > 0 || this.gracefulShutdownReason !== null });
     execution.promise = promise;
+    if (this.gracefulShutdownReason !== null && !abort.signal.aborted) abort.abort(new Error(this.gracefulShutdownReason));
   }
 
   /** A handler deferral (JobDeferredError): back to delayed, no attempt counted. */
@@ -1577,8 +1585,7 @@ export class MinionWorker extends EventEmitter {
       // already flipped status, our call no-ops cleanly. The prior silent-return
       // left jobs stranded in 'active' until a secondary sweep, breaking
       // timeout/cancel contracts downstream callers rely on.
-      let errorText: string;
-      let abortReason: string | null = null;
+      let errorText: string, abortReason: string | null = null;
       if (abort.signal.aborted) {
         abortReason = abort.signal.reason instanceof Error
           ? abort.signal.reason.message
@@ -1587,6 +1594,7 @@ export class MinionWorker extends EventEmitter {
       } else {
         errorText = err instanceof Error ? err.message : String(err);
       }
+      if (abortReason === 'watchdog' && await settleWatchdogAbort(this.queue, this.engine, job, lockToken, this.inFlight.get(job.id)?.shared !== false, execution?.stopped !== false)) return;
 
       // v0.41.22.2 (D8a / codex C6): infrastructure aborts (lock-renewal-failed,
       // lock-lost) are NOT job defects — they're connection / coordination

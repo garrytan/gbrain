@@ -26,9 +26,14 @@ import {
   upsertSessionContextState,
 } from '../core/context/session-state.ts';
 import { scheduleCheckpointHarvest, type HarvestAck } from '../core/context/checkpoint-harvest.ts';
-import { parseWbFileName } from '../core/context/corpus-segments.ts';
+import { corpusSpoolDir, parseWbFileName } from '../core/context/corpus-segments.ts';
+import { freezeSessionSource, resolveCorpusFileSource } from '../core/context/corpus-source.ts';
 import { loadCoreBlock } from '../core/core-memory.ts';
+import { opError } from '../core/ops/contract.ts';
+import { coreTrustIdentity } from '../core/context/openclaw-core.ts';
 import type { TurnContextResult } from '../core/context/turn-context.ts';
+import { attachBrief, briefEnabled, resetBriefLedger, sessionStartBrief, SESSION_BRIEF_CUTOFF_MS, withBriefDeadline } from '../core/context/proactive-brief.ts';
+import { proactiveEligibility } from '../core/eligibility/registry.ts';
 
 /** Tighter entity-card fan-out on the PUSH path (eng 4A): the server budget
  * can't absorb the pull path's 8-card ceiling on a cold cache. */
@@ -64,7 +69,8 @@ export function makeContextPackIpcHandler(
   engine: BrainEngine,
   defaultSource: string,
 ): ContextPackHandler {
-  return async (req) => {
+  return async (req, progress) => {
+    const startedAt = Date.now();
     const sessionId =
       typeof req.sessionId === 'string' && req.sessionId.trim() ? req.sessionId : null;
 
@@ -75,14 +81,27 @@ export function makeContextPackIpcHandler(
     // array is a CONFIRMED empty manifest and settles the poll.
     const sessionSource = typeof req.sourceId === 'string' && req.sourceId.trim() ? req.sourceId : defaultSource;
     if (req.coreOnly === true) {
-      const core = await coreForSession(engine, sessionSource);
+      // #5575 ENG-11: the trust identity is read before the core content; a
+      // client memo whose identity still matches is revalidated without assembly.
+      const identity = await coreTrustIdentity(engine);
       // The OpenClaw lane reads the pressure gate on the same fetch; it checks remember's availability itself.
       const pressure = await readPressureGate(engine, true).catch(() => null);
-      return { text: '', pointers: [], factsCount: 0, mode: 'pack' as const, ...(core ? { core } : {}), ...(pressure ? { pressure } : {}) };
+      const base = { text: '', pointers: [], factsCount: 0, mode: 'pack' as const, ...(pressure ? { pressure } : {}) };
+      if (identity !== null && identity === req.coreIdentity) return { ...base, coreTrust: { identity, unchanged: true } };
+      const core = await coreForSession(engine, sessionSource);
+      return { ...base, ...(core ? { core } : {}), ...(core && identity !== null ? { coreTrust: { identity, unchanged: false } } : {}) };
+    }
+    // #6268: the transport's bound-source check [CX2-10] already refuses a
+    // foreign sourceId; the handler refuses too (direct callers), never
+    // rerouting a session's manifest, state or harvest to another source.
+    if (sessionSource !== defaultSource) {
+      throw opError('source_mismatch', `source_mismatch: this serve is bound to source "${defaultSource}", not "${sessionSource}"`,
+        "Send the session's requests to the serve bound to its own source; nothing was rerouted.",
+        { why: "A session's manifest, state and harvest belong to the source it was captured under." });
     }
     if (req.manifestOnly === true) {
       const links = sessionId
-        ? await getCheckpointManifest(engine, defaultSource, null, sessionId)
+        ? await getCheckpointManifest(engine, sessionSource, null, sessionId)
         : [];
       return {
         text: '', pointers: [], factsCount: 0, mode: 'pack' as const,
@@ -100,8 +119,14 @@ export function makeContextPackIpcHandler(
         fromWindow = extractCandidatesFromWindow(req.window).map((c) => c.query);
       }
     } catch { /* extraction is best-effort */ }
+    // #6268: an unpinned session (no sourceId) resolves to this serve's own
+    // binding; an UNRESOLVED corpus record it already wrote is frozen to it,
+    // so its unresolved-stamped files follow the source this lane serves.
+    if (sessionId && !req.sourceId) {
+      try { freezeSessionSource(await serveCorpusDir(engine), sessionId, sessionSource, 'serve', { onlyExisting: true }); } catch { /* best effort */ }
+    }
     const state = sessionId
-      ? await getSessionContextState(engine, defaultSource, null, sessionId)
+      ? await getSessionContextState(engine, sessionSource, null, sessionId)
       : null;
     const banked = state?.standing_entities ?? [];
     const entities = Array.from(new Set([...fromReq, ...fromWindow, ...banked]));
@@ -110,7 +135,7 @@ export function makeContextPackIpcHandler(
       // PreCompact banking: persist the standing set for the post-compaction
       // SessionStart; no assembly, empty block.
       if (sessionId && entities.length) {
-        await upsertSessionContextState(engine, defaultSource, null, sessionId, {
+        await upsertSessionContextState(engine, sessionSource, null, sessionId, {
           standingEntities: entities.slice(0, PUSH_PACK_MAX_ENTITIES * 2),
         });
       }
@@ -127,8 +152,18 @@ export function makeContextPackIpcHandler(
           checkpointFlush = { status: 'skipped', reason: 'no_session' };
         } else {
           const dir = await serveCorpusDir(engine);
-          if (!existsSync(join(dir, base))) {
+          // #6268: stamped files live in the spool; a pre-stamp hook flushes a top-level name.
+          const spool = corpusSpoolDir(dir);
+          const location = existsSync(join(spool, base)) ? 'spool' as const : existsSync(join(dir, base)) ? 'legacy' as const : null;
+          const fileSource = location ? await resolveCorpusFileSource(engine, dir, base, location).catch(() => null) : null;
+          if (!location) {
             checkpointFlush = { status: 'skipped', reason: 'not_found' };
+          } else if (!fileSource || !fileSource.ok) {
+            checkpointFlush = { status: 'skipped', reason: fileSource ? fileSource.reason : 'corpus_source_error' };
+          } else if (fileSource.sourceId !== sessionSource) {
+            // Refuse, never reroute: this serve harvests only its own source;
+            // the sweep files the segment under its stamped source.
+            checkpointFlush = { status: 'skipped', reason: 'source_mismatch' };
           } else {
             // Ambient-writeback turn files ride the SAME bank lane with a
             // basename-derived lane tag (WP4): `.wb-<hash>` files get the
@@ -139,7 +174,8 @@ export function makeContextPackIpcHandler(
             // compact lane, past the writeback gate.
             const lane = parseWbFileName(base) !== null ? ('writeback' as const) : ('compact' as const);
             checkpointFlush = scheduleCheckpointHarvest({
-              engine, sourceId: defaultSource, sessionId, corpusDir: dir, file: base, lane,
+              engine, sourceId: fileSource.sourceId, sourceIncarnation: fileSource.incarnation, sessionId,
+              corpusDir: location === 'spool' ? spool : dir, file: base, lane,
             });
           }
         }
@@ -151,7 +187,7 @@ export function makeContextPackIpcHandler(
     }
 
     const result = await assembleContextPack(engine, {
-      sourceId: defaultSource,
+      sourceId: sessionSource,
       entities,
       sessionId: sessionId ?? undefined,
       since: state?.last_wake_at ?? undefined,
@@ -162,9 +198,11 @@ export function makeContextPackIpcHandler(
       // post-compaction SessionStart renders them (fail-open []; links that
       // missed this pack surface on the next boundary — at-least-once).
       ...(sessionId
-        ? { checkpointLinks: (await getCheckpointManifest(engine, defaultSource, null, sessionId)) ?? [] }
+        ? { checkpointLinks: (await getCheckpointManifest(engine, sessionSource, null, sessionId)) ?? [] }
         : {}),
     });
+    // The transport's backstop returns this pack if the work below runs past it (core lands on it when it arrives).
+    if (progress) progress.assembled = result;
     const core = typeof req.trigger === 'string' && req.trigger.startsWith('session-start') ? await coreForSession(engine, sessionSource) : null;
     if (core) result.core = core;
     if (sessionId) {
@@ -175,10 +213,21 @@ export function makeContextPackIpcHandler(
       // known at-most-once edge of the push path; the pull `delta` verb is
       // the lossless channel.) The cursor upsert is monotonic (GREATEST), so
       // an interleaved delta advance is never rewound.
-      await upsertSessionContextState(engine, defaultSource, null, sessionId, {
+      await upsertSessionContextState(engine, sessionSource, null, sessionId, {
         standingEntities: entities.slice(0, PUSH_PACK_MAX_ENTITIES * 2),
         ...(result.degradedReason ? {} : { lastWakeAt: new Date().toISOString() }),
       });
+    }
+    // Wave 5 D5 "Before you start" (default off): SessionStart only, after the
+    // pack, inside what is left of a request-start cutoff. A compaction or
+    // /clear re-entry is a context reset, so the session's ledger starts over.
+    const isSessionStart = typeof req.trigger === 'string' && req.trigger.startsWith('session-start');
+    if (isSessionStart && await briefEnabled(engine)) {
+      if (req.trigger === 'session-start:compact' || req.trigger === 'session-start:clear') resetBriefLedger(sessionSource, sessionId ?? undefined);
+      const clock = { now: Date.now(), stopAt: startedAt + SESSION_BRIEF_CUTOFF_MS };
+      const brief = await withBriefDeadline(proactiveEligibility({ engine }, 'context_pack').then((eligibility) =>
+        sessionStartBrief(engine, { sourceId: sessionSource, sessionId: sessionId ?? undefined, eligibility, clock })), clock);
+      return attachBrief(result, brief);
     }
     return result;
   };

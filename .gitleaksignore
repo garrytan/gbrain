@@ -21,3 +21,24 @@ ee280a34288d697285fd41c35d423e49b61fe54d:CHANGELOG.md:sourcegraph-access-token:1
 7530e1d4a813209c1033f9fe2a1349b2610c2357:TODOS.md:sourcegraph-access-token:391
 7530e1d4a813209c1033f9fe2a1349b2610c2357:TODOS.md:sourcegraph-access-token:2323
 7530e1d4a813209c1033f9fe2a1349b2610c2357:CHANGELOG.md:sourcegraph-access-token:11
+# #6377 content-repair lane (GBRA-72): a test constant named SECRET holding a synthetic sentinel sentence in
+# test/content-repair-judgment.test.ts and test/repair-slug-conflicts.test.ts (commit ac6e0868) read as generic-api-key;
+# the tree renamed the constant. These history-only fingerprints are not secrets.
+ac6e0868219439a6594d9fce0e016da203c6c4fc:test/content-repair-judgment.test.ts:generic-api-key:21
+ac6e0868219439a6594d9fce0e016da203c6c4fc:test/repair-slug-conflicts.test.ts:generic-api-key:58
+
+# Large pages #6722: the synthetic placeholder OPENAI_API_KEY in test/size-state-receipts-6722.test.ts (commit e3ebcc4f) read as
+# generic-api-key; the tree now uses the allowlisted sk-test-fake. This history-only fingerprint is not a secret.
+e3ebcc4f7e15051ae6354c8e4313ef91fc06d9f2:test/size-state-receipts-6722.test.ts:generic-api-key:49
+# Wave B PR 1 (large pages): synthetic PEM fence lines and a base64 sample in the segmenter / region-scan fixtures
+# (commit 8c9c65f) read as private-key and generic-api-key; the tree now assembles the fence lines at runtime
+# (test/helpers/segment-bodies.ts). These history-only fingerprints are not secrets.
+8c9c65f60b0a2a4924525883e2c7179c355ec671:test/large-pages/region-scan.test.ts:private-key:26
+8c9c65f60b0a2a4924525883e2c7179c355ec671:test/helpers/segment-bodies.ts:generic-api-key:17
+8c9c65f60b0a2a4924525883e2c7179c355ec671:test/helpers/segment-bodies.ts:private-key:18
+# Fix wave 17 lane 4 (#6587): the config key literal 'w17.6587.marker' in commit cb6a60a reads as generic-api-key;
+# the tree now binds it as a parameter. History-only fingerprint, not a secret.
+cb6a60abd59d51271acfa49346275107b97ed64f:test/e2e/migrate-embeddings-lease-heartbeat.test.ts:generic-api-key:60
+# Wave B PR 2 lane H: a synthetic NOTREAL private-key fixture in test/large-pages/credential-reseal-segments.test.ts (commit a314083)
+# read as private-key; the tree now builds its fence at runtime. This history-only fingerprint is not a secret.
+a3140831d22a944947ef9cbd72ff7129a3541951:test/large-pages/credential-reseal-segments.test.ts:private-key:31

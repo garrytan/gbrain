@@ -16,7 +16,8 @@ import {
   __setDocsRefForTests, docsUrl, fallbackJsonDocument, noticeBlock, renderNotice, toAgentError,
   toolErrorResult, toolResultWithNotices, withAgentSiblings, type Notice, type RenderContext,
 } from '../src/core/agent-output.ts';
-import { opError, OperationError } from '../src/core/ops/contract.ts';
+import { opError, OperationError, verbError } from '../src/core/ops/contract.ts';
+import { FACT_WITHDRAWN_MESSAGE, FACT_WITHDRAWN_SUGGESTION } from '../src/core/facts/withdrawal.ts';
 import '../src/core/operations.ts'; // registers shared-op CLI names for the A1 routing pin, as every gbrain process does
 import { confirmationPayload } from '../src/core/consent.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -144,6 +145,17 @@ describe('agent contract v1 goldens', () => {
     e.writeRequest = { request_id: '11111111-2222-4333-8444-555555555555', state: 'queued', retry_after_ms: 2000 } as OperationError['writeRequest'];
     e.writeError = 'write_pending';
     golden('receipt-error.json', toolErrorResult(toAgentError(e, { transport: 'stdio', op: 'put_page', mutating: true, outcome: 'pending', render: stdio })));
+  });
+
+  test('fact_withdrawn refusal: one identical withdrawn object on stdio, HTTP and CLI', () => {
+    const e = verbError('invalid_params', FACT_WITHDRAWN_MESSAGE, FACT_WITHDRAWN_SUGGESTION);
+    e.withdrawn = { at: '2026-10-12T00:00:00.000Z', subject: 'all_entities', visibility: 'world' };
+    const envs = [stdio, http, cli].map(render => toAgentError(e, { transport: render.transport, op: 'remember', mutating: true, render }));
+    for (const env of envs) {
+      expect(env.withdrawn).toEqual(e.withdrawn);
+      expect([env.error, env.code, env.message]).toEqual(['invalid_params', 'invalid_params', FACT_WITHDRAWN_MESSAGE]);
+    }
+    golden('withdrawn-refusal.json', toolErrorResult(envs[0]!));
   });
 
   test('legacy frozen error value with the new canonical code', () => {

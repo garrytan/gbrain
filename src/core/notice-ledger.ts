@@ -8,6 +8,11 @@
  *   principal. Bounded: 10k keys, 24 h TTL.
  * - `degraded` and `safety` notices are never deduped on HTTP (attached to
  *   every affected call). At most 2 `coaching` notices per session.
+ * - A notice's unrendered `dedupe_key` replaces its code as the dedupe
+ *   identity, and turns a per-call code into a once-per-session one:
+ *   `degraded_recall` rides every affected call, except a notice made only of
+ *   configuration-persistent stages (a keyless brain's `embed_unavailable`),
+ *   which shows once per session per distinct key.
  * - Mute applies to `coaching` and `info` only: globally for the local owner
  *   (`gbrain notices mute <code>`), per client on remote transports
  *   (`mute_notice`). Persisted under GBRAIN_HOME.
@@ -20,10 +25,13 @@ import type { Notice, Transport } from './agent-output.ts';
 const MAX_KEYS = 10_000;
 const TTL_MS = 24 * 60 * 60 * 1000;
 export const COACHING_BUDGET_PER_SESSION = 2;
-/** Notices that describe THIS call's result (never deduped): the diagnosis must ride every affected call. */
 /** The one muteable `ask`: an unanswered first-run bundle must stay dismissible. Every other ask always shows. */
 export const MUTEABLE_ASK_CODES: ReadonlySet<string> = new Set(['first_run_decisions']);
-export const PER_CALL_NOTICE_CODES: ReadonlySet<string> = new Set(['empty_retrieval', 'unknown_param', 'listing_truncated', 'former_relationships_hidden', 'source_binding_narrowed', 'local_transcripts', 'held_files', 'relational_chain', 'mention_index', 'delta_incomplete']);
+/** Notices that describe THIS call's result (never deduped unless the notice carries a `dedupe_key`): the diagnosis must ride every affected call. */
+export const PER_CALL_NOTICE_CODES: ReadonlySet<string> = new Set(['degraded_recall', 'hidden_tool_content', 'empty_retrieval', 'unknown_param', 'listing_truncated', 'former_relationships_hidden', 'source_binding_narrowed', 'local_transcripts', 'held_files', 'relational_chain', 'mention_index', 'delta_incomplete', 'identity_siblings_capped', 'references_unavailable', 'record_types_undeclared', 'alias_fanout', 'facts_unembedded']);
+
+/** Notices whose producer already deduped them with `claim` on its own key; admit applies mute only. */
+export const SELF_DEDUPED_NOTICE_CODES: ReadonlySet<string> = new Set(['grant_blocked_operations']);
 
 export interface NoticeAudience {
   transport: Transport;
@@ -36,6 +44,9 @@ export interface NoticeAudience {
 export class NoticeLedger {
   private seen = new Map<string, number>();
   private coaching = new Map<string, { count: number; at: number }>();
+  private tallies = new Map<string, { n: number; at: number }>();
+  private claimed = new Map<string, number>();
+  private memo = new Map<string, { value: unknown; at: number }>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -51,15 +62,43 @@ export class NoticeLedger {
     }
   }
 
+  /** Count one more `key` event in this audience's session (e.g. a reranker-degraded call) and return the session total. */
+  tally(audience: NoticeAudience, key: string): number {
+    const k = `${this.session(audience)}|${key}`;
+    const n = (this.tallies.get(k)?.n ?? 0) + 1;
+    this.tallies.delete(k);
+    this.tallies.set(k, { n, at: this.now() });
+    this.prune(this.tallies, v => v.at);
+    return n;
+  }
+
+  /** First call for `key` returns true and records it; later calls (within the TTL) return false. */
+  claim(key: string): boolean {
+    if (this.claimed.has(key)) return false;
+    this.claimed.set(key, this.now());
+    this.prune(this.claimed, at => at);
+    return true;
+  }
+
+  /** `compute` once per `key` (within the TTL); later calls get the stored value. */
+  async memoize<T>(key: string, compute: () => Promise<T>): Promise<T> {
+    const hit = this.memo.get(key);
+    if (hit) return hit.value as T;
+    const value = await compute();
+    this.memo.set(key, { value, at: this.now() });
+    this.prune(this.memo, v => v.at);
+    return value;
+  }
+
   /** Filter one call's notices: mute, dedupe and the coaching budget. Never throws. */
   admit(notices: readonly Notice[], audience: NoticeAudience, muted: ReadonlySet<string> = new Set()): Notice[] {
     const out: Notice[] = [];
     const session = this.session(audience);
     for (const n of notices) {
       if ((n.kind === 'coaching' || n.kind === 'info' || MUTEABLE_ASK_CODES.has(n.code)) && muted.has(n.code)) continue;
-      const always = PER_CALL_NOTICE_CODES.has(n.code)
+      const always = (PER_CALL_NOTICE_CODES.has(n.code) && n.dedupe_key === undefined) || SELF_DEDUPED_NOTICE_CODES.has(n.code)
         || (audience.transport === 'http' && (n.kind === 'degraded' || n.kind === 'safety'));
-      const key = `${session}|${n.code}`;
+      const key = n.dedupe_key === undefined ? `${session}|${n.code}` : `${session}|${n.code}|${n.dedupe_key}`;
       if (!always && this.seen.has(key)) continue;
       if (n.kind === 'coaching') {
         const used = this.coaching.get(session)?.count ?? 0;

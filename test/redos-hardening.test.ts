@@ -18,6 +18,7 @@ import { inferLinkTypeFromPack } from '../src/core/schema-pack/link-inference.ts
 import { linkRegexCatastrophicBacktrack } from '../src/core/schema-pack/lint-rules.ts';
 import type { SchemaPackManifest } from '../src/core/schema-pack/manifest-v1.ts';
 import { surfaceFileSource, surfaceSource } from './helpers/source-surface.ts';
+import { cpuMs } from './helpers/cpu-time.ts';
 
 describe('#1569 input-length cap', () => {
   test('runRegexBounded throws RegexInputTooLargeError over the cap', () => {
@@ -44,11 +45,11 @@ describe('#1569 input-length cap', () => {
       link_types: [{ name: 'founded', inference: { regex: '(a+)+$' } }],
     } as unknown as Pick<SchemaPackManifest, 'link_types'>;
     const huge = 'a'.repeat(MAX_REGEX_INPUT_CHARS + 100) + '!';
-    const t0 = Date.now();
-    const result = inferLinkTypeFromPack(pack, 'company', huge);
+    let result!: ReturnType<typeof inferLinkTypeFromPack>;
+    const ms = cpuMs(() => { result = inferLinkTypeFromPack(pack, 'company', huge); });
     // Skipped via the cap → no match, and fast (no catastrophic backtrack).
     expect(result).toBeNull();
-    expect(Date.now() - t0).toBeLessThan(2_000);
+    expect(ms).toBeLessThan(2_000);
   });
 });
 
@@ -89,9 +90,10 @@ describe('megawave vm-watchdog removal (bootstrap-verify freeze)', () => {
     const pack = {
       link_types: [{ name: 'evil', inference: { regex: '(a+)+$' } }],
     } as unknown as Pick<SchemaPackManifest, 'link_types'>;
-    const t0 = Date.now();
-    expect(inferLinkTypeFromPack(pack, 'company', 'a'.repeat(64) + '!')).toBeNull();
-    expect(Date.now() - t0).toBeLessThan(1_000);
+    let result!: ReturnType<typeof inferLinkTypeFromPack>;
+    const ms = cpuMs(() => { result = inferLinkTypeFromPack(pack, 'company', 'a'.repeat(64) + '!'); });
+    expect(result).toBeNull();
+    expect(ms).toBeLessThan(1_000);
   });
 });
 

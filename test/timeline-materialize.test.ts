@@ -15,6 +15,8 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
+/** A publication declares its writer's tier (the coordinator does); the timeline rows these put_page fixtures project are agent_written. */
+const AGENT_PUBLICATION = { ...TEST_WRITE_ATTRIBUTION, trust: { tier: 'agent_written' as const, origin: null } };
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { materializeTimeline, prepareCanonicalProjections, renderMaterializedBullet, type ProjectionWriter } from '../src/core/persistence/canonical-projections.ts';
@@ -273,7 +275,7 @@ describe('#5567 per-writer classes for marked rows', () => {
         const carried = await materializeTimeline(f.engine, next, slug, prior, writer);
         expect(carried.materialized).toBe(renders ? 1 : 0);
         const project = await prepareCanonicalProjections(f.engine, { ...next, timeline: carried.timeline }, slug, f.sourceId, prior, writer);
-        await f.engine.transaction(tx => withCoordinatedWrite(tx, [f.sourceId], () => project(tx), TEST_WRITE_ATTRIBUTION));
+        await f.engine.transaction(tx => withCoordinatedWrite(tx, [f.sourceId], () => project(tx), AGENT_PUBLICATION));
         expect(await f.timeline(slug)).toEqual(keeps ? [normalized] : []);
       });
     });

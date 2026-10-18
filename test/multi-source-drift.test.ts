@@ -228,6 +228,31 @@ describe('findMisroutedPages — heuristic correctness', () => {
   });
 });
 
+describe('findMisroutedPages — files sync never imports (#6681)', () => {
+  test('root AGENTS.md/CLAUDE.md metafiles are not drift; docs/AGENTS.md still is', async () => {
+    await engine.putPage('agents', { type: 'concept', title: 'default agents', compiled_truth: '.' });
+    await engine.putPage('claude', { type: 'concept', title: 'default claude', compiled_truth: '.' });
+    await engine.putPage('docs/agents', { type: 'concept', title: 'docs agents', compiled_truth: '.' });
+
+    const meta = makeTmpRoot('meta6681');
+    seedFile(meta, 'AGENTS.md');
+    seedFile(meta, 'CLAUDE.md');
+    await runSources(engine, ['add', 'src-meta6681', '--no-federated']);
+    await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = $2`, [meta, 'src-meta6681']);
+    const metaResult = await findMisroutedPages(engine, [{ id: 'src-meta6681', local_path: meta }]);
+    expect(metaResult.count).toBe(0);
+    expect(metaResult.sample).toEqual([]);
+
+    const real = makeTmpRoot('real6681');
+    seedFile(real, 'docs/AGENTS.md');
+    await runSources(engine, ['add', 'src-real6681', '--no-federated']);
+    await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = $2`, [real, 'src-real6681']);
+    const realResult = await findMisroutedPages(engine, [{ id: 'src-real6681', local_path: real }]);
+    expect(realResult.count).toBe(1);
+    expect(realResult.sample.map(s => s.slug)).toEqual(['docs/agents']);
+  });
+});
+
 describe('findMisroutedPages — git-root pins inside a work tree (#5862)', () => {
   /** A fresh repository; returns `<repo>/<subdir>` (the repo itself for ''). */
   function gitWorkTree(label: string, subdir: string): string {

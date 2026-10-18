@@ -48,7 +48,7 @@ const SIG = {
   requestLookup: /^SELECT (?:\*|count\(\*\)::int AS n) FROM persistence_requests WHERE principal_kind=\$1 AND principal_id=\$2 AND request_id=(?:\$3::uuid|ANY\(\$3::uuid\[\]\))$/,
   foregroundCheck: /^SELECT id FROM persistence_requests WHERE worktree_id=\$1::uuid AND state IN \('queued','running','recovering'\) AND NOT\(COALESCE\(intent->>'kind',''\) LIKE 'managed_sync_%'\)/,
   consumerOnly: /^UPDATE persistence_requests r SET claim_expires_at=|^SELECT 1 FROM persistence_requests WHERE worktree_id=\$1::uuid AND NOT \(id=ANY/,
-  origin: /^SELECT id,slug,source_path FROM pages WHERE source_id=\$1 AND source_path=ANY\(/,
+  origin: /^SELECT id,slug,source_path,deleted_at FROM pages WHERE source_id=\$1 AND source_path=ANY\(/,
   snapshot: /^WITH chosen AS \( SELECT p\.\* FROM pages p WHERE p\.slug=\$1/,
   writerCheck: /^SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=\$1::uuid$/,
 };

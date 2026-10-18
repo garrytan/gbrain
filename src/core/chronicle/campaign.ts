@@ -61,7 +61,7 @@ export async function queueCampaignRow(engine: BrainEngine,
        campaign_id=EXCLUDED.campaign_id, attempt_cap_usd=EXCLUDED.attempt_cap_usd, max_attempts=EXCLUDED.max_attempts,
        pricing_policy=EXCLUDED.pricing_policy, campaign_max_usd=EXCLUDED.campaign_max_usd, decided_at=now(), updated_at=now()
      WHERE NOT (c.trigger='backfill' AND c.state IN ('pending','failed') AND c.attempts < COALESCE(c.max_attempts, $11))
-       AND NOT (c.state IN ('pending','failed') AND c.attempts > 0 AND c.next_attempt_at > now())
+       AND NOT (c.state IN ('pending','failed') AND c.attempts > 0 AND c.next_attempt_at IS NOT NULL AND c.next_attempt_at > now())
        AND (c.state <> 'extracted' OR EXISTS (SELECT 1 FROM chronicle_page_state newer
          WHERE newer.source_id=c.source_id AND newer.page_id=c.page_id AND newer.content_hash<>c.content_hash
            AND newer.state='extracted' AND newer.updated_at > c.updated_at))

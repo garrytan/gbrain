@@ -20,6 +20,15 @@
  *   - `reconnect_succeeded`  the rebuild completed
  *   - `reconnect_failed`     the rebuild threw (NOT auto-recovering)
  *
+ * #6543 (A6): a resident `gbrain serve` also records the vendored driver's own
+ * per-connection incidents here (`setPoolIncidentAudit` in pool-gauge.ts):
+ *   - `connection_stuck`            the in-flight watchdog retired a connection
+ *   - `connection_desync`           a desynced pipeline retired a connection
+ *   - `connection_recovered`        a retired connection reconnected
+ *   - `connection_recovery_failed`  its reconnect failed
+ * `detail` carries the fixed-shape warn line (pool, reason, SQL keyword and
+ * table; never statement text or parameters).
+ *
  * Built on the shared `audit-writer.ts` cathedral — same ISO-week rotation,
  * same best-effort write semantics. File:
  * `~/.gbrain/audit/pool-recovery-YYYY-Www.jsonl` (honors `GBRAIN_AUDIT_DIR`).
@@ -37,13 +46,19 @@ export type PoolRecoveryEventKind =
   | 'reap_detected'
   | 'reconnect_other'
   | 'reconnect_succeeded'
-  | 'reconnect_failed';
+  | 'reconnect_failed'
+  | 'connection_stuck'
+  | 'connection_desync'
+  | 'connection_recovered'
+  | 'connection_recovery_failed';
 
 export interface PoolRecoveryEvent {
   ts: string;
   kind: PoolRecoveryEventKind;
   /** Redacted + truncated triggering-error message; absent on success events. */
   error_summary?: string;
+  /** #6543 (A6): the driver incident's fixed-shape line (connection_* kinds). */
+  detail?: string;
   pid: number;
 }
 
@@ -66,12 +81,13 @@ function summarizeError(err: unknown): string | undefined {
  * Log one pool-recovery event. Best-effort: stderr-warns on write failure but
  * never throws. The caller's reconnect path continues regardless.
  */
-export function logPoolRecovery(kind: PoolRecoveryEventKind, err?: unknown): void {
+export function logPoolRecovery(kind: PoolRecoveryEventKind, err?: unknown, detail?: string): void {
   const summary = summarizeError(err);
   writer.log({
     kind,
     pid: process.pid,
     ...(summary !== undefined ? { error_summary: summary } : {}),
+    ...(detail !== undefined ? { detail: redactConnectionInfo(detail).slice(0, 600) } : {}),
   });
 }
 
@@ -85,6 +101,11 @@ export interface ReadPoolRecoveryResult {
   failures: number;
   /** Non-reap reconnects (network/auth/health-check) in window. */
   others: number;
+  /** #6543 (A6): connections the driver retired as stuck / desynced, and their reconnects that succeeded / failed. */
+  stuck: number;
+  desyncs: number;
+  connection_recoveries: number;
+  connection_recovery_failures: number;
   most_recent_ts: string | null;
 }
 
@@ -111,11 +132,19 @@ export function readRecentPoolRecoveries(
   let recoveries = 0;
   let failures = 0;
   let others = 0;
+  let stuck = 0;
+  let desyncs = 0;
+  let connectionRecoveries = 0;
+  let connectionRecoveryFailures = 0;
   for (const e of events) {
     if (e.kind === 'reap_detected') reaps++;
     else if (e.kind === 'reconnect_succeeded') recoveries++;
     else if (e.kind === 'reconnect_failed') failures++;
     else if (e.kind === 'reconnect_other') others++;
+    else if (e.kind === 'connection_stuck') stuck++;
+    else if (e.kind === 'connection_desync') desyncs++;
+    else if (e.kind === 'connection_recovered') connectionRecoveries++;
+    else if (e.kind === 'connection_recovery_failed') connectionRecoveryFailures++;
   }
 
   return {
@@ -124,6 +153,10 @@ export function readRecentPoolRecoveries(
     recoveries,
     failures,
     others,
+    stuck,
+    desyncs,
+    connection_recoveries: connectionRecoveries,
+    connection_recovery_failures: connectionRecoveryFailures,
     most_recent_ts: events[0]?.ts ?? null,
   };
 }

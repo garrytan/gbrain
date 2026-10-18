@@ -22,6 +22,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { Action } from '../core/agent-output.ts';
 import { opError, type OperationError } from '../core/ops/contract.ts';
 import { PgliteBusyError } from '../core/pglite-lock.ts';
+import { connectMigrationEngine } from './migrations/run-engine.ts';
 import { DB_ACCESS_MARKER_PREFIX, shouldEmitDbAccessMarker } from '../core/pg-access-classify.ts';
 
 export type SchemaPendingReason = 'not_applied' | 'still_behind' | 'schema_unreadable';
@@ -87,9 +88,10 @@ export async function checkSchemaAfterOrchestrators(opts: {
   if (pglite ? !cfg.database_path || !existsSync(cfg.database_path) : opts.preflightVersion === null) return null;
   let lastRead = opts.preflightVersion;
   try {
-    const { engine, version } = await connectAtSchemaVersion(cfg);
-    let current = version;
+    const { engine, close } = await connectMigrationEngine(cfg);
+    let current: number;
     try {
+      current = parseInt(await engine.getConfig('version') || '1', 10);
       const { latest } = await pendingAbove(current);
       if (pglite && authorized && current < latest) {
         console.error(`Schema v${current} is behind v${latest}; applying schema migrations in-process...`);
@@ -97,7 +99,7 @@ export async function checkSchemaAfterOrchestrators(opts: {
         current = parseInt(await engine.getConfig('version') || '1', 10);
       }
     } finally {
-      await engine.disconnect();
+      await close();
     }
     lastRead = current;
     const { latest, pending } = await pendingAbove(current);

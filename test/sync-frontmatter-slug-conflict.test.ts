@@ -84,7 +84,7 @@ test('only the slug-conflict shape passes through; other invalid_params causes k
   expect(writeFailureDiagnostic('invalid_params', expected)).toEqual({ reason: 'invalid_params', message: expected,
     suggestion: 'Correct the frontmatter in the file and commit the change.' });
   for (const message of [expected.replace('books/fairml/ch01.md', '/private/books/ch01.md'), 'limit must be an integer from 1 to 100.', `${expected} credential=redacted`]) {
-    expect(writeFailureDiagnostic('invalid_params', message).message).toBe('The write did not commit. Inspect its durable request on the source host.');
+    expect(writeFailureDiagnostic('invalid_params', message).message).toBe('The write did not commit: it ended with invalid_params, and nothing was saved.');
   }
   expect(writeFailureDiagnostic('storage_error', expected).message).not.toContain('books/other-chapter');
 });

@@ -16,15 +16,24 @@
 import type { BrainEngine, LinkBatchInput } from './engine.ts';
 import type { Page } from './types.ts';
 import { executeRawJsonb } from './sql-query.ts';
-import { deriveTemporalEvidence, rowKey, type TemporalEvidence } from './link-temporal-evidence.ts';
+import { datedLines, deriveTemporalEvidence, narrativeRefs, rowKey, temporalEvidenceFrom, type TemporalEvidence, type TemporalInputs } from './link-temporal-evidence.ts';
 import { refreshRelationships, type RelationshipKey } from './link-relationships.ts';
 import { temporalLinkTypes } from './link-validity.ts';
-import { inlineTransitions } from './link-effective.ts';
+import { inlineTransitions, inlineTransitionsFrom, rangedRelationLines, type RangedRelationLine } from './link-effective.ts';
 import { pipelined } from './page-state/transactions.ts';
 
 type Tx = Pick<BrainEngine, 'executeRaw'>;
 
 const DERIVED_PRODUCERS = ['timeline', 'explicit', 'frontmatter', 'dream', 'inline'];
+
+/** What the evidence reads from the page body, collected outside the transaction (a segmented page's body is not read here). */
+export interface TemporalBody extends TemporalInputs { ranged: RangedRelationLine[] }
+
+/** The TemporalBody of a body held as strings. */
+export function temporalBodyOf(page: { compiled_truth: string; timeline?: string | null }): TemporalBody {
+  const content = `${page.compiled_truth}\n${page.timeline ?? ''}`;
+  return { lines: datedLines(content), narrative: narrativeRefs(page.compiled_truth), ranged: rangedRelationLines(content) };
+}
 
 export interface TemporalApplyResult {
   transitions: number;
@@ -50,17 +59,18 @@ export async function applyTemporalEvidence(
   page: Pick<Page, 'id' | 'slug' | 'source_id' | 'compiled_truth' | 'timeline' | 'frontmatter'>,
   rows: readonly LinkBatchInput[],
   keysBefore: readonly RelationshipKey[],
-  opts: { inlineRanges?: boolean } = {},
+  opts: { inlineRanges?: boolean; body?: TemporalBody } = {},
 ): Promise<TemporalApplyResult> {
   const pageId = Number(page.id);
   const sourceId = page.source_id ?? 'default';
-  const evidence = deriveTemporalEvidence({
-    slug: page.slug, compiled_truth: page.compiled_truth ?? '', timeline: page.timeline ?? '',
-    frontmatter: (page.frontmatter ?? {}) as Record<string, unknown>,
-  }, rows.map(r => ({ from_slug: r.from_slug, to_slug: r.to_slug, link_type: r.link_type, link_source: r.link_source ?? 'markdown', origin_field: r.origin_field ?? null })));
-  const inline = opts.inlineRanges
-    ? inlineTransitions(page.slug, `${page.compiled_truth ?? ''}\n${page.timeline ?? ''}`, rows.filter(r => (r.link_source ?? 'markdown') !== 'frontmatter'))
-    : { transitions: [], unmatched: [] };
+  const owned = rows.map(r => ({ from_slug: r.from_slug, to_slug: r.to_slug, link_type: r.link_type, link_source: r.link_source ?? 'markdown', origin_field: r.origin_field ?? null }));
+  const frontmatter = (page.frontmatter ?? {}) as Record<string, unknown>;
+  const evidence = opts.body ? temporalEvidenceFrom({ slug: page.slug, frontmatter }, opts.body, owned)
+    : deriveTemporalEvidence({ slug: page.slug, compiled_truth: page.compiled_truth ?? '', timeline: page.timeline ?? '', frontmatter }, owned);
+  const bodyRows = rows.filter(r => (r.link_source ?? 'markdown') !== 'frontmatter');
+  const inline = !opts.inlineRanges ? { transitions: [], unmatched: [] }
+    : opts.body ? inlineTransitionsFrom(page.slug, opts.body.ranged, bodyRows)
+    : inlineTransitions(page.slug, `${page.compiled_truth ?? ''}\n${page.timeline ?? ''}`, bodyRows);
   const transitions = [...evidence.transitions, ...inline.transitions];
 
   const tenseRows = rows.filter(r => evidence.tense.has(rowKey(r))).map(r => ({

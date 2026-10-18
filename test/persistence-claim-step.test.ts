@@ -11,8 +11,9 @@
  * when a publishing or lapsed claim is reported as overdue preparation.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { claimOwner, claimPhaseStamp, claimStall, claimStateOf, enterClaimPhase, enterClaimStep, setClaimOwnerForTest, startClaimPhase } from '../src/core/persistence/claim-phase.ts';
+import { claimOwner, claimOwnerIsThisProcess, claimPhaseStamp, claimStall, claimStateOf, enterClaimPhase, enterClaimStep, setClaimOwnerForTest, startClaimPhase } from '../src/core/persistence/claim-phase.ts';
 import { VERSION } from '../src/version.ts';
+import { processStartTime, readBootId } from '../src/core/pglite-lock.ts';
 
 afterEach(() => setClaimOwnerForTest(undefined));
 
@@ -27,7 +28,7 @@ describe('enterClaimStep', () => {
     enterClaimStep(clock, 'git_rev_parse', undefined, 'git', 2_500);
     expect(clock).toMatchObject({ step: 'git_rev_parse', stepSince: 2_500, waitingOn: 'git' });
     enterClaimPhase(clock, 'publishing', 3_000);
-    expect(clock).toMatchObject({ phase: 'publishing', since: 3_000, step: null, stepSince: 3_000, waitingOn: 'unknown' });
+    expect(clock).toMatchObject({ phase: 'publishing', since: 3_000, step: null, stepSince: 3_000, waitingOn: 'publication' }); // #6405: the publish phase names its own wait
   });
   test('throws the preparation\'s abort reason at the boundary, with or without a clock, and leaves the clock unchanged', () => {
     const abort = new AbortController();
@@ -48,11 +49,17 @@ describe('claimPhaseStamp and claimStateOf', () => {
     const clock = startClaimPhase(Date.parse('2026-10-08T03:00:00Z'));
     enterClaimStep(clock, 'origin_check', undefined, 'db', Date.parse('2026-10-08T03:01:00Z'));
     expect(JSON.parse(claimPhaseStamp(clock, 'tok-1'))).toEqual({ phase: 'preparing', claimed_at: '2026-10-08T03:00:00.000Z', since: '2026-10-08T03:00:00.000Z', token: 'tok-1',
-      step: 'origin_check', step_since: '2026-10-08T03:01:00.000Z', waiting_on: 'db', owner: { kind: 'sync', pid: 4242, version: '0.60.200.0' } });
+      step: 'origin_check', step_since: '2026-10-08T03:01:00.000Z', waiting_on: 'db', last_sql: null, owner: { kind: 'sync', pid: 4242, version: '0.60.200.0' } });
   });
-  test('the default owner is this process: the gbrain command (cli when none), pid and build', () => {
+  test('the default owner is this process: the gbrain command (cli when none), pid, build, (#6317) its nonce and pid namespace and (#6650) its boot id and start time', () => {
     const owner = claimOwner();
-    expect(owner).toEqual({ kind: expect.any(String), pid: process.pid, version: VERSION });
+    expect(owner).toEqual({ kind: expect.any(String), pid: process.pid, version: VERSION, nonce: expect.stringMatching(/^[0-9a-f]{16}$/), pid_ns: process.platform === 'linux' ? expect.stringMatching(/^pid:\[\d+\]$/) : null,
+      boot_id: readBootId(), start: processStartTime(process.pid) });
+    expect(claimOwner().nonce).toBe(owner.nonce);
+    expect(claimOwnerIsThisProcess(owner)).toBe(true);
+    expect(claimOwnerIsThisProcess({ pid: process.pid, nonce: 'another-process-reusing-the-pid' })).toBe(false);
+    expect(claimOwnerIsThisProcess({ pid: process.pid })).toBe(true);
+    expect(claimOwnerIsThisProcess({ pid: process.pid + 1, nonce: owner.nonce })).toBe(false);
   });
   test('claimStateOf reads step, step age, waiting_on and owner from the current claim\'s stamp', () => {
     const now = Date.parse('2026-10-08T03:12:00Z');
@@ -64,6 +71,14 @@ describe('claimPhaseStamp and claimStateOf', () => {
     expect(state?.why).toContain('step link_resolution, waiting on db');
     // Another claim's stamp: nothing of it is attributed to the current token.
     expect(claimStateOf({ state: 'running', claim_phase: stamp, execution_token: 't2' }, now)).toMatchObject({ phase: 'unrecorded', step: null, step_age_ms: null, waiting_on: 'unknown', owner: null });
+  });
+  test('#6650: an undispatched group follower\'s stamp (token and owner, no phase) reads as unrecorded with its owner, never as preparing', () => {
+    const owner = { kind: 'sync', pid: 7, version: '0.60.200.0' };
+    const now = Date.parse('2026-10-08T03:12:00Z');
+    const state = claimStateOf({ state: 'running', claim_phase: { token: 't1', owner, claimed_at: '2026-10-08T03:00:00.123456+00:00' }, execution_token: 't1' }, now);
+    expect(state).toMatchObject({ phase: 'unrecorded', claim_age_ms: 12 * 60_000 - 123, phase_age_ms: null, step: null, owner });
+    expect(state?.why).toContain('a group member its owner has not started yet');
+    expect(claimStall(state, 0)).toBeNull();
   });
   test('an older owner\'s stamp (no step fields) reads as step null and waiting_on unknown, never inferred', () => {
     const now = Date.parse('2026-10-08T03:12:00Z');

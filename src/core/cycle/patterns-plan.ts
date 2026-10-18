@@ -11,6 +11,9 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import type { PhaseResult } from '../cycle.ts';
+import {
+  PATTERNS_CHILD_READ_BUDGET_DEFAULT_KB, PATTERNS_CHILD_READ_BUDGET_KEY, PATTERNS_MIN_INTERVAL_DEFAULT_HOURS, PATTERNS_MIN_INTERVAL_KEY, readPhaseConfigNumber,
+} from './phase-config-values.ts';
 
 export const PATTERNS_LAST_RUN_KEY = 'dream.patterns.last_run';
 /** Reflections a first in-cycle run submits with no history (or min_evidence, if larger). */
@@ -75,9 +78,15 @@ export async function readPatternsLastRun(engine: BrainEngine): Promise<Patterns
   }
 }
 
-/** Record a child's cost; any end other than completed or timeout is `failed`. */
-export async function recordPatternsLastRun(engine: BrainEngine, run: { duration_ms: number; reflections: number; outcome: string }): Promise<void> {
-  const outcome: PatternsLastRun['outcome'] = run.outcome === 'completed' || run.outcome === 'timeout' ? run.outcome : 'failed';
+/**
+ * Record a child's cost; any end other than completed or timeout is `failed`.
+ * #6296: a child dead-lettered at its own timeout_ms (`timeout exceeded`,
+ * `wall-clock timeout exceeded`) is a timeout, so the next plan halves.
+ */
+export async function recordPatternsLastRun(engine: BrainEngine,
+  run: { duration_ms: number; reflections: number; outcome: string; error_text?: string | null }): Promise<void> {
+  const timedOut = run.outcome === 'timeout' || (run.outcome === 'dead' && /^(wall-clock )?timeout exceeded$/.test(run.error_text ?? ''));
+  const outcome: PatternsLastRun['outcome'] = timedOut ? 'timeout' : run.outcome === 'completed' ? 'completed' : 'failed';
   const record: PatternsLastRun = { duration_ms: run.duration_ms, reflections: run.reflections, at: new Date().toISOString(), outcome, budget_skips: 0 };
   await engine.setConfig(PATTERNS_LAST_RUN_KEY, JSON.stringify(record)).catch(() => undefined);
 }
@@ -112,4 +121,53 @@ export async function sizePatternsRun(engine: BrainEngine, input: { budgetMs: nu
     details: { reason: 'insufficient_cycle_budget', cause: plan.reason, reflections_selected: input.reflections,
       reflections_submitted: 0, reflections_fit: plan.n, budget_ms: budgetMs, last_run: lastRun,
       fix: patternsBudgetSkipFix(), reset_command: `gbrain config unset ${PATTERNS_LAST_RUN_KEY}` } } };
+}
+
+/** #6297: state key prefix of the time each partition's last completed patterns child ended. */
+export const PATTERNS_CADENCE_KEY = 'dream.patterns.last_completed_at';
+
+/**
+ * The owner partition's cadence key: per source and source incarnation, so a
+ * re-created source starts fresh. The external partition appends `.external`,
+ * so the owner pass never throttles it.
+ */
+export async function patternsCadenceKey(engine: BrainEngine, sourceId: string): Promise<string> {
+  const [source] = await engine.executeRaw<{ incarnation: string | null }>('SELECT incarnation FROM sources WHERE id = $1', [sourceId]);
+  return `${PATTERNS_CADENCE_KEY}.${sourceId}${source?.incarnation ? `.${source.incarnation}` : ''}`;
+}
+
+/**
+ * #6297: an in-cycle run (autopilot, bare `gbrain dream`) is skipped while
+ * the partition's last completed child ended less than
+ * `dream.patterns.min_interval_hours` (default 6, 0 off) ago. Every
+ * maintenance pass writes new reflections, so the evidence watermark alone
+ * re-ran a paid child on every pass. A direct `gbrain dream --phase patterns`
+ * or `--once` is not checked (the caller decides). An absent or unreadable
+ * stamp fails open.
+ */
+export async function patternsCadenceSkip(engine: BrainEngine, cadenceKey: string, nowMs = Date.now()): Promise<PhaseResult | null> {
+  const setting = await readPhaseConfigNumber(engine, PATTERNS_MIN_INTERVAL_KEY);
+  if (setting.warning) process.stderr.write(`[dream] ${setting.warning}\n`);
+  const hours = setting.value ?? PATTERNS_MIN_INTERVAL_DEFAULT_HOURS;
+  if (hours <= 0) return null;
+  const lastMs = Date.parse((await engine.getConfig(cadenceKey)) ?? '');
+  if (!Number.isFinite(lastMs)) return null;
+  const nextMs = lastMs + hours * 3_600_000;
+  if (nowMs >= nextMs) return null;
+  const next = new Date(nextMs).toISOString();
+  return { phase: 'patterns', status: 'skipped', duration_ms: 0,
+    summary: `patterns: the last completed run ended at ${new Date(lastMs).toISOString()}; in-cycle runs wait ${hours}h (${PATTERNS_MIN_INTERVAL_KEY}), so the next one is eligible at ${next}. Nothing was submitted.`,
+    details: { reason: 'patterns_min_interval', code: 'patterns_min_interval', last_completed_at: new Date(lastMs).toISOString(), next_eligible_at: next,
+      min_interval_hours: hours, cadence_key: cadenceKey,
+      fix: { argv: ['gbrain', 'dream', '--phase', 'patterns'], consent: ['paid'], actor: 'agent', requires_exclusive: false,
+        why: `A direct run is not held to ${PATTERNS_MIN_INTERVAL_KEY}. It is a paid model run, so ask the user first; otherwise the next in-cycle run after ${next} runs on its own.`,
+        verify: { argv: ['gbrain', 'config', 'get', cadenceKey] }, docs: 'docs/guides/dream-patterns.md#cadence' } as Action } };
+}
+
+/** #6297: the patterns child's get_page budget in bytes (`dream.patterns.child_read_budget_kb`, default 200 KB), or null when off. */
+export async function patternsChildReadBudgetBytes(engine: BrainEngine): Promise<number | null> {
+  const setting = await readPhaseConfigNumber(engine, PATTERNS_CHILD_READ_BUDGET_KEY);
+  if (setting.warning) process.stderr.write(`[dream] ${setting.warning}\n`);
+  const kb = setting.value ?? PATTERNS_CHILD_READ_BUDGET_DEFAULT_KB;
+  return kb > 0 ? kb * 1024 : null;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { formatResult } from '../src/cli.ts';
+import { formatResult } from '../src/cli/main.ts';
 
 /**
  * `gbrain history <slug> --json` accepted `--json` and silently printed the

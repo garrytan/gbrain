@@ -149,7 +149,10 @@ clients with an explicit `rescope-client --surface full` before flipping it.
 `warn` (default) accepts the call, surfaces `_meta.warnings` + a
 model-visible notice block, and logs the success as
 `status='success_with_warnings'`; `reject` returns `invalid_params` with
-did-you-mean suggestions.
+did-you-mean suggestions. The mode governs reads only: a write
+(`mutating: true`, such as `add_timeline_entry`, `put_page`, `remember`)
+rejects an unknown parameter in every mode, because the warn grace period
+would commit the row with the misnamed field dropped.
 
 **Flip criterion (evidence-based):** near-zero
 `success_with_warnings` rows over 30 days of production traffic —
@@ -239,9 +242,30 @@ than take-driven salience touches.
 
 Semantic result caching is temporarily disabled even when configuration enables
 it. Searches run fresh, so repeated requests may cost more and take longer.
-Stored rows and cache maintenance remain available. Stored contradiction reports
-are temporarily available only to trusted local callers without a source filter;
-other callers receive an empty list and an availability note.
+Stored rows and cache maintenance remain available. Remote callers of
+`find_contradictions` get only findings whose two sides they can read now, each
+side re-read live with its source and trust tier; stored report text never
+leaves (docs/contradictions.md, "Trust posture").
+
+## Served instruction settings
+
+Three brain config keys change the text of the initialize instructions. Every
+transport reads them when a client initializes (a read error serves the
+defaults); the static contract, bootstrap's GBRAIN-INSTRUCTIONS.md and the SDK
+constructor fallback are always the defaults rendering.
+
+| Key | Default | Effect on the instructions |
+|---|---|---|
+| `entity.names_references` | `true` | Found `entity names` rows (and siblings) carry `referenced_by_count` and a row-level `next` to the full card; the brief clause says "a `names` row's `next` opens the card". `false` drops both. |
+| `entity.record_types` | empty | Comma-separated canonical page types whose referring pages a `names` row lists as `records`; when set, the brief clause says a `names` row lists `records` by type. |
+| `mcp.instructions_governing_rule` | `in_effect` | Instruction 7: the record whose terms are in effect on the date asked about governs, and a page's `date`/`effective_date` is when it was written. `newest` serves the earlier "prefer the newest governing source" sentence, for measuring the rule. |
+
+```bash
+gbrain config set entity.record_types contract,amendment
+gbrain config set mcp.instructions_governing_rule newest   # measurement arm only
+```
+
+Clients read the new text at their next initialize (reconnect the harness).
 
 ## Incident levers
 

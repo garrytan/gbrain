@@ -32,7 +32,8 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { chat as defaultChat, embedQuery, type ChatResult, type ChatOpts } from '../ai/gateway.ts';
+import { chat as defaultChat, type ChatResult, type ChatOpts } from '../ai/gateway.ts';
+import { embedQueryWithPrefix } from '../search/query-prefix.ts';
 import { hybridSearch, hybridSearchCached } from '../search/hybrid.ts';
 import { INTERNAL_BREADTH_SEARCH_OPTS } from '../search/internal-breadth.ts';
 import { fetchFar, type CloseRef, type FarPage } from './domain-bank.ts';
@@ -661,7 +662,7 @@ async function _runBrainstormInner(
   const profile = opts.profile ?? BRAINSTORM_PROFILE;
   const stderr = opts.stderrWrite ?? ((s: string) => { process.stderr.write(s); });
   const chat = opts.chatFn ?? defaultChat;
-  const embedFn = opts.embedQueryFn ?? embedQuery;
+  const embedFn = opts.embedQueryFn ?? ((q: string) => embedQueryWithPrefix(engine, q));
 
   // ---- Phase 0: cost preview + TTY grace ----
   const { aborted, estimate } = await previewCostAndWait({

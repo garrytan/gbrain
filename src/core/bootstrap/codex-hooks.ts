@@ -48,6 +48,7 @@
 import { createHash } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { atomicWriteTextFile } from './atomic-write.ts';
+import { ownedEntryFingerprint } from './adopted-connections.ts';
 import type { HostSpecTarget } from './host-specs.ts';
 import { CODEX_HOOK_EVENTS, codexConfigPath, codexHooksPath } from './host-specs.ts';
 
@@ -134,13 +135,21 @@ function canonicalJson(v: unknown): string {
   return JSON.stringify(v);
 }
 
+/**
+ * Codex's trust hash for one matcher-less command handler: `event_name` is the
+ * snake_case state label (`session_end`, `session_start`, `user_prompt_submit`),
+ * the timeout is the normalized one (re-checked against openai/codex
+ * rust-v0.162.1 `hooks/src/engine/discovery.rs` `hook_hash` +
+ * `config/src/fingerprint.rs` `version_for_toml`).
+ */
+export function codexHookTrustHash(eventName: string, command: string, timeout: number): string {
+  const identity = { event_name: eventName, hooks: [{ type: 'command', command, timeout, async: false }] };
+  return 'sha256:' + createHash('sha256').update(canonicalJson(identity), 'utf8').digest('hex');
+}
+
 /** The trust hash for OUR SessionEnd handler shape (matcher/None fields omitted). */
 export function codexTrustHash(command: string): string {
-  const identity = {
-    event_name: 'session_end',
-    hooks: [{ type: 'command', command, timeout: SESSION_END_TIMEOUT_SEC, async: false }],
-  };
-  return 'sha256:' + createHash('sha256').update(canonicalJson(identity), 'utf8').digest('hex');
+  return codexHookTrustHash('session_end', command, SESSION_END_TIMEOUT_SEC);
 }
 
 interface HooksJson {
@@ -149,8 +158,9 @@ interface HooksJson {
   [k: string]: unknown;
 }
 
+/** A bootstrap-lane group: carries the ownership token and is not a `gbrain setup` group (those are owned by hash). */
 function isOurGroup(group: { hooks?: Array<{ command?: unknown }> }): boolean {
-  return (group.hooks ?? []).some((h) => typeof h.command === 'string' && h.command.includes(CODEX_HOOK_OWNERSHIP_TOKEN));
+  return (group.hooks ?? []).some((h) => typeof h.command === 'string' && h.command.includes(CODEX_HOOK_OWNERSHIP_TOKEN) && !h.command.includes(CODEX_SETUP_LANE_TOKEN));
 }
 
 export interface WriteCodexHooksResult {
@@ -336,4 +346,130 @@ export function removeCodexHooks(opts: { hooksPath?: string; configPath?: string
     }
   }
   return { hooksPath, configPath, removed, notes };
+}
+
+// ── `gbrain setup codex` lane: owned by exact hash, never by token ──────────
+//
+// Setup's groups carry `GBRAIN_HOOK_LANE=setup` so the bootstrap lane above
+// (token-owned) never claims or strips them; setup itself recognizes its
+// groups only by the sha256 fingerprint its connection receipt recorded
+// (src/core/setup/codex.ts), so an edited group is preserved, never removed.
+
+export const CODEX_SETUP_LANE_TOKEN = 'GBRAIN_HOOK_LANE=setup';
+export const CODEX_SETUP_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SessionEnd'] as const;
+export type CodexSetupEvent = (typeof CODEX_SETUP_EVENTS)[number];
+
+/** State label, normalized timeout and `gbrain hook` subcommand per event. The
+ * context events run synchronously within 15s (above session-start's own
+ * deadline); SessionEnd keeps the detached 3s capture command. */
+const SETUP_EVENT_SPECS: Record<CodexSetupEvent, { stateName: string; timeout: number; subcommand: string }> = {
+  SessionStart: { stateName: 'session_start', timeout: 15, subcommand: 'session-start' },
+  UserPromptSubmit: { stateName: 'user_prompt_submit', timeout: 15, subcommand: 'user-prompt' },
+  SessionEnd: { stateName: 'session_end', timeout: SESSION_END_TIMEOUT_SEC, subcommand: 'session-end' },
+};
+
+export interface CodexHookGroup { hooks: Array<{ type: 'command'; command: string; timeout: number }> }
+
+/** Setup's group for one event. `env` is POSIX `env` (any $SHELL parses it); the values pin this install. */
+export function codexSetupHookGroup(gbrainBin: string, event: CodexSetupEvent, env: { GBRAIN_HOME?: string; GBRAIN_SOURCE?: string }): CodexHookGroup {
+  const assignments = [CODEX_SETUP_LANE_TOKEN, ...(env.GBRAIN_HOME ? [`GBRAIN_HOME=${env.GBRAIN_HOME}`] : []), ...(env.GBRAIN_SOURCE ? [`GBRAIN_SOURCE=${env.GBRAIN_SOURCE}`] : [])];
+  const spec = SETUP_EVENT_SPECS[event];
+  const command = event === 'SessionEnd'
+    ? ['env', ...assignments].map(shellQuote).join(' ') + ' ' + buildCodexSessionEndCommand(gbrainBin)
+    : ['env', ...assignments, gbrainBin, 'hook', spec.subcommand, '--harness', 'codex'].map(shellQuote).join(' ');
+  return { hooks: [{ type: 'command', command, timeout: spec.timeout }] };
+}
+
+/** The `[hooks.state."<key>"]` entry that trusts `group` at `index` of `event` in `hooksPath`. */
+export function codexSetupTrustEntry(hooksPath: string, event: CodexSetupEvent, index: number, group: CodexHookGroup): { key: string; trusted_hash: string } {
+  const { stateName } = SETUP_EVENT_SPECS[event];
+  const handler = group.hooks[0]!;
+  return { key: `${hooksPath}:${stateName}:${index}:0`, trusted_hash: codexHookTrustHash(stateName, handler.command, handler.timeout) };
+}
+
+export interface CodexHookCensusGroup { event: string; index: number; hash: string; lane: 'setup' | 'bootstrap' | 'other'; commands: string[] }
+
+function loadHooksJson(hooksPath: string): { doc: HooksJson; hooks: NonNullable<HooksJson['hooks']> } {
+  if (!existsSync(hooksPath)) return { doc: {}, hooks: {} };
+  const text = readFileSync(hooksPath, 'utf8');
+  if (text.trim() === '') return { doc: {}, hooks: {} };
+  let doc: HooksJson;
+  try {
+    doc = JSON.parse(text) as HooksJson;
+    if (typeof doc !== 'object' || doc === null || Array.isArray(doc)) throw new Error('not an object');
+  } catch {
+    throw new Error(`${hooksPath} does not parse as a JSON object; setup never rewrites a file it cannot parse (codex skips it too). Fix it by hand, then run setup again.`);
+  }
+  if (doc.hooks !== undefined && (typeof doc.hooks !== 'object' || doc.hooks === null || Array.isArray(doc.hooks))) {
+    throw new Error(`${hooksPath} has a "hooks" key that is not an object; setup leaves it untouched.`);
+  }
+  return { doc, hooks: (doc.hooks ?? {}) as NonNullable<HooksJson['hooks']> };
+}
+
+const CONTEXT_LANE_TOKENS = ['hook session-start --harness codex', 'hook user-prompt --harness codex', CODEX_HOOK_OWNERSHIP_TOKEN];
+
+/** Every matcher group under setup's events, fingerprinted. Throws on an unparseable file. */
+export function codexHookCensus(hooksPath: string): CodexHookCensusGroup[] {
+  const { hooks } = loadHooksJson(hooksPath);
+  const out: CodexHookCensusGroup[] = [];
+  for (const event of CODEX_SETUP_EVENTS) {
+    const groups = hooks[event];
+    if (!Array.isArray(groups)) continue;
+    groups.forEach((group, index) => {
+      const commands = (Array.isArray(group?.hooks) ? group.hooks : []).map((h) => h?.command).filter((c): c is string => typeof c === 'string');
+      const lane = commands.some((c) => c.includes(CODEX_SETUP_LANE_TOKEN)) ? 'setup'
+        : commands.some((c) => CONTEXT_LANE_TOKENS.some((t) => c.includes(t))) ? 'bootstrap' : 'other';
+      out.push({ event, index, hash: ownedEntryFingerprint(group), lane, commands });
+    });
+  }
+  return out;
+}
+
+/**
+ * Converge setup's groups in hooks.json: for each event, a group whose
+ * fingerprint is in `owned` (or equals the wanted one) is replaced IN PLACE by
+ * the wanted group (extra owned copies dropped), else the wanted group is
+ * appended; an unwanted event loses only its owned groups. Events in
+ * `preserve` (edited by the user) get no write. Foreign and edited groups are
+ * never touched. Returns each wanted group's final index (the trust key).
+ */
+export function writeCodexSetupHooks(hooksPath: string, opts: {
+  want: Partial<Record<CodexSetupEvent, CodexHookGroup>>;
+  owned: ReadonlySet<string>;
+  preserve: ReadonlySet<string>;
+  dryRun?: boolean;
+}): { changed: boolean; indexes: Partial<Record<CodexSetupEvent, number>>; notes: string[] } {
+  const { doc, hooks } = loadHooksJson(hooksPath);
+  const notes: string[] = [];
+  const indexes: Partial<Record<CodexSetupEvent, number>> = {};
+  const nextHooks: NonNullable<HooksJson['hooks']> = { ...hooks };
+  let changed = false;
+  for (const event of CODEX_SETUP_EVENTS) {
+    const groups = Array.isArray(hooks[event]) ? hooks[event]! : [];
+    const wanted = opts.preserve.has(event) ? undefined : opts.want[event];
+    const wantedHash = wanted ? ownedEntryFingerprint(wanted) : null;
+    const ours = groups.flatMap((g, i) => {
+      const h = ownedEntryFingerprint(g);
+      return opts.owned.has(h) || h === wantedHash ? [i] : [];
+    });
+    let next: typeof groups;
+    if (wanted) {
+      const first = ours[0];
+      next = first === undefined ? [...groups, wanted] : groups.flatMap((g, i) => (i === first ? [wanted] : ours.includes(i) ? [] : [g]));
+      indexes[event] = first ?? next.length - 1;
+      if (first !== undefined && ownedEntryFingerprint(groups[first]) === wantedHash && ours.length === 1) continue;
+    } else {
+      if (ours.length === 0) continue;
+      next = groups.filter((_, i) => !ours.includes(i));
+    }
+    const lastDropped = Math.max(-1, ...ours.filter((i) => !(wanted && i === ours[0])));
+    if (lastDropped >= 0 && lastDropped < groups.length - 1) {
+      notes.push(`${event}: removing setup's group shifted the ${groups.length - 1 - lastDropped} group(s) after it down one index, so codex treats their trust entries as stale; re-trust them in codex (/hooks) if they stop firing.`);
+    }
+    changed = true;
+    if (next.length > 0) nextHooks[event] = next;
+    else delete nextHooks[event];
+  }
+  if (changed && !opts.dryRun) atomicWriteTextFile(hooksPath, `${JSON.stringify({ ...doc, hooks: nextHooks }, null, 2)}\n`, { freshMode: 0o600 });
+  return { changed, indexes, notes };
 }

@@ -6,6 +6,7 @@ import { parseTimelineEntries } from '../src/core/link-extraction.ts';
 import { extractTimelineFromContent, hasExtractorDetail, retractRemovedTimelineEntries } from '../src/core/timeline-extract.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { renderMaterializedBullet } from '../src/core/persistence/canonical-projections.ts';
+import { cpuMs } from './helpers/cpu-time.ts';
 
 describe('#6184 inline-citation timeline parsing', () => {
   test('a comment-only line after a citation is a paragraph boundary, not the summary', () => {
@@ -42,17 +43,15 @@ describe('#6184 write-back guard', () => {
 describe('#6184 comment handling stays linear (security review: a remote put_page body must not stall the parser)', () => {
   test('lines of empty comment runs that end in text parse in milliseconds', () => {
     const body = `Met alice-example. [Source: Slack import, 2026-10-04]\n${Array.from({ length: 20 }, () => `${'<!---->'.repeat(40)}x`).join('\n')}`;
-    const started = performance.now();
-    const entries = parseInlineCitationTimelineEntries(body);
-    expect(performance.now() - started).toBeLessThan(1500);
+    let entries: ReturnType<typeof parseInlineCitationTimelineEntries> = [];
+    expect(cpuMs(() => { entries = parseInlineCitationTimelineEntries(body); })).toBeLessThan(1500);
     expect(entries.map(e => e.date)).toEqual(['2026-10-04']);
   }, 60_000);
 
   test('many unclosed comment openers strip in linear time with the same result as before', () => {
     const opened = `${'<!--'.repeat(60_000)} tail`;
-    const started = performance.now();
-    const stripped = stripHtmlComments(opened);
-    expect(performance.now() - started).toBeLessThan(1500);
+    let stripped = '';
+    expect(cpuMs(() => { stripped = stripHtmlComments(opened); })).toBeLessThan(1500);
     expect(stripped.trim()).toBe('tail');
     expect(stripHtmlComments('a <!-- x --> b <!-- y')).toBe('a   b   y');
     expect(stripHtmlComments('<!---->a<!-->b-->c')).toBe(' a c');
@@ -97,9 +96,7 @@ describe('#6226 multi-source citations and emphasis', () => {
   test('emphasis unwrapping stays linear on adversarial input', () => {
     const inputs = ['**a'.repeat(50_000), '*x '.repeat(50_000), '__a_'.repeat(50_000), '_'.repeat(150_000)];
     for (const input of inputs) {
-      const started = performance.now();
-      parseInlineCitationTimelineEntries(`${input} [Source: s, 2026-01-02]`);
-      expect(performance.now() - started).toBeLessThan(1_000);
+      expect(cpuMs(() => parseInlineCitationTimelineEntries(`${input} [Source: s, 2026-01-02]`))).toBeLessThan(1_000);
     }
   });
 

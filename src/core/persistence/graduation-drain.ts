@@ -14,18 +14,25 @@ import { readWriterAdminLock } from './admin-lock.ts';
 import type { GraduationBlocker } from './engine-graduation.types.ts';
 
 const PENDING_REQUESTS_SQL = `SELECT r.request_id::text AS request_id, r.source_id, r.operation, r.state,
-    r.recovery IS NOT NULL AS recovering, w.owner_host_id::text AS owner_host_id
+    r.recovery IS NOT NULL AS recovering, r.blocked_reason, w.owner_host_id::text AS owner_host_id
   FROM persistence_requests r LEFT JOIN persistence_worktrees w ON w.id = r.worktree_id
   WHERE r.state IN ('queued', 'running', 'recovering') OR r.recovery IS NOT NULL
   ORDER BY r.sequence`;
 
-type PendingRequest = { request_id: string; source_id: string; operation: string; state: string; recovering: boolean; owner_host_id: string | null };
+const TERMINAL = new Set(['committed', 'conflict', 'failed', 'cancelled']);
+
+type PendingRequest = { request_id: string; source_id: string; operation: string; state: string; recovering: boolean; blocked_reason: string | null; owner_host_id: string | null };
+
+/** The read-only stuck-recovery preview of one record: the exit of a recovery that refuses a hand-edited file (C-1, C-4). */
+const stuckRecoveryPreview = (sourceId: string, requestId: string) => ['gbrain', 'repair', 'stuck-recovery', '--source', sourceId, '--request-id', requestId];
 
 /**
  * Everything that keeps graduation from copying, each with its graduation
  * action. Read-only. Queued, running and recovering requests owned by this
  * host are `request` blockers the drain itself clears (recovering ones carry
- * the retry command for when the drain cannot finish them); requests and host
+ * the retry command for when the drain cannot finish them), except a live
+ * recovery blocked on a hand-edited file (`unexpected_file_bytes`), which only
+ * the user resolves through the stuck-recovery preview it names; requests and host
  * bindings owned by another host, recovering topology changes, recovering
  * effects, the writer admin lock and OAuth clients bound to a missing source
  * (an FK only Postgres enforces) need someone else to act first.
@@ -42,8 +49,11 @@ export async function graduationBlockers(source: BrainEngine, hostId: string): P
     if (r.owner_host_id && r.owner_host_id !== hostId) {
       blockers.push({ kind: 'foreign_host_binding', id: r.request_id, detail: `${detail} is bound to a worktree owned by host ${r.owner_host_id}`,
         argv: ['gbrain', 'sources', 'writer', 'transfer', 'prepare', r.source_id], needsUser: true });
+    } else if (r.recovering && r.blocked_reason === 'unexpected_file_bytes' && !TERMINAL.has(r.state)) {
+      blockers.push({ kind: 'request', id: r.request_id, detail: `${detail} is blocked on a hand-edited file (unexpected_file_bytes)`,
+        argv: stuckRecoveryPreview(r.source_id, r.request_id), needsUser: true });
     } else if (r.recovering || r.state === 'recovering') {
-      blockers.push({ kind: 'request', id: r.request_id, detail, argv: ['gbrain', 'sync', '--source', r.source_id, '--no-pull', '--retry-failed'], needsUser: false });
+      blockers.push({ kind: 'request', id: r.request_id, detail, argv: ['gbrain', 'sync', '--source', r.source_id, '--no-pull'], needsUser: false });
     } else {
       blockers.push({ kind: 'request', id: r.request_id, detail, needsUser: false });
     }
@@ -54,14 +64,15 @@ export async function graduationBlockers(source: BrainEngine, hostId: string): P
     blockers.push({ kind: 'topology_recovery', id: t.id, detail: `${t.operation} for ${t.source_id} is recovering`,
       argv: ['gbrain', 'sources', 'writer', 'status', t.source_id, '--json'], needsUser: false });
   }
-  const effects = await source.executeRaw<{ id: string; kind: string; state: string; source_id: string | null; request_id: string }>(
-    `SELECT e.id::text AS id, e.kind, e.state, COALESCE(e.source_id, r.source_id) AS source_id, r.request_id::text AS request_id
+  const effects = await source.executeRaw<{ id: string; kind: string; state: string; error_code: string | null; source_id: string | null; request_id: string }>(
+    `SELECT e.id::text AS id, e.kind, e.state, e.error_code, COALESCE(e.source_id, r.source_id) AS source_id, r.request_id::text AS request_id
      FROM persistence_effects e JOIN persistence_requests r ON r.id = e.request_id WHERE e.recovery IS NOT NULL ORDER BY e.id`);
   for (const e of effects) {
     const sourceId = e.source_id ?? 'default';
-    blockers.push({ kind: 'effect_recovery', id: e.id, detail: `${e.kind} effect ${e.state} for request ${e.request_id} is recovering`,
+    const stuck = e.kind === 'withdrawal-mirror' && e.error_code === 'unexpected_file_bytes';
+    blockers.push({ kind: 'effect_recovery', id: e.id, detail: `${e.kind} effect ${e.state} for request ${e.request_id} is recovering${stuck ? ' and blocked on a hand-edited file (unexpected_file_bytes)' : ''}`,
       argv: e.kind === 'embedding' ? ['gbrain', 'repair', 'embedding-effects', '--source', sourceId]
-        : ['gbrain', 'sources', 'writer', 'status', sourceId, '--json'], needsUser: false });
+        : stuck ? stuckRecoveryPreview(sourceId, e.request_id) : ['gbrain', 'sources', 'writer', 'status', sourceId, '--json'], needsUser: stuck });
   }
   const bindings = await source.executeRaw<{ worktree_id: string; host_id: string; source_id: string | null }>(
     `SELECT b.worktree_id::text AS worktree_id, b.host_id::text AS host_id,
@@ -85,9 +96,9 @@ export async function graduationBlockers(source: BrainEngine, hostId: string): P
   return blockers;
 }
 
-/** Blockers the request-only drain can clear by itself. */
+/** Blockers the request-only drain can clear by itself (a recovery that needs the user is not one). */
 function drainable(blocker: GraduationBlocker): boolean {
-  return blocker.kind === 'request';
+  return blocker.kind === 'request' && !blocker.needsUser;
 }
 
 /**

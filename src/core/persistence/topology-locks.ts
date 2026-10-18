@@ -1,6 +1,7 @@
 import { join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { assertPhysicalRoot } from './physical-root.ts';
+import { inspectRelocatedPhysicalRoot } from './physical-root-record.ts';
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
@@ -32,8 +33,14 @@ export async function lockTopologyPrincipal(engine: BrainEngine, id: string): Pr
 }
 
 /** Native locks precede every topology/source/grant/receipt transaction. */
+/**
+ * `relocation` (#5914, P1.3c): a `set-path` whose target is where the recorded
+ * root now resolves through a symlink. The recorded binding then verifies as a
+ * relocated root (reservation and stamp agree on token, brainId and worktreeId)
+ * instead of failing the realpath check; the transaction moves its records.
+ */
 export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string,
-  run: (bindings: TopologyBinding[]) => Promise<T>, additionalRoot?: string, waitMs=5000): Promise<T> {
+  run: (bindings: TopologyBinding[]) => Promise<T>, additionalRoot?: string, waitMs=5000, opts: { relocation?: boolean } = {}): Promise<T> {
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
   const handles: NativeLockHandle[] = [];
   const take = async (path: string) => {
@@ -63,7 +70,10 @@ export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string
         `The worktree holding source ${item.source_id || sourceId} is owned by host ${item.owner_host_id}, not this host (${localHostId()}), or has no coordination path here, so nothing changed. Run the lifecycle command on the owning host; moving ownership is a separate, deliberate writer transfer.`,
         {fix:ownerStatusFix(sourceId)});
       await take(item.coordination_path);
-      if(item.local_path&&existsSync(item.local_path))assertPhysicalRoot(item.local_path,{worktreeId:item.worktree_id,coordinationPath:item.coordination_path});
+      if(!item.local_path||!existsSync(item.local_path)) continue;
+      const identity={worktreeId:item.worktree_id,coordinationPath:item.coordination_path};
+      if(opts.relocation&&item.source_id===sourceId&&additionalRoot&&item.local_path!==additionalRoot&&realpathSync(item.local_path)===additionalRoot) inspectRelocatedPhysicalRoot(item.local_path,additionalRoot,identity);
+      else assertPhysicalRoot(item.local_path,identity);
     }
     return await run(bindings);
   } finally { for (const handle of handles.reverse()) await handle.release(); }
@@ -136,11 +146,11 @@ export async function settleTopologyRequests(tx: BrainEngine, sources: string[],
   }
   const [blocked] = await tx.executeRaw<{ id: string; source_id: string | null }>(`SELECT id,source_id FROM persistence_effects WHERE
     (source_id=ANY($1::text[]) OR worktree_id=ANY($2::uuid[])) AND
-    (recovery IS NOT NULL OR state='running' OR (kind='withdrawal-mirror' AND state<>'committed')) LIMIT 1`, [sources,worktrees]);
+    (recovery IS NOT NULL OR state='running' OR (kind='withdrawal-mirror' AND state='queued')) LIMIT 1`, [sources,worktrees]);
   if (blocked) {
     const source = blocked.source_id ?? sources[0];
     throw opError('recovery_required', 'Finish the pending withdrawal mirror and publication effects before changing source topology.',
-      `Effect ${blocked.id} on source ${source} (a withdrawal mirror or publication effect) has not finished, so the lifecycle change rolled back and nothing changed. The owner's effect worker settles it; check it with the command in fix, which lists it with its page and request; gbrain sources writer retry-effects re-authorizes a failed or parked one. Then run the same lifecycle command again with the same request_id.`,
+      `Effect ${blocked.id} on source ${source} (a queued withdrawal mirror, a running effect or one holding a recovery record) has not finished, so the lifecycle change rolled back and nothing changed. The owner's effect worker settles it; check it with the command in fix, which lists it with its page and request. Then run the same lifecycle command again with the same request_id.`,
       {fix:ownerStatusFix(source)});
   }
   const pending = requests.filter(row => row.state === 'queued');

@@ -690,14 +690,16 @@ describe('writeFactsToFence — sync.write_through opt-out', () => {
     });
 
     expect(r.status).toBe('inserted');
-    expect(r.entity_slug).toBe('people/frank-example');
+    // #5504: people/frank-example has no page, so the resolver fell back to
+    // slugification and the row carries no entity (the backstop convention).
+    expect(r.entity_slug).toBeNull();
     expect(existsSync(join(brainDir, 'people/frank-example.md'))).toBe(false);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = await (engine as any).db.query(
       'SELECT entity_slug, source_markdown_slug FROM facts WHERE id = $1',
       [r.id],
     );
-    expect(rows.rows[0].entity_slug).toBe('people/frank-example');
+    expect(rows.rows[0].entity_slug).toBeNull();
     // No .md backs the row — the fence-tracking column stays null.
     expect(rows.rows[0].source_markdown_slug).toBeNull();
   });

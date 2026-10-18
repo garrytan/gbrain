@@ -183,10 +183,26 @@ and publishes a checksummed archive with POSIX mode `0600`. On Windows, built-in
 Windows PowerShell establishes and verifies access for the current owner and
 SYSTEM before writing backup payloads. It protects only newly created backup
 paths, never changes existing parent permissions, and refuses with
-`private_backup_path_unavailable` if enforcement is unavailable. Use a new private
-destination on a local filesystem with Windows ACL support and permitted
-Windows PowerShell. A busy database or a
+`private_backup_path_unavailable` when that protection could not be established
+or verified at the destination (some locations' inherited permissions prevent
+it; a new path inside your user profile works). The destination must be on a
+local filesystem with Windows ACL support, with built-in Windows PowerShell
+permitted. A busy database or a
 changing file fails the operation instead of publishing a success receipt.
+
+Before the dump, the command removes gbrain's own IPC socket files
+(`.gbrain-resolve.sock`, `.gbrain-persistence.sock`) from the data dir when
+nothing listens on them, so a `gbrain serve` that was killed does not block
+later backups; each removal is listed in the archive's `omitted` inventory.
+Any other socket, FIFO or symlink in the data dir is left alone and the
+command refuses with `backup_dump_failed` naming it: stop the process that
+uses it (or move it out of the data dir) and run the same command again.
+On Windows the runtime cannot inspect a stale AF_UNIX socket (`lstat` fails),
+so the sweep probes and claims such an entry without classifying it and removes
+it only through the native binding's tag check; an entry nothing can verify is
+kept and named in the refusal (`an entry this runtime cannot inspect`), never
+deleted blind. The Linux and macOS lanes cover the sweep; the `windows-latest`
+row of `test.yml` runs the stale-socket test natively.
 
 | Included | Excluded or inventoried for reconnection |
 | --- | --- |
@@ -209,6 +225,44 @@ This recovery format currently accepts managed `.gbrain/brain.pglite` databases,
 PostgreSQL 17 PGLite clusters, and at most 8 GiB of payload. `backup status` and
 `backup check` report file coverage; neither creates this snapshot. Markdown
 exports alone cannot recover facts that exist only in the database.
+
+`backup create` checks both limits before it takes the lock or writes anything.
+A data directory that is not `<root>/.gbrain/brain.pglite`, or one reached
+through a symlink (for example a `.gbrain` alias to another volume), refuses
+with `unmanaged_database_path`. A data directory whose estimated archive size
+is over 8 GiB refuses with `backup_too_large`. Doctor's `pglite_data_dir` check
+warns once the estimate passes 6 GiB, so you can plan before the refusal. Both
+refusals point at the runbook below.
+
+### Large or non-standard brains: quiesced physical copy
+
+For a brain over the cap or in a flat or symlinked layout, the supported
+recovery artifact is a physical copy of the stopped data directory. Ask the
+user before step 1: it stops their memory service.
+
+1. **Stop every writer.** Stop `gbrain serve`, autopilot and jobs workers, and
+   any agent session using this brain. Then run `gbrain doctor --json`: doctor
+   opens the brain only when no other gbrain process holds its PGLite lock, so
+   a `pglite_data_dir` warning that names a live PID means a writer is still
+   running.
+2. **Copy.** Resolve the real data directory through any alias
+   (`realpath ~/.gbrain/brain.pglite`) and copy it whole, with `config.json`,
+   into a new isolated home, laid out as `<new-home>/.gbrain/brain.pglite` and
+   `<new-home>/.gbrain/config.json`. Do not copy while anything runs against
+   the brain, and do not start writers again until the copy finishes.
+3. **Point the copy at itself.** Set `database_path` in the copied
+   `config.json` to the copied data directory.
+4. **Verify in isolation.** Run `GBRAIN_HOME=<new-home> gbrain doctor --json`
+   and an entity recall against the copy before relying on it. The copy is the
+   managed layout, so while it is under the cap, `GBRAIN_HOME=<new-home>
+   gbrain backup create --output <new archive>` also archives it.
+
+The restore drill in `test/backup-preflight-6649.serial.test.ts` runs these steps on a
+`.gbrain` alias to another directory: it copies the stopped brain, opens the
+copy in its own home with the data intact, archives the copy and restores that
+archive into a third root. Archives over 8 GiB are not supported yet; this
+runbook is the recovery route until a streaming format ships
+([#6649](https://github.com/garrytan/gbrain/issues/6649)).
 
 ## 7. Restore into a new root
 
@@ -316,6 +370,7 @@ hosted access, also revoke that installation's grant on the host.
 | `pglite_busy` | Wait for the active command to finish and retry; stop a long-lived server through its owning process before using finite CLI mode | agent | none | retry the read-only command |
 | Fresh conversation cannot recall the test | Inspect the native skill attachment and exact launcher invocation, then run explicit entity recall | user (reloads the native skill) | none | a `recall` from a fresh conversation |
 | Backup says files changed | Pause the writer and create a new snapshot; do not treat the failed output as a backup | agent | none | the new snapshot's verification output |
+| `unmanaged_database_path` or `backup_too_large` from `backup create` | Ask the user, then follow the [quiesced physical copy](#large-or-non-standard-brains-quiesced-physical-copy) runbook | user stops writers; agent copies and verifies | user agrees to stop writers | `GBRAIN_HOME=<new-home> gbrain doctor --json` |
 | Restore target already exists | Choose another absent root; restore never overwrites existing state | agent | none | the restore output |
 | A package or host URL is blocked | Complete the app's normal approval flow; preserve the error if access is denied | user | none | retry after approval |
 

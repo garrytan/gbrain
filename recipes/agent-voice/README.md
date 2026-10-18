@@ -54,6 +54,15 @@ Three rules for new recipes following this shape:
 - `code/lib/personas/private-name-blocklist.json` — privacy guard source of truth (read by the shipped guard script and by host-side prompt-shape tests).
 - `code/lib/personas/context-builder.contract.md` — API the operator implements for live brain context.
 
+## Provider notes
+
+- Cartesia TTS (`code/pipeline.mjs`, the deferred DIY pipeline): the default
+  model is `sonic-3.6`. Cartesia switched `sonic-english` off on 2026-06-01 and
+  requests naming it return an error (#5905). Pass `modelId` to
+  `CartesiaTtsAdapter` or set `CARTESIA_MODEL_ID` to pin another current model
+  (`sonic-3.5`, `sonic-3`). `tests/unit/cartesia-default-model.test.mjs` pins
+  the default without calling the API.
+
 ## Files (in `bundle = code/ + tests/unit/ + skills/ + package.json`) — copied to host repo
 
 The install subcommand reads `install/manifest.json` and copies each listed file to its target path under the host repo. SHA-256s computed at copy time get persisted into `<host>/services/<name>/.gbrain-source.json` so `--refresh` can do three-way classification (unchanged-identical / unchanged-stale / locally-modified) without re-walking the entire bundle.

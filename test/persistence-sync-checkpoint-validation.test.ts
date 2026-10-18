@@ -49,7 +49,7 @@ async function fixture(engine: BrainEngine) {
   await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,\'{}\')', [id, root]);
   await claimWorktree(engine, id, root);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-  return { id, root, opts: { sourceId: id, noPull: true, noEmbed: true, noExtract: true, explicitProcessing: [] } };
+  return { id, root, opts: { sourceId: id, noPull: true, noEmbed: true, noExtract: true } };
 }
 
 /** The validation statement exactly as it ran before #5762, kept only to prove parity. */
@@ -111,8 +111,8 @@ function failValidation(engine: BrainEngine, failure: 'timeout' | 'lock'): () =>
   return () => { engine.transaction = transaction; };
 }
 
-test('#5762 a validation statement timeout fails the checkpoint terminally with a typed code and a filled hint; other writes proceed', async () => each(async engine => {
-  const f = await fixture(engine);
+/** Runs the fixture's sync until its checkpoint validation times out terminally. */
+async function timedOutSync(engine: BrainEngine, f: Awaited<ReturnType<typeof fixture>>) {
   const restore = failValidation(engine, 'timeout');
   let result: Awaited<ReturnType<typeof performManagedSync>>;
   try {
@@ -120,15 +120,24 @@ test('#5762 a validation statement timeout fails the checkpoint terminally with 
     // A real 5 s statement timeout outlasts the sync's own 5 s wait; the same options then report the terminal outcome.
     for (let waited = 0; result.status === 'partial' && waited < 30_000; waited += 250) {
       await new Promise(resolve => setTimeout(resolve, 250));
-      const [row] = await engine.executeRaw<{ state: string }>("SELECT state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_checkpoint'", [f.id]);
+      const [row] = await engine.executeRaw<{ state: string }>("SELECT state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_checkpoint' ORDER BY sequence DESC LIMIT 1", [f.id]);
       if (row?.state === 'failed') result = await performManagedSync(engine, f.opts);
     }
   } finally { restore(); }
+  return result;
+}
+
+const checkpointRuns = (engine: BrainEngine, sourceId: string) => engine.executeRaw<{ state: string; error_code: string | null; run_id: string }>(
+  "SELECT state, error_code, intent->>'runId' AS run_id FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_checkpoint' ORDER BY sequence", [sourceId]);
+
+test('#5762 a validation statement timeout fails the checkpoint terminally with a typed code and a filled hint; other writes proceed', async () => each(async engine => {
+  const f = await fixture(engine);
+  const result = await timedOutSync(engine, f);
   expect(result).toMatchObject({ status: 'blocked_by_failures', failureCodes: [{ code: 'checkpoint_validation_timeout', count: 1 }] });
   const diagnostic = result.managedWrite!;
   expect(diagnostic).toMatchObject({ write_error: 'checkpoint_validation_timeout', reason: 'checkpoint_validation_timeout', detail: 'indexes_valid',
     docs: 'docs/guides/write-refusals.md#checkpoint-validation-timeout', write_request: { state: 'failed' } });
-  expect(diagnostic.suggestion).toContain(`gbrain sync --source ${f.id} --no-pull --retry-failed --no-embed --no-extract`);
+  expect(diagnostic.suggestion).toContain(`gbrain sync --source ${f.id} --no-pull --no-embed --no-extract`);
   expect(diagnostic.suggestion).toContain(diagnostic.write_request.request_id);
   const [checkpoint] = await engine.executeRaw<{ state: string; error_code: string; blocked_reason: string | null }>(
     "SELECT state,error_code,blocked_reason FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_checkpoint'", [f.id]);
@@ -149,13 +158,64 @@ test('#5762 a validation statement timeout fails the checkpoint terminally with 
 
   // The printed retry admits a fresh run that commits.
   expect((await performManagedSync(engine, { ...f.opts, retryFailed: true })).status).toBe('first_sync');
+  // #6735: it re-validated the pinned checkpoint of the timed-out run; it did not rediscover the manifest under a new run.
+  const runs = await checkpointRuns(engine, f.id);
+  expect(runs.at(-1)).toMatchObject({ state: 'committed', run_id: runs[0]!.run_id });
+}), 180_000);
+
+test('#6735 a plain resume re-validates a checkpoint whose validation timed out, once per invocation', async () => each(async engine => {
+  const f = await fixture(engine);
+  expect(await timedOutSync(engine, f)).toMatchObject({ status: 'blocked_by_failures', failureCodes: [{ code: 'checkpoint_validation_timeout', count: 1 }] });
+  const [failed] = await checkpointRuns(engine, f.id);
+  // A timeout that persists is revived once by the next invocation, then recorded again: the run is never rediscovered.
+  expect(await timedOutSync(engine, f)).toMatchObject({ status: 'blocked_by_failures', failureCodes: [{ code: 'checkpoint_validation_timeout', count: 1 }] });
+  expect((await checkpointRuns(engine, f.id)).map(row => [row.state, row.error_code, row.run_id]))
+    .toEqual([['failed', 'checkpoint_validation_timeout', failed!.run_id], ['failed', 'checkpoint_validation_timeout', failed!.run_id]]);
+  // Once validation fits its budget, the plain sync the run stopped on commits that same checkpoint.
+  expect((await performManagedSync(engine, f.opts)).status).toBe('first_sync');
+  expect((await checkpointRuns(engine, f.id)).map(row => [row.state, row.run_id]))
+    .toEqual([['failed', failed!.run_id], ['failed', failed!.run_id], ['committed', failed!.run_id]]);
+  expect(await engine.executeRaw('SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL ORDER BY slug', [f.id])).toEqual([{ slug: 'a' }, { slug: 'b' }]);
+}), 180_000);
+
+/** Every plan node under `node`, depth first. */
+const planNodes = (node: Record<string, unknown>): Array<Record<string, unknown>> =>
+  [node, ...((node.Plans as Array<Record<string, unknown>> | undefined) ?? []).flatMap(planNodes)];
+
+test('#6735 the committed-sibling lookup reads at most one row per non-committed receipt, whatever join the planner prefers', async () => each(async engine => {
+  const f = await fixture(engine);
+  const binding = (await getWorktreeBinding(engine, f.id))!;
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text FROM sources WHERE id=$1', [f.id]);
+  const runId = randomUUID(), committed = 3000, retried = 20;
+  const insert = (state: string, indexes: string) => engine.executeRaw(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,
+      source_incarnation,slug,worktree_id,digest,intent,authority,intent_bytes,terminal_reservation,state)
+    SELECT 'local_cli','budget',gen_random_uuid(),'submit_job',$1,$2::uuid,'p'||i,$3::uuid,'d',jsonb_build_object('kind','managed_sync_import','runId',$4::text,'index',i),
+      '{}'::jsonb,1,16384,$5 FROM ${indexes} AS i`, [f.id, source!.incarnation, binding.worktree_id, runId, state]);
+  // Every failed receipt was retried and committed at its index, so nothing blocks; the probe still reads each one's sibling.
+  await insert('committed', `generate_series(0, ${committed - 1})`);
+  await insert('failed', `generate_series(0, ${(retried - 1) * 97}, 97)`);
+  await engine.executeRaw('ANALYZE persistence_requests');
+  for (const settings of [[], ['enable_nestloop'], ['enable_nestloop', 'enable_mergejoin']]) {
+    const read = await engine.transaction(async tx => {
+      for (const setting of settings) await tx.executeRaw(`SET LOCAL ${setting}=off`);
+      expect(await findIncompleteSyncReceipt(tx, binding.worktree_id, runId)).toBeNull();
+      const [row] = await tx.executeRaw<Record<string, unknown>>(`EXPLAIN (ANALYZE, FORMAT JSON) ${INCOMPLETE_SYNC_RECEIPT_SQL}`, [binding.worktree_id, runId, [], [], []]);
+      const raw = Object.values(row!)[0];
+      const plan = (typeof raw === 'string' ? JSON.parse(raw) : raw) as Array<{ Plan: Record<string, unknown> }>;
+      return planNodes(plan[0]!.Plan).filter(node => node['Alias'] === 'committed')
+        .reduce((sum, node) => sum + Number(node['Actual Rows']) * Number(node['Actual Loops']), 0);
+    });
+    // Rows read from the committed siblings: the pre-#6735 NOT EXISTS read all 3000 under a merge or hash anti-join.
+    expect({ settings, read }).toEqual({ settings, read: retried });
+  }
+  await engine.executeRaw('DELETE FROM persistence_requests WHERE source_id=$1', [f.id]);
 }), 180_000);
 
 test('#5762 a lock timeout in the validation stays transient contention', async () => each(async engine => {
   const f = await fixture(engine);
   const restore = failValidation(engine, 'lock');
   try { expect(await performManagedSync(engine, f.opts)).toMatchObject({ status: 'partial', reason: 'writer_pending' }); }
-  finally { restore(); }
+  finally { await disposePersistenceConsumer(engine); restore(); }
   const [checkpoint] = await engine.executeRaw<{ state: string; error_code: string | null }>(
     "SELECT state,error_code FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_checkpoint'", [f.id]);
   expect(checkpoint.error_code).toBeNull();
@@ -166,7 +226,7 @@ test('#5762 a lock timeout in the validation stays transient contention', async 
 test('#5762 the hint names one of three index states and keeps the saved processing flags', async () => {
   const syncOptions = { full: false, workingTree: true, srcSubpath: null, exclude: [], includeHidden: [], strategy: null };
   const input = { requestId: 'req-1', sourceId: 'notes', processingOptions: { noEmbed: true, noExtract: false, noSchemaPack: true }, syncOptions };
-  const retry = 'gbrain sync --source notes --no-pull --retry-failed --no-embed --no-schema-pack --working-tree';
+  const retry = 'gbrain sync --source notes --no-pull --no-embed --no-schema-pack --working-tree';
   const building = formatCheckpointTimeoutHint([{ name: 'persistence_requests_sync_run_open', state: 'building',
     progress: { phase: 'building index: scanning table', blocks_done: 10, blocks_total: 40 } }], input);
   expect(building).toMatchObject({ detail: 'index_building' });
@@ -184,23 +244,25 @@ test('#5762 the hint names one of three index states and keeps the saved process
   // Every option that selects the cursor is printed, so the retry resumes the same cursor.
   expect(checkpointRetryCommand({ sourceId: 'notes', processingOptions: null, syncOptions: { full: true, workingTree: false, srcSubpath: 'docs/team a',
     exclude: ['drafts/**', "it's"], includeHidden: ['.notes'], strategy: 'markdown' } })).toBe(
-    "gbrain sync --source notes --no-pull --retry-failed --full --src-subpath 'docs/team a' --exclude 'drafts/**' --exclude 'it'\\''s' --include-hidden .notes --strategy markdown");
+    "gbrain sync --source notes --no-pull --full --src-subpath 'docs/team a' --exclude 'drafts/**' --exclude 'it'\\''s' --include-hidden .notes --strategy markdown");
   // A relative --src-subpath keeps the --repo base it resolved against.
   expect(checkpointRetryCommand({ sourceId: 'notes', processingOptions: { noEmbed: true, noExtract: true, noSchemaPack: false },
     syncOptions: { ...syncOptions, workingTree: false, srcSubpath: 'guides' }, repoPath: '/work/repo/docs' }))
-    .toBe('gbrain sync --source notes --no-pull --retry-failed --repo /work/repo/docs --no-embed --no-extract --src-subpath guides');
+    .toBe('gbrain sync --source notes --no-pull --repo /work/repo/docs --no-embed --no-extract --src-subpath guides');
   // A compacted receipt, or a checkpoint admitted before its cursor options were recorded: no assumed defaults.
   expect(checkpointRetryCommand({ sourceId: 'notes', processingOptions: { noEmbed: true, noExtract: false, noSchemaPack: false } }))
-    .toBe('gbrain sync --source notes --no-pull --retry-failed with the same options as the failed run (this receipt no longer records them)');
-  expect(checkpointRetryCommand({ sourceId: 'notes' })).toBe('gbrain sync --source notes --no-pull --retry-failed with the same options as the failed run (this receipt no longer records them)');
+    .toBe('gbrain sync --source notes --no-pull with the same options as the failed run (this receipt no longer records them)');
+  expect(checkpointRetryCommand({ sourceId: 'notes' })).toBe('gbrain sync --source notes --no-pull with the same options as the failed run (this receipt no longer records them)');
 });
 
 test('#5762 a dropped index reads as missing and the hint then names the rebuild command', async () => each(async engine => {
-  expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid']);
+  // #6511 and #6757 added the purge slug and request-id indexes to the online-built set; the default read lists them after the checkpoint pair.
+  expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid', 'valid', 'valid']);
   await engine.executeRaw('DROP INDEX persistence_requests_sync_run_committed');
   try {
     expect(await readRequestIndexStates(engine)).toEqual([{ name: 'persistence_requests_sync_run_open', state: 'valid' },
-      { name: 'persistence_requests_sync_run_committed', state: 'missing' }]);
+      { name: 'persistence_requests_sync_run_committed', state: 'missing' }, { name: 'persistence_requests_slug_intent', state: 'valid' },
+      { name: 'persistence_requests_request_id', state: 'valid' }]);
   } finally {
     const { PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL } = await import('../src/core/persistence/schema.ts');
     await engine.executeRaw(PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL);

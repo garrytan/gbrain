@@ -32,6 +32,7 @@ import { LATEST_VERSION } from '../src/core/migrate.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { entryRunsAt } from '../src/commands/doctor/budget.ts';
 
 const ENV_KEYS = ['PATH', 'GBRAIN_HOME', 'HOME', 'GBRAIN_AUDIT_DIR', 'GBRAIN_SYNC_FAILURES_DIR', 'DATABASE_URL', 'GBRAIN_DATABASE_URL', 'GBRAIN_SKILLS_DIR', 'OPENCLAW_WORKSPACE'] as const;
 const SKILL_BODY = '## Iron Law: Back-Linking (MANDATORY)\n\nbody paragraph.\n';
@@ -174,6 +175,8 @@ const byName = (name: string, e: DoctorEntry[] = [...DOCTOR_CHECK_REGISTRY]) => 
 const [OFFLINE, DB_GATE, LIVE, CONN_GATE] = byName('connection');
 const RESOLVER = byName('resolver_health')[0];
 const SEARCH_MODE = DOCTOR_CHECK_REGISTRY.at(-1)!;
+/** Every entry the default (`standard`) tier runs; `deep` entries run only under `--tier deep`. */
+const STANDARD = DOCTOR_CHECK_REGISTRY.flatMap((e, i) => entryRunsAt(e.tier, 'standard') ? [i] : []);
 const upTo = (entry: DoctorEntry) => DOCTOR_CHECK_REGISTRY.slice(0, indexOf(entry) + 1).map((_, i) => i);
 const dryViolations = (checks: Check[]) =>
   (checks.find((c) => c.name === 'resolver_health')?.issues ?? []).filter((i) => i.type === 'dry_violation' && i.skill === 'demo-example');
@@ -191,7 +194,7 @@ describe('doctor mode matrix (registry runner, EO11)', () => {
     await pglite.setConfig('version', String(LATEST_VERSION));
     const calls: string[] = [];
     const run = await runMode(recordingEngine(pglite, calls), [], calls);
-    expect(run.ran.map((r) => r.entry)).toEqual(DOCTOR_CHECK_REGISTRY.map((_, i) => i));
+    expect(run.ran.map((r) => r.entry)).toEqual(STANDARD);
     expect(run.ran.some((r) => r.result === 'stop')).toBe(false);
     expect(run.ran.find((r) => r.entry === indexOf(OFFLINE))?.result).toBe(0);
     expect(run.checks.find((c) => c.name === 'connection')?.status).toBe('ok');
@@ -202,6 +205,16 @@ describe('doctor mode matrix (registry runner, EO11)', () => {
     expect(skillFile()).toContain(SKILL_BODY);
     expect(dryViolations(run.checks).length).toBeGreaterThan(0);
     expect(await lockPresent()).toBe(true);
+  }, 180_000);
+
+  test('the deep tier is exactly the convergence shadow, and --tier deep runs every entry', async () => {
+    expect(DOCTOR_CHECK_REGISTRY.filter((e) => !entryRunsAt(e.tier, 'standard')).map((e) => e.name)).toEqual(['managed_sync_convergence']);
+    await pglite.setConfig('version', String(LATEST_VERSION));
+    const calls: string[] = [];
+    const run = await runMode(recordingEngine(pglite, calls), ['--tier', 'deep'], calls);
+    expect(run.ran.map((r) => r.entry)).toEqual(DOCTOR_CHECK_REGISTRY.map((_, i) => i));
+    expect(run.ran.some((r) => r.result === 'stop')).toBe(false);
+    expect(run.checks.find((c) => c.name === 'managed_sync_convergence')?.status).toBe('ok');
   }, 180_000);
 
   test('--fast: filesystem entries only, STOP at the DB-checks gate, no connection probe', async () => {
@@ -221,7 +234,7 @@ describe('doctor mode matrix (registry runner, EO11)', () => {
     await seedDeadHolderLock();
     const calls: string[] = [];
     const run = await runMode(recordingEngine(pglite, calls), ['--fix'], calls);
-    expect(run.ran.map((r) => r.entry)).toEqual(DOCTOR_CHECK_REGISTRY.map((_, i) => i));
+    expect(run.ran.map((r) => r.entry)).toEqual(STANDARD);
     expect(run.ctx?.autoFixReport?.fixed.map((f) => f.skill)).toEqual(['demo-example']);
     expect(skillFile()).not.toContain(SKILL_BODY);
     expect(dryViolations(run.checks)).toEqual([]);
@@ -233,7 +246,7 @@ describe('doctor mode matrix (registry runner, EO11)', () => {
     await seedDeadHolderLock();
     const calls: string[] = [];
     const run = await runMode(recordingEngine(pglite, calls), ['--fix', '--dry-run'], calls);
-    expect(run.ran.map((r) => r.entry)).toEqual(DOCTOR_CHECK_REGISTRY.map((_, i) => i));
+    expect(run.ran.map((r) => r.entry)).toEqual(STANDARD);
     expect(run.ctx?.autoFixReport?.fixed.map((f) => f.skill)).toEqual(['demo-example']);
     expect(skillFile()).toContain(SKILL_BODY);
     expect(dryViolations(run.checks).length).toBeGreaterThan(0);

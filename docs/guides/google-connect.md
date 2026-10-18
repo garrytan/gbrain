@@ -99,6 +99,60 @@ Repeat `gbrain google connect --account work@yourco.com` per account; each
 account becomes its own source (`gbrain sources add gmail-work --kind google
 --account work@yourco.com`) with independent sync cursors and locks.
 
+## Contacts next to your own person pages
+
+A Google source renders each contact as a near-empty person page under
+`people/<slug>` by default, the same directory a brain repo uses for its own
+hand-written profiles. On a multi-source brain that collision has two
+costs: mentions in the Gmail source bind to the contact stub instead of the
+real profile, and `gbrain doctor` lists the stubs under `junk_entity_hubs`.
+Two remedies, independent of each other:
+
+- **Keep contacts out of `people/`.** Add the source with
+  `--contacts-dir contacts` (stored as the source's `g_contacts_dir`; any
+  relative directory of lower-case segments). Contact pages are found by
+  their `google_contact_id`, not by directory, so a source whose directory
+  changes moves every contact on its next sweep: the new page lands first,
+  then the page under the old directory is retired. The default stays
+  `people` for every existing source.
+- **Let the stub yield.** With `gbrain config set link_resolution.cross_source
+  true`, a mention in the Gmail source of a name that has a real page in
+  another source binds to that page instead of the connector's stub (one
+  canonical page, or the one sharing the stub's slug; a tie keeps the stub).
+  The next mention pass (`gbrain extract --stale`, or autopilot) re-binds
+  pages it reaches; `gbrain doctor --only junk_entity_hubs` names the
+  canonical twin of each stub and the next step.
+
+### What a contact page carries
+
+Each page records the contact's names, email addresses, organization and
+title, phone numbers and user-created contact groups:
+
+- `emails:` is always present (empty for a phone-only contact); `phones:`
+  appears when the contact has any, in E.164 form (`+15550100`) where Google
+  supplies it, else as entered. Phones are exact identifiers for a manual
+  `entity_identity_link` join, not aliases: a digit string never takes part
+  in mention matching.
+- `groups:` lists the display names of the contact's user-created groups
+  (Google's built-in groups such as My Contacts or Starred are omitted). The
+  names come from one bounded `contactGroups` read per sweep that needs it;
+  when that read fails the sweep uses the names it cached last time, and a
+  group it cannot name at all is carried as its raw `contactGroups/<id>`. A
+  renamed or deleted group reaches a page when that contact next changes, or
+  on `gbrain sync --full`.
+- A contact with phones but no email gets a page too; one with no name
+  either lives at `contact-<id-hash>` (never at its phone number). A contact
+  with neither emails nor phones renders nothing.
+
+The contacts cursor is bound to the field mask that minted it: the People
+API rejects a sync token reused with different request parameters, so the
+source state records the mask next to the token (`contacts_person_fields`),
+commits the two together only after a sweep completed, and lists every
+contact once when the mask changes (as it did when phones and groups
+arrived). A sync token Google rejects with a 400 that is not an expiry gets
+exactly one full-list attempt; if that list fails as well, the error
+surfaces and the cursor is left alone.
+
 ## Secondary calendars
 
 The calendar sweep reads ONE calendar per source (so each keeps its own
@@ -126,11 +180,47 @@ for. Re-pointing an existing source at a different calendar (its
 re-lists the new calendar from a fresh window instead of replaying the old
 calendar's delta. Pages already imported from the previous calendar stay in
 the brain until you remove them — they are not reconciled automatically.
+`gbrain sources set-calendar <source> <calendar-id>` makes that change in one
+step and prints the sync to run. On a managed brain the source's sync cursor
+is keyed by its configuration, so when the source also syncs Gmail or
+Contacts the change makes their next sync re-read history from the start; the
+command then refuses with `confirmation_required` (exit 3) until you re-run
+it with `--yes`.
+
+### Unreadable calendar
+
+When Google answers the sweep's calendar read with HTTP 403 or 404, the
+account cannot read the calendar the source names (a calendar id from another
+account, a calendar that was unshared or deleted). Before #5012 that sweep
+looked like an empty calendar. Now:
+
+- the sync records `calendar_unreadable` (with the calendar id and HTTP
+  status) in the source's state and logs
+  `[google] calendar_unreadable: <account> cannot read calendar "<id>"`
+  with both fix commands. The run itself does not fail, so Gmail and Contacts
+  keep syncing; a readable list clears the record;
+- `gbrain google status` probes each linked calendar live (one `events.list`
+  read; `--no-probe` reports what the last sync recorded instead), names the
+  unreadable one with the fix, and reports `ok: false` and exits 1;
+- `gbrain doctor` warns `google_calendar_readable` from the recorded state,
+  with no network call.
+
+The fix: list the calendars the account can read, then point the source at
+one.
+
+```bash
+gbrain google calendars --account you@example.com
+gbrain sources set-calendar <source> <calendar-id>   # e.g. primary
+gbrain sync --source <source>
+gbrain doctor --only google_calendar_readable --json # verify
+```
 
 ## Calendar window
 
 Calendar pages cover events from `--history-days` ago up to 60 days from
-now, and each sweep applies that range on its own. That matters for
+now (`gbrain sources add … --future-days <n>`, stored as the source's
+`g_future_days`, 1..3650, moves that horizon per source), and each sweep
+applies that range on its own. That matters for
 incremental syncs: after any edit to a recurring series, Google sends back
 the series' instances for years before and after, and only those inside the
 range are kept. Because the 60-day edge moves forward daily, the sweep also
@@ -141,12 +231,14 @@ the range keep their pages.
 
 `gbrain sync --source <id> --full` re-lists the whole window and removes the
 pages of events that start inside it but are no longer listed (cancelled or
-deleted since). It never removes a page whose event starts before the window,
-so shrinking `--history-days` keeps your history. More than 200 removals in
-one run are refused and the run is reported partial; if that many are
-genuinely gone, run it once with `GBRAIN_ALLOW_MASS_RECONCILE=1`. Pages a
-source wrote beyond the horizon before the window existed are not removed
-automatically.
+deleted since), and the pages this source wrote for events that start at or
+past the horizon (instances a series edit imported years ahead before the
+window existed, or under a wider `g_future_days`). It never removes a page
+whose event starts before the window, so shrinking `--history-days` keeps
+your history, and it never touches a calendar page you wrote by hand. More
+than 200 removals in one run are refused, nothing is removed, and the run is
+reported partial; if that many are genuinely gone, run it once with
+`GBRAIN_ALLOW_MASS_RECONCILE=1`.
 
 **Say to your agent:** *"re-sync my calendar from scratch"* (your agent runs
 `gbrain sync --source <id> --full`).
@@ -202,7 +294,11 @@ calendar pages."*
   On a managed brain the first sweep also runs a one-time catch-up over email
   threads whose newest message is from the last 30 days, so threads synced
   before extraction was queued are analyzed once; it finishes over later
-  sweeps when the enqueue ceiling binds.
+  sweeps when the enqueue ceiling binds. Threads under a label you listed in
+  `g_loops_exclude_labels` (or the brain-wide `loops.extraction_exclude_labels`)
+  are never queued and open no deterministic loop; an unknown label name
+  fails closed with `excluded_label_unresolved` until you fix it. See
+  [open loops](open-loops.md#which-threads-reach-the-extractor).
 - **Quiet threads.** A thread still inside its waiting window (24 h for
   inbound, 72 h for your own question) is re-checked when the window ends,
   even if no new mail arrives, and opens its loop then. See
@@ -252,6 +348,21 @@ skipped silently:
 - the sync summary prints the held count and the retry command;
 - for Gmail, `gbrain waiting` returns `completeness: "partial"` and names each
   held thread from the last 14 days (or with an unknown date).
+
+Contacts and Calendar items are held the same way, keyed
+`contact:<resource name>` and `event:<calendar id>:<event id>`. One failing
+contact or event no longer stops its sweep: the other contacts and events, and
+the Gmail sweep, still land. Only a failure that repeats until the item changes
+(for example a contact email or event attendee carrying text the brain cannot
+store, `invalid_connector_text`) counts toward a hold; a transient failure is
+retried on the next sync and never held. While the failing item is not held,
+that service's sync token stays where it is, so the next sync lists the item
+again; once it is held, the token moves past it. On a managed brain a failed
+coordinator write still ends the run, as before, and `--retry-failed`
+re-admits it. Because a sync token never lists an
+unchanged item again, `gbrain sources retry-held` re-fetches a held contact or
+event by its id on the next sync. Contacts and Calendar holds do not change the
+coverage `gbrain waiting` reports, which is about mail.
 
 A held item does not block the source's freshness stamp. To re-attempt:
 
@@ -347,6 +458,7 @@ attached. The catalog (also emitted as structured JSON with `--json`):
 | `scope_missing` | Connected with narrower `--scopes` than needed | `gbrain google connect --reauth <email>` |
 | `relay_unreachable` / `relay_session_expired` / `claim_already_used` / `relay_disabled` | Hosted fast-path (gbrain.io relay) issues | BYO connect always works: `gbrain google connect` |
 | `not_connected` | No vault entry for the account | `gbrain google connect` |
+| `calendar_unreadable` | Google answered the source's calendar read with HTTP 403 or 404: the account cannot read that calendar | `gbrain google calendars --account <email>`, then `gbrain sources set-calendar <source> <calendar-id>`; see [Unreadable calendar](#unreadable-calendar) |
 | `upstream` | Google returned an unexpected error | Retry; if it persists, run `gbrain google status --json` and file the output |
 | `access_command_failed` | The `--access command` token command exited non-zero, timed out, or printed nothing token-shaped | Run it by hand; it must print a bare token or JSON with `token`/`access_token` |
 | `access_env_missing` | The `--access env` variable is unset/blank in this process | Export a live token into it (refresh externally), or switch back to the vault flow |
@@ -354,8 +466,10 @@ attached. The catalog (also emitted as structured JSON with `--json`):
 Cursor expiries (`historyId` older than ~a week, calendar/contacts
 `syncToken` 410, or a contacts HTTP 400 explicitly reporting an expired sync
 token) use bounded re-lists automatically. Contacts recovery refreshes its
-own cursor without restarting Gmail. Unrelated HTTP 400 errors remain
-upstream failures rather than triggering a full re-list.
+own cursor without restarting Gmail. A contacts HTTP 400 on a sync-token
+request that is not an expiry (a token minted under other request
+parameters) gets one full-list attempt; every other HTTP 400 remains an
+upstream failure rather than triggering a re-list.
 
 ## Custody, privacy, spend
 
@@ -369,7 +483,9 @@ upstream failures rather than triggering a full re-list.
   bundle (a loud per-credential warning when a Testing-mode consent screen
   would travel with it — those tokens die within 7 days on the target).
 - LLM spend: commitment extraction sends recent email text (last 30 days,
-  capped per sweep) to your configured chat provider. Kill switch:
+  capped per sweep) to your configured chat provider, under a daily cap of
+  $2.00 (`loops.extraction_max_usd_per_day`; see
+  [open loops](open-loops.md#which-threads-reach-the-extractor)). Kill switch:
   `gbrain config set loops.extraction_enabled false`. The deterministic
   unanswered-thread detector is free and always on.
 - Atom extraction from email and calendar pages is on by default: page text

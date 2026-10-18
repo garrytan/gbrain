@@ -22,6 +22,7 @@ export const dashscope: Recipe = {
   unpriced_models: [
     'text-embedding-v3',
     'text-embedding-v2',
+    'text-embedding-v1',
   ],
   base_url_default: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
   auth_env: {
@@ -30,8 +31,18 @@ export const dashscope: Recipe = {
   },
   touchpoints: {
     embedding: {
-      models: ['text-embedding-v3', 'text-embedding-v2'],
+      models: ['text-embedding-v3', 'text-embedding-v2', 'text-embedding-v1'],
       default_dims: 1024,
+      // PR #5922 / #4530: DashScope's documented per-INPUT caps (Model Studio
+      // "Synchronous API for text embedding", read 2026-10-11): v1/v2 reject
+      // any single input over 2,048 tokens with a 400 that fails the whole
+      // batch; v3 accepts 8,192. The chunker splits to floor(cap × 0.6)
+      // (resolveMaxChunkTokens) and the heal pass splits stored rows.
+      max_input_tokens: {
+        'text-embedding-v1': 2048,
+        'text-embedding-v2': 2048,
+        'text-embedding-v3': 8192,
+      },
       dims_options: [64, 128, 256, 512, 768, 1024],
       // Alibaba doesn't publish a hard batch-token cap for the OpenAI-compat
       // path. Conservative declaration so the gateway pre-splits before

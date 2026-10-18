@@ -32,6 +32,7 @@ export const anthropic: Recipe = {
         'claude-sonnet-5-5',
         'claude-sonnet-5',
         'claude-sonnet-4-6',
+        'claude-haiku-5-5',
         'claude-haiku-4-5-20251001',
       ],
       supports_tools: true,

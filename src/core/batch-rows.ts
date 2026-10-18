@@ -112,6 +112,7 @@ export interface LinkRow {
   to_source_id: string;
   origin_source_id: string;
   link_kind: string | null;
+  resolution_type: string | null;
 }
 
 /** One timeline row, keys === the jsonb_to_recordset column list. */
@@ -153,6 +154,7 @@ export function buildLinkRows(links: LinkBatchInput[]): LinkRow[] {
     to_source_id: l.to_source_id || 'default',
     origin_source_id: l.origin_source_id || 'default',
     link_kind: l.link_kind ?? null,
+    resolution_type: l.resolution_type ?? null,
   }));
 }
 
@@ -194,4 +196,34 @@ export function buildTakeRows(rowsIn: TakeBatchInput[]): { rows: TakeRow[]; weig
     };
   });
   return { rows, weightClamped };
+}
+
+/** Rows per encoded batch of a page-scale chunk write (A3). */
+export const ROW_BATCH_MAX_ROWS = 500;
+/** UTF-8 bytes per encoded batch, measured on the batch's own JSON document. */
+export const ROW_BATCH_MAX_BYTES = 16 * 1024 ** 2;
+
+/**
+ * Encode `items` as JSON array documents for `jsonb_to_recordset`, one batch at
+ * a time, each at most ROW_BATCH_MAX_ROWS rows and ROW_BATCH_MAX_BYTES bytes (a
+ * single larger row travels alone). Only the batch being built is held as
+ * JSON, so a page's statement size and staging memory stay bounded whatever
+ * the page size. `maxBytes` lowers the byte bound (segmented-page staging
+ * uses STAGE_BATCH_BYTES, 4 MiB on PGLite).
+ */
+export function* jsonRowBatches<T>(items: Iterable<T>, encode: (item: T) => unknown, maxBytes = ROW_BATCH_MAX_BYTES): Generator<string> {
+  let rows: string[] = [];
+  let bytes = 2;
+  for (const item of items) {
+    const row = JSON.stringify(encode(item));
+    const size = Buffer.byteLength(row) + 1;
+    if (rows.length > 0 && (rows.length === ROW_BATCH_MAX_ROWS || bytes + size > maxBytes)) {
+      yield `[${rows.join(',')}]`;
+      rows = [];
+      bytes = 2;
+    }
+    rows.push(row);
+    bytes += size;
+  }
+  if (rows.length > 0) yield `[${rows.join(',')}]`;
 }

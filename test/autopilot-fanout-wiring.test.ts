@@ -91,8 +91,10 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
 
   test('unavailable-path skips in the daemon loops are NDJSON events under --json, and sources-load is a static import (wave review)', () => {
     // Bare prose on stderr breaks the --json NDJSON stream every other daemon
-    // line keeps; the two skip sites now emit an event in jsonMode.
-    expect(AUTOPILOT_SRC.match(/event: 'freshness_source_path_skipped'/g)?.length).toBe(2);
+    // line keeps; the two path-skip sites and the #6803 account-mismatch
+    // skip emit an event in jsonMode.
+    expect(AUTOPILOT_SRC.match(/event: 'freshness_source_path_skipped'/g)?.length).toBe(3);
+    expect(AUTOPILOT_SRC).toContain("event: 'freshness_source_path_skipped', source_id: src.id, code: 'connector_account_changed'");
     expect(AUTOPILOT_SRC).not.toContain("await import('../core/sources-load.ts')");
     // The stale "#3696 RELATIVE path" narration is gone: the skip covers any
     // unavailable path (relative OR missing on this machine).
@@ -140,19 +142,22 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     const loopBody = DISPATCH_SRC.slice(loopIdx, queueAddIdx);
     // Exact-literal match on the FULL guard clause (condition + continue),
     // not just the function-call substring — a mutation that keeps calling
-    // isSyncDisabledConfig() but drops the `if (...) continue` (e.g.
-    // `isSyncDisabledConfig(src.config);` as a no-op statement) restores the
-    // #4399 bug while still containing the bare substring, so a loose
-    // `.toContain('isSyncDisabledConfig')` check alone would not catch it.
-    expect(loopBody).toContain('if (isSyncDisabledConfig(src.config)) continue;');
+    // the predicate but drops the `if (skip) continue` (a no-op statement)
+    // restores the #4399 bug while still containing the bare substring, so a
+    // loose `.toContain('automaticSyncSkip')` check alone would not catch it.
+    // P4.2: the disabled-config check is the first arm of the shared
+    // automaticSyncSkip predicate (unit coverage in test/sync-policy.test.ts
+    // and test/autopilot-freshness-not-applicable-6465.test.ts).
+    expect(loopBody).toContain('const skip = await automaticSyncSkip(engine, src, activationPending);');
+    expect(loopBody).toContain('if (skip) continue;');
     // The predicate comes from the sync-policy module via a STATIC import
     // (the wave review made sources-load static for the same loop; a dynamic
     // import here would re-introduce what that review removed), not from
     // performSync's own enforcement — this dispatcher is meant to stand on
     // its own regardless of what performSync does internally.
-    expect(AUTOPILOT_SRC).toContain("import { isSyncDisabledConfig } from '../core/sync-policy.ts';");
+    expect(AUTOPILOT_SRC).toMatch(/import \{ automaticSyncSkip, [^\n]*\} from '\.\.\/core\/sync-policy\.ts';/);
     expect(AUTOPILOT_SRC).not.toContain("await import('../core/sync-policy.ts')");
-    const skipIdx = loopBody.indexOf('if (isSyncDisabledConfig(src.config)) continue;');
+    const skipIdx = loopBody.indexOf('if (skip) continue;');
     const localPathGuardIdx = loopBody.indexOf("if (!src.local_path) continue;");
     expect(localPathGuardIdx).toBeGreaterThan(-1);
     expect(skipIdx).toBeGreaterThan(localPathGuardIdx);
@@ -168,8 +173,11 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     expect(loopIdx).toBeGreaterThan(-1);
     expect(queueAddIdx).toBeGreaterThan(loopIdx);
     const loopBody = DISPATCH_SRC.slice(loopIdx, queueAddIdx);
-    expect(loopBody).toContain("if (skipActivationPendingSync(activationPending, src.id, 'freshness_sync_skipped', jsonMode,");
-    expect(loopBody).toMatch(/if \(skipActivationPendingSync\([^\n]*\)\) continue;/);
+    // P4.2: the pending-activation check is the second arm of the shared automaticSyncSkip predicate; the loop
+    // passes the loaded set and `continue`s on any skip.
+    expect(loopBody).toContain('const skip = await automaticSyncSkip(engine, src, activationPending);');
+    expect(loopBody).toContain("reportAutomaticSyncSkip(src.id, skip, 'freshness_sync_skipped', jsonMode,");
+    expect(loopBody).toContain('if (skip) continue;');
     const setupIdx = DISPATCH_SRC.lastIndexOf('const activationPending = await loadActivationPendingSourceIds(engine);', loopIdx);
     expect(setupIdx).toBeGreaterThan(-1);
     expect(loopIdx - setupIdx).toBeLessThan(300);

@@ -52,14 +52,14 @@ export interface OrphanResult {
   connector_renders_excluded?: number;
 }
 
-const CONNECTOR_RENDER_TYPES = new Set(['email', 'meeting']);
+export const CONNECTOR_RENDER_TYPES = new Set(['email', 'meeting']);
 
 /**
  * #5877: ids of connector-kind sources. Their `email`/`meeting` pages are
  * leaf renders (participants are raw addresses, never wikilinks), so an
  * islanded render is expected and is reported apart rather than as an orphan.
  */
-async function loadConnectorSourceIds(engine: BrainEngine): Promise<Set<string>> {
+export async function loadConnectorSourceIds(engine: BrainEngine): Promise<Set<string>> {
   const rows = await engine.executeRaw<{ id: string; kind: string | null }>(`SELECT id, config->>'kind' AS kind FROM sources`);
   return new Set(rows.filter(r => isConnectorSourceKind(r.kind)).map(r => r.id));
 }

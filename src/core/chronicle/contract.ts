@@ -116,7 +116,7 @@ export interface ChronicleRunDetails {
   reasons: Partial<Record<ChronicleReasonCode, number>>;
   events_written: number;
   events_retired: number;
-  /** Proposed events refused before publication, by reason (`future_dated`, `date_imprecise`); never written. */
+  /** Proposed events refused before publication, by reason (`future_dated`, `date_imprecise`, `over_cap`); never written. */
   events_dropped: ChronicleDropCounts;
   /** Pending automatic rows left for the next run because the daily limit is used up. */
   deferred_daily_limit: number;

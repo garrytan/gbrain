@@ -36,6 +36,7 @@ import { applyTimeScope, type TimeScopeMode } from '../../core/search/hybrid/tim
 import { extractEventDates } from '../../core/event-dates.ts';
 import type { DayRange } from '../../core/temporal-grammar.ts';
 import { resolveModel } from '../../core/model-config.ts';
+import { getFactsExtractionModel } from '../../core/facts/extract.ts';
 import { rawSessionId, scoreRecall, type SlugToRawMap } from './metrics.ts';
 
 export type FactExtractor = 'paper' | 'production';
@@ -53,6 +54,11 @@ export interface FactKeyArm {
 
 /** The benchmark's published user-fact extraction instruction (zero-shot form). */
 export const PAPER_USER_FACT_SYSTEM = 'You will be given a list of messages from a human user to an AI assistant. Extract all the personal information, life events, experience, and preferences related to the user. Make sure you include all details such as life events, personal experience, preferences, specific numbers, locations, or dates. State each piece of information in a simple sentence. Put these sentences in a json list, each element being a standalone personal fact about the user. Minimize the coreference across the facts, e.g., replace pronouns with actual entities. If there is no specific events, personal information, or preference mentioned, just generate an empty list.';
+
+/** Output cap and user message of the paper extractor call. */
+export const PAPER_FACT_MAX_TOKENS = 2000;
+export const paperFactUserPrompt = (turns: string): string =>
+  `Human user messages:\n${turns}\n\nPersonal facts about the user (a list of strings in json format; do not generate anything else):`;
 
 export function defaultFactCachePath(extractor: FactExtractor, model: string): string {
   return join(homedir(), '.cache', 'gbrain-eval', `fact-keys-${extractor}-${model.replace(/[^a-z0-9.-]+/gi, '_')}.jsonl`);
@@ -102,11 +108,11 @@ function cacheFor(path: string): FactCache {
 }
 
 /** Session body without frontmatter. */
-function bodyOf(content: string): string {
+export function bodyOf(content: string): string {
   return content.replace(/^---\n[\s\S]*?\n---\n/, '').trim();
 }
 
-function userTurns(body: string): string {
+export function userTurns(body: string): string {
   return body.split(/\n\n(?=\*\*(?:user|assistant):\*\*)/)
     .filter(t => t.startsWith('**user:**'))
     .map(t => `user: ${t.slice('**user:**'.length).trim()}`)
@@ -136,8 +142,8 @@ async function extractItems(engine: BrainEngine, arm: FactKeyArm, body: string, 
     const turns = userTurns(body);
     if (!turns) { cache.set(key, []); return []; }
     const res = await arm.client.create({
-      model: arm.model, max_tokens: 2000, system: PAPER_USER_FACT_SYSTEM,
-      messages: [{ role: 'user', content: `Human user messages:\n${turns}\n\nPersonal facts about the user (a list of strings in json format; do not generate anything else):` }],
+      model: arm.model, max_tokens: PAPER_FACT_MAX_TOKENS, system: PAPER_USER_FACT_SYSTEM,
+      messages: [{ role: 'user', content: paperFactUserPrompt(turns) }],
     });
     spend.add(arm.model, (res as { usage?: { input_tokens?: number; output_tokens?: number } }).usage);
     const block = res.content.find(b => b.type === 'text');
@@ -290,7 +296,7 @@ export function armPins(o: RetrievalArmOptions): { retrieval_arms?: Record<strin
 export async function resolveFactKeyArm(o: RetrievalArmOptions, client: ThinkLLMClient): Promise<{ arm: FactKeyArm; spend: FactKeySpend } | null> {
   if (!o.factKeys) return null;
   const model = o.factExtractor === 'production' && !o.factKeysModel
-    ? await resolveModel(null, { configKey: 'facts.extraction_model', tier: 'reasoning', fallback: 'anthropic:claude-sonnet-4-6' })
+    ? await getFactsExtractionModel()
     : await resolveModel(null, { cliFlag: o.factKeysModel, tier: 'utility', fallback: 'haiku' });
   return { arm: { assignment: o.factKeys, extractor: o.factExtractor, model, client, maxUsd: o.factKeysMaxUsd }, spend: new FactKeySpend(o.factKeysMaxUsd) };
 }

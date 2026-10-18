@@ -10,6 +10,7 @@
  */
 
 import type { ProgressOptions } from './progress.ts';
+import { opError } from './ops/contract.ts';
 
 export interface CliOptions {
   quiet: boolean;
@@ -58,11 +59,13 @@ export const DEFAULT_CLI_OPTIONS: CliOptions = {
   brain: null,
 };
 
-/** `--wait` takes seconds (`--wait 45`, `--wait 2.5`), 0 to 600. A malformed value throws. */
+/** `--wait` takes seconds (`--wait 45`, `--wait 2.5`), 0 to 600. A malformed value is a usage error (exit 2). */
 function parseWaitSeconds(val: string | undefined): number {
   const seconds = val !== undefined && /^\d+(?:\.\d+)?$/.test(val) ? Number(val) : NaN;
   if (!Number.isFinite(seconds) || seconds > 600) {
-    throw new Error(`--wait requires a number of seconds from 0 to 600 (got ${val === undefined ? 'nothing' : JSON.stringify(val)}).`);
+    throw opError('invalid_params',
+      `--wait requires a number of seconds from 0 to 600, no units (got ${val === undefined ? 'nothing' : JSON.stringify(val)}).`,
+      'Give --wait seconds with no unit, for example --wait 45 or --wait 300 for five minutes.');
   }
   return Math.round(seconds * 1000);
 }
@@ -128,6 +131,15 @@ export const TIMEOUT_OWNING_COMMANDS = new Set(['sync', 'remote']);
  */
 export const EXPLAIN_CLAIMING_COMMANDS = new Set(['query', 'search', 'ask', 'call']);
 
+/**
+ * #6625: command routes whose own parser reads `--wait` (a duration such as
+ * `5m`, not the #5232 write wait in seconds). For these the global parser
+ * hands every `--wait` back, appended in the space-separated spelling;
+ * everyone else keeps the global write wait. Matched on the leading plain
+ * tokens, so `sources writer movement` owns it and `sources list` does not.
+ */
+export const WAIT_OWNING_ROUTES: readonly (readonly string[])[] = [['sources', 'writer', 'movement']];
+
 export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: string[] } {
   const cliOpts: CliOptions = { ...DEFAULT_CLI_OPTIONS };
   // #3013: --timeout can't be resolved inline — whether the GLOBAL parser
@@ -138,7 +150,8 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
   type Slot =
     | { plain: string }
     | { timeoutValue: string; equalsForm: boolean }
-    | { explainFlag: true };
+    | { explainFlag: true }
+    | { waitValue: string | undefined };
   const slots: Slot[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -209,13 +222,14 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
     }
     // #5232 write wait + pending opt-in. Global like --timeout so every write
     // lane (generated ops, call, capture, remember, takes) reads one value.
+    // #6625: slotted like --timeout, since `sources writer movement` owns its own --wait.
     if (a === '--wait') {
-      cliOpts.writeWaitMs = parseWaitSeconds(argv[i + 1]);
+      slots.push({ waitValue: argv[i + 1] });
       i++;
       continue;
     }
     if (a.startsWith('--wait=')) {
-      cliOpts.writeWaitMs = parseWaitSeconds(a.slice('--wait='.length));
+      slots.push({ waitValue: a.slice('--wait='.length) });
       continue;
     }
     if (a === '--accept-pending' || a === '--no-accept-pending') {
@@ -247,6 +261,8 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
   // everyone else gets it back in place (extract/whoknows/onboard own it).
   const commandClaimsExplain =
     commandSlot !== undefined && EXPLAIN_CLAIMING_COMMANDS.has(commandSlot.plain);
+  const leading = slots.filter((s): s is { plain: string } => 'plain' in s).map(s => s.plain);
+  const routeOwnsWait = WAIT_OWNING_ROUTES.some(route => route.every((token, i) => leading[i] === token));
 
   const rest: string[] = [];
   const handback: string[] = [];
@@ -287,6 +303,12 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
       } else {
         deferredExplain.push('--explain');
       }
+      continue;
+    }
+    if ('waitValue' in s) {
+      if (!routeOwnsWait) cliOpts.writeWaitMs = parseWaitSeconds(s.waitValue);
+      else if (s.waitValue === undefined) handback.push('--wait');
+      else handback.push('--wait', s.waitValue);
       continue;
     }
     if (commandOwnsTimeout) {

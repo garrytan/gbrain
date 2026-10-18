@@ -20,7 +20,7 @@ export const llamaServerReranker: Recipe = {
       // Informational placeholder for docs/wizard copy. Real model id is set
       // by the user via `gbrain config set search.reranker.model
       // llama-server-reranker:<--alias value>`.
-      default_model: 'qwen3-reranker-4b',
+      default_model: 'qwen3-reranker-0.6b',
       // Local inference cost — consumed by budget-tracker.ts's rerank
       // pricing lookup (via FREE_LOCAL_RERANK_PROVIDERS) so callers with
       // `--max-cost` don't hard-fail. NOT for API billing; local rerank

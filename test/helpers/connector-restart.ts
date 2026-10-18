@@ -17,7 +17,7 @@ const engine: BrainEngine = config.engine === 'pglite' ? new PGLiteEngine() : ne
 await engine.connect(config);
 if (input.crash) {
   const transaction = engine.transaction;
-  engine.transaction = function <T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>): Promise<T> {
+  engine.transaction = function <T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>, opts?: Parameters<BrainEngine['transaction']>[1]): Promise<T> {
     return transaction.call(this, async tx => {
       const result = await run(tx);
       const row = result as Partial<WriteRequest> | undefined;
@@ -27,7 +27,7 @@ if (input.crash) {
         await new Promise(() => {});
       }
       return result;
-    }) as Promise<T>;
+    }, opts) as Promise<T>;
   };
 }
 const issue = { number: 1, title: 'Example issue', state: 'open', body: input.body,

@@ -14,11 +14,13 @@
  * connect time) makes the write commit outside the transaction and fails.
  */
 import { expect, test } from 'bun:test';
+import { ROW_BATCH_MAX_ROWS } from '../../src/core/batch-rows.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { invalidateStaleSignatureEmbeddingsGuarded } from '../../src/core/embedding-invalidation.ts';
 import { reconcileContextualEmbeddingInputs } from '../../src/core/page-state/contextual-proof.ts';
 import { installPageProjection, readProjectionSnapshot } from '../../src/core/page-state/projections.ts';
 import { installFixtureChunks } from './page-projection.ts';
+import { chunk, flipInput, hexOf, manifestRow, pageMeta, publishSegmentedPage, segmentText, stageGeneration, stagingInput } from './page-body-fixtures.ts';
 
 export interface RollbackCase {
   domain: string;
@@ -141,6 +143,20 @@ export const ROLLBACK_CASES: RollbackCase[] = [
     },
     async write(tx) {
       await tx.upsertChunks(SLUG, [{ chunk_index: 0, chunk_text: 'rolled-back chunk', chunk_source: 'compiled_truth' }]);
+    },
+    observe: chunkTexts,
+  },
+  {
+    // A3: a replacement larger than one row batch commits as several INSERTs
+    // after one prune; all of them leave with the transaction.
+    domain: 'chunks (upsertChunks, several row batches)',
+    async seed(engine) {
+      await seedPage(engine);
+      await engine.upsertChunks(SLUG, [{ chunk_index: 0, chunk_text: 'seeded chunk', chunk_source: 'compiled_truth' }]);
+    },
+    async write(tx) {
+      await tx.upsertChunks(SLUG, Array.from({ length: ROW_BATCH_MAX_ROWS * 2 + 1 }, (_, i) => ({
+        chunk_index: i, chunk_text: `rolled-back chunk ${i}`, chunk_source: 'compiled_truth' as const })));
     },
     observe: chunkTexts,
   },
@@ -275,6 +291,25 @@ export const ROLLBACK_CASES: RollbackCase[] = [
     },
   },
   {
+    domain: 'pages (stale reserved frontmatter keys, #6454)',
+    async seed(engine) {
+      await seedPage(engine);
+      await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"type":"legacy","title":"Stored Title"}'::jsonb WHERE slug = $1 AND source_id = 'default'`, [SLUG]);
+    },
+    async write(tx) {
+      const [row] = await tx.listStaleFrontmatterKeyPages({ sourceId: 'default', afterId: 0, limit: 10 });
+      expect(row).toMatchObject({ slug: SLUG, keys: ['title', 'type'] });
+      expect(await tx.countStaleFrontmatterKeyPages({ sourceIds: ['default'] })).toEqual([{ source_id: 'default', n: 1 }]);
+      expect(await tx.stripStaleFrontmatterKeys({ sourceId: 'default', ids: [row.id] })).toBe(1);
+      expect(await tx.countStaleFrontmatterKeyPages({ sourceIds: ['default'] })).toEqual([]);
+    },
+    async observe(engine) {
+      const rows = await engine.executeRaw<{ stale: boolean }>(
+        `SELECT frontmatter ?| ARRAY['type','title','tags','slug'] AS stale FROM pages WHERE slug = $1 AND source_id = 'default'`, [SLUG]);
+      return rows[0]?.stale ?? null;
+    },
+  },
+  {
     domain: 'pages (attendance marker)',
     async seed(engine) {
       await seedPage(engine);
@@ -330,7 +365,134 @@ export const ROLLBACK_CASES: RollbackCase[] = [
       return (await engine.getTimeline(SLUG, { sourceId: 'default' })).map((e) => e.summary).sort();
     },
   },
+  {
+    domain: 'page-body (stageSegmentTexts)',
+    async seed(engine) { await seedSegmentedPage(engine, SEGMENTED_SLUG); },
+    async write(tx) { expect(await tx.stageSegmentTexts('default', [ROLLBACK_TEXT])).toEqual({ inserted: 1 }); },
+    observe: engine => segmentTextExists(engine, ROLLBACK_TEXT),
+  },
+  {
+    domain: 'page-body (stageManifestRows)',
+    async seed(engine) {
+      await seedSegmentedPage(engine, SEGMENTED_SLUG);
+      await engine.stageSegmentTexts('default', [MANIFEST_TEXT]);
+      await seedStaging(engine, MANIFEST_STAGING_ID);
+    },
+    async write(tx) {
+      const [occurrenceId] = await tx.allocateBodyOccurrenceIds(1);
+      await tx.stageManifestRows([manifestRow({ pageId: await segmentedPageId(tx, SEGMENTED_SLUG), occurrenceId: occurrenceId!, genFrom: 2, seq: 0,
+        text: MANIFEST_TEXT, byteStart: 0, stagingId: MANIFEST_STAGING_ID })]);
+    },
+    async observe(engine) { return (await engine.readManifest(await segmentedPageId(engine, SEGMENTED_SLUG), { stagingId: MANIFEST_STAGING_ID })).length; },
+  },
+  {
+    domain: 'page-body (stageSegmentChunks)',
+    async seed(engine) { await seedSegmentedPage(engine, SEGMENTED_SLUG); },
+    async write(tx) {
+      const [occurrenceId] = await tx.allocateBodyOccurrenceIds(1);
+      await tx.stageSegmentChunks(await segmentedPageId(tx, SEGMENTED_SLUG), 99, [chunk(occurrenceId!, 0, 'rolled-back staged chunk')]);
+    },
+    async observe(engine) {
+      const rows = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM content_chunks WHERE page_id = $1 AND body_generation = 99',
+        [await segmentedPageId(engine, SEGMENTED_SLUG)]);
+      return Number(rows[0]?.n ?? 0);
+    },
+  },
+  {
+    domain: 'page-body (createSegmentedPageShell)',
+    async seed() {},
+    async write(tx) { await tx.createSegmentedPageShell(SHELL_SLUG, pageMeta(), { sourceId: 'default' }); },
+    async observe(engine) {
+      const rows = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pages WHERE slug = $1 AND source_id = 'default'", [SHELL_SLUG]);
+      return Number(rows[0]?.n ?? 0);
+    },
+  },
+  {
+    domain: 'page-body (flipBodyGeneration)',
+    async seed(engine) {
+      await seedSegmentedPage(engine, FLIP_SLUG);
+      const pageId = await segmentedPageId(engine, FLIP_SLUG);
+      if (await openStagingOf(engine, FLIP_SLUG)) return;
+      await stageGeneration(engine, { pageId, slug: FLIP_SLUG, genFrom: 2, texts: [FLIP_TEXT] });
+    },
+    async write(tx) {
+      const pageId = await segmentedPageId(tx, FLIP_SLUG);
+      const live = await tx.readManifest(pageId);
+      expect(await tx.flipBodyGeneration(flipInput(pageId, 1, (await openStagingOf(tx, FLIP_SLUG))!, [FLIP_TEXT],
+        { closeOccurrences: live.map(r => r.occurrenceId) }))).toEqual({ retiredChunks: 0, retireDeferred: false });
+    },
+    async observe(engine) {
+      const rows = await engine.executeRaw<{ g: number }>("SELECT body_generation::int AS g FROM pages WHERE slug = $1 AND source_id = 'default'", [FLIP_SLUG]);
+      return Number(rows[0]?.g ?? -1);
+    },
+  },
+  {
+    domain: 'page-body (openBodyStaging)',
+    async seed(engine) { await seedSegmentedPage(engine, SEGMENTED_SLUG); },
+    async write(tx) { await tx.openBodyStaging(stagingInput({ id: OPENED_STAGING_ID, slug: SEGMENTED_SLUG })); },
+    observe: engine => stagingState(engine, OPENED_STAGING_ID),
+  },
+  {
+    domain: 'page-body (setBodyStagingState)',
+    async seed(engine) { await seedStaging(engine, STATE_STAGING_ID); },
+    async write(tx) { await tx.setBodyStagingState(STATE_STAGING_ID, 'aborted'); },
+    observe: engine => stagingState(engine, STATE_STAGING_ID),
+  },
+  {
+    domain: 'page-body (sweepSegments)',
+    async seed(engine) {
+      await seedSegmentedPage(engine, SEGMENTED_SLUG);
+      await engine.stageSegmentTexts('default', [ORPHAN_TEXT]);
+      await engine.executeRaw("UPDATE page_segment_texts SET created_at = now() - interval '2 hours' WHERE source_id = 'default' AND sha256 = decode($1, 'hex')",
+        [hexOf(ORPHAN_TEXT.sha256)]);
+    },
+    async write(tx) {
+      expect((await tx.sweepSegments({ sourceId: 'default' })).textsDeleted).toBeGreaterThanOrEqual(1);
+    },
+    observe: engine => segmentTextExists(engine, ORPHAN_TEXT),
+  },
 ];
+
+const SEGMENTED_SLUG = 'notes/engine-sql-rollback-segmented-alice-example';
+const FLIP_SLUG = 'notes/engine-sql-rollback-flip-alice-example';
+const SHELL_SLUG = 'notes/engine-sql-rollback-shell-alice-example';
+const ROLLBACK_TEXT = segmentText('# Rollback\nstaged text that never commits\n');
+const MANIFEST_TEXT = segmentText('# Rollback\nmanifest probe text\n');
+const FLIP_TEXT = segmentText('# Rollback\nflipped body\n');
+const ORPHAN_TEXT = segmentText('# Rollback\nunreferenced aged text\n');
+const MANIFEST_STAGING_ID = '6d1f1c2a-8b6e-4a59-9c39-2f0b6d4a0001';
+const OPENED_STAGING_ID = '6d1f1c2a-8b6e-4a59-9c39-2f0b6d4a0002';
+const STATE_STAGING_ID = '6d1f1c2a-8b6e-4a59-9c39-2f0b6d4a0003';
+
+async function segmentedPageId(engine: BrainEngine, slug: string): Promise<number> {
+  const rows = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug = $1 AND source_id = 'default'", [slug]);
+  return Number(rows[0]?.id ?? 0);
+}
+
+async function seedSegmentedPage(engine: BrainEngine, slug: string): Promise<void> {
+  if (await segmentedPageId(engine, slug)) return;
+  await publishSegmentedPage(engine, slug, [segmentText(`# ${slug}\nbase body\n`)]);
+}
+
+async function seedStaging(engine: BrainEngine, id: string): Promise<void> {
+  await seedSegmentedPage(engine, SEGMENTED_SLUG);
+  if (await stagingState(engine, id)) return;
+  await engine.openBodyStaging(stagingInput({ id, slug: SEGMENTED_SLUG, pageId: await segmentedPageId(engine, SEGMENTED_SLUG) }));
+}
+
+async function stagingState(engine: BrainEngine, id: string): Promise<string | null> {
+  const rows = await engine.executeRaw<{ state: string }>('SELECT state FROM page_body_stagings WHERE id = $1::uuid', [id]);
+  return rows[0]?.state ?? null;
+}
+
+async function openStagingOf(engine: BrainEngine, slug: string): Promise<string | null> {
+  const rows = await engine.executeRaw<{ id: string }>("SELECT id::text AS id FROM page_body_stagings WHERE slug = $1 AND state = 'open' ORDER BY created_at LIMIT 1", [slug]);
+  return rows[0]?.id ?? null;
+}
+
+async function segmentTextExists(engine: BrainEngine, text: { sha256: Uint8Array }): Promise<boolean> {
+  return (await engine.readSegmentTexts('default', [text.sha256])).has(hexOf(text.sha256));
+}
 
 async function chunkTexts(engine: BrainEngine): Promise<string[]> {
   const rows = await engine.executeRaw<{ t: string }>(

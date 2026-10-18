@@ -14,11 +14,13 @@ import { describe, expect, test } from 'bun:test';
 import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
 import { KNOB_CONFIG_KEY, SEARCH_MODE_CONFIG_KEYS, SEARCH_MODE_KEY } from '../src/core/search/mode.ts';
 import { REMOTE_PRIVATE_PAGES_KEY } from '../src/core/search/private-visibility.ts';
+import { PAGE_RANK_CUT_FACTOR_KEY, PAGE_RANK_CUT_KEY } from '../src/core/search/page-rank-cut.ts';
 
 /** search.* keys read directly via engine.getConfig (not mode-bundle knobs). */
 const DIRECTLY_READ_SINGLETONS = [
   SEARCH_MODE_KEY,
   'search.mode_upgrade_notice_shown',        // commands/upgrade.ts
+  'search.mode_source',                      // init --search-mode / config set search.mode (who chose search.mode)
   'search.image_query.max_bytes',            // ops/image.ts
   'search.image_query.daily_budget_usd_per_client', // ops/image.ts
   'search.image_query.remote_max_bytes',     // ops/image.ts
@@ -35,13 +37,26 @@ const DIRECTLY_READ_SINGLETONS = [
   'search.vector_legacy_guard',              // search/vector-legacy-guard.ts via loadConfigWithEngine
   'search.hnsw_iterative_scan',              // search/hnsw-iterative-scan.ts via loadConfigWithEngine
   'search.cjk_keyword_deadline_ms',          // search/cjk-keyword-deadline.ts via loadConfigWithEngine
+  'search.keyword_statement_timeout_ms',     // postgres-engine/keyword-statement-timeout.ts (engine.getConfig once per connection) + loadConfigWithEngine
+  'search.keyword_timeout_negative_cache_seconds', // postgres-engine/keyword-timeout-cache.ts (read on the first keyword timeout)
   'search.crag_escalation',                  // ops/search.ts
+  'search.alias_fanout_max',                 // search/alias-fanout.ts
+  'search.demote_generated',                 // search/provenance-demotion.ts
   'search.crag_think',                       // ops/search.ts
   'search.return_unit',                      // search/evidence-delivery.ts
   'search.return_window',
   'search.return_budget_default',
   'search.return_budget_conversation',
   'search.return_budget_max_remote',
+  'search.auto_packing',                     // search/evidence-delivery.ts (explicit-budget cap)
+  'search.long_page_unit',                   // search/evidence-delivery.ts (long non-conversation pages under implied auto)
+  'search.long_page_min_chars',              // search/evidence-delivery.ts (rendered-body threshold for a long page)
+  'search.evidence_date_header',             // search/evidence-delivery.ts (C1)
+  'search.entity_anchoring',                 // search/entity-anchor.ts (ops/search.ts)
+  'search.query_facts_arm',                  // search/facts-arm.ts (search/query-arms.ts)
+  'search.temporal_fact_reserve',            // search/facts-arm.ts (search/query-arms.ts)
+  PAGE_RANK_CUT_KEY,                         // search/page-rank-cut.ts via evidence-delivery.ts (W5)
+  PAGE_RANK_CUT_FACTOR_KEY,
 ];
 
 describe('KNOWN_CONFIG_KEYS search.* rows mirror what the code reads (#4605)', () => {

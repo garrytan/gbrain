@@ -49,6 +49,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await engine.setConfig('pricing.overrides', '');
   for (const t of ['mcp_spend_reservations', 'mcp_spend_log', 'minion_lease_pressure_log', 'minion_jobs']) await engine.executeRaw(`DELETE FROM ${t}`);
 });
 
@@ -142,6 +143,38 @@ describe('unpriced models', () => {
     expect(job!.status).toBe('dead');
     expect(job!.error_text).toStartWith('no_pricing:');
   });
+});
+
+describe('operator pricing under a user cap', () => {
+  test('a registered zero-price local route runs and settles at zero', async () => {
+    await engine.setConfig('pricing.overrides', '{"litellm:quality":{"input":0,"output":0}}');
+    let called = false;
+    const spend = group(0.05, 'user', 1);
+    const [job] = await runJobs('subagent', async () => {
+      await invokeAI({ operation: 'test', kind: 'chat', model: 'litellm:quality', maxInputTokens: 1000, maxOutputTokens: 100 },
+        async () => { called = true; return 'ok'; }, () => ({ inputTokens: 900, outputTokens: 50 }));
+    }, [{ data: {}, spend }]);
+    expect(called).toBe(true);
+    expect(job!.status).toBe('completed');
+    const costs = await readGroupSpend(engine, `group:${spend.group_id}`);
+    expect(costs.committedCents).toBe(0);
+    expect(costs.liveCents).toBe(0);
+  });
+
+  test('a nonzero override is metered and stops the next call when the group is spent', async () => {
+    await engine.setConfig('pricing.overrides', '{"litellm:quality":{"input":100,"output":100}}');
+    let called = 0;
+    const spend = group(0.05, 'user', 1);
+    const [job] = await runJobs('subagent', async () => {
+      for (let i = 0; i < 2; i++) await invokeAI({ operation: 'test', kind: 'chat', model: 'litellm:quality', maxInputTokens: 1000, maxOutputTokens: 100 },
+        async () => { called++; return 'ok'; }, () => ({ inputTokens: 1000, outputTokens: 50 }));
+    }, [{ data: {}, spend }]);
+    expect(called).toBe(1);
+    expect(job!.status).toBe('dead');
+    expect(job!.error_text).toStartWith('cost_cap_exceeded:');
+    expect((await readGroupSpend(engine, `group:${spend.group_id}`)).committedCents).toBe(10.5);
+  });
+
 });
 
 describe('enrich under a spend authorization', () => {

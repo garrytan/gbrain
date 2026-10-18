@@ -15,19 +15,22 @@
  *                ~/.gbrain/migrations/pending-host-work.jsonl so the host
  *                agent can walk through its plugin-contract work per
  *                skills/migrations/v0.11.0.md.
- *   F. Install — gbrain autopilot --install (env-aware).
+ *   F. Install — gbrain autopilot --install (env-aware); skipped with the
+ *                exact command when sync.repo_path is unset (v0_11_0-install.ts).
  *   G. Record  — append completed.jsonl (status: complete unless any
  *                pending-host-work items remain).
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, lstatSync, statSync, realpathSync } from 'fs';
 import { join, resolve, dirname } from 'path';
-import { execSync } from 'child_process';
+import { execSync } from '../../core/spawn.ts';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import { gbrainChildCommand } from './in-process.ts';
+import { releaseRunEngine } from './run-engine.ts';
+import { phaseFInstall } from './v0_11_0-install.ts';
 import { cliChildStdio } from '../../core/cli-force-exit.ts';
 import { savePreferences, loadPreferences } from '../../core/preferences.ts';
-import { loadConfig, configPath, gbrainPath } from '../../core/config.ts';
+import { configPath, gbrainPath } from '../../core/config.ts';
 // Bug 3 — appendCompletedMigration moved to the runner (apply-migrations.ts).
 import { promptLine } from '../../core/cli-util.ts';
 import { VERSION } from '../../version.ts';
@@ -235,6 +238,12 @@ function findCronManifests(opts: OrchestratorOpts): string[] {
   return found;
 }
 
+/** Host files Phase E would edit (an AGENTS.md marker, cron manifests); `gbrain setup` leaves this migration to the explicit command when any exist. */
+export function hostRewriteTargets(): string[] {
+  const opts = {} as OrchestratorOpts;
+  return [...findAgentsMdFiles(opts), ...findCronManifests(opts)];
+}
+
 function rewriteCronManifest(
   path: string,
   opts: OrchestratorOpts,
@@ -400,24 +409,6 @@ async function phaseEHost(opts: OrchestratorOpts): Promise<{
 }
 
 // -----------------------------------------------------------------------
-// Phase F — Autopilot install
-// -----------------------------------------------------------------------
-
-function phaseFInstall(opts: OrchestratorOpts): OrchestratorPhaseResult {
-  if (opts.dryRun) return { name: 'install', status: 'skipped', detail: 'dry-run' };
-  if (opts.noAutopilotInstall) return { name: 'install', status: 'skipped', detail: '--no-autopilot-install' };
-  try {
-    if (loadConfig()?.engine === 'pglite') {
-      return { name: 'install', status: 'skipped', detail: 'PGLite is single-writer; use gbrain serve for background maintenance' };
-    }
-    execSync(gbrainChildCommand('gbrain autopilot --install --yes'), { stdio: cliChildStdio(), timeout: 60_000, env: process.env });
-    return { name: 'install', status: 'complete' };
-  } catch (e) {
-    return { name: 'install', status: 'failed', detail: e instanceof Error ? e.message : String(e) };
-  }
-}
-
-// -----------------------------------------------------------------------
 // Orchestrator
 // -----------------------------------------------------------------------
 
@@ -431,6 +422,7 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
     return { version: '0.11.0', status: 'failed', phases };
   }
 
+  await releaseRunEngine();
   const b = phaseBSmoke(opts);
   phases.push(b);
   if (b.status === 'failed') {
@@ -451,7 +443,7 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
   const { phase: e, files_rewritten, pending_host_work } = await phaseEHost(opts);
   phases.push(e);
 
-  const f = phaseFInstall(opts);
+  const f = await phaseFInstall(opts);
   phases.push(f);
 
   // Bug 3 — Phase G (record in completed.jsonl) moved to the runner. The
@@ -496,6 +488,7 @@ export const v0_11_0: Migration = {
       'user might ask about later.',
   },
   orchestrator,
+  sharesRunEngine: true,
   effects: ['persistent_install'],
 };
 

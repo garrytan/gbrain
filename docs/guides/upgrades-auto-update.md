@@ -105,9 +105,82 @@ the startup Bun check, unlike `--version`). If the new release does not
 start, the upgrade exits non-zero and prints recovery: `bun upgrade`, then
 `gbrain post-upgrade`; or return to the previous release with
 `git -C <clone> checkout <previous sha> && bun install` (bun-link) or
-`bun remove -g gbrain && bun add -g github:garrytan/gbrain#v<previous>` (package; an in-place tag swap fails or silently corrupts the global lock on current Bun, #5034). Nothing is
+`git ls-remote --exit-code --tags https://github.com/garrytan/gbrain refs/tags/v<previous> && bun remove -g gbrain && bun add -g github:garrytan/gbrain#v<previous>` (package; an in-place tag swap fails or silently corrupts the global lock on current Bun, #5034). Nothing is
 rolled back automatically, and the autopilot channel records that version as
 failed.
+
+Tag-pinned package installs (`github:garrytan/gbrain#v<x>`) stay pinned through
+`bun update`, so `gbrain upgrade` prints a reinstall instead. Every printed
+reinstall checks that the release tag exists before `bun remove -g gbrain`
+runs, and ends with the line that restores the previous version if the add
+fails. The target is the newest published release tag: master's `VERSION` is
+stamped before the release checks pass and the tag is created, so a version
+can be announced before its tag exists. When the requested version's tag is
+missing, upgrade says `v<x> is not published yet`, removes nothing, and offers
+the newest published release if it is newer than yours (#6662). Windows
+PowerShell 5.1 has no `&&`, so on Windows the steps print one per line; run
+them in order and stop if the tag check fails.
+
+<a id="release-channel"></a>
+### Which version counts as available
+
+Every update surface (the startup marker, `gbrain check-update`,
+`gbrain self-upgrade`, doctor's `self_upgrade_health` and the `auto` channel)
+reads the `VERSION` file at the `latest-stable` tag: the release the canonical
+install (`github:garrytan/gbrain#latest-stable`) gets from `bun update`, moved
+only after the release checks pass and the assets publish. Master's `VERSION`
+is never offered: the next PR stamps it before release.yml tags it, and a
+superseded version never gets a tag (#6718, #6828).
+
+A swap is a swap only when the version changed. When `gbrain upgrade` finds
+the same version running after the install step (`bun update` on a tag whose
+head is already installed), it prints `No newer version was installed`, keeps
+`last_upgrade`, writes no `JUST_UPGRADED` breadcrumb and keeps the pending
+marker. The `auto` channel then stays up instead of exiting for a relaunch,
+clears its breadcrumb, records no known-bad version, audits the attempt as
+`skipped` (`nothing newer was installed`) and tries again after 24 hours
+(`self_upgrade.last_check_ts`). The channel confirms a swap from a receipt
+`gbrain upgrade` writes, or from `gbrain --version` when there is none; a
+swap that exits 0 with no newer version confirmed is held the same way, never
+relaunched. It also checks the version the install would actually get (a
+bun-link clone follows master, a moving tag can pass the checked version)
+against the known-bad list before swapping. A version is recorded known-bad only when it
+was installed and then failed (the post-swap `gbrain --help` smoke, or a
+relaunch that did not come up on it), under the version actually installed.
+
+<a id="known-bad-never-installed"></a>
+### A known-bad version that was never installed
+
+Releases before this fix could record a version known-bad that was never
+installed: the swap installed nothing, reported `swapped`, the supervisor
+relaunched the same version, and the relaunch recorded the attempted version
+in `self_upgrade.failed_versions`, so `auto` skipped that release forever.
+doctor's `self_upgrade_health` warns about each such entry and names the
+preview as its fix:
+
+```bash
+gbrain self-upgrade --clear-never-installed            # preview: lists each entry and the swap that recorded it; writes nothing
+gbrain self-upgrade --clear-never-installed --apply    # removes exactly the listed entries
+gbrain doctor --only self_upgrade_health --json        # verify
+```
+
+An entry is listed only when it is proven never installed. The audit rows
+alone are not proof, because a release that installed, crashed before its
+first boot finished, and was rolled back by hand leaves the same rows. The proof
+is the record the no-op swap wrote itself: `last_upgrade` in
+`upgrade-state.json` with the same version as `from` and `to`, timestamped
+inside that entry's swap (between its apply row and its `swapped` row), plus
+exactly one recorded failure for the entry, a `crash-on-launch` row on the
+version that ran the swap, and no audit row that ever ran the entry's version.
+Each swap overwrites `last_upgrade`, so only the most recent no-op can be
+proven; an older entry stays listed as kept, and you clear it by hand as below
+once you have confirmed it. Anything else stays known-bad. Nothing is rewritten during an
+upgrade. `gbrain config set self_upgrade.failed_versions '["<version>"]'` puts
+an entry back. On a release that does not have this command, read the list
+with `gbrain config get self_upgrade.failed_versions`, confirm the entry was
+never installed (no `v<version>` tag existed when it was recorded, or the
+audit shows the `swapped` row and the relaunch on the same version), then set
+the list without it.
 
 Recovery when autopilot is holding an upgrade:
 
@@ -122,6 +195,43 @@ Restart `gbrain serve` and autopilot afterwards if a service manager does not
 restart them for you, so they run on the new Bun. Hosts still running a
 release from before this check do not run it, so a Bun floor raise reaches
 them only after they have upgraded past this release.
+
+<a id="restart-and-verify"></a>
+### Restart and verify: a deploy ends with data movement
+
+`gbrain upgrade` swaps the binary and runs `post-upgrade`; it never restarts a
+running `gbrain serve`, jobs worker or autopilot, and the autopilot `--swap-only`
+channel exits for its supervisor to relaunch. So an upgrade is not finished when
+the new version starts: a managed brain whose processes stay alive while no page
+commits reads healthy on `/health`, on the pid and on `sync_running: true`. Both
+`upgrade` and `post-upgrade` end by printing the supervisor's step, bare, so it
+inherits the default window:
+
+```bash
+# on the brain host, after the swap
+systemctl restart gbrain-serve gbrain-jobs gbrain-autopilot   # or your supervisor's equivalent: every resident gbrain process
+gbrain sources writer movement           # waits one window (max(300 s, preparation budget + 60 s)); exit 0 only when pending work moved or nothing is pending
+gbrain doctor --json                     # managed_sync_not_moving, two_consumers_on_host, consumers_without_heartbeat, host_identity_mismatch all ok
+```
+
+`writer movement [<source>] [--wait <dur>] [--warn-only] [--json]` snapshots
+each active managed source (newest committed `managed_sync_*` receipt, the
+head's step, the cursor and its holds), waits the window and judges: `moved` or
+`current` exit 0; `held` exits 0 with the holds and their route
+(`gbrain repair fences --source <id>` for fence holds, `gbrain sources writer
+status --source <id> --json` then `gbrain sources retry-held <id>` for
+`preparation_stalled`); `within_allowance` (a multi-wave group still preparing
+with its step advancing) exits 0 with `retry_after_ms`; `not_moving` exits 1
+with `managed_sync_not_moving` (`reason: movement_check`) and the writer-status
+command as its fix; `unknown` carries the read failure's own code. `--warn-only`
+prints the same envelopes and exits 0 for pipelines that cannot fail;
+`--wait <dur>` takes sync's duration syntax. Restart every resident process, not
+only `serve`: an older jobs worker or autopilot left running writes no
+`persistence_consumers` heartbeat row and never defers to the resident
+consumer (doctor `consumers_without_heartbeat`), and a worker started under a
+different `HOME`/`GBRAIN_HOME` reads the binding as another host's (doctor
+`host_identity_mismatch`). Runbook for a check that fails:
+[the catch-up is parked](troubleshooting.md#managed-sync-not-moving).
 
 `gbrain config set self_upgrade.<key>` writes `~/.gbrain/config.json` (the
 file plane every self-upgrade reader uses) and refuses a value the readers

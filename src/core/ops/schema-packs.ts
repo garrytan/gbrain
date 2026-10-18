@@ -237,12 +237,12 @@ const schema_review_orphans: Operation = {
     const limit = Math.max(1, Math.min(10000, (p.limit as number) ?? 100));
     const { loadActivePackBestEffort } = await import('../schema-pack/best-effort.ts');
     const { findTypeOrphans } = await import('../schema-pack/review.ts');
-    const { isUndefinedTableError } = await import('../utils.ts');
+    const { isMissingSchemaObject } = await import('../utils.ts');
     const pack = await loadActivePackBestEffort(ctx);
     try {
       return { schema_version: 1, ...await findTypeOrphans(ctx.engine, pack?.manifest ?? null, sourceScopeOpts(ctx), limit) };
     } catch (err) {
-      if (isUndefinedTableError(err)) return { schema_version: 1, orphan_count: 0, orphans: [], undeclared_types: [], pack: pack?.manifest.name ?? null, truncated: false };
+      if (isMissingSchemaObject(err, 'table', 'pages')) return { schema_version: 1, orphan_count: 0, orphans: [], undeclared_types: [], pack: pack?.manifest.name ?? null, truncated: false };
       throw err;
     }
   },

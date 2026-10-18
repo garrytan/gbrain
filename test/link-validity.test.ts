@@ -12,6 +12,7 @@ import {
 
 const start = (d: string, origin: number | null = 1): TransitionEvidence => ({ kind: 'start', occurredOn: d, producer: 'timeline', originPageId: origin });
 const end = (d: string, origin: number | null = 1): TransitionEvidence => ({ kind: 'end', occurredOn: d, producer: 'timeline', originPageId: origin });
+const inferredEnd = (d: string): TransitionEvidence => ({ kind: 'end', occurredOn: d, producer: 'dream', originPageId: 1 });
 const present = (origin = 1): AssertionEvidence => ({ tense: 'present', originPageId: origin });
 const past = (origin = 1): AssertionEvidence => ({ tense: 'past', originPageId: origin });
 
@@ -110,6 +111,44 @@ describe('buildRelationshipState — state relations', () => {
     for (const p of perms(ev)) {
       expect(JSON.stringify(buildRelationshipState('state', [...asserts].reverse(), p))).toBe(baseline);
     }
+  });
+});
+
+describe('buildRelationshipState — inferred closures are upper bounds (W5)', () => {
+  test('a stint closed only by the nightly check ends by that date, an upper bound', () => {
+    const s = buildRelationshipState('state', [present()], [start('2019-02-01'), inferredEnd('2025-03-01')]);
+    expect(s.stints).toEqual([{ from: '2019-02-01', until: '2025-03-01' }]);
+    expect(s).toMatchObject({ lastEnd: '2025-03-01', lastEndUpperBound: true });
+  });
+
+  test('an explicit end closes the stint at the gap, earlier than the inferred closure', () => {
+    const s = buildRelationshipState('state', [present()], [start('2019-02-01'), end('2024-06-01'), inferredEnd('2025-03-01')]);
+    expect(s.stints).toEqual([{ from: '2019-02-01', until: '2024-06-01' }]);
+    expect(s).toMatchObject({ lastEnd: '2024-06-01', lastEndUpperBound: false });
+  });
+
+  test('an explicit end later than the inferred closure replaces it (the inferred date only bounded it)', () => {
+    const s = buildRelationshipState('state', [present()], [start('2019-02-01'), inferredEnd('2025-03-01'), end('2025-06-01')]);
+    expect(s.stints).toEqual([{ from: '2019-02-01', until: '2025-06-01' }]);
+    expect(s).toMatchObject({ lastEnd: '2025-06-01', lastEndUpperBound: false });
+  });
+
+  test('an explicit end of another stint does not override the inferred closure of this one; same-date evidence is exact', () => {
+    const s = buildRelationshipState('state', [], [start('2015-01-01'), end('2018-06-01'), start('2021-02-01'), inferredEnd('2025-03-01')]);
+    expect(s.stints).toEqual([{ from: '2015-01-01', until: '2018-06-01' }, { from: '2021-02-01', until: '2025-03-01' }]);
+    expect(s.lastEndUpperBound).toBe(true);
+    expect(buildRelationshipState('state', [], [start('2019-02-01'), inferredEnd('2025-03-01'), end('2025-03-01')]).lastEndUpperBound).toBe(false);
+  });
+
+  test('a same-day explicit end and rejoin ends the old stint, so it does not override the new stint\'s inferred closure', () => {
+    const s = buildRelationshipState('state', [], [start('2019-02-01'), end('2022-01-01'), start('2022-01-01'), inferredEnd('2025-03-01')]);
+    expect(s).toMatchObject({ lastEnd: '2025-03-01', lastEndUpperBound: true });
+  });
+
+  test('order invariance holds with inferred and explicit ends mixed', () => {
+    const ev = [start('2019-02-01'), inferredEnd('2025-03-01'), end('2025-06-01', 2), start('2026-01-01')];
+    const baseline = JSON.stringify(buildRelationshipState('state', [], ev));
+    for (const p of [ev, [...ev].reverse(), [ev[2]!, ev[0]!, ev[3]!, ev[1]!]]) expect(JSON.stringify(buildRelationshipState('state', [], p))).toBe(baseline);
   });
 });
 

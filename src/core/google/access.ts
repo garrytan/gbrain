@@ -25,7 +25,7 @@
  * Same trust class as recipe health_check argv entries.
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from '../spawn.ts';
 
 import { CredentialError } from '../creds/errors.ts';
 

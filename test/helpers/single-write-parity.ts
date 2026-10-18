@@ -23,6 +23,7 @@ import { expect } from 'bun:test';
 import { managedBrain } from './managed-brain.ts';
 import { withEnv } from './with-env.ts';
 import { resetWriteSwitches } from '../../src/core/persistence/switches.ts';
+import { trueUpRequests } from '../../src/core/persistence/receipt-true-up.ts';
 
 const facts = renderFactsTable([{ rowNum: 1, claim: 'Alice Example leads the platform team', kind: 'fact', confidence: 0.9,
   visibility: 'world', notability: 'medium', source: 'notes/standup', context: 'team update', active: true }]);
@@ -41,6 +42,23 @@ async function waitCommitted(engine: BrainEngine): Promise<void> {
     await Bun.sleep(50);
   }
   throw new Error('writes did not settle');
+}
+
+/**
+ * #6696 (A1): a request's terminal_reservation shrinks once its last effect settles, so both runs dump it only after every
+ * effect has settled and the (idempotent) true-up has run for every request; otherwise the column records effect timing.
+ */
+async function waitEffectsSettled(engine: BrainEngine): Promise<void> {
+  // 45 s: an effect that met a dependency wait (recovery_required while another publication recovers) retries after 30 s.
+  for (let i = 0; i < 900; i++) {
+    const [open] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM persistence_effects WHERE state IN ('queued','running')");
+    if (open!.n === 0) {
+      await trueUpRequests(engine, (await engine.executeRaw<{ id: string }>('SELECT id FROM persistence_requests')).map(r => r.id));
+      return;
+    }
+    await Bun.sleep(50);
+  }
+  throw new Error(`effects did not settle: ${JSON.stringify(await engine.executeRaw("SELECT e.kind,e.state,e.error_code,r.slug FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE e.state IN ('queued','running')"))}`);
 }
 
 /**
@@ -77,6 +95,7 @@ export async function runSingleWriteParityScenario(databaseUrl?: string): Promis
     await local({ slug: 'notes/doomed', expected_revision: doomed!.revision }, 'delete_page');
     await local({ slug: 'notes/db-only', content: '---\ntitle: Database only\n---\n\nNo binding for this source.\n' }, 'put_page', 'scratch').catch(error => ({ refused: (error as { code?: string }).code }));
     await waitCommitted(engine);
+    await waitEffectsSettled(engine);
     await disposePersistenceConsumer(engine);
     dump = await normalizedDump(engine, root);
     } finally { proto.executeRaw = original; }

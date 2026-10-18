@@ -264,7 +264,9 @@ async function replayRow(engine: BrainEngine, row: CapturedRow, opts: ReplayOpts
       current = await hybridSearch(engine, row.query, {
         limit,
         detail: row.detail ?? undefined,
-        expansion: row.expand_enabled ?? false,
+        // A captured `expand` of null means the caller left it unset, so the
+        // mode's default decides (query's default follows search.mode).
+        expansion: row.expand_enabled ?? undefined,
         // v0.36 (D16 / CDX-10): replay the SAME column that ran at capture
         // time so config drift between capture and replay doesn't surface
         // as "regression." NULL/undefined falls through to resolver default.

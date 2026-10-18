@@ -45,7 +45,11 @@ test('a three-batch drain attempt stops at its per-run cap (one BudgetTracker pe
       expect(calls).toBe(1);
       expect(result.extracted).toBe(1);
       expect(result.remaining).toBe(2);
-      expect(result.stopped).toBe('no_progress');
+      // #6425: the per-run cap stopped the attempt, not an empty or failing backlog.
+      expect(result.stopped).toBe('budget');
+      expect(result.budget_usd).toBe(0.03);
+      expect(result.spent_usd).toBeGreaterThan(0);
+      expect(result.batches).toBe(2);
     });
   } finally { __setChatTransportForTests(null); }
   expect(await engine.executeRaw("SELECT slug FROM pages WHERE type='atom' AND deleted_at IS NULL")).toHaveLength(1);

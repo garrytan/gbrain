@@ -72,8 +72,8 @@ export interface QueryCacheConfig {
  * hit_count and created_at rather than inserting duplicates.
  *
  * v0.32.3 [CDX-4]: knobsHash is now part of the key to prevent cross-mode
- * cache contamination. A tokenmax write (expansion=on, limit=50) and a
- * conservative write (no expansion, limit=10) for the same query+source
+ * cache contamination. A tokenmax write (limit=50, no token budget) and a
+ * conservative write (limit=10) for the same query+source
  * land in distinct rows. Empty-string knobsHash is accepted (preserves
  * existing test setups) but production calls always pass the resolved hash.
  */
@@ -223,8 +223,8 @@ export class SemanticQueryCache {
       // ttl_seconds > now) so we never return a stale row.
       //
       // v0.32.3 [CDX-4]: knobs_hash filter prevents cross-mode contamination.
-      // A tokenmax write (expansion=on, limit=50) and a conservative read
-      // (no expansion, limit=10) have distinct knobs hashes and miss each
+      // A tokenmax write (limit=50, no token budget) and a conservative read
+      // (limit=10) have distinct knobs hashes and miss each
       // other. Rows with NULL knobs_hash (pre-v0.32.3) are excluded.
       // v0.40.3.0: query_cache row aliased `qc` so the two-layer gate
       // fragment in CACHE_GATE_WHERE_CLAUSE can reference qc.max_generation_at_store

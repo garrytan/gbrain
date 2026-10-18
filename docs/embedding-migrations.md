@@ -94,9 +94,14 @@ gbrain embed --stale --facts --source source-example \
 The cap must be finite and nonnegative. `--max-facts` limits attempted facts
 (default 100, range 1–10,000); `--batch-size` bounds each batch (default 100,
 range 1–100); `--budget-ms` limits run time (default 60,000, range 1–3,600,000).
-All three accept integers. These limits do not authorize spend. Standalone
+All three accept integers. These limits do not authorize spend. A run that
+reaches `--budget-ms` stops with `stopped: "time_budget"` and no failures; its
+unfinished facts stay in `remaining` for the next run. Standalone
 repair is bounded per invocation; use brain-wide migration when durable total
-authorization across interruptions is required.
+authorization across interruptions is required. The migration's fact phase has
+no per-run fact cap or wall-clock budget: it drains each source's stale facts as
+counted at the start of the phase, bounded by the migration lease and cost cap,
+so a slow source no longer stops the sources after it.
 
 Each provider attempt rechecks source identity, authority, selected-brain and
 database off switches, model identity and spend allowance. Installation rechecks

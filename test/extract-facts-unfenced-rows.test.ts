@@ -37,9 +37,19 @@
  * the write-back is missing (the projection expires the adopted row and
  * inserts a new id), a rejected row is deleted, expired or rewritten, or the
  * source-wide guard skips every page.
+ *
+ * #6610: on an unmanaged brain, a database-only page (no recorded origin, no
+ * file at its slug path) gets its unfenced rows fenced into its database body
+ * through the coordinator when the fact writers' rule makes that write
+ * database-only (`sync.write_through` off; on Postgres, an unbound source with
+ * `persistence.unbound_write=database_only`). Without the opt-in its rows stay
+ * unfenced and held out of reconciliation but never gate the run, and doctor
+ * `fence_integrity` names the opt-in. Fails when: such a page is reported as a
+ * missing file every run (`FACTS_FENCE_FAILED ... does not exist on this
+ * host`) and halts the facts fence for good.
  */
 import { expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { runCycle } from '../src/core/cycle.ts';
@@ -47,6 +57,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { parseFactsFence } from '../src/core/facts-fence.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { managedPersistenceEnabled } from '../src/core/persistence/ownership.ts';
+import { fenceIntegrityResult } from '../src/commands/doctor/checks/fence-integrity.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { LEGACY_DB_ONLY_SLUG, LEGACY_FILE_SLUG, seedLegacyManagedContent, type LegacySeed } from './helpers/managed-legacy-fixture.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
@@ -325,6 +336,71 @@ for (const backend of testBackends()) {
       expect(await factState(engine)).toEqual(before);
     });
   }, 120_000);
+
+  /** Turn the fixture's page into a database-only page: no recorded origin and no file at its slug path. */
+  async function makeDatabaseOnly(engine: BrainEngine, root: string): Promise<void> {
+    await engine.executeRaw("UPDATE pages SET source_path = NULL, source_uri = NULL WHERE source_id = 'default' AND slug = $1", [SLUG]);
+    rmSync(join(root, `${SLUG}.md`));
+  }
+  async function databaseFence(engine: BrainEngine) {
+    return parseFactsFence((await engine.getPage(SLUG, { sourceId: 'default' }))!.compiled_truth).facts.map(f => [f.rowNum, f.claim]);
+  }
+  const FENCED = [[1, 'Alice example joined Acme example'], [2, 'Alice example moved to Lisbon'], [3, 'Alice example prefers async updates']];
+
+  test(`${backend}: unmanaged (#6610): a database-only page with sync.write_through off gets its rows fenced into its database body`, async () => {
+    await unmanagedBrain(databaseUrl, async ({ engine, root }) => {
+      await makeDatabaseOnly(engine, root);
+      await engine.setConfig('sync.write_through', 'false');
+      const first = await extractFactsPhase(engine, root);
+      expect(first.status, JSON.stringify(first.details)).toBe('ok');
+      expect(first.details).toMatchObject({ unfencedRowsFenced: 2, legacyRowsPending: 0, pagesFailed: 0 });
+      expect(await pendingCount(engine)).toBe(0);
+      expect(await databaseFence(engine)).toEqual(FENCED);
+      const after = await factState(engine);
+      expect(after.slice(0, 3).map(r => [r.row_num, r.source_markdown_slug, r.expired])).toEqual([[1, SLUG, false], [2, SLUG, false], [3, SLUG, false]]);
+      const page = (await engine.getPage(SLUG, { sourceId: 'default' }))!;
+      expect(page.source_path ?? null).toBeNull();
+      expect(existsSync(join(root, `${SLUG}.md`))).toBe(false);
+      const second = await extractFactsPhase(engine, root);
+      expect(second.details).toMatchObject({ unfencedRowsFenced: 0, factsInserted: 0, factsDeleted: 0 });
+      expect(await factState(engine)).toEqual(after);
+    });
+  }, 120_000);
+
+  if (backend === 'postgres') {
+    test('postgres: unmanaged (#6610): an unbound source with persistence.unbound_write=database_only fences a database-only page in its database body', async () => {
+      await unmanagedBrain(databaseUrl, async ({ engine, root }) => {
+        await makeDatabaseOnly(engine, root);
+        await engine.setConfig('persistence.unbound_write', 'database_only');
+        const result = await extractFactsPhase(engine, root);
+        expect(result.status, JSON.stringify(result.details)).toBe('ok');
+        expect(result.details).toMatchObject({ unfencedRowsFenced: 2, legacyRowsPending: 0 });
+        expect(await databaseFence(engine)).toEqual(FENCED);
+        const [page] = await engine.executeRaw<{ database_only_reason: string | null }>(
+          "SELECT database_only_reason FROM pages WHERE source_id = 'default' AND slug = $1", [SLUG]);
+        expect(page.database_only_reason).toBe('unbound_source');
+        expect(existsSync(join(root, `${SLUG}.md`))).toBe(false);
+      });
+    }, 120_000);
+
+    test('postgres: unmanaged (#6610): without the opt-in the rows stay unfenced, never gate the run, and fence_integrity names the opt-in', async () => {
+      await unmanagedBrain(databaseUrl, async ({ engine, root }) => {
+        await makeDatabaseOnly(engine, root);
+        const before = await factState(engine);
+        const result = await extractFactsPhase(engine, root);
+        expect(result.status, JSON.stringify(result.details)).toBe('ok');
+        expect(result.details).toMatchObject({ unfencedRowsFenced: 0, legacyRowsPending: 0, legacyPages: [] });
+        expect((result.details as { warnings: string[] }).warnings.some(w => w.startsWith('FACTS_FENCE_FAILED'))).toBe(false);
+        // Held out of reconciliation: nothing expired, detached or renumbered.
+        expect(await factState(engine)).toEqual(before);
+        const doctor = await fenceIntegrityResult(engine, { sourceIds: ['default'] });
+        expect(doctor.status).toBe('warn');
+        expect(doctor.details).toMatchObject({ unbound_legacy_facts: { total: 2, pages: [{ source_id: 'default', slug: SLUG, rows: 2 }] } });
+        expect(doctor.message).toContain('gbrain config set persistence.unbound_write database_only');
+        expect(doctor.fix).toMatchObject({ argv: ['gbrain', 'config', 'set', 'persistence.unbound_write', 'database_only'], ask_user: true });
+      });
+    }, 120_000);
+  }
 
   test(`${backend}: managed: one cycle fences row_num-NULL facts through the coordinator and a second cycle changes nothing`, async () => {
     let seed!: LegacySeed;

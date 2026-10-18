@@ -1,0 +1,172 @@
+/**
+ * #6402: a knock-on `cancelled` receipt is a retryable page fault, the same verdict sync's own `Next:` gives.
+ *
+ * Protects: `cancelled` is in the fault table (page / retry / not needs_human), so `sync status` hands the
+ * loop the retry instead of paging a person (an older build's knock-on cancel still renders that way); since
+ * #6712 a group head whose window predecessor was never admitted or failed publishes on its own fate; the failure ledger
+ * restarts `first_seen`/`attempts` when a run targets a new commit (a `--retry-failed` of the same target keeps
+ * counting, as `persistence-sync-failures.serial.test.ts` pins) and moves `updated_at`; a resume refused for conflicting
+ * cursor options (`invalid_params`, a caller error) leaves the recorded diagnosis untouched.
+ */
+import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import type { OperationContext } from '../src/core/ops/contract.ts';
+import { claimWorktree } from '../src/core/persistence/ownership.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
+import { classifySyncFault } from '../src/core/persistence/sync-fault-class.ts';
+import { managedSyncRetryCommand, readManagedSyncFailures, recordManagedSyncFailure } from '../src/core/persistence/sync-failures.ts';
+import { claimedHeadOrder, laneFaultBlockedReason, laneFaultCancelMessage, laneFaultInMessage, WINDOW_CANCEL_MESSAGE } from '../src/core/persistence/sync-window.ts';
+import { submissionAuthority } from '../src/core/persistence/authority.ts';
+import { admitWrite, claimNextWrite, getWriteRequestById } from '../src/core/persistence/journal.ts';
+import { localHostId, registerLocalWriter } from '../src/core/persistence/identity.ts';
+import { withEnv } from './helpers/with-env.ts';
+
+const home = mkdtempSync(join(tmpdir(), 'gbrain-6402-'));
+let engine: PGLiteEngine;
+const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const commit = (root: string, message: string) => { git(root, 'add', '.'); git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', message); };
+const note = (body: string) => `---\ntitle: Example\n---\n${body}\n`;
+async function fixture(files: Record<string, string>) {
+  const id = `kc-${randomUUID().replace(/-/g, '').slice(0, 20)}`, root = join(home, id);
+  mkdirSync(root); git(root, 'init', '-q');
+  for (const [path, body] of Object.entries(files)) writeFileSync(join(root, path), body);
+  commit(root, 'fixture');
+  await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+  await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [id, root]);
+  await claimWorktree(engine, id, root);
+  await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+  return { id, root, opts: { sourceId: id, noPull: true, noEmbed: true, noExtract: true } };
+}
+/** A managed run stopped on a recorded page failure, with its cursor unfinished. */
+async function blockedRun() {
+  const f = await fixture({ 'a.md': note('Alpha one.'), 'b.md': note('Beta one.') });
+  expect((await performManagedSync(engine, f.opts)).status).toBe('first_sync');
+  writeFileSync(join(f.root, 'a.md'), note('Alpha two.')); writeFileSync(join(f.root, 'b.md'), note('Beta two.'));
+  commit(f.root, 'version two');
+  writeFileSync(join(f.root, 'b.md'), note('Beta, uncommitted.'));
+  await engine.setConfig('sync.holds', 'fail');
+  try { expect((await performManagedSync(engine, f.opts)).status).toBe('blocked_by_failures'); }
+  finally { await engine.executeRaw("DELETE FROM config WHERE key='sync.holds'"); }
+  return f;
+}
+
+beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 60_000);
+afterAll(async () => { await disposePersistenceConsumer(engine); await engine.disconnect(); rmSync(home, { recursive: true, force: true }); });
+
+test('the classifier treats a knock-on cancel as a retryable page fault', () => {
+  expect(classifySyncFault({ code: 'cancelled', message: WINDOW_CANCEL_MESSAGE })).toEqual({ class: 'page', safe_actions: ['retry'], needs_human: false });
+});
+
+test('sync status turns a cancelled knock-on into the retry sync prints, not a human page', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
+  const f = await blockedRun();
+  await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(jsonb_set(completed_keys,'{0,code}','"cancelled"'),'{0,message}',to_jsonb($1::text))
+    WHERE op='managed-sync-failure' AND completed_keys->0->>'source_id'=$2`, [WINDOW_CANCEL_MESSAGE, f.id]);
+  const status = await readSyncStatus(engine, f.id);
+  expect(status.last_error).toMatchObject({ code: 'cancelled', class: 'page', safe_actions: ['retry'], needs_human: false });
+  expect(status.needs_human).toBe(false);
+  const [failure] = await readManagedSyncFailures(engine, [f.id]);
+  const printed = managedSyncRetryCommand(failure!).split(' ');
+  expect([...status.next!.argv!].sort()).toEqual([...printed].sort());
+}), 120_000);
+
+// #6712 PR 1: a resume with other processing flags is no longer refused; it inherits the cursor's opt-outs and meets
+// the same failure, which it must not re-record or replace.
+test('a resume with other processing flags inherits the cursor options and leaves the recorded failure untouched', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
+  const f = await blockedRun();
+  const [before] = await readManagedSyncFailures(engine, [f.id]);
+  expect(before!.code).toBe('source_changed');
+  // Holds stay off as in the blocked run, so the page fault is still a failure rather than converted to a hold.
+  await engine.setConfig('sync.holds', 'fail');
+  try { expect(await performManagedSync(engine, { ...f.opts, noEmbed: false })).toMatchObject({ status: 'blocked_by_failures' }); }
+  finally { await engine.executeRaw("DELETE FROM config WHERE key='sync.holds'"); }
+  const [after] = await readManagedSyncFailures(engine, [f.id]);
+  expect(after).toMatchObject({ code: 'source_changed', observation_id: before!.observation_id, attempts: before!.attempts });
+}), 120_000);
+
+test('the ledger restarts first_seen and attempts when the run targets a new commit, keeps counting a retry of the same target, and moves updated_at', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
+  const key = `ledger-${randomUUID()}`;
+  const base = { source_id: 'default', source_incarnation: 'x', path: 'a.md', code: 'cancelled', message: WINDOW_CANCEL_MESSAGE, request_id: null,
+    cursor_key: key, phase: 'receipt' as const, state: 'failed' };
+  const updatedAt = async () => (await engine.executeRaw<{ t: string }>("SELECT updated_at::text AS t FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1", [key]))[0]!.t;
+  const one = await recordManagedSyncFailure(engine, { ...base, target: 'c1', run_id: 'run-1', observation_id: 'run-1:0', first_seen: '2026-01-01T00:00:00.000Z' });
+  expect(one.failure).toMatchObject({ attempts: 1, first_seen: '2026-01-01T00:00:00.000Z' });
+  const t1 = await updatedAt();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const two = await recordManagedSyncFailure(engine, { ...base, target: 'c1', run_id: 'run-1b', observation_id: 'run-1b:0' });
+  expect(two.failure).toMatchObject({ attempts: 2, first_seen: '2026-01-01T00:00:00.000Z' });
+  const t2 = await updatedAt();
+  expect(t2 > t1).toBe(true);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const next = await recordManagedSyncFailure(engine, { ...base, target: 'c2', run_id: 'run-2', observation_id: 'run-2:0' });
+  expect(next.failure.attempts).toBe(1);
+  expect(next.failure.first_seen).not.toBe('2026-01-01T00:00:00.000Z');
+  expect((await updatedAt()) > t2).toBe(true);
+}));
+
+test('#6712: a head whose window predecessor was never admitted publishes on its own fate, never cancelled for it', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  await registerLocalWriter(engine, 'cli');
+  const [source] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation FROM sources WHERE id='default'");
+  const ctx: OperationContext = { engine, config: { engine: 'pglite' }, dryRun: false, remote: false, sourceId: 'default', logger: { info() {}, warn() {}, error() {} } } as OperationContext;
+  const authority = await submissionAuthority(ctx, 'put_page', 'default', source!.incarnation, 'notes/knock-on');
+  const missing = randomUUID();
+  const intent = { content: note('Knock-on.'), after: missing };
+  await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId: 'default', sourceIncarnation: source!.incarnation,
+    slug: 'notes/knock-on', pageId: null, requestId: randomUUID(), callerIntent: intent, intent });
+  const head = (await claimNextWrite(engine, localHostId()))!;
+  expect(await claimedHeadOrder(engine, head, false)).toBeNull();
+  expect(await claimedHeadOrder(engine, head, true)).toBeNull();
+  expect((await getWriteRequestById(engine, head.id))!.state).toBe('running');
+}));
+
+test('#6402 residual (P4.3) / #6712: a lane group released after a lock timeout keeps the fault on its rows and publishes after a failed predecessor', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  expect(laneFaultBlockedReason('lock_timeout')).toBe('lane_lock_timeout');
+  await registerLocalWriter(engine, 'cli');
+  const f = await fixture({ 'seed.md': note('Seed.') });
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [f.id]);
+  const ctx: OperationContext = { engine, config: { engine: 'pglite' }, dryRun: false, remote: false, sourceId: f.id, logger: { info() {}, warn() {}, error() {} } } as OperationContext;
+  // A predecessor that ended uncommitted, then a two-member lane group behind it (a claimed worktree, so the group is scoped like a sync's).
+  const failedId = randomUUID();
+  const authority = await submissionAuthority(ctx, 'put_page', f.id, source!.incarnation, 'notes/lane-prior');
+  await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId: f.id, sourceIncarnation: source!.incarnation,
+    slug: 'notes/lane-prior', pageId: null, requestId: failedId, callerIntent: { content: note('Prior.') }, intent: { content: note('Prior.') } });
+  await engine.executeRaw("UPDATE persistence_requests SET state='failed',completed_at=now(),error_code='storage_error' WHERE request_id=$1::uuid", [failedId]);
+  const headId = randomUUID();
+  for (const [slug, requestId] of [['notes/lane-head', headId], ['notes/lane-member', randomUUID()]] as const) {
+    const a = await submissionAuthority(ctx, 'put_page', f.id, source!.incarnation, slug);
+    const intent = { content: note(slug), after: failedId, group: headId };
+    await admitWrite(engine, { principal: a.principal, authority: a, operation: 'put_page', sourceId: f.id, sourceIncarnation: source!.incarnation,
+      slug, pageId: null, requestId, callerIntent: intent, intent });
+  }
+  // The group's publish hit a lock timeout: laneFallback released every member with the lane fault as its blocked reason.
+  await engine.executeRaw("UPDATE persistence_requests SET blocked_reason=$2 WHERE intent->>'group'=$1", [headId, laneFaultBlockedReason('lock_timeout')]);
+  // Scoped to the source's claimed worktree, as a managed sync's group rows are.
+  await engine.executeRaw('UPDATE persistence_requests SET worktree_id=(SELECT worktree_id FROM persistence_source_bindings WHERE source_id=$1 LIMIT 1) WHERE source_id=$1', [f.id]);
+  const head = (await claimNextWrite(engine, localHostId()))!;
+  expect(head.request_id).toBe(headId);
+  expect(head.blocked_reason).toBeNull();
+  // #6712: claimed as a window head behind a predecessor that failed, it publishes on its own fate instead of being cancelled.
+  expect(await claimedHeadOrder(engine, head, false)).toBeNull();
+  expect((await getWriteRequestById(engine, head.id))!.state).toBe('running');
+  // An older build's cancel text still names the fault, and still classifies as a retryable page fault.
+  expect(laneFaultCancelMessage('lock_timeout')).toContain('after lock_timeout on its lane group');
+  expect(classifySyncFault({ code: 'cancelled' })).toMatchObject({ class: 'page', safe_actions: ['retry'], needs_human: false });
+}));
+
+test('#6402 residual (P4.3): sync status carries the lane fault as the cancelled failure\'s detail', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
+  expect(laneFaultInMessage(laneFaultCancelMessage('statement_timeout'))).toBe('statement_timeout');
+  expect(laneFaultInMessage(WINDOW_CANCEL_MESSAGE)).toBeNull();
+  const f = await blockedRun();
+  await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(jsonb_set(completed_keys,'{0,code}','"cancelled"'),'{0,message}',to_jsonb($1::text))
+    WHERE op='managed-sync-failure' AND completed_keys->0->>'source_id'=$2`, [laneFaultCancelMessage('lock_timeout'), f.id]);
+  const status = await readSyncStatus(engine, f.id);
+  expect(status.last_error).toMatchObject({ code: 'cancelled', detail: 'lock_timeout', class: 'page', safe_actions: ['retry'], needs_human: false });
+  expect(status.last_error!.message).toContain('after lock_timeout on its lane group');
+  expect(status.needs_human).toBe(false);
+}), 120_000);

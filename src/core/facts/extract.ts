@@ -27,8 +27,8 @@ import { classifyGlobalLlmError } from '../ai/errors.ts';
 import { stripReasoningBlocks } from '../llm-json.ts';
 import type { ChatResult } from '../ai/gateway.ts';
 import { INJECTION_PATTERNS } from '../think/sanitize.ts';
-import { resolveModel } from '../model-config.ts';
-import { normalizeModelId } from '../model-id.ts';
+import { resolveModelDetailed, type ResolveSource } from '../model-config.ts';
+import { normalizeModelId, splitProviderModelId } from '../model-id.ts';
 import type { BrainEngine, NewFact, FactKind, FactAttribution } from '../engine.ts';
 import { normalizeMetricLabel } from './extract-from-fence.ts';
 import { isNullLikeEntity } from './write-single.ts';
@@ -53,15 +53,28 @@ export async function isFactsExtractionEnabled(engine: BrainEngine): Promise<boo
 }
 
 /**
- * Get the configured model for facts extraction. Defaults to Sonnet since
- * notability/salience judgment requires a sophisticated model, not Haiku.
- * Configurable via `gbrain config set facts.extraction_model <model>`.
+ * The measured default extraction model, by the provider the reasoning tier's
+ * key-aware default resolved to. It applies only when nothing chose a model:
+ * no `facts.extraction_model`, `models.tier.reasoning`, `models.default` or
+ * `GBRAIN_MODEL`. Claude Haiku 5.5 passed the preregistered facts-absorb
+ * quality gate against Sonnet 4.6 on 2026-10-08 (gbrain-evals
+ * docs/benchmarks/2026-10-08-facts-extraction-model.md) at less than a tenth of
+ * the cost; gpt-6-luna did not pass, so an install that resolves through
+ * OpenAI keeps the tier default.
  */
-export async function getFactsExtractionModel(engine?: BrainEngine): Promise<string> {
-  // v0.31.12: route through resolveModel so models.default + models.tier.reasoning
-  // overrides reach facts extraction. Per-config-key facts.extraction_model still
-  // wins via configKey, preserving the prior behavior for existing users.
-  const resolved = await resolveModel(engine ?? null, {
+export const FACTS_EXTRACTION_MEASURED_DEFAULTS: Readonly<Record<string, string>> = {
+  anthropic: 'anthropic:claude-haiku-5-5',
+};
+
+export type FactsExtractionModelSource = ResolveSource | 'measured_default';
+
+/**
+ * The model facts extraction uses and which setting chose it. Configurable via
+ * `gbrain config set facts.extraction_model <model>`; `models.tier.reasoning`,
+ * `models.default` and `GBRAIN_MODEL` reach it through resolveModel (v0.31.12).
+ */
+export async function resolveFactsExtractionModel(engine?: BrainEngine): Promise<{ model: string; source: FactsExtractionModelSource }> {
+  const resolved = await resolveModelDetailed(engine ?? null, {
     configKey: 'facts.extraction_model',
     tier: 'reasoning',
     fallback: 'anthropic:claude-sonnet-4-6',
@@ -69,7 +82,16 @@ export async function getFactsExtractionModel(engine?: BrainEngine): Promise<str
   // resolveModel returns bare model ids when resolving via tier defaults; ensure
   // the result keeps a provider prefix so gateway.chat() can route it (and slash
   // form normalizes to colon — #1698).
-  return normalizeModelId(resolved);
+  const model = normalizeModelId(resolved.model);
+  if (resolved.source === 'tier_default' || resolved.source === 'fallback') {
+    const measured = FACTS_EXTRACTION_MEASURED_DEFAULTS[splitProviderModelId(model).provider ?? ''];
+    if (measured) return { model: measured, source: 'measured_default' };
+  }
+  return { model, source: resolved.source };
+}
+
+export async function getFactsExtractionModel(engine?: BrainEngine): Promise<string> {
+  return (await resolveFactsExtractionModel(engine)).model;
 }
 
 /**
@@ -246,6 +268,8 @@ export interface ExtractInput {
   sessionId?: string | null;
   /** Existing canonical entity slugs the agent already resolved (D4 hint). */
   entityHints?: string[];
+  /** Hints the prompt forwards; defaults to ENTITY_HINTS_CAP (the extract_facts contract). */
+  entityHintsCap?: number;
   /** Source identifier for provenance — e.g. 'mcp:put_page' or 'mcp:extract_facts'. */
   source: string;
   /**
@@ -378,12 +402,17 @@ function renderExtractorSystem(admitsLow: boolean): string {
     '  * "ARR: $2M" → metric=arr, value=2000000, unit=USD, period=annual',
     '  * "Team size: 12" → metric=team_size, value=12, unit=people, period=null',
     '  * "Closed Series A: $15M" → metric=fundraise, value=15000000, unit=USD, period=null',
+    '  * "Seed round: €620K" → metric=fundraise, value=620000, unit=EUR, period=null',
+    '  * "CAD 2.75M committed" → metric=fundraise, value=2750000, unit=CAD, period=null',
     '  * "User churn: 5%" → metric=churn_rate, value=0.05, unit=pct, period=null',
     '  Use lowercase snake_case for metric. Common labels: mrr, arr, revenue,',
     '  runway, burn_rate, cash, gross_margin, team_size, headcount, users, mau,',
     '  dau, cac, ltv, churn_rate, fundraise. For non-metric claims (preferences,',
     '  events, beliefs), set all four to null. Numeric values: emit the raw',
     '  number after currency/scale normalization (50000 not "$50K"; 0.05 not "5%").',
+    '  Currency: a bare "$" is USD. When the text states another currency by',
+    '  symbol or code (€, £, ¥, EUR, GBP, CAD, ...), preserve the stated currency',
+    '  as the unit and never convert the amount.',
   ].join('\n');
 }
 
@@ -622,7 +651,7 @@ export async function extractFactsFromTurnWithOutcome(
   const dateLine = variant.dateGrounding ? `${observationDateLine(input.observationDate ?? null)}\n` : '';
   const userContent = `${dateLine}<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
     input.entityHints && input.entityHints.length
-      ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, ENTITY_HINTS_CAP).join(', ')}.`
+      ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, input.entityHintsCap ?? ENTITY_HINTS_CAP).join(', ')}.`
       : ''
   }`;
   let result: ChatResult;

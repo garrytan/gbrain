@@ -13,11 +13,12 @@ import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { buildSearchTitlesStatement } from '../../src/core/search/title-statement.ts';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
+import { KEYWORD_STATEMENT_TIMEOUT_DEFAULT_MS } from '../../src/core/postgres-engine/keyword-statement-timeout.ts';
 import { registerPostgresTests, requirePostgresTestDatabase } from '../helpers/test-backends.ts';
 
 await registerPostgresTests(() => import('../search/title-arm-exact.test.ts'));
 
-const POSTGRES_DIALECT = { statementTimeout: '8s', relaxedPrefersIndex: true, staleProbe: false };
+const POSTGRES_DIALECT = { statementTimeout: `${KEYWORD_STATEMENT_TIMEOUT_DEFAULT_MS}ms`, relaxedPrefersIndex: true, staleProbe: false };
 const REMOTE = { requireSafeChunks: true, excludePrivate: true, sourceId: 'default', limit: 50 };
 
 describe('remote title arm plan (postgres)', () => {

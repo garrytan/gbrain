@@ -19,6 +19,8 @@ import { checkError, finalizeCheckFixes, infoCheck } from '../src/commands/docto
 import { doctorCheckNames, onlyNeedsEngine, parseOnlyChecks } from '../src/commands/doctor/registry.ts';
 import { throttleDoctorHeartbeat } from '../src/commands/doctor/heartbeat.ts';
 import { agentContractCheck } from '../src/commands/doctor/checks/agent-contract.ts';
+import { readAgentContractEvents, recordAgentContractEvent } from '../src/core/agent-contract-log.ts';
+import { VERSION } from '../src/version.ts';
 import { backupCoachingDue } from '../src/core/backup/status-file.ts';
 import type { ProgressReporter } from '../src/core/progress.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -227,3 +229,39 @@ describe('connection errors name their source; brain score unknown when DB check
     expect(classifyPgAccessError(err, { url: 'postgresql://u@db.abcdefgh.supabase.co:5432/postgres' }).remediation).toMatch(/Supabase/);
   });
 });
+
+describe('#6758 agent_contract: events from other builds are history, counted apart', () => {
+  const now = Date.parse('2026-10-03T00:00:00Z');
+  const ts = new Date(now - 3_600_000).toISOString();
+  const older = new Date(now - 2 * 86_400_000).toISOString();
+  test('faults split by the build that recorded them; all from other builds reads as historical', () => {
+    const c = agentContractCheck([
+      { ts: older, op: 'find_orphans', transport: 'stdio', code: 'internal_error', version: '0.60.100.0' },
+      { ts, op: 'find_orphans', transport: 'stdio', code: 'internal_error', version: '0.60.200.0' },
+      { ts, op: 'search', transport: 'stdio', code: 'internal_error' },
+    ], now);
+    expect(c.status).toBe('warn');
+    expect(c.details).toMatchObject({ internal_errors: 3, builds: { this_build: 0, other_builds: 2, unknown_build: 1, versions: ['0.60.100.0', '0.60.200.0'] },
+      incident: { scope: 'historical', since: older } });
+    expect(c.message).toContain('2 of 3 were recorded by another gbrain build (0.60.100.0 to 0.60.200.0)');
+    expect(c.message).toContain('1 by a build that did not record its version');
+  });
+  test('a fault from this build is current', () => {
+    const c = agentContractCheck([
+      { ts: older, op: 'x', transport: 'stdio', code: 'internal_error', version: '0.60.100.0' },
+      { ts, op: 'y', transport: 'stdio', code: 'internal_error', version: VERSION },
+    ], now);
+    expect(c.details).toMatchObject({ builds: { this_build: 1, other_builds: 1, unknown_build: 0 }, incident: { scope: 'current', since: older } });
+  });
+  test('recordAgentContractEvent stamps the build that wrote the event', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-agent-contract-version-'));
+    try {
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        recordAgentContractEvent({ transport: 'cli', command: 'embed', code: 'internal_error', outcome: 'failed' });
+        recordAgentContractEvent({ transport: 'cli', command: 'embed', code: 'internal_error', version: '0.1.0.0' });
+        expect(readAgentContractEvents().map(e => e.version)).toEqual([VERSION, '0.1.0.0']);
+      });
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+});
+

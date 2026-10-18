@@ -47,7 +47,7 @@ import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
 async function runSyncFreshness(ctx: DoctorContext): Promise<Check[]> {
-  const { orphanRatioSourceId, progress } = ctx;
+  const { progress } = ctx;
   const engine = connectedEngine(ctx);
   const checks: Check[] = [];
 
@@ -75,10 +75,6 @@ async function runSyncFreshness(ctx: DoctorContext): Promise<Check[]> {
     // v0.41.19.0 (Issue 5): sync --all consolidation nudge.
     progress.heartbeat('sync_consolidation');
     checks.push(await checkSyncConsolidation(engine));
-    // v0.42.7 (#1696): link-extraction lag. --source scopes it (explicit-only
-    // parse, like orphan_ratio); bare doctor stays brain-wide. Fix: extract --stale.
-    progress.heartbeat('links_extraction_lag');
-    checks.push(await checkLinksExtractionLag(engine, { sourceId: orphanRatioSourceId }));
     // v0.38 — full-cycle freshness, sibling to sync_freshness. Reads
     // last_full_cycle_at from sources.config; mirrors what autopilot's
     // per-source dispatch gate sees.
@@ -108,7 +104,6 @@ export const syncFreshnessEntry: DoctorEntry = {
     'shared_skills_sources',
     'backup_coverage',
     'sync_consolidation',
-    'links_extraction_lag',
     'cycle_freshness',
     'content_hash_duplicates',
     'code_chunk_metadata',
@@ -116,6 +111,27 @@ export const syncFreshnessEntry: DoctorEntry = {
     'db_only_collector_collision',
   ],
   run: runSyncFreshness,
+};
+
+/**
+ * v0.42.7 (#1696): link-extraction lag. --source scopes it (explicit-only parse, like orphan_ratio); bare
+ * doctor stays brain-wide. Fix: extract --stale. #6803 C2: its own entry, run with the cheap incident checks,
+ * so a slow sync-freshness scan cannot take it down with it.
+ */
+async function runLinksExtractionLag(ctx: DoctorContext): Promise<Check[]> {
+  const engine = connectedEngine(ctx);
+  const checks: Check[] = [];
+  if (engine !== null) {
+    ctx.progress.heartbeat('links_extraction_lag');
+    checks.push(await checkLinksExtractionLag(engine, { sourceId: ctx.orphanRatioSourceId }));
+  }
+  return checks;
+}
+
+export const linksExtractionLagEntry: DoctorEntry = {
+  name: 'links_extraction_lag',
+  emits: ['links_extraction_lag'],
+  run: runLinksExtractionLag,
 };
 
 async function runSearchMode(ctx: DoctorContext): Promise<Check[]> {

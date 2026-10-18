@@ -33,6 +33,9 @@ export interface FixRouting { brain?: string; source?: string }
 const BRAIN_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 const pinnableSource = (s: string) => SOURCE_ID_RE.test(s) || s === ALL_SOURCES;
 const SOURCE_SELECTORS = ['--source', '--source-id', '--all-sources', '--sources'];
+/** The flag a command's target source is routed through: `--source`, or `--source-id` where `--source` selects a mode (extract: fs|db). */
+type SourceFlag = '--source' | '--source-id';
+const SOURCE_FLAGS: readonly SourceFlag[] = ['--source', '--source-id'];
 
 const opCommands = new Map<string, { ownsSource: boolean; scopesSourceId: boolean }>();
 
@@ -55,15 +58,16 @@ export function registerOpRoutes(ops: Iterable<{ params: Record<string, unknown>
  * pinned there, and `--source` only where a thin client can send it (an op with a
  * `source_id` scope, or a CLI command the brain host's operator runs).
  */
-export function routingFlagsFor(command: string, opts: { remote?: boolean } = {}): { brain: boolean; source: boolean } {
+export function routingFlagsFor(command: string, opts: { remote?: boolean } = {}): { brain: boolean; source: SourceFlag | false } {
   const accepted = CLI_FLAG_REGISTRY[command];
   if (accepted) {
     const routed = CLI_ROUTING_FLAGS[command] ?? [];
-    return { brain: !opts.remote && accepted.includes('--brain') && routed.includes('--brain'), source: accepted.includes('--source') && routed.includes('--source') };
+    const source = SOURCE_FLAGS.find(flag => accepted.includes(flag) && routed.includes(flag)) ?? false;
+    return { brain: !opts.remote && accepted.includes('--brain') && routed.includes('--brain'), source };
   }
   const op = opCommands.get(command);
   if (!op) return { brain: false, source: false };
-  return { brain: !opts.remote, source: !op.ownsSource && (!opts.remote || op.scopesSourceId) };
+  return { brain: !opts.remote, source: !op.ownsSource && (!opts.remote || op.scopesSourceId) ? '--source' : false };
 }
 
 const hasFlag = (head: readonly string[], flag: string) => head.some(a => a === flag || a.startsWith(`${flag}=`));
@@ -76,8 +80,11 @@ export function pinRouting(argv: readonly string[], routing: FixRouting | undefi
   const head = end === -1 ? argv : argv.slice(0, end);
   const add: string[] = [];
   if (flags.brain && routing.brain && BRAIN_ID_RE.test(routing.brain) && !hasFlag(head, '--brain')) add.push('--brain', routing.brain);
-  if (flags.source && routing.source && pinnableSource(routing.source) && !SOURCE_SELECTORS.some(f => hasFlag(head, f))) {
-    add.push('--source', routing.source);
+  // Under `--source-id` a `--source` already present is that command's mode selector, not a source choice.
+  const selectors = flags.source === '--source-id' ? SOURCE_SELECTORS.filter(f => f !== '--source') : SOURCE_SELECTORS;
+  const pinnable = flags.source === '--source-id' ? SOURCE_ID_RE.test(routing.source ?? '') : pinnableSource(routing.source ?? '');
+  if (flags.source && routing.source && pinnable && !selectors.some(f => hasFlag(head, f))) {
+    add.push(flags.source, routing.source);
   }
   if (add.length === 0) return [...argv];
   return end === -1 ? [...argv, ...add] : [...argv.slice(0, end), ...add, ...argv.slice(end)];

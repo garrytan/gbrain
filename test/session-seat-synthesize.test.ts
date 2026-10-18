@@ -138,7 +138,7 @@ for (const managed of [true, false]) describe(`${managed ? 'managed' : 'unmanage
       writeSession(corpus, 'sess-plain', 'the garden watering schedule');
       const opts = { brainDir: root, sourceId, dryRun: false };
       const first = await runPhaseSynthesize(engine, opts);
-      expect(first.status).toBe('ok');
+      expect(first).toMatchObject({ status: 'ok' });
       const pages = await pagesByTranscript(engine, sourceId);
       expect([...pages.keys()].sort()).toEqual(['sess-alice.txt', 'sess-bob.txt', 'sess-plain.txt']);
       expect(pages.get('sess-alice.txt')!.frontmatter.seat).toBe('alice-desk');
@@ -153,7 +153,7 @@ for (const managed of [true, false]) describe(`${managed ? 'managed' : 'unmanage
       writeSession(corpus, 'sess-plain', 'the garden watering schedule', 'carol-desk');
       await disposePersistenceConsumer(engine);
       const replay = await runPhaseSynthesize(engine, opts);
-      expect(replay.status).toBe('ok');
+      expect(replay).toMatchObject({ status: 'ok' });
       expect(calls()).toBe(spent);
       const [{ n: jobsAfter }] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM minion_jobs');
       expect(jobsAfter).toBe(jobs);

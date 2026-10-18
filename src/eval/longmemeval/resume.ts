@@ -317,7 +317,8 @@ export interface RowSearchMeta {
 }
 
 const VECTOR_DEGRADED_STAGES: ReadonlySet<string> = new Set(['embed_unavailable', 'embed_timeout']);
-const EXPANSION_FAILED_STAGES: ReadonlySet<string> = new Set(['expansion_failed', 'expansion_partial']);
+/** `expansion_not_applied`: a `--via-operation query` row the run expected to expand that did not (via-operation.ts). */
+const EXPANSION_FAILED_STAGES: ReadonlySet<string> = new Set(['expansion_failed', 'expansion_partial', 'expansion_not_applied']);
 const RERANKER_SKIPPED_STAGES: ReadonlySet<string> = new Set(['reranker_skipped', 'rerank_passthrough', 'rerank_failed']);
 
 /**

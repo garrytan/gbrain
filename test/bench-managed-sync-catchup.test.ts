@@ -88,7 +88,7 @@ describe('feeder', () => {
   test('the gap before a write-wait read is idle, gaps before cursor saves are producing', () => {
     const records = [
       ...chain(-100, 1, ['SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2']),
-      ...chain(0, 1, ['SELECT id,slug,source_path FROM pages WHERE source_id=$1 AND source_path=ANY($2::text[])', 'WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 )',
+      ...chain(0, 1, ['SELECT id,slug,source_path,deleted_at FROM pages WHERE source_id=$1 AND source_path=ANY($2::text[])', 'WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 )',
         'SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid']),
       ...chain(200, 1, ['begin', 'UPDATE op_checkpoints SET completed_keys=$4::text::jsonb,updated_at=now() WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb', 'commit']),
       ...chain(5000, 1, ['SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[])']),

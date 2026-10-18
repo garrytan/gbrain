@@ -9,7 +9,7 @@ import type { CliDispatchContext } from '../command-table.ts';
 export async function run(args: string[], ctx: CliDispatchContext): Promise<void> {
   const { cliModuleUrl } = ctx;
   // Run smoke tests — no DB connection needed, the script handles its own checks
-  const { execSync } = await import('child_process');
+  const { execSync } = await import('../../core/spawn.ts');
   const { resolve, dirname } = await import('path');
   const { fileURLToPath } = await import('url');
   const scriptDir = dirname(fileURLToPath(cliModuleUrl));

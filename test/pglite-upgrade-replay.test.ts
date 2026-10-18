@@ -75,12 +75,12 @@ import {
 const FRESH_GOLDEN = 'pglite-upgrade-replay/catalog-before-boot';
 /**
  * Master finding (see header): functions whose body text on an upgraded brain
- * differs from a fresh install by whitespace only.
+ * differs from a fresh install by whitespace only. v248 re-creates
+ * bump_page_generation_fn from the same fragment the schema blob embeds, so its
+ * drift is gone.
  */
 const WHITESPACE_ONLY_FUNCTION_DRIFT = [
   'bump_page_generation_clock_fn()',
-  'bump_page_generation_fn()',
-  'update_page_search_vector()',
 ];
 /** The OID-churn list is already sorted identity keys; nothing volatile to scrub. */
 const recreatedObjectsNormalizer = defineNormalizer<string[]>('oid-churn-keys-v1', (keys) => [...keys].sort());

@@ -14,8 +14,14 @@ const ROOT = join(import.meta.dir, '..');
 const FLAG = ['--allow', 'protected'].join('-');
 const FLAG_RE = new RegExp(`${FLAG}(?![\\w-])`);
 
+/** Other test files create and delete scratch files under test/ while this walk runs; one that vanishes mid-walk is skipped. */
+function vanishedOk<T>(read: () => T, fallback: T): T {
+  try { return read(); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return fallback; throw error; }
+}
+
 function files(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap(e => {
+  return vanishedOk(() => readdirSync(dir, { withFileTypes: true }), []).flatMap(e => {
     const p = join(dir, e.name);
     if (e.isDirectory()) return e.name === 'node_modules' ? [] : files(p);
     return /\.(ts|tsx|mjs|js|md|json|sh)$/.test(e.name) ? [p] : [];
@@ -25,7 +31,7 @@ function files(dir: string): string[] {
 describe(`no ${FLAG} flag references`, () => {
   it('src/, skills/ and test/ never mention the nonexistent flag', () => {
     const hits = ['src', 'skills', 'test'].flatMap(d => files(join(ROOT, d))).flatMap(file =>
-      readFileSync(file, 'utf8').split('\n').flatMap((line, i) => (FLAG_RE.test(line) ? [`${relative(ROOT, file)}:${i + 1}`] : [])));
+      vanishedOk(() => readFileSync(file, 'utf8'), '').split('\n').flatMap((line, i) => (FLAG_RE.test(line) ? [`${relative(ROOT, file)}:${i + 1}`] : [])));
     expect(hits).toEqual([]);
   });
 });

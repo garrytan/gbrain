@@ -12,7 +12,7 @@ import type { SearchResult } from '../../types.ts';
 import type { FusionListEntry } from '../fusion-lists.ts';
 import { applyAliasHop } from '../alias-hop.ts';
 import { applyExactLookupTier } from '../exact-lookup.ts';
-import { dedupResults } from '../dedup.ts';
+import { dedupResults, segmentRegions } from '../dedup.ts';
 import { enforceTokenBudget } from '../token-budget.ts';
 import { pushDegraded, stampBudgetStage } from './degraded.ts';
 import { stampEvidence } from '../evidence.ts';
@@ -59,7 +59,7 @@ export async function searchWithoutEmbeddings(
   // T3/T4 — alias hop + evidence stamp even without an embedding provider
   // (the named-thing fix is most valuable exactly when vector is unavailable).
   trace?.observe('fused', noEmbedResults);
-  const noEmbedDeduped = dedupResults(noEmbedResults);
+  const noEmbedDeduped = dedupResults(noEmbedResults, { regions: await segmentRegions(engine, noEmbedResults) });
   trace?.observe('deduped', noEmbedDeduped);
   const noEmbedPreExact = await applyAliasHop(engine, noEmbedDeduped, query, aliasHopOpts);
   // #1663 — structural exact-lookup tier (slug / exact-title identity).
@@ -180,7 +180,7 @@ export async function searchVectorFallback(
     fallbackResults = await applyFeedbackStage(engine, fallbackResults, { reranked: false });
   }
   trace?.observe('fused', fallbackResults);
-  const kwDeduped = dedupResults(fallbackResults);
+  const kwDeduped = dedupResults(fallbackResults, { regions: await segmentRegions(engine, fallbackResults) });
   trace?.observe('deduped', kwDeduped);
   const kwPreExact = await applyAliasHop(engine, kwDeduped, query, aliasHopOpts);
   // #1663 — structural exact-lookup tier (slug / exact-title identity).

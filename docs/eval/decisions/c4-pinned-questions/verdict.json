@@ -1,0 +1,2482 @@
+{
+  "decision_id": "c4-pinned-questions",
+  "plan": "MEMORY_PROOF_WAVE C4 + B5",
+  "stage": "dev",
+  "decided_at": "2026-10-05T19:30:00Z",
+  "measured_build": "garrytan/gbrain@1384a0db",
+  "deciding_run": "run_3",
+  "preregistration": "docs/eval/decisions/c4-pinned-questions/README.md, pushed in garrytan/gbrain@e17258eb before any run-3 cell",
+  "safety_gate": {
+    "status": "pass",
+    "scenarios": 33,
+    "engines": {
+      "pglite": "33/33",
+      "postgres": "33/33"
+    },
+    "full_ci": "bun run ci:ubicloud green on garrytan/gbrain@170422f4 (capy/mpw-integration, merged with master c9ba7782): 3475 items, 0 failed",
+    "appended_workload_leakage": {
+      "probes": 48,
+      "leaks": 0,
+      "surfaces": [
+        "search",
+        "get_page",
+        "context_pack",
+        "questions_status"
+      ],
+      "grant": "restricted MCP grant that cannot read private pages"
+    },
+    "run_3_leakage": {
+      "probes": 144,
+      "leaks": 0,
+      "seeds": [
+        42,
+        7,
+        1234
+      ],
+      "surfaces": [
+        "search",
+        "get_page",
+        "context_pack",
+        "questions_status"
+      ],
+      "embeddings": "voyage:voyage-4"
+    }
+  },
+  "benefit_gate": {
+    "status": "tie",
+    "against": {
+      "anchored_reader": "tie",
+      "query_reader": "pass",
+      "think": "think more accurate (1.000), pinned 47x cheaper per correct answer at 100 reads per write"
+    },
+    "rule": "Pinned (default refresh model) beats the anchored control if, in every seed, its accuracy is higher or its mean freshness lag is lower, with zero leaks across seeds.",
+    "reason": "Pinned beat the anchored control in seeds 7 and 1234 but not in seed 42 (0.972 vs 0.986 accuracy, 0.033 vs 0.017 lag), so the rule fails without a leak: a tie. Mean accuracy 0.981 pinned vs 0.968 control at equal tokens; the control at full evidence scored 1.000, as did think. The anchoring is the measured win: at equal tokens it lifts query+reader from 0.884 to 0.968 accuracy and stale-wrong from 0.116 to 0."
+  },
+  "overall": "opt_in",
+  "default_decision": "Pinned questions ship opt-in: gbrain creates no pin by itself, pinning a question is the owner consent for its paid refresh, and the standing_questions phase and context_pack delivery stay on for pins that exist (no setting changes). The anchored retrieval ships in pinned refresh (retrieveEvidence). Recommended next applications, each behind its own measured gate: query/search for entity-scoped latest-state questions, think gather for current-state questions about one entity, and context_pack entity cards.",
+  "cost_note": "Pinned remains the cheapest correct answer for an entity question read often: at 100 reads per write $0.00057 per correct answer vs $0.00152 for the anchored reader at equal tokens and $0.00284 at full evidence; break-even about 110 reads per pin against the equal-token anchored reader and about 46 against the full-evidence one.",
+  "caveats": [
+    "Synthetic seeded workload, 6 entities, 3 seeds; dev stage.",
+    "Every arm except query+reader at equal tokens is at or near the accuracy ceiling with embeddings on, so differences between them are within seed-to-seed variation.",
+    "Voyage embedding and rerank calls are not metered by the harness spend guard."
+  ],
+  "metered_spend_usd": 11.8061,
+  "run_3": {
+    "workload": "appended",
+    "seeds": [
+      42,
+      7,
+      1234
+    ],
+    "workload_hashes": {
+      "42": "ce95164d25dd0cb8",
+      "7": "0870f0ca0ea16cb2",
+      "1234": "67c92f500e87c0b5"
+    },
+    "entities": 6,
+    "batches": 12,
+    "reader_model": "anthropic:claude-sonnet-5-5",
+    "think_model": "anthropic:claude-opus-4-7",
+    "refresh_models": [
+      "anthropic:claude-opus-4-7",
+      "anthropic:claude-sonnet-5-5"
+    ],
+    "embedding_model": "voyage:voyage-4",
+    "search_mode": "balanced (default)",
+    "frozen_reads_per_write": [
+      1,
+      10,
+      100
+    ],
+    "metered_spend_usd": 10.9486,
+    "extra_spend_usd": {
+      "one_entity_smoke": 0.3774,
+      "sonnet_refresh_replay": 0.48
+    },
+    "refresh_failures": 0,
+    "leakage": {
+      "probes": 144,
+      "leaks": []
+    },
+    "decision": {
+      "control": "anchored_reader",
+      "refresh_model": "anthropic:claude-opus-4-7",
+      "seeds": [
+        {
+          "seed": 42,
+          "leaks": 0,
+          "pinned_accuracy": 0.9722222222222222,
+          "control_accuracy": 0.9861111111111112,
+          "pinned_lag": 0.03333333333333333,
+          "control_lag": 0.016666666666666666,
+          "beats_accuracy": false,
+          "beats_freshness": false,
+          "beats": false
+        },
+        {
+          "seed": 7,
+          "leaks": 0,
+          "pinned_accuracy": 1,
+          "control_accuracy": 0.9722222222222222,
+          "pinned_lag": 0,
+          "control_lag": 0.03333333333333333,
+          "beats_accuracy": true,
+          "beats_freshness": true,
+          "beats": true
+        },
+        {
+          "seed": 1234,
+          "leaks": 0,
+          "pinned_accuracy": 0.9722222222222222,
+          "control_accuracy": 0.9444444444444444,
+          "pinned_lag": 0.03333333333333333,
+          "control_lag": 0.06666666666666667,
+          "beats_accuracy": true,
+          "beats_freshness": true,
+          "beats": true
+        }
+      ],
+      "leaks": 0,
+      "outcome": "tie_anchored_retrieval_wins"
+    },
+    "aggregate": [
+      {
+        "reads_per_write": 1,
+        "arm": "pinned",
+        "refresh_model": "anthropic:claude-opus-4-7",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.9814814814814815,
+          "min": 0.9722222222222222,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0.022222222222222223,
+          "min": 0,
+          "max": 0.03333333333333333
+        },
+        "correct_at_change": {
+          "mean": 0.9777777777777779,
+          "min": 0.9666666666666667,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0.6485383333333333,
+          "min": 0.647,
+          "max": 0.6512099999999998
+        },
+        "usd_per_correct": {
+          "mean": 0.009655048809523809,
+          "min": 0.009463375,
+          "max": 0.009788914285714283
+        }
+      },
+      {
+        "reads_per_write": 1,
+        "arm": "query_reader",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.8842592592592592,
+          "min": 0.875,
+          "max": 0.9027777777777778
+        },
+        "stale_wrong_rate": {
+          "mean": 0.11574074074074074,
+          "min": 0.09722222222222222,
+          "max": 0.125
+        },
+        "mean_lag_batches": {
+          "mean": 0.13888888888888887,
+          "min": 0.11666666666666667,
+          "max": 0.15
+        },
+        "correct_at_change": {
+          "mean": 0.8611111111111112,
+          "min": 0.85,
+          "max": 0.8833333333333333
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.0013262443630443629,
+          "min": 0.0012799076923076917,
+          "max": 0.0013735555555555565
+        }
+      },
+      {
+        "reads_per_write": 1,
+        "arm": "query_reader_full",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.9907407407407408,
+          "min": 0.9722222222222222,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0.009259259259259259,
+          "min": 0,
+          "max": 0.027777777777777776
+        },
+        "mean_lag_batches": {
+          "mean": 0.011111111111111112,
+          "min": 0,
+          "max": 0.03333333333333333
+        },
+        "correct_at_change": {
+          "mean": 0.9888888888888889,
+          "min": 0.9666666666666667,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.0023105589947089947,
+          "min": 0.002281277777777778,
+          "max": 0.002357371428571429
+        }
+      },
+      {
+        "reads_per_write": 1,
+        "arm": "anchored_reader",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.9675925925925926,
+          "min": 0.9444444444444444,
+          "max": 0.9861111111111112
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0.03888888888888889,
+          "min": 0.016666666666666666,
+          "max": 0.06666666666666667
+        },
+        "correct_at_change": {
+          "mean": 0.9611111111111111,
+          "min": 0.9333333333333333,
+          "max": 0.9833333333333333
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.0015192773503767704,
+          "min": 0.0014694285714285718,
+          "max": 0.0016168823529411761
+        }
+      },
+      {
+        "reads_per_write": 1,
+        "arm": "anchored_reader_full",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 1,
+          "min": 1,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "correct_at_change": {
+          "mean": 1,
+          "min": 1,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.0028351759259259263,
+          "min": 0.0028330833333333333,
+          "max": 0.002836916666666667
+        }
+      },
+      {
+        "reads_per_write": 1,
+        "arm": "think",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 1,
+          "min": 1,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "correct_at_change": {
+          "mean": 1,
+          "min": 1,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.026647175925925925,
+          "min": 0.026231388888888884,
+          "max": 0.026964513888888895
+        }
+      },
+      {
+        "reads_per_write": 1,
+        "arm": "pinned",
+        "refresh_model": "anthropic:claude-sonnet-5-5",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.9953703703703703,
+          "min": 0.9861111111111112,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0.005555555555555556,
+          "min": 0,
+          "max": 0.016666666666666666
+        },
+        "correct_at_change": {
+          "mean": 0.9944444444444445,
+          "min": 0.9833333333333333,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0.43364,
+          "min": 0.430802,
+          "max": 0.43632
+        },
+        "usd_per_correct": {
+          "mean": 0.0068331867501304116,
+          "min": 0.006759527777777778,
+          "max": 0.006914338028169015
+        }
+      },
+      {
+        "reads_per_write": 10,
+        "arm": "pinned",
+        "refresh_model": "anthropic:claude-opus-4-7",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.9814814814814815,
+          "min": 0.9722222222222222,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0.022222222222222223,
+          "min": 0,
+          "max": 0.03333333333333333
+        },
+        "correct_at_change": {
+          "mean": 0.9777777777777779,
+          "min": 0.9666666666666667,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0.6485383333333333,
+          "min": 0.647,
+          "max": 0.6512099999999998
+        },
+        "usd_per_correct": {
+          "mean": 0.001393770833333333,
+          "min": 0.0013708124999999999,
+          "max": 0.0014162142857142854
+        }
+      },
+      {
+        "reads_per_write": 10,
+        "arm": "query_reader",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.8842592592592592,
+          "min": 0.875,
+          "max": 0.9027777777777778
+        },
+        "stale_wrong_rate": {
+          "mean": 0.11574074074074074,
+          "min": 0.09722222222222222,
+          "max": 0.125
+        },
+        "mean_lag_batches": {
+          "mean": 0.13888888888888887,
+          "min": 0.11666666666666667,
+          "max": 0.15
+        },
+        "correct_at_change": {
+          "mean": 0.8611111111111112,
+          "min": 0.85,
+          "max": 0.8833333333333333
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.0013262443630443629,
+          "min": 0.001279907692307692,
+          "max": 0.0013735555555555565
+        }
+      },
+      {
+        "reads_per_write": 10,
+        "arm": "query_reader_full",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.9907407407407408,
+          "min": 0.9722222222222222,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0.009259259259259259,
+          "min": 0,
+          "max": 0.027777777777777776
+        },
+        "mean_lag_batches": {
+          "mean": 0.011111111111111112,
+          "min": 0,
+          "max": 0.03333333333333333
+        },
+        "correct_at_change": {
+          "mean": 0.9888888888888889,
+          "min": 0.9666666666666667,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.0023105589947089947,
+          "min": 0.002281277777777778,
+          "max": 0.002357371428571429
+        }
+      },
+      {
+        "reads_per_write": 10,
+        "arm": "anchored_reader",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.9675925925925926,
+          "min": 0.9444444444444444,
+          "max": 0.9861111111111112
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0.03888888888888889,
+          "min": 0.016666666666666666,
+          "max": 0.06666666666666667
+        },
+        "correct_at_change": {
+          "mean": 0.9611111111111111,
+          "min": 0.9333333333333333,
+          "max": 0.9833333333333333
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.0015192773503767704,
+          "min": 0.0014694285714285716,
+          "max": 0.0016168823529411761
+        }
+      },
+      {
+        "reads_per_write": 10,
+        "arm": "anchored_reader_full",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 1,
+          "min": 1,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "correct_at_change": {
+          "mean": 1,
+          "min": 1,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.0028351759259259255,
+          "min": 0.002833083333333333,
+          "max": 0.002836916666666667
+        }
+      },
+      {
+        "reads_per_write": 10,
+        "arm": "think",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 1,
+          "min": 1,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "correct_at_change": {
+          "mean": 1,
+          "min": 1,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.02664717592592593,
+          "min": 0.026231388888888887,
+          "max": 0.026964513888888895
+        }
+      },
+      {
+        "reads_per_write": 10,
+        "arm": "pinned",
+        "refresh_model": "anthropic:claude-sonnet-5-5",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.9953703703703703,
+          "min": 0.9861111111111112,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0.005555555555555556,
+          "min": 0,
+          "max": 0.016666666666666666
+        },
+        "correct_at_change": {
+          "mean": 0.9944444444444445,
+          "min": 0.9833333333333333,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0.43364,
+          "min": 0.430802,
+          "max": 0.43632
+        },
+        "usd_per_correct": {
+          "mean": 0.001387229121022431,
+          "min": 0.0013716944444444447,
+          "max": 0.0014154901408450701
+        }
+      },
+      {
+        "reads_per_write": 100,
+        "arm": "pinned",
+        "refresh_model": "anthropic:claude-opus-4-7",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.9814814814814815,
+          "min": 0.9722222222222222,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0.022222222222222223,
+          "min": 0,
+          "max": 0.03333333333333333
+        },
+        "correct_at_change": {
+          "mean": 0.9777777777777779,
+          "min": 0.9666666666666667,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0.6485383333333333,
+          "min": 0.647,
+          "max": 0.6512099999999998
+        },
+        "usd_per_correct": {
+          "mean": 0.0005676430357142856,
+          "min": 0.0005615562499999998,
+          "max": 0.0005789442857142855
+        }
+      },
+      {
+        "reads_per_write": 100,
+        "arm": "query_reader",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.8842592592592592,
+          "min": 0.875,
+          "max": 0.9027777777777778
+        },
+        "stale_wrong_rate": {
+          "mean": 0.11574074074074074,
+          "min": 0.09722222222222222,
+          "max": 0.125
+        },
+        "mean_lag_batches": {
+          "mean": 0.13888888888888887,
+          "min": 0.11666666666666667,
+          "max": 0.15
+        },
+        "correct_at_change": {
+          "mean": 0.8611111111111112,
+          "min": 0.85,
+          "max": 0.8833333333333333
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.0013262443630443629,
+          "min": 0.0012799076923076917,
+          "max": 0.0013735555555555562
+        }
+      },
+      {
+        "reads_per_write": 100,
+        "arm": "query_reader_full",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.9907407407407408,
+          "min": 0.9722222222222222,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0.009259259259259259,
+          "min": 0,
+          "max": 0.027777777777777776
+        },
+        "mean_lag_batches": {
+          "mean": 0.011111111111111112,
+          "min": 0,
+          "max": 0.03333333333333333
+        },
+        "correct_at_change": {
+          "mean": 0.9888888888888889,
+          "min": 0.9666666666666667,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.0023105589947089947,
+          "min": 0.002281277777777778,
+          "max": 0.0023573714285714292
+        }
+      },
+      {
+        "reads_per_write": 100,
+        "arm": "anchored_reader",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.9675925925925926,
+          "min": 0.9444444444444444,
+          "max": 0.9861111111111112
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0.03888888888888889,
+          "min": 0.016666666666666666,
+          "max": 0.06666666666666667
+        },
+        "correct_at_change": {
+          "mean": 0.9611111111111111,
+          "min": 0.9333333333333333,
+          "max": 0.9833333333333333
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.0015192773503767704,
+          "min": 0.0014694285714285716,
+          "max": 0.0016168823529411761
+        }
+      },
+      {
+        "reads_per_write": 100,
+        "arm": "anchored_reader_full",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 1,
+          "min": 1,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "correct_at_change": {
+          "mean": 1,
+          "min": 1,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.0028351759259259263,
+          "min": 0.0028330833333333333,
+          "max": 0.002836916666666667
+        }
+      },
+      {
+        "reads_per_write": 100,
+        "arm": "think",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 1,
+          "min": 1,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "correct_at_change": {
+          "mean": 1,
+          "min": 1,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.02664717592592593,
+          "min": 0.026231388888888884,
+          "max": 0.026964513888888895
+        }
+      },
+      {
+        "reads_per_write": 100,
+        "arm": "pinned",
+        "refresh_model": "anthropic:claude-sonnet-5-5",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.9953703703703703,
+          "min": 0.9861111111111112,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0.005555555555555556,
+          "min": 0,
+          "max": 0.016666666666666666
+        },
+        "correct_at_change": {
+          "mean": 0.9944444444444445,
+          "min": 0.9833333333333333,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0.43364,
+          "min": 0.430802,
+          "max": 0.43632
+        },
+        "usd_per_correct": {
+          "mean": 0.0008426333581116327,
+          "min": 0.0008262944444444446,
+          "max": 0.0008656053521126758
+        }
+      }
+    ],
+    "per_seed": [
+      {
+        "seed": 42,
+        "workload_hash": "ce95164d25dd0cb8",
+        "leakage": {
+          "probes": 48,
+          "leaks": []
+        },
+        "summary": [
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-opus-4-7",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 0.9722222222222222,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.647,
+            "read_usd": 0.032899999999999985,
+            "usd": 0.6799,
+            "usd_per_correct": 0.009712857142857143,
+            "break_even_reads_per_pin": 145,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.03333333333333333,
+              "correct_at_change": 0.9666666666666667
+            }
+          },
+          {
+            "arm": "query_reader",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 0.875,
+            "stale_wrong_rate": 0.125,
+            "lifecycle_usd": 0,
+            "read_usd": 0.08653400000000006,
+            "usd": 0.08653400000000006,
+            "usd_per_correct": 0.0013735555555555565,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.15,
+              "correct_at_change": 0.85
+            }
+          },
+          {
+            "arm": "query_reader_full",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 0.9722222222222222,
+            "stale_wrong_rate": 0.027777777777777776,
+            "lifecycle_usd": 0,
+            "read_usd": 0.16501600000000002,
+            "usd": 0.16501600000000002,
+            "usd_per_correct": 0.002357371428571429,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.03333333333333333,
+              "correct_at_change": 0.9666666666666667
+            }
+          },
+          {
+            "arm": "anchored_reader",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 0.9861111111111112,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 0.104478,
+            "usd": 0.104478,
+            "usd_per_correct": 0.0014715211267605634,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.016666666666666666,
+              "correct_at_change": 0.9833333333333333
+            }
+          },
+          {
+            "arm": "anchored_reader_full",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 0.20425800000000002,
+            "usd": 0.20425800000000002,
+            "usd_per_correct": 0.002836916666666667,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "think",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 1.8886599999999996,
+            "usd": 1.8886599999999996,
+            "usd_per_correct": 0.026231388888888884,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-sonnet-5-5",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 0.9861111111111112,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.433798,
+            "read_usd": 0.05711999999999998,
+            "usd": 0.490918,
+            "usd_per_correct": 0.006914338028169015,
+            "break_even_reads_per_pin": 177,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.016666666666666666,
+              "correct_at_change": 0.9833333333333333
+            }
+          },
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-opus-4-7",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 0.9722222222222222,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.647,
+            "read_usd": 0.32899999999999985,
+            "usd": 0.9759999999999999,
+            "usd_per_correct": 0.001394285714285714,
+            "break_even_reads_per_pin": 145,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.03333333333333333,
+              "correct_at_change": 0.9666666666666667
+            }
+          },
+          {
+            "arm": "query_reader",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 0.875,
+            "stale_wrong_rate": 0.125,
+            "lifecycle_usd": 0,
+            "read_usd": 0.8653400000000006,
+            "usd": 0.8653400000000006,
+            "usd_per_correct": 0.0013735555555555565,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.15,
+              "correct_at_change": 0.85
+            }
+          },
+          {
+            "arm": "query_reader_full",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 0.9722222222222222,
+            "stale_wrong_rate": 0.027777777777777776,
+            "lifecycle_usd": 0,
+            "read_usd": 1.6501600000000003,
+            "usd": 1.6501600000000003,
+            "usd_per_correct": 0.002357371428571429,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.03333333333333333,
+              "correct_at_change": 0.9666666666666667
+            }
+          },
+          {
+            "arm": "anchored_reader",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 0.9861111111111112,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 1.04478,
+            "usd": 1.04478,
+            "usd_per_correct": 0.0014715211267605634,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.016666666666666666,
+              "correct_at_change": 0.9833333333333333
+            }
+          },
+          {
+            "arm": "anchored_reader_full",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 2.04258,
+            "usd": 2.04258,
+            "usd_per_correct": 0.002836916666666667,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "think",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 18.886599999999998,
+            "usd": 18.886599999999998,
+            "usd_per_correct": 0.026231388888888887,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-sonnet-5-5",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 0.9861111111111112,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.433798,
+            "read_usd": 0.5711999999999998,
+            "usd": 1.0049979999999998,
+            "usd_per_correct": 0.0014154901408450701,
+            "break_even_reads_per_pin": 177,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.016666666666666666,
+              "correct_at_change": 0.9833333333333333
+            }
+          },
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-opus-4-7",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 0.9722222222222222,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.647,
+            "read_usd": 3.2899999999999983,
+            "usd": 3.9369999999999985,
+            "usd_per_correct": 0.0005624285714285713,
+            "break_even_reads_per_pin": 145,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.03333333333333333,
+              "correct_at_change": 0.9666666666666667
+            }
+          },
+          {
+            "arm": "query_reader",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 0.875,
+            "stale_wrong_rate": 0.125,
+            "lifecycle_usd": 0,
+            "read_usd": 8.653400000000005,
+            "usd": 8.653400000000005,
+            "usd_per_correct": 0.0013735555555555562,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.15,
+              "correct_at_change": 0.85
+            }
+          },
+          {
+            "arm": "query_reader_full",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 0.9722222222222222,
+            "stale_wrong_rate": 0.027777777777777776,
+            "lifecycle_usd": 0,
+            "read_usd": 16.501600000000003,
+            "usd": 16.501600000000003,
+            "usd_per_correct": 0.0023573714285714292,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.03333333333333333,
+              "correct_at_change": 0.9666666666666667
+            }
+          },
+          {
+            "arm": "anchored_reader",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 0.9861111111111112,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 10.447799999999999,
+            "usd": 10.447799999999999,
+            "usd_per_correct": 0.0014715211267605634,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.016666666666666666,
+              "correct_at_change": 0.9833333333333333
+            }
+          },
+          {
+            "arm": "anchored_reader_full",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 20.425800000000002,
+            "usd": 20.425800000000002,
+            "usd_per_correct": 0.002836916666666667,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "think",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 188.86599999999996,
+            "usd": 188.86599999999996,
+            "usd_per_correct": 0.026231388888888884,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-sonnet-5-5",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 0.9861111111111112,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.433798,
+            "read_usd": 5.711999999999998,
+            "usd": 6.145797999999998,
+            "usd_per_correct": 0.0008656053521126758,
+            "break_even_reads_per_pin": 177,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.016666666666666666,
+              "correct_at_change": 0.9833333333333333
+            }
+          }
+        ]
+      },
+      {
+        "seed": 7,
+        "workload_hash": "0870f0ca0ea16cb2",
+        "leakage": {
+          "probes": 48,
+          "leaks": []
+        },
+        "summary": [
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-opus-4-7",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.647405,
+            "read_usd": 0.03395799999999999,
+            "usd": 0.6813629999999999,
+            "usd_per_correct": 0.009463375,
+            "break_even_reads_per_pin": 158,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "query_reader",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 0.9027777777777778,
+            "stale_wrong_rate": 0.09722222222222222,
+            "lifecycle_usd": 0,
+            "read_usd": 0.08319399999999996,
+            "usd": 0.08319399999999996,
+            "usd_per_correct": 0.0012799076923076917,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.11666666666666667,
+              "correct_at_change": 0.8833333333333333
+            }
+          },
+          {
+            "arm": "query_reader_full",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 0.16509799999999997,
+            "usd": 0.16509799999999997,
+            "usd_per_correct": 0.0022930277777777775,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "anchored_reader",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 0.9722222222222222,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 0.10286000000000002,
+            "usd": 0.10286000000000002,
+            "usd_per_correct": 0.0014694285714285718,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.03333333333333333,
+              "correct_at_change": 0.9666666666666667
+            }
+          },
+          {
+            "arm": "anchored_reader_full",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 0.20415799999999998,
+            "usd": 0.20415799999999998,
+            "usd_per_correct": 0.0028355277777777775,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "think",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 1.9414450000000005,
+            "usd": 1.9414450000000005,
+            "usd_per_correct": 0.026964513888888895,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-sonnet-5-5",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.430802,
+            "read_usd": 0.055884000000000024,
+            "usd": 0.48668600000000006,
+            "usd_per_correct": 0.006759527777777778,
+            "break_even_reads_per_pin": 190,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-opus-4-7",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.647405,
+            "read_usd": 0.3395799999999999,
+            "usd": 0.9869849999999999,
+            "usd_per_correct": 0.0013708124999999999,
+            "break_even_reads_per_pin": 158,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "query_reader",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 0.9027777777777778,
+            "stale_wrong_rate": 0.09722222222222222,
+            "lifecycle_usd": 0,
+            "read_usd": 0.8319399999999997,
+            "usd": 0.8319399999999997,
+            "usd_per_correct": 0.001279907692307692,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.11666666666666667,
+              "correct_at_change": 0.8833333333333333
+            }
+          },
+          {
+            "arm": "query_reader_full",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 1.65098,
+            "usd": 1.65098,
+            "usd_per_correct": 0.0022930277777777775,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "anchored_reader",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 0.9722222222222222,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 1.0286000000000002,
+            "usd": 1.0286000000000002,
+            "usd_per_correct": 0.0014694285714285716,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.03333333333333333,
+              "correct_at_change": 0.9666666666666667
+            }
+          },
+          {
+            "arm": "anchored_reader_full",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 2.0415799999999997,
+            "usd": 2.0415799999999997,
+            "usd_per_correct": 0.0028355277777777775,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "think",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 19.414450000000006,
+            "usd": 19.414450000000006,
+            "usd_per_correct": 0.026964513888888895,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-sonnet-5-5",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.430802,
+            "read_usd": 0.5588400000000002,
+            "usd": 0.9896420000000002,
+            "usd_per_correct": 0.001374502777777778,
+            "break_even_reads_per_pin": 190,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-opus-4-7",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.647405,
+            "read_usd": 3.395799999999999,
+            "usd": 4.043204999999999,
+            "usd_per_correct": 0.0005615562499999998,
+            "break_even_reads_per_pin": 158,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "query_reader",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 0.9027777777777778,
+            "stale_wrong_rate": 0.09722222222222222,
+            "lifecycle_usd": 0,
+            "read_usd": 8.319399999999996,
+            "usd": 8.319399999999996,
+            "usd_per_correct": 0.0012799076923076917,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.11666666666666667,
+              "correct_at_change": 0.8833333333333333
+            }
+          },
+          {
+            "arm": "query_reader_full",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 16.5098,
+            "usd": 16.5098,
+            "usd_per_correct": 0.0022930277777777775,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "anchored_reader",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 0.9722222222222222,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 10.286000000000001,
+            "usd": 10.286000000000001,
+            "usd_per_correct": 0.0014694285714285716,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.03333333333333333,
+              "correct_at_change": 0.9666666666666667
+            }
+          },
+          {
+            "arm": "anchored_reader_full",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 20.415799999999997,
+            "usd": 20.415799999999997,
+            "usd_per_correct": 0.0028355277777777775,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "think",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 194.14450000000005,
+            "usd": 194.14450000000005,
+            "usd_per_correct": 0.026964513888888895,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-sonnet-5-5",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.430802,
+            "read_usd": 5.588400000000002,
+            "usd": 6.019202000000002,
+            "usd_per_correct": 0.000836000277777778,
+            "break_even_reads_per_pin": 190,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          }
+        ]
+      },
+      {
+        "seed": 1234,
+        "workload_hash": "67c92f500e87c0b5",
+        "leakage": {
+          "probes": 48,
+          "leaks": []
+        },
+        "summary": [
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-opus-4-7",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 0.9722222222222222,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.6512099999999998,
+            "read_usd": 0.03401399999999999,
+            "usd": 0.6852239999999998,
+            "usd_per_correct": 0.009788914285714283,
+            "break_even_reads_per_pin": 158,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.03333333333333333,
+              "correct_at_change": 0.9666666666666667
+            }
+          },
+          {
+            "arm": "query_reader",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 0.875,
+            "stale_wrong_rate": 0.125,
+            "lifecycle_usd": 0,
+            "read_usd": 0.08349199999999998,
+            "usd": 0.08349199999999998,
+            "usd_per_correct": 0.001325269841269841,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.15,
+              "correct_at_change": 0.85
+            }
+          },
+          {
+            "arm": "query_reader_full",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 0.164252,
+            "usd": 0.164252,
+            "usd_per_correct": 0.002281277777777778,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "anchored_reader",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 0.9444444444444444,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 0.10994799999999998,
+            "usd": 0.10994799999999998,
+            "usd_per_correct": 0.0016168823529411761,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.06666666666666667,
+              "correct_at_change": 0.9333333333333333
+            }
+          },
+          {
+            "arm": "anchored_reader_full",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 0.203982,
+            "usd": 0.203982,
+            "usd_per_correct": 0.0028330833333333333,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "think",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 1.925685,
+            "usd": 1.925685,
+            "usd_per_correct": 0.026745625000000002,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-sonnet-5-5",
+            "reads_per_write": 1,
+            "reads": 72,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.43632,
+            "read_usd": 0.05513000000000001,
+            "usd": 0.49145,
+            "usd_per_correct": 0.006825694444444444,
+            "break_even_reads_per_pin": 185,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-opus-4-7",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 0.9722222222222222,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.6512099999999998,
+            "read_usd": 0.3401399999999999,
+            "usd": 0.9913499999999997,
+            "usd_per_correct": 0.0014162142857142854,
+            "break_even_reads_per_pin": 158,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.03333333333333333,
+              "correct_at_change": 0.9666666666666667
+            }
+          },
+          {
+            "arm": "query_reader",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 0.875,
+            "stale_wrong_rate": 0.125,
+            "lifecycle_usd": 0,
+            "read_usd": 0.8349199999999998,
+            "usd": 0.8349199999999998,
+            "usd_per_correct": 0.001325269841269841,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.15,
+              "correct_at_change": 0.85
+            }
+          },
+          {
+            "arm": "query_reader_full",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 1.6425200000000002,
+            "usd": 1.6425200000000002,
+            "usd_per_correct": 0.002281277777777778,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "anchored_reader",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 0.9444444444444444,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 1.0994799999999998,
+            "usd": 1.0994799999999998,
+            "usd_per_correct": 0.0016168823529411761,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.06666666666666667,
+              "correct_at_change": 0.9333333333333333
+            }
+          },
+          {
+            "arm": "anchored_reader_full",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 2.0398199999999997,
+            "usd": 2.0398199999999997,
+            "usd_per_correct": 0.002833083333333333,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "think",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 19.25685,
+            "usd": 19.25685,
+            "usd_per_correct": 0.026745625,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-sonnet-5-5",
+            "reads_per_write": 10,
+            "reads": 720,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.43632,
+            "read_usd": 0.5513000000000001,
+            "usd": 0.9876200000000002,
+            "usd_per_correct": 0.0013716944444444447,
+            "break_even_reads_per_pin": 185,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-opus-4-7",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 0.9722222222222222,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.6512099999999998,
+            "read_usd": 3.401399999999999,
+            "usd": 4.052609999999999,
+            "usd_per_correct": 0.0005789442857142855,
+            "break_even_reads_per_pin": 158,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.03333333333333333,
+              "correct_at_change": 0.9666666666666667
+            }
+          },
+          {
+            "arm": "query_reader",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 0.875,
+            "stale_wrong_rate": 0.125,
+            "lifecycle_usd": 0,
+            "read_usd": 8.349199999999998,
+            "usd": 8.349199999999998,
+            "usd_per_correct": 0.001325269841269841,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.15,
+              "correct_at_change": 0.85
+            }
+          },
+          {
+            "arm": "query_reader_full",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 16.4252,
+            "usd": 16.4252,
+            "usd_per_correct": 0.002281277777777778,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "anchored_reader",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 0.9444444444444444,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 10.994799999999998,
+            "usd": 10.994799999999998,
+            "usd_per_correct": 0.0016168823529411761,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.06666666666666667,
+              "correct_at_change": 0.9333333333333333
+            }
+          },
+          {
+            "arm": "anchored_reader_full",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 20.3982,
+            "usd": 20.3982,
+            "usd_per_correct": 0.0028330833333333333,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "think",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0,
+            "read_usd": 192.56850000000003,
+            "usd": 192.56850000000003,
+            "usd_per_correct": 0.026745625000000006,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          },
+          {
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-sonnet-5-5",
+            "reads_per_write": 100,
+            "reads": 7200,
+            "accuracy": 1,
+            "stale_wrong_rate": 0,
+            "lifecycle_usd": 0.43632,
+            "read_usd": 5.513000000000001,
+            "usd": 5.949320000000001,
+            "usd_per_correct": 0.0008262944444444446,
+            "break_even_reads_per_pin": 185,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0,
+              "correct_at_change": 1
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "run_2": {
+    "measured_build": "garrytan/gbrain@baadfc04064826e8c60dd8e67e0a55bf96f95c3f",
+    "benefit_gate": {
+      "status": "pass",
+      "against": {
+        "query_reader": "pass",
+        "think": "pass"
+      },
+      "reason": "On the appended-corrections workload pinned answers with the default model were correct on 98.6% of reads versus 51.4% for query+reader and 79.2% for think, with 0% stale-wrong versus 48.6% and 20.8%. Mean freshness lag was 0.017 write batches versus 0.583 and 0.25. Zero leaks in 48 restricted-grant probes. Decision rule (set before the run): pinned beating query+reader on accuracy or freshness without leakage means default-on; it beats it on both."
+    },
+    "overall": "default_on",
+    "default_decision": "Pinned questions ship on. The standing_questions phase, publishing and context_pack delivery of fresh pinned answers are on by default (cycle.standing_questions.enabled=true, publish_mode=publish). Pinning a question remains the consent for its paid refresh, as plan C1 specifies, so no pin is created automatically and a brain with no pins makes no model call. Migrated dream.auto_think questions keep their old enabled, budget and auto_commit state. No shipped default changes relative to run 1; the verdict label moves from opt_in to default_on.",
+    "caveats": [
+      "Retrieval asymmetry: the run-2 build anchors pinned refresh retrieval on the pin scope (entity page first, then pages that link to or name it, newest first). query+reader uses ordinary keyword query retrieval and think its own gather, both without that anchoring. The accuracy gap is partly this retrieval difference; a pin has a scope and an ad hoc query does not.",
+      "Keyword-only retrieval for every arm: the harness brain has no embedding key.",
+      "Cost: pinned with the default model costs more total dollars than query+reader until about 147 reads per pin (163 with the Sonnet refresh model). Per correct answer it costs 4.1x query+reader at 1 read per write, 0.59x at 10 and 0.24x at 100.",
+      "Withdrawal is the weakest event: 1 of 6 (default model) and 2 of 6 (Sonnet) pinned answers missed the revert after forget in batch 7.",
+      "Sonnet refresh returned non-JSON twice in 72 attempts (model_output_not_json); the pin kept its previous answer, which counts against it.",
+      "One seed, 6 entities; dev stage."
+    ],
+    "metered_spend_usd": 5.9164,
+    "run_2": {
+      "workload": "appended",
+      "workload_hash": "ce95164d25dd0cb8",
+      "seed": 42,
+      "entities": 6,
+      "batches": 12,
+      "states": 72,
+      "reader_model": "anthropic:claude-sonnet-5-5",
+      "think_model": "anthropic:claude-opus-4-7",
+      "refresh_models": [
+        "anthropic:claude-opus-4-7",
+        "anthropic:claude-sonnet-5-5"
+      ],
+      "frozen_reads_per_write": [
+        1,
+        10,
+        100
+      ],
+      "metered_spend_usd": 2.9839,
+      "leakage": {
+        "probes": 48,
+        "leaks": []
+      },
+      "refresh_failures": {
+        "model_output_not_json": 2,
+        "refresh_model": "anthropic:claude-sonnet-5-5"
+      },
+      "summary": [
+        {
+          "reads_per_write": 1,
+          "arm": "pinned",
+          "refresh_model": "anthropic:claude-opus-4-7",
+          "accuracy": 0.986111,
+          "stale_wrong_rate": 0,
+          "lifecycle_usd": 0.64916,
+          "usd": 0.68241,
+          "usd_per_correct": 0.009611,
+          "break_even_reads_per_pin": 147,
+          "freshness": {
+            "changes": 60,
+            "mean_lag_batches": 0.0167,
+            "correct_at_change": 0.9833
+          }
+        },
+        {
+          "reads_per_write": 1,
+          "arm": "query_reader",
+          "accuracy": 0.513889,
+          "stale_wrong_rate": 0.486111,
+          "lifecycle_usd": 0,
+          "usd": 0.086432,
+          "usd_per_correct": 0.002336,
+          "freshness": {
+            "changes": 60,
+            "mean_lag_batches": 0.5833,
+            "correct_at_change": 0.4833
+          }
+        },
+        {
+          "reads_per_write": 1,
+          "arm": "think",
+          "accuracy": 0.791667,
+          "stale_wrong_rate": 0.208333,
+          "lifecycle_usd": 0,
+          "usd": 1.74488,
+          "usd_per_correct": 0.030612,
+          "freshness": {
+            "changes": 60,
+            "mean_lag_batches": 0.25,
+            "correct_at_change": 0.7833
+          }
+        },
+        {
+          "reads_per_write": 1,
+          "arm": "pinned",
+          "refresh_model": "anthropic:claude-sonnet-5-5",
+          "accuracy": 0.958333,
+          "stale_wrong_rate": 0.013889,
+          "lifecycle_usd": 0.414458,
+          "usd": 0.470192,
+          "usd_per_correct": 0.006814,
+          "break_even_reads_per_pin": 163,
+          "freshness": {
+            "changes": 60,
+            "mean_lag_batches": 0.05,
+            "correct_at_change": 0.95
+          }
+        },
+        {
+          "reads_per_write": 10,
+          "arm": "pinned",
+          "refresh_model": "anthropic:claude-opus-4-7",
+          "accuracy": 0.986111,
+          "stale_wrong_rate": 0,
+          "lifecycle_usd": 0.64916,
+          "usd": 0.98166,
+          "usd_per_correct": 0.001383,
+          "break_even_reads_per_pin": 147,
+          "freshness": {
+            "changes": 60,
+            "mean_lag_batches": 0.0167,
+            "correct_at_change": 0.9833
+          }
+        },
+        {
+          "reads_per_write": 10,
+          "arm": "query_reader",
+          "accuracy": 0.513889,
+          "stale_wrong_rate": 0.486111,
+          "lifecycle_usd": 0,
+          "usd": 0.86432,
+          "usd_per_correct": 0.002336,
+          "freshness": {
+            "changes": 60,
+            "mean_lag_batches": 0.5833,
+            "correct_at_change": 0.4833
+          }
+        },
+        {
+          "reads_per_write": 10,
+          "arm": "think",
+          "accuracy": 0.791667,
+          "stale_wrong_rate": 0.208333,
+          "lifecycle_usd": 0,
+          "usd": 17.4488,
+          "usd_per_correct": 0.030612,
+          "freshness": {
+            "changes": 60,
+            "mean_lag_batches": 0.25,
+            "correct_at_change": 0.7833
+          }
+        },
+        {
+          "reads_per_write": 10,
+          "arm": "pinned",
+          "refresh_model": "anthropic:claude-sonnet-5-5",
+          "accuracy": 0.958333,
+          "stale_wrong_rate": 0.013889,
+          "lifecycle_usd": 0.414458,
+          "usd": 0.971798,
+          "usd_per_correct": 0.001408,
+          "break_even_reads_per_pin": 163,
+          "freshness": {
+            "changes": 60,
+            "mean_lag_batches": 0.05,
+            "correct_at_change": 0.95
+          }
+        },
+        {
+          "reads_per_write": 100,
+          "arm": "pinned",
+          "refresh_model": "anthropic:claude-opus-4-7",
+          "accuracy": 0.986111,
+          "stale_wrong_rate": 0,
+          "lifecycle_usd": 0.64916,
+          "usd": 3.97416,
+          "usd_per_correct": 0.00056,
+          "break_even_reads_per_pin": 147,
+          "freshness": {
+            "changes": 60,
+            "mean_lag_batches": 0.0167,
+            "correct_at_change": 0.9833
+          }
+        },
+        {
+          "reads_per_write": 100,
+          "arm": "query_reader",
+          "accuracy": 0.513889,
+          "stale_wrong_rate": 0.486111,
+          "lifecycle_usd": 0,
+          "usd": 8.6432,
+          "usd_per_correct": 0.002336,
+          "freshness": {
+            "changes": 60,
+            "mean_lag_batches": 0.5833,
+            "correct_at_change": 0.4833
+          }
+        },
+        {
+          "reads_per_write": 100,
+          "arm": "think",
+          "accuracy": 0.791667,
+          "stale_wrong_rate": 0.208333,
+          "lifecycle_usd": 0,
+          "usd": 174.488,
+          "usd_per_correct": 0.030612,
+          "freshness": {
+            "changes": 60,
+            "mean_lag_batches": 0.25,
+            "correct_at_change": 0.7833
+          }
+        },
+        {
+          "reads_per_write": 100,
+          "arm": "pinned",
+          "refresh_model": "anthropic:claude-sonnet-5-5",
+          "accuracy": 0.958333,
+          "stale_wrong_rate": 0.013889,
+          "lifecycle_usd": 0.414458,
+          "usd": 5.987858,
+          "usd_per_correct": 0.000868,
+          "break_even_reads_per_pin": 163,
+          "freshness": {
+            "changes": 60,
+            "mean_lag_batches": 0.05,
+            "correct_at_change": 0.95
+          }
+        }
+      ],
+      "diagnostic_pre_fix_attempt": {
+        "measured_build": "garrytan/gbrain@183fee7f (refresh retrieval without scope anchoring)",
+        "metered_spend_usd": 2.9324,
+        "finding": "Pinned refresh retrieval ranked every note sharing the question words alike and missed each entity newest note once notes accumulated, so pinned matched query+reader (0.528/0.542 vs 0.514 accuracy). Fixed in baadfc04 (src/core/questions/refresh.ts anchoredSlugs) with a regression test; not a decision input.",
+        "summary": [
+          {
+            "reads_per_write": 1,
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-opus-4-7",
+            "accuracy": 0.527778,
+            "stale_wrong_rate": 0.458333,
+            "lifecycle_usd": 0.622705,
+            "usd": 0.658259,
+            "usd_per_correct": 0.017323,
+            "break_even_reads_per_pin": 147,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.5667,
+              "correct_at_change": 0.5
+            }
+          },
+          {
+            "reads_per_write": 1,
+            "arm": "query_reader",
+            "accuracy": 0.513889,
+            "stale_wrong_rate": 0.486111,
+            "lifecycle_usd": 0,
+            "usd": 0.086568,
+            "usd_per_correct": 0.00234,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.5833,
+              "correct_at_change": 0.4833
+            }
+          },
+          {
+            "reads_per_write": 1,
+            "arm": "think",
+            "accuracy": 0.791667,
+            "stale_wrong_rate": 0.208333,
+            "lifecycle_usd": 0,
+            "usd": 1.74198,
+            "usd_per_correct": 0.030561,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.25,
+              "correct_at_change": 0.7833
+            }
+          },
+          {
+            "reads_per_write": 1,
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-sonnet-5-5",
+            "accuracy": 0.541667,
+            "stale_wrong_rate": 0.444444,
+            "lifecycle_usd": 0.389088,
+            "usd": 0.445642,
+            "usd_per_correct": 0.011427,
+            "break_even_reads_per_pin": 156,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.55,
+              "correct_at_change": 0.5
+            }
+          },
+          {
+            "reads_per_write": 10,
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-opus-4-7",
+            "accuracy": 0.527778,
+            "stale_wrong_rate": 0.458333,
+            "lifecycle_usd": 0.622705,
+            "usd": 0.978245,
+            "usd_per_correct": 0.002574,
+            "break_even_reads_per_pin": 147,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.5667,
+              "correct_at_change": 0.5
+            }
+          },
+          {
+            "reads_per_write": 10,
+            "arm": "query_reader",
+            "accuracy": 0.513889,
+            "stale_wrong_rate": 0.486111,
+            "lifecycle_usd": 0,
+            "usd": 0.86568,
+            "usd_per_correct": 0.00234,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.5833,
+              "correct_at_change": 0.4833
+            }
+          },
+          {
+            "reads_per_write": 10,
+            "arm": "think",
+            "accuracy": 0.791667,
+            "stale_wrong_rate": 0.208333,
+            "lifecycle_usd": 0,
+            "usd": 17.4198,
+            "usd_per_correct": 0.030561,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.25,
+              "correct_at_change": 0.7833
+            }
+          },
+          {
+            "reads_per_write": 10,
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-sonnet-5-5",
+            "accuracy": 0.541667,
+            "stale_wrong_rate": 0.444444,
+            "lifecycle_usd": 0.389088,
+            "usd": 0.954628,
+            "usd_per_correct": 0.002448,
+            "break_even_reads_per_pin": 156,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.55,
+              "correct_at_change": 0.5
+            }
+          },
+          {
+            "reads_per_write": 100,
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-opus-4-7",
+            "accuracy": 0.527778,
+            "stale_wrong_rate": 0.458333,
+            "lifecycle_usd": 0.622705,
+            "usd": 4.178105,
+            "usd_per_correct": 0.0011,
+            "break_even_reads_per_pin": 147,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.5667,
+              "correct_at_change": 0.5
+            }
+          },
+          {
+            "reads_per_write": 100,
+            "arm": "query_reader",
+            "accuracy": 0.513889,
+            "stale_wrong_rate": 0.486111,
+            "lifecycle_usd": 0,
+            "usd": 8.6568,
+            "usd_per_correct": 0.00234,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.5833,
+              "correct_at_change": 0.4833
+            }
+          },
+          {
+            "reads_per_write": 100,
+            "arm": "think",
+            "accuracy": 0.791667,
+            "stale_wrong_rate": 0.208333,
+            "lifecycle_usd": 0,
+            "usd": 174.198,
+            "usd_per_correct": 0.030561,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.25,
+              "correct_at_change": 0.7833
+            }
+          },
+          {
+            "reads_per_write": 100,
+            "arm": "pinned",
+            "refresh_model": "anthropic:claude-sonnet-5-5",
+            "accuracy": 0.541667,
+            "stale_wrong_rate": 0.444444,
+            "lifecycle_usd": 0.389088,
+            "usd": 6.044488,
+            "usd_per_correct": 0.00155,
+            "break_even_reads_per_pin": 156,
+            "freshness": {
+              "changes": 60,
+              "mean_lag_batches": 0.55,
+              "correct_at_change": 0.5
+            }
+          }
+        ]
+      }
+    },
+    "decided_at": "2026-10-05T18:00:00Z"
+  },
+  "run_1": {
+    "measured_build": "garrytan/gbrain@a4267eed7bb6f9478df73fef6266b8a111a3891a",
+    "benefit_gate": {
+      "status": "fail",
+      "against": {
+        "query_reader": "fail",
+        "think": "pass"
+      },
+      "reason": "Accuracy is at ceiling for every arm (100% correct, 0 stale-wrong), so the gate is decided on lifecycle cost. Pinned costs 4.4x query+reader per correct answer at 1 read per write and matches it at 10 reads per write ($0.000526 vs $0.000529); break-even is about 240 reads per pin. Pinned is 3.3x (1 read/write) to 14.5x (10 reads/write) cheaper than on-demand think."
+    },
+    "overall": "opt_in",
+    "default_decision": "Pinned questions ship opt-in: the feature does nothing until the owner pins a question, and no pin is created by default. Default-on is withheld because the benefit gate did not pass against query+reader.",
+    "ceiling_note": "Every arm answered every read correctly; the workload rewrites the evidence page on correction, so no arm had a superseded value to repeat. The run cannot show an accuracy or freshness difference.",
+    "metered_spend_usd": 2.3402,
+    "run": {
+      "mode": "run",
+      "workload_hash": "9428f19ffe229e66",
+      "seed": 42,
+      "entities": 6,
+      "batches": 4,
+      "answer_model": "anthropic:claude-opus-4-7",
+      "reader_model": "anthropic:claude-sonnet-5-5",
+      "metered_spend_usd": 2.3401960000000015,
+      "reports": [
+        {
+          "reads_per_write": 1,
+          "arms": [
+            {
+              "arm": "pinned",
+              "reads": 24,
+              "correct": 24,
+              "stale_wrong": 0,
+              "usd": 0.055947,
+              "usd_per_correct": 0.002331125
+            },
+            {
+              "arm": "query_reader",
+              "reads": 24,
+              "correct": 24,
+              "stale_wrong": 0,
+              "usd": 0.012694,
+              "usd_per_correct": 0.0005289166666666667
+            },
+            {
+              "arm": "think",
+              "reads": 24,
+              "correct": 24,
+              "stale_wrong": 0,
+              "usd": 0.18278499999999998,
+              "usd_per_correct": 0.007616041666666666
+            }
+          ],
+          "pinned_breakdown": {
+            "pin_and_refresh_usd": 0.048025,
+            "read_usd": 0.007921999999999998,
+            "refresh_attempts": 14
+          },
+          "break_even_reads": 242,
+          "plumbing_only": false
+        },
+        {
+          "reads_per_write": 10,
+          "arms": [
+            {
+              "arm": "pinned",
+              "reads": 240,
+              "correct": 240,
+              "stale_wrong": 0,
+              "usd": 0.1262400000000003,
+              "usd_per_correct": 0.0005260000000000012
+            },
+            {
+              "arm": "query_reader",
+              "reads": 240,
+              "correct": 240,
+              "stale_wrong": 0,
+              "usd": 0.12697999999999998,
+              "usd_per_correct": 0.0005290833333333332
+            },
+            {
+              "arm": "think",
+              "reads": 240,
+              "correct": 240,
+              "stale_wrong": 0,
+              "usd": 1.835549999999999,
+              "usd_per_correct": 0.007648124999999995
+            }
+          ],
+          "pinned_breakdown": {
+            "pin_and_refresh_usd": 0.047859999999999986,
+            "read_usd": 0.07838000000000032,
+            "refresh_attempts": 14
+          },
+          "break_even_reads": 237,
+          "plumbing_only": false
+        }
+      ]
+    },
+    "decided_at": "2026-10-05T09:30:00Z"
+  }
+}

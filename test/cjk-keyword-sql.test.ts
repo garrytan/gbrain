@@ -4,7 +4,8 @@
  * DATABASE_URL-gated block in test/e2e/engine-parity.test.ts.
  */
 import { describe, test, expect } from 'bun:test';
-import { buildCJKKeywordSql, type CjkKeywordCtx } from '../src/core/search/cjk-keyword-sql.ts';
+import { buildKeywordMatch } from '../src/core/search/keyword-statement.ts';
+import { buildCJKKeywordSql, buildCJKCandidateSql, type CjkKeywordCtx } from '../src/core/search/cjk-keyword-sql.ts';
 import { searchKeywordCJK, type ScopedReadRunner } from '../src/core/engine-sql/cjk-search.ts';
 import { scopedRead } from '../src/core/engine-sql/brands.ts';
 import type { SqlExecutor } from '../src/core/engine-sql/executor.ts';
@@ -164,5 +165,22 @@ describe('engine-sql searchKeywordCJK executor (#3986)', () => {
     const results = await searchKeywordCJK(runnerScope(async () => { called = true; return []; }), '', ctx());
     expect(results).toEqual([]);
     expect(called).toBe(false);
+  });
+});
+
+describe('Korean particles in the CJK builders (#6666)', () => {
+  const likes = (params: unknown[]) => params.filter(p => typeof p === 'string' && p.startsWith('%'));
+  test('the scoring query matches and scores the stem, not the inflected form', () => {
+    const { params } = buildCJKKeywordSql('혈당에서', ctx())!;
+    expect(likes(params)).toEqual(['%혈당%']);
+    expect(params.filter(p => typeof p === 'string' && !p.startsWith('%'))).toEqual(['혈당', '혈당에서']);
+  });
+
+  test('the capped candidate stage matches the stem too', () => {
+    expect(likes(buildCJKCandidateSql('혈당에서', ctx(), { match: 'all', cap: 50 })!.params)).toEqual(['%혈당%']);
+  });
+
+  test('the keyword count and pages match the stem', () => {
+    expect(likes(buildKeywordMatch('혈당에서 검진을', undefined)!.params)).toEqual(['%혈당%', '%검진%']);
   });
 });

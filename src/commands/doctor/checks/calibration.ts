@@ -21,7 +21,7 @@ import { resolveHardExcludes, DEFAULT_HARD_EXCLUDES } from '../../../core/search
 import { escapeLikePattern, buildVisibilityClause } from '../../../core/search/sql-ranking.ts';
 import { safeChunksFilter } from '../../../core/search/safe-chunks.ts';
 import type { Check } from '../../doctor.ts';
-import { checkError, doctorVerify } from '../check-fix.ts';
+import { checkError, doctorVerify, withSkippedSegmented } from '../check-fix.ts';
 import { pricingSetArgv } from '../../../core/budget/no-pricing.ts';
 
 // --- v0.36.1.0 calibration doctor checks (T12) ---
@@ -266,6 +266,11 @@ export async function checkLinkResolutionOpportunity(
     const sampled = await engine.executeRaw<{ compiled_truth: string | null; timeline: string | null }>(
       `SELECT compiled_truth, timeline FROM pages WHERE deleted_at IS NULL ORDER BY id DESC LIMIT ${SAMPLE_LIMIT}`,
     );
+    // Decision #10: a segmented page's body columns are NULL, so the sample scans it as an empty body.
+    const [segmented] = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM (SELECT body_storage FROM pages WHERE deleted_at IS NULL ORDER BY id DESC LIMIT ${SAMPLE_LIMIT}) s WHERE s.body_storage = 'segmented'`,
+    ).catch(() => []);
+    const result = (check: Check) => withSkippedSegmented(check, Number(segmented?.n ?? 0));
     const totalPages = allSlugs.size;
     const sampledNote = totalPages > SAMPLE_LIMIT
       ? ` (scanned the ${SAMPLE_LIMIT} most-recent of ${totalPages} pages)`
@@ -294,33 +299,33 @@ export async function checkLinkResolutionOpportunity(
     }
 
     if (bareCount === 0) {
-      return { name, status: 'ok', message: 'No bare wikilinks found' };
+      return result({ name, status: 'ok', message: 'No bare wikilinks found' });
     }
     if (wouldResolveCount === 0) {
-      return {
+      return result({
         name,
         status: 'ok',
         message: `${bareCount} bare wikilink(s) found, but none have basename matches in the brain.`,
-      };
+      });
     }
     const ratio = wouldResolveCount / bareCount;
     if (wouldResolveCount >= 5 && ratio >= 0.20) {
       const pct = Math.round(ratio * 100);
-      return {
+      return result({
         name,
         status: 'warn',
         message:
           `${wouldResolveCount} of ${bareCount} bare wikilinks (${pct}%) would resolve to ` +
           `${distinctTargets.size} distinct page(s) under global_basename mode${sampledNote}. ` +
           `Enable with: gbrain config set link_resolution.global_basename true`,
-      };
+      });
     }
     const pct = Math.round(ratio * 100);
-    return {
+    return result({
       name,
       status: 'ok',
       message: `${wouldResolveCount}/${bareCount} bare wikilinks (${pct}%) would resolve — below the 20% / 5-link threshold for surfacing a hint${sampledNote}.`,
-    };
+    });
   } catch (e) {
     return {
       name,
@@ -679,6 +684,17 @@ export async function checkRerankerHealth(engine: BrainEngine, now: Date = new D
           ],
           verify: doctorVerify('reranker_health'),
         },
+      };
+    }
+
+    // Cat 40 R0: no HTTP response at all is a configuration or network fault
+    // (a stale base URL fails every call), not a provider outage.
+    const unreachableFails = failures.filter((f) => f.reason === 'unreachable');
+    if (unreachableFails.length >= 3) {
+      return {
+        name: 'reranker_health',
+        status: 'warn',
+        message: `${unreachableFails.length} reranker call(s) in the last 7 days could not reach the ${model} endpoint (connection refused, DNS or network error), so those searches kept their fused order. Fix: check the reranker base URL (\`provider_base_urls.${model.split(':')[0]}\` in the gbrain config, or the provider default) and that the brain host can reach it, then run \`gbrain models doctor\`.`,
       };
     }
 

@@ -238,6 +238,7 @@ import {
   isSeparatorRow,
   stripStrikethrough,
   escapeFenceCell as safeFenceCell,
+  assertFenceRewritable,
 } from './fence-shared.ts';
 import { indexOfOutsideCode, locateOutsideCode, protectedRegions, unclosedCodeFenceStart } from './fence-scan.ts';
 
@@ -518,16 +519,18 @@ function nextTakeRowNum(body: string): number {
  * reservation rows included (W9F item 4).
  *
  * `claim`, `kind`, `holder` of the input are required; `weight` defaults
- * to 0.5 if omitted; `active` defaults to true.
+ * to 0.5 if omitted; `active` defaults to true. Throws `FenceRewriteRefusal`
+ * when the existing fence does not parse cleanly (any warning), since the
+ * rewrite would drop the rows the parser skipped.
  */
 export function upsertTakeRow(
   body: string,
   newRow: Omit<ParsedTake, 'rowNum'> & { rowNum?: number },
 ): { body: string; rowNum: number } {
-  const { takes, warnings, reservedRowNums } = parseTakesFence(body);
-  // Surface warnings to caller via an attached marker — caller decides what to do.
-  // (We don't throw here so writes proceed; doctor surfaces the underlying issue.)
-  void warnings;
+  const parsed = parseTakesFence(body);
+  // Re-rendering a fence the parser skipped rows of would delete them.
+  assertFenceRewritable('takes', parsed);
+  const { takes, reservedRowNums } = parsed;
   const nextRowNum = newRow.rowNum ?? nextTakeRowNum(body);
 
   const allRows: ParsedTake[] = [
@@ -575,7 +578,8 @@ export function upsertTakeRow(
  * The new row takes `newRowNum` when given, else `nextFreeRowNum` over the
  * body (W9F item 4).
  *
- * Throws when the target row is not found in the fence.
+ * Throws when the target row is not found in the fence, and
+ * `FenceRewriteRefusal` when the fence does not parse cleanly.
  */
 export function supersedeRow(
   body: string,
@@ -583,7 +587,9 @@ export function supersedeRow(
   replacement: Omit<ParsedTake, 'rowNum' | 'active'>,
   newRowNum: number = nextTakeRowNum(body),
 ): { body: string; oldRowNum: number; newRowNum: number } {
-  const { takes, reservedRowNums } = parseTakesFence(body);
+  const parsed = parseTakesFence(body);
+  assertFenceRewritable('takes', parsed);
+  const { takes, reservedRowNums } = parsed;
   const idx = takes.findIndex(t => t.rowNum === oldRowNum);
   if (idx === -1) {
     throw new Error(`supersedeRow: row #${oldRowNum} not found in takes fence`);

@@ -6,6 +6,10 @@
  * republished with its own rows through a revision-bound `put_page`; a page
  * whose fences are ambiguous (duplicated, unbalanced or unparseable) is kept
  * and counted for a manual edit, never guessed at.
+ *
+ * A segmented page (Wave B) is not moved: this repair rewrites the whole body
+ * as one string. Its timeline region is searched block by block for a fence
+ * marker, and each such page is counted (`segmented_pages`) and named.
  */
 import type { BrainEngine } from '../engine.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
@@ -13,6 +17,8 @@ import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { conceptPreservationHold } from '../cycle/concept-publication.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, replaceOrInsertFactsFence } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence } from '../takes-fence.ts';
+import { segmentedRegionContains } from '../page-body/segment-lines.ts';
+import { SEGMENTED_SAMPLE } from './timeline.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairScope, type RepairCursor } from './core.ts';
 
 const count = (text: string, marker: string) => text.split(marker).length - 1;
@@ -46,10 +52,24 @@ export function relocateTimelineFences(page: { compiled_truth: string | null; ti
 
 interface FencePage { id: number; source_id: string; slug: string; compiled_truth: string; timeline: string | null }
 
+const FENCE_MARKERS = ['gbrain:facts:', 'gbrain:takes:'];
+
 async function candidates(engine: BrainEngine, sourceIds: string[]): Promise<FencePage[]> {
   return engine.executeRaw<FencePage>(`SELECT p.id,p.source_id,p.slug,p.compiled_truth,p.timeline FROM pages p JOIN sources s ON s.id=p.source_id
     WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL AND s.config->>'kind' IN ('google','github')
       AND (p.timeline LIKE '%gbrain:facts:%' OR p.timeline LIKE '%gbrain:takes:%') ORDER BY p.id`, [sourceIds]);
+}
+
+/** Segmented connector pages whose timeline region holds a facts or takes fence marker, as `source:slug`. */
+async function segmentedCandidates(engine: BrainEngine, sourceIds: string[], after: RepairCursor | null): Promise<string[]> {
+  const pages = await engine.executeRaw<{ id: number; source_id: string; slug: string }>(`SELECT p.id,p.source_id,p.slug FROM pages p JOIN sources s ON s.id=p.source_id
+    WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL AND s.config->>'kind' IN ('google','github') AND p.body_storage='segmented' ORDER BY p.id`, [sourceIds]);
+  const found: string[] = [];
+  for (const page of pages) {
+    if (!afterCursor({ phase: 0, id: Number(page.id) }, after)) continue;
+    if (await segmentedRegionContains(engine, page, 'timeline', FENCE_MARKERS)) found.push(`${page.source_id}:${page.slug}`);
+  }
+  return found;
 }
 
 export const connectorFencesRepair: RepairHandler = {
@@ -63,7 +83,11 @@ export const connectorFencesRepair: RepairHandler = {
       items.push({ cursor: { phase: 0, id: page.id }, source_id: page.source_id, slug: page.slug,
         chars: page.compiled_truth.length + (page.timeline ?? '').length, action: 'move fences above the timeline' });
     }
-    return { items, residuals: { kept_ambiguous_pages: ambiguous } };
+    const segmented = await segmentedCandidates(engine, scope.source_ids, after);
+    const warnings = segmented.length ? [`segmented_pages: ${segmented.length} segmented connector page(s) (${segmented.slice(0, SEGMENTED_SAMPLE).join(', ')}`
+      + `${segmented.length > SEGMENTED_SAMPLE ? ', …' : ''}) hold a facts or takes fence below the timeline and are left as they are: this repair rewrites a whole body `
+      + 'as one string, so it does not handle segmented pages, and no command does yet.'] : [];
+    return { ...(warnings.length ? { warnings } : {}), items, residuals: { kept_ambiguous_pages: ambiguous, ...(segmented.length ? { segmented_pages: segmented.length } : {}) } };
   },
   async apply(ctx, item) {
     const snapshot = await ctx.engine.readPageSnapshot(item.slug, { sourceId: item.source_id });

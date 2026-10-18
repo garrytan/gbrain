@@ -48,6 +48,8 @@ import {
   type ExposeReceipt, type ServiceState, type ServiceTarget, type UninstallServiceResult,
 } from '../core/serve-service.ts';
 import { shellQuote } from '../core/mcp-registration.ts';
+import { cliRenderContext, renderNotice } from '../core/agent-output.ts';
+import { EXPOSE_FRICTION_REASONS, hostedOptionLine, hostedOptionMuted, hostedOptionNotice } from '../core/onboard/hosted-option.ts';
 
 export const MCP_EXPOSE_HELP = `gbrain mcp expose — publish the MCP server on your Tailscale tailnet and keep it running
 
@@ -130,6 +132,8 @@ export interface McpExposeDeps {
   plistPath?: string;
   unitPath?: string;
   loadConfig?: () => GBrainConfig | null;
+  /** The owner's muted notice codes (default: the global and stdio mute lists under GBRAIN_HOME). */
+  mutedNotices?: () => ReadonlySet<string>;
   executionEnv?: ExecutionEnvironment;
   run?: CommandRunner;
   which?: (name: string) => string | null;
@@ -193,6 +197,7 @@ interface Resolved {
   sleep: (ms: number) => Promise<void>;
   executionEnv: ExecutionEnvironment;
   loadConfig: () => GBrainConfig | null;
+  mutedNotices: () => ReadonlySet<string>;
   gbrainCommand: () => string[];
   runtimeDir: string;
   randomHex?: () => string;
@@ -232,6 +237,7 @@ function resolveDeps(deps: McpExposeDeps): Resolved {
     sleep: deps.sleep ?? ((ms: number) => new Promise(resolve => setTimeout(resolve, ms))),
     executionEnv: deps.executionEnv ?? detectExecutionEnvironment({ env }),
     loadConfig: deps.loadConfig ?? loadConfig,
+    mutedNotices: deps.mutedNotices ?? hostedOptionMuted,
     gbrainCommand: () => deps.gbrainCommand ?? resolveServeGbrainCommand({ which, fileExists: deps.fileExists }),
     runtimeDir: deps.runtimeDir ?? dirname(process.execPath || ''),
     randomHex: deps.randomHex,
@@ -302,6 +308,8 @@ export function parseExposeArgs(args: string[]): ExposeOptions {
 class Session {
   readonly checks: Check[] = [];
   readonly nextActions: string[] = [];
+  /** Set on the run whose early receipt write created the first receipt: that run shows hosted_option. */
+  firstPublish = false;
   constructor(private readonly d: Resolved, readonly json: boolean) {}
   /** Prose: stderr under --json, stdout otherwise. */
   say(line = ''): void { (this.json ? this.d.err : this.d.out)(line); }
@@ -311,12 +319,16 @@ class Session {
     return c;
   }
   finish(status: ExposeStatus, code: number, extra: { receipt?: ExposeReceipt | null; reason?: string; message?: string; plan?: string[]; consent?: Record<string, unknown> } = {}): number {
+    const where = EXPOSE_FRICTION_REASONS.has(extra.reason ?? '') ? 'mcp_expose_friction'
+      : this.firstPublish && (status === 'exposed' || status === 'pending') ? 'mcp_expose' : null;
+    const hosted = where ? hostedOptionNotice(where, this.d.mutedNotices()) : null;
     if (extra.message) this.say(`${status}: ${extra.message}`);
+    if (hosted && where && !this.json) this.say(hostedOptionLine(where));
     if (this.json) {
       this.d.out(JSON.stringify({
         status, receipt: extra.receipt ?? null, checks: this.checks, next_actions: this.nextActions,
         ...(extra.reason ? { reason: extra.reason } : {}), ...(extra.message ? { message: extra.message } : {}), ...(extra.plan ? { plan: extra.plan } : {}),
-        ...(extra.consent ?? {}),
+        ...(extra.consent ?? {}), ...(hosted ? { notices: [renderNotice(hosted, cliRenderContext())] } : {}),
       }));
     }
     return code;
@@ -955,6 +967,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
     // to find. Rewritten below with the settled state (created_at kept).
     writeExposeReceipt(receiptPath, buildReceipt());
     receiptWritten = true;
+    s.firstPublish = existing === null;
 
     // 9. verify
     if (opts.noService && !listeningBefore && !keptService) {

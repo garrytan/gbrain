@@ -46,7 +46,10 @@ Isolation model:
   later (or one carrying a bespoke scope) is denied until it is explicitly
   fenced and added to `CLIENT_FENCED_WRITE_OPS` (`src/core/operations.ts`).
   `think` is allow-listed because remote callers cannot persist from it;
-  `submit_agent` because it enforces this same column itself.
+  `submit_agent` because it enforces this same column itself; `remember`
+  (#5913) because it fences the one slug it writes and confines `replaces` to
+  the caller's entity. `forget`/`forget_fact` are not: a withdrawal's write set
+  reaches pages the fenced slug does not name.
 - **Indirect write paths are gated too, not just the ops.** `put_page`'s
   facts backstop would otherwise extract entities from the page body and
   write fact rows (and a `## Facts` fence on git-backed sources) onto
@@ -84,13 +87,13 @@ boundary, and it does not make every side effect prefix-clean:
   page content. Unreachable in the layout above (the `agents` source is
   path-less and holds no code pages); it applies only if you point employee
   writes at a code-synced source.
-- **Stored contradiction reports are temporarily local-only.**
-  `find_contradictions` returns stored findings only to trusted local callers
-  without a source filter. Harness clients receive `{ contradictions: [], note }`
-  with an availability note. Other brain-wide read ops (`get_recent_salience`,
+- **Stored contradiction findings are filtered per caller.**
+  `find_contradictions` returns a harness client only the findings whose two
+  sides it can read in its grant, re-read live with `source_id` and
+  `trust_tier`; stored report text never leaves. Other brain-wide read ops (`get_recent_salience`,
   `find_anomalies`, and `sources_list`/`sources_status`) honor the federated
   grant; `sources_status` answers `not_found` for an out-of-grant ID.
-- **Reads touch `last_retrieved_at`** on the pages they return, including
+- **Reads touch `last_retrieved_at`** (in `page_retrievals`) on the pages they return, including
   pages in read-only sources. Freshness/usage signals are therefore
   writable-by-reading; nothing else about the page is.
 - **`POST /ingest` writes land in the calling client's granted source.** The

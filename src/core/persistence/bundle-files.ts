@@ -8,11 +8,13 @@ import { sha256 } from './digest.ts';
 import type { BundleRecoveryRecord, FileRecoveryRecord, WriteRequest } from './model.ts';
 import type { WorktreeBinding } from './ownership.ts';
 import { recoveryStagingFile } from './staging.ts';
+import { isStreamedContent, type StreamedFileContent } from './large-file.ts';
 
 export interface MutationFile {
   path: string;
   root: string;
-  content: string | Uint8Array | null;
+  /** A `StreamedFileContent` (large-file.ts) is produced into its staging file, never held whole; page files only. */
+  content: string | Uint8Array | StreamedFileContent | null;
   expectedBeforeHash?: string | null;
 }
 export const BUNDLE_FILE_LIMITS = Object.freeze({ files: 128, fileBytes: 1024 * 1024, totalBytes: 8 * 1024 * 1024, depth: 16 });
@@ -83,7 +85,7 @@ export function prepareBundleRecovery(files: MutationFile[], binding: WorktreeBi
   let afterBytes = 0;
   const records: FileRecoveryRecord[] = [];
   for (const file of files) {
-    if (file.root !== root || file.expectedBeforeHash === undefined) throw unsafe();
+    if (file.root !== root || file.expectedBeforeHash === undefined || isStreamedContent(file.content)) throw unsafe();
     const normalized = file.path.normalize('NFC').toLowerCase();
     if (seen.has(normalized)) throw unsafe();
     for (const path of seen) if (path.startsWith(`${normalized}${sep}`) || normalized.startsWith(`${path}${sep}`)) throw unsafe();
@@ -163,7 +165,7 @@ export function stageBundleFile(file: MutationFile, record: FileRecoveryRecord):
     parent = next;
   }
   const stage = record.staging?.publication;
-  if (!stage) throw unsafe();
+  if (!stage || isStreamedContent(file.content)) throw unsafe();
   const content = typeof file.content === 'string' ? Buffer.from(file.content) : file.content;
   if (content.byteLength !== stage.bytes || sha256(content) !== stage.hash) throw unsafe();
   const fd = openSync(stage.path, 'wx', record.mode ?? 0o644);

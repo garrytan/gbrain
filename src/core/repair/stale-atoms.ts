@@ -147,7 +147,8 @@ export const staleAtomsRepair: RepairHandler = {
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }
-    const approved = await loadApprovedSet<ApprovedStaleAtom>(engine, { command: 'stale-atoms', hash: opts.expect, previewCommand: command });
+    const approved = await loadApprovedSet<ApprovedStaleAtom>(engine, { command: 'stale-atoms', hash: opts.expect, previewCommand: command,
+      emptyHash: async () => previewHash(await hashParts(engine, scope, [])) });
     if (approved.items.some(atom => JSON.stringify(atom.selection) !== JSON.stringify(scope.source_ids))) throw previewChangedError(opts.expect, command);
     const items = approved.items.map(({ selection: _selection, ...atom }, index) => item(atom, opts.expect!, index === approved.items.length - 1));
     return { items: items.filter(entry => afterCursor(entry.cursor, after)), preview_hash: opts.expect, residuals: {} };

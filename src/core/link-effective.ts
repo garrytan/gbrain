@@ -11,7 +11,7 @@
  * are already exact days (line-grammar.ts resolves `[ ]` / `( )`), so the
  * precision is 'day'. Grammar: docs/guides/line-grammar.md.
  */
-import { parseLineGrammar } from './line-grammar.ts';
+import { parseLineGrammar, type GrammarRelation } from './line-grammar.ts';
 import { lineHash, normalizeLinkTarget, refersTo, type DerivedTransition, type OwnedRow, type TemporalEvidence } from './link-temporal-evidence.ts';
 import { relationSemantics } from './link-validity.ts';
 
@@ -19,14 +19,27 @@ export type InlineTransition = Omit<DerivedTransition, 'producer'> & { producer:
 
 const LINK_RE = /\[\[([^\]|\n]+)(?:\|[^\]\n]*)?\]\]|\[[^\]\n]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/;
 
+/** A typed relation line with a validity range: its type, range, trimmed text and offset in the body. */
+export interface RangedRelationLine { type: string; effective: NonNullable<GrammarRelation['effective']>; line: string; start: number }
+
+export function rangedRelationLines(content: string): RangedRelationLine[] {
+  return parseLineGrammar(content).relations.flatMap(relation => relation.effective
+    ? [{ type: relation.type, effective: relation.effective, line: content.slice(relation.start, relation.end).trim(), start: relation.start }] : []);
+}
+
 export function inlineTransitions(slug: string, content: string, rows: readonly OwnedRow[]): {
+  transitions: InlineTransition[]; unmatched: TemporalEvidence['unmatched'];
+} {
+  return inlineTransitionsFrom(slug, rangedRelationLines(content), rows);
+}
+
+export function inlineTransitionsFrom(slug: string, relations: readonly RangedRelationLine[], rows: readonly OwnedRow[]): {
   transitions: InlineTransition[]; unmatched: TemporalEvidence['unmatched'];
 } {
   const transitions: InlineTransition[] = [];
   const unmatched: TemporalEvidence['unmatched'] = [];
-  for (const relation of parseLineGrammar(content).relations) {
-    if (!relation.effective) continue;
-    const line = content.slice(relation.start, relation.end).trim();
+  for (const relation of relations) {
+    const line = relation.line;
     const semantics = relationSemantics(relation.type);
     if (semantics === 'reference') { unmatched.push({ line, reason: 'not_temporal' }); continue; }
     const link = LINK_RE.exec(line);

@@ -7,7 +7,7 @@
  */
 
 import { ANTHROPIC_PRICING, type ModelPricing } from '../anthropic-pricing.ts';
-import { canonicalLookup } from '../model-pricing.ts';
+import { canonicalLookup, priceAtPromptSize } from '../model-pricing.ts';
 import { lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { splitProviderModelId } from '../model-id.ts';
 import { resolveRecipe } from '../ai/model-resolver.ts';
@@ -226,8 +226,14 @@ export function usageCostUsd(
   // #4312: operator overrides win — the operator owns their bill (negotiated
   // rates, proxy routes the shipped tables can't know about). Missing both →
   // null, and the TX2 fail-closed contract in reserve() still applies.
-  const p = priceFor(modelId, kind, overrides)?.pricing;
-  if (!p) return null;
+  const row = priceFor(modelId, kind, overrides)?.pricing;
+  if (!row) return null;
+  // #6448 item 1: a prompt past the model's long-prompt threshold bills the
+  // WHOLE request at the upper tier. `inputTokens` is the prompt size — the
+  // pre-flight estimate at reserve(), the provider's total input (cache
+  // included) at record() — so a reservation whose estimate crosses the
+  // threshold is held at the upper tariff (conservative) and settles exact.
+  const p = priceAtPromptSize(row, inputTokens);
   return (inputTokens / 1_000_000) * p.input + (outputTokens / 1_000_000) * p.output;
 }
 

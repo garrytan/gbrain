@@ -2,6 +2,12 @@ name: Durable persistence validation
 
 on:
   workflow_call:
+    inputs:
+      # test.yml `changes` (scripts/ci-convergence-scope.sh): `skip` only for a
+      # pull request whose diff cannot change managed-sync convergence.
+      convergence:
+        type: string
+        default: run
   workflow_dispatch:
 
 permissions:
@@ -16,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         engine: [pglite, postgres]
-        bun: ['1.4.0', '1.4.2']
+        bun: ['1.4.0', '1.4.3']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
@@ -35,7 +41,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       - name: Require valid workloads; report the p99 ratio as advisory
         env:
           DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
@@ -56,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bun: ['1.4.0', '1.4.2']
+        bun: ['1.4.0', '1.4.3']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
@@ -88,7 +96,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       - name: Execute all 24 deployment cases and owner transfer fencing
         env:
           DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
@@ -151,6 +161,9 @@ jobs:
           test/persistence-reconcile.test.ts
           test/persistence-reconcile-additive-5974.test.ts
           test/e2e/reconcile-pgbouncer.test.ts
+          test/e2e/publication-deadline-pgbouncer.test.ts
+          test/e2e/transaction-cancel-held-lock.test.ts
+          test/e2e/pgbouncer-pipelined-read-pool.test.ts
           test/e2e/extract-atoms-page-state.test.ts
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -160,21 +173,24 @@ jobs:
           if-no-files-found: error
 
   # Unit-lane suites whose PostgreSQL arm is gated on DATABASE_URL: the unit,
-  # serial and slow lanes unset it, so these arms run only here and in the
-  # scheduled race hunt (both arms per file; the PGLite arm also runs in the
-  # unit lane). The list is test/postgres-unit-arms.txt;
+  # serial and slow lanes unset it, so these arms run only here, in
+  # ci:ubicloud's pg-arms lane and in the scheduled race hunt (both arms per
+  # file; the PGLite arm also runs in the unit lane). The list is test/postgres-unit-arms.txt;
   # scripts/check-postgres-lane-coverage.ts fails a new DATABASE_URL-gated arm
   # until it is listed there or wrapped in a test/e2e registerPostgresTests
-  # file. The two shards are balanced by measured runtime.
+  # file. The fourteen shards (ARM_SHARDS in scripts/postgres-unit-arms.ts) are
+  # balanced by measured runtime (scripts/postgres-arm-weights.json, mined from
+  # this job's logs); each shard's measured sum, doubled for a slow runner, must
+  # end a minute inside the step's 20 minutes (ARM_SHARD_BUDGET_MS).
   unit-postgres-arms:
-    name: Unit-lane PostgreSQL arms ${{ matrix.shard }}/2 / Bun ${{ matrix.bun }}
+    name: Unit-lane PostgreSQL arms ${{ matrix.shard }}/16 / Bun ${{ matrix.bun }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
-        bun: ['1.4.0', '1.4.2']
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        bun: ['1.4.0', '1.4.3']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
@@ -193,7 +209,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       - name: Require PostgreSQL arms of unit-lane suites
         timeout-minutes: 20
         shell: bash
@@ -212,11 +230,11 @@ jobs:
           receipts_init pg-arms || exit 2
           # The list lives in test/postgres-unit-arms.txt (one path per line);
           # shards balance by measured runtime (scripts/postgres-arm-weights.json).
-          selected=$(bun scripts/postgres-unit-arms.ts shard "$SHARD" 2)
+          selected=$(bun scripts/postgres-unit-arms.ts shard "$SHARD" 16)
           files=()
           while IFS= read -r file; do [ -n "$file" ] && files+=("$file"); done <<< "$selected"
           if [ "${#files[@]}" -eq 0 ]; then
-            echo "::error::shard $SHARD/2 selected no files from test/postgres-unit-arms.txt. Why: an empty shard would pass without running any PostgreSQL arm. Fix: run 'bun scripts/postgres-unit-arms.ts shard $SHARD 2' locally and correct the list. Docs: docs/TESTING.md#postgres-arm-lanes" >&2
+            echo "::error::shard $SHARD/16 selected no files from test/postgres-unit-arms.txt. Why: an empty shard would pass without running any PostgreSQL arm. Fix: run 'bun scripts/postgres-unit-arms.ts shard $SHARD 16' locally and correct the list. Docs: docs/TESTING.md#postgres-arm-lanes" >&2
             exit 1
           fi
           # One bun process per file: *.serial.test.ts files require their own
@@ -227,7 +245,7 @@ jobs:
           failed=()
           for file in "${files[@]}"; do
             echo "::group::$file"
-            receipt_begin primary "s$SHARD-$(basename "$file" .ts)" "$SHARD" 2 postgres "$file"
+            receipt_begin primary "s$SHARD-$(basename "$file" .ts)" "$SHARD" 8 postgres "$file"
             rc=0
             bun --no-env-file test --timeout=120000 ${RECEIPT_ARGS[@]+"${RECEIPT_ARGS[@]}"} "$file" || rc=$?
             receipt_end "$rc"
@@ -258,7 +276,7 @@ jobs:
       fail-fast: false
       matrix:
         engine: [pglite, postgres]
-        bun: ['1.4.0', '1.4.2']
+        bun: ['1.4.0', '1.4.3']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
@@ -277,7 +295,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       # Named exception (docs/TESTING.md#event-parity): pull requests and merge-queue
       # runs soak 2,500 writes; pushes to master, the nightly Test schedule and manual
       # runs cover the full 10,000-write gate, whose PGLite run alone takes 15-28 minutes.
@@ -311,7 +331,7 @@ jobs:
       fail-fast: false
       matrix:
         engine: [pglite, postgres]
-        bun: ['1.4.0', '1.4.2']
+        bun: ['1.4.0', '1.4.3']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
@@ -343,7 +363,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       # The service password reaches every client through PGPASSWORD, so the URLs carry none.
       # Named exception (docs/TESTING.md#event-parity): ROBOT_SECONDS is 150 on pull
       # requests and merge-queue runs; pushes to master, the nightly Test schedule and
@@ -388,7 +410,7 @@ jobs:
       fail-fast: false
       matrix:
         engine: [pglite, postgres]
-        bun: ['1.4.0', '1.4.2']
+        bun: ['1.4.0', '1.4.3']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
@@ -407,7 +429,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       - name: Require all reconciliation crash boundaries before and after activation
         timeout-minutes: 12
         env:
@@ -427,3 +451,84 @@ jobs:
           name: reconciliation-${{ matrix.engine }}-bun-${{ matrix.bun }}
           path: .context/reconcile-crashes/*.json
           if-no-files-found: error
+
+  # Managed-sync convergence gate, PR cell (#6712 PR 0, test/sync-convergence.serial.test.ts,
+  # scripts/persistence/README.md#managed-sync-convergence-gate): real serve and
+  # sync processes against Postgres behind transaction-mode PgBouncer, through
+  # the harness's latency proxy, a seeded kill -9 loop at sync fault points under
+  # concurrent writers, then at most two plain syncs and the convergence oracle.
+  # 200 notes at 10 ms, 6 kills, fixed seed 6650 on every event. The nightly
+  # cell (2,000 notes, 50 ms, 20 kills, rotating seed) is convergence-nightly.yml,
+  # outside test-status.
+  # Named exception (docs/TESTING.md#event-parity): a pull request runs it only
+  # when scripts/ci-convergence-scope.sh selects its diff (test.yml `changes`);
+  # every merge-queue run, every push to master and the nightly Test schedule
+  # run it.
+  convergence:
+    name: Managed-sync convergence / Bun ${{ matrix.bun }}
+    if: ${{ inputs.convergence != 'skip' }}
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        bun: ['1.4.0', '1.4.3']
+        # Event parity: every event, pull requests and merge-queue runs
+        # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: gbrain_test
+          POSTGRES_PASSWORD: gbrain_test
+          POSTGRES_DB: gbrain_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U gbrain_test -d gbrain_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      pgbouncer:
+        image: edoburu/pgbouncer:latest
+        env:
+          DB_HOST: postgres
+          DB_PORT: '5432'
+          DB_USER: gbrain_test
+          DB_PASSWORD: gbrain_test
+          POOL_MODE: transaction
+          AUTH_TYPE: plain
+          MAX_CLIENT_CONN: '200'
+          DEFAULT_POOL_SIZE: '10'
+          IGNORE_STARTUP_PARAMETERS: extra_float_digits,statement_timeout,idle_in_transaction_session_timeout,search_path
+        ports: ['55433:5432']
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ matrix.bun }}
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      # The step timeout sits inside the job's, so the evidence and cleanup steps below still run after it.
+      - name: Converge a managed sync after the seeded kill loop under concurrent writers
+        timeout-minutes: 30
+        env:
+          GBRAIN_TEST_CONVERGENCE: '1'
+          GBRAIN_PGBOUNCER_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:55433/gbrain_test
+          GBRAIN_PGBOUNCER_DIRECT_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
+          GBRAIN_TEST_CONVERGENCE_NOTES: '200'
+          GBRAIN_TEST_CONVERGENCE_LATENCY_MS: '10'
+          GBRAIN_TEST_CONVERGENCE_KILLS: '6'
+          GBRAIN_TEST_CONVERGENCE_SEED: '6650'
+          GBRAIN_TEST_CONVERGENCE_SYNC_TIMEOUT_MS: '900000'
+          GBRAIN_TEST_CONVERGENCE_SCENARIO_TIMEOUT_MS: '1620000'
+          GBRAIN_TEST_CONVERGENCE_LOG_DIR: ${{ runner.temp }}/convergence
+        run: bun --no-env-file test --timeout="$GBRAIN_TEST_CONVERGENCE_SCENARIO_TIMEOUT_MS" test/sync-convergence.serial.test.ts
+      - name: Stop harness processes a timed-out run left behind
+        if: always()
+        run: pkill -9 -f 'src/cli\.ts (serve|sync|put|call|extract)' || true
+      - name: Upload the convergence fault evidence (plan, fired faults, every client, serve and writer log)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: convergence-bun-${{ matrix.bun }}
+          path: ${{ runner.temp }}/convergence
+          if-no-files-found: warn

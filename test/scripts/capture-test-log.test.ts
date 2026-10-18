@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { mineWeights } from '../../scripts/mine-shard-weights.ts';
-import { captureTestLog } from '../../scripts/capture-test-log.ts';
+import { BUN_SPAWNSYNC_POISONED, FailureCollector, captureTestLog } from '../../scripts/capture-test-log.ts';
 
 const SCRIPT = resolve(import.meta.dir, '../../scripts/capture-test-log.ts');
 const roots: string[] = [];
@@ -59,7 +59,11 @@ process.stderr.write('stderr tail');
 
   it('can feed captured unit and E2E records directly to the weight miner', async () => {
     const unit = await run(`
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+const artifact = join(import.meta.dir, 'timings', 'execution.log');
 console.log('##[group]test/fixture.test.ts:');
+while (!existsSync(artifact) || !readFileSync(artifact, 'utf8').includes('##[group]test/fixture.test.ts:')) await Bun.sleep(1);
 await Bun.sleep(20);
 console.log(' 0 fail');
 console.log('Ran 1 test across 1 file. [20ms]');
@@ -211,5 +215,129 @@ test('waits forever', async () => { await new Promise(() => {}); });`);
     });
     expect(await proc.exited).toBe(0);
     expect(existsSync(summary)).toBe(false);
+  });
+});
+
+describe('bun_spawnsync_poisoned signature (oven-sh/bun#34069)', () => {
+  // The shard-7 shape of run 38004627376 attempt 1 (d4dc2d4d8) and run 37971386009 (c12e14adf): a dangling child
+  // killed at a deadline inside one file, then nothing but timeouts, in unrelated files, until the job budget ends.
+  const feed = (lines: string[]) => { const c = new FailureCollector(); for (const line of lines) c.feed(line); return c; };
+  const timeout = (test: string, ms: number) => [`(fail) ${test} [${ms}.00ms]`, `  ^ this test timed out after ${ms}ms.`];
+  const poisonedRun = [
+    'bun test v1.4.2 (744846f84)',
+    '##[group]test/persistence-git-publication.test.ts:',
+    '(pass) literal Git pathspecs publish only the bracketed target and preserve the index [89.95ms]',
+    'killed 1 dangling process', 'killed 1 dangling process',
+    ...timeout('unchanged replay, missing target and tracked deletion keep distinct outcomes', 60002),
+    '##[group]test/voice-gate.test.ts:', '(pass) voice gate > default deny [1.20ms]',
+    '##[group]test/persistence-preactivation-claim.test.ts:',
+    'killed 1 dangling process', ...timeout('#6122 pre-activation claim (pglite) > the dry run reports the claim', 120000),
+    '##[group]test/scripts/merge-lcov.test.ts:',
+    'killed 1 dangling process', ...timeout('merge: DA summing across lanes > sums per-line hits', 60045),
+  ];
+
+  it('names the signature in the summary and the stderr line, with the Bun version and the upstream fix', () => {
+    const c = feed(poisonedRun);
+    expect(c.poisoned()).toBe(true);
+    const summary = c.render('test (7)', '/tmp/unit.log', 1);
+    expect(summary).toContain(`**${BUN_SPAWNSYNC_POISONED}**`);
+    expect(summary).toContain('Bun v1.4.2');
+    expect(summary).toContain('3 timed-out tests across 3 files');
+    expect(summary).toContain('oven-sh/bun#34069');
+    expect(summary).toContain('oven-sh/bun#44581');
+    expect(summary).toContain('rerun the job');
+    // The failing tests still follow, so the shard's own evidence is kept.
+    expect(summary).toContain('#### test/scripts/merge-lcov.test.ts › merge: DA summing across lanes > sums per-line hits');
+  });
+
+  it('one hung test with a dangling child is not the signature', () => {
+    const c = feed([
+      'bun test v1.4.2 (744846f84)', '##[group]test/a.test.ts:', 'killed 1 dangling process',
+      ...timeout('git that outlives the probe timeout keeps Git effects unfinished', 60001),
+      '##[group]test/b.test.ts:', '(pass) b > works [1.00ms]',
+    ]);
+    expect(c.poisoned()).toBe(false);
+    expect(c.render('test (7)', '/tmp/unit.log', 1)).not.toContain(BUN_SPAWNSYNC_POISONED);
+  });
+
+  it('a run of timeouts with no killed child is a slow or wedged backend, not the signature', () => {
+    const c = feed([
+      'bun test v1.4.2 (744846f84)',
+      '##[group]test/a.test.ts:', ...timeout('a > first', 60000), ...timeout('a > second', 60000),
+      '##[group]test/b.test.ts:', ...timeout('b > third', 60000), ...timeout('b > fourth', 60000),
+    ]);
+    expect(c.poisoned()).toBe(false);
+    expect(c.render('test (7)', '/tmp/unit.log', 1)).not.toContain(BUN_SPAWNSYNC_POISONED);
+  });
+
+  // #6586, run 38335527492 job 115101422707 (0030c078f, Bun 1.4.2): the drift showed first as the sync drain's git reads
+  // returning `spawnSync git ETIMEDOUT`, ten minutes before the first kill; the job then hit its time limit, the test
+  // process never exited, and nothing named the signature.
+  const cancelledRun = [
+    'bun test v1.4.2 (744846f84)',
+    '##[group]test/managed-sync-pinned-reads.test.ts:',
+    '[sync] 0/? processed · database connection dropped (spawnSync git ETIMEDOUT); reconnecting and retrying in 5s (1 of 3)',
+    '[sync] 9/28 processed · database connection dropped (spawnSync git ETIMEDOUT); reconnecting and retrying in 5s (1 of 3)',
+    'killed 1 dangling process',
+    ...timeout('pglite: windowed pinned reads leave the same rows as per-entry reads, with far fewer Git processes', 600000),
+    'killed 1 dangling process', 'killed 1 dangling process',
+    ...timeout("the Git top level is read once per root and run, and again when the checkout's .git changes", 60001),
+    '##[group]test/dream.test.ts:', 'killed 1 dangling process',
+    ...timeout('runDream --phase lint --phase orphans > runs both phases', 60000),
+  ];
+
+  it('warns live on the first spawnSync ETIMEDOUT and gives the verdict the moment it holds, each once', () => {
+    const c = new FailureCollector();
+    const notes: Array<[number, string]> = [];
+    cancelledRun.forEach((line, index) => { c.feed(line); for (const note of c.takeLiveNotes()) notes.push([index, note]); });
+    expect(notes).toHaveLength(2);
+    expect(notes[0]![0]).toBe(2);
+    expect(notes[0]![1]).toContain(`**${BUN_SPAWNSYNC_POISONED}?**`);
+    expect(notes[0]![1]).toContain('test/managed-sync-pinned-reads.test.ts printed `[sync] 0/? processed · database connection dropped (spawnSync git ETIMEDOUT)');
+    expect(notes[0]![1]).toContain('Bun v1.4.2');
+    expect(notes[0]![1]).toContain('fixed in Bun 1.4.3');
+    expect(notes[1]![0]).toBe(cancelledRun.length - 1);
+    expect(notes[1]![1]).toContain(`**${BUN_SPAWNSYNC_POISONED}**`);
+    expect(notes[1]![1]).toContain('3 timed-out tests across 2 files');
+    expect(c.takeLiveNotes()).toEqual([]);
+    // Already announced: the exit summary keeps the failures without repeating the verdict.
+    expect(c.render('test (2)', '/tmp/unit.log', 143)).not.toContain(`**${BUN_SPAWNSYNC_POISONED}**`);
+    const quiet = feed(['bun test v1.4.3 (abc)', '##[group]test/a.test.ts:', '(pass) a > spawns [1.00ms]']);
+    expect(quiet.takeLiveNotes()).toEqual([]);
+  });
+
+  it('a job whose test process is still running already has the live note in its step summary', async () => {
+    const f = fixture(`console.error('[sync] 0/? processed · database connection dropped (spawnSync git ETIMEDOUT); reconnecting and retrying in 5s (1 of 3)');
+await new Promise(() => setInterval(() => {}, 1000));`);
+    const summary = join(f.root, 'summary.md');
+    const proc = Bun.spawn([process.execPath, SCRIPT, '--job', 'test (2)', '--out', f.output, '--', process.execPath, f.script], {
+      stdout: 'ignore', stderr: 'pipe', env: { ...process.env, GITHUB_STEP_SUMMARY: summary },
+    });
+    try {
+      const deadline = Date.now() + 15_000;
+      while (!(existsSync(summary) && readFileSync(summary, 'utf8').includes(BUN_SPAWNSYNC_POISONED)) && Date.now() < deadline) await Bun.sleep(100);
+      const text = existsSync(summary) ? readFileSync(summary, 'utf8') : '';
+      expect(text).toContain('### test (2): live note');
+      expect(text).toContain(`**${BUN_SPAWNSYNC_POISONED}?**`);
+      expect(text).toContain('spawnSync git ETIMEDOUT');
+    } finally {
+      proc.kill('SIGTERM');
+      await proc.exited;
+    }
+    expect(await new Response(proc.stderr).text()).toContain(`capture-test-log: ${BUN_SPAWNSYNC_POISONED}?`);
+  }, 30000);
+
+  it('a non-timeout failure after the kill, or timeouts confined to one file, is left for its own diagnosis', () => {
+    const mixed = feed([
+      ...poisonedRun,
+      '##[group]test/c.test.ts:', 'error: expect(received).toBe(expected)', '(fail) c > asserts [2.00ms]',
+    ]);
+    expect(mixed.poisoned()).toBe(false);
+    const oneFile = feed([
+      'bun test v1.4.2 (744846f84)', '##[group]test/a.test.ts:', 'killed 1 dangling process',
+      ...timeout('a > one', 60000), ...timeout('a > two', 60000), ...timeout('a > three', 60000),
+    ]);
+    expect(oneFile.poisoned()).toBe(false);
+    expect(oneFile.render('test (7)', '/tmp/unit.log', 1)).not.toContain(BUN_SPAWNSYNC_POISONED);
   });
 });

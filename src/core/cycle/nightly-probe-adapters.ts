@@ -95,9 +95,12 @@ export async function runLongMemEvalForProbe(args: LongMemEvalProbeArgs): Promis
  * `--model` and the extractor `RunOpts.extractorModel`. `--no-embed-cache`
  * (C-N5): the cache swaps the gateway's process-global embed transport for
  * the run, which inside the daemon would also catch every other embed call.
+ * `--reader-mode direct` (#6627): the judge grades DIRECTNESS, and the notes
+ * reader's whole notes-plus-reasoning text becomes the hypothesis, so the
+ * probe uses the original terse reader. The shared reader prompts stay as-is.
  */
 export function buildLongMemEvalProbeCall(args: LongMemEvalProbeArgs): { argv: string[]; runOpts: RunOpts } {
-  const argv = [args.fixturePath, '--output', args.outputPath, '--no-embed-cache'];
+  const argv = [args.fixturePath, '--output', args.outputPath, '--no-embed-cache', '--reader-mode', 'direct'];
   const runOpts: RunOpts = { searchConfigSnapshot: args.searchConfigSnapshot, exitOnError: false };
   if (args.modelRoutes) {
     argv.push('--model', args.modelRoutes.reader.model);

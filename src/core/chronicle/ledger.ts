@@ -7,6 +7,8 @@ import type { BrainEngine } from '../engine.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import type { WriteAuthority, WriteRequest } from '../persistence/model.ts';
 import { derivedExtractionSkip } from '../persistence/derived-extraction-gate.ts';
+import { isSegmentedPage } from '../page-body/page-shape.ts';
+import type { BodyStorage } from '../page-body/types.ts';
 import { CHRONICLE_ACTIVATED_AT_KEY, autoChronicleSetting, chronicleSettings, type ChronicleSettings } from './config.ts';
 import { CHRONICLE_EXTRACTOR_VERSION, type ChronicleLedgerRow, type ChronicleTrigger } from './contract.ts';
 import { isChronicleEligible, isChronicleShaped } from './eligibility.ts';
@@ -21,7 +23,10 @@ export const RETIRE_REASONS = ['not_chronicle_shaped', 'dream_generated', 'too_s
 export interface ChronicleDecisionPage {
   type: string;
   slug: string;
+  /** For a segmented page, its `truth_lead` (the page row has no `compiled_truth`). */
   compiled_truth?: string | null;
+  body_storage?: BodyStorage | null;
+  body_bytes?: number | null;
   frontmatter?: Record<string, unknown> | null;
   effective_date?: Date | string | null;
   effective_date_source?: string | null;
@@ -190,7 +195,10 @@ export async function recordChronicleDecision(tx: BrainEngine, row: DecidingRequ
   }
   const now = new Date();
   const setting = autoChronicleSetting(enabledRaw);
-  const decision = decideChronicle({ page, authority: row.authority ?? null, noExtract,
+  const decisionPage: ChronicleDecisionPage = isSegmentedPage(page) ? { type: page.type, slug: page.slug, frontmatter: page.frontmatter,
+    effective_date: page.effective_date, effective_date_source: page.effective_date_source, body_storage: page.body_storage, body_bytes: page.body_bytes,
+    compiled_truth: (await tx.executeRaw<{ truth_lead: string | null }>('SELECT truth_lead FROM pages WHERE id=$1', [page.id]))[0]?.truth_lead } : page;
+  const decision = decideChronicle({ page: decisionPage, authority: row.authority ?? null, noExtract,
     enabled: setting === 'on', invalidSetting: setting === 'invalid', settings, now });
   const receiptCtx: ChronicleReasonContext = { sourceId: base.sourceId, since: now.toISOString().slice(0, 10),
     dailyLimit: settings.dailyLimit, recentDays: settings.recentDays };

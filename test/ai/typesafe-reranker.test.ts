@@ -63,7 +63,7 @@ describe('System One reranker (S1)', () => {
     expect(recipe.touchpoints.decide?.default_model).toBe('jev-1.13.0');
     expect(recipe.touchpoints.embedding).toBeUndefined();
     expect(recipe.touchpoints.chat).toBeUndefined();
-    expect(DEFAULT_RERANKER_MODEL).toBe('voyage:rerank-2.5');
+    expect(DEFAULT_RERANKER_MODEL).toBe('voyage:rerank-3-lite');
     expect(rerankerReadiness(MODEL, {}).ready).toBe(false);
     expect(rerankerReadiness(MODEL, { TYPESAFE_API_KEY: 'sk-test' }).ready).toBe(true);
     expect(rerankerReadiness(MODEL, { JEV_TYPESAFE_API_KEY: 'sk-test' }).ready).toBe(true);

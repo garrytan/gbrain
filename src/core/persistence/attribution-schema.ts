@@ -20,6 +20,7 @@
  * guard); the classification test in test/write-attribution.test.ts fails
  * until it is.
  */
+import { TRUST_ROW_COLUMNS } from '../trust/schema.ts';
 
 /** created_by and last_mutated_by on facts, takes and timeline_entries. */
 export const ROW_ATTRIBUTION_COLUMNS = [
@@ -46,11 +47,16 @@ export const WRITE_ATTRIBUTION_CONTENT_COLUMNS: Record<AttributedTable, readonly
     'resolved_by', 'created_at', 'resolved_quality'],
   timeline_entries: ['id', 'page_id', 'date', 'source', 'summary', 'detail', 'event_page_id', 'created_at'],
 };
-/** Physical projections (embeddings and their identity): changing them leaves attribution untouched. */
+/**
+ * Columns whose change leaves attribution untouched: physical projections
+ * (embeddings and their identity) and the trust tier and its origin record,
+ * which trust/schema.ts stamps and guards (a confirmation or backfill is not a
+ * content rewrite, so it does not move last_write_*).
+ */
 export const WRITE_ATTRIBUTION_PROJECTION_COLUMNS: Record<AttributedTable, readonly string[]> = {
-  facts: ['embedding', 'embedded_at', 'embedding_model', 'embedded_text_hash'],
-  takes: ['embedding', 'embedded_at', 'updated_at', 'embedding_model', 'embedded_text_hash'],
-  timeline_entries: [],
+  facts: ['embedding', 'embedded_at', 'embedding_model', 'embedded_text_hash', ...TRUST_ROW_COLUMNS],
+  takes: ['embedding', 'embedded_at', 'updated_at', 'embedding_model', 'embedded_text_hash', ...TRUST_ROW_COLUMNS],
+  timeline_entries: [...TRUST_ROW_COLUMNS],
 };
 
 const ATTRIBUTED_TABLES = Object.keys(WRITE_ATTRIBUTION_CONTENT_COLUMNS) as AttributedTable[];

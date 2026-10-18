@@ -60,10 +60,11 @@ beforeEach(async () => {
 
 describe('parsePurgeArgs', () => {
   test('accepts the documented forms', () => {
-    expect(parsePurgeArgs([])).toEqual({ olderThanHours: 72, dryRun: false, json: false });
+    expect(parsePurgeArgs([])).toEqual({ olderThanHours: 72, dryRun: false, json: false, retryParked: false });
     expect(parsePurgeArgs(['--older-than', '720'])).toMatchObject({ olderThanHours: 720 });
     expect(parsePurgeArgs(['--older-than=720'])).toMatchObject({ olderThanHours: 720 });
-    expect(parsePurgeArgs(['--older-than', '3d', '--dry-run', '--json'])).toEqual({ olderThanHours: 72, dryRun: true, json: true });
+    expect(parsePurgeArgs(['--older-than', '3d', '--dry-run', '--json'])).toEqual({ olderThanHours: 72, dryRun: true, json: true, retryParked: false });
+    expect(parsePurgeArgs(['--retry-parked', '--yes'])).toMatchObject({ retryParked: true });
     expect(parsePurgeArgs(['--older-than=0h', '--yes'])).toMatchObject({ olderThanHours: 0 });
   });
 

@@ -1,4 +1,5 @@
 import { bodyWriteChunkVersion } from './search/safe-chunks.ts';
+import { assertInlineBody } from './page-body/page-shape.ts';
 /**
  * #1856 — write-through for manual timeline entries.
  *
@@ -66,6 +67,7 @@ import {
   type PushLogOutcome,
 } from './brain-repo-durability.ts';
 import { extractTimelineFromContent } from './timeline-extract.ts';
+import { urlCloneReadOnly } from './url-clone.ts';
 
 /** Raw op params for one manual timeline entry (date pre-validated by caller). */
 export interface TimelineEntryWriteInput {
@@ -105,6 +107,7 @@ export interface TimelineWriteThroughOutcome {
   /** Why the FS-canonical path didn't apply (when handled=false). */
   skipped?:
     | 'disabled_by_config'
+    | 'url_clone'
     | 'no_repo_configured'
     | 'repo_not_found'
     | 'source_repo_belongs_to_other_source'
@@ -308,6 +311,9 @@ export async function writeTimelineEntryThrough(
     if (await isWriteThroughDisabled(engine)) {
       return { handled: false, skipped: 'disabled_by_config' };
     }
+    if (await urlCloneReadOnly(engine, sourceId)) {
+      return { handled: false, skipped: 'url_clone' };
+    }
     const target = await resolvePageWriteTarget(engine, slug, sourceId);
     if (!target.ok) {
       return { handled: false, skipped: target.skipped };
@@ -323,6 +329,7 @@ export async function writeTimelineEntryThrough(
       // error instead of inventing a second error shape here.
       return { handled: false, skipped: 'page_not_found' };
     }
+    assertInlineBody(page, 'timeline write-through');
 
     const rendered = renderTimelineEntry(entry, slug);
     if (!rendered) {
@@ -420,7 +427,7 @@ export async function writeTimelineEntryThrough(
             committed = commitWriteThroughFile(writeRoot, filePath, slug);
             if (committed) {
               pushed = 'pending';
-              lastPushStatus = getLastPushOutcome(currentBranch(writeRoot));
+              lastPushStatus = getLastPushOutcome(currentBranch(writeRoot), writeRoot);
             }
           }
         } catch { /* best-effort */ }

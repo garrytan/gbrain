@@ -14,7 +14,7 @@ import type { FenceKind } from './types.ts';
 
 export const FACTS_COLUMNS = [
   '#', 'claim', 'kind', 'confidence', 'visibility', 'notability', 'valid_from', 'valid_until', 'source', 'context',
-  'claim_metric', 'claim_value', 'claim_unit', 'claim_period',
+  'claim_metric', 'claim_value', 'claim_unit', 'claim_period', 'attributed_to',
 ] as const;
 export const TAKES_COLUMNS = [
   '#', 'claim', 'kind', 'who', 'weight', 'since', 'source', 'resolved', 'quality', 'evidence', 'value', 'unit', 'by',
@@ -24,6 +24,8 @@ export const TAKES_COLUMNS = [
 export const COLUMNS: Record<FenceKind, readonly string[]> = { facts: FACTS_COLUMNS, takes: TAKES_COLUMNS };
 /** The narrow canonical layout (facts 10, takes 7); the wide one adds the remaining columns. */
 export const BASE_WIDTH: Record<FenceKind, number> = { facts: 10, takes: 7 };
+/** The wide canonical layout (facts 14 typed columns, takes 13); a facts header that names `attributed_to` adds it as a 15th (#6385). */
+export const WIDE_WIDTH: Record<FenceKind, number> = { facts: 14, takes: 13 };
 /** Fewest cells the strict parser reads (facts 9 = no context, takes 6 = no source). */
 export const MIN_CELLS: Record<FenceKind, number> = { facts: 9, takes: 6 };
 /** Columns read by header name rather than position (takes resolution columns). */
@@ -33,7 +35,7 @@ export const NAMED_COLUMNS: Record<FenceKind, ReadonlySet<string>> = {
 };
 /** Columns a row may omit at its end and still parse. */
 export const TOLERATED_TRAILING: Record<FenceKind, ReadonlySet<string>> = {
-  facts: new Set(['context', 'claim_metric', 'claim_value', 'claim_unit', 'claim_period']),
+  facts: new Set(['context', 'claim_metric', 'claim_value', 'claim_unit', 'claim_period', 'attributed_to']),
   takes: new Set(['source', 'resolved', 'quality', 'evidence', 'value', 'unit', 'by']),
 };
 /** Write defaults for a required facts column absent from the whole header (`column_default`, T6). */
@@ -42,13 +44,18 @@ export const COLUMN_DEFAULTS: Record<FenceKind, Readonly<Record<string, string>>
   takes: {},
 };
 
-/** Header and separator text exactly as `renderFactsTable` / `renderTakesFence` emit them. */
-export const CANONICAL_HEADER: Record<FenceKind, { narrow: string; wide: string; narrowSep: string; wideSep: string }> = {
+/**
+ * Header and separator text exactly as `renderFactsTable` / `renderTakesFence` emit them; `attributed` is
+ * the facts wide header with the `attributed_to` column (#6385), what the renderer writes when a row carries it.
+ */
+export const CANONICAL_HEADER: Record<FenceKind, { narrow: string; wide: string; narrowSep: string; wideSep: string; attributed?: string; attributedSep?: string }> = {
   facts: {
     narrow: '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
     wide: '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context | claim_metric | claim_value | claim_unit | claim_period |',
     narrowSep: '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|',
     wideSep: '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|--------------|-------------|------------|--------------|',
+    attributed: '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context | claim_metric | claim_value | claim_unit | claim_period | attributed_to |',
+    attributedSep: '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|--------------|-------------|------------|--------------|---------------|',
   },
   takes: {
     narrow: '| # | claim | kind | who | weight | since | source |',
@@ -76,6 +83,7 @@ export const HEADER_ALIASES: Record<FenceKind, Readonly<Record<string, readonly 
     claim_value: ['claim value', 'value'],
     claim_unit: ['claim unit', 'unit'],
     claim_period: ['claim period', 'period'],
+    attributed_to: ['attributed_to'],
   },
   takes: {
     '#': ROW_NUM_ALIASES,
@@ -121,6 +129,7 @@ export function canonicalColumn(kind: FenceKind, headerCell: string): string | n
 const FACT_KINDS: ReadonlySet<string> = new Set(['event', 'preference', 'commitment', 'belief', 'fact', 'idea']);
 const VISIBILITIES: ReadonlySet<string> = new Set(['private', 'world']);
 const NOTABILITIES: ReadonlySet<string> = new Set(['high', 'medium', 'low']);
+const ATTRIBUTIONS: ReadonlySet<string> = new Set(['user', 'assistant', 'other']);
 const PLAIN_NUMBER_RE = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 const NUMERIC_CELL_RE = /^([+-]?)[$€£]?((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)((?:[eE][+-]?\d+)?)\s*([kmb]?)$/i;
 
@@ -132,6 +141,7 @@ export const ALLOWED: Record<FenceKind, Readonly<Record<string, readonly string[
     notability: [...NOTABILITIES],
     confidence: ['a number from 0 to 1'],
     claim_value: ['a number, optionally with 1,234 separators or a k/M/B suffix'],
+    attributed_to: [...ATTRIBUTIONS],
     '#': ['a positive whole number'],
   },
   takes: {
@@ -158,6 +168,7 @@ export function cellValid(kind: FenceKind, column: string, text: string): boolea
     case 'notability': return NOTABILITIES.has(lower);
     case 'confidence': return confidenceValid(text);
     case 'claim_value': return !text.trim() || NUMERIC_CELL_RE.test(text.trim());
+    case 'attributed_to': return !lower || ATTRIBUTIONS.has(lower);
     case 'takes:kind': return TAKE_KIND_VALUES.has(lower);
     case 'takes:who': return isValidHolder(text.trim());
     case 'takes:weight': return Number.isFinite(parseFloat(text));

@@ -20,7 +20,7 @@
  * older binary may still be using an old key during a mixed-version window.
  */
 import type { BrainEngine } from '../engine.ts';
-import { connectorCheckpointKey, connectorIdentity, type ConnectorKind } from './connector-identity.ts';
+import { connectorCheckpointKeys, connectorIdentity, type ConnectorKind } from './connector-identity.ts';
 import { CONNECTOR_STATE_OP, connectorStateKey, emptyConnectorState, type ConnectorState } from './connector-state.ts';
 
 type Sql = Pick<BrainEngine, 'executeRaw' | 'transaction' | 'kind'>;
@@ -33,14 +33,22 @@ export async function readConnectorV2Cutoff(engine: Pick<BrainEngine, 'executeRa
 
 interface SourceRow { id: string; incarnation: string; local_path: string | null; config: Record<string, unknown> | string | null; archived: boolean }
 
-/** Stable checkpoint keys of every registered connector source (archived ones included: a restore must still find its cursor). */
-export async function loadableConnectorKeys(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Map<string, { id: string; incarnation: string; archived: boolean }>> {
+export interface LoadableConnectorKey { id: string; incarnation: string; archived: boolean; alias: boolean }
+
+/**
+ * Checkpoint keys of every registered connector source (archived ones included: a restore must still find its
+ * cursor): each source's stable key, plus its alias keys (`alias: true`, #6561) so rows an earlier release wrote
+ * under them are never orphans while the source exists.
+ */
+export async function loadableConnectorKeys(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Map<string, LoadableConnectorKey>> {
   const rows = await engine.executeRaw<SourceRow>("SELECT id,incarnation::text,local_path,config,archived FROM sources WHERE config->>'kind' IN ('google','github')");
-  const keys = new Map<string, { id: string; incarnation: string; archived: boolean }>();
+  const keys = new Map<string, LoadableConnectorKey>();
   for (const row of rows) {
     const config = typeof row.config === 'string' ? JSON.parse(row.config) as Record<string, unknown> : row.config ?? {};
-    keys.set(connectorCheckpointKey(row.id, row.incarnation, connectorIdentity(config.kind as ConnectorKind, config, row.local_path)),
-      { id: row.id, incarnation: row.incarnation, archived: row.archived === true });
+    const [stable, ...aliases] = connectorCheckpointKeys(row.id, row.incarnation, connectorIdentity(config.kind as ConnectorKind, config, row.local_path));
+    const source = { id: row.id, incarnation: row.incarnation, archived: row.archived === true };
+    keys.set(stable!, { ...source, alias: false });
+    for (const alias of aliases) keys.set(alias, { ...source, alias: true });
   }
   return keys;
 }
@@ -76,6 +84,16 @@ export async function orphanConnectorCheckpoints(engine: Pick<BrainEngine, 'exec
   return engine.executeRaw<OrphanCheckpointRow>(`SELECT c.op, c.fingerprint, c.updated_at::text AS updated_at FROM op_checkpoints c
     WHERE c.op IN ('managed-connector','managed-connector-retry') AND ${orphanPredicate(2)}
     ORDER BY c.op, c.fingerprint LIMIT $1`, [opts.limit ?? 100_000, loadable, opts.before ?? null, opts.minAgeDays ?? null, CONNECTOR_STATE_OP]);
+}
+
+/** Checkpoint and retry rows kept only because their key is a source's #6561 alias key (the repair preview lists them). */
+export async function aliasProtectedConnectorCheckpoints(engine: Pick<BrainEngine, 'executeRaw'>): Promise<number> {
+  const aliases = [...(await loadableConnectorKeys(engine))].filter(([, source]) => source.alias).map(([key]) => key);
+  if (!aliases.length) return 0;
+  const [row] = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM op_checkpoints c
+    WHERE (c.op='managed-connector' AND c.fingerprint = ANY($1::text[]))
+       OR (c.op='managed-connector-retry' AND c.completed_keys->0->>'checkpointKey' = ANY($1::text[]))`, [aliases]);
+  return Number(row?.n ?? 0);
 }
 
 /**
@@ -126,6 +144,7 @@ export async function migrateConnectorCheckpoints(engine: Sql, log: (line: strin
   const report: ConnectorMigrationReport = { rekeyed: [], rewalking: [], removed: { checkpoints: 0, retries: 0 } };
   // Archived sources are migrated too: archive and restore keep the incarnation, so a restore resumes its cursor.
   for (const [key, source] of await loadableConnectorKeys(engine)) {
+    if (source.alias) continue;
     const receipt = newest.get(`${source.id}\u0000${source.incarnation}`);
     // No managed checkpoint yet, or already saved by this release under its stable key.
     if (!receipt || receipt.kind === 'connector_v2_checkpoint') continue;

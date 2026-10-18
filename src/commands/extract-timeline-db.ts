@@ -19,10 +19,12 @@
 import type { BrainEngine, TimelineBatchInput } from '../core/engine.ts';
 import type { Page, PageType } from '../core/types.ts';
 import { parseTimelineEntries, deriveTimelineAnchor } from '../core/link-extraction.ts';
-import { retractRemovedTimelineEntries } from '../core/timeline-extract.ts';
+import { eachStoredTimelineRow, retractRemovedTimelineEntries, segmentedTimelineText, storedTimelineKey, TimelineKeySet, unkeptTimelineRows } from '../core/timeline-extract.ts';
+import { timelineKey } from '../core/timeline-marker.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
 import { maintenanceTransaction } from '../core/persistence/attribution.ts';
-import { unrecordedCanonicalTimeline } from '../core/persistence/canonical-projections.ts';
+import { segmentedCanonicalCollector, unrecordedCanonicalTimeline } from '../core/persistence/canonical-projections.ts';
+import { isSegmentedPage } from '../core/page-body/page-shape.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent, type MaintenanceAuthority } from '../core/persistence/prepared-maintenance.ts';
 import { authorizeWrite } from '../core/persistence/authority.ts';
 import { getWriteRequest } from '../core/persistence/journal.ts';
@@ -34,8 +36,10 @@ import { readFix } from '../core/ops/op-fix.ts';
 import { createProgress } from '../core/progress.ts';
 import { importAnalyzeEveryPages, maybeRefreshPlannerStats } from '../core/planner-stats.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
-import { filterRefsSince } from './extract.ts';
+import { extractCompletionKey, filterRefsSince } from './extract.ts';
 import { isQuarantined } from '../core/quarantine.ts';
+import { pageSnapshotKey } from '../core/page-snapshot-batch.ts';
+import type { PageSnapshot } from '../core/page-state/types.ts';
 
 const BATCH_SIZE = 100;
 export const TIMELINE_EXTRACT_INTENT = 'managed_maintenance_timeline_extract';
@@ -63,6 +67,8 @@ export interface TimelineDbOptions {
   inferDates?: boolean;
   /** Restrict the walk to these slugs (requires sourceIdFilter). */
   slugs?: readonly string[];
+  /** S4 (P2.18): receives `extractCompletionKey` for each page whose timeline write landed (or had nothing to write). */
+  completed?: Set<string>;
 }
 
 /**
@@ -123,13 +129,18 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
   const analyzeEvery = opts.dryRun ? 0 : await importAnalyzeEveryPages(engine);
   let walked = 0;
 
+  // Unmanaged pages whose rows sit in the unflushed batch, and pages a refused batch held: completion follows the flush.
+  const unflushed = new Set<string>(), refusedPages = new Set<string>();
   async function flush() {
     if (batch.length === 0) return;
-    const snapshot = batch.slice();
+    const snapshot = batch.slice(), held = [...unflushed];
     batch.length = 0;
+    unflushed.clear();
     try {
       result.created += await maintenanceTransaction(engine, tx => tx.addTimelineEntriesBatch(snapshot, { auditSite: 'extract.timeline_db' }));
+      for (const key of held) if (!refusedPages.has(key)) opts.completed?.add(key);
     } catch (e) {
+      for (const key of held) { refusedPages.add(key); opts.completed?.delete(key); }
       const code = refusalCode(e);
       codes.add(code);
       result.refused += snapshot.length;
@@ -137,18 +148,25 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
     }
   }
 
-  for (const { slug, source_id } of refs) {
+  // Pages are read BATCH_SIZE at a time (one snapshot statement, and on a
+  // managed brain one read of their stored rows); a managed page with nothing
+  // to change then admits no request without another read.
+  let readBatch: TimelineReadBatch = { start: 0, covered: 0, snapshots: new Map(), stored: new Map() };
+  for (const [index, { slug, source_id }] of refs.entries()) {
     if (analyzeEvery > 0 && walked > 0 && walked % analyzeEvery === 0) {
       await flush();
       await maybeRefreshPlannerStats(engine, 'extract', { throttle: false }).catch(() => undefined);
     }
     walked++;
+    if (index >= readBatch.start + readBatch.covered) readBatch = await readTimelineBatch(engine, refs, index, managed);
+    const snapshot = readBatch.snapshots.get(pageSnapshotKey(source_id, slug)) ?? null;
     if (managed) {
       try {
-        const outcome = await publishPageTimeline(engine, await authorityFor(source_id), slug, source_id, opts);
+        const outcome = await publishPageTimeline(engine, await authorityFor(source_id), slug, source_id, opts,
+          { snapshot, stored: !snapshot ? [] : isSegmentedPage(snapshot.page) ? undefined : readBatch.stored.get(Number(snapshot.page.id)) ?? [] });
         if (outcome === 'skipped') result.skipped++;
         else if (outcome === 'pending') result.pending++;
-        else if (outcome !== null) { result.created += outcome; result.pages++; }
+        else if (outcome !== null) { result.created += outcome; result.pages++; opts.completed?.add(extractCompletionKey(source_id, slug, snapshot!.revision)); }
       } catch (e) {
         const code = refusalCode(e);
         codes.add(code);
@@ -159,19 +177,23 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
       continue;
     }
 
-    const page = await engine.getPage(slug, { sourceId: source_id });
+    const page = snapshot?.page ?? null;
     if (!page || isQuarantined(page.frontmatter)) continue;
     if (opts.typeFilter && page.type !== opts.typeFilter) continue;
-    const fullContent = page.compiled_truth + '\n' + page.timeline;
+    // A segmented body is read block by block (segmentedTimelineText), never as one string.
+    const segmented = isSegmentedPage(page) ? await segmentedTimelineText(engine, page) : null;
+    const fullContent = segmented ?? page.compiled_truth + '\n' + page.timeline;
     if (!opts.dryRun) await retractRemovedTimelineEntries(engine, slug, source_id, fullContent);
-    let entries = parseTimelineEntries(fullContent);
+    let entries = segmented ? segmented.entries : parseTimelineEntries(page.compiled_truth + '\n' + page.timeline);
     // --infer-dates: pages with no in-body timeline line but a trustworthy
     // content date (frontmatter / filename) get one anchor entry at that date.
     if (entries.length === 0 && opts.inferDates) {
       const anchor = anchorFor(page, slug);
       if (anchor) entries = [anchor];
     }
-    for (const entry of entries) {
+    const completion = extractCompletionKey(source_id, slug, snapshot!.revision);
+    if (!opts.dryRun) { if (entries.length) unflushed.add(completion); else opts.completed?.add(completion); }
+    for (const [n, entry] of entries.entries()) {
       if (dryRunSeen) {
         const key = `${source_id}::${slug}::${entry.date}::${entry.summary}`;
         if (dryRunSeen.has(key)) continue;
@@ -187,7 +209,7 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
         result.created++;
       } else {
         batch.push({ slug, date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail || '', source_id });
-        if (batch.length >= BATCH_SIZE) await flush();
+        if (batch.length >= BATCH_SIZE) { await flush(); if (n < entries.length - 1) unflushed.add(completion); }
       }
     }
     result.pages++;
@@ -214,24 +236,94 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
   return result;
 }
 
-/** The timeline change one page needs: removed rows to retract and canonical tuples (or an inferred anchor) to insert. */
-async function plannedTimeline(engine: BrainEngine, page: Page, slug: string, sourceId: string, inferDates: boolean) {
-  const fullContent = page.compiled_truth + '\n' + page.timeline;
-  const removed = await retractRemovedTimelineEntries(engine, slug, sourceId, fullContent, { dryRun: true });
-  let entries: Array<{ date: string; source?: string; summary: string; detail?: string }> = await unrecordedCanonicalTimeline(engine, page.id, page, slug);
-  if (entries.length === 0 && inferDates && parseTimelineEntries(fullContent).length === 0) {
-    const anchor = anchorFor(page, slug);
-    const [stored] = anchor ? await engine.executeRaw<{ n: number }>(
-      'SELECT count(*)::int AS n FROM timeline_entries WHERE page_id=$1 AND event_page_id IS NULL', [page.id]) : [{ n: 1 }];
-    if (anchor && !stored?.n) entries = [anchor];
+/** A page's stored non-event timeline rows, read once for both planning checks. */
+interface StoredTimelineRows { id: number; date: string; date_text: string; source: string; summary: string; detail: string | null }
+
+interface TimelineReadBatch {
+  start: number;
+  covered: number;
+  snapshots: Map<string, PageSnapshot>;
+  /** Managed walks only: stored rows by page id (inline pages). */
+  stored: Map<number, StoredTimelineRows[]>;
+}
+
+/** The stored non-event timeline rows of each page, by page id. */
+async function storedTimelineRows(engine: BrainEngine, pageIds: readonly number[]): Promise<Map<number, StoredTimelineRows[]>> {
+  const stored = new Map<number, StoredTimelineRows[]>();
+  const rows = await engine.executeRaw<StoredTimelineRows & { page_id: number }>(
+    `SELECT page_id, id, to_char(date, 'YYYY-MM-DD') AS date, date::text AS date_text, source, summary, detail FROM timeline_entries
+      WHERE page_id = ANY($1::int[]) AND event_page_id IS NULL ORDER BY date, id`, [pageIds]);
+  for (const { page_id, ...row } of rows) {
+    const list = stored.get(Number(page_id)) ?? [];
+    list.push(row);
+    stored.set(Number(page_id), list);
   }
-  return { fullContent, removed: removed.length, entries };
+  return stored;
+}
+
+async function readTimelineBatch(engine: BrainEngine, refs: ReadonlyArray<{ slug: string; source_id: string }>, start: number,
+  withStoredRows: boolean): Promise<TimelineReadBatch> {
+  const { snapshots, covered } = await engine.readPageSnapshotsBatch(refs.slice(start, start + BATCH_SIZE)
+    .map(ref => ({ slug: ref.slug, sourceId: ref.source_id })));
+  // A segmented page's rows are streamed by its plan (plannedTimeline), not held for the batch.
+  const pageIds = [...snapshots.values()].filter(snapshot => !isSegmentedPage(snapshot.page)).map(snapshot => Number(snapshot.page.id));
+  const stored = withStoredRows && pageIds.length ? await storedTimelineRows(engine, pageIds) : new Map<number, StoredTimelineRows[]>();
+  return { start, covered, snapshots, stored };
+}
+
+/**
+ * The timeline change one page needs: removed rows to retract and canonical
+ * tuples (or an inferred anchor) to insert. `stored` is the caller's read of
+ * the page's rows; without it they are read once here. A segmented body is
+ * read once, block by block, keeping only what differs from the stored rows
+ * (the keys of the rows it produces, the entries no row records). `retract`
+ * deletes the removed rows; `stop` is asked before each segment read.
+ */
+async function plannedTimeline(engine: BrainEngine, page: Page, slug: string, sourceId: string, inferDates: boolean, stored?: StoredTimelineRows[],
+  opts: { retract?: boolean; stop?: () => boolean } = {}) {
+  const retraction = { dryRun: opts.retract !== true, ...(opts.stop ? { stop: opts.stop } : {}) };
+  const strip = (rows: StoredTimelineRows[]) => rows.map(({ date_text: _text, ...row }) => row);
+  let entries: Array<{ date: string; source?: string; summary: string; detail?: string }>;
+  let removed: unknown[];
+  let parsed: number;
+  let rowCount: number;
+  if (!isSegmentedPage(page)) {
+    const rows = stored ?? (await storedTimelineRows(engine, [Number(page.id)])).get(Number(page.id)) ?? [];
+    const text = page.compiled_truth + '\n' + page.timeline;
+    removed = await retractRemovedTimelineEntries(engine, slug, sourceId, text, { ...retraction, storedRows: strip(rows) });
+    entries = await unrecordedCanonicalTimeline(engine, page.id, page, slug, rows.map(row => ({ date: row.date_text, source: row.source, summary: row.summary })));
+    parsed = parseTimelineEntries(text).length;
+    rowCount = rows.length;
+  } else {
+    // A segmented body is read once, through the engine given (inside the coordinator's transaction too), and its
+    // rows are held as key digests (TimelineKeySet), never as one array unless the caller read them.
+    const within = new TimelineKeySet();
+    const recorded = new TimelineKeySet();
+    rowCount = 0;
+    const take = (row: StoredTimelineRows) => {
+      within.add(storedTimelineKey(row));
+      recorded.add(timelineKey({ date: row.date_text, source: row.source, summary: row.summary }));
+      rowCount++;
+    };
+    if (stored) stored.forEach(take);
+    else await eachStoredTimelineRow(engine, Number(page.id), take);
+    const collector = segmentedCanonicalCollector(slug, recorded);
+    const keys = await segmentedTimelineText(engine, page, { within, entries: false, ...(opts.stop ? { stop: opts.stop } : {}), onBlock: text => collector.add(text) });
+    removed = await retractRemovedTimelineEntries(engine, slug, sourceId, keys, { ...retraction,
+      storedRows: stored ? strip(stored) : await unkeptTimelineRows(engine, Number(page.id), keys) });
+    entries = [...collector.result().values()];
+    parsed = keys.parsed;
+  }
+  if (entries.length === 0 && inferDates && parsed === 0 && rowCount === 0) {
+    const anchor = anchorFor(page, slug);
+    if (anchor) entries = [anchor];
+  }
+  return { removed: removed.length, entries };
 }
 
 /** Under the coordinator's page lock: retract removed rows, insert the planned tuples. */
 async function writePageTimeline(tx: BrainEngine, page: Page, slug: string, sourceId: string, inferDates: boolean): Promise<number> {
-  const plan = await plannedTimeline(tx, page, slug, sourceId, inferDates);
-  if (plan.removed) await retractRemovedTimelineEntries(tx, slug, sourceId, plan.fullContent);
+  const plan = await plannedTimeline(tx, page, slug, sourceId, inferDates, undefined, { retract: true });
   if (!plan.entries.length) return 0;
   return tx.addTimelineEntriesBatch(plan.entries.map(entry => ({ slug, date: entry.date, source: entry.source,
     summary: entry.summary, detail: entry.detail || '', source_id: sourceId })), { auditSite: 'extract.timeline_db' });
@@ -241,13 +333,14 @@ async function writePageTimeline(tx: BrainEngine, page: Page, slug: string, sour
  * One page on a managed brain: null when the page is missing or filtered out,
  * 0 when nothing changes (no request admitted), else the rows the committed
  * request added. The request id is bound to the page revision, so a rerun
- * replays an accepted request instead of admitting a second one.
+ * replays an accepted request instead of admitting a second one. `read` is
+ * the caller's batched read of the page and its stored rows.
  */
 async function publishPageTimeline(engine: BrainEngine, authority: MaintenanceAuthority, slug: string, sourceId: string,
-  opts: TimelineDbOptions): Promise<number | null | 'skipped' | 'pending'> {
-  const snapshot = await engine.readPageSnapshot(slug, { sourceId });
+  opts: TimelineDbOptions, read?: { snapshot: PageSnapshot | null; stored: StoredTimelineRows[] | undefined }, stop?: () => boolean): Promise<number | null | 'skipped' | 'pending'> {
+  const snapshot = read ? read.snapshot : await engine.readPageSnapshot(slug, { sourceId });
   if (!snapshot || isQuarantined(snapshot.page.frontmatter) || (opts.typeFilter && snapshot.page.type !== opts.typeFilter)) return null;
-  const plan = await plannedTimeline(engine, snapshot.page, slug, sourceId, opts.inferDates === true);
+  const plan = await plannedTimeline(engine, snapshot.page, slug, sourceId, opts.inferDates === true, read?.stored, stop ? { stop } : {});
   if (!plan.removed && !plan.entries.length) return 0;
   for (let attempt = 0; ; attempt++) {
     const h = digest(['extract-timeline-db-v1', sourceId, slug, snapshot.revision, attempt]);
@@ -270,12 +363,14 @@ async function publishPageTimeline(engine: BrainEngine, authority: MaintenanceAu
  * One page's timeline on a managed brain, through the coordinator (the serve
  * sweep's path): rows added, 0 when nothing changes, or 'unsettled' when the
  * page changed mid-run or its request is still pending (retry next time).
+ * `stop` is the caller's budget, asked before each segment the planning read
+ * takes (BodyReadStopped ends it before any request is admitted).
  */
-export async function publishManagedPageTimeline(engine: BrainEngine, slug: string, sourceId: string): Promise<number | 'unsettled'> {
+export async function publishManagedPageTimeline(engine: BrainEngine, slug: string, sourceId: string, stop?: () => boolean): Promise<number | 'unsettled'> {
   const authority = await maintenancePreflight(engine, sourceId);
   if (!authority) throw opError('writer_coordinator_required', 'This brain is not managed; write the timeline batch directly.',
     `Source ${sourceId} has no managed writer, so there is no coordinator to publish through.`);
-  const outcome = await publishPageTimeline(engine, authority, slug, sourceId, { dryRun: false, jsonMode: false });
+  const outcome = await publishPageTimeline(engine, authority, slug, sourceId, { dryRun: false, jsonMode: false }, undefined, stop);
   return outcome === 'skipped' || outcome === 'pending' ? 'unsettled' : outcome ?? 0;
 }
 

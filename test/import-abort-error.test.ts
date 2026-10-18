@@ -21,7 +21,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 // empty sets.
 const engineStub = {
   kind: 'pglite',
-  executeRaw: async () => [],
+  executeRaw: async (sql: string) => sql.includes('FROM persistence_brain') ? [{ enabled: false }] : [], // #6482: the strict mode reader needs one well-formed unmanaged row.
   getConfig: async () => null,
 } as unknown as BrainEngine;
 
@@ -71,7 +71,7 @@ test('unreadable import target → typed abort', async () => {
 const answering = (match: string, rows: unknown[] | Error): BrainEngine => ({
   ...engineStub,
   executeRaw: async (sql: string) => {
-    if (!sql.includes(match)) return [];
+    if (!sql.includes(match)) return sql.includes('FROM persistence_brain') ? [{ enabled: false }] : [];
     if (rows instanceof Error) throw rows;
     return rows;
   },

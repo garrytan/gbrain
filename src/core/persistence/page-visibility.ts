@@ -15,5 +15,11 @@ export async function authorizePageVisibility(engine: SqlEngine, authority: Writ
   if (!(authority.excludePrivate ?? true) && !await excludesPrivateWrites(engine, true)) return;
   const rows = await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2
     AND NOT (${privatePagesFilterFragment('pages')}) LIMIT 1`, [authority.sourceId, slug]);
-  if (rows.length) throw opError('page_not_found', 'Page not found.', 'This page does not exist or is not visible to this connection, so nothing was written. Write to a different slug, or confirm the slug with a search first.');
+  if (rows.length) throw pageNotVisibleError();
 }
+
+/** The one refusal a remote writer gets for a target it may not see; other visibility refusals reuse it verbatim. */
+export function pageNotVisibleError() {
+  return opError('page_not_found', 'Page not found.', 'This page does not exist or is not visible to this connection, so nothing was written. Write to a different slug, or confirm the slug with a search first.');
+}
+

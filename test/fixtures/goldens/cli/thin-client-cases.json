@@ -369,7 +369,7 @@
       "argv": "salience",
       "exitCode": 1,
       "stderr": [
-        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: gbrain remote doctor",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
@@ -379,7 +379,7 @@
       "argv": "anomalies",
       "exitCode": 1,
       "stderr": [
-        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: gbrain remote doctor",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
@@ -412,7 +412,7 @@
         "  local-only — N/A on remote brain",
         "",
         "Warnings:",
-        "  ! remote snapshot failed: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+        "  ! remote snapshot failed: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?"
       ]
     },
     {
@@ -637,7 +637,7 @@
       "argv": "recall",
       "exitCode": 1,
       "stderr": [
-        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: gbrain remote doctor",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
@@ -680,6 +680,16 @@
       "stderr": [
         "Error [requires_local_engine]: `gbrain loops` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
         "Fix: gbrain loops",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "questions",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `gbrain questions` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain questions",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
@@ -733,6 +743,26 @@
         "Error [requires_local_engine]: `gbrain quarantine` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
         "Fix: gbrain quarantine",
         "Why: `quarantine list` routes to the brain host automatically (quarantine_list MCP op). scan/clear are host-bound (bulk re-import; the clear trust decision) — run those on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "beliefs",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `gbrain beliefs` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain beliefs",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "trust",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `gbrain trust` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain trust",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []

@@ -35,7 +35,6 @@ let closePostgres: (() => Promise<void>) | undefined;
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim();
 const BODY = Array.from({ length: 30 }, (_, i) => `Line ${i} of a synthetic note that keeps the rename detectable.`).join('\n');
 const NOTE = `---\ntitle: Renamed example\n---\n${BODY}\n`;
-const BROKEN = `---\ntitle: alice-example first line\nalice-example second line\n---\n${BODY}\n`;
 
 beforeAll(async () => {
   configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
@@ -93,11 +92,13 @@ describe('sync rename attribution on an unmanaged brain', () => {
   test('a full sync moves a held rename once its file screens clean under the maintenance principal', () => withEnv(env, async () => {
     for (const engine of engines) {
       const brain = await gitSource(engine);
-      commit(brain.root, { 'notes/held-old.md': NOTE }, 'add');
+      // #6729: an exact move (R100) whose slug: line still names the old path holds with the old page's identity.
+      commit(brain.root, { 'notes/held-old.md': NOTE.replace('title: Renamed example', 'title: Renamed example\nslug: notes/held-old') }, 'add');
       await sync(brain);
       const id = await pageId(engine, brain.sourceId, 'notes/held-old');
       git(brain.root, 'mv', 'notes/held-old.md', 'notes/held-new.md');
-      commit(brain.root, { 'notes/held-new.md': BROKEN }, 'rename onto a broken file');
+      commit(brain.root, {}, 'exact move onto a stale slug: line');
+      expect(git(brain.root, 'diff', '--name-status', '-M', 'HEAD~1', 'HEAD')).toBe('R100\tnotes/held-old.md\tnotes/held-new.md');
       await sync(brain);
       expect(await pageId(engine, brain.sourceId, 'notes/held-new')).toBeUndefined();
 

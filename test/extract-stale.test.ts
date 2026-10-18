@@ -387,21 +387,11 @@ describe('gbrain extract --stale', () => {
   });
 
   test('--source fs is rejected (DB-source only)', async () => {
-    const origErr = console.error;
-    const origExit = process.exit;
-    let exited = false; let msg = '';
-    console.error = (m?: unknown) => { msg += String(m); };
-    process.exit = ((_code?: number) => { exited = true; throw new Error('__exit__'); }) as unknown as typeof process.exit;
-    try {
-      await runExtract(engine, ['--stale', '--source', 'fs']);
-    } catch (e) {
-      if ((e as Error).message !== '__exit__') throw e;
-    } finally {
-      console.error = origErr;
-      process.exit = origExit;
-    }
-    expect(exited).toBe(true);
-    expect(msg).toContain('DB-source only');
+    // #6803 (D2): the refusal is a typed invalid_params (exit 2) instead of a bare process.exit(1).
+    let refusal: unknown;
+    try { await runExtract(engine, ['--stale', '--source', 'fs']); } catch (e) { refusal = e; }
+    expect((refusal as { code?: string }).code).toBe('invalid_params');
+    expect((refusal as Error).message).toContain('DB-source only');
   });
 
   // ─── #2576 bug 1: --stale must run the same resolver passes as

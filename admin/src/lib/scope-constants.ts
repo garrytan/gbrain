@@ -10,14 +10,17 @@
  * or `bun run verify` will reject the change.
  */
 
-export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'skill_editor' | 'skill_publisher' | 'skills_member_self';
+export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'skill_editor' | 'skill_publisher' | 'skills_member_self' | 'memory_confirm';
 
 // MIRROR OF src/core/scope.ts ALLOWED_SCOPES_LIST — keep alphabetically sorted.
 // v0.38: 'agent' added for the submit_agent remote-MCP op (sibling to admin,
 // NOT implied — existing admin clients must re-register to opt in).
+// memory_confirm is listed for display only: the server refuses to grant it
+// over the admin API (local CLI only, src/core/scope.ts LOCAL_CLI_ONLY_SCOPES).
 export const ALLOWED_SCOPES_LIST: ReadonlyArray<Scope> = [
   'admin',
   'agent',
+  'memory_confirm',
   'read',
   'skill_editor',
   'skill_publisher',

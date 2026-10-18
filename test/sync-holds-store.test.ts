@@ -103,9 +103,13 @@ describe('git hold store', () => {
 
   test('policy defaults, overrides and escalation thresholds (count, and percentage only from 40 screened)', async () => {
     expect(await readSyncHoldPolicy(engine)).toEqual({ mode: 'hold', cap: 500, escalateCount: 50, escalatePct: 5, parserRegression: 'stop' });
+    // #6712 PR 2: sync.holds stays a brain key; the cap, the thresholds and the parser-regression stop are tuned by their
+    // GBRAIN_SYNC_* environment variables, and the retired keys stored on a brain are not applied.
     await engine.setConfig('sync.holds', 'fail'); await engine.setConfig('sync.hold_cap', '2'); await engine.setConfig('sync.parser_regression', 'hold');
     await engine.setConfig('sync.hold_escalate_count', '10'); await engine.setConfig('sync.hold_escalate_pct', '20');
-    expect(await readSyncHoldPolicy(engine)).toEqual({ mode: 'fail', cap: 2, escalateCount: 10, escalatePct: 20, parserRegression: 'hold' });
+    expect(await readSyncHoldPolicy(engine, {})).toEqual({ mode: 'fail', cap: 500, escalateCount: 50, escalatePct: 5, parserRegression: 'stop' });
+    expect(await readSyncHoldPolicy(engine, { GBRAIN_SYNC_HOLD_CAP: '2', GBRAIN_SYNC_PARSER_REGRESSION: 'hold', GBRAIN_SYNC_HOLD_ESCALATE_COUNT: '10', GBRAIN_SYNC_HOLD_ESCALATE_PCT: '20' }))
+      .toEqual({ mode: 'fail', cap: 2, escalateCount: 10, escalatePct: 20, parserRegression: 'hold' });
     const defaults = { escalateCount: 50, escalatePct: 5 };
     expect(holdsEscalated(defaults, 51, { held: 0, screened: 0 })).toBe(true);
     expect(holdsEscalated(defaults, 50, { held: 0, screened: 0 })).toBe(false);

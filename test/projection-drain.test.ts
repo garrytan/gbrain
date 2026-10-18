@@ -7,7 +7,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { rebuildPendingPageProjections, projectionBacklog } from '../src/core/page-state/projections.ts';
+import { rebuildPendingPageProjections, projectionBacklog, previewProjectionDrain } from '../src/core/page-state/projections.ts';
 import { runResidentProjectionInvocation } from '../src/core/persistence/consumer.ts';
 import { claimNextWrite, hasClaimableWrite } from '../src/core/persistence/journal.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
@@ -125,6 +125,21 @@ test('a drain run tries a failing page once, keeps rebuilding the rest, and repo
     expect(result.failed[0]).toMatchObject({ source_id: sourceId, slug: 'broken-code' });
     expect(result.failed[0].reason).toContain('recorded source path');
     expect(await engine.executeRaw("SELECT reason FROM page_projection_jobs WHERE slug='broken-code'")).toEqual([{ reason: 'rebuild_failed' }]);
+  }
+}, 120_000);
+
+test('#6803: the drain preview lists a failed page first and rebuilds nothing', async () => {
+  for (const engine of engines) {
+    const sourceId = await backlog(engine, 3);
+    await engine.putPage('broken-code', { type: 'code', page_kind: 'code', title: 'Missing origin', compiled_truth: 'export const example = 1;' }, { sourceId });
+    await drainProjections(engine);
+    await engine.executeRaw(`INSERT INTO page_projection_jobs(source_incarnation,slug,revision,reason)
+      SELECT s.incarnation,p.slug,p.knowledge_revision,'test_backlog' FROM pages p JOIN sources s ON s.id=p.source_id WHERE p.source_id=$1 AND p.slug LIKE 'notes/%'`, [sourceId]);
+    const before = await engine.executeRaw<{ slug: string; reason: string; revision: string }>('SELECT slug,reason,revision::text AS revision FROM page_projection_jobs ORDER BY slug');
+    const preview = await previewProjectionDrain(engine, 2);
+    expect(preview).toMatchObject({ pending: 4, failed: 1 });
+    expect(preview.rows.map(r => [r.source_id, r.slug, r.reason])).toEqual([[sourceId, 'broken-code', 'rebuild_failed'], [sourceId, 'notes/n-0000', 'test_backlog']]);
+    expect(await engine.executeRaw('SELECT slug,reason,revision::text AS revision FROM page_projection_jobs ORDER BY slug')).toEqual(before);
   }
 }, 120_000);
 

@@ -4,7 +4,7 @@
  * The inline cost estimator now MIRRORS EXECUTION (delta, not full-tree
  * ceiling) so the gate's dollar figure stops being a ~400x phantom on a busy
  * brain. Real temp git repos, no PGLite. estimateInlineNewTokens is exported
- * from commands/sync.ts; CHUNKER_VERSION is the live chunker version.
+ * from commands/sync.ts; chunkerStamp() is the live chunker stamp (version plus grammar revisions).
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
@@ -12,9 +12,9 @@ import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { estimateInlineNewTokens } from '../src/commands/sync.ts';
-import { CHUNKER_VERSION } from '../src/core/chunkers/code.ts';
+import { chunkerStamp } from '../src/core/chunkers/code.ts';
 
-const CURRENT = String(CHUNKER_VERSION);
+const CURRENT = chunkerStamp();
 let repo: string;
 
 function commitAll(msg: string): string {
@@ -52,6 +52,19 @@ describe('estimateInlineNewTokens — ladder', () => {
     expect(r.estimateKind).toBe('ceiling');
     expect(r.ceilingReasons).toContain('chunker_drift');
     expect(r.changedSources).toBe(1);
+  });
+
+  test('#6858: a managed incremental sync keeps its stamp, so a stale stamp prices the delta, never the tree', () => {
+    writeFileSync(join(repo, 'topics/a.md'), 'an unchanged body that the delta must not price '.repeat(50));
+    const base = commitAll('base');
+    writeFileSync(join(repo, 'topics/b.md'), 'one new note');
+    const head = commitAll('one change');
+    const stale = [src({ last_commit: base, chunker_version: 'STALE-0' })];
+    const managed = estimateInlineNewTokens(stale, CURRENT, { chunkerDriftWalks: false });
+    expect(managed.estimateKind).toBe('delta');
+    expect(managed.ceilingReasons).toEqual([]);
+    expect(managed.tokens).toBe(estimateInlineNewTokens([src({ last_commit: base, chunker_version: CURRENT })], CURRENT).tokens);
+    expect(estimateInlineNewTokens([src({ last_commit: head, chunker_version: 'STALE-0' })], CURRENT, { chunkerDriftWalks: false }).estimateKind).toBe('unchanged');
   });
 
   test('[D2A headline] HEAD==last_commit + current chunker + DIRTY tree → 0 (unchanged)', () => {

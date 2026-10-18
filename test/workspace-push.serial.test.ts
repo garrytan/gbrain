@@ -10,7 +10,7 @@
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import {
-  mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, statSync, utimesSync, symlinkSync,
+  mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, statSync, utimesSync, symlinkSync, truncateSync,
 } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -19,7 +19,7 @@ import {
   workspacePush, acquirePushLock, pushLockDir, pushStatusPath, pushStatusPathForRoot,
   readPushStatuses, readPushStatusForRoot, summarizePushStatuses, verifyRemotePrivacy,
   parseGithubOwnerRepo, resolveWorkspaceRoot, PUSH_LOCK_STALE_MS, PUSH_DENY_GLOBS,
-  sanitizePushReason, SECRET_SCAN_REFUSAL_DOCS,
+  sanitizePushReason, SECRET_SCAN_REFUSAL_DOCS, PUSH_STREAM_SCAN_MAX_BYTES,
 } from '../src/core/workspace-push.ts';
 import { SCAN_ALLOW_FILENAME } from '../src/core/secret-scan.ts';
 import { visibilityCachePath } from '../src/core/repo-visibility.ts';
@@ -182,8 +182,46 @@ describe('deny-glob backstop [G6]', () => {
   }, T);
 
   test('the deny list covers the documented classes', () => {
-    expect(PUSH_DENY_GLOBS).toEqual(['*.pglite', '.env*', '*.pem', '*.key', '.gbrain/**']);
+    expect(PUSH_DENY_GLOBS).toEqual(['*.pglite', '.env*', '*.pem', '*.key', '.gbrain/**',
+      '.gbrain-owner.json', '.gbrain-owner-*.json', '.gbrain-owner.json.*.tmp', '.gbrain-bootstrap.lock/**']);
   });
+
+  // #5186 (W14 P1.5a): ownership markers and the bootstrap lock are denied like
+  // credentials; the ownership token must never reach a remote.
+  test('a TRACKED ownership marker hard-fails the push (#5186)', async () => {
+    mkdirSync(join(work, 'brain'));
+    writeFileSync(join(work, 'brain', '.gbrain-owner.json'), '{"version":1,"token":"not-a-real-token"}\n');
+    writeFileSync(join(work, `.gbrain-owner-${'ab'.repeat(32)}.json`), '{"version":1}\n');
+    git(work, 'add', '-A');
+    git(work, 'commit', '-qm', 'oops tracked markers');
+    const before = originHead(bare);
+    const r = await push();
+    expect(r.status).toBe('blocked_tracked_deny');
+    expect(r.denyMatches?.sort()).toEqual([`.gbrain-owner-${'ab'.repeat(32)}.json`, 'brain/.gbrain-owner.json']);
+    expect(originHead(bare)).toBe(before);
+  }, T);
+
+  test('UNTRACKED markers and the bootstrap lock are excluded from the commit; a page push is unchanged (#5186)', async () => {
+    // A stamp at the push root itself makes the root managed (writer_coordinator_required),
+    // so the markers sit on a nested root, where the first hardened commit would sweep them up.
+    mkdirSync(join(work, 'brain'));
+    writeFileSync(join(work, 'brain', '.gbrain-owner.json'), '{"version":1}\n');
+    writeFileSync(join(work, 'brain', '.gbrain-owner.json.11111111-2222-3333-4444-555555555555.tmp'), '{"version":1}\n');
+    writeFileSync(join(work, `.gbrain-owner-${'ab'.repeat(32)}.json`), '{"version":1}\n');
+    mkdirSync(join(work, '.gbrain-bootstrap.lock'));
+    writeFileSync(join(work, '.gbrain-bootstrap.lock', 'meta.json'), '{"pid":1}\n');
+    writeFileSync(join(work, 'note.md'), 'keep me\n');
+    const r = await push();
+    expect(r.status).toBe('pushed');
+    expect(r.excludedUntracked?.sort()).toEqual([
+      '.gbrain-bootstrap.lock/meta.json', `.gbrain-owner-${'ab'.repeat(32)}.json`, 'brain/.gbrain-owner.json',
+      'brain/.gbrain-owner.json.11111111-2222-3333-4444-555555555555.tmp']);
+    const shipped = git(bare, 'ls-tree', '-r', '--name-only', 'main');
+    expect(shipped).toContain('note.md');
+    expect(shipped).not.toContain('.gbrain-owner');
+    expect(shipped).not.toContain('.gbrain-bootstrap.lock');
+    expect(existsSync(join(work, 'brain', '.gbrain-owner.json'))).toBe(true);
+  }, T);
 
   test('a GITIGNORED deny match is named in excludedUntracked and never reaches the index', async () => {
     writeFileSync(join(work, '.gitignore'), '*.pglite\n');
@@ -325,17 +363,20 @@ describe('secret-scan gate — fails CLOSED on unscannable staged blobs', () => 
     expect(readPushStatuses()[0]!.ok).toBe(false);
   }, T);
 
-  test('an oversized staged blob (> scan cap) BLOCKS the push', async () => {
-    // 26MiB > SCAN_MAX_FILE_BYTES (25MiB): too big to scan in-memory, so it
-    // must block rather than sail through the sole pre-push secret gate.
-    writeFileSync(join(work, 'big.bin'), Buffer.alloc(26 * 1024 * 1024, 0x61));
+  test('an oversized staged blob (> scan ceiling) BLOCKS the push', async () => {
+    // Over PUSH_STREAM_SCAN_MAX_BYTES: too big even for the streamed scan
+    // (blobs over the 25 MiB in-memory cap are streamed up to it,
+    // test/workspace-push-large-blob.serial.test.ts), so it must block rather
+    // than sail through the sole pre-push secret gate. Sparse: no disk blocks.
+    writeFileSync(join(work, 'big.bin'), '');
+    truncateSync(join(work, 'big.bin'), PUSH_STREAM_SCAN_MAX_BYTES + 1);
     const before = originHead(bare);
     const beforeCount = commitCount(work);
     const r = await push();
     expect(r.status).toBe('blocked_unscannable');
     expect(r.ok).toBe(false);
     expect(r.unscannable?.some((u) => u.startsWith('big.bin'))).toBe(true);
-    expect(r.reason).toContain('scan cap');
+    expect(r.reason).toContain('scan ceiling');
     expect(commitCount(work)).toBe(beforeCount); // nothing committed
     expect(originHead(bare)).toBe(before);       // nothing pushed
     expect(git(work, 'diff', '--cached', '--name-only')).toBe('');

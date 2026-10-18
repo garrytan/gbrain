@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-state-002",
+  "suites": [
+    "state-resolution"
+  ],
+  "category": "state-resolution",
+  "trust_steps": [
+    {
+      "step_id": "s1",
+      "actor": "owner",
+      "op": "write_file",
+      "slug": "people/ronan-pellwarden",
+      "content": "---\ntitle: Ronan Pellwarden\ntype: person\naliases: [ronan]\n---\n\n# Ronan Pellwarden\n\nRonan Pellwarden is the founder of Saplingrove Works.\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|\n| 1 | Ronan Pellwarden lives in Osaka | fact | 1.0 | world | medium | 2026-01-01 |  | owner |  |\n<!--- gbrain:facts:end -->\n"
+    },
+    {
+      "step_id": "s2",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Ronan Pellwarden lives in Austin",
+      "entity": "people/ronan-pellwarden",
+      "target": "s1",
+      "target_claim": "Ronan Pellwarden lives in Osaka"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Where is Ronan Pellwarden now and what is their role?"
+    }
+  ]
+}

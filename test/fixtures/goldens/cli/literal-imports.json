@@ -16,6 +16,9 @@
       "backfill": [
         "./commands/backfill.ts"
       ],
+      "beliefs": [
+        "./commands/beliefs.ts"
+      ],
       "book-mirror": [
         "./commands/book-mirror.ts"
       ],
@@ -56,7 +59,8 @@
         "./commands/edges-backfill.ts"
       ],
       "embed": [
-        "./commands/embed.ts"
+        "./commands/embed.ts",
+        "./core/held-embedding.ts"
       ],
       "enrich": [
         "./commands/enrich.ts"
@@ -131,7 +135,11 @@
         "./commands/pricing.ts"
       ],
       "quarantine": [
+        "./commands/trust.ts",
         "./commands/quarantine.ts"
+      ],
+      "questions": [
+        "./commands/questions.ts"
       ],
       "recall": [
         "./commands/recall.ts"
@@ -143,6 +151,7 @@
         "./commands/reindex.ts",
         "./commands/reindex-multimodal.ts",
         "./core/sync-concurrency.ts",
+        "./core/oversized-backfill.ts",
         "./commands/reindex-vectors.ts",
         "./commands/reindex-aliases.ts",
         "./commands/reindex.ts",
@@ -199,6 +208,12 @@
       ],
       "transcripts": [
         "./commands/transcripts.ts"
+      ],
+      "trust": [
+        "./commands/trust-claim.ts",
+        "./core/eligibility/explain.ts",
+        "./core/eligibility/scan.ts",
+        "./core/trust/backfill.ts"
       ],
       "waiting": [
         "./commands/loops.ts"

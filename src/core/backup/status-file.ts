@@ -72,6 +72,8 @@ export interface BackupAssetVerdict {
   configured_remote?: boolean;
   verification?: {
     state: 'verified' | 'not_checked' | 'unavailable' | 'missing_ref' | 'mismatch' | 'budget_exhausted' | 'stale';
+    /** Why an `unavailable` probe failed: the full two-second slot ran out, or git exited with an error. */
+    cause?: 'timeout' | 'exit';
     checked_at?: string;
     local_commit?: string;
     remote_commit?: string;

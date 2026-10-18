@@ -8,7 +8,10 @@
  *
  * Postgres: a renewable TTL lease row in `gbrain_cycle_locks` (db-lock.ts),
  * which survives transaction-mode poolers and reuses its dead-holder
- * takeover rules. A schema without that table has no lease yet; the runner
+ * takeover rules. The lease identity is (id, holder_pid, acquisition_token);
+ * the epoch text of `acquired_at` on the handle is reported by
+ * MigrationLeaseLostError and never compared, so a rewrite of that column
+ * under a live runner cannot make it refuse itself (#6028). A schema without that table has no lease yet; the runner
  * then relies on the initSchema lock and acquires the lease once the table
  * exists. An unreachable database has nothing to coordinate.
  *
@@ -175,6 +178,17 @@ async function acquirePostgres(config: GBrainConfig): Promise<MigrationOrchestra
   };
 }
 
+/** #6904: orchestration locks this process holds right now; only acquire/release change it. */
+let heldHere = 0;
+
+/**
+ * #6904: whether this process holds the orchestration lock. Write admission refuses while the schema is behind this build,
+ * except for this process's orchestrators, which may write mid-upgrade while it holds the lock. No caller can set it.
+ */
+export function migrationOrchestrationHeldHere(): boolean {
+  return heldHere > 0;
+}
+
 /**
  * Acquire the orchestration lock or throw MigrationsRunningError. Returns
  * null only on Postgres when the database is unreachable or
@@ -182,11 +196,13 @@ async function acquirePostgres(config: GBrainConfig): Promise<MigrationOrchestra
  * starts orchestrators.
  */
 export async function acquireMigrationOrchestrationLock(config: GBrainConfig): Promise<MigrationOrchestrationLock | null> {
-  if (config.engine === 'pglite') {
-    if (!config.database_path) return { assertHeld: async () => {}, release: async () => {} };
-    return acquirePglite(config.database_path);
-  }
-  return acquirePostgres(config);
+  const lock = config.engine === 'pglite'
+    ? config.database_path ? await acquirePglite(config.database_path) : { assertHeld: async () => {}, release: async () => {} }
+    : await acquirePostgres(config);
+  if (!lock) return null;
+  heldHere++;
+  let released = false;
+  return { ...lock, release: async () => { if (!released) { released = true; heldHere--; } await lock.release(); } };
 }
 
 /** Best-effort holder lookup for callers that only saw the runner's exit status. */

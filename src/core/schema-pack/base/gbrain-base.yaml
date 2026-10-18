@@ -305,6 +305,16 @@ page_types:
     extractable: false
     expert_routing: false
 
+  # Pinned question page (C4): the question and the owner's notes; the answer
+  # lives in pinned_questions. Owner-private and never evidence. Set via
+  # frontmatter only, so an existing questions/ folder keeps its own types.
+  - name: question
+    primitive: annotation
+    path_prefixes: []
+    aliases: []
+    extractable: false
+    expert_routing: false
+
   # Receipt page written by the v0.41.23 extract framework after every
   # extractor run. Demoted in search via the 0.3x source-boost on the
   # `extracts/` prefix (see src/core/search/source-boost.ts). Always

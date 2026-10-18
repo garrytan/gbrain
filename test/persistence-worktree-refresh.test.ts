@@ -41,7 +41,7 @@ import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-f
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
+import { commitFile, git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
@@ -442,3 +442,24 @@ test('admission completes a syncing refresh whose members all reached the target
   expect((await f.put(f.alpha, 'notes/caught-up', page('Caught up', 'admitted'))).state ?? 'committed').toBe('committed');
   expect((await f.refreshRows()).map(r => r.state)).toEqual(['completed']);
 }), 120_000);
+
+test('#6712 wave: a refresh completes once every member synced to a descendant of the target, and --resume completes it the same way', () => each(async f => {
+  const target = f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  let descendant = '';
+  // A commit lands on top of the fast-forwarded target before the member syncs run, so each member syncs past the target.
+  const result = await refreshWorktree(f.engine, f.alpha, { hooks: { boundary: point => {
+    if (point === 'merged') descendant = commitFile(f.root, 'alpha/three.md', page('Alpha three', 'Committed on top of the target.'));
+  } } });
+  expect(git(f.root, 'merge-base', '--is-ancestor', target, descendant) === '' && descendant !== target).toBe(true);
+  expect(await f.lastCommit(f.alpha)).toBe(descendant);
+  expect(await f.lastCommit(f.beta)).toBe(descendant);
+  expect(result).toMatchObject({ status: 'completed', target_head: target });
+  expect(result.next).toBeUndefined();
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['completed']);
+  expect((await f.put(f.alpha, 'notes/after-descendant', page('After', 'admitted'))).state ?? 'committed').toBe('committed');
+  // A refresh left in syncing (its process died) whose members already synced past the target completes on --resume.
+  const [row] = await f.refreshRows();
+  await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET state='syncing',completed_at=NULL WHERE id=$1::uuid`, [row.id]);
+  expect(await refreshWorktree(f.engine, f.alpha, { resume: true })).toMatchObject({ status: 'completed', refresh_id: row.id });
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['completed']);
+}), 180_000);

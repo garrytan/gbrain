@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
-import { configureGateway, resetGateway, embed, embedQuery, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway, embed, embedQuery, __setEmbedTransportForTests, __clearQueryEmbedCacheForTests } from '../src/core/ai/gateway.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { hybridSearchCached } from '../src/core/search/hybrid.ts';
 import { knobsHash, resolveSearchMode } from '../src/core/search/mode.ts';
@@ -94,6 +94,7 @@ describe('search reads the selected brain prefix per request', () => {
     await brainA.setConfig('embedding_query_prefix', 'query: ');
     await hybridSearchCached(brainA, 'widget roadmap');
     await brainA.unsetConfig('embedding_query_prefix');
+    __clearQueryEmbedCacheForTests();
     await hybridSearchCached(brainA, 'widget roadmap');
     expect(seen).toEqual(['widget roadmap', 'query: widget roadmap', 'widget roadmap']);
   });
@@ -156,6 +157,9 @@ describe('doctor advisory', () => {
     expect(suggestedQueryPrefix('openai-compatible:intfloat/multilingual-e5-large')?.value).toBe('query: ');
     expect(suggestedQueryPrefix('openai-compatible:BAAI/bge-large-en-v1.5')?.family).toBe('BGE');
     expect(suggestedQueryPrefix('ollama:nomic-embed-text')?.value).toBe('search_query: ');
+    // PR #6062 (query half, @xorets): EmbeddingGemma's model card asks for the task prompt in front of each query.
+    expect(suggestedQueryPrefix('ollama:embeddinggemma:300m')).toEqual({ family: 'EmbeddingGemma', value: 'task: search result | query: ' });
+    expect(suggestedQueryPrefix('openai-compatible:google/embeddinggemma-300m')?.family).toBe('EmbeddingGemma');
     expect(suggestedQueryPrefix('openai:text-embedding-3-large')).toBeNull();
     expect(suggestedQueryPrefix('openai-compatible:BAAI/bge-m3')).toBeNull();
   });

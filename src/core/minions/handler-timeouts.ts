@@ -147,3 +147,12 @@ export function resolveChatPerTurnTimeoutMs(raw: string | null | undefined): num
   const n = raw == null || raw.trim() === '' ? NaN : Number(raw);
   return Number.isSafeInteger(n) && n > 0 ? n : DEFAULT_CHAT_PER_TURN_TIMEOUT_MS;
 }
+
+/**
+ * The wall-clock runtime (ms) past which `handleWallClockTimeouts` dead-letters an active job, regardless of its lock.
+ * `$1` is the worker's lock duration for rows without `lock_duration_ms`. Shared with handlers that budget from it (#6706).
+ */
+export const WALL_CLOCK_THRESHOLD_MS_SQL = `CASE
+                WHEN timeout_ms IS NOT NULL THEN timeout_ms * 2
+                ELSE COALESCE(lock_duration_ms, $1)::double precision * 2 * GREATEST(max_stalled, 1)
+              END`;

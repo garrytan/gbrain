@@ -324,25 +324,37 @@ describe.skipIf(!url)('Postgres cancellation ownership', () => {
     expect(replacement).not.toBe(pid);
   }), 30000);
 
-  test('late cancellation cleanup cannot release a replacement connection after socket loss', () => fixture(async ctx => {
-    await ctx.engine.connect({ database_url: ctx.proxyUrl, poolSize: 1 });
-    const [{ pid }] = await ctx.engine.executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid');
-    const abort = new AbortController();
-    const work = ctx.engine.executeRaw('SELECT pg_sleep($1) AS cancellation_victim', [0.2], { signal: abort.signal });
-    void work.catch(() => {});
-    await waitFor(async () => (await ctx.observer`SELECT query FROM pg_stat_activity WHERE pid=${pid} AND state='active'`)[0]?.query.includes('cancellation_victim'), { timeoutMs: 5000 });
-    abort.abort();
-    await waitFor(ctx.cancelHeld, { timeoutMs: 5000 });
-    await waitFor(async () => (await ctx.observer`SELECT state FROM pg_stat_activity WHERE pid=${pid}`)[0]?.state === 'idle', { timeoutMs: 5000 });
-    ctx.closeQueryConnections();
-    const replacement = ctx.engine.executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid, pg_sleep($1) AS replacement_owner', [0.2], { signal: new AbortController().signal });
-    void replacement.catch(() => {});
-    await waitFor(async () => (await ctx.observer`SELECT pid FROM pg_stat_activity WHERE pid<>${pid} AND state='active' AND query LIKE '%AS replacement_owner'`).length === 1, { timeoutMs: 5000 });
-    ctx.releaseCancel();
-    await work;
-    expect((await replacement)[0].pid).not.toBe(pid);
-    expect(await ctx.engine.executeRaw('SELECT 42 AS answer')).toEqual([{ answer: 42 }]);
-  }), 30000);
+  // Postgres reports a backend idle before it sends ReadyForQuery, so 'idle' in pg_stat_activity does not mean the
+  // client holds the result; the socket loss waits for the driver to settle the victim. The in-transit arm holds the
+  // victim's result in the proxy past the backend's idle report to keep that ordering deterministic.
+  for (const inTransit of [false, true]) {
+    test(`late cancellation cleanup cannot release a replacement connection after socket loss${inTransit ? ' once an in-transit result lands' : ''}`, () => fixture(async ctx => {
+      await ctx.engine.connect({ database_url: ctx.proxyUrl, poolSize: 1 });
+      const [{ pid }] = await ctx.engine.executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+      const settled = ctx.engine.sql.pool.completed;
+      const abort = new AbortController();
+      const work = ctx.engine.executeRaw('SELECT pg_sleep($1) AS cancellation_victim', [0.2], { signal: abort.signal });
+      void work.catch(() => {});
+      await waitFor(async () => (await ctx.observer`SELECT query FROM pg_stat_activity WHERE pid=${pid} AND state='active'`)[0]?.query.includes('cancellation_victim'), { timeoutMs: 5000 });
+      if (inTransit) ctx.pauseQueries();
+      abort.abort();
+      await waitFor(ctx.cancelHeld, { timeoutMs: 5000 });
+      await waitFor(async () => (await ctx.observer`SELECT state FROM pg_stat_activity WHERE pid=${pid}`)[0]?.state === 'idle', { timeoutMs: 5000 });
+      if (inTransit) {
+        expect(ctx.engine.sql.pool.completed).toBe(settled);
+        ctx.resumeQueries();
+      }
+      await waitFor(() => ctx.engine.sql.pool.completed > settled, { timeoutMs: 5000, label: 'the victim settled in the driver' });
+      ctx.closeQueryConnections();
+      const replacement = ctx.engine.executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid, pg_sleep($1) AS replacement_owner', [0.2], { signal: new AbortController().signal });
+      void replacement.catch(() => {});
+      await waitFor(async () => (await ctx.observer`SELECT pid FROM pg_stat_activity WHERE pid<>${pid} AND state='active' AND query LIKE '%AS replacement_owner'`).length === 1, { timeoutMs: 5000 });
+      ctx.releaseCancel();
+      await work;
+      expect((await replacement)[0].pid).not.toBe(pid);
+      expect(await ctx.engine.executeRaw('SELECT 42 AS answer')).toEqual([{ answer: 42 }]);
+    }), 30000);
+  }
 
   const drivers = { esm: postgres, commonjs: createRequire(import.meta.url)('#postgres') as typeof postgres };
   for (const [name, driver] of Object.entries(drivers)) {

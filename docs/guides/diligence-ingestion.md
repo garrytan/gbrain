@@ -100,8 +100,16 @@ Update `brain/companies/{slug}.md`:
 **Step 8: Commit.**
 
 ```bash
-cd brain/ && git add -A && git commit -m "diligence: {Company} — {doc type} ingestion" && git push
+cd brain/ && scripts/brain-commit-push.sh "diligence: {Company} — {doc type} ingestion" \
+  diligence/{company-slug}/ companies/{company-slug}.md
 ```
+
+Name the diligence directory and every page you edited; other agents may have
+uncommitted work in the same checkout, so never commit the whole tree. Without
+the helper, run `gbrain git commit-push -m "<msg>" -- <paths>`. On a non-zero
+exit: retry once on `commit_lock_busy`; stop and tell the user on
+`integrate_conflict` or `writer_coordinator_required`; never fall back to
+stash, `pull --rebase` or a plain push ([outcomes](shared-checkout-git.md#outcomes)).
 
 **Step 9: Publish (if asked).**
 When the user wants a shareable brief, create a password-protected

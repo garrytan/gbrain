@@ -10,7 +10,9 @@
  * Phases come from the transaction each statement runs in (begin..commit on
  * one connection, labelled by its signature statement) and, for statements
  * outside a transaction, from known consumer-scan and effect statements or
- * the statement's position between the transactions.
+ * the statement's position between the transactions. Consumer passes run on
+ * their own connections concurrently with the write, so one that lands after
+ * the claim commit would otherwise count as preparation.
  */
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -26,6 +28,8 @@ import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration, type LocalRegistration } from '../../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { _resetWriteThroughCacheForTest } from '../../src/core/write-through.ts';
+import { readWriteSwitchSnapshot, resetWriteSwitches } from '../../src/core/persistence/switches.ts';
+import { _resetPublicationCeilingForTest, readPublicationCeilingMs } from '../../src/core/persistence/publication-deadline.ts';
 
 interface TraceRecord { t: number; ms: number; conn: number; kind: string; sql: string }
 type Phase = 'admission' | 'claim' | 'prepare' | 'recovery_record' | 'publication' | 'completion' | 'consumer_scan' | 'wait_poll' | 'effects' | 'other';
@@ -50,7 +54,17 @@ const SCAN = [
   /persistence_host_bindings h JOIN persistence_source_bindings/, /r\.recovery IS NOT NULL AND NOT\(r\.worktree_id/,
   /FROM persistence_effects e JOIN persistence_worktrees w ON w\.id=e\.worktree_id WHERE e\.recovery IS NOT NULL/,
   /FROM persistence_topology_changes c/, /FROM persistence_worktree_refreshes f JOIN/, /^WITH expired AS/, /page_projection_jobs/,
+  /^WITH purged AS \( DELETE FROM persistence_consumers/,
+  // #6650: the consumer's dead-owner claim scan, at most every 5 s on any tick (an idle tick can land inside a slow preparation).
+  /^SELECT DISTINCT concat_ws\(':',r\.claim_phase->'owner'->>'pid'/,
+  /^SELECT 1 FROM persistence_effects e WHERE e\.id>\$1::bigint AND e\.kind='embedding' AND e\.state='queued' AND e\.attempts=0/,
 ];
+/**
+ * The consumer's idle no-op embedding settle pass (embedding-noop-settle.ts) reads the embedding write target, then
+ * runs the probe above on the same connection, concurrently with the measured write. Write paths share that config
+ * read, so it is a scan only when the probe follows it on its connection.
+ */
+const SETTLE_TARGET_READ = /^SELECT key,value FROM config WHERE key IN \('search_embedding_column','embedding_columns','embedding_model'/;
 const statementKinds = new Set(['execute', 'simple']);
 const flat = (sql: string) => sql.replace(/\s+/g, ' ').trim();
 
@@ -71,6 +85,8 @@ function classify(records: TraceRecord[]) {
     }
   }
   for (const group of open.values()) groups.push({ records: group, begin: group[0]!.t, end: group[group.length - 1]!.t });
+  const settleReads = new Set(standalone.filter((record, i) => SETTLE_TARGET_READ.test(flat(record.sql))
+    && SCAN.some(pattern => pattern.test(flat(standalone.slice(i + 1).find(next => next.conn === record.conn)?.sql ?? '')))));
   const labelled = groups.map(group => {
     const text = group.records.map(r => flat(r.sql)).join('\n');
     let phase: Phase = 'other';
@@ -95,7 +111,7 @@ function classify(records: TraceRecord[]) {
   const publicationEnd = anchor('publication', 'end') ?? Infinity;
   const phaseOf = (record: TraceRecord): Phase => {
     const text = flat(record.sql);
-    if (SCAN.some(pattern => pattern.test(text))) return 'consumer_scan';
+    if (settleReads.has(record) || SCAN.some(pattern => pattern.test(text))) return 'consumer_scan';
     if (/^SELECT state,error_code,error_message,completed_at,updated_at,blocked_reason,outcome FROM persistence_requests/.test(text)) return 'wait_poll';
     if (/^UPDATE persistence_requests SET state='running'/.test(text) || /FOR UPDATE OF r SKIP LOCKED\) RETURNING/.test(text)) return 'claim';
     if (/persistence_effects/.test(text) && record.t > publicationEnd) return 'effects';
@@ -122,6 +138,37 @@ function classify(records: TraceRecord[]) {
   }), { statements: 0, describes: 0 });
   return result;
 }
+
+test('the consumer\'s dead-owner claim scan landing inside preparation is a consumer scan, not preparation', () => {
+  const at = (t: number, conn: number, kind: string, sql: string): TraceRecord => ({ t, ms: 0, conn, kind, sql });
+  const records = [
+    at(1, 1, 'simple', 'begin'), at(2, 1, 'execute', 'INSERT INTO persistence_requests (id) VALUES ($1)'), at(3, 1, 'simple', 'commit'),
+    at(10, 2, 'execute', "UPDATE persistence_requests SET state='running', execution_token=$2::uuid WHERE id=$1"),
+    at(11, 4, 'execute', "SELECT config->>'slug_root_mode' AS mode FROM sources WHERE id = $1"),
+    at(12, 3, 'execute', "SELECT DISTINCT\n concat_ws(':',r.claim_phase->'owner'->>'pid',r.claim_phase->'owner'->>'nonce',r.claim_phase->'owner'->>'start') AS key,(r.claim_phase->'owner')::text AS owner\n FROM persistence_requests r WHERE r.state='running' LIMIT 100"),
+    at(13, 4, 'execute', "SELECT key,value FROM config WHERE key LIKE 'persistence.limits.%'"),
+    at(20, 5, 'simple', 'begin'), at(21, 5, 'execute', 'UPDATE persistence_requests SET publication_started=true WHERE id=$1'), at(22, 5, 'simple', 'commit'),
+  ];
+  const phases = classify(records);
+  expect(phases.consumer_scan).toEqual({ statements: 1, describes: 0 });
+  expect(phases.prepare).toEqual({ statements: 2, describes: 0 });
+});
+
+test('the consumer\'s no-op embedding settle pass landing after the claim commit is a consumer scan, not preparation', () => {
+  const at = (t: number, conn: number, kind: string, sql: string): TraceRecord => ({ t, ms: 0, conn, kind, sql });
+  const records = [
+    at(1, 1, 'simple', 'begin'), at(2, 1, 'execute', 'INSERT INTO persistence_requests (id) VALUES ($1)'), at(3, 1, 'simple', 'commit'),
+    at(10, 2, 'execute', "UPDATE persistence_requests SET state='running', execution_token=$2::uuid WHERE id=$1"),
+    at(11, 3, 'simple', "SELECT key,value FROM config WHERE key IN ('search_embedding_column','embedding_columns','embedding_model','embedding_dimensions','contextual_retrieval.mode') ORDER BY key"),
+    at(12, 4, 'execute', "SELECT config->>'slug_root_mode' AS mode FROM sources WHERE id = $1"),
+    at(13, 3, 'execute', "SELECT 1 FROM persistence_effects e WHERE e.id>$1::bigint AND e.kind='embedding' AND e.state='queued'\n AND e.attempts=0 AND e.recovery IS NULL ORDER BY e.id LIMIT 1"),
+    at(14, 4, 'simple', "SELECT key,value FROM config WHERE key IN ('search_embedding_column','embedding_columns','embedding_model','embedding_dimensions','contextual_retrieval.mode') ORDER BY key"),
+    at(20, 5, 'simple', 'begin'), at(21, 5, 'execute', 'UPDATE persistence_requests SET publication_started=true WHERE id=$1'), at(22, 5, 'simple', 'commit'),
+  ];
+  const phases = classify(records);
+  expect(phases.consumer_scan).toEqual({ statements: 2, describes: 0 });
+  expect(phases.prepare).toEqual({ statements: 2, describes: 0 });
+});
 
 const d = hasDatabase() ? describe : describe.skip;
 d('#6007 put_page statement budget (Postgres)', () => {
@@ -163,6 +210,13 @@ d('#6007 put_page statement budget (Postgres)', () => {
         const windows: { put: [number, number]; receipt: [number, number] }[] = [];
         for (let i = 0; i < 5; i++) {
           await settle();
+          // The 5 s config snapshots (write switches, publication ceiling) are refreshed outside the measured window, so a
+          // slow host whose writes run more than 5 s after the warm-up still measures one write with warm caches. A read
+          // of a snapshot still inside its TTL returns it as is, so both are dropped first: one read 4.9 s earlier would
+          // otherwise expire inside the measured write.
+          resetWriteSwitches();
+          _resetPublicationCeilingForTest();
+          await Promise.all([readWriteSwitchSnapshot(engine), readPublicationCeilingMs(engine)]);
           const requestId = randomUUID();
           const started = now();
           const result = await dispatch('put_page', { slug: `notes/budget-${i}`, content: `---\ntitle: Budget ${i}\ntype: note\n---\n\n${body}`, request_id: requestId });

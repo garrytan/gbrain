@@ -8,7 +8,9 @@ describe('owner-delegated CLI refusals name their own next step', () => {
   test('every funnel call site carries a site-specific suggestion', () => {
     expectFunnelSuggestions('src/commands/embed-facts-delegate.ts', 'invalid', 4);
     expectFunnelSuggestions('src/core/embed-facts-options.ts', 'invalid', 6);
-    expectFunnelSuggestions('src/commands/extract-stale-delegate.ts', 'invalid', 3);
+    // #6803 (D2): the --source refusal moved from the owner delegate to the validator both dispatch paths share.
+    expectFunnelSuggestions('src/commands/extract-stale-delegate.ts', 'invalid', 2);
+    expectFunnelSuggestions('src/commands/extract-stale-options.ts', 'invalid', 4);
     expectFunnelSuggestions('src/commands/sync-persistence-delegate.ts', 'invalid', 3);
   });
 

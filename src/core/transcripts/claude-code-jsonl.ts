@@ -82,8 +82,10 @@ export type ConfineTranscriptResult =
  * exception (#5465): an ENOENT leaf whose parent resolves inside the tree
  * validates ok with `absent: true`, because Claude Code writes transcripts
  * asynchronously and a not-yet-created file has nothing to read (the same
- * trust as no transcript_path at all). An absent parent, or any other lstat
- * failure, still fails closed.
+ * trust as no transcript_path at all). #6739 extends it to an absent project
+ * folder that is a direct child of an existing ancestor inside the tree, with
+ * no ".." segment. Any deeper absent path, or any other lstat failure, still
+ * fails closed.
  *
  * Cross-OS install (#4522, Claude Code on the Windows host + gbrain in WSL):
  * the hook stdin's transcript_path arrives as a Windows drive literal
@@ -145,10 +147,21 @@ export function confineTranscriptPath(
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') return { ok: false, reason: 'unreadable' };
     const parent = dirname(candidate);
     // No directory component (a bare filename — e.g. an untranslated Windows
-    // drive literal on a non-WSL host) or an absent parent: containment is
-    // unprovable, so fail closed exactly as before.
-    if (parent === '.' || !existsSync(parent)) return { ok: false, reason: 'unreadable' };
-    if (!containedIn(parent)) return { ok: false, reason: 'outside_projects_dir' };
+    // drive literal on a non-WSL host): containment is unprovable.
+    if (parent === '.') return { ok: false, reason: 'unreadable' };
+    if (existsSync(parent)) {
+      if (!containedIn(parent)) return { ok: false, reason: 'outside_projects_dir' };
+      return { ok: true, path: candidate, size: 0, absent: true };
+    }
+    // #6739: Claude Code creates projects/<project>/ only after the first
+    // prompt in a new working folder, so the parent can be absent too. The
+    // path is judged lexically: no ".." segment, and the missing parent must
+    // be a direct child of an existing ancestor that resolves inside the
+    // tree. Anything deeper or less certain fails closed.
+    if (candidate.split(/[\\/]/).includes('..')) return { ok: false, reason: 'unreadable' };
+    const ancestor = dirname(parent);
+    if (ancestor === parent || !existsSync(ancestor)) return { ok: false, reason: 'unreadable' };
+    if (!containedIn(ancestor)) return { ok: false, reason: 'outside_projects_dir' };
     return { ok: true, path: candidate, size: 0, absent: true };
   }
   if (st.isSymbolicLink()) return { ok: false, reason: 'symlink' };
@@ -257,6 +270,13 @@ export interface ParsedTranscript {
    * span. Kept alongside rather than on ToolCallRecord, which deliberately
    * carries no transcript-internal positions. */
   toolCallTurnIndexes: number[];
+  /**
+   * Set by a lane that can prove the read held only records it recognizes and
+   * no conversation: the Codex lane sets it when every non-blank line parsed
+   * and was a session header (a session opened and closed with no prompt).
+   * Session-end reads it as an empty session instead of parser drift.
+   */
+  recognizedOnly?: boolean;
 }
 
 /**

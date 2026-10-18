@@ -869,3 +869,43 @@ groups were large (16 pages at ~0 ms) or lanes were many (8+); the admission
 was refused and lanes ran one at a time. The sweep at `4004f1f2f` shows it:
 8 / 12 / 16 lanes at 88.1 / 69.2 / 56.5 pages/min. Now the batch takes only the
 room left after the cursor's next group and a reserve of 10.
+
+## Startup reads, lock scope and a held claim (follow-up wave)
+
+Three runs per head on Ubicloud `standard-16` VMs at 57 ms, default settings,
+1,500 files with 34 waived deletions first: master `b5f12b12e` (v0.60.117.0)
+against this wave at `d6d9d5956`. G6 and G7 are judged on the mean of three
+runs per head from here on, because single runs of the open-loop row spread by
+more than the gate's margin.
+
+| Gate | Master | This wave | Target | Result |
+|---|---|---|---|---|
+| G3 first commit | 19.0 / 19.3 / 19.6 s | 15.6 / 15.6 / 15.5 s | <= 15 s | missed by 0.5 s |
+| G6 `put_page` p95 during catch-up, over idle | +0.52 / +0.59 / +2.28 s, 1 failed write | +0.52 / +0.52 / +0.77 s, none failed | <= idle + 1 s | met |
+| G7 catch-up while a write arrives every 5 s | 65.1 / 60.9 / 63.4% | 55.4 / 64.4 / 60.1% | >= 50% of idle | met |
+| Idle steady pages/min | 374 / 379 / 370 | 392 / 370 / 393 | no regression | held |
+
+**G7 correction.** The v0.60.111.0 row above (45%, from one run) was low
+against every later run of the same code: three more runs at `9d013e52d`
+measured 60.6, 63.2 and 62.3%, and master has stayed between 57 and 71% since.
+G7 is met.
+
+**G3.** Three changes take 3.7 s off the first commit. Described parameter
+types are saved for the next process (about 40 fewer describe round trips per
+run; a statement only the catch-up runs still describes on its first run, which
+is why a brain's second catch-up starts faster than the bench's first). A
+waiver run's screen reuses the page snapshot and authority check its freeze
+just made instead of repeating them for each entry, and each freeze reads the
+page beside its origin check. The remaining 15.5 s is serial: about 4 s of
+startup reads, 2.5 s of screening the 34 waived entries four at a time, 1.3 s
+for their waiver transaction and about 6 s for the first group.
+
+**G6.** Two lock waits are gone. Claiming a lane group's followers locked up
+to 63 rows after the group, including the next foreground write's row, for the
+claim's round trips; it now locks only the members (lock-wait samples per run
+from about 190 to 84). And a foreground write the writer's own process had
+claimed, but could not publish while the sync's lanes held the worktree, did
+not hold back new lane heads, so groups kept starting ahead of it until it was
+handed back. Master's +2.28 s run (one write not committed within its wait)
+fits that case, but its bench output does not name the cause; the forced test
+in `test/managed-sync-foreground-priority.test.ts` reproduces the held claim.

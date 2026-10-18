@@ -22,7 +22,7 @@ describe('buildSyncManifest', () => {
   test('parses R100 rename entries', () => {
     const output = `R100\tpeople/old-name.md\tpeople/new-name.md`;
     const manifest = buildSyncManifest(output);
-    expect(manifest.renamed).toEqual([{ from: 'people/old-name.md', to: 'people/new-name.md' }]);
+    expect(manifest.renamed).toEqual([{ from: 'people/old-name.md', to: 'people/new-name.md', similarity: 100 }]);
     expect(manifest.added).toEqual([]);
     expect(manifest.modified).toEqual([]);
     expect(manifest.deleted).toEqual([]);
@@ -31,7 +31,7 @@ describe('buildSyncManifest', () => {
   test('parses partial rename (R075)', () => {
     const output = `R075\tpeople/old.md\tpeople/new.md`;
     const manifest = buildSyncManifest(output);
-    expect(manifest.renamed).toEqual([{ from: 'people/old.md', to: 'people/new.md' }]);
+    expect(manifest.renamed).toEqual([{ from: 'people/old.md', to: 'people/new.md', similarity: 75 }]);
   });
 
   test('T (typechange) counts as modified — was silently dropped', () => {
@@ -364,7 +364,7 @@ describe('buildSyncManifest — C-style-quoted paths', () => {
     const output = 'R100\t"people/old \\"nick\\".md"\t"people/new \\"nick\\".md"';
     const manifest = buildSyncManifest(output);
     expect(manifest.renamed).toEqual([
-      { from: 'people/old "nick".md', to: 'people/new "nick".md' },
+      { from: 'people/old "nick".md', to: 'people/new "nick".md', similarity: 100 },
     ]);
   });
 

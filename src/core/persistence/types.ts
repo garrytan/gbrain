@@ -7,7 +7,7 @@ export type WriteRequestState = typeof WRITE_REQUEST_STATES[number];
 
 export const WRITE_ERROR_CODES = [
   'writer_lock_unavailable', 'writer_pool_capacity', 'owner_unavailable',
-  'recovery_required', 'queue_capacity', 'revision_required', 'revision_conflict',
+  'recovery_required', 'queue_capacity', 'write_quota_exhausted', 'write_quota_insufficient', 'write_capacity_backpressure', 'revision_required', 'revision_conflict',
   'idempotency_conflict', 'source_changed', 'write_pending', 'storage_error', 'cancelled',
   'permission_denied', 'scope_denied', 'invalid_params', 'not_found', 'page_not_found',
   'page_identity_changed', 'write_claim_lost', 'request_too_large', 'response_too_large',
@@ -18,9 +18,9 @@ export const WRITE_ERROR_CODES = [
   'connector_account_changed', 'connector_intent_outdated', 'checkpoint_validation_timeout',
   'invalid_connector_text', 'connector_holds_exhausted', 'connector_fence_below_timeline',
   'core_budget_exceeded', 'core_mark_owner_only', 'core_remote_edit_refused', 'core_delete_owner_only',
-  'timeline_rows_would_be_removed', 'preparation_stalled',
-  'timeline_rows_would_be_removed',
-  'fence_unrenderable',
+  'timeline_rows_would_be_removed', 'purged_content', 'preparation_stalled',
+  'fence_unrenderable', 'page_body_segmented',
+  'write_outcome_unknown', 'write_interrupted',
 ] as const;
 
 export type WriteErrorCode = typeof WRITE_ERROR_CODES[number];
@@ -40,6 +40,8 @@ export interface WriteDiagnostic {
 
 export interface WriteReceipt {
   request_id: string;
+  /** F6: the client's non-UUID request_id when it sent one; request_id is its canonical UUIDv5. */
+  client_request_id?: string;
   state: WriteRequestState;
   /** Milliseconds until polling is useful; null for terminal outcomes. */
   retry_after_ms: number | null;
@@ -102,6 +104,7 @@ export function isWriteReceipt(value: unknown): value is WriteReceipt {
   const retry = value.retry_after_ms;
   if (retry !== null && (typeof retry !== 'number' || !Number.isSafeInteger(retry) || retry < 0)) return false;
   if (isTerminalWriteState(value.state as WriteRequestState) && retry !== null) return false;
+  if (value.client_request_id !== undefined && (typeof value.client_request_id !== 'string' || !value.client_request_id)) return false;
   if (value.revision !== undefined && (typeof value.revision !== 'string' || !value.revision)) return false;
   if (value.compacted !== undefined && typeof value.compacted !== 'boolean') return false;
   if (value.outcome !== undefined && !isRecord(value.outcome)) return false;
@@ -133,6 +136,7 @@ export function admittedPendingReceipt(envelope: unknown): WriteReceipt | null {
 export function publicWriteReceipt(receipt: WriteReceipt): WriteReceipt {
   return {
     request_id: receipt.request_id,
+    ...(receipt.client_request_id !== undefined ? { client_request_id: receipt.client_request_id } : {}),
     state: receipt.state,
     retry_after_ms: receipt.retry_after_ms,
     ...(receipt.revision !== undefined ? { revision: receipt.revision } : {}),

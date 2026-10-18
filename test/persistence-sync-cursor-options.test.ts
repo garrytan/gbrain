@@ -19,7 +19,10 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 // #5632: an interrupted managed sync stores its processing options on the
 // cursor. Autopilot (noEmbed+noExtract defaults) and a plain CLI run (neither)
 // resolve different defaults, so each refused to finish the other's cursor
-// forever. A resume that chose no processing flag now adopts the stored ones.
+// forever. #6712 PR 1 (#6552 §1) rewrote these tests: the options refusal and
+// the explicit-flag list are gone. A resume keeps the cursor's accepted
+// opt-outs (`inherited_options`), and an opt-out the caller sets applies to the
+// requests it freezes from then on; admitted requests keep their frozen options.
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-cursor-options-'));
 const engines: BrainEngine[] = [];
@@ -51,47 +54,50 @@ const isolated = (fn: (engine: BrainEngine) => Promise<void>) => withEnv({ GBRAI
 const storedOptions = async (engine: BrainEngine, id: string) => (await engine.executeRaw<{ options: unknown }>(
   "SELECT c.completed_keys->0->'processingOptions' AS options FROM op_checkpoints c WHERE c.op='managed-sync' AND c.completed_keys->0->>'sourceId'=$1", [id]))[0]?.options;
 // What each caller passes: the autopilot job fills noEmbed/noExtract defaults; the plain CLI passes no flag.
-const autopilot = (sourceId: string): SyncOpts => ({ sourceId, noPull: true, noEmbed: true, noExtract: true, explicitProcessing: [] } as SyncOpts);
-const plainCli = (sourceId: string): SyncOpts => ({ sourceId, noPull: true, explicitProcessing: [] } as SyncOpts);
+const autopilot = (sourceId: string): SyncOpts => ({ sourceId, noPull: true, noEmbed: true, noExtract: true });
+const plainCli = (sourceId: string): SyncOpts => ({ sourceId, noPull: true });
+const importOptions = async (engine: BrainEngine, id: string) => (await engine.executeRaw<{ options: unknown }>(
+  "SELECT intent->'processingOptions' AS options FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence", [id])).map(row => row.options);
+const none = { noEmbed: false, noExtract: false, noSchemaPack: false }, unattended = { noEmbed: true, noExtract: true, noSchemaPack: false };
 
-test('explicit processing flags are the ones the caller set', () => {
-  const explicit = (syncAuthority as Record<string, any>).explicitSyncProcessing;
-  expect(explicit({ noEmbed: true, noExtract: false })).toEqual(['noEmbed', 'noExtract']);
-  expect(explicit({ noPull: true })).toEqual([]);
+test('a caller\'s processing options are the flags it set; no explicit-flag list remains', () => {
+  expect(syncAuthority.syncProcessingOptions({ noEmbed: true, noExtract: false } as SyncOpts)).toEqual({ noEmbed: true, noExtract: false, noSchemaPack: false });
+  expect((syncAuthority as Record<string, unknown>).explicitSyncProcessing).toBeUndefined();
+  expect((syncAuthority as Record<string, unknown>).typedSyncProcessing).toBeUndefined();
 });
 
-test('a CLI-partial cursor is finished by an autopilot resume with the stored options', async () => isolated(async engine => {
+test('a CLI-partial cursor is finished by an autopilot resume; its opt-outs apply to the pages it freezes', async () => isolated(async engine => {
   const id = await fixture(engine);
   expect(await performManagedSync(engine, plainCli(id), { maxPages: 1, maxMs: 1000 })).toMatchObject({ status: 'partial' });
-  expect(await storedOptions(engine, id)).toEqual({ noEmbed: false, noExtract: false, noSchemaPack: false });
-  expect((await performManagedSync(engine, autopilot(id))).status).toBe('first_sync');
+  expect(await storedOptions(engine, id)).toEqual(none);
+  const finished = await performManagedSync(engine, autopilot(id));
+  expect(finished.status).toBe('first_sync');
+  expect(finished.inherited_options).toBeUndefined();
   expect(await engine.getPage('c', { sourceId: id })).not.toBeNull();
-  const intents = await engine.executeRaw<{ options: unknown }>("SELECT intent->'processingOptions' AS options FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import'", [id]);
-  expect(intents.map(row => row.options)).toEqual(Array(3).fill({ noEmbed: false, noExtract: false, noSchemaPack: false }));
+  expect(await importOptions(engine, id)).toEqual([none, unattended, unattended]);
+  expect(await storedOptions(engine, id)).toEqual(unattended);
 }), 120_000);
 
-test('an autopilot-partial cursor is finished by a plain CLI resume', async () => isolated(async engine => {
+test('an autopilot-partial cursor is finished by a plain CLI resume that keeps its opt-outs', async () => isolated(async engine => {
   const id = await fixture(engine);
   expect(await performManagedSync(engine, autopilot(id), { maxPages: 1, maxMs: 1000 })).toMatchObject({ status: 'partial' });
-  expect((await performManagedSync(engine, plainCli(id))).status).toBe('first_sync');
+  const finished = await performManagedSync(engine, plainCli(id));
+  expect(finished.status).toBe('first_sync');
+  expect(finished.inherited_options).toEqual(['noEmbed', 'noExtract']);
+  expect(await importOptions(engine, id)).toEqual([unattended, unattended, unattended]);
 }), 120_000);
 
-test('an explicit conflicting flag refuses with the stored options and the printed resume command finishes the cursor', async () => isolated(async engine => {
+// #6552 §1 probe: on the base this resume threw invalid_params (cursor_processing_options_conflict) and printed a command to retype the flags.
+test('a resume whose flags differ from the stored options finishes the cursor instead of refusing', async () => isolated(async engine => {
   const id = await fixture(engine);
   expect(await performManagedSync(engine, autopilot(id), { maxPages: 1, maxMs: 1000 })).toMatchObject({ status: 'partial' });
-  const refused = await performManagedSync(engine, { sourceId: id, noPull: true, noExtract: false, explicitProcessing: ['noExtract'] } as SyncOpts)
-    .then(() => null, (error: unknown) => error as { code: string; detail?: string; suggestion?: string });
-  expect(refused).toMatchObject({ code: 'invalid_params', detail: 'cursor_processing_options_conflict' });
-  expect(refused!.suggestion).toContain('noEmbed=true, noExtract=true, noSchemaPack=false');
-  const command = `gbrain sync --source ${id} --no-pull --no-embed --no-extract`;
-  expect(refused!.suggestion).toContain(command);
-  const args = command.split(' ').slice(2);
-  const resumed = await performManagedSync(engine, { sourceId: id, noPull: true, noEmbed: args.includes('--no-embed'), noExtract: args.includes('--no-extract'),
-    explicitProcessing: ['noEmbed', 'noExtract'] } as SyncOpts);
+  const resumed = await performManagedSync(engine, { sourceId: id, noPull: true, noExtract: false, noSchemaPack: true } as SyncOpts);
   expect(resumed.status).toBe('first_sync');
+  expect(resumed.inherited_options).toEqual(['noEmbed', 'noExtract']);
+  expect(await importOptions(engine, id)).toEqual([unattended, { ...unattended, noSchemaPack: true }, { ...unattended, noSchemaPack: true }]);
 }), 120_000);
 
-test('a remote sync job keeps its frozen options while the worker adds explicit processing keys', async () => isolated(async engine => {
+test('a remote sync job finishes under its own frozen options', async () => isolated(async engine => {
   const id = await fixture(engine);
   const clientId = `options-client-${randomUUID()}`;
   await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_name,client_secret_hash,scope,source_id,allowed_operations)
@@ -99,9 +105,7 @@ test('a remote sync job keeps its frozen options while the worker adds explicit 
   const ctx = { engine, remote: true, sourceId: id, auth: { clientId, principal: { kind: 'oauth_client', id: clientId }, scopes: ['admin'], sourceId: id,
     allowedOperations: ['submit_job'] } } as unknown as OperationContext;
   const accepted = await prepareRemoteJob(ctx, 'sync', { noPull: true });
-  const explicit = (syncAuthority as Record<string, any>).explicitSyncProcessing;
-  const result = await withSubmissionAuthority(accepted.authority, () => performManagedSync(engine,
-    { ...accepted.data, explicitProcessing: explicit(accepted.data) } as SyncOpts));
+  const result = await withSubmissionAuthority(accepted.authority, () => performManagedSync(engine, { ...accepted.data } as SyncOpts));
   expect(result.status).toBe('first_sync');
   await engine.executeRaw('DELETE FROM oauth_clients WHERE client_id=$1', [clientId]);
 }), 120_000);

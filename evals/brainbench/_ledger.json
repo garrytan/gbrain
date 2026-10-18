@@ -2,8 +2,8 @@
   "name": "brainbench-corpus",
   "version": 1,
   "seed": 42,
-  "generated_fixtures": 135,
-  "holdout_fixtures": 23,
+  "generated_fixtures": 177,
+  "holdout_fixtures": 29,
   "gold_turns": 241,
   "categories": {
     "kta-pos": 25,
@@ -12,7 +12,12 @@
     "write-back": 20,
     "continuity_pairs": 15,
     "multi-source": 10,
-    "adversarial": 15
+    "adversarial": 15,
+    "trust": 8,
+    "state-resolution": 8,
+    "poisoning-external": 10,
+    "poisoning-agent": 10,
+    "deletion": 6
   },
   "prose": "template-synthesized, PRNG-varied; deliberately no LLM pass (controlled difficulty; see README)",
   "rebuild": "bun evals/brainbench/generator/gen.ts",

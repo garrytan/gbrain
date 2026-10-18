@@ -40,6 +40,9 @@ beforeEach(async () => {
   await engine.executeRaw('DELETE FROM planner_stats_deltas');
   await engine.executeRaw('DELETE FROM planner_stats_state');
   await engine.executeRaw("DELETE FROM config WHERE key LIKE 'planner.%' OR key = 'import.analyze_every_pages'");
+  // The reset deletes rows but keeps catalog row counts; re-sample the emptied pages table so an index
+  // count left by an earlier test's narrow ANALYZE is not read as an expression index without statistics.
+  await engine.executeRaw('ANALYZE pages');
   __testing.reset(engine);
   __testing.hooks.afterWatermark = undefined;
   __testing.hooks.onAnalyzed = undefined;

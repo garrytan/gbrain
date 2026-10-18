@@ -12,20 +12,28 @@ import { join } from 'path';
 export interface StorageConfig {
   db_tracked: string[];
   db_only: string[];
+  /**
+   * #6696 C7: opt-in policy, present only when declared. Drifted pages under these prefixes are reconciled with
+   * the database copy by the trusted local maintenance worker on the canonical owner host (repair/keep-db-policy.ts).
+   */
+  keep_db?: string[];
 }
 
 export type StorageTier = 'db_tracked' | 'db_only' | 'unspecified';
 
 /** Recognized YAML keys (canonical and deprecated). */
 const STORAGE_KEYS = new Set([
-  'db_tracked', 'db_only',
+  'db_tracked', 'db_only', 'keep_db',
   'git_tracked', 'supabase_only', // deprecated aliases
 ]);
+const CANONICAL_STORAGE_KEYS = ['db_tracked', 'db_only', 'keep_db'];
 
 /**
- * Parse the gbrain.yml shape: a top-level `storage:` section with up to four
- * array-valued nested keys (canonical `db_tracked` / `db_only` plus the
- * deprecated aliases `git_tracked` / `supabase_only`).
+ * Parse the gbrain.yml shape: a top-level `storage:` section with up to five
+ * array-valued nested keys (canonical `db_tracked` / `db_only`, the opt-in
+ * `keep_db` policy, and the deprecated aliases `git_tracked` /
+ * `supabase_only`). Any other nested key is collected into `unknown`, which
+ * `loadStorageConfig` warns about once per key and process.
  *
  * Intentionally narrow. Does NOT handle the full YAML spec — only the file
  * shape gbrain controls. Trades expressiveness for zero-dep parsing and
@@ -44,11 +52,12 @@ const STORAGE_KEYS = new Set([
 type RawStorage = {
   db_tracked?: string[];
   db_only?: string[];
+  keep_db?: string[];
   git_tracked?: string[];
   supabase_only?: string[];
 };
 
-function parseStorageYaml(content: string): RawStorage | null {
+function parseStorageYaml(content: string, unknown: string[] = []): RawStorage | null {
   const lines = content.split('\n').map((line) => line.replace(/\r$/, ''));
 
   let inStorage = false;
@@ -103,6 +112,7 @@ function parseStorageYaml(content: string): RawStorage | null {
       }
       continue;
     }
+    if (!unknown.includes(key)) unknown.push(key);
     currentList = null;
   }
 
@@ -151,16 +161,19 @@ function normalizeStorageConfig(raw: RawStorage): StorageConfig {
     }
   }
 
+  const keep = raw.keep_db ? { keep_db: raw.keep_db } : {};
   if (hasCanonical) {
     return {
       db_tracked: raw.db_tracked ?? [],
       db_only: raw.db_only ?? [],
+      ...keep,
     };
   }
 
   return {
     db_tracked: raw.git_tracked ?? [],
     db_only: raw.supabase_only ?? [],
+    ...keep,
   };
 }
 
@@ -181,6 +194,7 @@ function normalizeStorageConfig(raw: RawStorage): StorageConfig {
  *     surface "your config didn't take" rather than silently no-op.
  */
 let _missingStorageWarned = false;
+const _unknownKeysWarned = new Set<string>();
 
 export function loadStorageConfig(repoPath?: string | null): StorageConfig | null {
   if (!repoPath) return null;
@@ -193,8 +207,9 @@ export function loadStorageConfig(repoPath?: string | null): StorageConfig | nul
   const content = readFileSync(yamlPath, 'utf-8');
 
   let raw: RawStorage | null;
+  const unknown: string[] = [];
   try {
-    raw = parseStorageYaml(content);
+    raw = parseStorageYaml(content, unknown);
   } catch (error) {
     console.warn(
       `Warning: Failed to parse gbrain.yml: ${error instanceof Error ? error.message : String(error)}`,
@@ -215,10 +230,15 @@ export function loadStorageConfig(repoPath?: string | null): StorageConfig | nul
     return null;
   }
 
+  for (const key of unknown.filter(key => !_unknownKeysWarned.has(key))) {
+    _unknownKeysWarned.add(key);
+    console.warn(`Warning: ${yamlPath}: unknown storage key '${key}' is ignored; storage takes ${CANONICAL_STORAGE_KEYS.join(', ')} (see docs/storage-tiering.md).`);
+  }
+
   const merged = normalizeStorageConfig(raw);
 
   // Empty storage section → return as-is but warn.
-  if (merged.db_tracked.length === 0 && merged.db_only.length === 0) {
+  if (merged.db_tracked.length === 0 && merged.db_only.length === 0 && !merged.keep_db?.length) {
     if (!_missingStorageWarned) {
       _missingStorageWarned = true;
       console.warn(
@@ -305,7 +325,8 @@ export function normalizeAndValidateStorageConfig(input: StorageConfig): Storage
 
   const tracked = normalize(input.db_tracked);
   const dbonly = normalize(input.db_only);
-  const allChanged = [...tracked.changed, ...dbonly.changed];
+  const keep = input.keep_db ? normalize(input.keep_db) : null;
+  const allChanged = [...tracked.changed, ...dbonly.changed, ...(keep?.changed ?? [])];
 
   if (allChanged.length > 0 && !_normalizationInfoEmitted) {
     _normalizationInfoEmitted = true;
@@ -326,7 +347,7 @@ export function normalizeAndValidateStorageConfig(input: StorageConfig): Storage
     }
   }
 
-  return { db_tracked: tracked.normalized, db_only: dbonly.normalized };
+  return { db_tracked: tracked.normalized, db_only: dbonly.normalized, ...(keep ? { keep_db: keep.normalized } : {}) };
 }
 
 /**
@@ -364,6 +385,11 @@ export function isDbOnly(slug: string, config: StorageConfig): boolean {
  */
 export function isDeclaredDbOnlySlug(slug: string, config: StorageConfig | null): boolean {
   return config?.db_only.some((dir) => matchesTierDir(slug, dir.toLowerCase())) ?? false;
+}
+
+/** #6696 C7: whether a page slug sits under a declared `keep_db` prefix (case-insensitive, like `isDeclaredDbOnlySlug`). */
+export function isKeepDbSlug(slug: string, keepDb: readonly string[]): boolean {
+  return keepDb.some((dir) => matchesTierDir(slug, dir.toLowerCase()));
 }
 
 /**
@@ -469,6 +495,7 @@ export const isSupabaseOnly = isDbOnly;
 /** Reset once-per-process warning flags. Test-only. */
 export function __resetMissingStorageWarning(): void {
   _missingStorageWarned = false;
+  _unknownKeysWarned.clear();
   _deprecationWarned = false;
   _normalizationInfoEmitted = false;
 }

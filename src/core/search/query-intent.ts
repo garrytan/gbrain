@@ -754,8 +754,8 @@ export function conceptNudge(query: string): string | null {
   if (!looksConceptShaped(query)) return null;
   const preview = query.length > 60 ? `${query.slice(0, 57)}...` : query;
   return (
-    `hint: concept-shaped question — try \`gbrain query "${preview}"\` ` +
-    `(adds multi-query expansion; recovers synonym-phrased matches search can miss). ` +
+    `hint: concept-shaped question — try \`gbrain query "${preview}" --expand\` ` +
+    `(multi-query expansion can recover synonym-phrased matches search can miss). ` +
     `A nonzero search count is not proof of completeness.`
   );
 }

@@ -13,7 +13,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { isValidTimeZone } from '../effective-date.ts';
+import { dayInZone, formatBrainDay, isValidTimeZone } from '../effective-date.ts';
 
 export interface ThinkTemporalContext {
   /** YYYY-MM-DD in `timeZone`. */
@@ -35,11 +35,6 @@ export class ReferenceDateError extends Error {
 const CONTENT_DATE_SOURCES = new Set(['event_date', 'date', 'published', 'filename']);
 
 const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-/** The calendar day an instant falls on in `timeZone`, as YYYY-MM-DD. */
-export function dayInZone(instant: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(instant);
-}
 
 /**
  * Validates a caller-supplied reference date: a real YYYY-MM-DD calendar day,
@@ -83,12 +78,5 @@ export function pageContentDate(
 ): string | null {
   if (!page.effective_date_source || !CONTENT_DATE_SOURCES.has(page.effective_date_source)) return null;
   const raw = page.effective_date;
-  if (raw === null || raw === undefined || raw === '') return null;
-  if (typeof raw === 'string' && ISO_DAY.test(raw.trim())) return raw.trim();
-  const instant = raw instanceof Date ? raw : new Date(raw);
-  if (!Number.isFinite(instant.getTime())) return null;
-  if (instant.getUTCHours() === 0 && instant.getUTCMinutes() === 0 && instant.getUTCSeconds() === 0 && instant.getUTCMilliseconds() === 0) {
-    return instant.toISOString().slice(0, 10);
-  }
-  return dayInZone(instant, timeZone);
+  return formatBrainDay(typeof raw === 'string' ? raw.trim() : raw, timeZone);
 }

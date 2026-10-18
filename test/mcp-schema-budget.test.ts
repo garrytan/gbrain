@@ -38,6 +38,12 @@
  * disclosure), get_write_request (poll cadence and final states),
  * add_timeline_entry (when no call is needed) and the instructions (write
  * guidance); the served list still fits 25,000 model-visible characters.
+ * Wave 16 (#6040 item 1): query and search both name people/companies/projects
+ * by topic as `query` work (+77, the measured routing fix), paid for by
+ * redundant words in unowned tool text (`(v1)` on six verb labels, `Optional;`
+ * on request_id, examples that repeat the description); the served list is
+ * measured at 24,768 and must keep SERVED_STARTER_MIN_HEADROOM free so the
+ * next description edit does not land on the ceiling again.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -45,15 +51,17 @@ import { operations, type Operation } from '../src/core/operations.ts';
 import { filterOpsForSurface, STARTER_OPS } from '../src/mcp/surface.ts';
 import { buildToolDefs } from '../src/mcp/tool-defs.ts';
 import { stdioVisibleTools } from '../src/mcp/server.ts';
-import { GBRAIN_MCP_INSTRUCTIONS } from '../src/mcp/instructions.ts';
+import { buildMcpInstructions, GBRAIN_MCP_INSTRUCTIONS } from '../src/mcp/instructions.ts';
 import { cl100kAvailable, estimateTokens } from '../src/core/chunkers/token-estimate.ts';
 
 const SERVED_STARTER_MAX_CHARS = 25_000;
+/** Headroom the served starter list must keep under the ceiling (wave 16: 24,998 of 25,000 left 2 characters; 200 is what the wave reaches without touching text other threads own, raised to 300 once the entity card and query/search trims land). */
+const SERVED_STARTER_MIN_HEADROOM = 200;
 const SERVED_STARTER_MAX_TOKENS = 5_700;
-/** The whole tools/list JSON, annotations included (25,735 measured at v0.60.46.0; traverse_graph's `hops` is full-surface-only, 25,941 measured; 26,402 once mute_notice, the dismissal for the coaching notices starter sessions receive, joined starter; 26,671 with #6007's put_page wait_ms param and write guidance, which carry the put_pages hint and the receipt poll rule starter agents need; 26,679 with delta's opaque `cursor` param, paid for by trimming delta's own descriptions, model-visible 24,985). */
+/** The whole tools/list JSON, annotations included (25,735 measured at v0.60.46.0; traverse_graph's `hops` is full-surface-only, 25,941 measured; 26,402 once mute_notice, the dismissal for the coaching notices starter sessions receive, joined starter; 26,671 with #6007's put_page wait_ms param and write guidance, which carry the put_pages hint and the receipt poll rule starter agents need; 26,679 with delta's opaque `cursor` param, paid for by trimming delta's own descriptions, model-visible 24,985; 26,692 with recall's `question` param, paid for by trimming recall's own parameter text, model-visible 24,998; 24,996 after the #6446 merge, recall's grep text trimmed again). */
 const SERVED_STARTER_MAX_JSON_CHARS = 26_700;
 /** 4,042 at the cost wave + 586 for the operator contract's error protocol, notice prefix and memory loop (F1); no schema guidance moved here. */
-const INSTRUCTIONS_MAX_CHARS = 4_868; // #6007: +240 for the issue-required write guidance (put_pages, wait_ms)
+const INSTRUCTIONS_MAX_CHARS = 5_108; // #6007: +240 for the issue-required write guidance (put_pages, wait_ms); Cat 40 Hard round 4: +107 for batching lists of names (entity names, keyword OR) and sending independent calls together; d5b: +70 for the brief naming the fields compact `entity names` rows carry (the maximal rendering, record types enrolled; +39 at the default) instead of a `referenced_by` walk batch mode cannot do; F4: +63 for instruction 7's governing rule (the record whose terms are in effect on the date asked about governs; page dates are named as page dates), 74 characters longer than the "prefer the newest governing source" sentence it replaces, 11 paid by cutting "the best-ranked excerpts" to "top excerpts" in the same clause
 const DESCRIPTION_HARD_CAP = 1_200;
 const PARAM_DESCRIPTION_HARD_CAP = 200;
 
@@ -62,14 +70,30 @@ const PARAM_DESCRIPTION_HARD_CAP = 200;
  * remember 1330 -> 1370: the additive `items` batch param (save up to 20 facts
  * before compaction), measured at 1,344 after its descriptions were shortened so the
  * served starter list stays under 25,000 next to #6007's put_page growth.
+ * search 1670 -> 1800: keyword OR across quoted names and the pointer to entity names (Cat 40 Hard
+ * round 4), paid for by trimming query, list_pages, capture, mute_notice and request_tools text.
+ * entity 470 -> 550: the additive `names` param (resolve up to 50 names in one
+ * call, Cat 40 Hard round 4), measured at 546 with the `name` example and part
+ * of the miss sentence trimmed so the served starter list stays under 25,000.
+ * add_timeline_entry 680 -> 730 (#5970, wave 15): the description names the
+ * correction route (edit its bullet via edit_page with expected_revision),
+ * measured at 720 after its own text was tightened; get_ingest_log,
+ * list_write_requests, traverse_graph and list_link_sources lost redundant
+ * words (no pinned phrase, every description still >= 60 characters) so the
+ * served starter list stays at or under 25,000.
+ * search 1800 -> 1830 (wave 16, #6040 item 1): the redirect reads
+ * `Concepts/landscape or people/companies/projects by topic: \`query\``, measured
+ * at 1,826. Without it Haiku 4.5 routes "all the people that work on X" to
+ * search (28/80 at temperature 1; 1/80 with the clause); the batching sentence
+ * `Name lists: entity names.` stays, so the growth is paid by other tools.
  */
 const TOOL_BUDGETS: Record<string, number> = {
-  add_timeline_entry: 680, cancel_job: 270, cancel_write_request: 350, capture: 1250, context_pack: 760,
-  delete_skill: 810, delta: 830, edit_page: 1090, entity: 470, find_anomalies: 520, forget: 560, get_agent_job: 270,
+  add_timeline_entry: 730, cancel_job: 270, cancel_write_request: 350, capture: 1250, context_pack: 760,
+  delete_skill: 810, delta: 830, edit_page: 1090, entity: 550, find_anomalies: 520, forget: 560, get_agent_job: 270,
   get_backlinks: 770, get_ingest_log: 280, get_page: 930, get_recent_salience: 660, get_skill: 910,
   get_skill_asset: 790, get_write_request: 360, join_brain: 560, leave_brain: 540, list_brain_skillpack: 230,
   list_link_sources: 220, list_pages: 1060, list_skills: 670, list_write_requests: 450, put_page: 1460,
-  mute_notice: 460, put_skill: 1420, query: 3100, recall: 1540, remember: 1370, request_tools: 560, resolve_slugs: 410, search: 1670,
+  mute_notice: 460, put_skill: 1420, query: 3100, recall: 1540, remember: 1370, request_tools: 560, resolve_slugs: 410, search: 1830,
   submit_agent: 750, sync_brain_skills: 770, synthesize: 550, traverse_graph: 810, whoami: 230,
 };
 
@@ -137,6 +161,13 @@ describe('served starter tool list (Cat 40 configuration)', () => {
     expect(size(ops)).toBeLessThanOrEqual(SERVED_STARTER_MAX_CHARS);
   });
 
+  test('the served list keeps headroom under the ceiling, publish_skills on and off (wave 16)', async () => {
+    for (const publishSkills of [true, false]) {
+      const ops = await served(publishSkills);
+      expect(SERVED_STARTER_MAX_CHARS - size(ops), `publish_skills=${publishSkills}`).toBeGreaterThanOrEqual(SERVED_STARTER_MIN_HEADROOM);
+    }
+  });
+
   test('cl100k token ceiling', async () => {
     if (!cl100kAvailable()) return;
     expect(estimateTokens(JSON.stringify(modelVisible(await served(true))))).toBeLessThanOrEqual(SERVED_STARTER_MAX_TOKENS);
@@ -144,6 +175,22 @@ describe('served starter tool list (Cat 40 configuration)', () => {
 
   test('initialize instructions stay at or below their recorded size', () => {
     expect(GBRAIN_MCP_INSTRUCTIONS.length).toBeLessThanOrEqual(INSTRUCTIONS_MAX_CHARS);
+  });
+
+  // Per-arm renderings: all off (names-row off, no records, `newest`), names-row on / records off, F4 only
+  // (`in_effect`, names-row off, no records), and the maximal one (records enrolled, names-row on, `in_effect`) at 5,108.
+  test('every per-arm rendering stays at or below the recorded size; the maximal one is the recorded size', () => {
+    let max = 0;
+    for (const governingRule of ['newest', 'in_effect'] as const) {
+      for (const namesRow of [false, true]) {
+        for (const records of [false, true]) {
+          const size = buildMcpInstructions({ references: { namesRow, records }, governingRule }).length;
+          max = Math.max(max, size);
+          expect({ governingRule, namesRow, records, fits: size <= INSTRUCTIONS_MAX_CHARS }).toEqual({ governingRule, namesRow, records, fits: true });
+        }
+      }
+    }
+    expect(buildMcpInstructions({ references: { namesRow: true, records: true }, governingRule: 'in_effect' }).length).toBe(max);
   });
 });
 
@@ -176,6 +223,17 @@ describe('minimum guidance (DX-14)', () => {
       for (const phrase of phrases) expect(op.description, `${name}: ${phrase}`).toContain(phrase);
     });
   }
+
+  test('remember items description names entity and the optional item fields on starter and full (#6363)', () => {
+    for (const surface of ['starter', 'full'] as const) {
+      const op = filterOpsForSurface(operations, surface).find(o => o.name === 'remember')!;
+      const [def] = buildToolDefs([op]);
+      const items = (def.inputSchema.properties as Record<string, { description?: string }>).items;
+      for (const field of ['fact', 'entity', 'provenance', 'kind', 'ttl', 'visibility']) {
+        expect(items.description, `${surface}: ${field}`).toContain(field);
+      }
+    }
+  });
 
   test('every required input of a starter tool is declared in its schema', () => {
     for (const def of buildToolDefs(operations.filter(o => STARTER_OPS.has(o.name)))) {

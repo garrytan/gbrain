@@ -4,7 +4,7 @@
  * run's counts. Never includes the pinned account or installation id.
  *
  * #5988: also each Git source's held files (`readGitHoldStatuses`, limited
- * in SQL to `sync.hold_cap`) and the blocked sync requests recent runs
+ * in SQL to `GBRAIN_SYNC_HOLD_CAP`) and the blocked sync requests recent runs
  * converted in place, shown beside connector holds. Only `sources status` and `sources retry-held` merge
  * the two; `readAllSourceHolds`, `gbrain waiting` and doctor
  * `connector_held_items` stay connector-only.
@@ -12,7 +12,9 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { readManagedConnectorState, type ConnectorRunCounts, type UpgradeRecovery } from './connector-state.ts';
+import { CONNECTOR_STOPPED_RUNS, readManagedConnectorState, type ConnectorPurgedItem, type ConnectorRunCounts, type ConnectorRunFailure, type UpgradeRecovery } from './connector-state.ts';
+import { classifySyncFault, type SyncFaultVerdict } from './sync-fault-class.ts';
+import type { Action } from '../agent-output.ts';
 import { managedBrain, readAllSourceHolds } from '../connectors/item-holds-store.ts';
 import type { ItemHoldRecord } from '../connectors/item-holds.ts';
 import { fenceAutoRepairFor, gitHoldItem, readGitHoldListing, readSyncConversions, readSyncHoldPolicy, type GitHoldItem, type SyncConversion } from './sync-holds.ts';
@@ -32,6 +34,37 @@ export interface ConnectorSourceStatus {
   held: ItemHoldRecord[];
   /** Set when this source's hold state could not be read: coverage is unknown, not hold-free. */
   held_error?: string;
+  /** #6831: recent items skipped because their content matches a page purge tombstone (newest first). */
+  purged_items: ConnectorPurgedItem[];
+  /** #6831: the error the source's connector runs keep ending on, or null when the last run finished. */
+  last_failure: ConnectorRunFailure | null;
+  /** #6831: `last_failure.consecutive` reached CONNECTOR_STOPPED_RUNS: nothing from this source is being imported. */
+  stopped: boolean;
+}
+
+/** #6831: `sync status`'s view of a connector source's recorded run failure (`connector_last_error`). */
+export interface ConnectorLastError extends ConnectorRunFailure, SyncFaultVerdict {
+  stopped: boolean;
+  fix: Action;
+}
+
+/** #6831: the read-only next step for a recorded connector run failure: its receipt when it names one, else the source's status. */
+function connectorFailureFix(sourceId: string, failure: ConnectorRunFailure): Action {
+  return failure.request_id
+    ? { argv: ['gbrain', 'write-request', '--', failure.request_id], consent: [], actor: 'agent', requires_exclusive: false,
+      why: `Read-only: the receipt of ${failure.slug ?? 'the item'} the last connector run of ${sourceId} ended on, with its error and fix.` }
+    : { argv: ['gbrain', 'sources', 'status', sourceId, '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+      why: `Read-only: the connector state of ${sourceId}, including the error its last run ended on.` };
+}
+
+/** #6831: the connector run failure recorded for a source (null for a non-connector source or a last run that finished). */
+export async function readConnectorLastError(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<ConnectorLastError | null> {
+  const [source] = await engine.executeRaw<{ incarnation: string }>(
+    "SELECT incarnation::text FROM sources WHERE id=$1 AND NOT archived AND config->>'kind' IN ('google','github')", [sourceId]);
+  const failure = source ? (await readManagedConnectorState(engine, sourceId, source.incarnation)).last_failure : null;
+  if (!failure) return null;
+  return { ...failure, stopped: failure.consecutive >= CONNECTOR_STOPPED_RUNS, ...classifySyncFault({ code: failure.code, message: failure.message }),
+    fix: connectorFailureFix(sourceId, failure) };
 }
 
 export async function readConnectorSourceStatuses(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds?: string[]): Promise<Map<string, ConnectorSourceStatus>> {
@@ -50,7 +83,8 @@ export async function readConnectorSourceStatuses(engine: Pick<BrainEngine, 'exe
     }
     statuses.set(source.id, { upgrade_recovery: state.upgrade_recovery, resumed_from: state.resumed_from, account_pinned: state.account !== null,
       continuity_unverified: state.continuity_unverified, pending: state.pending.length, last_run: state.last_run, held,
-      ...(heldError ? { held_error: heldError } : {}) });
+      ...(heldError ? { held_error: heldError } : {}), purged_items: state.purged_items ?? [], last_failure: state.last_failure ?? null,
+      stopped: (state.last_failure?.consecutive ?? 0) >= CONNECTOR_STOPPED_RUNS });
   }
   return statuses;
 }
@@ -60,7 +94,21 @@ export function connectorStatusLines(sourceId: string, status: ConnectorSourceSt
   const run = status.last_run;
   lines.push(`  ${sourceId}: connector ${run ? `last run ${run.finished_at.slice(0, 19).replace('T', ' ')}: ${run.page_admissions} page admission(s), `
     + `${run.skipped_unchanged} skipped unchanged, ${run.pending} pending, ${run.checkpoint_admissions} checkpoint admission(s)`
-    + `${run.stopped_on_wait_budget ? ', stopped on wait budget' : ''}${run.dropped_upstream ? `, ${run.dropped_upstream} dropped (deleted upstream)` : ''}` : 'has not run since the upgrade'}`);
+    + `${run.stopped_on_wait_budget ? ', stopped on wait budget' : ''}${run.dropped_upstream ? `, ${run.dropped_upstream} dropped (deleted upstream)` : ''}`
+    + `${run.purged_skipped ? `, ${run.purged_skipped} skipped as purged content` : ''}` : 'has not run since the upgrade'}`);
+  const failure = status.last_failure;
+  if (failure) {
+    const where = failure.slug ? ` on ${failure.slug}${failure.request_id ? ` (request ${failure.request_id})` : ''}` : '';
+    lines.push(`    ${status.stopped ? `STOPPED: the last ${failure.consecutive} connector syncs` : `the last ${failure.consecutive === 1 ? 'connector sync' : `${failure.consecutive} connector syncs`}`} ended on ${failure.code}${where} `
+      + `at ${failure.at.slice(0, 19).replace('T', ' ')}: ${failure.message}`);
+    lines.push(`    nothing after that point of the run was imported; next: ${connectorFailureFix(sourceId, failure).argv!.join(' ')}`);
+  }
+  if (status.purged_items.length) {
+    lines.push(`    ${status.purged_items.length} item(s) recently skipped as purged content (the purge tombstone working; they do not stop the sync): `
+      + status.purged_items.slice(0, HELD_STATUS_LIMIT).map(item => `${item.slug} (${day(item.at)})`).join(', ')
+      + `${status.purged_items.length > HELD_STATUS_LIMIT ? `, +${status.purged_items.length - HELD_STATUS_LIMIT} more` : ''}`);
+    lines.push('    to let one back in, the owner clears its tombstone on the brain host: gbrain pages unpurge <slug>');
+  }
   if (status.upgrade_recovery === 'resumed') {
     lines.push(`    resumed from pre-upgrade checkpoint of ${status.resumed_from}; content selection since then is unverified; to re-walk: gbrain sync --source ${sourceId} --reset-checkpoint`);
   } else if (status.upgrade_recovery === 'rewalking_once') {
@@ -95,7 +143,7 @@ export function statusSourceNotFound(sourceId: string) {
     { fix: readFix('Lists the registered sources and their ids, read-only.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
 }
 
-/** A Git source's held files: the outstanding count and up to `sync.hold_cap` of them in detail. */
+/** A Git source's held files: the outstanding count and up to `GBRAIN_SYNC_HOLD_CAP` of them in detail. */
 export interface GitHoldStatus {
   count: number;
   items: GitHoldItem[];

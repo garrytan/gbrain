@@ -67,6 +67,8 @@ beforeEach(async () => {
   await resetPgliteState(engine);
   await engine.setConfig('version', schemaVersion);
   await engine.setConfig('models.dream.patterns', 'anthropic:claude-sonnet-4-6');
+  // #6297's in-cycle cadence is its own gate (test/cycle-patterns-cadence.serial.test.ts); off here so the watermark is tested alone.
+  await engine.setConfig('dream.patterns.min_interval_hours', '0');
   await seedReflections();
 });
 

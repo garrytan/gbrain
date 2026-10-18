@@ -19,10 +19,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { buildFlagRegistry } from '../scripts/generate-flag-registry.ts';
-import { findUnknownFlag } from '../src/cli.ts';
+import { findUnknownFlag } from '../src/cli/main.ts';
 
 const FILES: Record<string, string> = {
-  'src/cli.ts': [
+  'src/cli/main.ts': [
     'async function handleCliOnly(command: string, args: string[]) {',
     '  if (await routeSyntheticBeforeTable(command, args)) return;',
     '  if (await dispatchPreConnectCommand(command, args)) return;',

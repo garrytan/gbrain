@@ -14,6 +14,7 @@ import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from
 import { dirname } from 'node:path';
 import { gbrainPath } from './config.ts';
 import type { Effect, Transport } from './agent-output.ts';
+import { VERSION } from '../version.ts';
 
 const MAX_BYTES = 1024 * 1024;
 
@@ -27,6 +28,12 @@ export interface AgentContractEvent {
   outcome?: string;
   /** Internal normaliser fault class (never a message). */
   fault?: string;
+  /** #6629, #6758: the gbrain release that wrote the event (stamped on every event; absent on lines older builds wrote). */
+  version?: string;
+  /** #6629: the `--json` guard mode the event concerns. */
+  guard?: 'document' | 'ndjson';
+  /** #6629: the process exit code the event was recorded at. */
+  exit_code?: number;
 }
 
 export function agentContractLogPath(): string {
@@ -44,8 +51,9 @@ export function appendBoundedJsonl(path: string, record: Record<string, unknown>
   } catch { /* fail-open */ }
 }
 
+/** #6758: every event names the build that wrote it, so doctor can tell history from a current fault. */
 export function recordAgentContractEvent(event: AgentContractEvent): void {
-  appendBoundedJsonl(agentContractLogPath(), { ts: new Date().toISOString(), ...event });
+  appendBoundedJsonl(agentContractLogPath(), { ts: new Date().toISOString(), ...event, version: event.version ?? VERSION });
 }
 
 /** Read back recent events (newest last). Never throws. */
