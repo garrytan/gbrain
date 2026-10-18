@@ -271,6 +271,15 @@ Save ONE fact with mandatory attribution.
   Empty ⇒ `provenance_required` error with a fix.
 - `entity`: set whenever the fact is about a specific person/company/project —
   entity-scoped recall will not find unattributed facts.
+- Operators can require an existing page for explicit named entities with
+  `gbrain config set facts.require_entity_page true` (default: off). An unresolved
+  entity is rejected with `invalid_params` and `entity_page_required` before any
+  fact or durable write request is saved. Resolve and read the canonical page;
+  if it does not exist, create a sourced page with `put_page`, then retry with
+  its full slug. This does not create placeholder pages or change subjectless
+  notes, inference fallback, or already admitted request retries. Page visibility
+  and source authorization checks still apply. Disable with
+  `gbrain config set facts.require_entity_page false`.
 - `valid_from` (ISO 8601): when the fact became true. Omitted ⇒ write time.
 - `infer_entity` (additive, boolean, default `true`): when `entity` is omitted,
   the server may link the fact to the one entity page its text names exactly

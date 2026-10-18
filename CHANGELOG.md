@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.304.0] - 2026-10-18
+
+You can now require a page before saving a fact about a named subject. Enable
+`facts.require_entity_page` to catch names that have not resolved to a page and
+receive instructions to create or find the right record before retrying.
+The setting is off by default; ordinary notes without a named subject still work.
+
+### Itemized changes
+
+### Added
+
+- Opt-in `facts.require_entity_page` check for `remember`, rejecting unresolved
+  named entities before saving a fact or admitting a durable write request.
+
 ## [0.60.303.0] - 2026-10-18
 
 **CI only: master is green again. tsc runs in its own `typecheck` job beside `verify`, and the crash robot reaches every fault its count role plans.** Nothing changes for gbrain users.
