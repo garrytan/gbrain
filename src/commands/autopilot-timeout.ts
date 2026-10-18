@@ -40,3 +40,29 @@ export function resolveAutopilotDispatchTimeoutMs(
     ? Math.max(intervalDerivedTimeoutMs, FULL_CYCLE_TIMEOUT_FLOOR_MS)
     : intervalDerivedTimeoutMs;
 }
+
+/**
+ * Co-stamp the automatic drain's soft window and hard deadline. The drain
+ * hard-stops at the job deadline (#5809) and dead-letters, aborting the paid
+ * call in flight, so a window longer than the interval-derived deadline never
+ * runs to its window. One final chat can use two SDK calls on schema-rejecting
+ * compatible providers; leave a finite publication allowance too. This is not
+ * a publication guarantee. Manual drains and other dispatch deadlines keep
+ * their existing contracts.
+ */
+export function resolveAutopilotAutoDrainBounds(
+  intervalTimeoutMs: number,
+  requestedWindowSeconds: number,
+  chatTimeoutMs: number,
+): { windowSeconds: number; timeoutMs: number } | null {
+  if (![intervalTimeoutMs, requestedWindowSeconds, chatTimeoutMs]
+    .every(value => Number.isFinite(value) && value > 0)) return null;
+  const completionAllowanceMs = Math.ceil(2 * chatTimeoutMs + 60_000);
+  const maxWindowSeconds = Math.floor((FULL_CYCLE_TIMEOUT_FLOOR_MS - completionAllowanceMs) / 1000);
+  if (maxWindowSeconds < 1) return null;
+  const windowSeconds = Math.min(Math.max(1, Math.floor(requestedWindowSeconds)), maxWindowSeconds);
+  return {
+    windowSeconds,
+    timeoutMs: Math.ceil(Math.max(intervalTimeoutMs, windowSeconds * 1000 + completionAllowanceMs)),
+  };
+}

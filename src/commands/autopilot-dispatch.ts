@@ -13,7 +13,7 @@ import { connectorAccountMismatches, connectorAccountMismatchSkipWarning } from 
 import { AUTOPILOT_GIT_PULL_KEY, automaticGitPullDisabled, automaticSyncPull } from '../core/persistence/automatic-sync-policy.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
 import { automaticSyncSkip, loadActivationPendingSourceIds, reportAutomaticSyncSkip, skipActivationPendingSync } from '../core/sync-policy.ts';
-import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
+import { resolveAutopilotAutoDrainBounds, resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 import {
   autopilotRemediationIdempotencyKey,
   autopilotTargetedSteps,
@@ -102,8 +102,9 @@ export async function dispatchAutopilotTick(
       // maintenance' carry a 30-min handler anchor (handler-timeouts.ts)
       // because a full cycle can outlive short daemon intervals — unlike
       // the lighter interval-derived `timeoutMs` above (sync/freshness,
-      // extract-atoms-drain, targeted small-plan steps), which have no
-      // such anchor and are meant to stay interval-derived. Naming this
+      // targeted small-plan steps), which have no such anchor and are meant
+      // to stay interval-derived. Auto-drains separately co-stamp their
+      // bounded window and deadline. Naming this
       // separately (rather than reusing the outer `timeoutMs`) avoids
       // the #2781 bug class: dispatchGlobalMaintenance previously reused
       // the outer non-full-cycle `timeoutMs` by shorthand, silently
@@ -451,7 +452,15 @@ export async function submitAutoDrains(
     return Number.isFinite(n) && n >= 0 ? n : d;
   };
   const threshold = parsePosInt(await engine.getConfig('autopilot.auto_drain.threshold'), 25);
-  const windowSeconds = parsePosInt(await engine.getConfig('autopilot.auto_drain.window_seconds'), 120);
+  const requestedWindowSeconds = parsePosInt(await engine.getConfig('autopilot.auto_drain.window_seconds'), 120);
+  const { AI_CHAT_TIMEOUT_MS } = await import('../core/ai/gateway.ts');
+  const bounds = resolveAutopilotAutoDrainBounds(timeoutMs, requestedWindowSeconds, AI_CHAT_TIMEOUT_MS);
+  if (!bounds) {
+    process.stderr.write((jsonMode
+      ? JSON.stringify({ event: 'auto_drain_bounds_unavailable', reason: 'chat_timeout_leaves_no_bounded_window' })
+      : '[dispatch] auto-drain skipped: chat timeout leaves no bounded processing window') + '\n');
+    return;
+  }
   const maxUsdPerDay = parseNonNegFloat(await engine.getConfig('autopilot.auto_drain.max_usd_per_day'), 2.0);
   // Each drain attempt runs under one BudgetTracker capped at ~$0.30
   // (cycle.extract_atoms.budget_usd); bound the brain-wide daily attempt
@@ -530,7 +539,7 @@ export async function submitAutoDrains(
       }
       const job = await queue.add(
         'extract-atoms-drain',
-        { sourceId: src.id, window: windowSeconds, ...(kind === 'checkout' ? { repoPath: src.local_path } : {}) },
+        { sourceId: src.id, window: bounds.windowSeconds, ...(kind === 'checkout' ? { repoPath: src.local_path } : {}) },
         {
           queue: 'default',
           idempotency_key: idemKey,
@@ -538,7 +547,7 @@ export async function submitAutoDrains(
           // all-provider-failed batch, so give the queue's
           // backoff a chance (was 1 — dead-lettered instantly).
           max_attempts: 3,
-          timeout_ms: timeoutMs,
+          timeout_ms: bounds.timeoutMs,
         },
         { allowProtectedSubmit: true },
       );
