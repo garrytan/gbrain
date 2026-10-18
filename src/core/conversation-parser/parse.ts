@@ -29,6 +29,7 @@ import {
   cleanSpeaker,
 } from './builtins.ts';
 import { normalizeBlockConversation } from './normalize-block.ts';
+import { parseNativeGmail } from './native-gmail.ts';
 import type {
   DateContext,
   MatchedMessage,
@@ -778,6 +779,9 @@ export function parseConversation(
   body: string,
   opts: ParseConversationOpts = {},
 ): ParseResult {
+  const nativeEmail = parseNativeGmail(body, opts);
+  if (nativeEmail) return nativeEmail;
+
   if (!body) {
     return { messages: [], phase: 'no_match' };
   }

@@ -899,6 +899,8 @@ async function processPage(
   // 1970-01-01. Now they pick up the correct date.
   const fallbackDate = snapshot.window?.fallbackDate ?? undefined;
   const parseResult = parseConversation(body, { page, ...(fallbackDate ? { fallbackDate } : {}) });
+  // A native Gmail refusal stays retryable: no LLM rescue and no durable not-extractable marker.
+  if (parseResult.native_email_refusal) { state.result.pages_skipped++; state.result.pages_skipped_unparsed++; return { newEndIso: null }; }
   let messages = parseResult.messages;
   if (parseResult.timezone_warning) {
     process.stderr.write(parseResult.timezone_warning + '\n');
@@ -969,7 +971,7 @@ async function processPage(
   // An email thread is one conversation even when replies are hours apart;
   // a frontmatter conversation_segment_gap_minutes still wins.
   const gapMinutes = pageSegmentGapMinutes(page) ??
-    (parseResult.matched_pattern_id === 'email-thread-heading' ? MAX_PAGE_SEGMENT_GAP_MINUTES : undefined);
+    (parseResult.matched_pattern_id === 'email-thread-heading' || parseResult.matched_pattern_id === 'native-gmail' ? MAX_PAGE_SEGMENT_GAP_MINUTES : undefined);
   const allSegments = splitIntoSegments(messages, { gapMinutes, pageTitle: page.title || page.slug });
   const segments = splitIntoSegments(messages, { gapMinutes, sinceIso, pageTitle: page.title || page.slug });
   if (segments.length === 0) {

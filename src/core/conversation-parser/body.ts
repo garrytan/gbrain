@@ -159,6 +159,14 @@ export async function readConversationInput(
       );
     }
   }
+  // Native Gmail envelopes and attachment footers belong to the collector
+  // transcript in compiled_truth. Derived timeline entries are not email turns.
+  // The native parser still validates the envelope; malformed metadata cannot
+  // escape to generic parsing by selecting a different body here.
+  if (!isSegmentedPage(page) && page.type === 'email' && page.frontmatter &&
+    ('thread_id' in page.frontmatter || 'message_ids' in page.frontmatter)) {
+    return { body: page.compiled_truth ?? '' };
+  }
   if (!isSegmentedPage(page)) return { body: readSummaryBody(page) };
   const totalBytes = Number(page.body_bytes);
   const priorFacts = totalBytes > CONVERSATION_WINDOW_BYTES ? await opts.priorFacts?.() ?? 0 : 0;

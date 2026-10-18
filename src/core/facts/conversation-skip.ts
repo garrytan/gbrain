@@ -8,6 +8,8 @@
  *     on 1970-01-01, so its facts would be dated at the epoch.
  *   - Single email: an email thread page with one message is an email, not
  *     a conversation.
+ *   - Never for a native Gmail refusal: a page whose envelope does not match
+ *     its body stays retryable instead of leaving the backlog.
  *   - Prose: a meeting or email page with no speaker turns and the shape of
  *     meeting notes or a calendar event, when no LLM fallback is
  *     configured. Other speaker-less pages stay retryable (a later parser
@@ -36,7 +38,7 @@ export interface ConversationSkip {
 export function conversationSkip(
   page: Page,
   body: string,
-  parse: Pick<ParseResult, 'phase' | 'matched_pattern_id'>,
+  parse: Pick<ParseResult, 'phase' | 'matched_pattern_id' | 'native_email_refusal'>,
   messages: ReadonlyArray<{ timestamp: string }>,
   opts: { llmFallback: boolean },
 ): ConversationSkip | null {
@@ -46,8 +48,9 @@ export function conversationSkip(
       message: 'no page date to place message times (they would read 1970-01-01); add a date: to the page frontmatter to extract it',
     };
   }
+  if (parse.native_email_refusal) return null;
   let reason: string | null = null;
-  if (messages.length === 1 && parse.matched_pattern_id === 'email-thread-heading') {
+  if (messages.length === 1 && (parse.matched_pattern_id === 'email-thread-heading' || parse.matched_pattern_id === 'native-gmail')) {
     reason = `a single email message in this ${page.type} page, not a conversation`;
   } else if (messages.length === 0 && parse.phase === 'no_match' && !opts.llmFallback && PROSE_PAGE_TYPES.has(page.type) && looksLikeMeetingNotes(body)) {
     reason = `no speaker turns in this ${page.type} page (prose, not a transcript)`;

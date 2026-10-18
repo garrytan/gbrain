@@ -155,6 +155,30 @@ folded speakers. extract-conversation-facts treats a thread as one
 conversation: unless the page sets `conversation_segment_gap_minutes`, the
 segment gap is the 7-day maximum instead of 30 minutes.
 
+## Native Gmail
+
+A page with `type: email` whose frontmatter carries the collector's envelope
+(`thread_id` or `message_ids`) is parsed by `native-gmail`
+(`src/core/conversation-parser/native-gmail.ts`) before any generic pattern.
+The envelope is the authority, not the rendered body: each message turn must be
+a `## <From> · YYYY-MM-DD HH:MM` heading followed by its
+`[Source: email "…", YYYY-MM-DD](https://mail.google.com/mail/u/?authuser=<account>#inbox/<id>)`
+citation, in `message_ids` order, for the page's `account`, inside
+`first_message_date`…`date`, from an address in `senders` (when present), with
+the last turn from `from`. When `gmail_attachment_receipts` is present each
+message's attachment footer and, from newer collectors, its original
+`From`/date/`To`/`Cc` headers (`envelope`) must match. The routing line and
+footer are stripped from the turn text; authored text is kept verbatim.
+
+A page that declares the envelope but does not match it is refused with
+`native_email_refusal` (`NATIVE_GMAIL_ENVELOPE_REFUSED` and a fixed reason
+code, never message content). A refusal is retryable: extract-conversation-facts
+counts it as unparsed and returns before the LLM fallback and before any durable
+not-extractable marker, so a damaged or forged page is neither guessed at nor
+permanently skipped. Disabling the `native-gmail` built-in refuses rather than
+falling through. Envelope pages are read from `compiled_truth` only (timeline
+entries are derived, not email turns), and keep the email thread segment gap.
+
 ## Meeting notes and undated pages
 
 On a brain without managed persistence, a meeting or email page that yields no
