@@ -409,6 +409,12 @@ const GBRAIN_BLOCK_MARKERS = [
 function entryToInjectedBlock(entry: unknown): string | null {
   if (typeof entry !== 'object' || entry === null) return null;
   const e = entry as Record<string, unknown>;
+  // SessionStart records stdout, including core memory before the retrieved
+  // envelope. Only the retrieved suffix participates in per-turn dedupe.
+  if (e.type === 'hook_success' && e.hookEvent === 'SessionStart' && typeof e.content === 'string') {
+    const start = e.content.indexOf(GBRAIN_BLOCK_MARKERS[0]);
+    return start >= 0 ? e.content.slice(start).trim() : null;
+  }
   if (e.type !== 'attachment') return null;
   const att = e.attachment;
   if (typeof att !== 'object' || att === null) return null;

@@ -150,6 +150,7 @@ describe('user-prompt source routing (#5941)', () => {
     });
     expect(seen).toHaveLength(1);
     expect(seen[0].sourceId).toBe('wiki');
+    expect(seen[0].sessionOnlyHotMemory).toBe(false);
   });
 
   test('GBRAIN_SOURCE still wins over the dotfile', async () => {
@@ -164,6 +165,7 @@ describe('user-prompt source routing (#5941)', () => {
       stdin: JSON.stringify({ prompt: 'hello Acme', session_id: 'sess-env', cwd: repoWithDotfile('wiki') }),
     });
     expect(seen[0].sourceId).toBe('pinned');
+    expect(seen[0].sessionOnlyHotMemory).toBe(true);
   });
 
   test('with a session id, the source capture froze for the session wins over a later dotfile change', async () => {

@@ -80,6 +80,7 @@ export async function turnContextWithBrief(engine: BrainEngine, sourceId: string
     window: req.window ?? [],
     priorContextText: req.priorContextText,
     sessionId: req.sessionId,
+    sessionOnlyHotMemory: req.sessionOnlyHotMemory === true,
     maxBytes: briefOn ? Math.max(1024, (req.maxBytes ?? TURN_CONTEXT_DEFAULT_MAX_BYTES) - BRIEF_MAX_BYTES - 2) : req.maxBytes,
     // Per-request config read: `gbrain serve` is long-running, and the
     // lexical-arms switch reverts a false-fire regression on the NEXT turn

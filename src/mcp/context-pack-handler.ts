@@ -190,6 +190,7 @@ export function makeContextPackIpcHandler(
       sourceId: sessionSource,
       entities,
       sessionId: sessionId ?? undefined,
+      sessionOnlyHotMemory: req.sessionOnlyHotMemory === true,
       since: state?.last_wake_at ?? undefined,
       maxEntities: PUSH_PACK_MAX_ENTITIES,
       deadlineMs: CONTEXT_PACK_SERVER_BUDGET_MS,
