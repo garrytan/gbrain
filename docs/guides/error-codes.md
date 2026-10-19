@@ -2090,6 +2090,16 @@ More: [docs/guides/multi-language-fts.md#cjk-keyword-budget](../../docs/guides/m
 
 More: [docs/guides/troubleshooting.md#keyword-search-times-out-on-a-large-postgres-brain](../../docs/guides/troubleshooting.md#keyword-search-times-out-on-a-large-postgres-brain)
 
+### keyword_statement_timeout
+
+<a id="keyword_statement_timeout"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Keyword-only search exceeded the operator-set Postgres statement timeout. | The keyword ranking statement was canceled at search.keyword_statement_timeout_ms. Broad terms or database contention can exhaust this bound; the failure is not evidence of no matches. The read is safe to retry, but an unchanged broad query can time out again. | Narrow the search with source_id, types or a more specific query before retrying. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/troubleshooting.md#keyword-search-times-out-on-a-large-postgres-brain](../../docs/guides/troubleshooting.md#keyword-search-times-out-on-a-large-postgres-brain)
+
 ### knock_on_exhausted
 
 <a id="knock_on_exhausted"></a>

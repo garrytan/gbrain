@@ -28,10 +28,20 @@ import { opError, type OperationContext } from '../ops/contract.ts';
 import { invalidParam } from '../ops/op-fix.ts';
 import { expandEngineTypeFilters } from '../schema-pack/query-types.ts';
 import { KEYWORD_COUNT_CAP, type KeywordPageAfter } from './keyword-statement.ts';
+import { CODES } from '../error-registry.ts';
+import { isGenuineStatementTimeout } from '../postgres-engine/keyword-timeout-cache.ts';
 
 export type SearchMatch = 'hybrid' | 'keyword';
 
 export const SEARCH_OFFSET_CAP = 10_000;
+
+/** Only keyword-only ranking failures become op errors; hybrid arms keep their degradation contract. */
+export function rethrowKeywordTimeout(error: unknown): never {
+  if (!isGenuineStatementTimeout(error)) throw error;
+  throw opError('keyword_statement_timeout', 'Keyword search exceeded search.keyword_statement_timeout_ms.',
+    CODES.keyword_statement_timeout.suggestion);
+}
+
 /**
  * The count's deadline floor. The count runs beside the search and is given
  * up at whichever is later: this floor, or the search finishing plus

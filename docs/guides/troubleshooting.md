@@ -525,6 +525,15 @@ most of the corpus still reads and ranks every match, so prefer narrowing with
 candidate set that will answer broad terms from a capped set instead of
 failing open.
 
+**Keyword-only timeouts name the next step.** When `search` uses
+`match: "keyword"` or the operator's `search.mcp_keyword_only` setting and its
+ranking statement exceeds the bound, MCP returns `isError: true` with
+`code: "keyword_statement_timeout"`, `class: "retryable"` and `retryable: true`.
+Narrow with `source_id`, `types` or a more specific query before retrying:
+the read is safe to retry, but repeating an unchanged broad query can time out
+again. User cancellations and other database errors keep their existing
+handling. A count-only timeout still reports `keyword_count_unavailable`.
+
 **A timed-out keyword search is skipped for 10 minutes.** After hybrid search's
 keyword statement hits the bound, a serving process (`gbrain serve`, an MCP
 session) skips that exact statement for

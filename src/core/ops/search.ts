@@ -50,7 +50,7 @@ import { declaredNames, titleName } from '../mentions/aliases.ts';
 import { aliasPhrase, wholeQueryEntityNames, withAliasFanOut, type FanoutMeta, type ResolvedEntity } from '../search/alias-fanout.ts';
 import { entitySavedFacts } from '../search/entity-facts.ts';
 import { mentionCoverageNotice, readMentionCoverage } from '../mentions/coverage.ts';
-import { keepEnumeratedRows, keywordCountMeta, parseSearchPaging, readKeywordPage, startKeywordCount, withCountMeta } from '../search/keyword-paging.ts';
+import { keepEnumeratedRows, keywordCountMeta, parseSearchPaging, readKeywordPage, rethrowKeywordTimeout, startKeywordCount, withCountMeta } from '../search/keyword-paging.ts';
 import { searchLimitCap } from '../search/eval-pool-depth.ts';
 import { heldFilesNotice, stampHeldHits } from '../persistence/held-reads.ts';
 import { opError } from './contract.ts';
@@ -717,7 +717,7 @@ const search: Operation = {
       // A query that is one entity's name lists records filed under any of its names (the agent no longer walks each alias).
       const names = paging.match === 'keyword' && !paging.cursor ? await setup(() => wholeQueryEntityNames(ctx.engine, queryText, { ...scope, excludePrivate })) : null;
       const pageParams = names ? { ...p, query: names.map(aliasPhrase).join(' OR ') } : p;
-      const page = paging.match === 'keyword' ? await timings.stage('lexical', () => readKeywordPage(ctx.engine, pageParams, keywordOpts, paging, Math.min(limit, searchLimitCap()))) : null;
+      const page = paging.match === 'keyword' ? await timings.stage('lexical', () => readKeywordPage(ctx.engine, pageParams, keywordOpts, paging, Math.min(limit, searchLimitCap()))).catch(rethrowKeywordTimeout) : null;
       if (page && names) {
         page.meta.match_names = names;
         for (const row of page.rows) {
@@ -728,7 +728,7 @@ const search: Operation = {
       }
       const lexicalDone = Promise.withResolvers<void>();
       const keywordCount = page ? null : timings.overlap('keyword_count', startKeywordCount(ctx.engine, queryText, undefined, keywordOpts, lexicalDone.promise));
-      const results = (page ? page.rows : dedupResults(await timings.stage('lexical', () => ctx.engine.searchKeyword(queryText, { limit, offset, ...keywordOpts })).finally(lexicalDone.resolve))).map(r => ({ ...r }));
+      const results = (page ? page.rows : dedupResults(await timings.stage('lexical', () => ctx.engine.searchKeyword(queryText, { limit, offset, ...keywordOpts })).catch(rethrowKeywordTimeout).finally(lexicalDone.resolve))).map(r => ({ ...r }));
       await stampKeywordRows(ctx, results, { ...scope, excludePrivate }, queryText, startedAt, timings);
       // #3800: cap AFTER capture/meta so eval + cache see the real payload.
       return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, null, snippetCap, timings,
