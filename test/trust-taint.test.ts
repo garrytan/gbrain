@@ -256,7 +256,7 @@ describe('every other deriver stamps a non-unknown tier with edges', () => {
     const depth = await page(`meetings/depth-${uniq()}`, 'agent_written');
     const snapshot = (await engine.readPageSnapshot(depth.slug, { sourceId: 'default' }))!;
     const slug = `events/2026-01-05-example-${uniq()}`;
-    const out = await publishChronicleGeneration(engine, { sourceId: 'default', pin: pinDepth(snapshot), decisionRequestId: null, maintenance: null,
+    const out = await publishChronicleGeneration(engine, { sourceId: 'default', pin: pinDepth(snapshot), decisionRequestId: null, maintenance: null, replaces: true,
       events: [{ slug, title: 'Example event', compiledTruth: 'An example event happened.', frontmatter: { captured_via: 'life-chronicle:auto', event: { depth: depth.slug } },
         when: '2026-01-05', day: '2026-01-05', summary: 'Example event' }] });
     expect(out.superseded).toBeUndefined();

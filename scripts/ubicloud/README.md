@@ -6,14 +6,46 @@ untracked files that are not ignored, and `.git`) and streams it to every VM, so
 uncommitted edits are tested. `scripts/ubicloud/ubi-runner.sh` creates and
 destroys the VMs.
 
+## How many full gates
+
+Run one full gate (`bun run ci:ubicloud`) per PR, at handoff, on the tree you
+hand off (the tree rule in the project's shipping rules: a head whose tree
+matches an already-gated tree apart from the release stamp files needs no new
+gate). During development use `bun run ci:ubicloud:diff`, `--lanes` and
+targeted suites (`bun test --timeout=60000 <files>`). The gstack pregate remote stage
+(`scripts/pregate-remote-gate.sh`, `.gstack/pregate.json`'s `remote_gate`)
+runs the `:diff` form for the same reason. `:diff` narrows only doc-only
+trees today (doc checks plus gitleaks); any other tree still runs every lane,
+so pick `--lanes` or targeted suites when the change is narrow. In a
+multi-lane wave, lanes run `ci:ubicloud:diff` or targeted suites, and only
+the integrator runs the full gate.
+
 ## Ownership and teardown
 
-Every VM is named `ubirun-<owner>-<epoch>-<suffix>`. The owner is `UBI_OWNER`
-(lowercased, letters and digits only, at most 12 characters, starting with a
-letter) or a random per-machine id kept in the runner's state directory. Set
-`UBI_OWNER` to your thread code (`UBI_OWNER=gbra41 bun run ci:ubicloud`) so
-everyone can see whose VMs hold the quota. Ubicloud names allow 63 characters
-of `[a-z0-9-]`, so a full name stays under 40.
+Every VM is named `ubirun-<owner>-<epoch>-<suffix>`, or
+`ubirun-<owner>-<epoch>-x<expiry epoch>-<suffix>` when it carries an expiry.
+The owner is `UBI_OWNER` (lowercased, letters and digits only, at most 12
+characters, starting with a letter) or a random per-machine id kept in the
+runner's state directory. Set `UBI_OWNER` to your thread code
+(`UBI_OWNER=gbra41 bun run ci:ubicloud`) so everyone can see whose VMs hold
+the quota. Ubicloud names allow 63 characters of `[a-z0-9-]`, so a full name
+stays under 52.
+
+Ubicloud has no VM tags, so the expiry lives in the name. `ci:ubicloud` names
+every gate VM to expire two hours after creation (`--ttl-hours N` changes it,
+`--ttl-hours 0` means no expiry). `ubi-runner.sh up` and `run` take the same
+`--ttl-hours H`; without it their VMs never expire, which suits long dev,
+benchmark and eval VMs. `scripts/ubicloud/reap-expired.ts` is the operator
+side of the leak guard: run from the operator's Capy automation, where the
+Ubicloud token already lives (never from GitHub Actions), it lists the project's
+VMs, selects only names in the expiring format whose expiry plus a 15-minute
+grace has passed, and prints each `ubirun-*` VM's owner, age, expiry and action
+plus an owner-notice block (expired VMs grouped by owner and the thread code
+the owner tag names). It is a dry run unless given `--apply`, which destroys
+each expired VM through `ubi-runner.sh down`, and it refuses the whole run when
+more than `--max` (40) VMs are expired. It never selects an owner-tagged name
+without an expiry, a legacy untagged `ubirun-<epoch>-*` name or a VM the
+runner did not name, whoever owns it.
 
 Each name is recorded before its create request is sent: the runner writes
 the VM's state directory first, and `ci-ubicloud.ts` appends the name to
@@ -37,7 +69,8 @@ A machine that goes to sleep kills the run outright, with no signal, so
 teardown can't run: on Capy, run `ci:ubicloud` as a watched background
 operation so the machine stays awake. After any interrupted run, check
 `list --mine` and reap leftovers with `down NAME` (or `gc HOURS`, which only
-destroys your own VMs older than HOURS).
+destroys your own VMs older than HOURS). A gate VM nobody reaps still dies
+once its expiry passes and the operator reaper next runs with `--apply`.
 
 `ubi-runner.sh list --mine` lists your VMs. `ubi-runner.sh usage` prints VMs
 and vCPUs per owner across the project, which shows who holds the shared quota.
@@ -109,12 +142,17 @@ unit, serial and slow lanes run with database URLs unset. The `pg-arms` lane
 runs every file in `test/postgres-unit-arms.txt` the way persistence-validation's
 `unit-postgres-arms` step does (`bun --no-env-file test --timeout=120000`,
 `GBRAIN_TEST_ALLOW_DATABASE_URL=1`, no timeout multiplier) against the slot's
-own empty `gbrain_arms_test` database. The summary sums its measured durations over
-that job's `ARM_SHARDS` partition (14 shards), and a shard over the step's 20-minute timeout
+own empty `gbrain_arms_test` database. The summary takes the two-worker makespan of its
+measured durations over that job's `ARM_SHARDS` partition (11 shards, `ARM_WORKERS` = 2
+files at a time), and a shard over the step's 20-minute timeout
 fails the run, since GitHub would cut that shard off mid-list. The committed
 weights must also fit each shard twice over with a minute to spare
 (`ARM_SHARD_BUDGET_MS`, 570 s), because a slow runner ran the files 1.3-2x
-their mined weights. Tests run natively as
+their mined weights. With the unit and slow lanes, the summary does the same
+for test.yml's unit shards: it sums measured durations over `test-shard.sh`'s
+`UNIT_SHARDS` partition and fails a shard over the 21 minutes left in the
+22-minute job after setup (`docs/TESTING.md#keeping-ci-partitions-balanced`);
+`evals/` files, which no ci:ubicloud lane runs, count as unmeasured. Tests run natively as
 a non-root user on Ubuntu 24.04, the same OS as the CI runners, instead of as
 root in the `oven/bun` container.
 
@@ -136,9 +174,7 @@ VM). The decision is logged (`fleet: project VMs hold 192 vCPUs, ceiling 448:
 10 VM(s) × 16 vCPUs (burst maximum 10)`). The 64 vCPUs above the ceiling are
 headroom for the managed GitHub runners `usage` can't see. When usage can't
 be read, or the project is busy, the run takes the default. Slots default to
-one per two vCPUs (`--slots`); `--size` and `--location` pick the VM shape. In
-a multi-lane wave, each lane runs `ci:ubicloud:diff` or its targeted suites,
-and only the integrator runs the full gate. A VM that the quota refuses fails
+one per two vCPUs (`--slots`); `--size` and `--location` pick the VM shape. A VM that the quota refuses fails
 to provision and the run continues on the VMs that did start, so a busy
 project shrinks the fleet instead of failing. The runner prints the refusal
 (needed, used and maximum vCPUs) with the project's VMs and vCPUs per owner;

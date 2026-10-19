@@ -278,4 +278,7 @@ brackets are filled in with real values on each surface.
 <!-- chronicle-reasons:end -->
 
 Don't hand-write `life/events/` pages: extraction owns them and retires events
-the page no longer supports. Edit the meeting page instead.
+the page no longer supports. Edit the meeting page instead. Only a complete
+re-extraction retires events: one that finds no events, drops or caps a
+proposal, or reads a page longer than the judge's window keeps the earlier
+events live.

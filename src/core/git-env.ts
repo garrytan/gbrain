@@ -14,6 +14,13 @@ export const GIT_LOCAL_ENV_VARS = ['GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONF
 
 const LOCAL = new Set<string>(GIT_LOCAL_ENV_VARS);
 
+/**
+ * Extra env for a Git call that only reads (diff, ls-files, cat-file, rev-parse, status): `GIT_OPTIONAL_LOCKS=0` stops Git
+ * taking `index.lock` to refresh the index opportunistically, so a sync never holds the lock a concurrent commit needs.
+ * Never for a call that writes (commit, merge, push, update-ref).
+ */
+export const GIT_READ_ENV: NodeJS.ProcessEnv = { GIT_OPTIONAL_LOCKS: '0' };
+
 export function gitChildEnv(extra: NodeJS.ProcessEnv = {}, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(source)) {

@@ -19,6 +19,10 @@
  *   --diff             doc-only diffs run only the doc checks and gitleaks (ci:local --diff)
  *   --record-weights   write measured durations to scripts/ubicloud/weights.json
  *   --keep             leave the VMs running (destroy with ubi-runner.sh down NAME)
+ *   --ttl-hours N      VM expiry written into each name (default 2; 0 = no
+ *                      expiry). The operator reaper destroys VMs past their
+ *                      expiry, so a VM a sleeping machine never tore down
+ *                      dies within hours (scripts/ubicloud/reap-expired.ts)
  *
  * Needs UBICLOUD_API_KEY (or UBICLOUD_API_TOKEN) plus bash, curl, python3,
  * ssh, ssh-keygen and tar locally. The checkout (tracked + untracked-unignored
@@ -35,11 +39,13 @@
  * ci:local uses (scripts/ubicloud/ci-item.sh). The pg-arms lane runs every
  * file in test/postgres-unit-arms.txt with DATABASE_URL set, the way
  * persistence-validation's unit-postgres-arms job does, and fails the run when
- * a shard of that job's partition measures over its step timeout. Durations of every run are
+ * a shard of that job's partition measures over its step timeout; with the unit
+ * and slow lanes it does the same for test.yml's unit shards. Durations of every run are
  * merged into .context/ci-ubicloud/weights.json, which weights the next run.
  *
- * VMs are named ubirun-<owner>-<epoch>-ciNN<hex> (owner: UBI_OWNER or the
- * runner's per-machine id). Each name is appended to <run>/vms.txt before its
+ * VMs are named ubirun-<owner>-<epoch>-x<expiry epoch>-ciNN<hex> (owner:
+ * UBI_OWNER or the runner's per-machine id; ubirun-<owner>-<epoch>-ciNN<hex>
+ * with --ttl-hours 0). Each name is appended to <run>/vms.txt before its
  * create request is sent. On exit, including SIGINT, SIGTERM, SIGHUP (a
  * dropped terminal, a cancelled background operation) and SIGQUIT, in-flight
  * `up` calls are allowed to finish (they destroy their own VM), then every
@@ -65,8 +71,10 @@ import {
   type WeightTable,
 } from "./ubicloud/schedule.ts";
 import { runScript, type RunScriptOpts } from "./ubicloud/run-script.ts";
+import { expiringVmName } from "./ubicloud/reap-expired.ts";
 import { buildTypecheckState, portableBuildInfo, typecheckBuildInfo } from "./ubicloud/typecheck-state.ts";
-import { ARM_SHARDS, ARM_STEP_TIMEOUT_MS, ARM_WEIGHTS, armShards, readArmsList } from "./postgres-unit-arms.ts";
+import { ARM_SHARDS, ARM_STEP_TIMEOUT_MS, ARM_WEIGHTS, ARM_WORKERS, armMakespan, armShards, readArmsList } from "./postgres-unit-arms.ts";
+import { UNIT_JOB_TIMEOUT_MS, UNIT_SETUP_ALLOWANCE_MS, UNIT_SHARDS, unitShards } from "./sharding.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 const RUNNER = join(ROOT, "scripts/ubicloud/ubi-runner.sh");
@@ -106,6 +114,7 @@ interface Opts {
   diff: boolean;
   recordWeights: boolean;
   keep: boolean;
+  ttlHours: number;
 }
 
 function parseArgs(argv: string[]): Opts {
@@ -119,6 +128,7 @@ function parseArgs(argv: string[]): Opts {
     diff: false,
     recordWeights: false,
     keep: false,
+    ttlHours: 2,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -136,9 +146,11 @@ function parseArgs(argv: string[]): Opts {
     else if (arg === "--diff") opts.diff = true;
     else if (arg === "--record-weights") opts.recordWeights = true;
     else if (arg === "--keep") opts.keep = true;
+    else if (arg === "--ttl-hours") opts.ttlHours = Number(value());
     else usage(`unknown argument ${arg}`);
   }
   for (const lane of opts.lanes) if (!(ALL_LANES as readonly string[]).includes(lane)) usage(`unknown lane ${lane}`);
+  if (!Number.isInteger(opts.ttlHours) || opts.ttlHours < 0 || opts.ttlHours > 8760) usage("--ttl-hours must be a whole number of hours from 0 (no expiry) to 8760");
   if (!Number.isInteger(opts.vms) || opts.vms < 0 || (opts.vms === 0 && argv.includes("--vms"))) usage("--vms must be a positive integer");
   // One slot per two vCPUs: the whole corpus still fits inside the longest
   // single file's runtime at the default fleet size, and the headroom keeps
@@ -150,7 +162,7 @@ function parseArgs(argv: string[]): Opts {
 
 function usage(message: string): never {
   console.error(`ci-ubicloud: ${message}`);
-  console.error("usage: bun run scripts/ci-ubicloud.ts [--vms N] [--size SIZE] [--slots N] [--location LOC] [--image IMAGE] [--lanes a,b] [--diff] [--record-weights] [--keep]");
+  console.error("usage: bun run scripts/ci-ubicloud.ts [--vms N] [--size SIZE] [--slots N] [--location LOC] [--image IMAGE] [--lanes a,b] [--diff] [--record-weights] [--keep] [--ttl-hours N]");
   process.exit(2);
 }
 
@@ -262,7 +274,7 @@ async function main() {
     opts.vms = decision.vms;
     log(`fleet: ${decision.reason} (pass --vms N to override)`);
   }
-  log(`provisioning ${opts.vms} × ${opts.size} in ${opts.location} (${opts.image === "stock" ? "stock Ubuntu 24.04" : `image ${opts.image}`}), ${opts.slots} slots each; logs in ${runDir}`);
+  log(`provisioning ${opts.vms} × ${opts.size} in ${opts.location} (${opts.image === "stock" ? "stock Ubuntu 24.04" : `image ${opts.image}`}), ${opts.slots} slots each, ${opts.ttlHours ? `names expiring ${opts.ttlHours}h after creation` : "no expiry"}; logs in ${runDir}`);
 
   // ── Checkout tarball, packed once while the VMs boot ─────────────────────
   const tarball = join(tmpdir(), `gbrain-ci-ubicloud-${process.pid}.tgz`);
@@ -285,8 +297,9 @@ async function main() {
   // ── Teardown on every exit path ──────────────────────────────────────────
   const owner = sh("bash", [RUNNER, "owner"]).trim();
   const ledger = join(runDir, "vms.txt");
+  const createdAt = Math.floor(Date.now() / 1000);
   const vms: Vm[] = Array.from({ length: opts.vms }, (_, i) => ({
-    name: `ubirun-${owner}-${Math.floor(Date.now() / 1000)}-ci${String(i + 1).padStart(2, "0")}${Math.random().toString(16).slice(2, 6)}`,
+    name: expiringVmName({ owner, createdAt, ttlHours: opts.ttlHours, suffix: `ci${String(i + 1).padStart(2, "0")}${Math.random().toString(16).slice(2, 6).padEnd(4, "0")}` }),
     state: "provisioning",
     requested: false,
     infraErrors: 0,
@@ -307,7 +320,7 @@ async function main() {
     rmSync(tarball, { force: true });
     const live = vms.filter((vm) => vm.requested && vm.state !== "destroyed");
     if (opts.keep) {
-      log(`--keep: leaving ${live.map((vm) => vm.name).join(" ")} running; destroy with: scripts/ubicloud/ubi-runner.sh down NAME`);
+      log(`--keep: leaving ${live.map((vm) => vm.name).join(" ")} running; destroy with: scripts/ubicloud/ubi-runner.sh down NAME${opts.ttlHours ? ` (the operator reaper destroys them ${opts.ttlHours}h after creation; --ttl-hours 0 for no expiry)` : ""}`);
       return;
     }
     log(`destroying ${live.length} VM(s): ${live.map((vm) => vm.name).join(" ")}`);
@@ -529,19 +542,34 @@ async function main() {
   for (const r of [...all].sort((a, b) => b.ms - a.ms).slice(0, 8)) console.log(`    ${Math.round(r.ms / 1000)}s ${r.lane} ${r.file}`);
 
   // The pg-arms lane's proof that unit-postgres-arms fits: each shard of the
-  // workflow's own partition, summed from this run's measured file durations.
+  // workflow's own partition, its ARM_WORKERS workers' makespan over this run's
+  // measured file durations (both arms, as the Bun 1.4.0 cell runs them).
   const armShardReport = opts.lanes.has("pg-arms")
     ? armShards(ROOT, arms.files, ARM_SHARDS).map((files, i) => ({
       shard: i + 1,
       files: files.length,
-      ms: files.reduce((sum, file) => sum + (results.get(weightKey("pg-arms", file))?.ms ?? 0), 0),
+      ms: armMakespan(files, (file) => results.get(weightKey("pg-arms", file))?.ms ?? 0),
     }))
     : [];
   if (armShardReport.length) {
-    console.log(`  pg-arms shards (unit-postgres-arms partition, ${ARM_SHARDS} shards, step timeout ${ARM_STEP_TIMEOUT_MS / 1000}s each):`);
+    console.log(`  pg-arms shards (unit-postgres-arms partition, ${ARM_SHARDS} shards of ${ARM_WORKERS} workers, step timeout ${ARM_STEP_TIMEOUT_MS / 1000}s each):`);
     for (const s of armShardReport) console.log(`    ${s.shard}/${ARM_SHARDS}: ${Math.round(s.ms / 1000)}s across ${s.files} files`);
   }
   const overBudget = armShardReport.filter((s) => s.ms > ARM_STEP_TIMEOUT_MS);
+  // The same proof for test.yml's unit shards: test-shard.sh's own partition,
+  // summed from this run's measured unit and slow file durations.
+  const unitShardRoomMs = UNIT_JOB_TIMEOUT_MS - UNIT_SETUP_ALLOWANCE_MS;
+  const unitShardReport = opts.lanes.has("unit") && opts.lanes.has("slow")
+    ? unitShards(ROOT).map((files, i) => {
+      const measured = files.map((file) => results.get(weightKey("unit", file))?.ms ?? results.get(weightKey("slow", file))?.ms);
+      return { shard: i + 1, files: files.length, unmeasured: measured.filter((ms) => ms === undefined).length, ms: measured.reduce<number>((sum, ms) => sum + (ms ?? 0), 0) };
+    })
+    : [];
+  if (unitShardReport.length) {
+    console.log(`  unit shards (test.yml partition, ${UNIT_SHARDS} shards, ${unitShardRoomMs / 1000}s each after setup):`);
+    for (const s of unitShardReport) console.log(`    ${s.shard}/${UNIT_SHARDS}: ${Math.round(s.ms / 1000)}s across ${s.files} files${s.unmeasured ? ` (${s.unmeasured} not run by this gate)` : ""}`);
+  }
+  const unitOverBudget = unitShardReport.filter((s) => s.ms > unitShardRoomMs);
 
   const timings: Record<string, number> = {};
   for (const r of all) if (r.rc === 0 && r.file !== "-") timings[weightKey(r.lane as Lane, r.file)] = r.ms;
@@ -560,6 +588,7 @@ async function main() {
     vms: vms.map(({ name, state, setupMs, infraErrors }) => ({ name, state, setupMs, infraErrors })),
     lanes: Object.fromEntries(byLane), failures: failures.map(({ lane, file, rc, ms, vm }) => ({ lane, file, rc, ms, vm })),
     armShards: armShardReport,
+    unitShards: unitShardReport,
   }, null, 2) + "\n");
 
   if (failures.length) {
@@ -575,6 +604,10 @@ async function main() {
   }
   if (overBudget.length) {
     console.log(`\npg-arms: ${overBudget.map((s) => `shard ${s.shard}/${ARM_SHARDS} measured ${Math.round(s.ms / 1000)}s`).join(", ")}, over the ${ARM_STEP_TIMEOUT_MS / 1000}s step timeout of persistence-validation's unit-postgres-arms job, which would cut that shard off mid-list. Fix: raise ARM_SHARDS (and the workflow matrix) or speed up the heaviest files, then re-mine scripts/postgres-arm-weights.json. Docs: docs/TESTING.md#postgres-arm-lanes`);
+    exitCode = 1;
+  }
+  if (unitOverBudget.length) {
+    console.log(`\nunit: ${unitOverBudget.map((s) => `shard ${s.shard}/${UNIT_SHARDS} measured ${Math.round(s.ms / 1000)}s`).join(", ")}, over the ${unitShardRoomMs / 1000}s a test.yml unit shard has inside its job timeout after setup, which would cancel that shard mid-list. Fix: raise UNIT_SHARDS (and both workflow matrices) or speed up the heaviest files, then re-mine scripts/test-weights.json. Docs: docs/TESTING.md#keeping-ci-partitions-balanced`);
     exitCode = 1;
   }
   const expected = totalItems;

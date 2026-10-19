@@ -62,6 +62,10 @@ import { join } from 'node:path';
 //     only when its loop is closed through `loops_close` or `gbrain repair
 //     loop-facts` (expired_at + valid_until with the struck fence row); the
 //     contradiction sweep and probes never call it.
+//   - repair/consolidate-ties.ts (#6023) — `gbrain repair consolidate-ties`
+//     reopens (valid_until back to NULL) only the preview-approved facts the
+//     pre-#6023 consolidate writeback closed at their own instant; local CLI,
+//     explicit-only, and the contradiction probe never calls it.
 const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/cycle/extract-facts.ts',
   'src/core/cycle/phases/consolidate.ts',
@@ -74,6 +78,7 @@ const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/persistence/prepared-maintenance.ts',
   'src/core/postgres-engine.ts',
   'src/core/pglite-engine.ts',
+  'src/core/repair/consolidate-ties.ts',
 ]);
 
 function walkTs(dir: string, acc: string[] = []): string[] {

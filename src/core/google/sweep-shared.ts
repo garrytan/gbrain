@@ -3,7 +3,7 @@
  * primitives every Google sweep (contacts, calendar, Gmail) shares. Peeled
  * from google-source.ts so the sweeps can live in their own modules.
  */
-import { closeSync, existsSync, fchmodSync, lstatSync, openSync, renameSync, rmSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, fchmodSync, lstatSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import type { BrainEngine } from '../engine.ts';
@@ -13,6 +13,12 @@ import type { ManagedConnectorSync } from '../persistence/connector-sync.ts';
 import { connectorRender } from '../connectors/connector-text.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { mkdirPrivate } from '../atomic-write.ts';
+import { replaceableFile } from '../facts/file-body-guard.ts';
+import { assertInlineBody } from '../page-body/page-shape.ts';
+import { OperationError } from '../ops/contract.ts';
+import { slugifyPath } from '../sync.ts';
+import { isWriteThroughDisabled } from '../write-through.ts';
+import { isSourceDbOnlySlug } from '../persistence/source-storage.ts';
 import type { GoogleSourceConfig, GoogleSourceState } from './types.ts';
 import type { LoopsExclusionPolicy } from './loops-exclusion.ts';
 
@@ -135,23 +141,41 @@ export async function importRendered(
   }
   const filePath = join(deps.cfg.dir, relPath);
   assertContained(deps.cfg.dir, filePath);
-  mkdirPrivate(dirname(filePath), deps.cfg.dir);
-  const before = existsSync(filePath);
+  const slug = slugifyPath(relPath);
+  const existing = await deps.engine.getPage(slug, { sourceId: deps.sourceId });
+  if (existing) assertInlineBody(existing, 'Google connector materialization');
+  const databaseOnly = await isWriteThroughDisabled(deps.engine) || isSourceDbOnlySlug(deps.cfg.dir, slug, 'refuse');
+  const guard = databaseOnly ? null : await replaceableFile(deps.engine, deps.sourceId, slug, filePath);
+  const drift = () => new OperationError('file_database_drift',
+    `${slug}: the checkout file has an edit not retained in the database, or changed during import. The file was not replaced. If the file is newer, run gbrain sync --source ${deps.sourceId}; if the database is newer, re-save its page with write-through on; if both changed, ask the user which version to keep before retrying.`,
+    'Import the newer file with gbrain sync, or ask the user which version to keep; the item is held until then.');
+  if (guard && !guard.ok) throw drift();
+  const before = databaseOnly ? !!existing : existsSync(filePath);
   // Temp-write → import → rename: a failed import never destroys the
   // previously-good page (github-source pattern).
   const tmpPath = `${filePath}.tmp`;
-  writePrivateTemp(tmpPath, markdown);
+  if (!databaseOnly) {
+    mkdirPrivate(dirname(filePath), deps.cfg.dir);
+    writePrivateTemp(tmpPath, markdown);
+  }
   try {
-    const { importFile } = await import('../import-file.ts');
-    const result = await importFile(deps.engine, tmpPath, relPath, {
+    const { importFile, importFromContent } = await import('../import-file.ts');
+    const opts = {
       noEmbed: true, // embeds handled by the size gate below, like sync
       sourceId: deps.sourceId,
       ...(activePack ? { activePack } : {}),
-    });
+    };
+    const result = databaseOnly
+      ? await importFromContent(deps.engine, slug, markdown, { ...opts, sourcePath: relPath, preserveGateMarkers: true })
+      : await importFile(deps.engine, tmpPath, relPath, opts);
     if (result.status === 'error' || result.error) {
       throw new Error(result.error ?? `Import failed for ${relPath}`);
     }
-    renameSync(tmpPath, filePath);
+    if (guard?.ok) {
+      const current = existsSync(filePath) ? readFileSync(filePath, 'utf8') : null;
+      if (current !== guard.expectedFileBytes) throw drift();
+      renameSync(tmpPath, filePath);
+    }
     if (result.status === 'imported') {
       summary.pagesAffected.push(result.slug);
       summary.chunksCreated += result.chunks;
@@ -163,7 +187,7 @@ export async function importRendered(
     }
     return result.slug;
   } finally {
-    rmSync(tmpPath, { force: true });
+    if (!databaseOnly) rmSync(tmpPath, { force: true });
   }
 }
 

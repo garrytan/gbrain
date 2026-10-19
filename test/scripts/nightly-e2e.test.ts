@@ -151,7 +151,7 @@ describe('nightly E2E scheduling', () => {
     expect(CLASSIFY_DOCS).toBe('docs/operations/verify-and-nightly-e2e.md#full-corpus-report-states');
     expect(readFileSync(join(repo, 'docs/operations/verify-and-nightly-e2e.md'), 'utf8')).toMatch(/^## Full-corpus report states$/m);
     const status = workflow.jobs['e2e-status'];
-    expect(status.if).toBe('always()');
+    expect(status.if).toBe("${{ needs.prepare-e2e.outputs.reuse != 'true' && always() }}");
     expect(status.needs).toContain('coverage-full-e2e');
     expect(status.needs).not.toContain('coverage-full-report');
     const validate = status.steps.find((step: any) => step.name === 'Verify complete nightly execution');

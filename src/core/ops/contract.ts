@@ -79,6 +79,8 @@ export class OperationError extends Error {
   public protocolVersion?: number;
   public writeRequest?: WriteReceipt;
   public writeError?: WriteErrorCode;
+  /** #6989: the request ID of a write that may have committed although its reply was not delivered (`response_too_large`); never invented for a read. */
+  public requestId?: string;
   /** Agent contract v1 (A1): which cause, when one code covers several. */
   public reason?: string;
   /** Agent contract v1: why it happened, for the agent to explain and weigh. */
@@ -151,6 +153,7 @@ export class OperationError extends Error {
       detail: this.detail,
       protocol_version: this.protocolVersion,
       ...(this.writeRequest ? { write_request: publicWriteReceipt(this.writeRequest) } : {}),
+      ...(this.requestId ? { request_id: this.requestId } : {}),
       ...(this.writeError ? { write_error: this.writeError } : {}),
       ...(this.reason !== undefined ? { reason: this.reason } : {}),
       ...(this.why !== undefined ? { why: this.why } : {}),

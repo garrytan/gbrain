@@ -121,6 +121,7 @@
       "  [OK] stale_embedding_effects: No committed write has a stale queued or failed embedding effect.",
       "  [OK] google_file_modes: No group- or world-readable gbrain files under Google source directories outside ~/.gbrain.",
       "  [OK] google_calendar_readable: No Google source recorded an unreadable calendar at its last sync.",
+      "  [OK] atom_retirements_restorable: No atom retired by an empty re-extraction is waiting to be restored.",
       "  [OK] extractor_facts_expired: No conversation-extractor fact is left expired by the pre-v0.60.11.0 projection.",
       "  [OK] conversation_label_facts: No conversation fact carries the pre-fix meeting-label signature (a 1970-01-01 segment on a label page).",
       "  [OK] conversation_outcomes_stale: No conversation extraction outcome predates extractor version 1.",

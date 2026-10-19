@@ -15,8 +15,7 @@
  * rewritten, folded into or guessed; identity keys are never resolved from a
  * duplicate.
  */
-import { load } from 'js-yaml';
-import { FRONTMATTER_SCHEMA } from './data-frontmatter.ts';
+import { FRONTMATTER_SCHEMA, loadBoundedYaml as load } from './data-frontmatter.ts';
 
 /** Bump when a rule widens; older holds are re-screened. */
 export const RECOVERY_VERSION = 1;

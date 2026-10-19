@@ -8,12 +8,14 @@
  * (untracked files included, ignored files excluded), the totals stop summing
  * every summary lane, a gate with no summary or a moved tree still prints a
  * receipt, the gate's exit code is lost, or a missing UBI_OWNER or a
- * PREGATE_TREE mismatch reaches the gate.
- * Seam: GBRAIN_PREGATE_GATE_CMD replaces `bun run ci:ubicloud`.
+ * PREGATE_TREE mismatch reaches the gate, or the default gate is anything
+ * but the development form `bun run ci:ubicloud:diff` (the full gate runs
+ * once per PR, at handoff).
+ * Seam: GBRAIN_PREGATE_GATE_CMD replaces `bun run ci:ubicloud:diff`.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -82,6 +84,20 @@ describe('pregate-remote-gate.sh', () => {
     });
     expect(r.stdout).toContain('args: --vms 8');
     expect(r.stdout.trim().split('\n').at(-1)).toBe(`PREGATE_REMOTE: tree=${contentTree()} tests=4 failed=0`);
+    expect(r.status).toBe(0);
+  });
+
+  it('runs the development gate, bun run ci:ubicloud:diff, by default and passes the extra arguments on', () => {
+    const bin = join(repo, '.git', 'fake-bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'bun'), `#!/usr/bin/env bash\necho "fake-bun: $*"\nprintf '%s\\n' '=== ci-ubicloud summary ===' '  gitleaks 1 passed, 0 failed, 2s compute'\n`);
+    chmodSync(join(bin, 'bun'), 0o755);
+    const r = spawnSync('bash', [SCRIPT, '--lanes', 'unit'], {
+      cwd: repo, encoding: 'utf8',
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: 'gbra0test', PATH: `${bin}:${process.env.PATH}`, GBRAIN_PREGATE_GATE_CMD: undefined, PREGATE_TREE: undefined },
+    });
+    expect(r.stdout).toContain('fake-bun: run ci:ubicloud:diff --lanes unit');
+    expect(r.stdout.trim().split('\n').at(-1)).toBe(`PREGATE_REMOTE: tree=${contentTree()} tests=1 failed=0`);
     expect(r.status).toBe(0);
   });
 

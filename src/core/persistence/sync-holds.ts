@@ -42,6 +42,9 @@ import type { FenceReason, FenceTier, GateLetter } from '../fence-repair/types.t
 import { FENCE_VERSION } from '../fence-repair/refusal.ts';
 import { fenceHoldFix, fenceHoldLocation, fencePreviewArgv, readFenceAutoRepair, type FenceAutoRepair, type FenceHoldLocation } from '../fence-repair/hold-fix.ts';
 import { contentHoldDocs, contentHoldFix } from '../content-repair/hold-fix.ts';
+import { classicRenameHoldFix } from '../classic-rename-holds.ts';
+import { classicFileHoldFix } from '../classic-file-holds.ts';
+import { unsupportedPathHoldFix } from '../sync-byte-paths.ts';
 import { STRUCTURED_WRITE_ADVICE, type FencesNormalized } from '../fence-repair/report.ts';
 import type { SyncDiscovery, SyncRename } from './sync-discovery.ts';
 import { isCodeFilePath, isImageFilePath, isMultimodalEnabled } from '../sync.ts';
@@ -70,7 +73,11 @@ export const GIT_HOLD_ESCALATE_MIN_SCREENED = 40;
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
 export type GitHoldCode = ContentRefusal['code'] | 'rename_held' | 'parser_regression' | 'managed_image_sync_unsupported' | 'concurrent_write' | 'preparation_stalled' | 'worktree_dirty' | 'file_drift'
-  | 'legacy_slug_conflict' | 'write_interrupted' | 'origin_conflict';
+  | 'legacy_slug_conflict' | 'write_interrupted' | 'origin_conflict'
+  /** GBRA-133 PR 1 (classic sync): src/core/classic-rename-holds.ts, src/core/classic-file-holds.ts and src/core/sync-byte-paths.ts. */
+  | 'rename_identity_unreadable' | 'rename_reconcile_failed' | 'file_unreadable' | 'absent_from_worktree' | 'unsupported_path'
+  /** #6712 PR 4b (S-47): bytes an older gbrain imported and validated whose frontmatter aliases expand past #7018's bound; held alone, never a parser regression. */
+  | 'frontmatter_alias_limit';
 /**
  * Flip lane C: the holds of a write that ran out of attempts, its preparation never settling (`preparation_stalled`)
  * or its statements ended by the database every time (`write_interrupted`). The file is not the problem: they route to
@@ -90,7 +97,9 @@ export interface PreparationStallMeta {
   /** The `gbrain sync` arguments that resume the cursor with its stored options (after `sources retry-held`). */
   sync_argv: string[];
 }
-export type GitHoldReason = InvalidFrontmatterReason | 'rename_source_changed' | 'explicit_id_conflict' | FenceReason | OriginConflictReason;
+export type GitHoldReason = InvalidFrontmatterReason | 'rename_source_changed' | 'explicit_id_conflict' | FenceReason | OriginConflictReason
+  | 'symlink_in_repo' | 'symlink_outside_root' | 'symlink_dangling' | 'symlink_loop' | 'permission_denied' | 'not_regular_file' | 'skip_worktree' | 'deleted_locally'
+  | 'not_utf8' | 'control_character';
 
 export interface GitHoldMeta {
   reason?: GitHoldReason;
@@ -508,7 +517,9 @@ export async function holdBasisMoved(engine: Pick<BrainEngine, 'executeRaw'>, so
  * imports the image instead of holding it. #6712 PR 2: a `content_rejected`, `write_gate_rejected` or
  * `purged_content` hold rests on a setting, an allow rule or a tombstone its fix lets the user change, so it
  * re-screens on every sync too. #6727: so does a `legacy_slug_conflict` hold, which rests on the legacy pages a person removes. #6948: and an
- * `origin_conflict` hold, which rests on the twin pages the heal, the repair or a person removes.
+ * `origin_conflict` hold, which rests on the twin pages the heal, the repair or a person removes. A `frontmatter_alias_limit` hold
+ * rests on the file's bytes alone (the bound is intended, not transient), so like `invalid_frontmatter` it re-screens when
+ * the file changes.
  */
 export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, retried: boolean): boolean {
   return retried || ['frontmatter_slug_conflict', 'file_too_large', 'rename_held', 'parser_regression', 'content_rejected', 'write_gate_rejected', 'purged_content', 'legacy_slug_conflict', 'origin_conflict'].includes(record.code)
@@ -696,9 +707,14 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         user_message: `Multimodal embedding is off, so managed sync holds ${record.path} and the rest of source ${source} keeps syncing. Keeping images held is fine; to import them, set GBRAIN_EMBEDDING_MULTIMODAL=true for the gbrain process (image embeddings can cost money) and sync again; to stop holding them, leave images out of the source with sync.exclude.`,
         why: 'Whether images are embedded is the user\'s call (it costs provider calls). With GBRAIN_EMBEDDING_MULTIMODAL=true the next sync imports every held image; the hold also clears when the file is deleted or excluded, and is re-screened when it changes or on gbrain sources retry-held.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
+    case 'frontmatter_alias_limit':
+      return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
+        user_message: `${record.path} nests YAML aliases in its frontmatter that expand past gbrain's size limit, so sync holds it and the rest of source ${source} keeps syncing. An older gbrain imported these bytes; this version refuses them on purpose. Reduce the alias nesting in its frontmatter (or write the values out), or remove the file, then commit and run gbrain sync --source ${source} --no-pull.`,
+        why: 'The alias bound (#7018) stops a few hundred bytes of nested anchors from expanding into gigabytes; it is intended, so the page keeps its last imported version until the file changes.',
+        verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'parser_regression':
       return { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'user', requires_exclusive: false,
-        user_message: `gbrain refuses ${record.path}, whose exact bytes imported under an earlier version. This is a gbrain bug: report it with the gbrain version, the file and the code, then upgrade or pin the last good version.`,
+        user_message: `gbrain refuses ${record.path}, whose exact bytes imported under an earlier version. This is a gbrain bug: report it with the gbrain version, the file and the code, then upgrade, or keep GBRAIN_SYNC_PARSER_REGRESSION=hold set for the process that syncs; never pin a release older than 0.60.305.0.`,
         why: 'The same bytes imported before, so only gbrain changed; sync holds the file under GBRAIN_SYNC_PARSER_REGRESSION=hold.' };
     case 'legacy_slug_conflict': {
       const slugs = record.meta.legacy_slugs ?? [];
@@ -738,10 +754,14 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
           + (soft.length ? `, for example: ${soft.join('; ')}` : '') + `; then run gbrain sync --source ${source} --no-pull. gbrain repair origin-twins --source ${source} lists the group and its commands.`,
         why: 'Which page owns a file cannot be decided when the pages differ, carry different frontmatter ids, or none is the page the path names; sync never deletes a page it cannot prove is a duplicate.', then, verify };
     }
+    case 'rename_identity_unreadable': case 'rename_reconcile_failed':
+      return classicRenameHoldFix(record);
     case 'rename_held':
       return repair(true, `The page that ${record.path} renames changed after the rename was recorded, so it was not moved; the preview proposes re-binding the rename to the current page for approval.`);
     case 'frontmatter_slug_conflict':
       return contentHoldFix(record);
+    case 'file_unreadable': case 'absent_from_worktree': return classicFileHoldFix(record);
+    case 'unsupported_path': return unsupportedPathHoldFix(record);
     default:
       return record.meta.reason === 'needs_interpretation'
         ? repair(true, `Reading ${record.path} needs an interpretation (folded lines, a duplicate key or an unclosed list); the preview shows the exact proposal for approval.`)

@@ -91,7 +91,7 @@ async function capture(run: () => Promise<unknown>): Promise<{ out: string; exit
   console.error = () => {};
   process.stdout.write = ((chunk: string | Uint8Array) => { lines.push(String(chunk)); return true; }) as typeof process.stdout.write;
   try { await run(); return { out: lines.join('\n'), exitCode: process.exitCode }; }
-  finally { console.log = log; console.error = error; process.stdout.write = stdout; process.exitCode = previous; }
+  finally { console.log = log; console.error = error; process.stdout.write = stdout; process.exitCode = previous ?? 0; }
 }
 async function repair(engine: BrainEngine, args: string[]): Promise<RepairJson> {
   const { out } = await capture(() => runRepairCommand(engine, ['conversation-labels', ...args, '--json']));

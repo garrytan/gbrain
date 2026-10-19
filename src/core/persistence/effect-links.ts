@@ -13,6 +13,7 @@ import type { SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
 import { excludesPrivateWrites } from './page-visibility.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { extractSegmentedPageLinks } from '../page-body/segment-links.ts';
+import { validateSlug } from '../utils.ts';
 import { isRemoteWantedPagesEnabled, replaceWantedLinks } from '../wanted-links.ts';
 
 /** `mcp.remote_auto_links`: unset is on; false/0/no/off (any case) turns the remote `links` effect off. */
@@ -21,7 +22,7 @@ export async function isRemoteAutoLinksEnabled(engine: Pick<BrainEngine, 'getCon
   return value == null || !['false', '0', 'no', 'off'].includes(value.trim().toLowerCase());
 }
 
-export type SkippedLinkTarget = { slug: string; reason: 'cross_source' | 'missing' | 'not_visible' | 'outside_grant' };
+export type SkippedLinkTarget = { slug: string; reason: 'cross_source' | 'invalid_slug' | 'missing' | 'not_visible' | 'outside_grant' };
 /** At most this many skipped targets are recorded on one effect outcome. */
 const SKIPPED_TARGET_LIMIT = 50;
 
@@ -30,6 +31,10 @@ const SKIPPED_TARGET_LIMIT = 50;
  * page-path mentions in compiled_truth only. No frontmatter, no timeline
  * section, no schema-pack verbs; every edge is stored as an untyped `mentions`.
  * A segmented page's compiled truth is read block by block (page-body/segment-links.ts).
+ * #7008: a target validateSlug refuses (`../x`, a backslash, an encoded separator)
+ * is skipped as invalid_slug here, before any page key is locked, so it never
+ * fails the effect or costs the page its valid edges; control characters in the
+ * recorded slug are escaped so the outcome stays storable.
  */
 async function mentionTargets(engine: BrainEngine, snapshot: PageSnapshot, sourceId: string) {
   const { page } = snapshot;
@@ -43,10 +48,17 @@ async function mentionTargets(engine: BrainEngine, snapshot: PageSnapshot, sourc
   const skipped: SkippedLinkTarget[] = [];
   for (const candidate of candidates) {
     if (candidate.fromSlug || candidate.targetSlug === page.slug) continue;
-    if (candidate.targetSourceId && candidate.targetSourceId !== sourceId) skipped.push({ slug: candidate.targetSlug, reason: 'cross_source' });
+    if (!validSlug(candidate.targetSlug)) {
+      const slug = candidate.targetSlug.replace(/[\x00-\x1f\x7f-\x9f]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+      if (!skipped.some(target => target.slug === slug)) skipped.push({ slug, reason: 'invalid_slug' });
+    } else if (candidate.targetSourceId && candidate.targetSourceId !== sourceId) skipped.push({ slug: candidate.targetSlug, reason: 'cross_source' });
     else if (!targets.has(candidate.targetSlug)) targets.set(candidate.targetSlug, candidate.context);
   }
   return { targets, skipped };
+}
+
+function validSlug(slug: string): boolean {
+  try { validateSlug(slug); return true; } catch { return false; }
 }
 
 /** The writer's slug confinement, stored and current, applied to link targets. */

@@ -1,5 +1,4 @@
-import { dataFrontmatter as matter, FrontmatterLanguageError } from './data-frontmatter.ts';
-import { load as yamlLoad } from 'js-yaml';
+import { dataFrontmatter as matter, FrontmatterLanguageError, loadBoundedYaml as yamlLoad, YamlAliasBoundError } from './data-frontmatter.ts';
 import type { Page, PageType } from './types.ts';
 import { resolveSlugForPath, slugifyPath } from './sync.ts';
 import {
@@ -31,6 +30,7 @@ export interface ParseValidationError {
   recoverable?: boolean;
   /** YAML_PARSE only: what ingestion changed to read it; content-free, so it can be recorded as provenance. */
   recovery?: Array<{ kind: RecoveryKind; key: string; line: number; recovery_version: number }>;
+  /** YAML_PARSE only: a bound this release refuses on purpose, not a reading it cannot make. */ intended?: IntendedRefusal;
 }
 
 export type ParseWarningCode = 'FRONTMATTER_RECOVERED' | 'FRONTMATTER_COMMENT_VALUE';
@@ -510,10 +510,13 @@ export const HOLD_CODES = ['invalid_frontmatter', 'frontmatter_slug_conflict', '
 export type HoldCode = typeof HOLD_CODES[number];
 export const INVALID_FRONTMATTER_REASONS = ['yaml_parse', 'needs_interpretation', 'ambiguous_identity_key', 'ambiguous_protected_key'] as const;
 export type InvalidFrontmatterReason = typeof INVALID_FRONTMATTER_REASONS[number];
+/** Refusals a release makes on purpose (`yaml_alias_limit`: #7018's alias bound): validated older bytes they refuse are held alone, never a parser regression (sync-screen.ts). */
+export type IntendedRefusal = 'yaml_alias_limit';
 
 export interface ContentHold {
   code: HoldCode;
   reason?: InvalidFrontmatterReason;
+  /** A refusal this release makes on purpose; structured, never read from the message. */ intended?: IntendedRefusal;
   key?: string;
   line?: number;
   /** Safe to persist and show remotely: names the key, line and cause, never a frontmatter value. */
@@ -579,7 +582,7 @@ export function classifyImportHold(parsed: ParsedMarkdown, ctx: {
       : reason === 'ambiguous_identity_key' ? `ambiguous identity key "${key}"${where}`
       : reason === 'needs_interpretation' ? `key "${key}"${where} ${step!.kind === 'dup' ? 'appears more than once' : step!.kind === 'fold' ? 'continues on unquoted lines' : 'opens [ or { without closing it'}`
       : `${(yaml?.message ?? '').replace(/^YAML parse failed:\s*/, '') || 'malformed YAML'}${key ? ` (key "${key}")` : ''}`;
-    return { code: 'invalid_frontmatter', reason, ...(key ? { key } : {}), ...(line !== undefined ? { line } : {}),
+    return { code: 'invalid_frontmatter', reason, ...(key ? { key } : {}), ...(line !== undefined ? { line } : {}), ...(yaml?.intended ? { intended: yaml.intended } : {}),
       message: `Invalid YAML frontmatter: ${detail}. ${HOLD_GUIDANCE[reason]}` };
   }
   const expected = ctx.expectedSlug;
@@ -756,6 +759,7 @@ function collectValidationErrors(
       line: ctx.recovery?.line ?? (recoverable ? ctx.recovered[0]!.line : located?.line) ?? firstNonEmpty + 1,
       recoverable,
       ...(recoverable ? { recovery: ctx.recovered.map(step => ({ kind: step.kind, key: step.key, line: step.line, recovery_version: RECOVERY_VERSION })) } : {}),
+      ...(located?.intended ? { intended: located.intended } : {}),
     });
   }
 
@@ -816,15 +820,15 @@ export function yamlBlockError(block: string): Error | null {
   }
 }
 
-/** Where js-yaml refuses a raw block: its reason phrase and the file line and column. */
-function yamlFailureLocation(block: string, lineOffset: number): { reason: string; line: number; column: number } | null {
+/** Where js-yaml refuses a raw block: its reason phrase and the file line and column, and whether the refusal is the alias bound. */
+function yamlFailureLocation(block: string, lineOffset: number): { reason: string; line: number; column: number; intended?: IntendedRefusal } | null {
   try {
     yamlLoad(block);
     return null;
   } catch (e) {
     const err = e as { reason?: string; mark?: { line?: number; column?: number } };
     if (typeof err.mark?.line !== 'number') return null;
-    return { reason: err.reason ?? 'malformed YAML', line: lineOffset + err.mark.line + 1, column: (err.mark.column ?? 0) + 1 };
+    return { reason: err.reason ?? 'malformed YAML', line: lineOffset + err.mark.line + 1, column: (err.mark.column ?? 0) + 1, ...(e instanceof YamlAliasBoundError ? { intended: 'yaml_alias_limit' as const } : {}) };
   }
 }
 

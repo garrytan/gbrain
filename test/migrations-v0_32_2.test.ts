@@ -184,6 +184,8 @@ describe('phaseBFenceFacts — happy path backfill', () => {
       '---\ntype: person\ntitle: Alice\nslug: people/alice\n---\n\n# Alice\n\nNotes about Alice.\n',
       'utf-8',
     );
+    // #6982: the page's database body is the file's, as an import leaves it; a differing body is held, not overwritten.
+    await engine.putPage('people/alice', { type: 'person', title: 'Alice', compiled_truth: '# Alice\n\nNotes about Alice.', frontmatter: {} });
     await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Founded Acme' });
 
     await __testing.phaseBFenceFacts(engine, OPTS);

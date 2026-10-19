@@ -99,14 +99,14 @@ describe('CL-1: nothing after the page\'s own day', () => {
     expect((await events(engine)).map((e) => e.day).sort()).toEqual([day(-4), day(-3)]);
   }), 120_000);
 
-  test('re-extraction retires the old generation even when every new proposal is dropped', () => brain(async ({ engine, ctx }) => {
+  test('re-extraction keeps the old generation live when every new proposal is dropped (#7013)', () => brain(async ({ engine, ctx }) => {
     await put(ctx, 'meetings/sync', meeting());
     await runOnce(engine, async () => ({ events: [ev(PAGE_DAY, 'Alice and Bob reviewed the launch plan')] }));
     await put(ctx, 'meetings/sync', meeting(`${BODY} Wording changed.`));
     const r = await runOnce(engine, async () => ({ events: [ev(day(10), 'Offsite planning session')] }));
-    expect(r.details).toMatchObject({ judged: 1, no_events: 1, events_written: 0, events_retired: 1,
+    expect(r.details).toMatchObject({ judged: 1, no_events: 1, events_written: 0, events_retired: 0,
       events_dropped: { future_dated: 1 }, reasons: { future_dated: 1 } });
-    expect((await events(engine)).map((e) => [e.what, e.deleted])).toEqual([['Alice and Bob reviewed the launch plan', true]]);
+    expect((await events(engine)).map((e) => [e.what, e.deleted])).toEqual([['Alice and Bob reviewed the launch plan', false]]);
     expect((await ledger(engine)).map((row) => [row.state, row.reason])).toEqual([['extracted', null], ['extracted', 'future_dated']]);
   }), 120_000);
 });

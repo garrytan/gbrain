@@ -91,7 +91,7 @@ export async function settlePending(world: World, model: ReferenceModel): Promis
   await model.settleLate(pending, observed);
 }
 
-/** Finish a schedule: drain, check drained invariants, prove a fresh write still admits. */
+/** Finish a schedule: drain, check drained invariants, prove a fresh write still admits, and drain that write's effects. */
 export async function finish(world: World, model: ReferenceModel, label: string, drainMs: number = DRAIN_BOUND_MS[world.engine.kind]): Promise<void> {
   const drained = await drain(world.engine, world, drainMs);
   if (!drained) model.violate({ class: 'wedge', detail: `${label}: requests or effects did not drain within ${drainMs / 1000} s` });
@@ -104,6 +104,9 @@ export async function finish(world: World, model: ReferenceModel, label: string,
   const seen = await executeOp(world, probe);
   if (seen.status !== 'committed') model.violate({ class: 'wedge', detail: `${label}: a fresh write after the schedule ended ${seen.status}/${seen.code}` });
   await awaitClaimPass(world);
+  // The probe's own effects (its git commit among them) reach their seams only if the worker waits for them: a count
+  // role that happened to see the probe's effect:git:mid planned a fault no run was sure to reach (seed 5105).
+  if (!await drain(world.engine, world, drainMs)) model.violate({ class: 'wedge', detail: `${label}: the probe's effects did not drain within ${drainMs / 1000} s` });
 }
 
 /**

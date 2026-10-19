@@ -45,7 +45,9 @@ interface Repo { engine: BrainEngine; root: string; sourceId: string; commit(fil
   sync(opts?: { skipFailed?: boolean; engine?: BrainEngine }): ReturnType<typeof performSync>; lastCommit(): Promise<string | null> }
 
 /** A legacy (unmanaged) source on a temp git repo whose first sync imported seed.md; the ledger lives under the temp home.
- *  concurrency 1: Postgres import workers connect to the configured database_url, not the isolated test database. */
+ *  concurrency 1: Postgres import workers connect to the configured database_url, not the isolated test database.
+ *  sync.holds=fail: since GBRA-133 the default policy holds an unreadable file (file_unreadable/permission_denied,
+ *  test/pathological/s-classic-file-holds.test.ts); the fail-closed policy keeps it on the ledger path pinned here. */
 function legacyRepo(databaseUrl: string | undefined, run: (r: Repo) => Promise<void>): Promise<void> {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-a18-'));
   const root = join(home, 'repo');
@@ -54,6 +56,7 @@ function legacyRepo(databaseUrl: string | undefined, run: (r: Repo) => Promise<v
     const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
     try {
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      await engine.setConfig('sync.holds', 'fail');
       git(root, 'init', '-q'); git(root, 'config', 'user.name', 'Example'); git(root, 'config', 'user.email', 'example@example.invalid');
       const commit = (files: Record<string, string>, msg: string) => {
         for (const [path, body] of Object.entries(files)) { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), body); }

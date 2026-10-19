@@ -412,7 +412,8 @@ export async function publishManagedAtoms(engine: BrainEngine, session: ManagedA
   }
   const originKey = origin.kind === 'page' ? 'source_slug' : 'source_path';
   // #6503: a partial extraction read only the head, so it retires nothing an earlier extraction produced.
-  const retirements = failure || origin.partialInputChars ? [] : reviewedRetirements ?? await engine.executeRaw<ManagedAtomRetirement>(
+  // #7013: retirement needs a replacement generation; a zero-yield extraction (or its retry) retires nothing.
+  const retirements = failure || origin.partialInputChars || !atoms.length ? [] : reviewedRetirements ?? await engine.executeRaw<ManagedAtomRetirement>(
     `SELECT slug,id AS "pageId",knowledge_revision::text AS revision FROM pages
       WHERE source_id=$1 AND type='atom' AND deleted_at IS NULL
         AND frontmatter->>'${originKey}'=$2
@@ -490,10 +491,12 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
   await validate(engine);
   const additionalPageKeys = p.origin.kind === 'page' ? [{ sourceId: row.source_id, slug: p.origin.locator }] : [];
   if (p.kind === 'managed_atom_delete') {
+    await replacementPublished(engine, row, p);
     await authorizeWrite(engine, row.authority, 'delete_page', row.slug);
     const prepared = await preparePageMutation(engine, { ...row, operation: 'delete_page' }, config, undefined, undefined, { allowMissingFile: true });
     return { ...prepared, additionalPageKeys, validate: async tx => {
       await validate(tx);
+      await replacementPublished(tx, row, p);
       await authorizeWrite(tx, row.authority, 'delete_page', row.slug);
       await prepared.validate?.(tx);
     }, apply: async tx => {
@@ -577,6 +580,22 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
     }
     return { ...result, atom_run_key: p.runKey, atom_kind: p.kind };
   } };
+}
+
+/**
+ * #7013: an atom retirement publishes only after its batch's replacement generation did: at least one atom page
+ * of the same run, every one of them committed (they are admitted ahead of the retirements). A put that conflicted
+ * or failed, or a batch with no put at all (a zero-yield batch accepted before this check), retires nothing.
+ */
+async function replacementPublished(db: BrainEngine, row: WriteRequest, p: AtomIntent): Promise<void> {
+  const [batch] = await db.executeRaw<{ puts: number; committed: number }>(`SELECT count(*)::int AS puts,
+      count(*) FILTER (WHERE state='committed')::int AS committed FROM persistence_requests
+    WHERE source_id=$1 AND source_incarnation=$2::uuid AND COALESCE(intent->>'runKey',outcome->>'atom_run_key')=$3
+      AND COALESCE(intent->>'kind',outcome->>'atom_kind')='managed_atom_page'`, [row.source_id, row.source_incarnation, p.runKey]);
+  if (batch && batch.puts > 0 && batch.committed === batch.puts) return;
+  throw opError('revision_conflict', 'The atom batch\'s replacement generation did not publish, so its earlier atom is kept.',
+    `Atom ${row.slug} in source ${row.source_id} would be retired by batch ${p.runKey.slice(0, 12)}, but ${batch?.puts ? `${batch.puts - batch.committed} of its ${batch.puts} new atom page(s) did not commit` : 'that batch published no new atom'}; request ${row.request_id} retired nothing. Read the batch receipt; the next atom drain extracts the source again.`,
+    { fix: receiptFix(row.request_id) });
 }
 
 /** A `managed-atoms` checkpoint `ac` for one page at its current content hash, completed or failed. */

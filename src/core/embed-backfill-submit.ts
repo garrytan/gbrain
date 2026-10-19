@@ -42,7 +42,10 @@
  * (`gbrain sources status`, webhook response body, sync completion banner).
  */
 import type { BrainEngine } from './engine.ts';
+import { cliRenderContext, noticeBlock, renderNotice, type Notice, type RenderedNotice } from './agent-output.ts';
 import { getCompanyBrainProfile } from './company-brain/profile.ts';
+import { loadConfig } from './config.ts';
+import { embeddingsDisabled } from './embedding-disabled.ts';
 import { opError } from './ops/contract.ts';
 import { readFix } from './ops/op-fix.ts';
 import { embedBackfillWorkerSurface } from './minions/embed-backfill-admission.ts';
@@ -64,7 +67,9 @@ export type SubmitEmbedBackfillResult =
   | { status: 'spend_capped'; spend24hUsd: number; spendCapUsd: number }
   /** #6803: the last EMBED_BACKFILL_STALL_LIMIT backfills failed identically with nothing embedded, and nothing has changed since. */
   | { status: 'stalled'; failures: number; remaining: number; blocked: number; lastFailedAt: string }
-  | { status: 'no_worker_surface'; engineKind: 'pglite' | 'unknown' };
+  | { status: 'no_worker_surface'; engineKind: 'pglite' | 'unknown' }
+  /** The brain is keyless by choice: nothing to embed. `notice` is set only the first time for this brain state. */
+  | { status: 'embedding_disabled'; notice: Notice | null };
 
 export type SubmitEmbedBackfillStatus = SubmitEmbedBackfillResult['status'];
 
@@ -135,6 +140,40 @@ async function readIntConfig(
   return Number.isFinite(n) && n > 0 ? n : def;
 }
 
+export const EMBED_BACKFILL_SKIP_REPORTED_KEY = 'embed.backfill_skip_reported';
+
+/**
+ * GBRA-133 (latency 6.9): a brain keyless by choice (`init --no-embedding`)
+ * runs no embed-backfill. Every automatic submitter and the handler stop here
+ * instead of draining each stale chunk against no embedding model (one failure
+ * per page, three attempts, the worker held for minutes). Returns null when
+ * embedding is on. The embed_backfill_skipped notice is returned once per brain
+ * state: the first skip records it under EMBED_BACKFILL_SKIP_REPORTED_KEY, and
+ * a check that finds embedding on clears the record, so a brain that turns
+ * keyless again is told again.
+ */
+export async function keylessEmbedBackfill(engine: BrainEngine): Promise<{ notice: Notice | null } | null> {
+  const reported = await engine.getConfig(EMBED_BACKFILL_SKIP_REPORTED_KEY).catch(() => null);
+  if (!await embeddingsDisabled(engine)) {
+    if (reported !== null) await engine.unsetConfig(EMBED_BACKFILL_SKIP_REPORTED_KEY).catch(() => undefined);
+    return null;
+  }
+  if (reported === 'embedding_disabled') return { notice: null };
+  await engine.setConfig(EMBED_BACKFILL_SKIP_REPORTED_KEY, 'embedding_disabled').catch(() => undefined);
+  const { embeddingEnablement } = await import('./readiness.ts');
+  const enable = embeddingEnablement({ engine: engine.kind, ...(loadConfig() ?? {}), embedding_disabled: true });
+  return { notice: { code: 'embed_backfill_skipped', kind: 'info',
+    why: 'Embedding is disabled on this brain (keyless by choice), so no embed-backfill runs and search stays keyword-only; nothing is failing.',
+    fix: { ...enable, why: `Keyless is a valid choice and needs nothing. To turn on semantic search instead: ${enable.why}` } } };
+}
+
+/** A job's report of the keyless notice: one block on stderr, and the wire form its result carries. */
+export function reportKeylessNotice(notice: Notice): RenderedNotice {
+  const rendered = renderNotice(notice, cliRenderContext());
+  process.stderr.write(`${noticeBlock(rendered)}\n`);
+  return rendered;
+}
+
 export async function submitEmbedBackfill(
   engine: BrainEngine,
   sourceId: string,
@@ -145,6 +184,8 @@ export async function submitEmbedBackfill(
   // a row so the undrainable job cannot also cooldown-block a later attempt.
   const surface = embedBackfillWorkerSurface(engine);
   if (surface.status === 'no_worker_surface') return surface;
+  const keyless = await keylessEmbedBackfill(engine);
+  if (keyless) return { status: 'embedding_disabled', notice: keyless.notice };
   if (await getCompanyBrainProfile(engine, sourceId)) throw opError('source_profile_no_backfill', 'This source profile disables automatic embedding backfill. Enable enrichment only through a separate explicit action.',
     `Source ${sourceId} uses the company-brain import profile, which never queues embedding backfill; keyword search keeps working. Embedding it is a separate action the user approves; do not edit the stored profile.`,
     { docs: 'docs/guides/company-brain-ingestion.md#what-stays-opt-in',

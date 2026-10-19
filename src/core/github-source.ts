@@ -48,6 +48,11 @@ import type { SyncOpts } from '../commands/sync.ts';
 import { isWriteTargetContained } from './path-confine.ts';
 import { createProgress, startHeartbeat } from './progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
+import { replaceableFile } from './facts/file-body-guard.ts';
+import { assertInlineBody } from './page-body/page-shape.ts';
+import { OperationError } from './ops/contract.ts';
+import { isWriteThroughDisabled } from './write-through.ts';
+import { isSourceDbOnlySlug } from './persistence/source-storage.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -965,20 +970,35 @@ async function materializePage(deps: GitHubSyncDeps, filePath: string, content: 
   const rel = relative(deps.cfg.dir, filePath).replace(/\\/g, '/');
   content = connectorRender(content, { path: rel });
   if (deps.managed) return deps.managed.importMarkdown(rel, content);
-  const created = !existsSync(filePath);
+  const slug = slugifyPath(rel);
+  const existing = await deps.engine.getPage(slug, { sourceId: deps.sourceId });
+  if (existing) assertInlineBody(existing, 'GitHub connector materialization');
+  const databaseOnly = await isWriteThroughDisabled(deps.engine) || isSourceDbOnlySlug(deps.cfg.dir, slug, 'refuse');
+  if (databaseOnly) return { ...await importPage(deps, filePath, activePack, rel, content), created: !existing };
+  const guard = await replaceableFile(deps.engine, deps.sourceId, slug, filePath);
+  const drift = () => new OperationError('file_database_drift',
+    `${slug}: the checkout file has an edit not retained in the database, or changed during import. The file was not replaced. If the file is newer, run gbrain sync --source ${deps.sourceId}; if the database is newer, re-save its page with write-through on; if both changed, ask the user which version to keep before retrying.`,
+    'Import the newer file with gbrain sync, or ask the user which version to keep; the item is held until then.');
+  if (!guard.ok) throw drift();
+  const created = guard.expectedFileBytes === null;
   mkdirSync(dirname(filePath), { recursive: true });
   const tmpPath = `${filePath}.tmp`;
   writeFileSync(tmpPath, content, 'utf-8');
   try {
     const result = await importPage(deps, tmpPath, activePack, rel);
+    const current = existsSync(filePath) ? readFileSync(filePath, 'utf8') : null;
+    if (current !== guard.expectedFileBytes) throw drift();
     renameSync(tmpPath, filePath);
     return { ...result, created };
   } finally { rmSync(tmpPath, { force: true }); }
 }
 
 async function storedPage(deps: GitHubSyncDeps, filePath: string, apiUpdatedAt: string) {
-  if (!deps.managed) return { fresh: isPageFresh(filePath, apiUpdatedAt), hasDetail: pageHasDetail(filePath), exists: existsSync(filePath) };
-  const page = await deps.managed.page(relative(deps.cfg.dir, filePath).replace(/\\/g, '/').replace(/\.md$/, ''));
+  const slug = relative(deps.cfg.dir, filePath).replace(/\\/g, '/').replace(/\.md$/, '');
+  if (!deps.managed && !await isWriteThroughDisabled(deps.engine) && !isSourceDbOnlySlug(deps.cfg.dir, slugifyPath(slug), 'refuse')) {
+    return { fresh: isPageFresh(filePath, apiUpdatedAt), hasDetail: pageHasDetail(filePath), exists: existsSync(filePath) };
+  }
+  const page = deps.managed ? await deps.managed.page(slug) : await deps.engine.getPage(slugifyPath(slug), { sourceId: deps.sourceId });
   return { exists: !!page, fresh: typeof page?.frontmatter.updated_at === 'string' && page.frontmatter.updated_at >= apiUpdatedAt,
     hasDetail: !!page && page.frontmatter.detail_fetched !== false };
 }
@@ -988,14 +1008,17 @@ async function importPage(
   filePath: string,
   activePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined,
   relPathOverride?: string,
+  content?: string,
 ): Promise<{ slug: string; chunks: number; status: 'imported' | 'skipped' }> {
-  const { importFile } = await import('./import-file.ts');
+  const { importFile, importFromContent } = await import('./import-file.ts');
   const rel = relPathOverride ?? relative(deps.cfg.dir, filePath).replace(/\\/g, '/');
-  const result = await importFile(deps.engine, filePath, rel, {
+  const opts = {
     noEmbed: true, // embeddings handled by the size gate below, like sync
     sourceId: deps.sourceId,
     activePack,
-  });
+  };
+  const result = content === undefined ? await importFile(deps.engine, filePath, rel, opts)
+    : await importFromContent(deps.engine, slugifyPath(rel), content, { ...opts, sourcePath: rel, preserveGateMarkers: true });
   if (result.status === 'error' || result.error) {
     throw new Error(result.error ?? `Import failed for ${rel}`);
   }
@@ -1449,6 +1472,8 @@ async function runExtractAndEmbed(
         process.stderr.write(`[github] large sync (${totalChanges} pages); embeds deferred to embed-backfill job ${sub.jobId} — or ${drainHint}\n`);
       } else if (sub.status === 'cooldown' || sub.status === 'spend_capped' || sub.status === 'no_worker_surface' || sub.status === 'stalled') {
         process.stderr.write(`[github] large sync (${totalChanges} pages); embed-backfill not queued (${sub.status}) — ${drainHint}\n`);
+      } else if (sub.status === 'embedding_disabled') {
+        process.stderr.write(`[github] large sync (${totalChanges} pages); embed-backfill not queued: embedding is disabled on this brain (keyless by choice)\n`);
       } else { sub satisfies never; }
     } catch (err) {
       process.stderr.write(`[github] embed-backfill submission failed: ${err instanceof Error ? err.message : String(err)} — ${drainHint}\n`);

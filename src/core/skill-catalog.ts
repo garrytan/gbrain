@@ -38,7 +38,8 @@
 
 import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
 import { basename, join, relative, resolve } from 'path';
-import { FAILSAFE_SCHEMA, load } from 'js-yaml';
+import { FAILSAFE_SCHEMA } from 'js-yaml';
+import { loadBoundedYaml as load } from './data-frontmatter.ts';
 import {
   autoDetectSkillsDir,
   autoDetectSkillsDirReadOnly,

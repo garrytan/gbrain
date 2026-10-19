@@ -231,7 +231,7 @@ describe('runMigrateEngine — per-page failures are surfaced, not swallowed (#3
       if (source) await source.disconnect();
       if (verifyEngine) await verifyEngine.disconnect();
       _resetCliExitVerdictForTests();
-      process.exitCode = prevExitCode;
+      process.exitCode = prevExitCode ?? 0;
       if (prevGbrainHome !== undefined) process.env.GBRAIN_HOME = prevGbrainHome; else delete process.env.GBRAIN_HOME;
       if (prevDatabaseUrl !== undefined) process.env.DATABASE_URL = prevDatabaseUrl;
       if (prevGbrainDatabaseUrl !== undefined) process.env.GBRAIN_DATABASE_URL = prevGbrainDatabaseUrl;
@@ -311,7 +311,7 @@ describe('runMigrateEngine — per-page failures are surfaced, not swallowed (#3
       if (source) await source.disconnect();
       if (verifyEngine) await verifyEngine.disconnect();
       _resetCliExitVerdictForTests();
-      process.exitCode = prevExitCode;
+      process.exitCode = prevExitCode ?? 0;
       if (prevGbrainHome !== undefined) process.env.GBRAIN_HOME = prevGbrainHome; else delete process.env.GBRAIN_HOME;
       if (prevDatabaseUrl !== undefined) process.env.DATABASE_URL = prevDatabaseUrl;
       if (prevGbrainDatabaseUrl !== undefined) process.env.GBRAIN_DATABASE_URL = prevGbrainDatabaseUrl;
@@ -376,7 +376,7 @@ describe('runMigrateEngine — per-page failures are surfaced, not swallowed (#3
       if (source) await source.disconnect();
       if (verifyEngine) await verifyEngine.disconnect();
       _resetCliExitVerdictForTests();
-      process.exitCode = prevExitCode;
+      process.exitCode = prevExitCode ?? 0;
       if (prevGbrainHome !== undefined) process.env.GBRAIN_HOME = prevGbrainHome; else delete process.env.GBRAIN_HOME;
       if (prevDatabaseUrl !== undefined) process.env.DATABASE_URL = prevDatabaseUrl;
       if (prevGbrainDatabaseUrl !== undefined) process.env.GBRAIN_DATABASE_URL = prevGbrainDatabaseUrl;

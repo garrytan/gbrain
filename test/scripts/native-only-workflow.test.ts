@@ -12,18 +12,25 @@ const workflow = load(readFileSync(join(import.meta.dir, '../../.github/workflow
   concurrency: { group: string; 'cancel-in-progress': boolean }; jobs: Record<string, Job>;
 };
 type Diagnostic = { race_hunt?: boolean; stress_files?: string; stress_base?: string };
-function context(event: string, flag?: boolean, diagnostic: Diagnostic = {}) {
+// test.yml `changes` outputs a pull request's diff selectors; the default
+// selects every native target and the persistence lanes.
+type Changes = { 'native-scope'?: string; convergence?: string; reuse?: string };
+function context(event: string, flag?: boolean, diagnostic: Diagnostic = {}, changes: Changes = {}) {
   // Dispatch inputs carry their declared defaults; other events have no inputs.
   const inputs = event === 'workflow_dispatch' ? { native_only: flag, race_hunt: false, stress_files: '', stress_base: '', stress_head: '', ...diagnostic } : {};
   return { format: (f: string, ...a: unknown[]) => f.replace(/\{(\d+)\}/g, (_, i) => String(a[Number(i)])), github: { workflow: 'Test', event_name: event, ref: 'refs/heads/example', run_id: '77', event: { pull_request: event === 'pull_request' ? { number: 123 } : {} } },
-    inputs, always: () => true };
+    inputs, always: () => true, needs: { changes: { outputs: { 'native-scope': 'full', convergence: 'run', ...changes } } } };
 }
-function evaluate(expression: string, event: string, flag?: boolean, diagnostic?: Diagnostic): unknown {
-  return runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/g, ''), context(event, flag, diagnostic), { timeout: 100 });
+function evaluate(expression: string, event: string, flag?: boolean, diagnostic?: Diagnostic, changes?: Changes): unknown {
+  const js = expression.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replace(/outputs\.(\w+(?:-\w+)+)/g, (_, key) => `outputs['${key}']`);
+  return runInNewContext(js, context(event, flag, diagnostic, changes), { timeout: 100 });
 }
 function template(value: string, event: string, flag?: boolean, diagnostic?: Diagnostic): string {
   return value.replace(/\$\{\{(.*?)\}\}/g, (_, expression) => String(evaluate(expression.trim(), event, flag, diagnostic)));
 }
+// Jobs a pull request (the cheap tier) never runs (docs/ci-event-parity.md#full-ci-on-pull-requests).
+const FULL_ONLY = new Set(['serial-tests', 'slow-brainbench-e2e', 'brainbench', 'slow-entity-resolve-perf', 'test', 'admin-browser',
+  'shared-skills-compatibility', 'coverage-report', 'test-status', 'full-suite']);
 
 describe('native-only CI remains separate from full validation', () => {
   test('only an explicit manual boolean skips full jobs; default and PR/push gates stay required', () => {
@@ -35,11 +42,14 @@ describe('native-only CI remains separate from full validation', () => {
     for (const [name, job] of Object.entries(workflow.jobs)) {
       if (ownModes.has(name)) continue;
       expect(job.if).toBeDefined();
-      const nativeStatus = name === 'native-only-status';
       for (const event of ['push', 'pull_request', 'workflow_dispatch']) {
         for (const flag of [undefined, false, true]) {
           const nativeOnly = event === 'workflow_dispatch' && flag === true;
-          expect(Boolean(evaluate(job.if!, event, flag)), `${name}/${event}/${flag}`).toBe(nativeStatus ? nativeOnly : !nativeOnly);
+          const expected = name === 'native-only-status' ? nativeOnly
+            : name === 'cheap-tier' ? event === 'pull_request'
+            : name === 'reused-full-suite' ? false
+            : !nativeOnly && !(event === 'pull_request' && FULL_ONLY.has(name));
+          expect(Boolean(evaluate(job.if!, event, flag)), `${name}/${event}/${flag}`).toBe(expected);
         }
       }
     }

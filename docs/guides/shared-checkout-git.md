@@ -107,6 +107,19 @@ both forms with `writer_coordinator_required`: its persistence owner is the only
 Git writer there. Save pages with `put_page`, `edit_page`, `remember` or
 `capture`; see [files that are not pages](../architecture/topologies.md#files-that-are-not-pages).
 
+The one form a managed worktree accepts is `--push-only --keep-checkout`. It
+publishes the commits already on the branch, merging a moved remote in memory,
+but never moves the checkout and skips its pre-push hook, so
+`gbrain sources refresh` stays the only way remote files enter the checkout.
+The owner's Git effects use it on their own when another machine pushed first;
+you run it only to settle a [conflict](#conflicts) the owner reports.
+
+**Say to your agent:** *"My brain's Git backups stopped pushing. Find out why and get them moving again."*
+The agent reads `gbrain sync status --source <id> --json` (`git_push_holds`) or
+`gbrain doctor --json` (`parked_effects`). Effects parked after repeated push
+failures go through `gbrain sources writer retry-effects <source> --parked-pushes`
+(preview with `--dry-run`); a conflict names the user's choice first.
+
 <a id="outcomes"></a>
 ## Outcomes
 
@@ -203,6 +216,14 @@ To resolve:
 
 Write a merged copy outside the checkout: editing the conflicted file in place
 leaves it dirty, so the checkout cannot fast-forward over it afterwards.
+
+On a managed worktree the owner's Git effects hold with `integrate_conflict`
+instead (the database already has every page write; only the Git backup
+waits). The fix the owner reports adds `--keep-checkout` and the checkout's
+`--path`; after the choice is pushed, run
+`gbrain sources writer retry-effects <source> --parked-pushes` for the effects
+that parked meanwhile, then `gbrain sources refresh <source>` to bring the
+merged remote files in.
 
 Shared append-only files (a `log.md` every workflow appends to) are the usual
 source of conflicts: two appends at the end of the same file overlap. Keep

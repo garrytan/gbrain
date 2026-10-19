@@ -4,9 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { load } from 'js-yaml';
+import { UNIT_SHARDS } from '../../scripts/sharding.ts';
 
 const root = join(import.meta.dir, '..', '..');
-type Job = { needs?: string | string[]; if?: string; steps: Array<{ name?: string; run?: string; uses?: string; env?: Record<string, string> }> };
+type Job = { needs?: string | string[]; if?: string; steps: Array<{ name?: string; run?: string; uses?: string; env?: Record<string, string>; if?: string; with?: Record<string, string>; 'timeout-minutes'?: number }> };
 type Workflow = { on: Record<string, { paths?: string[] }>; jobs: Record<string, Job> };
 const loadWorkflow = (name: string) => load(readFileSync(join(root, '.github/workflows', name), 'utf8')) as Workflow;
 const unit = loadWorkflow('test.yml');
@@ -35,9 +36,12 @@ describe('CI execution evidence', () => {
       expect(source).not.toMatch(/(?:ci|e2e)-pass-|cache-check|cache-write/);
       expect(source).toContain('bun-cache-');
       expect(source).toContain('pglite-snapshot-');
-      expect(workflow.on.pull_request.paths).toBeUndefined();
     }
-    for (const name of ['gitleaks', 'verify']) {
+    expect(unit.on.pull_request.paths).toBeUndefined();
+    // E2E never runs on pull_request events: the full-ci dispatch runs it on the
+    // head before merge (docs/ci-event-parity.md#full-ci-on-pull-requests).
+    expect(e2e.on.pull_request).toBeUndefined();
+    for (const name of ['gitleaks', 'verify', 'typecheck']) {
       expect(unit.jobs[name].needs).toBeUndefined();
       expect(unit.jobs[name].if).toBe("${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}");
     }
@@ -52,10 +56,30 @@ describe('CI execution evidence', () => {
     expect(pkg.scripts.verify).toContain('scripts/run-verify-parallel.sh');
   });
 
+  test('typecheck runs as its own job beside verify, under a measured step timeout, saves its state on every outcome and gates test-status', () => {
+    const job = unit.jobs.typecheck;
+    const tsc = job.steps.find(step => step.run === 'bun run typecheck')!;
+    expect(tsc['timeout-minutes']).toBe(6);
+    const restore = job.steps.find(step => step.uses?.startsWith('actions/cache/restore@') && step.with?.path === 'node_modules/.cache/gbrain-typecheck.tsbuildinfo')!;
+    const save = job.steps.find(step => step.uses?.startsWith('actions/cache/save@'))!;
+    expect(save.if).toBe('always()');
+    expect(save.with).toEqual({ path: restore.with!.path, key: restore.with!.key });
+    expect(job.steps.indexOf(save)).toBeGreaterThan(job.steps.indexOf(tsc));
+    const verify = unit.jobs.verify.steps.find(step => step.run === 'bun run verify')!;
+    expect(verify.env?.GBRAIN_VERIFY_SKIP_TYPECHECK).toBe('1');
+    expect(JSON.stringify(unit.jobs.verify.steps)).not.toContain('gbrain-typecheck.tsbuildinfo');
+    const skipped = spawnSync('bash', [join(root, 'scripts/run-verify-parallel.sh'), '--dry-list'], { cwd: root, encoding: 'utf8', env: { ...process.env, GBRAIN_VERIFY_SKIP_TYPECHECK: '1' } });
+    const full = spawnSync('bash', [join(root, 'scripts/run-verify-parallel.sh'), '--dry-list'], { cwd: root, encoding: 'utf8' });
+    expect(full.stdout.split('\n')).toContain('typecheck');
+    expect(skipped.stdout.split('\n').filter(Boolean)).toEqual(full.stdout.split('\n').filter(line => line && line !== 'typecheck'));
+    expect(unit.jobs['test-status'].needs).toContain('typecheck');
+    expect(aggregate(unit, 'test-status', 'push', { typecheck: 'failure' })).toBe(1);
+  });
+
   test('unit aggregate rejects failed, cancelled or skipped required jobs', () => {
-    expect(unit.jobs['test-status'].if).toBe("${{ always() && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}");
+    expect(unit.jobs['test-status'].if).toBe("${{ needs.changes.outputs.reuse != 'true' && always() && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}");
     expect(unit.jobs['test-status'].needs).toEqual([
-      'gitleaks', 'security-regressions', 'dependency-audit', 'verify', 'serial-tests',
+      'changes', 'gitleaks', 'security-regressions', 'dependency-audit', 'verify', 'typecheck', 'serial-tests',
       'slow-entity-resolve-perf', 'slow-brainbench-e2e', 'brainbench', 'test', 'native-locks', 'persistence-validation',
       'admin-browser', 'shared-skills-compatibility', 'stress-changed-tests',
     ]);
@@ -68,7 +92,7 @@ describe('CI execution evidence', () => {
   });
 
   test('E2E aggregate gates nightly full-corpus execution and allows its skip on other events', () => {
-    expect(e2e.jobs['e2e-status'].if).toBe('always()');
+    expect(e2e.jobs['e2e-status'].if).toBe("${{ needs.prepare-e2e.outputs.reuse != 'true' && always() }}");
     const needs = e2e.jobs['e2e-status'].needs as string[];
     const nightly = ['coverage-full-unit', 'coverage-full-serial', 'coverage-full-slow', 'coverage-full-e2e'];
     expect(needs).toEqual(['jsonb-parity', 'tier1', 'tier1-backend-matrix', 'tier2', 'prepare-e2e', 'selected-e2e', ...nightly]);
@@ -105,11 +129,23 @@ describe('CI execution evidence', () => {
   test('unit shard count agrees across the matrix, the shard step and the coverage manifest', () => {
     const job = unit.jobs.test as Job & { strategy: { matrix: { shard: number[] } } };
     const shards = job.strategy.matrix.shard;
-    expect(shards).toEqual(Array.from({ length: shards.length }, (_, i) => i + 1));
+    expect(shards).toEqual(Array.from({ length: UNIT_SHARDS }, (_, i) => i + 1));
     const run = job.steps.find(step => step.run?.includes('scripts/test-shard.sh'))!;
     expect(run.name).toBe(`Run test shard \${{ matrix.shard }}/${shards.length}`);
     expect(run.run).toContain(`scripts/test-shard.sh \${{ matrix.shard }} ${shards.length}`);
     const merge = unit.jobs['coverage-report'].steps.find(step => step.name === 'Merge lanes')!.run!;
+    const expected = /--manifest-expect (\S+)/.exec(merge)![1].split(',').filter(lane => lane.startsWith('shard-'));
+    expect(expected).toEqual(shards.map(shard => `shard-${shard}`));
+  });
+
+  test('the nightly coverage-full-unit lane runs the same unit partition', () => {
+    const job = e2e.jobs['coverage-full-unit'] as Job & { strategy: { matrix: { shard: number[] } } };
+    const shards = job.strategy.matrix.shard;
+    expect(shards).toEqual(Array.from({ length: UNIT_SHARDS }, (_, i) => i + 1));
+    const run = job.steps.find(step => step.run?.includes('scripts/test-shard.sh'))!;
+    expect(run.name).toBe(`Coverage shard \${{ matrix.shard }}/${UNIT_SHARDS}`);
+    expect(run.run).toBe(`scripts/test-shard.sh \${{ matrix.shard }} ${UNIT_SHARDS}`);
+    const merge = e2e.jobs['coverage-full-report'].steps.find(step => step.name === 'Merge full corpus')!.run!;
     const expected = /--manifest-expect (\S+)/.exec(merge)![1].split(',').filter(lane => lane.startsWith('shard-'));
     expect(expected).toEqual(shards.map(shard => `shard-${shard}`));
   });

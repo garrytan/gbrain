@@ -30,7 +30,8 @@ import { isWindowsColonTarget } from '../../core/persistence/native-file-target.
 import { ERROR_CATALOGUE } from '../../core/error-catalogue.ts';
 import { enginePoolStats } from '../../core/postgres-engine/pool-stats.ts';
 import type { SyncOpts, SyncResult } from '../sync.ts';
-import { clearLegacyHold, holdRefusedImport, noteScreenedImport, type LegacyHolds } from './holds.ts';
+import { clearLegacyHold, holdClassicFile, holdRefusedImport, noteScreenedImport, type LegacyHolds } from './holds.ts';
+import { classifyClassicFile } from '../../core/classic-file-holds.ts';
 import { partial, markCompleted, noteTypeWarning, maybeYield } from './sync-run.ts';
 import type { SyncPlan, SyncProgress, SyncRun } from './sync-run.ts';
 
@@ -276,6 +277,16 @@ async function importOnePath(run: SyncRun, ctx: ImportContext, eng: BrainEngine,
       + `Rename it without ':' on a macOS or Linux checkout and commit, then run gbrain sync${opts.sourceId ? ` --source ${opts.sourceId}` : ''} (${ERROR_CATALOGUE.colon_slug_windows_write_through.docs}).` });
     progressAt.last = Date.now();
     progress.tick(1, `skip:${path}`);
+    return;
+  }
+  // GBRA-133: a symlink, a permission error or a committed file missing from
+  // the working tree is held (re-screened every run), never failed: it stays
+  // out of failedFiles and the auto-skip streak, so it never gates the bookmark.
+  const unreadable = holds?.active && !company ? classifyClassicFile(syncRepoPath, path, gitContextRoot) : null;
+  if (unreadable && await holdClassicFile(eng, holds!, path, unreadable)) {
+    await markCompleted(run, path);
+    progressAt.last = Date.now();
+    progress.tick(1, `held:${path}`);
     return;
   }
   if (!company && !existsSync(filePath)) {

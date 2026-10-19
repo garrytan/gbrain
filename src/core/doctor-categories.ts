@@ -57,6 +57,8 @@ export type CheckCategory = 'brain' | 'skill' | 'ops' | 'meta';
 export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'abandoned_threads',
   'atom_provenance_drift',
+  // #7013: atoms an empty managed re-extraction retired that atoms-restore can bring back (doctor/checks/atom-retirements.ts).
+  'atom_retirements_restorable',
   'captured_facts_active',
   'conversation_label_facts',
   'conversation_outcomes_stale',

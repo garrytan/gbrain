@@ -4,7 +4,9 @@
  * the caller writes the hold and advances the cursor in one transaction. A
  * pinned Git blob over the sync read bound is held by its size before its
  * content is loaded. `sync_parser_regression` stops the run only when the
- * page's import provenance proves the exact bytes imported validated before.
+ * page's import provenance proves the exact bytes imported validated before
+ * and the refusal is not one this release makes on purpose (an intended
+ * refusal, such as #7018's alias bound, holds that page alone).
  * Dry runs screen every pending import read-only with batched Git reads.
  * #6188: the screen runs with `fences: 'coordinated'` (see `screenSyncImport`):
  * a fence Tier 1 rewrites losslessly is admitted (publication commits the
@@ -18,7 +20,7 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { loadImportSanityConfig, screenNormalized, type ContentRefusal, type ImportSanityConfig, type ImportScreenResult } from '../import-screen.ts';
 import { fencesNormalizeEnabled } from '../fence-repair/config.ts';
 import type { FenceFix } from '../fence-repair/types.ts';
-import { parseMarkdown, RECOVERY_VERSION } from '../markdown.ts';
+import { parseMarkdown, RECOVERY_VERSION, type IntendedRefusal } from '../markdown.ts';
 import { fenceMessage, type FenceMessageLocation } from '../fence-repair/reasons.ts';
 import { completeFenceLocation, FENCE_VERSION, type ReceiptFenceLocation } from '../fence-repair/refusal.ts';
 import { fenceFileLine } from '../fence-repair/hold-fix.ts';
@@ -34,7 +36,7 @@ import { readSyncContent, readSyncFile, syncGitPath, type SyncDiscovery, type Sy
 import { pinnedWindowBlock, readBlobBytes, readBlobContents, readPinnedBlob, readPinnedBytes, readPinnedContent, readTreeBlobs, SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { screenSyncImport, type SyncImportScreenInput } from './sync-prepare.ts';
 import type { SyncProcessingOptions } from './sync-authority.ts';
-import { gitHoldItem, readSyncHoldPolicy, readSyncImportProvenance, type GitHoldItem, type GitHoldRecord, type PreparationStallMeta, type SyncHoldPolicy } from './sync-holds.ts';
+import { gitHoldItem, readSyncHoldPolicy, readSyncImportProvenance, type GitHoldCode, type GitHoldItem, type GitHoldRecord, type PreparationStallMeta, type SyncHoldPolicy } from './sync-holds.ts';
 import type { WriteRequest } from './model.ts';
 
 type Snapshot = Awaited<ReturnType<BrainEngine['readPageSnapshot']>>;
@@ -119,6 +121,15 @@ export function heldImageEntry(cursor: SyncDiscovery & { index: number }, entry:
   if (!blob) { try { bytes = readSyncFile(cursor.root, entry.path); } catch (error) { if (!isSyncReadBound(error)) throw error; } }
   return managedImageHold(entry, bytes === null ? null : bytes.toString('utf8'), blob);
 }
+
+/**
+ * The hold each intended refusal (markdown.ts `IntendedRefusal`) earns when the page's provenance says a validating older
+ * gbrain imported the same bytes: that page alone is held, and the run goes on.
+ */
+const INTENDED_HOLDS: Record<IntendedRefusal, { code: GitHoldCode; cause: string; fix: string }> = {
+  yaml_alias_limit: { code: 'frontmatter_alias_limit', cause: 'its frontmatter YAML aliases expand past the size limit',
+    fix: 'Reduce the alias nesting in its frontmatter (or write the values out), or remove the file, then commit.' },
+};
 
 function heldEntry(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld'>, slug: string, pageId: number | null,
   refusal: { code: GitHoldRecord['code']; reason?: GitHoldRecord['meta']['reason']; key?: string; line?: number; message: string; fence?: FenceMessageLocation },
@@ -308,11 +319,18 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
   if (refusal.code === 'invalid_frontmatter' && snapshot && snapshot.page.deleted_at == null) {
     const provenance = await readSyncImportProvenance(engine, input.cursor.sourceId, input.cursor.incarnation, snapshot.page.id);
     if (provenance?.validated === true && provenance.raw_sha256 === sha256(content) && provenance.origin === entry.sourcePath) {
+      // A refusal this release makes on purpose holds that page alone; it is never a parser regression.
+      if (refusal.intended) {
+        const intended = INTENDED_HOLDS[refusal.intended];
+        return heldEntry(entry, slug, pageId, { code: intended.code, ...(refusal.line !== undefined ? { line: refusal.line } : {}),
+          message: `${entry.path} is held: ${intended.cause}${refusal.line !== undefined ? ` (line ${refusal.line})` : ''}, which gbrain ${VERSION} refuses on purpose although gbrain ${provenance.gbrain_version} `
+            + `imported these exact bytes. ${intended.fix} The rest of the source keeps syncing.` }, content, blob);
+      }
       const why = `gbrain ${VERSION} refuses ${entry.path} (${refusal.reason ?? 'yaml_parse'}${refusal.line !== undefined ? `, line ${refusal.line}` : ''}), but gbrain ${provenance.gbrain_version} imported these exact bytes and validated them.`;
       if (run.policy.parserRegression === 'hold') return heldEntry(entry, slug, pageId, { code: 'parser_regression', message: `${why} Held under GBRAIN_SYNC_PARSER_REGRESSION=hold.` }, content, blob);
       throw opError('sync_parser_regression', `Sync stopped: ${why}`,
         `This is a gbrain bug. Report it with the gbrain version (${VERSION}), the file (${entry.path}) and the code (${refusal.code}${refusal.reason ? `/${refusal.reason}` : ''}). `
-          + `Upgrade, or pin the last good version (${provenance.gbrain_version}), then run: ${input.retryCommand}. To hold such files and let the rest sync meanwhile, the user can set GBRAIN_SYNC_PARSER_REGRESSION=hold for the process that syncs.`,
+          + `Upgrade, or set GBRAIN_SYNC_PARSER_REGRESSION=hold for the process that syncs (it holds such files and lets the rest sync meanwhile), and never pin a release older than 0.60.305.0; then run: ${input.retryCommand}.`,
         { fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
           why: 'Collects the gbrain version and brain health to attach to the bug report; the sync checkpoint did not advance past this file.' } });
     }

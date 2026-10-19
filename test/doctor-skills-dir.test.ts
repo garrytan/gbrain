@@ -82,7 +82,7 @@ async function runDoctorJson(args: string[], env: Record<string, string | undefi
   } finally {
     console.log = origLog;
     process.exit = origExit;
-    process.exitCode = origExitCode;
+    process.exitCode = origExitCode ?? 0;
   }
   const lines = captured.join('').split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {

@@ -33,7 +33,8 @@
  */
 import { execFileSync } from './spawn.ts';
 import { buildSyncManifest, type SyncManifest } from './sync.ts';
-import { gitChildEnv } from './git-env.ts';
+import { GIT_READ_ENV, gitChildEnv } from './git-env.ts';
+import { classifyGitPathBytes, displayBytePath, type UnsupportedPathReason } from './sync-byte-paths.ts';
 
 /** Runs a git subcommand in `repoPath` and returns trimmed stdout (throws on failure). */
 export type GitRunner = (repoPath: string, args: string[]) => string;
@@ -44,7 +45,7 @@ export type GitRunner = (repoPath: string, args: string[]) => string;
 // would ENOBUFS-crash the sync with no log line).
 const DEFAULT_GIT_RUNNER: GitRunner = (repoPath, args) =>
   execFileSync('git', ['-c', 'core.quotepath=false', '-C', repoPath, ...args], {
-    env: gitChildEnv(),
+    env: gitChildEnv(GIT_READ_ENV),
     encoding: 'utf-8',
     timeout: 30_000,
     maxBuffer: 100 * 1024 * 1024,
@@ -157,4 +158,130 @@ export function computeSyncDelta(
         ? buildDetachedWorkingTreeManifest(repoPath, run)
         : null;
   return { status: 'ok', manifest: detached ? mergeSyncManifests(manifest, detached) : manifest };
+}
+
+/** Runs a read-only git subcommand in `repoPath` and returns its stdout bytes untouched (throws on failure). */
+export type GitBytesRunner = (repoPath: string, args: string[]) => Buffer;
+
+const DEFAULT_GIT_BYTES_RUNNER: GitBytesRunner = (repoPath, args) =>
+  execFileSync('git', ['-C', repoPath, ...args], { env: gitChildEnv(GIT_READ_ENV), timeout: 30_000, maxBuffer: 100 * 1024 * 1024 });
+
+let _gitBytesRunner: GitBytesRunner = DEFAULT_GIT_BYTES_RUNNER;
+
+/** Test seam for the lossless parser; `null` restores the default. */
+export function _setGitBytesRunnerForTests(fn: GitBytesRunner | null): void {
+  _gitBytesRunner = fn ?? DEFAULT_GIT_BYTES_RUNNER;
+}
+
+/** A delta path that is not a usable page path (not UTF-8, or a control character), as its exact bytes. */
+export interface UnsupportedGitPath { raw: Buffer; reason: UnsupportedPathReason }
+
+/**
+ * Classic sync's delta read as bytes (GBRA-133): the manifest of every path that decodes as UTF-8 without a control
+ * character, exactly as Git has it (no trim, no unquoting), plus what the text manifest cannot carry: `unsupported`
+ * paths present after the range, `gone` unsupported paths that left the tree, and gitlinks (submodules, embedded
+ * repositories) that appeared, which sync does not follow.
+ */
+export interface LosslessDelta {
+  manifest: SyncManifest;
+  unsupported: UnsupportedGitPath[];
+  gone: Buffer[];
+  gitlinks: string[];
+}
+
+export type LosslessDeltaResult = ({ status: 'ok' } & LosslessDelta) | { status: 'unavailable'; reason: 'anchor_missing' | 'diff_failed' };
+
+function splitNul(out: Buffer): Buffer[] {
+  const fields: Buffer[] = [];
+  for (let start = 0; start < out.length;) {
+    const end = out.indexOf(0, start);
+    if (end === -1) { fields.push(out.subarray(start)); break; }
+    fields.push(out.subarray(start, end));
+    start = end + 1;
+  }
+  return fields;
+}
+
+/** Parses `git diff --raw -z -M` output. Status letters map as `buildSyncManifest` maps them; a gitlink (mode 160000) never enters the manifest. */
+export function parseRawDiffZ(out: Buffer): LosslessDelta {
+  const delta: LosslessDelta = { manifest: { added: [], modified: [], deleted: [], renamed: [] }, unsupported: [], gone: [], gitlinks: [] };
+  const { manifest } = delta;
+  const present = (raw: Buffer, list: string[]) => {
+    const parsed = classifyGitPathBytes(raw);
+    if ('path' in parsed) list.push(parsed.path);
+    else delta.unsupported.push({ raw: Buffer.from(raw), reason: parsed.reason });
+  };
+  const left = (raw: Buffer) => {
+    const parsed = classifyGitPathBytes(raw);
+    if ('path' in parsed) manifest.deleted.push(parsed.path);
+    else delta.gone.push(Buffer.from(raw));
+  };
+  const gitlink = (raw: Buffer) => {
+    const parsed = classifyGitPathBytes(raw);
+    delta.gitlinks.push('path' in parsed ? parsed.path : displayBytePath(raw));
+  };
+  const fields = splitNul(out);
+  for (let i = 0; i < fields.length;) {
+    const header = fields[i++]!.toString('latin1');
+    if (!header.startsWith(':')) continue;
+    const [oldMode, newMode, , , status = ''] = header.slice(1).split(' ');
+    const action = status[0];
+    const first = fields[i++];
+    if (!first) break;
+    const oldLink = oldMode === '160000', newLink = newMode === '160000';
+    if (action === 'R' || action === 'C') {
+      const second = fields[i++];
+      if (!second) break;
+      if (action === 'C') { present(second, manifest.added); continue; }
+      const from = classifyGitPathBytes(first), to = classifyGitPathBytes(second);
+      if ('path' in from && 'path' in to) {
+        const similarity = Number(status.slice(1));
+        manifest.renamed.push({ from: from.path, to: to.path, ...(status.length > 1 && Number.isInteger(similarity) ? { similarity } : {}) });
+        continue;
+      }
+      if (!('path' in from)) delta.gone.push(Buffer.from(first));
+      present(second, manifest.added);
+      continue;
+    }
+    if (newLink && !oldLink) {
+      gitlink(first);
+      if (action !== 'A') left(first);
+      continue;
+    }
+    if (oldLink && newLink) continue;
+    if (action === 'A') present(first, manifest.added);
+    else if (action === 'M' || action === 'T' || action === 'U') present(first, manifest.modified);
+    else if (action === 'D' && !oldLink) left(first);
+  }
+  return delta;
+}
+
+/** `computeSyncDelta` read as bytes (classic sync); the same anchor and diff ladder. */
+export function computeLosslessSyncDelta(repoPath: string, fromCommit: string, toCommit: string): LosslessDeltaResult {
+  const run = _gitBytesRunner;
+  try {
+    run(repoPath, ['cat-file', '-t', fromCommit]);
+  } catch {
+    return { status: 'unavailable', reason: 'anchor_missing' };
+  }
+  let out: Buffer;
+  try {
+    out = run(repoPath, ['diff', '--raw', '-z', '-M', `${fromCommit}..${toCommit}`]);
+  } catch {
+    return { status: 'unavailable', reason: 'diff_failed' };
+  }
+  return { status: 'ok', ...parseRawDiffZ(out) };
+}
+
+/** `buildDetachedWorkingTreeManifest` read as bytes (classic sync): tracked changes against HEAD plus untracked files. */
+export function buildLosslessWorkingTreeManifest(repoPath: string): LosslessDelta {
+  const run = _gitBytesRunner;
+  const delta = parseRawDiffZ(run(repoPath, ['diff', '--raw', '-z', '-M', 'HEAD']));
+  for (const raw of splitNul(run(repoPath, ['ls-files', '-z', '--others', '--exclude-standard']))) {
+    if (raw.length === 0) continue;
+    const parsed = classifyGitPathBytes(raw);
+    if ('path' in parsed) delta.manifest.added.push(parsed.path);
+    else delta.unsupported.push({ raw: Buffer.from(raw), reason: parsed.reason });
+  }
+  return { ...delta, manifest: { ...delta.manifest, added: unique(delta.manifest.added), modified: unique(delta.manifest.modified), deleted: unique(delta.manifest.deleted) } };
 }

@@ -11,15 +11,13 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 
 import type { BrainEngine } from '../engine.ts';
 import { withPageLock } from '../page-lock.ts';
 import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
-import { resolvePageWriteTarget } from '../write-through.ts';
+import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
-import { parseMarkdown } from '../markdown.ts';
-import { sanitizeText } from '../batch-rows.ts';
 import { contentHash } from '../utils.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { rewriteLiveSegmentedFences } from '../page-body/segment-rewrite.ts';
@@ -27,7 +25,9 @@ import type { BodyRegion } from '../page-body/types.ts';
 import { recordFactWithdrawal } from './withdrawal.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { markBeliefCommits } from '../belief/append.ts';
+import { classifyItemFailure } from '../item-failure.ts';
 import { withdrawnFact } from './withdrawal-overlay.ts';
+import { bestEffortStoredBodyMirror, fileBodyMatchesStored, fileDatabaseDriftToken, mirrorFileBody, readStoredBody } from './file-body-guard.ts';
 
 export interface ForgetFactResult {
   /** True iff the row was found AND a forget was applied (fence or DB). */
@@ -36,6 +36,8 @@ export interface ForgetFactResult {
   path: 'fence' | 'legacy_db' | 'not_found' | 'already_expired';
   /** Human-readable reason captured in `context`; mirrors back what was written. */
   reason: string;
+  /** A held mirror does not undo the authoritative withdrawal or expiry. */
+  warning?: string;
 }
 
 interface FactDbRow {
@@ -197,9 +199,11 @@ export async function forgetFactInFence(
       return strikeFenceRow(fence, row.row_num!, strikeRow) ?? fence;
     }));
   };
+  let mirrorWarning: string | undefined;
   const strikeDbBody = async (): Promise<void> => {
     if (row.row_num === null || row.source_markdown_slug === null) return;
     const slug = row.source_markdown_slug;
+    const expected = await readStoredBody(engine, row.source_id, slug);
     const page = await engine.getPage(slug, { sourceId: row.source_id });
     if (!page) return;
     if (isSegmentedPage(page)) return strikeSegments(page.id, ['truth']);
@@ -210,8 +214,16 @@ export async function forgetFactInFence(
     // content_chunks with the live claim for good. A row-shaped hash over the
     // struck body can never equal the unchanged file's, so the next sync
     // re-imports + re-chunks through the withdrawal overlay.
-    await maintenanceTransaction(engine, tx => tx.refreshPageBody(slug, row.source_id, struck, page.timeline ?? '',
-      contentHash({ ...page, compiled_truth: struck })));
+    await maintenanceTransaction(engine, async tx => {
+      const current = await readStoredBody(tx, row.source_id, slug, true);
+      if (!current || !expected || current.compiled_truth !== expected.compiled_truth || current.timeline !== expected.timeline) {
+        mirrorWarning = `${slug} (revision_conflict: the database body changed while the withdrawal mirror ran; the withdrawal or supersession remains authoritative. Read the current page and re-save it to refresh the physical mirror)`;
+        console.warn(`[facts.forget] ${mirrorWarning}`);
+        return;
+      }
+      await tx.createVersion(slug, { sourceId: row.source_id });
+      await tx.refreshPageBody(slug, row.source_id, struck, page.timeline ?? '', contentHash({ ...page, compiled_truth: struck }));
+    });
   };
 
   // DB-only path: the withdrawal remains authoritative during reimport.
@@ -223,9 +235,9 @@ export async function forgetFactInFence(
     if (ok && row.source_markdown_slug !== null) {
       const slug = row.source_markdown_slug;
       await (locked ? strikeDbBody() : withPageLock(slug, strikeDbBody, { timeoutMs: 5_000 }))
-        .catch(() => { /* best-effort, see above */ });
+        .catch(err => { if (classifyItemFailure(err).scope === 'run') throw err; });
     }
-    return { ok, path: 'legacy_db', reason };
+    return { ok, path: 'legacy_db', reason, ...(mirrorWarning ? { warning: mirrorWarning } : {}) };
   };
 
   // Fence path requires: v51 columns set + source.local_path set.
@@ -235,6 +247,7 @@ export async function forgetFactInFence(
     row.entity_slug !== null;
 
   if (!canFence) return legacyExpire();
+  if (await isWriteThroughDisabled(engine)) return legacyExpire();
 
   // Look up source.local_path.
   const sources = await engine.executeRaw<SourceRow>(
@@ -269,6 +282,15 @@ export async function forgetFactInFence(
 
     return withPageLock(slug, async () => {
       const body = readFileSync(filePath, 'utf-8');
+      const page = await engine.getPage(slug, { sourceId: row.source_id });
+      const segmented = page && isSegmentedPage(page);
+      const stored = segmented ? null : await readStoredBody(engine, row.source_id, slug);
+      const held = (when: 'before' | 'during'): ForgetFactResult => {
+        const warning = fileDatabaseDriftToken(slug, row.source_id, when, 'the withdrawal or supersession remains authoritative; only its page mirror is held');
+        console.warn(`[facts.forget] ${warning}`);
+        return { ok: true, path: 'legacy_db', reason, warning };
+      };
+      if (!segmented && (stored ? !fileBodyMatchesStored(body, slug, stored) : page !== null)) return held('before');
       // Fence missing the row (DB drifted from markdown) or its markers (race /
       // corruption): fall through to legacy expire so the user's intent
       // succeeds; doctor surfaces the drift separately.
@@ -284,6 +306,28 @@ export async function forgetFactInFence(
         // Quarantine .tmp; leave the canonical file alone; fall back to
         // DB expire so the user's forget intent still succeeds.
         return legacyExpire(true);
+      }
+      if (!segmented) {
+        const written = await maintenanceTransaction(engine, async tx => {
+          if (!existsSync(filePath) || readFileSync(filePath, 'utf-8') !== body) return false;
+          if (stored ? !await bestEffortStoredBodyMirror(tx, row.source_id, slug, stored,
+            savepoint => mirrorFileBody(savepoint, row.source_id, slug, tmpBody, stored), err => {
+              mirrorWarning = `FACTS_PAGE_MIRROR_FAILED: ${slug} (source ${row.source_id}): ${err instanceof Error ? err.message : String(err)}; page cache stale until gbrain sync --source ${row.source_id}`;
+              console.warn(`[facts.forget] ${mirrorWarning}`);
+            }) : await readStoredBody(tx, row.source_id, slug, true)) return false;
+          if (!existsSync(filePath) || readFileSync(filePath, 'utf-8') !== body) throw new WithdrawalFileChanged();
+          assertSourceFilesystemActive();
+          renameSync(tmpPath, filePath);
+          return true;
+        }).catch(err => {
+          if (err instanceof WithdrawalFileChanged) return false;
+          throw err;
+        });
+        if (!written) {
+          rmSync(tmpPath, { force: true });
+          return held('during');
+        }
+        return { ok: true, path: 'fence', reason, ...(mirrorWarning ? { warning: mirrorWarning } : {}) };
       }
       renameSync(tmpPath, filePath);
 
@@ -309,17 +353,11 @@ export async function forgetFactInFence(
       // hash of its pre-mirror content, which the rewritten file can't match.
       // Best-effort — file + facts row are already correct.
       try {
-        const reparsed = parseMarkdown(tmpBody, `${slug}.md`);
         const page = await engine.getPage(slug, { sourceId: row.source_id });
         // The withdrawal already struck the segmented row with the overlay's reason; it takes the file's row, as the
         // inline body takes the file's text, so the caller's reason reaches the stored body.
         const fileRow = parseFactsFence(tmpBody).facts.find(f => f.rowNum === targetRowNum);
         if (page && isSegmentedPage(page)) await strikeSegments(page.id, ['truth', 'timeline'], fileRow ? () => fileRow : strike);
-        else if (page) {
-          await maintenanceTransaction(engine, tx => tx.refreshPageBody(slug, row.source_id,
-            sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline),
-            page.content_hash || contentHash(page)));
-        }
       } catch { /* degrades to the pre-#4696 window (stale until the next sync) */ }
 
       return { ok: true, path: 'fence', reason };
@@ -329,3 +367,5 @@ export async function forgetFactInFence(
     ? mirrorWithdrawal()
     : withSourceFilesystemLock(engine, resolved.writeRoot, mirrorWithdrawal);
 }
+
+class WithdrawalFileChanged extends Error {}

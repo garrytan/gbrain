@@ -11,6 +11,11 @@ name: CI health
 # wave merges) and opens a follow-up issue when a target is missed. Reads
 # runs, jobs, check-run annotations and issues only (no logs, no fork runs
 # or artifacts). nightly-watch watches this workflow like any scheduled one.
+# A second step writes the CI cost ledger (scripts/ci-cost-ledger.ts) to the
+# step summary: Ubicloud runner $/week by workflow, event and conclusion and
+# the median $/run of green Test and E2E runs against
+# scripts/ci-cost-baseline.json. It is report-only: a rise over 20% shows as
+# a warning annotation, never a red run.
 
 on:
   schedule:
@@ -67,3 +72,8 @@ jobs:
           [ -z "$UNTIL" ] || args+=(--until "$UNTIL")
           [ -z "$DRY_RUN" ] || args+=("$DRY_RUN")
           bun scripts/ci-health-report.ts "${args[@]}"
+      - name: CI cost ledger (report only)
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/ci-cost-ledger.ts --repo "$GITHUB_REPOSITORY" --report-only --step-summary --max-requests 500

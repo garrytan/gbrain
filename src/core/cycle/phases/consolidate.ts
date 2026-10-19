@@ -28,6 +28,7 @@ import type { BrainEngine, FactRow } from '../../engine.ts';
 import type { PhaseResult } from '../../cycle.ts';
 import { cosineSimilarity } from '../../facts/classify.ts';
 import { claimsDiverge, EXPLICIT_DUPLICATE_THRESHOLD } from '../../facts/capture-dedup.ts';
+import { sameInstantTies, type SameInstantTie } from '../../facts/claim-ties.ts';
 import { createHash } from 'node:crypto';
 import { isAborted } from '../../abort-check.ts';
 import { classifyItemFailure, ItemRun } from '../../item-failure.ts';
@@ -156,6 +157,8 @@ export async function runPhaseConsolidate(
   let clustersSkippedRetired = 0;
   let clustersGateHeld = 0;
   let clustersGateRejected = 0;
+  let clustersHeldSameInstant = 0;
+  const sameInstantClusters: SameInstantCluster[] = [];
   // #6023: a dry run lists the clusters it would write so an operator can
   // inspect them before `--yes`; capped so the envelope stays bounded.
   const preview: ConsolidateClusterPreview[] = [];
@@ -263,6 +266,8 @@ export async function runPhaseConsolidate(
 
       for (const cluster of clusters) {
         if (cluster.length < 2) continue;
+        const tie = clusterTie(cluster, claims);
+        if (tie) { clustersHeldSameInstant += 1; if (sameInstantClusters.length < SAME_INSTANT_SAMPLES) sameInstantClusters.push(heldCluster(b, tie)); continue; }
         // Take selection: pick the highest-confidence fact's text as the
         // take claim (v0.31 deterministic). v0.32 will swap to a Sonnet
         // synthesis pass.
@@ -297,6 +302,7 @@ export async function runPhaseConsolidate(
           factsConsolidated += Number(receipt.facts_consolidated ?? 0);
           takesWritten += Number(receipt.takes_written ?? 0);
           if (receipt.reason === 'retired_take') clustersSkippedRetired++;
+          if (receipt.reason === 'same_instant_typed_claims') clustersHeldSameInstant++;
           continue;
         }
 
@@ -400,15 +406,16 @@ export async function runPhaseConsolidate(
 
   return {
     phase: 'consolidate',
-    status: bucketsFailed > 0 ? 'warn' : factsConsolidated === 0 && clustersSkippedRetired > 0 ? 'skipped' : 'ok',
+    status: bucketsFailed > 0 || clustersHeldSameInstant > 0 ? 'warn' : factsConsolidated === 0 && clustersSkippedRetired > 0 ? 'skipped' : 'ok',
     duration_ms: 0,
-    summary: dryRun
+    summary: (dryRun
       ? `(dry-run) would promote ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} buckets`
       : `promoted ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} buckets` +
         (clustersSkippedRetired ? `; skipped ${clustersSkippedRetired} clusters with retired takes` : '') +
         (clustersGateHeld ? `; held ${clustersGateHeld} takes for write-gate review` : '') +
         (clustersGateRejected ? `; write gate rejected ${clustersGateRejected} takes` : '') +
-        (bucketsFailed ? `; ${bucketsFailed} bucket(s) failed (details.bucket_failures)` : ''),
+        (bucketsFailed ? `; ${bucketsFailed} bucket(s) failed (details.bucket_failures)` : '')) +
+      (clustersHeldSameInstant ? `; held ${clustersHeldSameInstant} cluster(s) whose typed claims state one metric for the same effective time (details.same_instant_clusters)` : ''),
     details: {
       dryRun,
       cluster_threshold: threshold,
@@ -422,6 +429,8 @@ export async function runPhaseConsolidate(
       clusters_skipped_retired: clustersSkippedRetired,
       clusters_gate_held: clustersGateHeld,
       clusters_gate_rejected: clustersGateRejected,
+      clusters_held_same_instant: clustersHeldSameInstant,
+      same_instant_clusters: sameInstantClusters,
       buckets_failed: bucketsFailed,
       bucket_failures: bucketFailures,
       ...(factsConsolidated === 0 && clustersSkippedRetired > 0 ? { reason: 'retired_take' } : {}),
@@ -441,6 +450,34 @@ async function gateNewTake(engine: BrainEngine, derivation: { trust: WriteTrust;
     input: { tier: derivation.trust.tier, origin: derivation.trust.origin, requestId: null }, cfg });
   if (gate.action === 'hold') await derivedMaintenanceTransaction(engine, derivation, async tx => ({ result: await recordWriteGateHold(tx, gate.hold!), rows: [] }));
   return gate;
+}
+
+/** One cluster held because two or more of its typed claims tie at one effective instant (`details.same_instant_clusters`). */
+export interface SameInstantCluster {
+  source_id: string;
+  entity_slug: string;
+  metric: string;
+  unit: string | null;
+  period: string | null;
+  valid_from: string;
+  fact_ids: number[];
+  fix: Action;
+}
+const SAME_INSTANT_SAMPLES = 20;
+
+function clusterTie(cluster: FactRow[], claims: Map<number, ClaimShape>): SameInstantTie | undefined {
+  return sameInstantTies(cluster.map(f => ({ id: f.id, at: f.valid_from.getTime(), metric: claims.get(f.id)?.metric ?? null,
+    unit: claims.get(f.id)?.unit ?? null, period: claims.get(f.id)?.period ?? null })))[0];
+}
+
+function heldCluster(bucket: { source_id: string; entity_slug: string }, tie: SameInstantTie): SameInstantCluster {
+  const validFrom = new Date(tie.at).toISOString();
+  const claim = [tie.metric, tie.unit, tie.period].filter(Boolean).join(', ');
+  return { source_id: bucket.source_id, entity_slug: bucket.entity_slug, metric: tie.metric, unit: tie.unit, period: tie.period, valid_from: validFrom,
+    fact_ids: tie.ids, fix: { ask_user: true, argv: ['gbrain', 'forget', '<FACT_ID>'], consent: [], actor: 'agent', requires_exclusive: false,
+      inputs: [{ name: 'FACT_ID', how: `One of facts ${tie.ids.join(', ')}: the statement the user says is no longer current; for exact duplicates, any one of them.` }],
+      why: 'Consolidation cannot order statements of one metric at one effective time, so it left the cluster unchanged; forgetting the stale one lets the next consolidate run promote the rest.',
+      user_message: `Facts ${tie.ids.join(', ')} on ${bucket.entity_slug} state ${claim} for the same effective time (${validFrom}), and gbrain cannot tell which one is current, so it left them unconsolidated. Which one should stay? The other is forgotten, and the next consolidate run promotes the cluster.` } };
 }
 
 /** The typed-claim columns of a fact (FactRow does not carry them). */

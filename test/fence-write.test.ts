@@ -804,8 +804,8 @@ describe('writeFactsToFence — durability latch recovery', () => {
         installFakeDurabilityHook(brainDir);
         const filePath = join(brainDir, 'people/race.md');
 
-        // Gate writer A between its rename and its commit (insertFacts sits
-        // between the two), so writer B arrives while A's content is renamed
+        // Gate writer A after its publishing transaction and before its git commit,
+        // so writer B arrives while A's content is renamed
         // into place but not yet committed — the false preexisting_dirty
         // shape from the out-of-lock prewrite snapshot.
         let release: () => void = () => {};
@@ -813,11 +813,11 @@ describe('writeFactsToFence — durability latch recovery', () => {
         let gated = false;
         const gatedEngine = Object.create(engine) as typeof engine;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        // The insert runs on a transaction engine derived from gatedEngine: delegate with `this`.
-        (gatedEngine as any).insertFacts = async function (this: typeof engine, rows: unknown, opts: unknown) {
-          if (!gated) { gated = true; await gate; }
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          return (engine as any).insertFacts.call(this, rows, opts);
+        // The transaction engine is derived from gatedEngine: delegate with `this`.
+        (gatedEngine as any).transaction = async function (this: typeof engine, fn: Parameters<typeof engine.transaction>[0]) {
+          const result = await engine.transaction.call(this, fn);
+          if (!gated && existsSync(filePath) && readFileSync(filePath, 'utf-8').includes('Writer A fact')) { gated = true; await gate; }
+          return result;
         };
 
         const a = writeFactsToFence(

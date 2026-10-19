@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-10-18T20:08:06Z",
+  "window": {
+    "since": "2026-10-16T20:08:06Z",
+    "until": "2026-10-18T20:08:06Z"
+  },
+  "threshold": 0.2,
+  "note": "Median $/run of successful runs from scripts/ci-cost-ledger.ts --write-baseline; refresh it in the PR that intentionally changes CI cost.",
+  "median_usd_per_run": {
+    "Test|pull_request": 1.4394,
+    "Test|push": 1.3425,
+    "E2E Tests|pull_request": 0.3312,
+    "E2E Tests|push": 0.3275
+  },
+  "green_runs_read": {
+    "Test|pull_request": 110,
+    "Test|push": 28,
+    "E2E Tests|pull_request": 180,
+    "E2E Tests|push": 36
+  }
+}

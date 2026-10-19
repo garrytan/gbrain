@@ -9,7 +9,7 @@
  */
 
 import { describe, test, expect, afterEach } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { MinionJobContext } from '../src/core/minions/types.ts';
@@ -39,15 +39,24 @@ function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
-async function waitForFiles(paths: string[], ms = 10_000): Promise<void> {
+// `echo $$ > f` creates f before it writes the pid, so an existing file can still be empty. An empty read is pid 0,
+// which alive() reports live (kill(0, 0) signals the process group) and the cleanup's SIGKILL would send to this
+// test's own process group. Wait for every file to hold a pid.
+async function waitForPids(paths: string[], ms = 10_000): Promise<number[]> {
   const deadline = Date.now() + ms;
-  while (!paths.every(existsSync)) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${paths.join(', ')}`);
+  for (;;) {
+    const pids = paths.map(path => existsSync(path) ? Number(readFileSync(path, 'utf8').trim()) : NaN);
+    if (pids.every(n => Number.isInteger(n) && n > 0)) return pids;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for a pid in ${paths.join(', ')}`);
     await new Promise(r => setTimeout(r, 25));
   }
 }
 
-const pid = (path: string) => Number(readFileSync(path, 'utf8').trim());
+const pid = (path: string) => {
+  const n = Number(readFileSync(path, 'utf8').trim());
+  if (!Number.isInteger(n) || n <= 0) throw new Error(`${path} holds no pid`);
+  return n;
+};
 const dirs: string[] = [];
 const leftovers: number[] = [];
 afterEach(() => {
@@ -61,6 +70,14 @@ function scratch(): string {
 }
 
 describePosix('#5062 shell handler process tree', () => {
+  test('a pid file that exists before its pid is written is waited for, never read as pid 0', async () => {
+    const d = scratch();
+    const path = join(d, 'late.pid');
+    writeFileSync(path, '');
+    setTimeout(() => writeFileSync(path, `${process.pid}\n`), 200);
+    expect(await waitForPids([path])).toEqual([process.pid]);
+  });
+
   test('abort kills a leader and grandchild that both ignore SIGTERM (escalates by liveness)', async () => {
     const d = scratch();
     const cmd = [
@@ -72,8 +89,7 @@ describePosix('#5062 shell handler process tree', () => {
     await withEnv({ GBRAIN_ALLOW_SHELL_JOBS: '1' }, async () => {
       const ac = new AbortController();
       const run = shellHandler(makeCtx({ cmd, cwd: d }, ac.signal));
-      await waitForFiles([`${d}/leader.pid`, `${d}/grandchild.pid`]);
-      const tree = [pid(`${d}/leader.pid`), pid(`${d}/grandchild.pid`)];
+      const tree = await waitForPids([`${d}/leader.pid`, `${d}/grandchild.pid`]);
       leftovers.push(...tree);
       ac.abort(new Error('cancel'));
       await expect(run).rejects.toThrow(/aborted/);
@@ -91,8 +107,7 @@ describePosix('#5062 shell handler process tree', () => {
     await withEnv({ GBRAIN_ALLOW_SHELL_JOBS: '1' }, async () => {
       const ac = new AbortController();
       const run = shellHandler(makeCtx({ cmd, cwd: d }, ac.signal));
-      await waitForFiles([`${d}/leader.pid`, `${d}/grandchild.pid`]);
-      const grandchild = pid(`${d}/grandchild.pid`);
+      const [, grandchild] = await waitForPids([`${d}/leader.pid`, `${d}/grandchild.pid`]);
       leftovers.push(grandchild);
       ac.abort(new Error('cancel'));
       await expect(run).rejects.toThrow(/aborted/);

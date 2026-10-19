@@ -345,6 +345,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'stale_embedding_effects',
     'google_file_modes',
     'google_calendar_readable',
+    'atom_retirements_restorable',
     'extractor_facts_expired',
     'conversation_label_facts',
     'conversation_outcomes_stale',

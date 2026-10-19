@@ -181,7 +181,13 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     return runGitDurabilityAdministration(engine, params);
   }
   if (operation === 'writer_retry_effects') {
-    keys(params, ['source_id', 'request_id', 'dry_run', 'admin_intent', 'expected_state']);
+    keys(params, ['source_id', 'request_id', 'dry_run', 'admin_intent', 'expected_state', 'parked_pushes']);
+    if (params.parked_pushes === true) {
+      if (params.request_id !== undefined || params.admin_intent !== undefined || params.expected_state !== undefined) throw invalid(
+        '--parked-pushes retries every parked push of the source; it takes no --request-id or admin intent.',
+        'Run gbrain sources writer retry-effects <source> --parked-pushes [--dry-run], or name one request with --request-id instead.');
+      return (await import('./git-durability-administration.ts')).retrySourceParkedPushes(engine, source(params.source_id), params.dry_run === true);
+    }
     if (!isWriteRequestId(params.request_id)) throw invalid('A valid original write request UUID is required.',
       'Pass --request-id with the original write\'s request id (a UUID); gbrain sources writer status for that source lists blocked effects with their request ids.',
       typeof params.source_id === 'string' && isValidSourceId(params.source_id)

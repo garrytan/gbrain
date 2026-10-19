@@ -107,13 +107,13 @@ src/core/cycle/chronicle.ts	discover	sql	STREAM
 src/core/cycle/concept-publication.ts	composeConceptRepublication	call:serializeMarkdown	INLINE	
 src/core/cycle/concept-publication.ts	composeConceptRepublication	field	INLINE	
 src/core/cycle/concept-publication.ts	conceptPreservationHold	field	INLINE	
-src/core/cycle/concept-publication.ts	fileHoldsPage	field	INLINE	
 src/core/cycle/concept-publication.ts	preserveCanonicalFences	call:serializeMarkdown	INLINE	after assertInlineBody
 src/core/cycle/concept-publication.ts	preserveCanonicalFences	field	INLINE	assertInlineBody: refuses a segmented page (concept pages inline; enrich/connector callers SEGW)
 src/core/cycle/concept-publication.ts	publishClassicConcept	call:serializeMarkdown	INLINE	
 src/core/cycle/concept-publication.ts	publishClassicConcept	field	INLINE	
 src/core/cycle/concept-publication.ts	publishManagedConcept	call:serializeMarkdown	INLINE	
 src/core/cycle/dream-taint.ts	putDerivedPage	call:putPage	SEGW	
+src/core/cycle/dream-taint.ts	putDerivedPage	field	SEGW	compares the prior body from readStoredBody; a segmented prior reads NULL, so it is versioned before the putPage
 src/core/cycle/drift.ts	runPhaseDrift	call:putPage	INLINE	
 src/core/cycle/drift.ts	runPhaseDrift	call:serializeMarkdown	INLINE	
 src/core/cycle/edge-contradictions.ts	removeTimelineLine	call:serializeMarkdown	SEGW	
@@ -145,9 +145,10 @@ src/core/cycle/phantom-redirect-managed.ts	redirectManagedPhantom	field	SEGW	seg
 src/core/cycle/phantom-redirect.ts	fenceDbDrift	field	SEGW	segmented page: getter throws page_body_segmented
 src/core/cycle/phantom-redirect.ts	materializeCanonicalToDisk	call:serializeMarkdown	SEGW	canonical asserted inline by the caller
 src/core/cycle/phantom-redirect.ts	materializeCanonicalToDisk	field	SEGW	canonical asserted inline by the caller
+src/core/cycle/phantom-redirect.ts	mergeIntoCanonicalBody	field	SEGW	canonical asserted inline by tryRedirectPhantom before the merge
+src/core/cycle/phantom-redirect.ts	mergeIntoCanonicalFile	call:contentHash	META	hash of the reparsed inline file
+src/core/cycle/phantom-redirect.ts	mergeIntoCanonicalFile	field	SEGW	canonical asserted inline by tryRedirectPhantom before the merge
 src/core/cycle/phantom-redirect.ts	phantomHasResidue	field	SEGW	phantom stubs are small; segmented page: getter throws page_body_segmented
-src/core/cycle/phantom-redirect.ts	tryRedirectPhantom	call:contentHash	META	hash of the reparsed inline file
-src/core/cycle/phantom-redirect.ts	tryRedirectPhantom	call:refreshPageBody	SEGW	assertInlineBody on the canonical first
 src/core/cycle/phantom-redirect.ts	tryRedirectPhantom	field	SEGW	canonical target asserted inline before the disk fence append; per-phantom throw is logged and the walk continues
 src/core/cycle/propose-takes.ts	listCandidatePages	sql	STREAM	
 src/core/cycle/propose-takes.ts	ProposeTakesPhase.process	call:contentHash	META	
@@ -213,9 +214,14 @@ src/core/facts/backstop.ts	runFactsBackstop	field	STREAM
 src/core/facts/backstop.ts	runPipeline	field	STREAM	
 src/core/facts/drain.ts	estimateBacklogUsd	sql	META	
 src/core/facts/eligibility.ts	isFactsBackstopEligible	field	LEAD	
-src/core/facts/fence-write.ts	writeFactsToFence	call:contentHash	META	
-src/core/facts/fence-write.ts	writeFactsToFence	call:refreshPageBody	SEGW	
-src/core/facts/fence-write.ts	writeFactsToFence	field	SEGW	
+src/core/facts/file-body-guard.ts	fileBodyMatchesStored	field	SEGW	a segmented page reads NULL inline columns, never matches, and the caller holds it (nothing written)
+src/core/facts/file-body-guard.ts	mirroredBody	field	NONE	the parsed checkout file body, not a page row
+src/core/facts/file-body-guard.ts	readStoredBody	sql	SEGW	reads the inline columns only; a segmented page reads NULL and every caller holds it
+src/core/facts/file-body-guard.ts	replaceStoredBody	call:contentHash	META	hash of the inline file body being mirrored
+src/core/facts/file-body-guard.ts	replaceStoredBody	call:refreshPageBody	SEGW	runs only after fileBodyMatchesStored matched the inline row under the lock, so never on a segmented page
+src/core/facts/file-body-guard.ts	replaceStoredBody	field	SEGW	runs only after fileBodyMatchesStored matched the inline row under the lock, so never on a segmented page
+src/core/facts/file-body-guard.ts	storedBodyUnchanged	field	SEGW	compares the inline preimage only after the fence and forget callers have refused a segmented page
+src/core/facts/file-body-guard.ts	replaceableFile	sql	SEGW	a segmented page reads NULL inline columns, so its file is never replaceable and the caller holds it
 src/core/facts/forget.ts	forgetFactInFence	call:contentHash	META	inline pages only
 src/core/facts/forget.ts	forgetFactInFence	call:refreshPageBody	SEGW	assertInlineBody first
 src/core/facts/forget.ts	forgetFactInFence	field	SEGW	assertInlineBody before the DB strike/mirror (best-effort: the withdrawal record stays authoritative)
@@ -240,9 +246,6 @@ src/core/facts/relink-publish.ts	prepareRelinkMutation	field	SEGW
 src/core/facts/subject-infer-write.ts	linkAllowed	field	STREAM	
 src/core/facts/unfenced-facts.ts	auditUnadoptableFacts	call:serializePageToMarkdown	SEGW	
 src/core/facts/unfenced-facts.ts	fenceDatabaseOnlyPage	call:serializePageToMarkdown	SEGW	
-src/core/facts/unfenced-facts.ts	fenceFilePage	call:contentHash	META	
-src/core/facts/unfenced-facts.ts	fenceFilePage	call:refreshPageBody	SEGW	
-src/core/facts/unfenced-facts.ts	fenceFilePage	field	SEGW	
 src/core/facts/unfenced-facts.ts	planManagedPage	call:serializePageToMarkdown	SEGW	
 src/core/facts/withdrawal-discovery.ts	discoverWithdrawalTargets	field	STREAM	inline rows only
 src/core/facts/withdrawal-discovery.ts	discoverWithdrawalTargets	sql	STREAM	page scan reads inline bodies (NULL never matches); segmented pages are found by the chunk scan and their mirror writers refuse or skip (per-segment discovery, PR 2)
@@ -532,6 +535,7 @@ src/core/think/gather.ts	renderPagesBlockDetailed	field	LEAD	segmented page: get
 src/core/think/gather.ts	runGather	field	LEAD	visibleLeads reads Page.compiled_truth from listPages/search: segmented page: getter throws page_body_segmented (lead source in PR 2)
 src/core/think/index.ts	composeExtractiveFallback	field	LEAD	
 src/core/think/index.ts	persistSynthesis	call:putPage	SEGW	
+src/core/think/persist-take.ts	assertTakeFileCanonical	field	SEGW	compares the inline page body outside the takes section with the file; a segmented page reads NULL, never matches, and the take is refused before any write
 src/core/timeline-dedup-repair.ts	repairLegacyTimelineSourceRows	field	STREAM	
 src/core/timeline-dedup-repair.ts	repairLegacyTimelineSourceRows	sql	STREAM	
 src/core/timeline-extract.ts	pruneTimelineOrphans	sql	STREAM	

@@ -66,7 +66,7 @@ async function runCaptureExpectingExit(args: string[]): Promise<{ exitCode: numb
   } finally {
     console.error = origErr;
     setCliExitVerdict(originalVerdict);
-    process.exitCode = originalExitCode;
+    process.exitCode = originalExitCode ?? 0;
   }
   return { exitCode, stderr: errCaptured.join('\n') };
 }

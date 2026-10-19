@@ -36,6 +36,7 @@ import { assertPurgeParams } from './purge-params.ts';
 import { authorizeWrite, slugDisclosable } from './authority.ts';
 import { findLiveFileClaimants, type FileClaimant, type FileClaimTarget } from './file-claims.ts';
 import { digest, sha256 } from './digest.ts';
+import { replaceableFile } from '../facts/file-body-guard.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
@@ -339,7 +340,13 @@ async function compareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 's
     // An inline page's file over the push-scan cap cannot hold its body (at most 24 MiB): drift, never read whole.
     const matches = bodyUnread(snapshot.page) ? await segmentedFileMatches(engine, row.slug, before, snapshot, importPath, options.activePack, options.between)
       : before.length <= PUSH_SCAN_MAX_FILE_BYTES && await fileMatchesSnapshot(engine, row.slug, (before instanceof FileBytes ? Buffer.from(before.subarray()) : before).toString('utf8'), snapshot, importPath, options.activePack);
-    if (!matches) {
+    // #6986: a declared db_only page or a never-filed derive-phase page (atoms/, ...) is canonical in the database, so the
+    // file at its path is a cache. A cache that holds a state the database already had (the live page or a recent
+    // version), left behind by a writer that skipped it, is refreshed by this write under the bytes compared; a cache
+    // holding content the database never had is an uncoordinated edit and still refuses below.
+    const staleCache = !matches && before instanceof Buffer && publishesDatabaseOnly(root, row.slug, snapshot)
+      && await replaceableFile(engine, row.source_id, row.slug, path).then(check => check.ok && check.expectedFileBytes === before.toString('utf8'));
+    if (!matches && !staleCache) {
       const held = await heldFileRefusal(engine, row, root, path, 'drift', options.remote === true);
       if (held) throw held;
       // #6394: a page that never recorded its file reconciles against the file at its slug path only when adopted explicitly.

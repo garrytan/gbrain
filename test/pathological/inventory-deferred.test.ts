@@ -34,7 +34,6 @@ export const DEFERRED: ReadonlyArray<readonly [string, string, string]> = [
   ['A-52', 'deferred: next wave (test.todo)', 'Unmanaged extraction (cycle incremental pass and full fs walk)'],
   ['A-53', 'GBRA-101 (4b)', 'Managed import batches (IMPORT_BATCH_MAX_PAGES) admit every member in one transaction'],
   ['A-54', 'deferred: next wave (test.todo)', 'One link whose addLink throws on the target (a target page absent for any reason other than a known failed/vanished page, or a link-type constraint...'],
-  ['A-55', 'deferred: next wave (test.todo)', 'Full sync re-export of DB-only pages: one try around the loop, so the first writePageThrough throw stops re-export of all remaining pages, silently...'],
   ['A-56', 'deferred: next wave (test.todo)', 'Legacy facts backstop per page: catch { /* per-page enqueue is best-effort */ } with no counter'],
   ['A-57', 'GBRA-101 (4b)', 'Managed per-file prepare/screen: loadActivePackForEngine(...).catch(() => null)'],
   ['A-58', 'deferred: next wave (test.todo)', 'Legacy import, file gone from disk branch: clearLegacyHold is outside any try, so a DB error there escapes importOnePath and aborts the whole drain...'],

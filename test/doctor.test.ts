@@ -1734,8 +1734,8 @@ describe('issue #972 — link_resolution_opportunity check', () => {
     const source = doctorSource();
     // Local buildChecks path.
     expect(source).toMatch(/await checkLinkResolutionOpportunity\(engine, progress\)/);
-    // Thin-client doctorReportRemote path.
-    expect(source).toMatch(/await checkLinkResolutionOpportunity\(engine\)/);
+    // Thin-client doctorReportRemote path, confined to the caller's grant.
+    expect(source).toMatch(/await checkLinkResolutionOpportunity\(engine, undefined, \{ sourceIds: opts\.sourceIds \}\)/);
     // Heartbeat label registered.
     expect(source).toContain("progress.heartbeat('link_resolution_opportunity')");
     // Issue #972 (T3): scan is bounded to a most-recent sample, not a full

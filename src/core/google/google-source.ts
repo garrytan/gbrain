@@ -664,6 +664,8 @@ async function runExtractAndEmbed(
       const sub = await submitEmbedBackfill(deps.engine, deps.sourceId, { reason: 'google_sync_defer' });
       if (sub.status === 'submitted') {
         process.stderr.write(`[google] large sync (${totalChanges} pages); embeds deferred to embed-backfill job ${sub.jobId} — or ${drainHint}\n`);
+      } else if (sub.status === 'embedding_disabled') {
+        process.stderr.write(`[google] large sync (${totalChanges} pages); embed-backfill not queued: embedding is disabled on this brain (keyless by choice)\n`);
       } else {
         process.stderr.write(`[google] large sync (${totalChanges} pages); embed-backfill not queued (${sub.status}) — ${drainHint}\n`);
       }

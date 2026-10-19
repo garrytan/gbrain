@@ -973,7 +973,7 @@ describe('runSweep CLI arg parsing [CX2-5]', () => {
       console.log = origLog;
       console.error = origErr;
       _resetCliExitVerdictForTests();
-      process.exitCode = savedExitCode; // setCliExitVerdict mirrors here — undo
+      process.exitCode = savedExitCode ?? 0; // setCliExitVerdict mirrors here — undo
     }
   }
 

@@ -150,16 +150,22 @@ esac
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
-  test('security and persistence matrices run both supported Bun versions on pull requests and merge-queue runs (event parity)', () => {
+  // Pull requests run the cheap tier (docs/ci-event-parity.md#full-ci-on-pull-requests):
+  // of the persistence lanes only the crash robot and convergence; the rest run
+  // in the full-ci dispatch, on every push, in the merge queue and nightly.
+  test('security and persistence matrices run both supported Bun versions on every event that runs them; pull requests run only the crash robot and convergence', () => {
     const security = load('test.yml').jobs['security-regressions'];
     const persistence = load('persistence-validation.yml').jobs;
-    const jobs = [security, ...['read-performance', 'deployment-matrix', 'unit-postgres-arms', 'invariants', 'crash-robot', 'reconciliation', 'convergence'].map(name => persistence[name]!)];
-    for (const job of jobs) {
+    const cheap = [security, persistence['crash-robot']!, persistence.convergence!];
+    const fullOnly = ['read-performance', 'deployment-matrix', 'unit-postgres-arms', 'invariants', 'reconciliation'].map(name => persistence[name]!);
+    for (const job of [...cheap, ...fullOnly]) {
       expect(job.strategy!.matrix.exclude).toBeUndefined();
       const push = cells(job, { github: { event_name: 'push' }, inputs: {} });
-      for (const event_name of ['pull_request', 'merge_group', 'schedule', 'workflow_dispatch']) {
+      expect(push.length).toBeGreaterThan(0);
+      for (const event_name of ['merge_group', 'schedule', 'workflow_dispatch']) {
         expect(cells(job, { github: { event_name }, inputs: {} })).toEqual(push);
       }
+      expect(cells(job, { github: { event_name: 'pull_request' }, inputs: {} })).toEqual(cheap.includes(job) ? push : []);
       expect(push.filter(cell => cell.split('/').includes(MINIMUM_BUN_VERSION)).length).toBe(push.length / 2);
     }
     expect(cells(security, { github: { event_name: 'pull_request' }, inputs: {} })).toHaveLength(6);

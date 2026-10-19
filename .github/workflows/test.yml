@@ -80,9 +80,12 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: read
     outputs:
       native-scope: ${{ steps.scope.outputs.native }}
       convergence: ${{ steps.convergence.outputs.convergence }}
+      reuse: ${{ steps.reuse.outputs.reuse }}
+      reuse-source-run-id: ${{ steps.reuse.outputs.source_run_id }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
@@ -90,7 +93,29 @@ jobs:
             scripts/ci-native-scope.sh
             scripts/ci-manifest-diff.sh
             scripts/ci-convergence-scope.sh
+            scripts/ci-reuse.ts
+            scripts/lib/gh-issue.ts
           sparse-checkout-cone-mode: false
+      - if: github.event_name == 'push'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.3
+      # Master-push reuse (P2, scripts/ci-reuse.ts): a push whose tree equals the
+      # tree of a passed full-suite run skips every full lane and records the
+      # reused run. Any doubt, a crash included, leaves reuse unset: a full run.
+      - id: reuse
+        if: github.event_name == 'push'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/ci-reuse.ts --workflow test --sha "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" --output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY" --record "$RUNNER_TEMP/reuse.json"
+      - if: steps.reuse.outputs.reuse == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: reused-full-suite
+          path: ${{ runner.temp }}/reuse.json
+          if-no-files-found: error
+          retention-days: 90
       - id: scope
         env:
           GH_TOKEN: ${{ github.token }}
@@ -154,7 +179,7 @@ jobs:
           echo "convergence gate: $convergence"
           echo "convergence=$convergence" >> "$GITHUB_OUTPUT"
 
-  # Re-run checks for every event. Only dependencies and PGLite snapshots are cached.
+  # Re-run checks for every event, except a master push reusing a passed full-suite run of its exact tree (scripts/ci-reuse.ts). Only dependencies and PGLite snapshots are cached.
   gitleaks:
     if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
     runs-on: ubicloud-standard-2-ubuntu-2404
@@ -332,7 +357,7 @@ jobs:
 
   verify:
     if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
-    # Pre-test gates: privacy/jsonb/source-id/etc + typecheck + admin-build.
+    # Pre-test gates: privacy/jsonb/source-id/etc + admin-build (tsc runs in the typecheck job).
     # Lives in its own runner so the matrix shards aren't carrying ~2-3min
     # of verify work in addition to their test files (the old shape stuffed
     # this into `test (1)` via `if: matrix.shard == 1`, which made shard 1
@@ -367,26 +392,15 @@ jobs:
       - name: Install dependencies (bounded, retried once)
         timeout-minutes: 8
         run: bun scripts/ci-bun-install.ts --frozen-lockfile
-      # #6056: typecheck is the slowest verify check and ran cold on every
-      # job. `bun run typecheck` is incremental against this tsbuildinfo, so
-      # a restored one from an earlier run lets tsc recheck only what changed.
-      # Rolling key: every run saves under its own SHA and the next run
-      # restores the newest one for the same bun.lock + tsconfig.json
-      # (a dependency or compiler-option change starts cold). After
-      # `bun install`, which (re)creates node_modules.
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
-        with:
-          path: node_modules/.cache/gbrain-typecheck.tsbuildinfo
-          key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-${{ github.sha }}
-          restore-keys: |
-            tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-
       # check:schema-migration-order compares new schema migrations with
       # origin/master's latest version; a depth-1 fetch of the ref is enough.
       - run: git fetch --no-tags --depth=1 origin +refs/heads/master:refs/remotes/origin/master
       # Receipts (X2): verify records every check's real outcome (pass, fail,
       # timeout, self-skip) as one JUnit testcase; logs stay on failure.
+      # The typecheck job below runs tsc, so verify skips its own copy here.
       - run: bun run verify
         env:
+          GBRAIN_VERIFY_SKIP_TYPECHECK: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
           GBRAIN_VERIFY_LOG_DIR: ${{ runner.temp }}/verify-logs
       - name: Upload verify logs
@@ -428,8 +442,64 @@ jobs:
           if-no-files-found: warn
           overwrite: true
 
-  serial-tests:
+  typecheck:
     if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
+    # tsc runs here, in parallel with verify, instead of inside verify's pool
+    # with its 120 s per-check cap. A change to a widely imported type (any new
+    # error code in src/core/error-registry.ts) makes the incremental check
+    # almost cold. On master c8354664 (run 39140170894), the cold check took
+    # 121 s in verify's pool and timed out at the cap. A timed-out tsc also
+    # writes no tsbuildinfo, so every rerun restored the same stale state.
+    # Step timeout from measurement: 3 x the worst cold CI time (121 s) is
+    # about 6 minutes. tsc is single-threaded, so 4 vCPUs (16 GB; peak heap
+    # is about 5.3 GB) do the work of verify's 8.
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.3
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock', 'admin/bun.lock') }}
+          restore-keys: bun-cache-${{ runner.os }}-
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile
+      # #6056: `bun run typecheck` is incremental against this tsbuildinfo, so
+      # a restored one from an earlier run lets tsc recheck only what changed.
+      # Rolling key: every run saves under its own SHA and the next run
+      # restores the newest one for the same bun.lock + tsconfig.json
+      # (a dependency or compiler-option change starts cold). After
+      # `bun install`, which (re)creates node_modules.
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: node_modules/.cache/gbrain-typecheck.tsbuildinfo
+          key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-${{ github.sha }}
+          restore-keys: |
+            tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-
+      - name: Typecheck (tsc, incremental)
+        timeout-minutes: 6
+        run: bun run typecheck
+      # Saved even when this check finds type errors, and whatever the other
+      # jobs do: tsc writes its state on an error too, so the next master run
+      # starts from this commit instead of an older, colder state.
+      - name: Save the typecheck state
+        if: always()
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: node_modules/.cache/gbrain-typecheck.tsbuildinfo
+          key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-${{ github.sha }}
+
+  # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): full profile only. A
+  # pull request runs the cheap tier; this job runs in the full-ci dispatch on its
+  # head before merge (merge-train requires full-suite), on every push to master
+  # and on the nightly schedule.
+  serial-tests:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.reuse != 'true' && (github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
     # *.serial.test.ts — one bun process per file (module-registry isolation),
     # POOLED across files by scripts/run-serial-tests.sh (was strictly
     # sequential: an 8.5-minute job whose serialization the quarantine
@@ -520,8 +590,13 @@ jobs:
           retention-days: 14
           overwrite: true
 
+  # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): full profile only. A
+  # pull request runs the cheap tier; this job runs in the full-ci dispatch on its
+  # head before merge (merge-train requires full-suite), on every push to master
+  # and on the nightly schedule.
   slow-brainbench-e2e:
-    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
+    needs: [changes]
+    if: ${{ needs.changes.outputs.reuse != 'true' && (github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
     # Dedicated runner for the BrainBench CLI e2e file. At 98s mined it was
     # the matrix's single heaviest atom (10% of the whole corpus weight) and
     # the hard floor on shard-count scaling; a Phase-2 rewrite (spawn batching
@@ -597,8 +672,13 @@ jobs:
           if-no-files-found: ignore
           overwrite: true
 
+  # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): full profile only. A
+  # pull request runs the cheap tier; this job runs in the full-ci dispatch on its
+  # head before merge (merge-train requires full-suite), on every push to master
+  # and on the nightly schedule.
   brainbench:
-    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
+    needs: [changes]
+    if: ${{ needs.changes.outputs.reuse != 'true' && (github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
     # BrainBench memory-conformance gate (Cathedral 2). Hermetic: in-memory
     # PGLite, zero API keys, ~15s for the full 141-fixture × 3-harness run.
     # Governance (decision 4): compares HEAD's run against MAIN's committed
@@ -641,8 +721,13 @@ jobs:
             bun scripts/render-brainbench-delta.ts "${{ runner.temp }}/brainbench-result.json" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+  # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): full profile only. A
+  # pull request runs the cheap tier; this job runs in the full-ci dispatch on its
+  # head before merge (merge-train requires full-suite), on every push to master
+  # and on the nightly schedule.
   slow-entity-resolve-perf:
-    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
+    needs: [changes]
+    if: ${{ needs.changes.outputs.reuse != 'true' && (github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
     # Dedicated runner for the entity-resolve perf test (~159s, single perf
     # describe with one test that builds 5000+ pages and asserts the NEW
     # tryPrefixExpansion shape is 5x faster than the OLD shape — not
@@ -725,20 +810,29 @@ jobs:
           bun run src/cli.ts init --pglite --no-embedding --non-interactive
           bun run src/cli.ts protocol conformance --synthesize
 
+  # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): full profile only. A
+  # pull request runs the cheap tier; this job runs in the full-ci dispatch on its
+  # head before merge (merge-train requires full-suite), on every push to master
+  # and on the nightly schedule.
   test:
-    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
+    needs: [changes]
+    if: ${{ needs.changes.outputs.reuse != 'true' && (github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
     # Pure matrix shard — no verify, no serial. Each shard runs its slice
     # of the unit test set under one `bun test` invocation.
     #
-    # 10 shards: ~7,260s of mined file time (run 39028606998) is ~727s per
-    # shard. At 8 (~908s per shard) a runner draw with high CPU steal ran
-    # files 1.5x slower and pushed shard 2 past the 22-minute timeout on
-    # master run 39030803745; 10 keeps that draw inside it.
+    # 18 shards (UNIT_SHARDS in scripts/sharding.ts): ~10,200s of mined file
+    # time (run 39121354115) is ~567s per shard. A shard's mined weight must
+    # fit this job's 22 minutes twice over, after a minute of setup, with a
+    # minute to spare (UNIT_SHARD_BUDGET_MS, 600s;
+    # test/scripts/unit-shard-budget.test.ts). At 10 (~950s per shard)
+    # shards ran 0.8-1.4x their prediction and shard 5 was cancelled at the
+    # timeout on master run 39121354115; 17 fits by 48 ms, so the next test
+    # file would fail it.
     #
     # Partition policy is weight-aware LPT bin-packing via scripts/sharding.ts
     # (replaces FNV-1a path hash). Weights live in scripts/test-weights.json,
     # mined from real CI logs via scripts/mine-shard-weights.ts. Missing
-    # weights fall back to corpus median — new test files work immediately.
+    # weights fall back to the corpus p75 — new test files work immediately.
     # 4 vCPUs: a shard is one bun process (1.1-1.5 busy cores on average), but
     # on 2 vCPUs the unit shard mean rose from 542s to 608s on PR #6013 and
     # made Test the PR critical path, so shards stay on 4.
@@ -751,7 +845,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -785,9 +879,9 @@ jobs:
           echo "loadavg: $(cat /proc/loadavg)"
           awk '/^cpu /{print "steal_jiffies", $9}' /proc/stat
           lscpu | grep -m1 'Model name'
-      - name: Run test shard ${{ matrix.shard }}/10
+      - name: Run test shard ${{ matrix.shard }}/18
         shell: bash
-        run: bun scripts/capture-test-log.ts --job 'test (${{ matrix.shard }})' --out "$RUNNER_TEMP/unit.log" -- bash scripts/test-shard.sh ${{ matrix.shard }} 10
+        run: bun scripts/capture-test-log.ts --job 'test (${{ matrix.shard }})' --out "$RUNNER_TEMP/unit.log" -- bash scripts/test-shard.sh ${{ matrix.shard }} 18
         env:
           COVERAGE_DIR: ${{ runner.temp }}/coverage
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
@@ -828,7 +922,7 @@ jobs:
 
 
   # ──────────────────────────────────────────────────────────────────────
-  # coverage-report: merges the PR corpus (10 unit + 4 serial + 2 slow
+  # coverage-report: merges the PR corpus (18 unit + 4 serial + 2 slow
   # lanes) into one honest number, renders it to the step summary, and runs
   # the diff + baseline gates in report-only mode (COVERAGE_GATE_ENFORCE=0).
   # ADVISORY during the report-only window: deliberately NOT in test-status's
@@ -837,9 +931,13 @@ jobs:
   # `always()` is load-bearing: without it, a failed shard skips this job at
   # exactly the moment the (degraded) report matters most.
   # ──────────────────────────────────────────────────────────────────────
+  # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): full profile only. A
+  # pull request runs the cheap tier; this job runs in the full-ci dispatch on its
+  # head before merge (merge-train requires full-suite), on every push to master
+  # and on the nightly schedule.
   coverage-report:
-    needs: [serial-tests, slow-entity-resolve-perf, slow-brainbench-e2e, test]
-    if: ${{ always() && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}
+    needs: [changes, serial-tests, slow-entity-resolve-perf, slow-brainbench-e2e, test]
+    if: ${{ needs.changes.outputs.reuse != 'true' && always() && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -868,7 +966,7 @@ jobs:
           bun scripts/merge-lcov.ts \
             --out-lcov "$RUNNER_TEMP/coverage-merged/lcov.info" \
             --out-json "$RUNNER_TEMP/coverage-merged/summary.json" \
-            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,serial-1,serial-2,serial-3,serial-4,slowperf,slowbrainbench \
+            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,shard-11,shard-12,shard-13,shard-14,shard-15,shard-16,shard-17,shard-18,serial-1,serial-2,serial-3,serial-4,slowperf,slowbrainbench \
             "$RUNNER_TEMP/coverage-artifacts"
       - name: Coverage summary → step summary
         run: bun scripts/render-coverage-summary.ts --summary "$RUNNER_TEMP/coverage-merged/summary.json" --structural scripts/structural-suites.tsv >> "$GITHUB_STEP_SUMMARY"
@@ -895,16 +993,23 @@ jobs:
           if-no-files-found: ignore
           overwrite: true
 
+  # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): a pull request (cheap
+  # tier) runs the native cells only when its diff touches native code (scope other
+  # than smoke); the full-ci dispatch, every push and the nightly run them all.
   native-locks:
     needs: [changes]
-    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
+    if: ${{ needs.changes.outputs.reuse != 'true' && ((github.event_name != 'pull_request' || needs.changes.outputs.native-scope != 'smoke') && (github.event_name != 'workflow_dispatch' || (inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
     uses: ./.github/workflows/native-locks.yml
     with:
       scope: ${{ needs.changes.outputs.native-scope }}
 
+  # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): a pull request (cheap
+  # tier) calls it only when its diff can change persistence or managed sync, and
+  # then runs only the crash robot and convergence; the full-ci dispatch, every
+  # push and the nightly run every lane.
   persistence-validation:
     needs: [changes]
-    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
+    if: ${{ needs.changes.outputs.reuse != 'true' && ((github.event_name != 'pull_request' || needs.changes.outputs.convergence != 'skip') && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
     uses: ./.github/workflows/persistence-validation.yml
     with:
       convergence: ${{ needs.changes.outputs.convergence || 'run' }}
@@ -943,8 +1048,13 @@ jobs:
     with:
       mode: race-hunt
 
+  # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): full profile only. A
+  # pull request runs the cheap tier; this job runs in the full-ci dispatch on its
+  # head before merge (merge-train requires full-suite), on every push to master
+  # and on the nightly schedule.
   admin-browser:
-    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
+    needs: [changes]
+    if: ${{ needs.changes.outputs.reuse != 'true' && (github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 12
     steps:
@@ -991,8 +1101,13 @@ jobs:
           include-hidden-files: true
           retention-days: 7
 
+  # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): full profile only. A
+  # pull request runs the cheap tier; this job runs in the full-ci dispatch on its
+  # head before merge (merge-train requires full-suite), on every push to master
+  # and on the nightly schedule.
   shared-skills-compatibility:
-    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
+    needs: [changes]
+    if: ${{ needs.changes.outputs.reuse != 'true' && (github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -1025,8 +1140,8 @@ jobs:
   # comparison against a baseline run is the parent's local call:
   #   bun scripts/ci-executed-counts.ts --base-run <id> --head-run <id>
   executed-receipts:
-    needs: [verify, serial-tests, slow-entity-resolve-perf, slow-brainbench-e2e, test, shared-skills-compatibility, persistence-validation]
-    if: ${{ always() && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}
+    needs: [changes, verify, serial-tests, slow-entity-resolve-perf, slow-brainbench-e2e, test, shared-skills-compatibility, persistence-validation]
+    if: ${{ needs.changes.outputs.reuse != 'true' && always() && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -1079,19 +1194,25 @@ jobs:
 
   # The stable aggregate succeeds only when every required lane ran successfully.
   # Coverage percentages remain advisory until their separate graduation.
+  # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): full profile only. A
+  # pull request runs the cheap tier; this job runs in the full-ci dispatch on its
+  # head before merge (merge-train requires full-suite), on every push to master
+  # and on the nightly schedule.
   test-status:
-    name: ${{ github.event_name == 'workflow_dispatch' && (inputs.native_only == true || inputs.race_hunt == true || inputs.stress_files != '' || inputs.stress_base != '') && 'full-suite-not-run' || 'test-status' }}
-    needs: [gitleaks, security-regressions, dependency-audit, verify, serial-tests, slow-entity-resolve-perf, slow-brainbench-e2e, brainbench, test, native-locks, persistence-validation, admin-browser, shared-skills-compatibility, stress-changed-tests]
-    if: ${{ always() && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}
+    name: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.native_only == true || inputs.race_hunt == true || inputs.stress_files != '' || inputs.stress_base != ''))) && 'full-suite-not-run' || 'test-status' }}
+    needs: [changes, gitleaks, security-regressions, dependency-audit, verify, typecheck, serial-tests, slow-entity-resolve-perf, slow-brainbench-e2e, brainbench, test, native-locks, persistence-validation, admin-browser, shared-skills-compatibility, stress-changed-tests]
+    if: ${{ needs.changes.outputs.reuse != 'true' && always() && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
     steps:
       - name: Aggregate result
         run: |
+          CHANGES="${{ needs.changes.result }}"
           GITLEAKS="${{ needs.gitleaks.result }}"
           SECURITY="${{ needs.security-regressions.result }}"
           AUDIT="${{ needs.dependency-audit.result }}"
           VERIFY="${{ needs.verify.result }}"
+          TYPECHECK="${{ needs.typecheck.result }}"
           SERIAL="${{ needs.serial-tests.result }}"
           SLOW_PERF="${{ needs.slow-entity-resolve-perf.result }}"
           SLOW_BRAINBENCH="${{ needs.slow-brainbench-e2e.result }}"
@@ -1102,9 +1223,9 @@ jobs:
           ADMIN_BROWSER="${{ needs.admin-browser.result }}"
           SKILL_COMPATIBILITY="${{ needs.shared-skills-compatibility.result }}"
           STRESS="${{ needs.stress-changed-tests.result }}"
-          echo "gitleaks=$GITLEAKS  security-regressions=$SECURITY  dependency-audit=$AUDIT  verify=$VERIFY  serial-tests=$SERIAL  slow-entity-resolve-perf=$SLOW_PERF  slow-brainbench-e2e=$SLOW_BRAINBENCH  brainbench=$BRAINBENCH  test=$TEST  native-locks=$NATIVE_LOCKS  persistence=$PERSISTENCE  admin-browser=$ADMIN_BROWSER"
+          echo "changes=$CHANGES  gitleaks=$GITLEAKS  security-regressions=$SECURITY  dependency-audit=$AUDIT  verify=$VERIFY  typecheck=$TYPECHECK  serial-tests=$SERIAL  slow-entity-resolve-perf=$SLOW_PERF  slow-brainbench-e2e=$SLOW_BRAINBENCH  brainbench=$BRAINBENCH  test=$TEST  native-locks=$NATIVE_LOCKS  persistence=$PERSISTENCE  admin-browser=$ADMIN_BROWSER"
           echo "shared-skills-compatibility=$SKILL_COMPATIBILITY  stress-changed-tests=$STRESS"
-          for r in "$GITLEAKS" "$SECURITY" "$AUDIT" "$VERIFY" "$SERIAL" "$SLOW_PERF" "$SLOW_BRAINBENCH" "$BRAINBENCH" "$TEST" "$NATIVE_LOCKS" "$PERSISTENCE" "$ADMIN_BROWSER" "$SKILL_COMPATIBILITY" "$STRESS"; do
+          for r in "$CHANGES" "$GITLEAKS" "$SECURITY" "$AUDIT" "$VERIFY" "$TYPECHECK" "$SERIAL" "$SLOW_PERF" "$SLOW_BRAINBENCH" "$BRAINBENCH" "$TEST" "$NATIVE_LOCKS" "$PERSISTENCE" "$ADMIN_BROWSER" "$SKILL_COMPATIBILITY" "$STRESS"; do
             if [ "$r" != "success" ]; then
               echo "✗ gated job did not succeed (got $r) — CI fail"
               exit 1
@@ -1112,6 +1233,93 @@ jobs:
           done
           echo "✓ all gated jobs succeeded — CI green"
 
+
+  # Full CI on pull requests (docs/ci-event-parity.md#full-ci-on-pull-requests): the
+  # check merge-train reads. It succeeds only when test-status did on the same
+  # run, and a pull-request run (the cheap tier) names it full-suite-not-run, so
+  # a cheap green can never produce it. Its artifact records the tree the run
+  # tested, which scripts/ci-reuse.ts compares on a push to master.
+  # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): full profile only;
+  # a pull request gets it from the full-ci dispatch on its head.
+  full-suite:
+    name: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.native_only == true || inputs.race_hunt == true || inputs.stress_files != '' || inputs.stress_base != ''))) && 'full-suite-not-run' || 'full-suite' }}
+    needs: [changes, test-status]
+    if: ${{ needs.changes.outputs.reuse != 'true' && always() && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - name: Require test-status
+        env:
+          TEST_STATUS: ${{ needs.test-status.result }}
+        run: |
+          if [ "$TEST_STATUS" != success ]; then
+            echo "::error::full-suite requires test-status to succeed on this run (got $TEST_STATUS)"
+            exit 1
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci-full-suite-tree.sh
+          sparse-checkout-cone-mode: false
+      - name: Record the tested tree
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/full-suite
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          WORKFLOW: ${{ github.workflow }}
+          EVENT: ${{ github.event_name }}
+        run: bash scripts/ci-full-suite-tree.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: full-suite-tree
+          path: ${{ runner.temp }}/full-suite/tree.json
+          retention-days: 30
+          overwrite: true
+
+  # The cheap tier's result (docs/ci-event-parity.md#full-ci-on-pull-requests). It never
+  # reports test-status or full-suite; its name and step summary say the full
+  # suite did not run. The persistence and native lanes may be skipped only when
+  # their own diff selectors left them out.
+  # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): pull requests only;
+  # every other event runs the full profile and reports full-suite instead.
+  cheap-tier:
+    name: cheap-tier (full suite not run)
+    needs: [changes, gitleaks, security-regressions, dependency-audit, verify, typecheck, stress-changed-tests, native-locks, persistence-validation]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci-cheap-tier.sh
+          sparse-checkout-cone-mode: false
+      - name: Aggregate the cheap tier
+        env:
+          GITLEAKS: ${{ needs.gitleaks.result }}
+          SECURITY: ${{ needs.security-regressions.result }}
+          AUDIT: ${{ needs.dependency-audit.result }}
+          VERIFY: ${{ needs.verify.result }}
+          TYPECHECK: ${{ needs.typecheck.result }}
+          STRESS: ${{ needs.stress-changed-tests.result }}
+          NATIVE: ${{ needs.native-locks.result }}
+          NATIVE_SCOPE: ${{ needs.changes.outputs.native-scope }}
+          PERSISTENCE: ${{ needs.persistence-validation.result }}
+          CONVERGENCE: ${{ needs.changes.outputs.convergence }}
+        run: bash scripts/ci-cheap-tier.sh
+
+  # Master-push reuse marker (scripts/ci-reuse.ts, scripts/release-gate.ts): exists
+  # only in a push run that reused a passed full-suite run of its exact tree; the
+  # release gate reads its reuse.json.
+  reused-full-suite:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.reuse == 'true' }}
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 2
+    steps:
+      - env:
+          SOURCE: ${{ needs.changes.outputs.reuse-source-run-id }}
+        run: echo "Reused full-suite run $SOURCE (identical tree)"
 
   # A native-only run emits its own scoped result, never the required full-suite check.
   native-only-status:

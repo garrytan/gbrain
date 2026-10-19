@@ -1,0 +1,48 @@
+name: Full CI dispatch
+
+# Full CI on pull requests (docs/ci-event-parity.md#full-ci-on-pull-requests). A
+# pull-request run of Test is the cheap tier, and E2E does not run on pull
+# requests. The full-ci label starts the full profile: this workflow dispatches
+# Test and E2E on the pull request's head branch, the same shape as a push to
+# master, and dispatches again on every later push while the label stays.
+# Applying a label needs triage access or higher, so contributors cannot start
+# it, and a fork's head branch is never dispatched. A thread can do the same by
+# hand before its slot:
+#   gh workflow run test.yml --ref <branch> && gh workflow run e2e.yml --ref <branch>
+# merge-train requires the full-suite and e2e-full-suite checks on the exact head.
+on:
+  pull_request:
+    branches: [master]
+    types: [labeled, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: full-ci-dispatch-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    name: full-ci dispatch
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && ((github.event.action == 'labeled' && github.event.label.name == 'full-ci') || (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'full-ci'))) }}
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch Test and E2E on the head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          current=$(gh api "repos/$REPO/commits/heads/$BRANCH" --jq .sha)
+          if [ "$current" != "$HEAD_SHA" ]; then
+            echo "::notice::$BRANCH moved to $current after this event; the push that moved it dispatches its own full run."
+            exit 0
+          fi
+          gh workflow run test.yml -R "$REPO" --ref "$BRANCH"
+          gh workflow run e2e.yml -R "$REPO" --ref "$BRANCH"
+          echo "Dispatched Test and E2E (full profile) on $BRANCH at $HEAD_SHA." >> "$GITHUB_STEP_SUMMARY"

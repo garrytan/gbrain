@@ -29,6 +29,7 @@ export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'code.cluster_generation', reason: 'code-intel traversal cache generation counter' },
   { key: 'embedding_migration.state', reason: 'gbrain migrate-embeddings resume state' },
   { key: 'embedding_migration.completed', reason: 'gbrain migrate-embeddings completion marker' },
+  { key: 'embed.backfill_skip_reported', reason: 'once-only marker for the embed_backfill_skipped notice on a keyless brain (embed-backfill-submit.ts)' },
   { key: 'facts.drain_state', reason: 'facts drain scheduler state (facts/drain.ts)' },
   { key: 'facts.absorb_retry.state', reason: 'dead facts-absorb re-submit set (facts/dead-absorb-retry.ts); gbrain facts retry-dead edits it' },
   { key: 'google.file_modes_notice', reason: 'one-time upgrade notice marker (v0.60.31 migration)' },

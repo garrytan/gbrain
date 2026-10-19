@@ -43,12 +43,15 @@ const _resolveSyncFreshnessHours = resolveHoursEnv;
  * the deadline stays under the interval to keep ticks from overlapping. A
  * schema without `persistence_brain` reads as unmanaged.
  */
-export async function checkSyncConsolidation(engine: BrainEngine): Promise<Check> {
+export async function checkSyncConsolidation(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
   try {
+    // A remote caller's grant bounds the count: the brain-wide source count
+    // would tell a source-bound token how many sources it cannot see.
     const rows = await engine.executeRaw<{ id: string }>(
       `SELECT id FROM sources
         WHERE archived IS NOT TRUE
-          AND local_path IS NOT NULL`,
+          AND local_path IS NOT NULL${opts.sourceIds ? '\n          AND id = ANY($1::text[])' : ''}`,
+      opts.sourceIds ? [opts.sourceIds] : undefined,
     );
     const sourceCount = rows.length;
     if (sourceCount < 2) {

@@ -30,15 +30,30 @@
 import { createHash } from 'node:crypto';
 import { lstatSync, openSync, readSync, closeSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
-import { JSON_SCHEMA, load as yamlLoad } from 'js-yaml';
+import { JSON_SCHEMA } from 'js-yaml';
+import { loadBoundedYaml as yamlLoad } from './data-frontmatter.ts';
 import type { BrainEngine } from './engine.ts';
 import { spawn } from './spawn.ts';
-import { gitChildEnv } from './git-env.ts';
+import { GIT_READ_ENV, gitChildEnv } from './git-env.ts';
 import { explicitMarkdownTitle } from './markdown.ts';
 import { isMarkdownFilePath, resolveSlugForPath, type DowngradedRename, type RenameDowngradeReason, type RenameSideSource, type SyncManifest } from './sync.ts';
 import { computeSyncDelta, type SyncDeltaResult } from './sync-delta.ts';
 
 const HEAD_BYTES = 64 * 1024;
+
+/** GBRA-133 S-51: text Postgres cannot store or compare (SQLSTATE 22021/22P05): U+0000 or a lone UTF-16 surrogate. */
+const UNQUERYABLE_TEXT = /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+/** An identity value the database cannot compare is absent (never normalized into another value). */
+const queryable = (value: string | null): string | null => value !== null && UNQUERYABLE_TEXT.test(value) ? null : value;
+/** The SQLSTATEs a parameter the database cannot encode raises: an invalid byte sequence, an untranslatable character. */
+const UNREADABLE_IDENTITY_STATES: ReadonlySet<string> = new Set(['22021', '22P05']);
+const unreadableIdentity = (error: unknown): boolean => {
+  for (let current = error, depth = 0; current && depth < 5; depth++, current = (current as { cause?: unknown }).cause) {
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === 'string' && UNREADABLE_IDENTITY_STATES.has(code)) return true;
+  }
+  return false;
+};
 
 /** `digest`: sha256 of the whole file when it fit in the head read (null for a longer file), the content-continuity signal. */
 export interface FrontmatterIdentity { id: string | null; slug: string | null; title: string | null; digest: string | null }
@@ -53,7 +68,7 @@ export function frontmatterIdentity(head: Buffer | string | null): FrontmatterId
   if (head === null) return NO_IDENTITY;
   const text = (typeof head === 'string' ? head : head.toString('utf8')).replace(/^\uFEFF/, '');
   let title: string | null;
-  try { title = explicitMarkdownTitle(text) || null; } catch { title = null; }
+  try { title = queryable(explicitMarkdownTitle(text) || null); } catch { title = null; }
   const digest = Buffer.byteLength(head) < HEAD_BYTES ? createHash('sha256').update(head).digest('hex') : null;
   const block = /^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(text);
   if (!block) return { ...NO_IDENTITY, title, digest };
@@ -63,7 +78,7 @@ export function frontmatterIdentity(head: Buffer | string | null): FrontmatterId
   const field = (key: string, numeric = false): string | null => {
     const value = (data as Record<string, unknown>)[key];
     const text = typeof value === 'string' ? value.trim() : numeric && typeof value === 'number' && Number.isFinite(value) ? String(value) : '';
-    return text === '' ? null : text;
+    return text === '' ? null : queryable(text);
   };
   return { id: field('id', true), slug: field('slug'), title, digest };
 }
@@ -72,7 +87,7 @@ export function frontmatterIdentity(head: Buffer | string | null): FrontmatterId
 export async function catFileHeads(repo: string, objects: string[]): Promise<Array<Buffer | null>> {
   if (objects.length === 0) return [];
   return new Promise((done, fail) => {
-    const child = spawn('git', ['-c', 'core.quotepath=false', '-C', repo, 'cat-file', '--batch'], { env: gitChildEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn('git', ['-c', 'core.quotepath=false', '-C', repo, 'cat-file', '--batch'], { env: gitChildEnv(GIT_READ_ENV), stdio: ['pipe', 'pipe', 'pipe'] });
     const out: Array<Buffer | null> = [];
     let pending: Buffer = Buffer.alloc(0), remaining = -1, blob = false, kept: Buffer[] = [], keptBytes = 0, stderr = '';
     child.stdout!.on('data', (chunk: Buffer) => {
@@ -248,7 +263,18 @@ export function decideRenameIdentities(manifest: SyncManifest, inputs: RenameIde
   };
 }
 
-export interface ConfirmRenameOpts { sourceId: string; /** See `RenameIdentityInputs.sourcePathOf`. */ sourcePathOf?: (gitPath: string) => string }
+/** GBRA-133 S-51: an inexact pair whose identity the database refused to read (`cause`, SQLSTATE 22021/22P05); neither side is in the manifest. */
+export interface HeldIdentityRename { from: string; to: string; similarity: number; cause: unknown }
+/** A confirmed manifest; `heldRenames` lists the pairs the caller must hold instead of applying. */
+export interface ConfirmedManifest extends SyncManifest { heldRenames?: HeldIdentityRename[] }
+
+export interface ConfirmRenameOpts {
+  sourceId: string;
+  /** See `RenameIdentityInputs.sourcePathOf`. */
+  sourcePathOf?: (gitPath: string) => string;
+  /** The caller holds `heldRenames`; without it a pair the database refused to read still throws its error. */
+  holdUnreadable?: boolean;
+}
 
 /**
  * Reads both sides' frontmatter and the live pages sharing their ids and titles, then applies
@@ -256,7 +282,7 @@ export interface ConfirmRenameOpts { sourceId: string; /** See `RenameIdentityIn
  * whose base is HEAD).
  */
 export async function confirmRenameIdentities(engine: Pick<BrainEngine, 'executeRaw'>, repo: string, base: string, target: string | null,
-  manifest: SyncManifest, opts: ConfirmRenameOpts): Promise<SyncManifest> {
+  manifest: SyncManifest, opts: ConfirmRenameOpts): Promise<ConfirmedManifest> {
   if (!needsRenameConfirmation(manifest)) return manifest;
   const readable = (path: string) => isMarkdownFilePath(path) && !path.includes('\n');
   const basePaths = [...new Set([...manifest.deleted, ...manifest.renamed.map(rename => rename.from)].filter(readable))];
@@ -269,26 +295,56 @@ export async function confirmRenameIdentities(engine: Pick<BrainEngine, 'execute
   // The old side's title is the one its page row stores: a page whose title changed in the brain is compared as it is now.
   const titled = basePaths.filter(path => baseIdentity.get(path)!.title);
   const sourcePathOf = opts.sourcePathOf ?? ((path: string) => path);
-  const stored = titled.length ? await engine.executeRaw<{ slug: string; source_path: string | null; title: string | null }>(
+  // GBRA-133 S-51: both reads batch every path; a value the database cannot encode (22021/22P05) is found by retrying
+  // path by path, and only the pairs carrying it are held. Every other error propagates (a lost connection is the run's).
+  const unreadable = new Map<string, unknown>();
+  const perPath = async <T>(paths: string[], read: (paths: string[]) => Promise<T[]>): Promise<T[]> => {
+    if (paths.length === 0) return [];
+    try { return await read(paths); } catch (error) {
+      if (!unreadableIdentity(error)) throw error;
+      const rows: T[] = [];
+      for (const path of paths) {
+        try { rows.push(...await read([path])); } catch (one) {
+          if (!unreadableIdentity(one)) throw one;
+          unreadable.set(path, one);
+        }
+      }
+      return rows;
+    }
+  };
+  const stored = await perPath(titled, paths => engine.executeRaw<{ slug: string; source_path: string | null; title: string | null }>(
     `SELECT slug, source_path, title FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND (source_path = ANY($2::text[]) OR slug = ANY($3::text[]))`,
-    [opts.sourceId, [...new Set(titled.flatMap(path => [path, sourcePathOf(path)]))], titled.map(path => resolveSlugForPath(sourcePathOf(path)))]) : [];
+    [opts.sourceId, [...new Set(paths.flatMap(path => [path, sourcePathOf(path)]))], paths.map(path => resolveSlugForPath(sourcePathOf(path)))]));
   for (const path of titled) {
     const row = stored.find(page => page.source_path === path || page.source_path === sourcePathOf(path))
       ?? stored.find(page => page.source_path === null && page.slug === resolveSlugForPath(sourcePathOf(path)));
     if (row) baseIdentity.set(path, { ...baseIdentity.get(path)!, title: row.title?.trim() || null });
   }
-  const identities = [...baseIdentity.values(), ...targetIdentity.values()];
-  const ids = [...new Set(identities.flatMap(identity => identity.id ? [identity.id] : []))];
-  const titles = [...new Set(identities.flatMap(identity => identity.title ? [identity.title] : []))];
-  const live = ids.length || titles.length ? await engine.executeRaw<LiveIdentityHolder>(
-    `SELECT slug, source_path, frontmatter->>'id' AS fm_id, title FROM pages
-      WHERE source_id = $1 AND deleted_at IS NULL AND (frontmatter->>'id' = ANY($2::text[]) OR title = ANY($3::text[]))`,
-    [opts.sourceId, ids, titles]) : [];
-  const decided = decideRenameIdentities(manifest, {
+  const identityOf = (path: string) => [baseIdentity.get(path), targetIdentity.get(path)].filter((identity): identity is FrontmatterIdentity => !!identity);
+  const valued = [...new Set([...basePaths, ...targetPaths])].filter(path => identityOf(path).some(identity => identity.id || identity.title));
+  const live = await perPath(valued, paths => {
+    const identities = paths.flatMap(identityOf);
+    return engine.executeRaw<LiveIdentityHolder>(
+      `SELECT slug, source_path, frontmatter->>'id' AS fm_id, title FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND (frontmatter->>'id' = ANY($2::text[]) OR title = ANY($3::text[]))`,
+      [opts.sourceId, [...new Set(identities.flatMap(identity => identity.id ? [identity.id] : []))], [...new Set(identities.flatMap(identity => identity.title ? [identity.title] : []))]]);
+  });
+  // A path whose identity the database refused: an inexact pair carrying it is held (the old page stays whole); on an
+  // unpaired add or delete its identity is absent, which today's rules already treat as a plain add or delete.
+  const held: HeldIdentityRename[] = [];
+  for (const path of unreadable.keys()) { baseIdentity.delete(path); targetIdentity.delete(path); }
+  const pairs = manifest.renamed.filter(rename => {
+    const cause = rename.similarity !== undefined && rename.similarity < 100 ? unreadable.get(rename.from) ?? unreadable.get(rename.to) : undefined;
+    if (cause !== undefined) held.push({ from: rename.from, to: rename.to, similarity: rename.similarity!, cause });
+    return cause === undefined;
+  });
+  const decided: ConfirmedManifest = decideRenameIdentities({ ...manifest, renamed: pairs }, {
     base: path => baseIdentity.get(path) ?? NO_IDENTITY,
     target: path => targetIdentity.get(path) ?? NO_IDENTITY,
     live, sourcePathOf: opts.sourcePathOf, targetSource: target === null ? 'working_tree' : 'commit',
   });
+  if (held.length && !opts.holdUnreadable) throw held[0]!.cause;
+  if (held.length) decided.heldRenames = held;
   if (target !== null) return decided;
   // A dirty-tree verdict holds only for the bytes it read: each kept rename carries their digest, and the identity move
   // re-checks it against the bytes it imports (classic applyRename, managed readSyncContent).
@@ -299,8 +355,37 @@ export async function confirmRenameIdentities(engine: Pick<BrainEngine, 'execute
   return { ...decided, renamed: decided.renamed.map(stamp) };
 }
 
+/**
+ * GBRA-133 S-51: decides a held pair again (its file changed, or a retry asked): the base side is the page the hold
+ * kept (its stored id and title), the target the file at `target`. `held` when the database still refuses a value.
+ */
+export async function redecideHeldRename(engine: Pick<BrainEngine, 'executeRaw'>, repo: string, target: string,
+  pair: { from: string; to: string; gitTo: string; pageId: number }, opts: ConfirmRenameOpts): Promise<'confirmed' | 'downgraded' | 'held'> {
+  const [page] = await engine.executeRaw<{ fm_id: string | null; title: string | null }>(
+    `SELECT frontmatter->>'id' AS fm_id, title FROM pages WHERE id = $1 AND deleted_at IS NULL`, [pair.pageId]);
+  if (!page) return 'downgraded';
+  const before: FrontmatterIdentity = { ...NO_IDENTITY, id: queryable(page.fm_id?.trim() || null), title: queryable(page.title?.trim() || null) };
+  const [head] = pair.gitTo.includes('\n') ? [null] : await catFileHeads(repo, [`${target}:${pair.gitTo}`]);
+  const after = frontmatterIdentity(head ?? null);
+  const ids = [...new Set([before.id, after.id].filter((value): value is string => !!value))];
+  const titles = [...new Set([before.title, after.title].filter((value): value is string => !!value))];
+  let live: LiveIdentityHolder[];
+  try {
+    live = ids.length || titles.length ? await engine.executeRaw<LiveIdentityHolder>(
+      `SELECT slug, source_path, frontmatter->>'id' AS fm_id, title FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND (frontmatter->>'id' = ANY($2::text[]) OR title = ANY($3::text[]))`, [opts.sourceId, ids, titles]) : [];
+  } catch (error) {
+    if (unreadableIdentity(error)) return 'held';
+    throw error;
+  }
+  const decided = decideRenameIdentities({ added: [], modified: [], deleted: [], renamed: [{ from: pair.from, to: pair.to, similarity: 0 }] }, {
+    base: path => path === pair.from ? before : NO_IDENTITY, target: path => path === pair.to ? after : NO_IDENTITY, live,
+  });
+  return decided.renamed.length ? 'confirmed' : 'downgraded';
+}
+
 /** `computeSyncDelta` of a commit range with its renames confirmed (the commit-range half of every incremental sync). */
-export async function confirmedSyncDelta(engine: Pick<BrainEngine, 'executeRaw'>, repo: string, from: string, to: string, opts: ConfirmRenameOpts): Promise<SyncDeltaResult> {
+export async function confirmedSyncDelta(engine: Pick<BrainEngine, 'executeRaw'>, repo: string, from: string, to: string, opts: ConfirmRenameOpts): Promise<Exclude<SyncDeltaResult, { status: 'ok' }> | { status: 'ok'; manifest: ConfirmedManifest }> {
   const delta = computeSyncDelta(repo, from, to);
   return delta.status === 'ok' ? { status: 'ok', manifest: await confirmRenameIdentities(engine, repo, from, to, delta.manifest, opts) } : delta;
 }

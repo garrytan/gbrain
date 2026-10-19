@@ -23,20 +23,34 @@
  * A workflow_dispatch backfill runs the same gate for master's HEAD, so it
  * publishes the current VERSION once master's CI for HEAD is green. Writes
  * `publish=true|false` and `sha=<commit>` to --output (GITHUB_OUTPUT).
+ *
+ * Master-push reuse (scripts/ci-reuse.ts, docs/ci-event-parity.md#master-push-reuse):
+ * a green push run whose latest attempt has a succeeded `reused-full-suite`
+ * job reused a pull request run's full suite. On publish the gate reads that
+ * push run's `reused-full-suite` artifact (reuse.json, written by
+ * ci-reuse.ts --record), prints the reused run per workflow and writes
+ * `test_reused_run_id` / `e2e_reused_run_id` (empty when the push ran in
+ * full). A reused job whose record is missing or names another workflow or
+ * commit publishes nothing.
  * Exit 0 publish or superseded, 1 no publish (failed, timed out, not master),
  * 2 usage. Docs: docs/RELEASING.md#release-ci-gate
  */
 import { appendFileSync } from 'node:fs';
-import { restClient, type GitHubClient } from './lib/gh-issue.ts';
+import { attemptJobs, checkRecord, REUSE_ARTIFACT, REUSE_FILE, REUSE_JOB } from './ci-reuse.ts';
+import { fetchArtifactJson, restClient, type GitHubClient } from './lib/gh-issue.ts';
 
-export const GATED = [{ file: 'test.yml', name: 'Test' }, { file: 'e2e.yml', name: 'E2E Tests' }] as const;
+export const GATED = [{ file: 'test.yml', name: 'Test', key: 'test' }, { file: 'e2e.yml', name: 'E2E Tests', key: 'e2e' }] as const;
 export const DOCS = 'docs/RELEASING.md#release-ci-gate';
 const RED = new Set(['failure', 'timed_out', 'startup_failure', 'action_required']);
 const MAX_HOPS = 10;
 
 export interface GateRun { id: number; run_number: number; run_attempt: number; status: string; conclusion: string | null; head_sha: string; head_branch: string; event: string; html_url?: string }
+export interface ReusedRun { run_id: number; run_attempt: number; sha: string }
+/** Whether a green push run reused a pull request run's full suite (`problem`: it did, but its record cannot name the run). */
+export type Provenance = { reused: false } | ({ reused: true } & ReusedRun) | { problem: string };
+export interface Source { workflow: string; key: string; run_id: number; reused?: ReusedRun }
 export type Verdict =
-  | { kind: 'publish'; sha: string; why: string }
+  | { kind: 'publish'; sha: string; why: string; sources: Source[] }
   | { kind: 'superseded'; sha: string; why: string }
   | { kind: 'wait'; sha: string; why: string }
   | { kind: 'fail'; sha: string; why: string; next: string };
@@ -46,6 +60,7 @@ export interface GateDeps {
   newerRuns(file: string, after: number): Promise<GateRun[]>;
   versionAt(sha: string): Promise<string>;
   contains(base: string, head: string): Promise<boolean>;
+  provenance(file: string, run: GateRun): Promise<Provenance>;
 }
 
 const newest = (runs: GateRun[]) => [...runs].sort((a, b) => b.run_number - a.run_number || b.run_attempt - a.run_attempt)[0];
@@ -77,7 +92,18 @@ export async function evaluate(deps: GateDeps, sha: string, version: string): Pr
     }
     const pending = runs.filter(r => !r.run || r.run.status !== 'completed');
     if (pending.length) return { kind: 'wait', sha: candidate, why: pending.map(r => `${r.wf.name} ${r.run ? `run ${r.run.id} is ${r.run.status}` : 'has no push run yet'} on ${candidate.slice(0, 12)}`).join('; ') };
-    return { kind: 'publish', sha: candidate, why: `Test and E2E Tests both succeeded on ${candidate.slice(0, 12)}${candidate === sha ? '' : ` (the newer master commit that replaced the cancelled runs of ${sha.slice(0, 12)}; same VERSION)`}` };
+    const proven = await Promise.all(runs.map(async r => ({ wf: r.wf, run: r.run!, prov: await deps.provenance(r.wf.file, r.run!) })));
+    const unproven = proven.find(p => 'problem' in p.prov);
+    if (unproven && 'problem' in unproven.prov) {
+      return {
+        kind: 'fail', sha: candidate,
+        why: `${unproven.wf.name} run ${unproven.run.id} reused an earlier full-suite run on ${candidate.slice(0, 12)}, but its reuse record cannot name that run (${unproven.prov.problem}), so v${version} is not published. A release names the run that proved its tree.`,
+        next: `Re-run that push run (gh run rerun ${unproven.run.id}); it decides reuse again and records it, or runs the full suite. Once it is green: gh workflow run release.yml --ref master`,
+      };
+    }
+    const sources: Source[] = proven.map(p => ({ workflow: p.wf.name, key: p.wf.key, run_id: p.run.id, ...('run_id' in p.prov ? { reused: { run_id: p.prov.run_id, run_attempt: p.prov.run_attempt, sha: p.prov.sha } } : {}) }));
+    const how = sources.map(s => s.reused ? `${s.workflow} reused full-suite run ${s.reused.run_id} attempt ${s.reused.run_attempt} (pull request head ${s.reused.sha.slice(0, 12)}, identical tree)` : `${s.workflow} ran in full in run ${s.run_id}`).join('; ');
+    return { kind: 'publish', sha: candidate, sources, why: `Test and E2E Tests both succeeded on ${candidate.slice(0, 12)}${candidate === sha ? '' : ` (the newer master commit that replaced the cancelled runs of ${sha.slice(0, 12)}; same VERSION)`}: ${how}` };
   }
   return { kind: 'fail', sha: candidate, why: `followed ${MAX_HOPS} cancelled runs without a completed one`, next: 'Wait for master to settle, then: gh workflow run release.yml --ref master' };
 }
@@ -99,7 +125,22 @@ export function apiDeps(client: GitHubClient): GateDeps {
       const cmp = await client.request<{ status: string }>('GET', `repos/{repo}/compare/${base}...${head}`);
       return cmp.status === 'ahead' || cmp.status === 'identical';
     },
+    async provenance(file, run) {
+      const name = GATED.find(g => g.file === file)?.name ?? file;
+      const marker = (await attemptJobs(client, run.id, run.run_attempt)).filter(j => j.name === REUSE_JOB);
+      if (marker.length === 0 || marker.every(j => j.conclusion === 'skipped')) return { reused: false };
+      if (marker.length > 1 || marker[0]!.conclusion !== 'success') return { problem: `run ${run.id}'s ${REUSE_JOB} job concluded ${marker.map(j => j.conclusion).join(', ')}` };
+      const got = await fetchArtifactJson(client, run.id, REUSE_ARTIFACT, REUSE_FILE);
+      if (got.reason) return { problem: got.reason };
+      const rec = checkRecord(got.value, name, run.head_sha);
+      return typeof rec === 'string' ? { problem: rec } : { reused: true, ...rec };
+    },
   };
+}
+
+/** GITHUB_OUTPUT lines naming the run each workflow reused (empty when the push ran in full). */
+export function reuseOutputs(sources: Source[]): string {
+  return GATED.map(g => `${g.key}_reused_run_id=${sources.find(s => s.key === g.key)?.reused?.run_id ?? ''}\n`).join('');
 }
 
 export async function gate(deps: GateDeps, opts: { sha: string; version: string; timeoutMs: number; pollMs: number; log: (line: string) => void; sleep?: (ms: number) => Promise<void>; now?: () => number }): Promise<Verdict> {
@@ -141,6 +182,7 @@ if (import.meta.main) {
     if (v.kind === 'publish') {
       console.log(`[release-gate] publish v${version} at ${v.sha}: ${v.why}.`);
       write(true, v.sha);
+      if (output) appendFileSync(output, reuseOutputs(v.sources));
     } else if (v.kind === 'superseded') {
       console.log(`::notice::Release v${version} skipped: ${v.why}. Nothing to do. Docs: ${DOCS}`);
       write(false, v.sha);

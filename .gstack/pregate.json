@@ -17,6 +17,23 @@
     ],
     "scripts/pregate-remote-gate.sh": [
       "test/scripts/pregate-remote-gate.test.ts"
+    ],
+    "scripts/ubicloud/ubi-runner.sh": [
+      "test/scripts/ubi-runner.test.ts",
+      "test/scripts/ci-ubicloud-vm-names.test.ts"
+    ],
+    "scripts/ubicloud/reap-expired.ts": [
+      "test/scripts/ubicloud-reap-expired.test.ts"
+    ],
+    "scripts/ci-cost-ledger.ts": [
+      "test/scripts/ci-cost-ledger.test.ts"
+    ],
+    "scripts/ci-cost-baseline.json": [
+      "test/scripts/ci-cost-ledger.test.ts"
+    ],
+    ".github/workflows/ci-health.yml": [
+      "test/scripts/ci-cost-ledger.test.ts",
+      "test/scripts/ci-health-report.test.ts"
     ]
   },
   "guards": [

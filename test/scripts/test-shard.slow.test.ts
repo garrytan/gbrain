@@ -30,6 +30,7 @@
 import { describe, it, expect, beforeAll } from 'bun:test';
 import { execFileSync } from 'child_process';
 import { resolve } from 'path';
+import { UNIT_SHARDS } from '../../scripts/sharding.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..', '..');
 const SHARD_SH = resolve(REPO_ROOT, 'scripts/test-shard.sh');
@@ -172,7 +173,7 @@ describe('test-shard.sh — LPT balance contract', () => {
 
   // CI runs THIS many shards (test.yml matrix). The old version of this
   // test asserted 4- and 6-shard splits — configurations nothing runs.
-  const CI_SHARDS = 10;
+  const CI_SHARDS = UNIT_SHARDS;
 
   it('CI_SHARDS matches the test.yml matrix (parsed, not regexed)', () => {
     const fs = require('fs');

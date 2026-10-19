@@ -103,7 +103,7 @@ const SOURCE_CODES = new Set([
 ]);
 const CONTENT_CODES = new Set([
   'invalid_params', 'invalid_connector_text', 'request_too_large', 'page_identity_changed', 'take_row_collision',
-  'connector_fence_below_timeline', 'malformed', 'http_4xx',
+  'connector_fence_below_timeline', 'malformed', 'http_4xx', 'file_database_drift', 'page_body_segmented',
 ]);
 const POSTGRES_SOURCE_CODES: Record<string, string> = {
   '57014': 'statement_timeout', '55P03': 'lock_timeout', '40001': 'database_contention', '40P01': 'database_contention',

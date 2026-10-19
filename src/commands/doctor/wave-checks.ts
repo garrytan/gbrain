@@ -308,6 +308,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async engine => (await import('./checks/extraction-sync.ts')).computeAtomProvenanceDriftCheck(engine),
   },
   {
+    id: 'atom_retirements_restorable', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Restoring atoms an empty re-extraction retired is a host-side, explicit-only repair.',
+    count: d => Number(d.count ?? 0),
+    impact: 'Some atoms were retired when a re-extraction returned no atoms, and the purge removes them once their hold ends',
+    run: async (engine, scope) => (await import('./checks/atom-retirements.ts')).atomRetirementsRestorableCheck(engine, scope.sourceIds),
+  },
+  {
     id: 'extractor_facts_expired', resolution: 'repair', registration: 'wave',
     hostOnly: 'Restoring expired extractor facts is a host-side, explicit-only repair.',
     count: d => Number(d.evidenced ?? 0) + Number(d.ambiguous ?? 0),

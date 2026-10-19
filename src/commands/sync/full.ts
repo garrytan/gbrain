@@ -44,6 +44,8 @@ import {
 import type { SyncOpts, SyncResult } from '../sync.ts';
 import { heldRenameOrigins, holdRefusedImport, moveHeldRenames, noteScreenedImport, settleFullSyncHolds, wouldHoldFields, type LegacyHolds } from './holds.ts';
 import { sweepOrphanedRenameSentinels } from './rename-reconcile.ts';
+import { classifyItemFailure } from '../../core/item-failure.ts';
+import { OperationError } from '../../core/ops/contract.ts';
 
 export async function performFullSync(
   engine: BrainEngine,
@@ -409,8 +411,8 @@ async function reconcileFullSyncDeletes(
     // #5988 (E13): the old page of a held rename keeps its origin until the
     // renamed file imports; its file being gone does not make it stale.
     const heldOrigins = await heldRenameOrigins(engine, sid);
-    const rows = (await engine.executeRaw<{ slug: string; source_path: string | null }>(
-      `SELECT slug, source_path FROM pages WHERE source_id = $1 AND source_path IS NOT NULL AND deleted_at IS NULL`,
+    const rows = (await engine.executeRaw<{ slug: string; source_path: string | null; body_storage: string }>(
+      `SELECT slug, source_path, body_storage FROM pages WHERE source_id = $1 AND source_path IS NOT NULL AND deleted_at IS NULL`,
       [sid],
     )).filter(row => !heldOrigins.has(row.source_path!));
     // #774: a scoped full sync is authoritative ONLY for its scope — pages
@@ -463,6 +465,7 @@ async function reconcileFullSyncDeletes(
       // history (i.e. was genuinely deleted) are reconcile-deleted.
       const everCommitted = company ? null : listEverCommittedPaths(gitContextRoot);
       const pathBySlug = new Map(rows.map(r => [r.slug, r.source_path]));
+      const segmentedSlugs = new Set(rows.filter(r => r.body_storage === 'segmented').map(r => r.slug));
       let deletableSlugs = plan.staleSlugs;
       const dbOnlySlugs: string[] = [];
       if (everCommitted) {
@@ -475,17 +478,31 @@ async function reconcileFullSyncDeletes(
       }
       if (dbOnlySlugs.length > 0) {
         let reExported = 0;
-        try {
-          const { writePageThrough } = await import('../../core/write-through.ts');
-          for (const slug of dbOnlySlugs) {
-            const r = await writePageThrough(engine, slug, { sourceId: sid });
-            if (r.written) reExported++;
+        let reExportFailures = 0;
+        const { writePageThrough } = await import('../../core/write-through.ts');
+        for (const slug of dbOnlySlugs) {
+          try {
+            if (segmentedSlugs.has(slug)) throw new OperationError('page_body_segmented', 'Re-export cannot render a segmented page.', 'Read it with gbrain get --body auto; the page stays in the database.');
+            const r = await writePageThrough(engine, slug, { sourceId: sid, expectedFileBytes: null });
+            if (r.written) { reExported++; continue; }
+            if (r.skipped === 'disabled_by_config' || r.skipped === 'url_clone') continue;
+            if (r.skipped === 'file_changed') throw new OperationError('file_database_drift', 'The checkout file exists; re-export only restores absent files.', `If the file holds the newer edit, run gbrain sync --source ${sid} to import it; otherwise ask the user which version to keep.`);
+            if (r.error) throw new Error(r.error);
+            throw new OperationError('storage_error', `The page was not re-exported (${r.skipped}).`, 'Run gbrain doctor --json for the write-through target, then sync again.');
+          } catch (error) {
+            const failure = classifyItemFailure(error);
+            if (failure.scope === 'run') throw error;
+            reExportFailures++;
+            serr(`  ${slug} (${failure.code}: ${failure.message}) Kept the database page and any existing file. ` +
+              `If the file is newer, import it with gbrain sync --source ${sid} --include-gitignored; ` +
+              `if the database is newer, re-save its copy with write-through on; when both changed, ask the user which edit wins.`);
           }
-        } catch { /* best-effort — pages are preserved either way */ }
+        }
         serr(
           `\n  Kept ${dbOnlySlugs.length} page(s) whose markdown was never committed to git ` +
           `(DB-only write-through — not deleting).` +
           (reExported > 0 ? ` Re-exported ${reExported} of them to the working tree.` : '') +
+          (reExportFailures > 0 ? ` ${reExportFailures} re-export failure(s), listed above.` : '') +
           `\n  Commit + push them (e.g. scripts/brain-commit-push.sh, or 'gbrain sources harden') ` +
           `so the next sync sees them as file-backed.`,
         );

@@ -27,7 +27,8 @@
  * not a silent failure to exempt.
  */
 
-import { FAILSAFE_SCHEMA, load as yamlLoad } from 'js-yaml';
+import { FAILSAFE_SCHEMA } from 'js-yaml';
+import { loadBoundedYaml as yamlLoad } from './data-frontmatter.ts';
 
 // ---------------------------------------------------------------------------
 // Types

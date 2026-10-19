@@ -119,12 +119,18 @@ Every hold and error has three fields, from one table
 | `file_too_large` | page | none | yes | always |
 | `content_rejected` | page | none | yes | always |
 | `parser_regression` | page | upgrade | yes | always: a gbrain bug |
+| `frontmatter_alias_limit` | page | none | yes | always: only an edit to the file or its removal clears it |
 | `managed_image_sync_unsupported` | page | none | no | never: images stay held while multimodal embedding is off |
 | `purged_content` | page | none | yes | always: only the owner clears a purge tombstone |
 | `write_gate_rejected` | page | none | yes | always: write_gate.external_mode=reject is the user's setting |
 | `legacy_slug_conflict` | page | none | yes | always: only a person decides which legacy page the file takes over |
 | `origin_conflict` | page | repair | no | the hold carries a reason (the pages differ, ids conflict or none is the page the path names), or the heal is off |
+| `rename_identity_unreadable` | page | none | yes | always: the file title or id holds characters the database cannot compare |
+| `rename_reconcile_failed` | page | none | yes | always: the old page may be a duplicate |
 | `origin_conflict_decision` | page | none | yes | always: the pages differ, their ids conflict or none is the page the path names |
+| `file_unreadable` | page | none | yes | always: only a change to the checkout makes the file readable |
+| `absent_from_worktree` | page | none | yes | always: only a person decides whether the file comes back or its deletion is committed |
+| `unsupported_path` | page | none | yes | always: only a rename makes the name a page path |
 | `revision_conflict` | page | retry | no | the same path fails again after a rerun |
 | `page_identity_changed` | page | retry | no | the same path fails again after a rerun |
 | `pinned_git_worktree_conflict` | page | retry | no | the same path fails again after a rerun |

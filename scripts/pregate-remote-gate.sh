@@ -9,8 +9,11 @@
 #
 #   PREGATE_REMOTE: tree=<tree> tests=<n> failed=<n>
 #
-# It runs the full Ubicloud gate (`bun run ci:ubicloud`, every lane), a
-# superset of whatever pregate selected, so PREGATE_FILES_FILE is not read.
+# It runs the development form of the Ubicloud gate, `bun run ci:ubicloud:diff`:
+# a doc-only tree runs the doc checks and gitleaks, any other tree every lane,
+# a superset of whatever pregate selected, so PREGATE_FILES_FILE is not read.
+# The full gate (`bun run ci:ubicloud`) runs once per PR, at handoff, outside
+# pregate (scripts/ubicloud/README.md#how-many-full-gates).
 # <tree> is the working-tree content fingerprint this script computes itself
 # (tracked plus untracked-unignored files, the set ci:ubicloud packs), taken
 # before and after the gate; the line is printed only when both agree and,
@@ -24,7 +27,7 @@
 # environment. Extra arguments go to ci:ubicloud (for example --vms 8).
 # Spend is not reported (no spent=), so gstack counts it at the cap.
 #
-# Seam: GBRAIN_PREGATE_GATE_CMD replaces `bun run ci:ubicloud`
+# Seam: GBRAIN_PREGATE_GATE_CMD replaces `bun run ci:ubicloud:diff`
 # (test/scripts/pregate-remote-gate.test.ts).
 set -uo pipefail
 
@@ -54,7 +57,7 @@ fi
 log=$(mktemp "${TMPDIR:-/tmp}/pregate-remote-gate-log-XXXXXX") || fail "cannot create a log file"
 trap 'rm -f "$log"' EXIT
 
-gate_cmd=${GBRAIN_PREGATE_GATE_CMD:-bun run ci:ubicloud}
+gate_cmd=${GBRAIN_PREGATE_GATE_CMD:-bun run ci:ubicloud:diff}
 # shellcheck disable=SC2086
 env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u VOYAGE_API_KEY -u GEMINI_API_KEY -u JEV_TYPESAFE_API_KEY -u DATABASE_URL \
   bash -c "$gate_cmd \"\$@\"" pregate-remote-gate "$@" 2>&1 | tee "$log"

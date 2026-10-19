@@ -31,6 +31,7 @@ import { getWorktreeBinding, type GitDurabilitySetting, type WorktreeBinding } f
 import { requireWriterAdminIntent, assertWriterAdminState, writerAdminState } from './admin-intent.ts';
 import { gitDurabilityPolicy, planGitDurabilityCatchUp, requeueGitDurabilityCatchUp } from './git-durability-policy.ts';
 import { refusalEnvelope, retryParkedEffects } from './effect-retry.ts';
+import { GIT_PUSH_CODES } from './git-push-holds.ts';
 import { patchManagedDurabilityBlock } from '../brain-repo-durability.ts';
 
 export const GIT_DURABILITY_PARAMS = ['source_id', 'enable', 'disable', 'pat_file', 'dry_run', 'admin_intent', 'expected_state'] as const;
@@ -168,7 +169,8 @@ const REQUEST_REFUSALS = new Set(['permission_denied', 'source_changed', 'write_
 
 /**
  * #5808(a): after a credential change, one more attempt for every effect of this
- * worktree that parked on `git_push_unavailable`. Other worktrees are untouched;
+ * worktree that parked on a push code (`git_push_unavailable`; #7010 adds
+ * `push_unconfirmed` and `integrate_conflict`, see `retrySourceParkedPushes`). Other worktrees are untouched;
  * each journal row goes through `retryParkedEffects`, so the original write's
  * authority is re-checked and a claimed or settled effect is left alone.
  * #6678: effects reference the internal journal id, so the public receipt id is
@@ -182,8 +184,8 @@ export async function retryParkedPushes(engine: BrainEngine, worktreeId: string,
     SELECT DISTINCT e.source_id,r.id::text AS id,r.request_id::text AS request_id FROM persistence_effects e
       JOIN persistence_requests r ON r.id=e.request_id
      WHERE e.worktree_id=$1::uuid AND e.kind='git' AND e.state='failed' AND e.error_code='targets_parked' AND e.recovery IS NULL
-       AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(e.data->'parked','[]'::jsonb)) p WHERE p->>'error_code'='git_push_unavailable')
-     ORDER BY e.source_id,request_id,id`, [worktreeId]);
+       AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(e.data->'parked','[]'::jsonb)) p WHERE p->>'error_code'=ANY($2::text[]))
+     ORDER BY e.source_id,request_id,id`, [worktreeId, [...GIT_PUSH_CODES]]);
   let queued = 0, unchanged = 0;
   const refused: ParkedPushRefusal[] = [];
   for (const row of rows) {
@@ -201,6 +203,17 @@ export async function retryParkedPushes(engine: BrainEngine, worktreeId: string,
     if (effects.some(effect => effect.action === 'retry_queued' || effect.action === 'would_retry')) queued++; else unchanged++;
   }
   return { status: refused.length ? 'partial' : 'ok', requests: rows.length, queued, unchanged, refused };
+}
+
+/**
+ * #7010: `retry-effects <source> --parked-pushes`: one more attempt for every Git effect of the source's worktree
+ * parked on a push code, without a credential change. A push the remote rejected because it moved now publishes over
+ * the remote without moving the checkout, so the effects a moved remote parked before this release go through.
+ */
+export async function retrySourceParkedPushes(engine: BrainEngine, sourceId: string, dryRun: boolean): Promise<Record<string, unknown>> {
+  const binding = await ownedBinding(engine, sourceId);
+  return { action: 'writer_retry_parked_pushes', source_id: sourceId, worktree_id: binding.worktree_id, dry_run: dryRun,
+    ...await retryParkedPushes(engine, binding.worktree_id, dryRun) };
 }
 
 async function ownedBinding(engine: BrainEngine, sourceId: string): Promise<WorktreeBinding & { local_path: string }> {

@@ -24,6 +24,7 @@ import {
   persistTakeFromSynthesis,
   TAKE_CLAIM_MAX_CHARS,
 } from '../src/core/think/persist-take.ts';
+import { writePageThrough } from '../src/core/write-through.ts';
 
 let engine: PGLiteEngine;
 let brainDir: string;
@@ -99,6 +100,7 @@ describe('#2556 persistTakeFromSynthesis (PGLite + tmp repo)', () => {
       title: 'Alice Example',
       compiled_truth: 'A founder page.',
     });
+    expect((await writePageThrough(engine, 'people/alice-example', { sourceId: 'default' })).written).toBe(true);
 
     const r = await persistTakeFromSynthesis(
       engine,

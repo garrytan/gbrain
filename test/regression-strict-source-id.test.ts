@@ -40,6 +40,8 @@ const pageEngine = {
     slug, type: 'note', title: slug, compiled_truth: 'body', timeline: '', frontmatter: {},
   }),
   getTags: async () => [],
+  getConfig: async () => null,
+  executeRaw: async () => [],
 } as unknown as BrainEngine;
 
 describe('strict-regex blast radius — patterns.ts + synthesize.ts (codex r2 P1-D)', () => {

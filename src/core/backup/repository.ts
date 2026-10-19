@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from '../spawn.ts';
+import { execFile, execFileSync, spawn } from '../spawn.ts';
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { buildGitEnv } from '../git-remote.ts';
@@ -11,18 +11,41 @@ import { BACKUP_VERIFICATION_MAX_AGE_MS, type BackupAssetVerdict } from './statu
 export const BACKUP_REMOTE_PROBE_CAP = 8;
 export const BACKUP_REMOTE_BUDGET_MS = 8_000;
 export const BACKUP_REMOTE_TIMEOUT_MS = 2_000;
+export const BACKUP_REMOTE_TIMEOUT_KEY = 'backup.remote_timeout_ms';
+export const BACKUP_REMOTE_TIMEOUT_MIN_MS = 500;
+export const BACKUP_REMOTE_TIMEOUT_MAX_MS = 30_000;
 
-export interface RemoteProbeBudget { remaining: number; deadline?: number }
+/** `timeoutMs`: each remote probe's slot (resolveBackupRemoteTimeoutMs); default BACKUP_REMOTE_TIMEOUT_MS. */
+export interface RemoteProbeBudget { remaining: number; deadline?: number; timeoutMs?: number }
 
 /**
- * A remote probe starts only when its full `BACKUP_REMOTE_TIMEOUT_MS` slot is
- * still inside the sweep deadline. A probe started on the leftover sub-slot
- * would be killed mid-handshake and record a healthy slow remote as
- * `unavailable` (#6499); deferring it reports `budget_exhausted` instead.
+ * #6907: the remote probe slot. GBRAIN_BACKUP_REMOTE_TIMEOUT_MS wins over the
+ * brain's `backup.remote_timeout_ms`; a non-number is ignored, and a number is
+ * clamped to 0.5-30 s. Default 2 s.
+ */
+export function resolveBackupRemoteTimeoutMs(configured: string | null | undefined, env: string | undefined = process.env.GBRAIN_BACKUP_REMOTE_TIMEOUT_MS): number {
+  for (const raw of [env, configured]) {
+    if (raw == null || raw.trim() === '') continue;
+    const ms = Number(raw);
+    if (Number.isFinite(ms)) return Math.min(BACKUP_REMOTE_TIMEOUT_MAX_MS, Math.max(BACKUP_REMOTE_TIMEOUT_MIN_MS, Math.round(ms)));
+  }
+  return BACKUP_REMOTE_TIMEOUT_MS;
+}
+
+/** The sweep's remote budget: eight seconds, or four slots when the slot is longer. */
+export function backupRemoteBudgetMs(timeoutMs: number): number {
+  return Math.max(BACKUP_REMOTE_BUDGET_MS, 4 * timeoutMs);
+}
+
+/**
+ * A remote probe starts only when its full slot is still inside the sweep
+ * deadline. A probe started on the leftover sub-slot would be killed
+ * mid-handshake and record a healthy slow remote as `unavailable` (#6499);
+ * deferring it reports `budget_exhausted` instead.
  */
 export function budgetAllowsProbe(budget: RemoteProbeBudget, nowMs: number = Date.now()): boolean {
   if (budget.remaining <= 0) return false;
-  return budget.deadline === undefined || budget.deadline - nowMs >= BACKUP_REMOTE_TIMEOUT_MS;
+  return budget.deadline === undefined || budget.deadline - nowMs >= (budget.timeoutMs ?? BACKUP_REMOTE_TIMEOUT_MS);
 }
 
 /** Variables that locate the user's own git config, credentials and network path. */
@@ -49,6 +72,37 @@ function git(root: string, args: string[]): string {
     encoding: 'utf8', timeout: 2_000, maxBuffer: 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'], env: backupGitEnv(),
   }).trim();
+}
+
+/**
+ * #6907: does the tree hold changes besides physical-root metadata? Reads
+ * `git status --porcelain` as it streams and stops git at the first other
+ * line, so a tree with a huge listing costs one line instead of overflowing a
+ * buffer; a single line past the bound reads dirty (metadata names are short).
+ * Fails on a timeout or a git error, like the other local probes.
+ */
+function worktreeDirty(root: string): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['-C', root, 'status', '--porcelain'], { stdio: ['ignore', 'pipe', 'ignore'], env: backupGitEnv() });
+    let pending = '';
+    let settled = false;
+    const settle = (result: boolean | Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill();
+      if (result instanceof Error) reject(result); else resolve(result);
+    };
+    const timer = setTimeout(() => settle(new Error('git status timed out')), 2_000);
+    child.stdout!.setEncoding('utf8');
+    child.stdout!.on('data', (chunk: string) => {
+      const lines = (pending + chunk).split('\n');
+      pending = lines.pop()!;
+      if (withoutPhysicalRootMetadata(lines.join('\n')).length > 0 || pending.length > 1024 * 1024) settle(true);
+    });
+    child.on('error', settle);
+    child.on('close', (code: number | null) => settle(code === 0 ? withoutPhysicalRootMetadata(pending).length > 0 : new Error(`git status exited ${code}`)));
+  });
 }
 
 function repositoryFingerprint(root: string, origin: string, branch: string, head: string): string {
@@ -97,7 +151,7 @@ export async function assessBackupRepository(
     }
     const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
     const head = git(root, ['rev-parse', '--verify', 'HEAD']);
-    const dirty = withoutPhysicalRootMetadata(git(root, ['status', '--porcelain'])).length > 0;
+    const dirty = await worktreeDirty(root);
     let ahead: number | undefined;
     try { ahead = Number(git(root, ['rev-list', '--count', `refs/remotes/origin/${branch}..HEAD`])); } catch {}
     asset.state = ahead && ahead > 0 ? 'unpushed' : dirty ? 'dirty' : 'ok';
@@ -126,7 +180,8 @@ export async function assessBackupRepository(
       }
       return asset;
     }
-    budget.deadline ??= Date.now() + BACKUP_REMOTE_BUDGET_MS;
+    const timeoutMs = budget.timeoutMs ?? BACKUP_REMOTE_TIMEOUT_MS;
+    budget.deadline ??= Date.now() + backupRemoteBudgetMs(timeoutMs);
     if (!budgetAllowsProbe(budget)) {
       asset.verification = { state: 'budget_exhausted', repository_fingerprint: fingerprint };
       return asset;
@@ -137,8 +192,9 @@ export async function assessBackupRepository(
       execFile('git', ['-C', root, '-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always',
         '-c', 'protocol.https.allow=always', '-c', 'protocol.http.allow=always', '-c', 'protocol.ssh.allow=always',
         '-c', 'http.followRedirects=false', '-c', 'credential.interactive=false', 'ls-remote', '--exit-code', '--refs', 'origin', ref], {
-        encoding: 'utf8', timeout: BACKUP_REMOTE_TIMEOUT_MS, maxBuffer: 64 * 1024,
-        env: { ...backupGitEnv(), GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', SSH_ASKPASS_REQUIRE: 'never', GIT_SSH_COMMAND: 'ssh -oBatchMode=yes -oStrictHostKeyChecking=yes -oConnectTimeout=2' },
+        encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 * 1024,
+        env: { ...backupGitEnv(), GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', SSH_ASKPASS_REQUIRE: 'never',
+          GIT_SSH_COMMAND: `ssh -oBatchMode=yes -oStrictHostKeyChecking=yes -oConnectTimeout=${Math.ceil(timeoutMs / 1000)}` },
       }, (error, stdout) => error ? reject(error) : resolve(stdout));
     }).catch((error: { code?: unknown; killed?: boolean }) => {
       asset.verification = error.code === 2
@@ -154,7 +210,7 @@ export async function assessBackupRepository(
     }
     const stillClean = git(root, ['rev-parse', '--verify', 'HEAD']) === head
       && git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']) === branch
-      && withoutPhysicalRootMetadata(git(root, ['status', '--porcelain'])).length === 0
+      && !await worktreeDirty(root)
       && git(root, ['remote', 'get-url', 'origin']) === origin
       && repositoryFingerprint(root, origin, branch, head) === fingerprint;
     asset.verification = { state: remoteHead === head && stillClean && !dirty ? 'verified' : 'mismatch', checked_at: now.toISOString(), local_commit: head, remote_commit: remoteHead, repository_fingerprint: fingerprint };
