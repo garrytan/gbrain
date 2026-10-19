@@ -24,6 +24,8 @@ import { escapeLikePattern, hasCJK, cjkMatchTerms } from '../cjk.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import { resolveBoostMap, resolveHardExcludes } from './source-boost.ts';
 import { buildHardExcludeClause, buildSourceFactorCase, buildVisibilityClause } from './sql-ranking.ts';
+import { privatePagesFilterFragment } from './private-visibility.ts';
+import { chunkVisibleFilter, requiresSafeChunks } from './safe-chunks.ts';
 
 /** Counts stop here; a capped count is reported as "10000+". */
 export const KEYWORD_COUNT_CAP = 10_000;
@@ -84,17 +86,24 @@ export function buildKeywordMatch(query: string, opts: SearchOpts | undefined): 
 
 /** Distinct matching pages, capped at KEYWORD_COUNT_CAP + 1. */
 export function buildKeywordCountStatement(query: string, opts: SearchOpts | undefined): { sql: string; params: unknown[] } | null {
-  const m = buildKeywordMatch(query, opts);
+  // Keep the scalar-source cap-driven plan. For federated/unscoped reads,
+  // isolate the private rule's selectivity from the page/chunk join.
+  const deferred = opts?.excludePrivate && (opts.sourceIds?.length || !opts.sourceId);
+  const m = deferred ? keywordCandidates(query, opts) : buildKeywordMatch(query, opts);
   if (!m) return null;
   return {
-    sql: `SELECT count(*)::int AS n FROM (SELECT DISTINCT cc.page_id FROM ${FROM} WHERE ${m.where} LIMIT ${KEYWORD_COUNT_CAP + 1}) matched`,
+    sql: deferred
+      ? `SELECT count(*)::int AS n FROM (
+          SELECT DISTINCT cc.page_id FROM ${FROM} ${privateKeywordPageJoin()} WHERE ${m.where}
+          LIMIT ${KEYWORD_COUNT_CAP + 1}) matched`
+      : `SELECT count(*)::int AS n FROM (SELECT DISTINCT cc.page_id FROM ${FROM} WHERE ${m.where} LIMIT ${KEYWORD_COUNT_CAP + 1}) matched`,
     params: m.params.slice(0, m.whereParamCount),
   };
 }
 
 /** One page of matching pages, best chunk each, in keyset order. */
 export function buildKeywordPagesStatement(query: string, opts: SearchOpts | undefined, page: KeywordPageWindow): { sql: string; params: unknown[] } | null {
-  const m = buildKeywordMatch(query, opts);
+  const m = keywordCandidates(query, opts);
   if (!m) return null;
   const params = [...m.params];
   let after = '';
@@ -115,10 +124,53 @@ export function buildKeywordPagesStatement(query: string, opts: SearchOpts | und
         CASE WHEN ${messageId} THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
         CASE WHEN ${messageId} THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
         cc.id AS chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, b.score, false AS stale
-      FROM best b JOIN pages p ON p.id = b.page_id JOIN content_chunks cc ON cc.id = b.chunk_id
+      FROM ${opts?.excludePrivate ? '(SELECT * FROM best ORDER BY score DESC, page_id ASC OFFSET 0) b' : 'best b'} JOIN pages p ON p.id = b.page_id JOIN content_chunks cc ON cc.id = b.chunk_id${opts?.excludePrivate ? `\n      ${privateKeywordPageJoin()}` : ''}
       ${after}
       ORDER BY b.score DESC, b.page_id ASC
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
+  };
+}
+
+/**
+ * Plan matching and ordering independently of the correlated privacy subplans.
+ * Keep the safe-chunk floor when deferring privacy; every other filter stays
+ * in the candidate query. The canonical page rule still runs before LIMIT,
+ * OFFSET and the count cap, including when the first candidates are hidden.
+ */
+function keywordCandidates(query: string, opts: SearchOpts | undefined): KeywordMatch | null {
+  return buildKeywordMatch(query, opts?.excludePrivate
+    ? { ...opts, excludePrivate: false, requireSafeChunks: requiresSafeChunks(opts) }
+    : opts);
+}
+
+/** Keep the canonical row check separate from candidate planning. */
+function privateKeywordPageJoin(alias = 'p'): string {
+  return `CROSS JOIN LATERAL (SELECT true WHERE ${privatePagesFilterFragment(alias)} OFFSET 0) private_page`;
+}
+
+/** Public chunk fields, shared by the candidate and post-limit hydration. */
+export function keywordChunkProjection(idsOnly = false): string {
+  if (idsOnly) return 'p.id as page_id, cc.id as chunk_id';
+  return `p.slug, p.id as page_id, p.title, p.type, p.source_id,
+          p.effective_date, p.effective_date_source,
+          CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+            THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
+          CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+            THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
+          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source`;
+}
+
+/** Sort ids/scores, apply privacy, then hydrate the existing chunk-pool window. */
+export function buildKeywordRankWindow(limitParam: string, excludePrivate?: boolean): { start: string; end: string } {
+  if (!excludePrivate) return { start: '', end: `LIMIT ${limitParam}` };
+  return {
+    start: `SELECT ${keywordChunkProjection()}, private_pool.score FROM (
+        SELECT private_candidates.page_id, private_candidates.chunk_id, private_candidates.score FROM (`,
+    end: `OFFSET 0) private_candidates JOIN pages private_candidate_page ON private_candidate_page.id = private_candidates.page_id
+        ${privateKeywordPageJoin('private_candidate_page')}
+        ORDER BY score DESC, page_id ASC, chunk_id ASC LIMIT ${limitParam}
+        ) private_pool JOIN pages p ON p.id = private_pool.page_id
+        JOIN content_chunks cc ON cc.id = private_pool.chunk_id AND ${chunkVisibleFilter('p', 'cc')}`,
   };
 }

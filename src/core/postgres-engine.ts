@@ -139,7 +139,7 @@ import * as timelineImpl from './engine-sql/timeline.ts';
 import * as sourcesImpl from './engine-sql/sources.ts';
 import * as filesImpl from './engine-sql/files.ts';
 import type { ChunkWindowRequest, ChunkWindowOpts, ChunkWindowPage } from './search/chunk-windows.ts';
-import type { KeywordPageWindow } from './search/keyword-statement.ts';
+import { buildKeywordRankWindow, keywordChunkProjection, type KeywordPageWindow } from './search/keyword-statement.ts';
 import type { EmbeddingState, EmbeddingStateCounts, EmbeddingStateRow } from './embedding-state.ts';
 import * as chunksImpl from './engine-sql/chunks.ts';
 import * as pageBodyImpl from './engine-sql/page-body.ts';
@@ -1092,23 +1092,20 @@ export class PostgresEngine implements BrainEngine {
     // archived sources. Joined `sources s` lets the predicate compile to a
     // column lookup. NOT bypassed by detail=high — soft-delete is a contract,
     // not a temporal preference.
-    const visibilityClause = buildVisibilityClause('p', 's', { ...opts, chunkAlias: 'cc' });
+    const candidateOpts = opts?.excludePrivate
+      ? { ...opts, excludePrivate: false, requireSafeChunks: requiresSafeChunks(opts) } : opts;
+    const visibilityClause = buildVisibilityClause('p', 's', { ...candidateOpts, chunkAlias: 'cc' });
     // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
     const rankParam = opts?.rankQuery ? `$${params.push(opts.rankQuery)}` : '$1';
 
     const chunk = buildKeywordChunkMatch(ftsLang, opts?.excludePrivate);
+    const window = buildKeywordRankWindow(innerLimitParam, opts?.excludePrivate);
     const rawQuery = `
-      WITH ranked_chunks AS (
+      WITH ranked_chunks AS (${window.start}
         SELECT
-          p.slug, p.id as page_id, p.title, p.type, p.source_id,
-          p.effective_date, p.effective_date_source,
-          CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
-            THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
-          CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
-            THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
-          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+          ${keywordChunkProjection(opts?.excludePrivate)},
           ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', ${rankParam})) * ${sourceFactorCase} AS score
         FROM ${chunk.from}
         JOIN pages p ON p.id = cc.page_id
@@ -1127,7 +1124,7 @@ export class PostgresEngine implements BrainEngine {
           ${visibilityClause}
           ${chunk.modality}
         ORDER BY score DESC, page_id ASC, chunk_id ASC
-        LIMIT ${innerLimitParam}
+        ${window.end}
       ),
       ${buildBestPerPagePoolCte('ranked_chunks')}
       SELECT slug, page_id, title, type, source_id,
