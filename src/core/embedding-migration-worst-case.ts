@@ -34,7 +34,7 @@ import { resolveMaxChunkTokens } from './embedding-input-limit.ts';
 import { preparePageProjection, readProjectionSnapshot } from './page-state/projections.ts';
 import { QUARANTINE_FILTER_FRAGMENT } from './quarantine.ts';
 import { loadPricingOverrides } from './budget/budget-tracker.ts';
-import { usageCostUsd } from './budget/reservation-cost.ts';
+import { priceFor, usageCostUsd } from './budget/reservation-cost.ts';
 import type { EmbeddingMigrationPlan } from './embedding-migration.ts';
 import type { MigrationWorstCase } from './embedding-migration-budget.ts';
 
@@ -146,6 +146,17 @@ async function eachStaleFactBatch(engine: BrainEngine, plan: EmbeddingMigrationP
 }
 
 export async function planMigrationWorstCase(engine: BrainEngine, plan: EmbeddingMigrationPlan, opts: { rerankerModel?: string } = {}): Promise<MigrationWorstCase> {
+  const overrides = await loadPricingOverrides(engine);
+  // Both kinds bill input only. Resolve actual rates, never a rounded estimate
+  // or a zero-token cost, and keep unknown/paid models on the full census path.
+  const hasZeroInputPrice = (model: string, kind: 'embed' | 'rerank') => {
+    const row = priceFor(model, kind, overrides)?.pricing;
+    return row?.input === 0 && (row.long_prompt?.input ?? 0) === 0;
+  };
+  if (hasZeroInputPrice(plan.to_model, 'embed')
+    && (!opts.rerankerModel || hasZeroInputPrice(opts.rerankerModel, 'rerank'))) {
+    return { requests: 0, input_tokens: 0, usd: 0, unpriced_models: [], counts_skipped: 'zero_price' };
+  }
   const envCap = Number.parseInt(process.env.GBRAIN_EMBED_MAX_BATCH_TOKENS ?? '', 10);
   const ceilings: number[] = [];
   const ceilingsOf = (texts: string[]) => texts.length
@@ -161,9 +172,10 @@ export async function planMigrationWorstCase(engine: BrainEngine, plan: Embeddin
   await eachStaleFactBatch(engine, plan, add);
   const embedTokens = ceilings.reduce((sum, n) => sum + n, 0);
   const rerankTokens = opts.rerankerModel ? rerankRequestMaxInputTokens(RERANKER_PROBE.query, RERANKER_PROBE.documents) : 0;
-  const overrides = await loadPricingOverrides(engine);
-  const embedUsd = usageCostUsd(plan.to_model, embedTokens, 0, 'embed', overrides);
-  const rerankUsd = opts.rerankerModel ? usageCostUsd(opts.rerankerModel, rerankTokens, 0, 'rerank', overrides) : 0;
+  // Preserve pricing at the end of a paid/unpriced census, which can be long.
+  const currentOverrides = await loadPricingOverrides(engine);
+  const embedUsd = usageCostUsd(plan.to_model, embedTokens, 0, 'embed', currentOverrides);
+  const rerankUsd = opts.rerankerModel ? usageCostUsd(opts.rerankerModel, rerankTokens, 0, 'rerank', currentOverrides) : 0;
   const unpriced = [...(embedUsd === null ? [plan.to_model] : []), ...(rerankUsd === null ? [opts.rerankerModel!] : [])];
   return {
     requests: ceilings.length + (opts.rerankerModel ? 1 : 0),

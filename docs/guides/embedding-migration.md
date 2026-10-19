@@ -88,6 +88,15 @@ even if a custom base URL still serves its old model.
    token-limit rejection bills nothing and releases its reservation, so the
    gateway's split of that batch fits inside the same worst case. A response
    without usage, or a crash before settlement, keeps the maximum debit.
+   When the target embedder and any reranker being switched both have exactly
+   zero input prices, the worst-case authorization is $0 without reading corpus
+   text. Pricing uses the budget resolver: operator overrides take precedence
+   over shipped prices and free local-provider rules. Paid or unpriced models
+   retain the full census. JSON keeps numeric `requests` and `input_tokens` as
+   `0` placeholders with `counts_skipped: "zero_price"`; these counts are
+   uncomputed, not an empty workload. `usd` is `0` and `unpriced_models` is `[]`.
+   The other workload and completion censuses still run, and existing caps,
+   retained debits and per-request authorization checks still apply.
    Usage above the reservation is debited, recorded as overshoot, and stops
    further dispatch until you re-run with `--max-cost-usd`. A reranker without
    a price is left out of the worst case with a warning; its probe refuses

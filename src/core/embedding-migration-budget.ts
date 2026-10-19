@@ -12,7 +12,14 @@ export const EMBEDDING_BUDGET_REFUSAL_DOCS = 'https://github.com/garrytan/gbrain
 const USD_EPSILON = 1e-9;
 
 /** Σ maximum input over the planned requests, from the same batcher the run dispatches through. `usd` is null only when the embedding model is unpriced. */
-export interface MigrationWorstCase { requests: number; input_tokens: number; usd: number | null; unpriced_models: string[] }
+export interface MigrationWorstCase {
+  requests: number;
+  input_tokens: number;
+  usd: number | null;
+  unpriced_models: string[];
+  /** With all billed input rates exactly zero, counts are uncomputed numeric 0 placeholders, not an empty workload. */
+  counts_skipped?: 'zero_price';
+}
 
 export interface MigrationBudgetRefusalDetails {
   error: typeof EMBEDDING_BUDGET_BELOW_WORST_CASE;
