@@ -170,7 +170,7 @@ describe('#5506: chat call meter prices what it counts', () => {
     const records: ChatUsageRecord[] = [];
     setChatUsageSink((r) => { records.push(r); });
     const cacheUsage = { ...usage, cache_read_tokens: 400 };
-    for (const model of ['claude-cli:claude-haiku-4-5', 'claude-cli:haiku']) recordChatUsage({ model, usage: cacheUsage });
+    for (const model of ['claude-cli:claude-haiku-4-5', 'claude-cli:claude-haiku-4-5-20251001']) recordChatUsage({ model, usage: cacheUsage });
     const anthropic = estimateChatCostUsd(PRICED, { ...cacheUsage, input_tokens: 600 })!;
     expect(records.map(r => r.cost_usd)).toEqual([anthropic, anthropic]);
   });
