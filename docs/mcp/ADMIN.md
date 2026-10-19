@@ -579,6 +579,45 @@ with `gbrain auth rescope-token <name> --operations <op,...>` or
 `gbrain auth rescope-client <client_id> --allowed-operations <op,...>`
 (`all` removes a client's snapshot again).
 
+### Background work in a retrieval child
+
+**Say to your agent:** *"Run my retrieval child with read-only tools and turn
+off its automatic maintenance sweeps."*
+
+Read-only access leaves the startup and idle maintenance sweeps enabled.
+They can reconcile facts fences, write derived facts, links, timeline rows
+and extraction watermarks, and ingest pending session-corpus files. This can
+also update page fences and corpus tracking files. Corpus ingestion can
+spend on extraction and fact embeddings when the existing capture,
+extraction and provider gates allow it; see [ambient capture and corpus
+sweeps](../guides/ambient-writeback.md#the-three-activation-surfaces).
+
+The idle sweep also attempts deferred embeddings from earlier delegated
+syncs. With pending work and an embedding provider, it can call the provider
+and store embeddings, subject to [embedding spend controls](../operations/spend-controls.md).
+Set `GBRAIN_SWEEP=0` in the child's environment to disable the startup and
+idle sweeps, including that idle embedding-drain call:
+
+```bash
+GBRAIN_SWEEP=0 gbrain serve --surface full --access read-only \
+  --stdio-idle-timeout 0 --fail-fast
+```
+
+`--stdio-idle-timeout 0` disables idle exit, not maintenance. The sweep switch
+does not disable owner migrations, hook IPC or separately scheduled
+delegated work.
+
+- Scope reads with per-call `source_id`; `source_id: "__all__"` stays inside
+  the caller's readable sources. `GBRAIN_SOURCE=__all__` in the child does
+  not grant all-source reads. See [stdio source binding](DEPLOY.md#stdio-source-binding).
+- Use `get_brain_identity` on the full read-only surface for source-scoped
+  page and chunk counters. `get_stats` requires `admin` scope and is absent.
+- Filesystem audit logs use `~/.gbrain/audit` (or
+  `$GBRAIN_HOME/.gbrain/audit` when overridden). For a read-only home, set
+  `GBRAIN_AUDIT_DIR` to a writable directory. Otherwise best-effort audit
+  writes can emit `[db-disconnect-audit] write failed (EROFS ...)` on stderr.
+  Audit writes are independent of the sweep switch.
+
 ## Invalidate tokens, revoke, or delete
 
 | Action | Result | How the client reconnects |
