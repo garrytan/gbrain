@@ -10,6 +10,7 @@ import { localHostId } from '../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { assertSafeE2eDatabaseUrl } from './helpers/db-guard.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
 const DIMS = 1536;
 const words = 'amber basalt cobalt dune ember fjord granite harbor iris jade kelp lagoon marble nickel onyx pumice quartz reef slate tundra'.split(' ');
@@ -25,9 +26,8 @@ function vector(text: string): Float32Array {
   return Float32Array.from({ length: DIMS }, (_, i) => (digest[i % 32]! - 128) / 128 + Math.sin(i + digest[(i * 7) % 32]!));
 }
 
-for (const kind of ['pglite', 'postgres'] as const) {
-  const suite = kind === 'postgres' && !process.env.DATABASE_URL ? describe.skip : describe;
-  suite(`${kind}: a prepared page edit keeps unchanged chunks`, () => {
+for (const kind of testBackends()) {
+  describe(`${kind}: a prepared page edit keeps unchanged chunks`, () => {
     let engine: BrainEngine;
     const sources: string[] = [];
     beforeAll(async () => {
@@ -80,9 +80,10 @@ for (const kind of ['pglite', 'postgres'] as const) {
     }
     const withoutId = (rows: Record<string, unknown>[]) => rows.map(({ id: _id, ...rest }) => rest);
 
-    test('a one-paragraph edit embeds only the changed chunks and stores what a fresh write stores', async () => {
+    test('a fenced one-paragraph edit embeds only changed chunks and stores what a fresh write stores', async () => {
       const { write, rows, embedded } = await fixture();
       const body = paragraphs(11, 8);
+      body.push('<!--- gbrain:takes:begin -->\nPRIVATE_CANARY\n<!--- gbrain:takes:end -->');
       await write('notes/edited', page('Reuse Fixture', body));
       const before = await rows("notes/edited");
       expect(before.length).toBeGreaterThan(3);
@@ -94,6 +95,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
       const unchanged = after.filter(row => before.some(old => old.chunk_index === row.chunk_index && old.chunk_text === row.chunk_text));
       expect(unchanged.length).toBeGreaterThan(0);
       expect(embedded.length).toBe(after.length - unchanged.length);
+      expect(embedded.some(text => text.includes('PRIVATE_CANARY'))).toBe(false);
       for (const row of unchanged) expect(row).toEqual(before.find(old => old.chunk_index === row.chunk_index)!);
       // A page written once with the edited content is the reference for every stored column.
       await write('notes/reference', page('Reuse Fixture', body));
