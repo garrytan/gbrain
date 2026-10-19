@@ -74,6 +74,7 @@ export interface GBrainConfig {
   persistence?: { write_wait_ms?: number | string };
   migrate?: { graduation?: boolean }; // `migrate.graduation false`: legacy copier instead of graduation (file plane, read pre-connect)
   doctor?: { default_budget_ms?: number | string }; // #6803: non-interactive CLI doctor --json check-run cap (file plane, read pre-connect; 0 off)
+  links?: { reference_index_max_pages?: number; reference_index_max_bytes?: number };
   /** A4 user preapprovals (file plane only; set by the trusted local CLI; read by core/consent.ts). */
   consent?: { preapprove?: { paid?: { max_usd_per_run?: number }; persistent_install?: boolean } };
   database_url?: string;
@@ -1239,6 +1240,7 @@ export async function loadConfigWithEngine(
  *      without `--force`.
  */
 export const KNOWN_CONFIG_KEYS: readonly string[] = [
+  'links.reference_index_max_pages', 'links.reference_index_max_bytes',
   // File-plane (GBrainConfig static fields)
   'engine',
   'database_url',

@@ -5,6 +5,7 @@ import { fetchSource, isSourceFederated } from './sources-load.ts';
 import { parseMarkdown } from './markdown.ts';
 import { isValidSourceId } from './source-id.ts';
 import { buildSourceLocalReferenceIndex } from './source-local-reference-index.ts';
+import { readSourceLocalReferenceLimits } from './source-local-reference-limits.ts';
 import { collectWantedLinks, isWantedPagesEnabled } from './wanted-links.ts';
 import { readLineGrammarSettings } from './line-grammar.ts';
 import { DerivedLinkSettingsChangedError } from './derived-links.ts';
@@ -27,7 +28,7 @@ export async function loadLinkPageMetadata(engine: Pick<BrainEngine, 'executeRaw
 }
 
 export function makeIndexedLinkResolver(pages: readonly LinkPageMetadata[], sourceId: string): SlugResolver {
-  const index = buildSourceLocalReferenceIndex(pages.filter(page => page.source_id === sourceId));
+  const index = buildSourceLocalReferenceIndex(pages.filter(page => page.source_id === sourceId), readSourceLocalReferenceLimits());
   return {
     async resolveAttendance(name, dirHint) { return this.resolve(name, dirHint); },
     async resolve(name, dirHint) {
