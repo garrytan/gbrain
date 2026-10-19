@@ -29,6 +29,7 @@ import type { PhaseResult } from '../../cycle.ts';
 import { cosineSimilarity } from '../../facts/classify.ts';
 import { claimsDiverge, EXPLICIT_DUPLICATE_THRESHOLD } from '../../facts/capture-dedup.ts';
 import { sameInstantTies, type SameInstantTie } from '../../facts/claim-ties.ts';
+import { opError } from '../../ops/contract.ts';
 import { createHash } from 'node:crypto';
 import { isAborted } from '../../abort-check.ts';
 import { classifyItemFailure, ItemRun } from '../../item-failure.ts';
@@ -352,6 +353,7 @@ export async function runPhaseConsolidate(
           gateConfig ??= (await loadImportSanityConfig(engine)).writeGate ?? DEFAULT_WRITE_GATE_CONFIG);
         if (gate && gate.action !== 'insert') { if (gate.action === 'hold') clustersGateHeld++; else clustersGateRejected++; continue; }
         const written = await derivedMaintenanceTransaction<{ created: boolean; takeId: number | null } | null>(engine, derivation, async tx => {
+          await assertUnchangedClaimChronology(tx, b.source_id, cluster, claims);
           let takeId: number;
           let created = false;
           if (existing.length > 0) {
@@ -485,6 +487,25 @@ export interface ClaimShape {
   metric: string | null;
   unit: string | null;
   period: string | null;
+}
+
+/** The pre-cluster tie check is advisory until its chronology is rechecked
+ * under the publication row locks. Do this before any take/lifecycle effect.
+ */
+async function assertUnchangedClaimChronology(engine: BrainEngine, sourceId: string, observed: FactRow[], claims: Map<number, ClaimShape>): Promise<void> {
+  const rows = await engine.executeRaw<{
+    id: number; valid_from: Date | string; claim_metric: string | null; claim_unit: string | null; claim_period: string | null;
+  }>(`SELECT id, valid_from, claim_metric, claim_unit, claim_period FROM facts
+    WHERE source_id=$1 AND id=ANY($2::bigint[]) ORDER BY id FOR UPDATE`, [sourceId, observed.map(f => f.id)]);
+  const expected = new Map(observed.map(f => [Number(f.id), f]));
+  if (rows.length !== observed.length || rows.some(row => {
+    const fact = expected.get(Number(row.id));
+    const shape = claims.get(Number(row.id));
+    const at = row.valid_from instanceof Date ? row.valid_from.getTime() : Date.parse(row.valid_from);
+    return !fact || at !== fact.valid_from.getTime() || row.claim_metric !== (shape?.metric ?? null)
+      || row.claim_unit !== (shape?.unit ?? null) || row.claim_period !== (shape?.period ?? null);
+  })) throw opError('revision_conflict', 'Consolidation chronology changed after clustering.',
+    'No take or fact lifecycle was written for this cluster. Run consolidation again to re-cluster the current effective times and typed claims.');
 }
 
 async function loadClaimShapes(engine: BrainEngine, ids: number[]): Promise<Map<number, ClaimShape>> {

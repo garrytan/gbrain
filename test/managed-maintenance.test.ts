@@ -105,6 +105,76 @@ async function seedFacts(engine: BrainEngine, sourceId: string, slug: string, vi
   }
 }
 
+// Value: protects=unchanged fractional instants still consolidate;
+// fails_when=publication compares a Date through lossy string formatting;
+// why_new=day-only fixtures cannot catch lost milliseconds; seam=none.
+test('unmanaged consolidation retains unchanged millisecond chronology', async () => {
+  await fixture(async (engine, sourceId) => {
+    await seed(engine, sourceId);
+    await engine.executeRaw("UPDATE facts SET valid_from=valid_from+interval '0.123 seconds' WHERE source_id=$1", [sourceId]);
+    const before = await engine.executeRaw('SELECT id,valid_from FROM facts WHERE source_id=$1 ORDER BY id', [sourceId]);
+    const result = await runPhaseConsolidate(engine, { sourceId });
+    expect(result.status).toBe('ok');
+    expect(result.details.facts_consolidated).toBe(3);
+    expect(result.details.takes_written).toBe(1);
+    expect(await engine.executeRaw('SELECT id,valid_from FROM facts WHERE source_id=$1 ORDER BY id', [sourceId])).toEqual(before);
+  });
+});
+
+// Value: protects=native phase checks live chronology before effects;
+// fails_when=phase validator or live tuple check is removed;
+// why_new=helper-only tests miss a disconnected phase; seam=none;
+// no_claim=production concurrency scheduling or model quality.
+for (const change of ['timestamp', 'typed_metadata', 'deleted_contributor'] as const) {
+test(`native unmanaged consolidation refuses chronology changed after clustering (${change})`, async () => {
+  await fixture(async (engine, sourceId, root) => {
+    await seed(engine, sourceId);
+    if (change === 'typed_metadata') await engine.executeRaw("UPDATE facts SET valid_from='2026-01-01T00:00:00Z' WHERE source_id=$1", [sourceId]);
+    const original = readFileSync(join(root, 'people/example.md'), 'utf8');
+    const page = (await engine.readPageSnapshot('people/example', { sourceId }))!;
+    const read = engine.listFactsByEntity;
+    const transaction = engine.transaction;
+    const readOwn = Object.getOwnPropertyDescriptor(engine, 'listFactsByEntity');
+    const transactionOwn = Object.getOwnPropertyDescriptor(engine, 'transaction');
+    let observedSnapshot = false;
+    let before: Array<Record<string, unknown>> | undefined;
+    engine.listFactsByEntity = async function (...args) {
+      const observed = await read.apply(this, args);
+      if (args[0] === sourceId) observedSnapshot = true;
+      return observed;
+    };
+    engine.transaction = async function (fn, opts) {
+      if (this === engine && observedSnapshot && before === undefined) {
+        await engine.executeRaw(change === 'timestamp'
+          ? "UPDATE facts SET valid_from=valid_from+interval '1 day' WHERE source_id=$1"
+          : change === 'typed_metadata'
+            ? "UPDATE facts SET claim_metric='deposit_amount',claim_unit='USD',claim_period='monthly' WHERE source_id=$1"
+            : "DELETE FROM facts WHERE source_id=$1 AND id=(SELECT min(id) FROM facts WHERE source_id=$1)", [sourceId]);
+        before = await engine.executeRaw('SELECT id,valid_from,valid_until,consolidated_at,consolidated_into FROM facts WHERE source_id=$1 ORDER BY id', [sourceId]);
+      }
+      return transaction.bind(this)(fn, opts);
+    };
+    try {
+      const result = await runPhaseConsolidate(engine, { sourceId });
+      if (!before) throw new Error('Fixture expected a chronology change before publication');
+      expect(result.details.facts_consolidated).toBe(0);
+      expect(result.status).toBe('warn');
+      expect(result.details.takes_written).toBe(0);
+      expect(result.details.bucket_failures).toMatchObject([{ code: 'revision_conflict' }]);
+      expect(await engine.executeRaw('SELECT id,valid_from,valid_until,consolidated_at,consolidated_into FROM facts WHERE source_id=$1 ORDER BY id', [sourceId])).toEqual(before);
+      expect(await engine.executeRaw('SELECT id FROM takes WHERE page_id=$1', [page.page.id])).toHaveLength(0);
+      expect((await engine.readPageSnapshot('people/example', { sourceId }))!.revision).toBe(page.revision);
+      expect(readFileSync(join(root, 'people/example.md'), 'utf8')).toBe(original);
+    } finally {
+      if (readOwn) Object.defineProperty(engine, 'listFactsByEntity', readOwn);
+      else delete (engine as Partial<BrainEngine>).listFactsByEntity;
+      if (transactionOwn) Object.defineProperty(engine, 'transaction', transactionOwn);
+      else delete (engine as Partial<BrainEngine>).transaction;
+    }
+  });
+});
+}
+
 test('runCycle consolidates only its explicitly selected source across two eligible source clusters', async () => {
   await fixture(async (engine, sourceId, root) => {
     const otherSourceId = `other-${sourceId}`;
