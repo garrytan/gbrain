@@ -15,11 +15,13 @@
 //   guaranteed runtime), and `shell: win32` re-opens a quoting surface. A
 //   checked-in .ts run by `bun run` sidesteps all three.
 //
-// Uses Bun APIs only — `which()` for Windows-aware PATH resolution (finds
+// Uses builtin APIs only — `which()` for Windows-aware PATH resolution (finds
 // gbrain.exe / gbrain.cmd) and an argv-array `Bun.spawnSync` (no shell, nothing
 // to quote). It NEVER fails the install: every path exits 0.
 
 import { which } from 'bun';
+import { realpathSync } from 'node:fs';
+import { resolve, sep } from 'node:path';
 
 // Repo modules load dynamically inside try/catch: a static import of a file
 // that is not on disk (a Docker dependency layer, a partial checkout) would
@@ -61,6 +63,24 @@ const bin = which('gbrain');
 if (!bin) {
   // Fresh clone / global install where gbrain isn't on PATH yet: skip cleanly.
   console.error(HINT);
+  process.exit(0);
+}
+
+// A dev checkout may find a different install on PATH. Global installs and
+// bun-link launchers are symlinks into their own package: compare real paths
+// with a directory boundary, including when the package root is a symlink.
+let skipReason: string | undefined;
+try {
+  const packageRoot = realpathSync(resolve(import.meta.dir, '..'));
+  const binaryPath = realpathSync(bin);
+  if (!binaryPath.startsWith(packageRoot + sep)) {
+    skipReason = 'gbrain on PATH resolves outside this package';
+  }
+} catch {
+  skipReason = 'could not resolve gbrain on PATH to this package';
+}
+if (skipReason) {
+  console.error(`[gbrain] postinstall skipped: ${skipReason}. Run \`gbrain apply-migrations --yes\` manually.`);
   process.exit(0);
 }
 
