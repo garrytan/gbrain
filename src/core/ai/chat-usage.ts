@@ -10,10 +10,12 @@
  *     the minion worker wraps handler execution in `job:<name>`; direct CLI /
  *     op callers record with phase NULL unless they opt in. Attribution is
  *     advisory — a missing phase never blocks the record.
- *   - prices the call from CANONICAL_PRICING (`estimateChatCostUsd`),
- *     including cache_read/cache_write tokens at the provider's cache rates
- *     when the table carries them (Anthropic), falling back to the input
- *     rate otherwise. Unknown models record cost_usd = NULL (never a fake 0).
+ *   - prices the call with the budget tracker's table resolver
+ *     (`estimateChatCostUsd` over `priceFor`: aliases, the claude-cli →
+ *     Anthropic sibling, CANONICAL_PRICING, free local providers), including
+ *     cache_read/cache_write tokens at the provider's cache rates when the
+ *     table carries them (Anthropic), falling back to the input rate
+ *     otherwise. Unknown models record cost_usd = NULL (never a fake 0).
  *   - forwards the record to the registered sink FIRE-AND-FORGET. Accounting
  *     is strictly fail-open: a sink error (missing table pre-migration,
  *     closed engine, disk pressure) must never break a chat call.
@@ -30,7 +32,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { canonicalLookup, priceAtPromptSize } from '../model-pricing.ts';
+import { priceAtPromptSize } from '../model-pricing.ts';
 import { priceFor, type PricingOverrides } from '../budget/reservation-cost.ts';
 
 export interface ChatUsageRecord {
@@ -114,9 +116,12 @@ export function setChatUsageSink(sink: ChatUsageSink | null): void {
 }
 
 /**
- * Price a chat call in USD from the canonical table. Cache tokens use the
- * table's cache_read/cache_write rates when present, else the input rate
- * (documented best-effort — see module doc). Unknown model → null.
+ * Price a chat call in USD from the shipped tables, resolved exactly as the
+ * budget tracker resolves them (`priceFor` without overrides), so a
+ * `claude-cli:` call the budget prices at Anthropic rates is not recorded as
+ * unpriced. Cache tokens use the table's cache_read/cache_write rates when
+ * present, else the input rate (documented best-effort — see module doc).
+ * Unknown model → null.
  */
 export function estimateChatCostUsd(
   model: string,
@@ -127,7 +132,7 @@ export function estimateChatCostUsd(
     cache_write_tokens?: number;
   },
 ): number | null {
-  const row = canonicalLookup(model);
+  const row = priceFor(model, 'chat')?.pricing;
   if (!row) return null;
   const cacheRead = usage.cache_read_tokens ?? 0;
   const cacheWrite = usage.cache_write_tokens ?? 0;
