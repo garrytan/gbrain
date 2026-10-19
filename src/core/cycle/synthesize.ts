@@ -41,8 +41,9 @@ import { deferPublishOrThrow, finishDeferredPostprocess, loadCommittedOutputsOrD
  *     written ONLY on success (codex finding #5 deferral: no auto git commit
  *     in v1).
  *   - Idempotency via `dream:synth-v2:<source>:filename:<basename>:<hash16>`
- *     job keys (byte-stable — pinned by test/dream-synthesize-chunking.serial.test.ts).
- *   - Edited transcripts produce slugs with content-hash suffix → no overwrite.
+ *     job keys (byte-stable — pinned by test/dream-synthesize-chunking.serial.test.ts),
+ *     hashed on the transcript body so a frontmatter-only edit re-arms nothing.
+ *   - Edited transcripts produce slugs with body-hash suffix → no overwrite.
  *   - Degenerate triage verdicts (truncated / refusal / unparseable /
  *     score out of [0,1]) are never cached — the next cycle re-judges.
  *
@@ -77,7 +78,7 @@ import { resolveCycleDate, utcDate } from './cycle-date.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { stampDreamProvenance, summaryProvenanceLines } from './dream-provenance.ts';
 import { putDerivedPage, summaryDerivation, withTranscriptTaint } from './dream-taint.ts';
-import { findSynthV2Completion, partitionCompletedSynthesis } from './synthesize-completion.ts';
+import { findTranscriptCompletion, partitionCompletedSynthesis, synthesisHash } from './synthesize-completion.ts';
 
 // Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7), the
 // allow-list loader to filing-rules.ts (#2397); patterns.ts and the
@@ -734,8 +735,9 @@ async function runPhaseSynthesizeInner(
         budgetExhaustedDeferrals.push(basename(t.filePath));
         continue; // budget gone — defer the rest, don't submit more children
       }
-      const hash16 = t.contentHash.slice(0, 16);
-      const hash6 = t.contentHash.slice(0, 6);
+      const hash = synthesisHash(t);
+      const hash16 = hash.slice(0, 16);
+      const hash6 = hash.slice(0, 6);
 
       // D8: legacy-key migration safety. If this content hash already
       // completed under the pre-v2 path-based key family — single-chunk OR
@@ -756,25 +758,23 @@ async function runPhaseSynthesizeInner(
       // manifest (up to 20 searches) was built — and the coalesced children
       // re-entered writtenRefs, so their old pages were quote-repaired,
       // restamped and re-embedded every night with nothing new written.
-      const v2Completion = findSynthV2Completion(
-        successfulV2Keys, t.filePath, hash16, synthesisIdentity,
-      );
+      const v2Completion = findTranscriptCompletion(successfulV2Keys, t, synthesisIdentity);
       if (v2Completion) {
         if (maintenance) {
-          const key = `dream:synth-v2:${encodeURIComponent(synthesisIdentity)}:filename:${encodeURIComponent(basename(t.filePath))}:${hash16}`;
+          const key = `dream:synth-v2:${encodeURIComponent(synthesisIdentity)}:filename:${encodeURIComponent(basename(t.filePath))}:${v2Completion.hash.slice(0, 16)}`;
           const jobs = await engine.executeRaw<{ id: number; idempotency_key: string }>(
             "SELECT id,idempotency_key FROM minion_jobs WHERE status='completed' AND (idempotency_key=$1 OR left(idempotency_key,length($1)+2)=$1||':c') ORDER BY id", [key]);
           for (const job of jobs) {
             childIds.push(job.id);
             jobRawSource.set(job.id, t.filePath);
             const chunk = job.idempotency_key.match(/:c(\d+)of\d+$/);
-            if (chunk) chunkInfo.set(job.id, { idx: Number(chunk[1]), hash6 });
+            if (chunk) chunkInfo.set(job.id, { idx: Number(chunk[1]), hash6: v2Completion.hash.slice(0, 6) });
           }
           continue;
         }
         skipReports.push({
           filePath: t.filePath,
-          reason: v2Completion === 'chunked'
+          reason: v2Completion.shape === 'chunked'
             ? 'already_synthesized_v2_chunked'
             : 'already_synthesized_v2_single_chunk',
         });
@@ -901,9 +901,7 @@ async function runPhaseSynthesizeInner(
           // (CDX-9) + #4217 write requirement — a synthesis child whose every
           // write failed must dead-letter, not report completed.
           mode: config.mode,
-          oneshot_slug_suffix: chunks.length > 1
-            ? `${t.contentHash.slice(0, 6)}-c${i}`
-            : t.contentHash.slice(0, 6),
+          oneshot_slug_suffix: chunks.length > 1 ? `${hash6}-c${i}` : hash6,
           oneshot_task_prefixes: [config.reflectionsPrefix, config.originalsPrefix], // #6160: oneshot task shapes
           require_writes: true,
           // #1586: scope every child tool call to the cycle's resolved source
@@ -2814,9 +2812,8 @@ function buildSynthesisPrompt(
       : `- Observation date: unknown (today is ${cycleDate}; never resolve relative dates against it — keep them as written)`;
   const baseSlugSegment = sanitizeForSlug(t.basename) || `session-${dateHint}`;
   const isChunked = chunkTotal > 1;
-  const hashSuffix = isChunked
-    ? `${t.contentHash.slice(0, 6)}-c${chunkIdx}`
-    : t.contentHash.slice(0, 6);
+  const hash6 = synthesisHash(t).slice(0, 6);
+  const hashSuffix = isChunked ? `${hash6}-c${chunkIdx}` : hash6;
   const chunkBanner = isChunked
     ? `\n- This is CHUNK ${chunkIdx + 1} of ${chunkTotal} from the same transcript. Different chunks process different sections; do not assume continuity with other chunks.`
     : '';
