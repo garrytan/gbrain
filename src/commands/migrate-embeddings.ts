@@ -184,7 +184,9 @@ function renderPlan(ctx: MigrationPlanContext): string {
       : `  Estimated cost: unknown — no pricing entry for ${plan.to_model}. Check the provider's pricing before proceeding.`,
   );
   const worst = plan.worst_case_authorization;
-  lines.push(worst.usd === null
+  lines.push(worst.counts_skipped === 'zero_price'
+    ? '  Worst-case authorization: $0.00 (all billed models are priced at zero; request and token counts skipped).'
+    : worst.usd === null
     ? `  Worst-case authorization: unknown (${worst.requests} request(s); no price for ${plan.to_model}); paid dispatch refuses until priced.`
     : `  Worst-case authorization: $${ceilCents(worst.usd).toFixed(2)} (${worst.requests} request(s) at maximum input size; retries and batch splits settle from the same headroom).`);
   const unpricedReranker = worst.unpriced_models.filter(m => m !== plan.to_model);

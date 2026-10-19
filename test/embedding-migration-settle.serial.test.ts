@@ -213,6 +213,25 @@ for (const kind of testBackends()) {
       expect((await budget()).requests).toBe(1);
     });
 
+    test('a zero-priced dry-run labels uncomputed counts without reading chunk texts', async () => {
+      await seedPages(1);
+      await engine.setConfig('pricing.overrides', JSON.stringify({ [model]: 0 }));
+      const read = spyOn(engine, 'executeRaw');
+      try {
+        const text = await cli(['--dry-run']);
+        expect(text.code).toBe(0);
+        expect(text.text).toContain('Worst-case authorization: $0.00 (all billed models are priced at zero; request and token counts skipped).');
+        const json = await cli(['--dry-run', '--json']);
+        expect(json.code).toBe(0);
+        const preview = JSON.parse(json.text.slice(json.text.indexOf('{\n  "status": "planned"'), json.text.lastIndexOf('}') + 1));
+        expect(preview.plan.worst_case_authorization).toEqual({
+          requests: 0, input_tokens: 0, usd: 0, unpriced_models: [], counts_skipped: 'zero_price', prior_debited_usd: 0,
+        });
+        expect(read.mock.calls.some(([sql]) => sql.includes('SELECT cc.page_id, cc.chunk_index, cc.chunk_text'))).toBe(false);
+        expect(transportCalls).toBe(0);
+      } finally { read.mockRestore(); }
+    });
+
     test('a cap equal to the printed worst-case authorization completes the migration', async () => {
       const rate = 1_000;
       await engine.setConfig('pricing.overrides', JSON.stringify({ [model]: rate }));
