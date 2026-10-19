@@ -25,6 +25,7 @@ import { ABSENT_FILE_HASH, assertReconcilePins, readReconcileState, reconcileFil
 import { verifyReconcileBackup } from './reconcile-backup.ts';
 import { assertAutoDecisions } from './reconcile-additive.ts';
 import { bindOrigin } from './origin-guard.ts';
+import { prepareEmptyCacheRemoval } from './reconcile-cache.ts';
 
 const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page ${slug} in source ${sourceId} as stored now, with its revision, read-only.`,
   { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] });
@@ -135,6 +136,7 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
   const adopt = reconcileReadOptions(artifact);
   const state = await readReconcileState(engine, row.source_id, row.slug, artifact.preconditions.assessment_at, adopt);
   assertReconcilePins(artifact.preconditions, state.pins);
+  if (artifact.action === 'remove_empty_db_only_cache') return prepareEmptyCacheRemoval(engine, row, state, artifact, reference);
   assertAutoDecisions(artifact.auto_decisions ?? [], state.file, reconcileCanonical(state.snapshot.page, state.snapshot.tags), artifact.decisions);
   const prepared = await prepareReconcileResult(engine, state, artifact.decisions);
   if (!prepared.ready || digest(prepared.result) !== artifact.result_digest) staleReconcile('canonical policy result changed');

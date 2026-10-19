@@ -61,6 +61,8 @@ interface PreparedMutationBase {
   noop?: boolean;
   /** #5470 screening only: the content is unchanged, but publication still runs (and queues effects). */
   contentUnchanged?: boolean;
+  /** File-only empty-cache recovery: no canonical page write or derived effects. */
+  cacheRemoval?: true;
   deferEmbedding?: boolean;
   /** Why a page write bound to a worktree publishes no file (receipt `write_through.skipped`). */
   databaseOnlyReason?: 'db_only' | 'unbound_source' | 'mirror_read_only' | 'sync_excluded' | 'shared_origin' | 'origin_twin';
@@ -570,7 +572,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       const apply = () => timePublicationStep('apply', row.slug, () => prepared.apply(tx, snapshot));
       const outcome = await withCoordinatedWrite(tx, [row.source_id], skill ? apply
         : () => withBeliefBatch(tx, publicationBeliefOptions(row, prepared.additionalPageKeys, beliefReport), apply), publicationAttribution(row, prepared.trust));
-      if (!skill) await classifyUnboundPage(tx, row);
+      if (!skill && !prepared.cacheRemoval) await classifyUnboundPage(tx, row);
       if (prepared.databaseOnlyReason === 'mirror_read_only') await classifyMirrorPage(tx, row);
       const final = skill ? null : await publicationPostimage(tx, row, prepared);
       decoratePublicationOutcome(row, prepared, outcome, final, files.length, skill);

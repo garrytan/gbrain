@@ -189,6 +189,39 @@ then counts the pages of the active source that owns the repo path (its
 `.gbrain-source` or the longest registered `local_path` containing it), or
 every source's pages when no active source owns it.
 
+## Recovering an empty database-only cache
+
+**Say to your agent:** *"My database-only page cannot be edited because an empty
+cache file blocks it. Preview a recovery that keeps all my saved memory."*
+
+For a live page under an explicitly declared `storage.db_only` directory with
+no recorded `source_path` or `source_uri`, the active owner can preview removal
+of an exactly zero-byte cache:
+
+```bash
+gbrain sources reconcile example-source conversations/sessions/example-session \
+  --brain host --preview --remove-empty-db-only-cache --out /private/path/cache-preview.json --json
+# Review the private artifact and its remove_empty_db_only_cache action first.
+gbrain sources reconcile example-source conversations/sessions/example-session \
+  --brain host --apply /private/path/cache-preview.json --request-id <new-uuid> --json
+```
+
+The output path must be a new file outside every source checkout. Apply retains
+private preimages and uses the existing owner's recoverable publication. It
+removes only the empty file; page identity, revision, body, history, facts,
+timeline, links, aliases, privacy and storage policy are unchanged. It does not
+adopt an origin, change ownership, commit to Git, or run enrichment. Retry the
+original edit separately with a new request ID after the repair commits. A lost
+apply response can be retried using the same artifact and request ID.
+
+Apply refuses a stale source, revision, policy, owner, path or file hash.
+Symlinks, hard links, shared claims, undeclared pages and nonempty files
+(including whitespace) refuse. Preserve unpublished file content and inspect it
+with the operator; this command does not discard it. A page with a recorded
+origin uses normal reconciliation. Never-filed derived pages outside a declared
+`db_only` directory are outside this recovery's scope. Preview artifacts and
+backups are private and subject to reconciliation size limits.
+
 ## Restoring a page whose file is gone
 
 On a classic brain (no managed persistence) sync keys a page on the file it

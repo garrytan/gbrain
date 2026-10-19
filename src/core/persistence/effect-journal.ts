@@ -27,7 +27,7 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
   outcome: Record<string, unknown>, prepared?: PreparedMutation,
   /** A grouped publication completes its members after queueing all of them, then calls `reconcileFinishedBatch` itself. */
   opts: { deferBatchReconcile?: boolean } = {}): Promise<void> {
-  if (prepared?.noop || prepared?.target === 'skill_bundle') return;
+  if (prepared?.noop || prepared?.cacheRemoval || prepared?.target === 'skill_bundle') return;
   await declarePersistenceProtocol(tx);
   const revision = snapshot?.revision;
   const data = { slug: row.slug, page_id: snapshot?.page.id };
