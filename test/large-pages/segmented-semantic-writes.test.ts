@@ -143,7 +143,7 @@ for (const kind of testBackends()) {
         expect(removed).toContain('Already out of core');
         expect(removed).toBe(await core(INLINE, ['remove']));
         expect(verdict()).toBe(0);
-      } finally { console.log = log; console.error = err; _resetCliExitVerdictForTests(); process.exitCode = exitCode; }
+      } finally { console.log = log; console.error = err; _resetCliExitVerdictForTests(); process.exitCode = exitCode ?? 0; }
     }, 600_000);
 
     test('sources reconcile previews a drifted segmented page as it previews the inline twin', async () => {

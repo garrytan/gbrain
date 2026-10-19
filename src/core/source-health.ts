@@ -417,8 +417,9 @@ async function jobCountsBySource(engine: BrainEngine): Promise<Map<string, JobSt
  * Sync-eligible sources with a local path, for doctor `sync_freshness`,
  * including the upstream observation sync records (#5255, O-DX-8). Older
  * brains without those columns (or without `archived`) still load.
+ * `sourceIds` (a remote caller's grant) confines the roster in SQL.
  */
-export async function loadSyncFreshnessSources(engine: BrainEngine) {
+export async function loadSyncFreshnessSources(engine: BrainEngine, sourceIds?: string[]) {
   type FreshnessSourceRow = {
     id: string;
     name: string;
@@ -433,20 +434,25 @@ export async function loadSyncFreshnessSources(engine: BrainEngine) {
     upstream_behind: number | null;
   };
   const columns = 'id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at, config';
+  const scope = sourceIds ? ' AND id = ANY($1::text[])' : '';
+  const params = sourceIds ? [sourceIds] : undefined;
   let sources: FreshnessSourceRow[];
   try {
     sources = await engine.executeRaw<FreshnessSourceRow>(
-      `SELECT ${columns}, upstream_checked_at, upstream_commit, upstream_behind FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE`,
+      `SELECT ${columns}, upstream_checked_at, upstream_commit, upstream_behind FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE${scope}`,
+      params,
     );
   } catch {
     const noUpstream = 'NULL AS upstream_checked_at, NULL AS upstream_commit, NULL AS upstream_behind';
     try {
       sources = await engine.executeRaw<FreshnessSourceRow>(
-        `SELECT ${columns}, ${noUpstream} FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE`,
+        `SELECT ${columns}, ${noUpstream} FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE${scope}`,
+        params,
       );
     } catch {
       sources = await engine.executeRaw<FreshnessSourceRow>(
-        `SELECT ${columns}, ${noUpstream} FROM sources WHERE local_path IS NOT NULL`,
+        `SELECT ${columns}, ${noUpstream} FROM sources WHERE local_path IS NOT NULL${scope}`,
+        params,
       );
     }
   }

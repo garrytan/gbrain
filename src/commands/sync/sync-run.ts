@@ -75,6 +75,8 @@ export interface SyncPlan {
   readonly modePath: (p: string) => string;
   /** #5988: the run's content holds (null for company-brain sources); its re-screen paths join the import drain. */
   readonly holds: LegacyHolds | null;
+  /** GBRA-133: gitlinks that appeared in this run's range (reported once, never followed). */
+  readonly gitlinks: string[];
 }
 
 export interface SyncRun {

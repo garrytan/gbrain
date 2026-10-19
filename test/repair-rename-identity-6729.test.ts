@@ -292,7 +292,7 @@ for (const kind of testBackends()) describe(`gbrain repair rename-identity (#672
     // large Postgres brain) sets exit 1, which is not this test's subject, so the prior exit code is restored after it.
     const priorExitCode = process.exitCode;
     const allOut = await repair(['--all', '--apply', '--json']);
-    process.exitCode = priorExitCode;
+    process.exitCode = priorExitCode ?? 0;
     const all = JSON.parse(allOut) as { results: Array<{ kind: string }>; explicit_kinds: Array<{ kind: string; code: string; preview_command: string; docs: string }> };
     expect(all.results.map(r => r.kind)).not.toContain('rename-identity');
     expect(all.explicit_kinds).toContainEqual({ kind: 'rename-identity', code: 'explicit_kind_required', preview_command: 'gbrain repair rename-identity', docs: 'docs/guides/repair.md#explicit-only-repair-kinds' });

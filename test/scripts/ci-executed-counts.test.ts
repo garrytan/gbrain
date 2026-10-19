@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  buildSide, compare, loadReceiptDir, parseDeltas, parseJUnit, missingKeySkips, canonicalTestName,
+  buildSide, compare, loadReceiptDir, parseDeltas, parseJUnit, missingKeySkips, canonicalTestName, render, testBackend,
   DELTA_COLUMNS, JUnitError,
 } from '../../scripts/ci-executed-counts.ts';
 
@@ -163,6 +163,50 @@ describe('identity comparison', () => {
     const result = compare(side('head'), side('base'), noDeltas);
     expect(side('base').identities.size).toBe(2);
     expect(result.drops.map(d => d.identity.arm)).toEqual(['pgbouncer']);
+  });
+
+  test('each identity carries the backend its test name pins', () => {
+    expect(testBackend('pglite: semantic writes > adds')).toBe('pglite');
+    expect(testBackend('A-1 managed link extraction (PGLite) > isolates')).toBe('pglite');
+    expect(testBackend('postgres: semantic writes > adds')).toBe('postgres');
+    expect(testBackend('migrate (postgresql target) > copies')).toBe('postgres');
+    expect(testBackend('pglite and postgres agree')).toBe('');
+    expect(testBackend('pgliteish postgresify')).toBe('');
+    expect(testBackend('a publish held past the ceiling (pglite) > commits once (on Postgres after a requeue)')).toBe('pglite');
+    expect(testBackend('postgres-unit-arms list > the shards cover every file')).toBe('');
+    expect(testBackend('math > adds')).toBe('');
+  });
+
+  // The Bun 1.4.3 PostgreSQL-arm cell runs only the PostgreSQL side of
+  // testBackends() suites (GBRA-135 E1b): their PGLite tests leave the
+  // pg-arms lane (arm postgres) and keep running in unit (no arm).
+  const ARMS = 'pg-arms-bun-1.4.3';
+  const backendCases = (file: string, names: string[]): Case[] => names.map(name => ({ file, name, describe: [] }));
+  test('a PGLite test leaving the PostgreSQL-arm lane reads as moved when it runs on PGLite in unit', () => {
+    const f = 'test/w.test.ts';
+    writeReceipt('base', { artifact: 'receipts-pg-arms-1-bun-1.4.3', id: 'p1', lane: ARMS, shard: 1, of: 1, arm: 'postgres', files: [f], cases: backendCases(f, ['pglite: writes', 'pglite: reads', 'postgres: writes', 'postgres: reads']) });
+    writeReceipt('head', { artifact: 'receipts-pg-arms-1-bun-1.4.3', id: 'p1', lane: ARMS, shard: 1, of: 1, arm: 'postgres', files: [f], cases: backendCases(f, ['postgres: writes', 'postgres: reads']) });
+    for (const s of ['base', 'head']) writeReceipt(s, { artifact: 'receipts-unit-1', id: 'u1', shard: 1, of: 1, files: [f], cases: backendCases(f, ['pglite: writes', 'pglite: reads']) });
+    const undeclared = compare(side('head'), side('base'), noDeltas);
+    expect(undeclared.drops.map(d => [d.identity.test, d.identity.backend, d.verdict])).toEqual([['pglite: writes', 'pglite', 'undeclared'], ['pglite: reads', 'pglite', 'undeclared']]);
+    const row = ['move', ARMS, f, '*', 'postgres', 'unit', '', '', 'E1b: the PGLite side runs in the unit shards', ''].join('\t');
+    expect(undeclared.suggestions).toEqual([row.replace('E1b: the PGLite side runs in the unit shards', 'TODO: why this test no longer runs here')]);
+    const declared = compare(side('head'), side('base'), parseDeltas(`${HEADER}\n${row}\n`));
+    expect(declared.drops.map(d => d.verdict)).toEqual(['moved', 'moved']);
+    expect(declared.ok).toBe(true);
+    expect(render(declared)).toContain(`| ${ARMS} | 0 | 2 | 0 |`);
+  });
+
+  test('a move that changes arm is refused for a PostgreSQL test and for a test whose name pins no backend', () => {
+    const f = 'test/w.test.ts';
+    writeReceipt('base', { artifact: 'receipts-pg-arms-1-bun-1.4.3', id: 'p1', lane: ARMS, shard: 1, of: 1, arm: 'postgres', files: [f], cases: backendCases(f, ['postgres: writes', 'engines agree']) });
+    writeReceipt('head', { artifact: 'receipts-pg-arms-1-bun-1.4.3', id: 'p1', lane: ARMS, shard: 1, of: 1, arm: 'postgres', files: [f], cases: backendCases(f, ['pglite: writes']) });
+    writeReceipt('head', { artifact: 'receipts-unit-1', id: 'u1', shard: 1, of: 1, files: [f], cases: backendCases(f, ['postgres: writes', 'engines agree']) });
+    const row = ['move', ARMS, f, '*', 'postgres', 'unit', '', '', 'claimed move', ''].join('\t');
+    const result = compare(side('head'), side('base'), parseDeltas(`${HEADER}\n${row}\n`));
+    expect(result.drops.map(d => [d.identity.test, d.verdict])).toEqual([['postgres: writes', 'move-target-missing'], ['engines agree', 'move-target-missing']]);
+    expect(result.ok).toBe(false);
+    expect(compare(side('head'), side('base'), noDeltas).suggestions.every(s => s.startsWith('retire\t'))).toBe(true);
   });
 
   test('a base artifact missing from head fails unless a job row declares it', () => {

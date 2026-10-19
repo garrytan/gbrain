@@ -76,6 +76,23 @@ export function getCode(err: unknown): string | undefined {
   return undefined;
 }
 
+/** Socket errnos and postgres.js library codes that mean an open connection went away: decided by the code, never the message. */
+const CONNECTION_CODES: ReadonlySet<string> = new Set(['ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'EPIPE', 'CONNECTION_CLOSED', 'CONNECTION_ENDED', 'CONNECTION_DESTROYED']);
+
+/** True for a socket errno or a postgres.js connection code. */
+export function isConnectionCode(code: string | undefined): boolean {
+  return code !== undefined && CONNECTION_CODES.has(code);
+}
+
+/**
+ * GBRA-133 S-70: does this message name a path? Connection text is only read from a message that names none, so an
+ * unexpected error quoting a file such as `notes/connection closed.md` is never taken for a dropped connection.
+ * URLs (a connection string, an endpoint) are not paths.
+ */
+export function quotesPath(message: string): boolean {
+  return /[\\/]/.test(message.replace(/[a-z][a-z0-9+.-]*:\/\/\S*/gi, ''));
+}
+
 export function getMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (err && typeof err === 'object') {
@@ -133,6 +150,7 @@ export function isRetryableConnError(err: unknown): boolean {
   // The message form is already caught by /connection.*closed/i below; match
   // the code too for wrappers that rethrow with the code but a new message.
   if (code === 'CONNECTION_CLOSED') return true;
+  if (isConnectionCode(code)) return true;
   // v0.42.x (#1794): SQLSTATE 53300 too_many_connections — pool/pooler
   // exhaustion. Starts with 53 not 08, so the /^08/ test above misses it.
   // Transient: the spike clears as in-flight queries release connections.
@@ -147,7 +165,7 @@ export function isRetryableConnError(err: unknown): boolean {
     return true;
   }
   const msg = getMessage(err);
-  return CONN_PATTERNS.some(p => p.test(msg));
+  return !quotesPath(msg) && CONN_PATTERNS.some(p => p.test(msg));
 }
 
 /**
@@ -159,8 +177,9 @@ export function isRetryableConnError(err: unknown): boolean {
  */
 export function isConnectionLoss(err: unknown): boolean {
   const code = getCode(err);
-  if (code && (/^08/.test(code) || ['CONNECTION_CLOSED', 'CONNECTION_ENDED', 'CONNECTION_DESTROYED', '57P01', '57P02', '57P03'].includes(code))) return true;
-  return /\b(ECONNRESET|ECONNABORTED|ETIMEDOUT|EPIPE)\b|Connection terminated unexpectedly|server closed the connection|connection.*closed|terminating connection due to administrator command/i.test(getMessage(err));
+  if (code && (/^08/.test(code) || isConnectionCode(code) || ['57P01', '57P02', '57P03'].includes(code))) return true;
+  const msg = getMessage(err);
+  return !quotesPath(msg) && /\b(ECONNRESET|ECONNABORTED|ETIMEDOUT|EPIPE)\b|Connection terminated unexpectedly|server closed the connection|connection.*closed|terminating connection due to administrator command/i.test(msg);
 }
 
 /**

@@ -70,7 +70,10 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   { code: 'rename_held', class: 'page', safe_actions: ['repair'], needs_human: false, escalate: 'the repair preview needs an interpretation', human_reason: 'Approve re-binding the rename to the current page.' },
   { code: 'file_too_large', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'The file is over the page size limit; exclude it with sync.exclude, or split it into files under the limit.' },
   { code: 'content_rejected', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'The content-sanity gate rejected the file; remove the junk or change junk_disposition.' },
-  { code: 'parser_regression', class: 'page', safe_actions: ['upgrade'], needs_human: true, escalate: 'always: a gbrain bug', human_reason: 'Report the file and gbrain version, then upgrade or pin the last good release.' },
+  { code: 'parser_regression', class: 'page', safe_actions: ['upgrade'], needs_human: true, escalate: 'always: a gbrain bug', human_reason: 'Report the file and gbrain version, then upgrade, or keep GBRAIN_SYNC_PARSER_REGRESSION=hold set for the process that syncs; never pin a release older than 0.60.305.0.' },
+  // #6712 PR 4b (S-47): bytes an older gbrain imported whose frontmatter aliases expand past #7018's intended bound; only an edit clears it.
+  { code: 'frontmatter_alias_limit', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only an edit to the file or its removal clears it',
+    human_reason: 'The file\'s frontmatter nests YAML aliases past the size limit; reduce the alias nesting (or write the values out), or remove the file, and commit.' },
   { code: 'managed_image_sync_unsupported', class: 'page', safe_actions: ['none'], needs_human: false, escalate: 'never: images stay held while multimodal embedding is off', human_reason: 'Leave images held, exclude them with sync.exclude, or set GBRAIN_EMBEDDING_MULTIMODAL=true so the next sync imports them.' },
   // #6712 PR 2 (L4): two content refusals that hold the file; only the owner or the user changes the outcome.
   { code: 'purged_content', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only the owner clears a purge tombstone',
@@ -84,8 +87,22 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   { code: 'origin_conflict', class: 'page', safe_actions: ['repair'], needs_human: false, escalate: 'the hold carries a reason (the pages differ, ids conflict or none is the page the path names), or the heal is off',
     human_reason: 'Several live pages record this file as their origin and sync cannot prove they are one document; a person keeps the page that is the file\'s and soft-deletes the others (gbrain repair origin-twins --source <source> lists them with the commands), then syncs.' },
   // #6948: an `origin_conflict` hold whose verdict carries a reason (sync-status.ts holdVerdict): nothing resolves it without a person.
+  // GBRA-133 PR 1: classic rename holds (src/core/classic-rename-holds.ts); only a person changes the file or removes the page.
+  { code: 'rename_identity_unreadable', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: the file title or id holds characters the database cannot compare',
+    human_reason: 'The database refused to compare this renamed file title or frontmatter id; a person removes the NUL byte or broken Unicode character from the file and commits, then syncs.' },
+  { code: 'rename_reconcile_failed', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: the old page may be a duplicate',
+    human_reason: 'A rename imported but the old page could not be removed; a person runs a full sync of the source (it removes pages whose file is gone) or removes the old page with gbrain delete.' },
   { code: 'origin_conflict_decision', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: the pages differ, their ids conflict or none is the page the path names',
     human_reason: 'Several live pages record this file as their origin and sync cannot prove they are one document; a person keeps the page that is the file\'s and soft-deletes the others (gbrain repair origin-twins --source <source> lists them with the commands), then syncs.' },
+  // GBRA-130 A-7 / GBRA-133: the file is not a readable regular file inside the source root (a symlink, a non-regular file, a permission error).
+  { code: 'file_unreadable', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only a change to the checkout makes the file readable',
+    human_reason: 'Sync cannot read this file as a regular file inside the source root (a symlink, a non-regular file or a permission error) and never follows it; make it a readable regular file in the checkout (or exclude it with sync.exclude) and commit, then run gbrain sources retry-held <source>.' },
+  // GBRA-133: a committed file missing from the working tree (a sparse checkout, a deletion not committed); classic sync holds it.
+  { code: 'absent_from_worktree', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only a person decides whether the file comes back or its deletion is committed',
+    human_reason: 'The file is committed but missing from the checkout; a person restores it (git restore, or widens the sparse checkout) so the next sync imports it, or commits the deletion with gbrain git commit-push, which clears the hold.' },
+  // GBRA-133: a committed file name that is not valid UTF-8 or holds a control character cannot be a page path; classic sync holds it.
+  { code: 'unsupported_path', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only a rename makes the name a page path',
+    human_reason: 'The file name is not valid UTF-8 or contains a control character, so it cannot be a page path; a person renames the file to a valid name and commits, and the next sync imports it and clears the hold.' },
   // Older releases recorded these as run failures; a rerun on this release holds the page instead.
   { code: 'revision_conflict', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'the same path fails again after a rerun' },
   { code: 'page_identity_changed', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'the same path fails again after a rerun' },

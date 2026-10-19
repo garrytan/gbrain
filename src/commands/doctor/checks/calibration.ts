@@ -87,7 +87,7 @@ export async function checkContextualRetrievalCoverage(
     let failureSummaryLine = '';
     try {
       const audit = await import('../../../core/audit-synopsis.ts');
-      const events = audit.readRecentSynopsisFailures(7);
+      const events = audit.readRecentSynopsisFailures(7).filter((e) => !opts.sourceIds || opts.sourceIds.includes(e.source_id));
       const summary = audit.summarizeSynopsisFailures(events);
       if (summary && summary.total > 0) {
         const rate = (summary.page_level_fallback_rate * 100).toFixed(1);
@@ -160,7 +160,7 @@ export async function checkContextualRetrievalCoverage(
  * NOTE: this does NOT verify `archive/` pages are embedded/graphed — after the
  * #1777 fix `archive/` is no longer excluded, so it never appears here.
  */
-export async function checkHiddenBySearchPolicy(engine: BrainEngine): Promise<Check> {
+export async function checkHiddenBySearchPolicy(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
   const name = 'hidden_by_search_policy';
   try {
     const prefixes = resolveHardExcludes();
@@ -177,14 +177,16 @@ export async function checkHiddenBySearchPolicy(engine: BrainEngine): Promise<Ch
     const filters = prefixes
       .map((_, i) => `COUNT(DISTINCT p.id) FILTER (WHERE p.slug LIKE $${i + 1} ESCAPE '\\')::int AS c${i}`)
       .join(',\n         ');
-    const params = prefixes.map((pfx) => `${escapeLikePattern(pfx)}%`);
+    const params: unknown[] = prefixes.map((pfx) => `${escapeLikePattern(pfx)}%`);
+    // A remote caller's grant confines the counts to its own sources.
+    if (opts.sourceIds) params.push(opts.sourceIds);
     const sql =
       `SELECT
          ${filters}
        FROM pages p
        JOIN sources s ON s.id = p.source_id
        WHERE EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)
-         ${visibility}`;
+         ${visibility}${opts.sourceIds ? `\n         AND p.source_id = ANY($${params.length}::text[])` : ''}`;
     const rows = await engine.executeRaw<Record<string, number>>(sql, params);
     const row = rows[0] ?? {};
 
@@ -238,13 +240,24 @@ export async function checkHiddenBySearchPolicy(engine: BrainEngine): Promise<Ch
 export async function checkLinkResolutionOpportunity(
   engine: BrainEngine,
   progress?: ProgressReporter,
+  opts: { sourceIds?: string[] } = {},
 ): Promise<Check> {
   const name = 'link_resolution_opportunity';
   try {
     if (await isGlobalBasenameEnabled(engine)) {
       return { name, status: 'ok', message: 'global_basename mode already enabled' };
     }
-    const allSlugs = await engine.getAllSlugs();
+    // A remote caller's grant confines the slug index, the page total and the
+    // scanned sample to its own sources.
+    let allSlugs: Set<string>;
+    if (opts.sourceIds) {
+      allSlugs = new Set();
+      for (const sourceId of opts.sourceIds) for (const slug of await engine.getAllSlugs({ sourceId })) allSlugs.add(slug);
+    } else {
+      allSlugs = await engine.getAllSlugs();
+    }
+    const scope = opts.sourceIds ? ' AND source_id = ANY($1::text[])' : '';
+    const scopeParams = opts.sourceIds ? [opts.sourceIds] : undefined;
     if (allSlugs.size === 0) {
       return { name, status: 'ok', message: 'Brain is empty — nothing to scan' };
     }
@@ -264,11 +277,13 @@ export async function checkLinkResolutionOpportunity(
     // returned a perpetual partial; this bounds the work to a fixed sample.
     const SAMPLE_LIMIT = 1000;
     const sampled = await engine.executeRaw<{ compiled_truth: string | null; timeline: string | null }>(
-      `SELECT compiled_truth, timeline FROM pages WHERE deleted_at IS NULL ORDER BY id DESC LIMIT ${SAMPLE_LIMIT}`,
+      `SELECT compiled_truth, timeline FROM pages WHERE deleted_at IS NULL${scope} ORDER BY id DESC LIMIT ${SAMPLE_LIMIT}`,
+      scopeParams,
     );
     // Decision #10: a segmented page's body columns are NULL, so the sample scans it as an empty body.
     const [segmented] = await engine.executeRaw<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM (SELECT body_storage FROM pages WHERE deleted_at IS NULL ORDER BY id DESC LIMIT ${SAMPLE_LIMIT}) s WHERE s.body_storage = 'segmented'`,
+      `SELECT COUNT(*)::int AS n FROM (SELECT body_storage FROM pages WHERE deleted_at IS NULL${scope} ORDER BY id DESC LIMIT ${SAMPLE_LIMIT}) s WHERE s.body_storage = 'segmented'`,
+      scopeParams,
     ).catch(() => []);
     const result = (check: Check) => withSkippedSegmented(check, Number(segmented?.n ?? 0));
     const totalPages = allSlugs.size;
@@ -335,8 +350,9 @@ export async function checkLinkResolutionOpportunity(
   }
 }
 
-export async function checkAbandonedThreads(engine: BrainEngine): Promise<Check> {
+export async function checkAbandonedThreads(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
   try {
+    // A remote caller's grant counts only takes on its own sources' pages.
     const rows = await engine.executeRaw<{ count: number }>(
       // since_date is TEXT and may be month-precision ('YYYY-MM'); 'YYYY-MM'::date
       // throws "invalid input syntax for type date", so normalize to the 1st
@@ -350,7 +366,9 @@ export async function checkAbandonedThreads(engine: BrainEngine): Promise<Check>
            AND weight >= 0.7
            AND since_date IS NOT NULL
            AND (since_date || CASE WHEN length(since_date) = 7 THEN '-01' ELSE '' END)::date
-               < (now() - INTERVAL '12 months')`,
+               < (now() - INTERVAL '12 months')` +
+        (opts.sourceIds ? `\n           AND page_id IN (SELECT id FROM pages WHERE source_id = ANY($1::text[]))` : ''),
+      opts.sourceIds ? [opts.sourceIds] : undefined,
     );
     const count = rows[0]?.count ?? 0;
     if (count === 0) {
@@ -377,14 +395,15 @@ export async function checkAbandonedThreads(engine: BrainEngine): Promise<Check>
  * brains see one row per source; this check uses the most recent across
  * all sources.
  */
-export async function checkCalibrationFreshness(engine: BrainEngine): Promise<Check> {
+export async function checkCalibrationFreshness(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
   try {
     const ownerHolder = resolveOwnerHolder({
       configValue: await engine.getConfig('emotional_weight.user_holder'),
     });
+    // A remote caller's grant reads only its own sources' profiles.
     const rows = await engine.executeRaw<{ generated_at: Date | null }>(
-      `SELECT MAX(generated_at) AS generated_at FROM calibration_profiles WHERE holder = $1`,
-      [ownerHolder],
+      `SELECT MAX(generated_at) AS generated_at FROM calibration_profiles WHERE holder = $1${opts.sourceIds ? ' AND source_id = ANY($2::text[])' : ''}`,
+      opts.sourceIds ? [ownerHolder, opts.sourceIds] : [ownerHolder],
     );
     const generated = rows[0]?.generated_at;
     if (!generated) {
@@ -426,10 +445,15 @@ export async function checkCalibrationFreshness(engine: BrainEngine): Promise<Ch
  * exists so the surface is wired; the math arrives once we have N >= 30
  * auto-applied verdicts to compare.
  */
-export async function checkGradeConfidenceDrift(engine: BrainEngine): Promise<Check> {
+export async function checkGradeConfidenceDrift(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
   try {
+    // A remote caller's grant counts only verdicts on takes of its own sources' pages.
     const rows = await engine.executeRaw<{ applied_count: number }>(
-      `SELECT COUNT(*)::int AS applied_count FROM take_grade_cache WHERE applied = true`,
+      `SELECT COUNT(*)::int AS applied_count FROM take_grade_cache WHERE applied = true` +
+        (opts.sourceIds
+          ? ' AND take_id IN (SELECT t.id FROM takes t JOIN pages p ON p.id = t.page_id WHERE p.source_id = ANY($1::text[]))'
+          : ''),
+      opts.sourceIds ? [opts.sourceIds] : undefined,
     );
     const applied = rows[0]?.applied_count ?? 0;
     if (applied < 30) {
@@ -531,13 +555,15 @@ export async function checkSubagentHealth(engine: BrainEngine): Promise<Check> {
   }
 }
 
-export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> {
+export async function checkVoiceGateHealth(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
   try {
+    // A remote caller's grant reads only its own sources' profiles.
     const rows = await engine.executeRaw<{ total: number; failures: number }>(
       `SELECT COUNT(*)::int AS total,
               COALESCE(SUM(CASE WHEN voice_gate_passed = false THEN 1 ELSE 0 END), 0)::int AS failures
          FROM calibration_profiles
-         WHERE generated_at >= (now() - INTERVAL '7 days')`,
+         WHERE generated_at >= (now() - INTERVAL '7 days')${opts.sourceIds ? ' AND source_id = ANY($1::text[])' : ''}`,
+      opts.sourceIds ? [opts.sourceIds] : undefined,
     );
     const total = rows[0]?.total ?? 0;
     const failures = rows[0]?.failures ?? 0;

@@ -15,11 +15,12 @@
  *     operator-edited event (hash changed) is never overwritten or retired;
  *     an operator-deleted event (deleted without `retired_by`) is never
  *     resurrected.
- *   - Only after the whole generation published, the previous generation's
- *     owned events it did not reproduce are retired (soft-deleted with
- *     `retired_by: life-chronicle`, reversible); a later generation that
- *     produces one again restores it. A failed or superseded run retires
- *     nothing.
+ *   - Only after the whole generation published, and only when the caller
+ *     declares it a complete replacement (`replaces`), the previous
+ *     generation's owned events it did not reproduce are retired (soft-deleted
+ *     with `retired_by: life-chronicle`, reversible); a later generation that
+ *     produces one again restores it. A failed or superseded run, and an empty
+ *     or partial one (#7013), retires nothing.
  *
  * Managed brains publish through two maintenance intents (database-only);
  * unmanaged brains write directly inside one attributed maintenance
@@ -164,12 +165,13 @@ export interface ChronicleGenerationResult {
 }
 
 /**
- * Publish one generation (possibly empty) for a pinned depth page and retire
- * the previous generation's owned events it did not reproduce.
+ * Publish one generation (possibly empty) for a pinned depth page. With `replaces` (a complete judged generation, or
+ * an ineligible revision's empty one) it then retires the previous generation's owned events it did not reproduce;
+ * without it (an empty or partial judged generation, #7013) it retires nothing.
  */
 export async function publishChronicleGeneration(engine: BrainEngine, opts: {
   sourceId: string; pin: ChronicleDepthPin; events: BuiltChronicleEvent[]; decisionRequestId: string | null;
-  maintenance?: MaintenanceAuthority | null; signal?: AbortSignal;
+  replaces: boolean; maintenance?: MaintenanceAuthority | null; signal?: AbortSignal;
 }): Promise<ChronicleGenerationResult> {
   const { sourceId, pin } = opts;
   const maintenance = opts.maintenance === undefined ? await maintenancePreflight(engine, sourceId) : opts.maintenance;
@@ -225,6 +227,7 @@ export async function publishChronicleGeneration(engine: BrainEngine, opts: {
     }
   }
 
+  if (!opts.replaces) return result;
   const keep = new Set(events.map((e) => e.slug));
   const stale = await engine.executeRaw<{ slug: string; revision: string; content_hash: string }>(
     `SELECT slug, knowledge_revision::text AS revision, content_hash FROM pages

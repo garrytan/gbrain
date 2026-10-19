@@ -5,7 +5,7 @@
  * protocol lives in src/core/git/commit-push.ts.
  *
  *   gbrain git commit-push [--path <dir>] -m <msg> [--json] [--] <paths…>
- *   gbrain git commit-push --push-only [--path <dir>] [--expect-remote <sha> --resolve <p>=ours|theirs|file:<f>…]
+ *   gbrain git commit-push --push-only [--keep-checkout] [--path <dir>] [--expect-remote <sha> --resolve <p>=ours|theirs|file:<f>…]
  *   gbrain git commit-push --pull [--path <dir>] [--require-clean]
  *   gbrain git commit-push --dry-run [--path <dir>] [-m <msg>] [--] <paths…>
  */
@@ -20,7 +20,7 @@ import { GIT_ENV } from '../core/git-transport.ts';
 
 const HELP = `Usage: gbrain git commit-push [--path <dir>] -m <msg> [--json] [--] <paths...>
        gbrain git commit-push --push-only [--path <dir>] [--branch <b>]
-       gbrain git commit-push --push-only [--path <dir>] --expect-remote <sha> --resolve <path>=ours|theirs|file:<file>...
+       gbrain git commit-push --push-only [--keep-checkout] [--path <dir>] --expect-remote <sha> --resolve <path>=ours|theirs|file:<file>...
        gbrain git commit-push --pull [--path <dir>] [--require-clean]
 
 Commit only the named paths and push them, safely, in a checkout other agents
@@ -33,6 +33,9 @@ Flags:
   -m, --message <m>   Commit message (required unless --push-only or --pull).
   --push-only         Publish commits already on the branch; commit nothing.
   --branch <name>     With --push-only: publish HEAD to this remote branch (one exact name).
+  --keep-checkout     With --push-only: never move the checkout and skip its pre-push hook. The one
+                      publish allowed in a managed canonical worktree (its Git effects' integrate_conflict
+                      fix); gbrain sources refresh brings the merged remote files in afterwards.
   --pull              Bring remote commits in (fast-forward, or an in-memory merge); never pushes.
   --require-clean     Unattended rule: --pull skips when the checkout has any local edit;
                       a push never advances a checkout that has one, and never waits for
@@ -50,11 +53,11 @@ confirmed (push_unconfirmed); 1 on other failures, each with an "Error [<code>]"
 
 interface Parsed {
   sub?: string; path?: string; message?: string; branch?: string; expectRemote?: string; json: boolean; pushOnly: boolean; pull: boolean;
-  requireClean: boolean; dryRun: boolean; help: boolean; paths: string[]; resolve: string[];
+  requireClean: boolean; dryRun: boolean; help: boolean; keepCheckout: boolean; paths: string[]; resolve: string[];
 }
 
 function parse(args: string[]): Parsed {
-  const p: Parsed = { json: false, pushOnly: false, pull: false, requireClean: false, dryRun: false, help: false, paths: [], resolve: [] };
+  const p: Parsed = { json: false, pushOnly: false, pull: false, requireClean: false, dryRun: false, help: false, keepCheckout: false, paths: [], resolve: [] };
   let rest = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -70,6 +73,7 @@ function parse(args: string[]): Parsed {
     else if (a === '--help' || a === '-h') p.help = true;
     else if (a === '--json') p.json = true;
     else if (a === '--push-only') p.pushOnly = true;
+    else if (a === '--keep-checkout') p.keepCheckout = true;
     else if (a === '--pull') p.pull = true;
     else if (a === '--require-clean') p.requireClean = true;
     else if (a === '--dry-run') p.dryRun = true;
@@ -114,9 +118,9 @@ export async function runGit(args: string[]): Promise<number> {
     const repo = checkoutRoot(p.path ?? process.cwd());
     const cwd = p.path ? repo : process.cwd();
     if ((p.pull && p.pushOnly) || (p.pull && (p.message || p.paths.length || p.resolve.length || p.branch))
-      || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote) && !p.pushOnly)) {
+      || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout) && !p.pushOnly)) {
       throw opError('commit_paths_invalid', 'These flags do not combine.',
-        'Use one mode: -m <msg> -- <paths> (commit + push), --push-only [--branch <b>] [--expect-remote <sha> --resolve ...], or --pull [--require-clean].');
+        'Use one mode: -m <msg> -- <paths> (commit + push), --push-only [--keep-checkout] [--branch <b>] [--expect-remote <sha> --resolve ...], or --pull [--require-clean].');
     }
     if (Boolean(p.resolve.length) !== Boolean(p.expectRemote) || (p.expectRemote && !/^[0-9a-f]{7,64}$/i.test(p.expectRemote))) {
       throw opError('commit_paths_invalid', '--resolve and --expect-remote <sha> go together.',
@@ -142,6 +146,7 @@ export async function runGit(args: string[]): Promise<number> {
 
     const result = commitAndPush({
       repo, cwd, paths: p.paths, message: p.message, pushOnly: p.pushOnly, advanceOnlyWhenClean: p.requireClean,
+      ...(p.keepCheckout ? { keepCheckout: true } : {}),
       ...(p.branch ? { branch: p.branch } : {}),
       ...(p.resolve.length ? { resolutions: parseResolutions(p.resolve), expectRemote: p.expectRemote } : {}),
     });

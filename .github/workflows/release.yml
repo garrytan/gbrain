@@ -80,6 +80,8 @@ jobs:
     outputs:
       publish: ${{ steps.gate.outputs.publish }}
       sha: ${{ steps.gate.outputs.sha }}
+      test_reused_run_id: ${{ steps.gate.outputs.test_reused_run_id }}
+      e2e_reused_run_id: ${{ steps.gate.outputs.e2e_reused_run_id }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
@@ -141,7 +143,7 @@ jobs:
           cd admin && bun install --frozen-lockfile --ignore-scripts && cd ..
           bun run build:admin
       # No test re-run here: the Test workflow already gated this exact SHA at
-      # merge (10 shards + E2E). Re-running the whole suite serially on the
+      # merge (unit shards + E2E). Re-running the whole suite serially on the
       # release runner is a flakier duplicate gate — it blocked the first
       # release on ambient-env tests (run 30698650484). The build job's gate
       # is the artifact itself: compile, then smoke-test the binary.

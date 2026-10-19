@@ -15,6 +15,7 @@
 import { resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { parseMarkdown } from '../markdown.ts';
+import { readStoredBody } from '../facts/file-body-guard.ts';
 import { declareDerivation, deriveTrust, derivedMaintenanceTransaction, derivedWriteTrust, frontmatterTaint, type DerivationDeclaration } from '../trust/taint.ts';
 import type { TaintInput, TrustTier, WriteTrust } from '../trust/tier.ts';
 import { CONVERSATION_PAGE_URI_PREFIX } from './transcript-discovery.ts';
@@ -67,11 +68,18 @@ export async function summaryDerivation(engine: BrainEngine, sourceId: string, s
   return { trust, inputs, declaration: declareDerivation(trust, inputs) };
 }
 
-/** An unmanaged derived page write (the dream summary): putPage at the derivation's tier, lowered, with its input edges. */
+/**
+ * An unmanaged derived page write (the dream summary): putPage at the derivation's tier, lowered, with its input edges.
+ * #6982: a live body it replaces with a different one is kept in page_versions first (putPage itself keeps none), and
+ * `tags` (the ones its file declares) are stored as the importer stores them, so the file compares equal to the page.
+ */
 export async function putDerivedPage(engine: BrainEngine, derivation: Derivation, slug: string,
-  page: Parameters<BrainEngine['putPage']>[1], opts: { sourceId: string }): Promise<void> {
+  page: Parameters<BrainEngine['putPage']>[1], opts: { sourceId: string; tags?: readonly string[] }): Promise<void> {
   await derivedMaintenanceTransaction(engine, derivation, async tx => {
-    const written = await tx.putPage(slug, page, opts);
+    const prior = await readStoredBody(tx, opts.sourceId, slug, true);
+    if (prior && (prior.compiled_truth !== page.compiled_truth || (prior.timeline ?? '') !== (page.timeline ?? ''))) await tx.createVersion(slug, { sourceId: opts.sourceId });
+    const written = await tx.putPage(slug, page, { sourceId: opts.sourceId });
+    for (const tag of opts.tags ?? []) await tx.addTag(slug, tag, { sourceId: opts.sourceId, tagSource: 'frontmatter' });
     return { result: undefined, rows: [{ table: 'pages' as const, id: Number(written.id), sourceId: opts.sourceId }] };
   });
 }

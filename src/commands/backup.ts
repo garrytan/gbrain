@@ -28,6 +28,7 @@ import {
   backupNagGate,
   isBackupStatusStale,
   isVerifiedRecoverable,
+  isRemoteTimeout,
   loadBackupStatus,
   currentBackupEvidence,
   type BackupAssetVerdict,
@@ -131,11 +132,15 @@ function renderHuman(s: BackupStatus, out: (line: string) => void): void {
   out(`backup coverage — ${s.overall === 'warn' ? 'WARN' : 'ok'} (checked ${age}, by ${s.computed_by})`);
   for (const a of s.assets) {
     const mark = isVerifiedRecoverable(a) ? '✓' : a.state === 'no_remote' ? '✗' : a.state === 'info' ? '·' : '⚠';
-    out(`  ${mark} [${a.kind}] ${a.id} — ${a.state}${a.verification ? `; remote evidence: ${a.verification.state}` : ''}${a.detail ? `: ${a.detail}` : ''}`);
+    out(`  ${mark} [${a.kind}] ${a.id} — ${a.state}${a.verification ? `; remote evidence: ${isRemoteTimeout(a) ? 'timed out (unconfirmed, not missing)' : a.verification.state}` : ''}${a.detail ? `: ${a.detail}` : ''}`);
     const fix = suggestedFix(a);
     if (fix) out(`      fix: ${fix.join(' ')}`);
   }
   out(recoveryStatement(s));
+  const timeouts = s.totals.remote_timeouts ?? 0;
+  if (timeouts > 0) {
+    out(`note: ${timeouts} remote check(s) timed out, so those backups are unconfirmed, not missing; for a slow remote raise the slot (default 2000 ms, max 30000): gbrain config set backup.remote_timeout_ms <ms>`);
+  }
   if (s.degraded) {
     out('note: the brain database was unreadable during this check — verdict is partial (not cached)');
   }

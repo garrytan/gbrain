@@ -41,13 +41,40 @@
  * Used by: scripts/test-shard.sh (thin wrapper), test/scripts/sharding.test.ts.
  */
 
+import { spawnSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..");
 const DEFAULT_WEIGHTS_PATH = resolve(REPO_ROOT, "scripts/test-weights.json");
+
+/**
+ * test.yml's unit matrix size, also e2e.yml's coverage-full-unit matrix;
+ * test/scripts/unit-shard-budget.test.ts pins both workflows to it.
+ */
+export const UNIT_SHARDS = 18;
+/** test.yml's `test` job `timeout-minutes: 22`: the only bound on a unit shard, its setup steps included. */
+export const UNIT_JOB_TIMEOUT_MS = 22 * 60 * 1000;
+/** The job's steps before the shard (checkout, Bun, cache restores, install): 10-20 s measured on a warm cache. */
+export const UNIT_SETUP_ALLOWANCE_MS = 60 * 1000;
+/**
+ * A unit shard's mined weight may be at most this: on a runner twice as slow
+ * as the mined weights (master shards ran 0.8-1.4x their prediction, and one
+ * cancelled at the timeout) it still ends a minute inside the job timeout
+ * after setup.
+ */
+export const UNIT_SHARD_BUDGET_MS = (UNIT_JOB_TIMEOUT_MS - UNIT_SETUP_ALLOWANCE_MS - 60_000) / 2;
+
+/** Each unit shard's files as test.yml runs them: scripts/test-shard.sh's own discovery and partition. */
+export function unitShards(root: string, n: number = UNIT_SHARDS): string[][] {
+  return Array.from({ length: n }, (_, i) => {
+    const r = spawnSync("bash", [join(root, "scripts/test-shard.sh"), "--dry-run-list", String(i + 1), String(n)], { cwd: root, encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`scripts/test-shard.sh --dry-run-list ${i + 1} ${n} failed: ${r.stderr}`);
+    return r.stdout.split("\n").filter(Boolean);
+  });
+}
 
 export type WeightMap = Map<string, number>;
 

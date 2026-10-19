@@ -946,7 +946,7 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
     let exit: number | string | undefined;
     try {
       await runExtract(engine, ['timeline', '--source', 'db', '--source-id', state.sourceId]);
-    } finally { exit = process.exitCode; process.exitCode = exitBefore; }
+    } finally { exit = process.exitCode; process.exitCode = exitBefore ?? 0; }
     const findings = await detectorFindings(state);
     if (findings.length) throw new Error(`${findings.join('; ')} (exit ${String(exit ?? 0)}, timeline rows ${await count()})`);
     expect(await count()).toBe(1);

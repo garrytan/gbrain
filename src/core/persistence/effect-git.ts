@@ -120,17 +120,17 @@ async function indexLockError(session: GitSession, stderr: string, mayReclaim: b
     { detail: lock, fix: staleLockFix(session.root, lock, why) });
 }
 
-async function git(session: GitSession, args: string[]): Promise<{ stdout: string; code: number }> {
+async function git(session: GitSession, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
   for (let reclaimed = false; ; reclaimed = true) {
     const { error, stdout, stderr } = await run(session, args);
     if (error && (error.killed || typeof error.code !== 'number')) throw gitFailure('Git execution did not finish within its bounded attempt.',
       `A git command in the canonical checkout did not finish within ${Math.round(session.timeoutMs / 1000)} seconds or could not start.`);
     const code = error?.code as number ?? 0;
-    if (code === 0) return { stdout, code };
+    if (code === 0) return { stdout, stderr, code };
     const locked = await indexLockError(session, stderr, !reclaimed);
     if (locked === 'reclaimed') continue;
     if (locked) throw locked;
-    return { stdout, code };
+    return { stdout, stderr, code };
   }
 }
 
@@ -299,8 +299,18 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
   return results;
 }
 
-/** Push the current branch to its tracking remote once. A plain push is idempotent and cannot import remote canonical content. */
-export async function pushGitRoot(root: string, signal?: AbortSignal): Promise<{ push: 'committed' } | { push: 'skipped'; reason: 'no_tracking_remote' }> {
+/** Git's refusal of a push because the remote branch moved (LC_ALL=C keeps it untranslated). */
+const NON_FAST_FORWARD = /\[rejected\][^\n]*\((?:non-fast-forward|fetch first)\)/;
+
+/**
+ * Push the current branch to its tracking remote. A plain push is tried first (idempotent, cannot import remote
+ * content). #7010: when the remote moved (a non-fast-forward rejection), the push goes through the shared-checkout
+ * publish (`commitAndPush` with `keepCheckout`), which merges the remote commits in memory and pushes the merge
+ * without moving the checkout, so `gbrain sources refresh` stays the only importer of remote files. That publish
+ * runs synchronously; it starts only after the remote answered this push. Both sides changing one file holds the
+ * effect with `integrate_conflict` and the user's choice as its fix.
+ */
+export async function pushGitRoot(root: string, signal?: AbortSignal): Promise<{ push: 'committed'; integrated?: number } | { push: 'skipped'; reason: 'no_tracking_remote' }> {
   return withSession(root, signal, undefined, false, async session => {
     const branch = await git(session, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
     if (branch.code !== 0) return { push: 'skipped', reason: 'no_tracking_remote' } as const;
@@ -308,11 +318,62 @@ export async function pushGitRoot(root: string, signal?: AbortSignal): Promise<{
     const merge = await git(session, ['config', '--get', `branch.${branch.stdout.trim()}.merge`]);
     if (remote.code !== 0 || merge.code !== 0 || !remote.stdout.trim() || remote.stdout.trim() === '.') return { push: 'skipped', reason: 'no_tracking_remote' } as const;
     const push = await git(session, ['push', '--', remote.stdout.trim(), `HEAD:${merge.stdout.trim()}`]);
-    if (push.code !== 0) throw opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
-      `git push to ${remote.stdout.trim()} failed (network, credentials or a rejected non-fast-forward). Nothing is lost locally and the worker pushes again on a later pass; gbrain never pulls or rebases the checkout. If it keeps failing, check the remote and its credentials with git push on the brain host.`,
+    if (push.code === 0) return { push: 'committed' } as const;
+    if (!NON_FAST_FORWARD.test(push.stderr)) throw opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
+      `git push to ${remote.stdout.trim()} failed (network, credentials or a remote that refused it). Nothing is lost locally and the worker pushes again on a later pass; gbrain never pulls or rebases the checkout. If it keeps failing, check the remote and its credentials with git push on the brain host.`,
       { fix: effectStatusFix });
-    return { push: 'committed' } as const;
+    signal?.throwIfAborted();
+    return publishKeepingCheckout(root, signal);
   });
+}
+
+/** #7010: the bound on one keep-checkout publish (a fetch, an in-memory merge and a push, repeated while the remote keeps moving). */
+const KEEP_CHECKOUT_PUBLISH_TIMEOUT_MS = 600_000;
+
+/**
+ * #7010: run the shared publish in a child `gbrain git commit-push --push-only --keep-checkout`. The shared publish is
+ * synchronous (fetches and pushes block for up to minutes), so it never runs on the owner's event loop, where it
+ * would stall lease renewals. The child is this process's own executable, never a `gbrain` found on PATH (an older
+ * install would not know the flag); a busy publish lock fails at once and the effect retries.
+ */
+async function publishKeepingCheckout(root: string, signal?: AbortSignal): Promise<{ push: 'committed'; integrated?: number }> {
+  const { CHILD_ENV, resolveChildCliInvocation } = await import('../minions/job-isolation.ts');
+  const cli = resolveChildCliInvocation(process.env, process.execPath, process.argv[1], () => null);
+  if (!cli) throw opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
+    `The remote branch moved, and publishing over it runs gbrain git commit-push --push-only --keep-checkout, but this process could not locate its own gbrain executable (set ${CHILD_ENV.childCliOverride} to it). Nothing is lost locally.`,
+    { fix: effectStatusFix });
+  const child = await execFileBounded(cli.cmd, [...cli.argsPrefix, 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', root, '--json'], {
+    timeout: KEEP_CHECKOUT_PUBLISH_TIMEOUT_MS, termGraceMs: GIT_TERM_GRACE_MS, maxBuffer: 1024 * 1024, signal,
+    env: { ...process.env, GBRAIN_PUBLISH_LOCK_WAIT_SECONDS: '0', GBRAIN_PUSH_LOCK_WAIT_SECONDS: '0' },
+  });
+  signal?.throwIfAborted();
+  let doc: Record<string, unknown> | null = null;
+  try { doc = JSON.parse(child.stdout.trim()); } catch { /* reported below */ }
+  if (!child.error && doc?.outcome === 'pushed') return { push: 'committed', ...(Number(doc.integrated) ? { integrated: Number(doc.integrated) } : {}) };
+  if (doc && typeof doc.code === 'string' && typeof doc.message === 'string') {
+    const error = opError(doc.code as Parameters<typeof opError>[0], doc.message, typeof doc.suggestion === 'string' ? doc.suggestion : '',
+      { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), ...(doc.fix ? { fix: doc.fix as Action } : {}), retryable: doc.retryable === true });
+    throw error.code === 'integrate_conflict' ? heldConflict(root, error) : error;
+  }
+  throw opError('push_unconfirmed', 'The canonical commit is durable locally; its push will retry.',
+    `The remote branch moved and the keep-checkout publish did not report a push (${child.error ? `exit ${String(child.error.code ?? child.error.signal ?? 'unknown')}` : `outcome ${String(doc?.outcome ?? 'unreadable')}`}: ${child.stderr.trim().slice(0, 300) || 'no detail'}). Nothing is lost locally; the worker pushes again on a later pass.`,
+    { fix: effectStatusFix, retryable: true });
+}
+
+/**
+ * #7010: a true conflict holds the checkout's Git effects (they retry, then park) until the user picks a side.
+ * The fix keeps the shared publish's choice command (`--keep-checkout`, so the checkout stays put) and adds the
+ * retry of parked effects and a read-only verify.
+ */
+function heldConflict(root: string, error: OperationError): OperationError {
+  const fix = error.fix as Action | undefined;
+  const held = opError('integrate_conflict', `Git backups of canonical page writes are held: ${error.message}`,
+    `${error.suggestion ?? ''} The page writes themselves are committed in the database and in local commits; nothing is lost, and nothing is pushed from ${root} until the conflict is resolved. After the choice is pushed, gbrain sources writer retry-effects with --parked-pushes for the source this checkout backs (gbrain sources writer status names it) retries the Git effects that parked meanwhile, and gbrain sources refresh for that source brings the merged remote files into the checkout.`,
+    { ...(error.detail ? { detail: error.detail } : {}), fix: { ...(fix ?? { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+      why: 'Choosing which version of a file wins discards the other side; ask the user before resolving.' }),
+    user_message: `${fix?.user_message ?? 'This machine and the remote changed the same file.'} Until you choose, Git backups of new page writes from ${root} are held (nothing is lost; the database has every write).`,
+    verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--json'] } } });
+  return held;
 }
 
 /** The outcome a Git effect records when its root has no durability hook: no git command ran. */

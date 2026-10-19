@@ -1040,7 +1040,7 @@ async function runPipelineBodyInner(
       // didn't (null-localPath echo, or the write_through flag flipped
       // mid-pipeline across the config-cache TTL). Route the group to the
       // legacy DB-only path — never drop facts.
-      if (result.databaseOnlyReason !== 'url_clone') warnOnce(
+      if (result.databaseOnlyReason !== 'url_clone' && result.databaseOnlyReason !== 'file_database_drift') warnOnce(
         'facts:fence-write-unexpected-fallback',
         `[facts] writeFactsToFence returned legacyFallback for slug=${slug} despite localPath being set — routing to DB-only inserts.`,
       );
@@ -1048,7 +1048,7 @@ async function runPipelineBodyInner(
         const newFact: NewFact = {
           fact: f.fact,
           kind: f.kind,
-          entity_slug: f.entity_inferred ? null : slug,
+          entity_slug: f.entity_inferred && result.databaseOnlyReason !== 'file_database_drift' ? null : slug,
           visibility,
           notability: f.notability,
           source: f.source,
@@ -1058,7 +1058,7 @@ async function runPipelineBodyInner(
           embedding_model: f.embedding_model ?? null, attributed_to: f.attributed_to ?? null,
           // #4206: caller event-time fallback + provenance context.
           valid_from: factEventTime(f, ctx),
-          context: ctx.sourceSlug ?? input.pageSlug ?? null,
+          context: result.databaseOnlyReason === 'file_database_drift' ? annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, groupResolutionSource, f.entity_inferred) : ctx.sourceSlug ?? input.pageSlug ?? null,
         };
         await insertDerivedFact(newFact); // DB-only fallback when the fence lane declined the write (write_through opt-out race / localPath echo)
       }

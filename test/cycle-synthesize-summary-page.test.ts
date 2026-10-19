@@ -47,6 +47,7 @@ async function renderSummary(writtenSlugs: string[]): Promise<{ body: string; ma
     getConfig: async (_key: string) => null,
     // The summary write runs in a maintenance transaction; the stub is its own transaction engine.
     executeRaw: async () => [],
+    addTag: async () => {},
     transaction: async <T>(fn: (tx: BrainEngine) => Promise<T>) => fn(engine),
   } as unknown as BrainEngine;
   try {

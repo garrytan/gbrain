@@ -1172,10 +1172,10 @@ export async function computeExtractHealthCheck(
 
 export async function checkSyncFreshness(
   engine: BrainEngine,
-  opts?: { nowMs?: number; localOnly?: boolean },
+  opts?: { nowMs?: number; localOnly?: boolean; sourceIds?: string[] },
 ): Promise<Check> {
   try {
-    const sources = await loadSyncFreshnessSources(engine);
+    const sources = await loadSyncFreshnessSources(engine, opts?.sourceIds);
 
     if (sources.length === 0) {
       return {
@@ -1217,7 +1217,7 @@ export async function checkSyncFreshness(
     // #4960: sources with no successful sync carry their own state, fix and wording (no generic "run sync" suffix).
     const outcomes: SyncOutcomeEntry[] = [];
     let ownedContent = new Set<string>();
-    try { ownedContent = new Set((await ownedContentFreshness(engine)).map(source => source.sourceId)); }
+    try { ownedContent = new Set((await ownedContentFreshness(engine, opts?.sourceIds)).map(source => source.sourceId)); }
     catch (error) { if (!isOwnedContentSchemaMissing(error)) throw error; }
     // #6076: an adopted read-only catalog pack (no commit history) has nothing to sync.
     const catalogPacks = await readOnlyCatalogPackSourceIds(engine, sources, localOnly);

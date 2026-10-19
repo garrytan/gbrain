@@ -15,11 +15,25 @@ import type { DiscoveredTranscript } from './transcript-discovery.ts';
  * #5145: split transcripts into already-synthesized and candidates BEFORE the
  * paid triage pass. Classic brains (no maintenance) and dry runs (maintenance
  * forced null) used to triage completed transcripts first and only skip them
- * afterwards, re-buying triage whenever the verdict cache expired. Legacy
- * `dream:synth:` keys count on classic brains only (as the fan-out always
- * did); a dry run on a managed brain reads the source incarnation read-only
- * so its synth-v2 keys match the identity a real run would use. The key lists
- * are returned for the fan-out's own per-transcript checks.
+ * afterwards, re-buying triage whenever the verdict cache expired. A dry run
+ * on a managed brain reads the source incarnation read-only so its synth-v2
+ * keys match the identity a real run would use.
+ *
+ * `retainedSkips` maps each transcript the fan-out must skip without
+ * re-attaching children to its skip reason: legacy `dream:synth:` completions
+ * and, on a managed brain, synth-v2 completions under the bare source id.
+ * Completions keyed to this run's own identity stay out of the map; the
+ * fan-out re-checks them against `successfulV2Keys` (a managed run re-attaches
+ * their children for postprocessing).
+ *
+ * #6924: on a managed brain a completion without an incarnation (legacy keys,
+ * bare-source synth-v2 keys) was recorded before the brain went managed, so
+ * its identity cannot say which row of this source id it belongs to. It
+ * counts only when this source still holds that synthesis's output: a live
+ * `dream_generated` page whose `raw_source` names the transcript (matched by
+ * basename, like the keys). Pages are deleted with their source row, so a
+ * completion of a removed and re-added source, or of another source, never
+ * suppresses synthesis.
  */
 export async function partitionCompletedSynthesis(
   engine: BrainEngine,
@@ -27,19 +41,48 @@ export async function partitionCompletedSynthesis(
   sourceId: string,
   maintenance: MaintenanceAuthority | null,
   dryRun: boolean,
-): Promise<{ completed: Set<string>; successfulLegacyKeys: string[]; successfulV2Keys: string[]; synthesisIdentity: string }> {
+): Promise<{ completed: Set<string>; retainedSkips: Map<string, string>; successfulV2Keys: string[]; synthesisIdentity: string }> {
   const incarnation = maintenance
     ? maintenance.writer.sourceIncarnation
     : dryRun ? await readManagedSourceIncarnation(engine, sourceId) : null;
   const synthesisIdentity = incarnation !== null ? `${sourceId}/${incarnation}` : sourceId;
   const successfulV2Keys = await loadSuccessfulSynthesisKeys(engine, sourceId, 'dream:synth-v2:');
-  const successfulLegacyKeys = incarnation !== null ? [] : await loadSuccessfulSynthesisKeys(engine, sourceId, 'dream:synth:');
-  const completed = new Set(transcripts.filter(t => {
+  const successfulLegacyKeys = await loadSuccessfulSynthesisKeys(engine, sourceId, 'dream:synth:');
+  const retainedOutputs = incarnation !== null ? await loadRetainedOutputSources(engine, sourceId) : null;
+  const completed = new Set<string>();
+  const retainedSkips = new Map<string, string>();
+  for (const t of transcripts) {
     const hash16 = t.contentHash.slice(0, 16);
-    return findLegacyCompletion(successfulLegacyKeys, t.filePath, hash16) !== null
-      || findSynthV2Completion(successfulV2Keys, t.filePath, hash16, synthesisIdentity) !== null;
-  }).map(t => t.filePath));
-  return { completed, successfulLegacyKeys, successfulV2Keys, synthesisIdentity };
+    const current = findSynthV2Completion(successfulV2Keys, t.filePath, hash16, synthesisIdentity);
+    if (current) completed.add(t.filePath);
+    if (retainedOutputs && (current || !retainedOutputs.has(basename(t.filePath)))) continue;
+    const legacy = findLegacyCompletion(successfulLegacyKeys, t.filePath, hash16);
+    const premanaged = retainedOutputs ? findSynthV2Completion(successfulV2Keys, t.filePath, hash16, sourceId) : null;
+    const reason = legacy ? `already_synthesized_legacy_${legacy === 'chunked' ? 'chunked' : 'single_chunk'}`
+      : premanaged ? `already_synthesized_v2_${premanaged === 'chunked' ? 'chunked' : 'single_chunk'}` : null;
+    if (!reason) continue;
+    completed.add(t.filePath);
+    retainedSkips.set(t.filePath, reason);
+  }
+  return { completed, retainedSkips, successfulV2Keys, synthesisIdentity };
+}
+
+/**
+ * #6924: basenames of the transcripts this source's live synthesis output
+ * names (`raw_source`, stamped on every classic synthesis page by
+ * stampDreamProvenance).
+ */
+async function loadRetainedOutputSources(engine: BrainEngine, sourceId: string): Promise<Set<string>> {
+  const rows = await engine.executeRaw<{ raw_source: string }>(
+    `SELECT DISTINCT frontmatter->>'raw_source' AS raw_source
+       FROM pages
+      WHERE source_id = $1
+        AND deleted_at IS NULL
+        AND frontmatter->>'dream_generated' = 'true'
+        AND COALESCE(frontmatter->>'raw_source', '') <> ''`,
+    [sourceId],
+  );
+  return new Set(rows.map(row => basename(row.raw_source)));
 }
 
 /**

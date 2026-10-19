@@ -42,7 +42,7 @@ import { slugifySegment } from '../sync.ts';
 import { validatePageSlug } from '../ops/context.ts';
 import { privatePagesFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 import { maintenancePreflight } from '../persistence/prepared-maintenance.ts';
-import { derivedWriteThrough } from './derived-write-through.ts';
+import { derivedWriteThrough, reportFileHolds } from './derived-write-through.ts';
 import { addSpellingRedirects, canonicalConceptStem, loadConceptRedirects, loadLiveConceptStems } from './concept-redirects.ts';
 import {
   addManagedProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishClassicConcept, publishManagedConcept, stripFenceSections,
@@ -617,7 +617,7 @@ export async function runPhaseSynthesizeConcepts(
     });
   }
 
-  return {
+  return reportFileHolds({
     phase: 'synthesize_concepts',
     status: failures.length > 0 || linkWarnings.length > 0 || publicationDeferred.length > 0 || publicationHeld.length > 0 || skippedFileDrift.length > 0 ? 'warn' : 'ok',
     duration_ms: 0,
@@ -661,7 +661,7 @@ export async function runPhaseSynthesizeConcepts(
       pricing_fallback_models: [...pricingFallbackModels],
       dry_run: opts.dryRun ?? false,
     },
-  };
+  }, conceptFiles?.held, 'concept');
 }
 
 /**

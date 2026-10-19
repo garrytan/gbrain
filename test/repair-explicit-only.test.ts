@@ -24,7 +24,7 @@ import { REPAIR_HELP, parseRepairArgs, runRepairCommand } from '../src/commands/
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-const EXPLICIT: RepairKind[] = ['accepted-takes', 'google-file-modes', 'stale-atoms', 'extractor-facts', 'conversation-labels', 'captured-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'timeline-comments', 'managed-sync-orphans', 'content-receipt-root', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'missing-tables', 'url-clone-fences'];
+const EXPLICIT: RepairKind[] = ['accepted-takes', 'google-file-modes', 'stale-atoms', 'atoms-restore', 'extractor-facts', 'conversation-labels', 'captured-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'timeline-comments', 'managed-sync-orphans', 'content-receipt-root', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'missing-tables', 'url-clone-fences'];
 let engine: PGLiteEngine;
 const home = mkdtempSync(join(tmpdir(), 'gbrain-repair-explicit-'));
 
@@ -109,7 +109,7 @@ describe('surfaces that list instead of run', () => {
       expect(out.explicit_kinds).toEqual(EXPLICIT.map(kind => ({ kind, code: 'explicit_kind_required', preview_command: `gbrain repair ${kind}`,
         docs: 'docs/guides/repair.md#explicit-only-repair-kinds' })));
     }
-    expect(await captured(['--all'])).toContain('Explicit-only kinds (not run without their name; preview each): gbrain repair accepted-takes; gbrain repair google-file-modes; gbrain repair stale-atoms; gbrain repair extractor-facts; gbrain repair conversation-labels; gbrain repair captured-facts; gbrain repair loop-facts');
+    expect(await captured(['--all'])).toContain('Explicit-only kinds (not run without their name; preview each): gbrain repair accepted-takes; gbrain repair google-file-modes; gbrain repair stale-atoms; gbrain repair atoms-restore; gbrain repair extractor-facts; gbrain repair conversation-labels; gbrain repair captured-facts; gbrain repair loop-facts');
   });
 
   test('gbrain repair --all --apply exits 0 when explicit kinds are the only ones left', async () => {

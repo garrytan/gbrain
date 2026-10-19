@@ -278,21 +278,28 @@ for (const kind of testBackends()) {
       }
     }, 60_000);
 
-    test('managed: atoms of an edited page are stale only once its current text completed an extraction', async () => {
+    test('managed: atoms of an edited page are stale only once its current text completed an extraction that produced atoms', async () => {
       const sourceId = `stale-c-${randomUUID().slice(0, 8)}`;
       const f = await managedFixture(sourceId);
       try {
         expect((await f.extract()).status).toBe('ok');
+        const prior = (await f.atoms()).map(row => row.slug);
         const edited = await f.edit('A careful project record at revision two. '.repeat(40));
         expect((await repair(['--source', sourceId])).results[0].affected).toBe(0);
         const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
         await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-atoms',$1,$2::text::jsonb)`,
           [`pre-fix-${sourceId}`, JSON.stringify([{ sourceId, incarnation, requestId: randomUUID(), kind: 'page', locator: f.slug, pageId: edited.id, contentHash: edited.content_hash }])]);
+        // #7013: a completed extraction of the current text that produced no atom replaces nothing.
+        expect((await repair(['--source', sourceId])).results[0].affected).toBe(0);
+        await f.unmanaged(() => engine.putPage('atoms/replacement-example', { type: 'atom', title: 'Replacement', compiled_truth: 'Replacement atom.',
+          frontmatter: { source_slug: f.slug, source_hash: edited.content_hash!.slice(0, 16), managed_extraction: true } }, { sourceId }));
         const preview = await repair(['--source', sourceId]);
         expect(preview.results[0].listing!.map(entry => entry.class)).toEqual(['origin_changed', 'origin_changed']);
         const applied = await repair(['--source', sourceId, '--apply', '--expect', hashOf(preview)]);
         expect(applied.results[0]).toMatchObject({ applied: 2, outcomes: { retired: 2 } });
-        expect((await f.atoms()).every(row => row.deleted && row.frontmatter.retired_by === 'stale-atoms')).toBe(true);
+        const after = await f.atoms();
+        expect(after.filter(row => prior.includes(row.slug)).every(row => row.deleted && row.frontmatter.retired_by === 'stale-atoms')).toBe(true);
+        expect(after.filter(row => prior.includes(row.slug))).toHaveLength(2);
       } finally {
         await disposePersistenceConsumer(engine);
         await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');

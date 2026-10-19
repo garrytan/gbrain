@@ -80,13 +80,13 @@ the decision rule is critical path first, vCPU-minutes second.
 
 ### Event parity
 
-Every test file runs on every push to master, on the nightly schedule and on
-manual dispatch, and pull requests and merge-queue runs (`merge_group`) run
-every Bun-version cell too. Each narrower PR behavior is a named exception
-whose comment names the scheduled run that covers it
-(`test/scripts/ci-pr-scope.test.ts` fails on an unclassified one). Table,
-dependency-audit rule and cost: [docs/ci-event-parity.md](ci-event-parity.md). Required checks stay keyed on
-the `test-status` and `e2e-status` aggregators.
+Every test file and Bun cell runs on each push to master, nightly, on manual
+dispatch and in the merge queue. A pull request runs the cheap tier;
+merge needs `full-suite` and `e2e-full-suite` from a full run on its head
+([full CI for PRs](ci-event-parity.md#full-ci-on-pull-requests)).
+Each narrower PR behavior is a named exception whose comment names the run
+covering it (`test/scripts/ci-pr-scope.test.ts` fails on an unclassified one).
+Table, audit rule and cost: [docs/ci-event-parity.md](ci-event-parity.md).
 
 The `changes` job classifies a pull request's changed files with
 `scripts/ci-native-scope.sh`: native lock sources, the native toolchain, IPC,
@@ -444,8 +444,8 @@ self-test" below).
 `bun run typecheck` ([heap ceiling](operations/verify-and-nightly-e2e.md#typecheck-heap)) uses TypeScript's native incremental analysis in
 `node_modules/.cache/gbrain-typecheck.tsbuildinfo`. Every invocation still runs
 the compiler; source, root-file, configuration and dependency changes invalidate
-the affected analysis, and cached diagnostics remain failures. CI restores it
-(#6056) and `ci:ubicloud` uploads it (scripts/ubicloud/README.md).
+the affected analysis, and cached diagnostics remain failures. CI's `typecheck`
+job restores and always saves it (#6056), as `ci:ubicloud` does.
 
 The local Docker runner isolates root and admin `node_modules`, plus the generated
 admin bundle, in named volumes. Admin build dependencies, Vite's generated cache
@@ -660,7 +660,7 @@ evidence for a change before it merges. `test.yml`'s security matrix,
 
 ### Keeping CI partitions balanced
 
-Required CI runs eight weighted unit workers, four serial workers with bounded
+Required CI runs 18 weighted unit workers, four serial workers with bounded
 per-file pools, and up to eight selected E2E workers. E2E selection and exclusions
 run once before setup; the resulting file lists are frozen and executed against
 separate Postgres services. An explicit empty selection launches no tests;
@@ -675,6 +675,9 @@ guarded `setupLegacyEmbeddingDB()` helper, in a temporary home with provider
 keys stripped and local environment-file loading disabled. No partition relies
 on a preceding file to create shared tables. Bootstrap is a separate timed CI
 step and must be included in end-to-end comparisons.
+
+Twice a unit shard's mined weight, plus setup, must end a minute inside its
+job (`UNIT_SHARD_BUDGET_MS`); on failure re-mine, then raise `UNIT_SHARDS`.
 
 Refresh after a large test wave or when the longest shard repeatedly exceeds
 the mean shard execution time by 25%. `bun run check:weight-coverage` (in
@@ -699,9 +702,7 @@ serial or explicit full-profile E2E run replaces that lane's entire map. Capture
 successful completion marker, and GitHub imports verify every expected job.
 Incomplete or failed inputs leave the existing map intact. Sidecar metadata
 records the source run/commit, units, and counts. Unit/E2E weights are milliseconds;
-serial weights remain seconds. New files receive the corpus p75 estimate. Empty
-maps and zero-cost ties distribute files deterministically; corrupt serial
-weights warn and retain safe fallback scheduling.
+serial weights remain seconds. New files receive the corpus p75 estimate.
 
 The default E2E miner reads selected jobs and merges partial observations.
 `--e2e-profile full` instead requires a successful GitHub run with a source SHA
@@ -719,8 +720,7 @@ CI retains timestamped unit/E2E logs, frozen E2E selection, and serial attempt
 records for 14 days. Compare push-to-required-green time including queueing,
 first failure, rescues/reruns, runner minutes, unique file counts, and coverage
 completeness. Compare cold and warm caches separately. Snapshot timings and
-partition estimates are projections until matched workflow runs confirm them;
-successful test results are never cached.
+partition estimates are projections until matched workflow runs confirm them.
 
 ### E2E selection
 
@@ -1269,7 +1269,7 @@ there even though they pass on Linux and macOS.
 
 ### CI vs local: intentionally divergent file sets
 
-- **CI matrix** (`.github/workflows/test.yml`) runs `scripts/test-shard.sh` across 10 shards split by weight-aware LPT bin-packing (`scripts/sharding.ts`; unweighted files get the p75 weight) and includes `*.slow.test.ts` files without a dedicated job, plus keyless-allowlisted `evals/**/*.test.ts` (`test/scripts/evals-collection.test.ts`). Shards keep planned file order (`test-shard.sh --dry-run-list <i> 10`) and print their predicted weight (`sharding.ts --sum`). Every Bun job activates the PGLite schema snapshot (built in-runner, cached across jobs; the runner's hash check is authoritative). Serial files run across four `serial-tests` workers via `bun run test:serial`; `verify` and the BrainBench memory-conformance gate (`scripts/ci-brainbench-gate.sh`, compared against `evals/brainbench/baselines/main.json`) have their own jobs, all aggregated by `test-status`. `e2e.yml` aggregates through `e2e-status`, with jsonb-parity gating Tier 2's token spend; scheduled runs also require the full-corpus lanes. Both aggregates reject failures, cancellations and unexpected skips, and successful test results are never reused. CI is the ground truth for "did everything pass."
+- **CI matrix** (`.github/workflows/test.yml`) runs `scripts/test-shard.sh` across 18 shards split by weight-aware LPT bin-packing (`scripts/sharding.ts`; unweighted files get the p75 weight) and includes `*.slow.test.ts` files without a dedicated job, plus keyless-allowlisted `evals/**/*.test.ts` (`test/scripts/evals-collection.test.ts`). Shards keep planned file order (`test-shard.sh --dry-run-list <i> 18`) and print their predicted weight (`sharding.ts --sum`). Every Bun job activates the PGLite schema snapshot (built in-runner, cached across jobs; the runner's hash check is authoritative). Serial files run across four `serial-tests` workers via `bun run test:serial`; `verify`, `typecheck` and the BrainBench memory-conformance gate (`scripts/ci-brainbench-gate.sh`, compared against `evals/brainbench/baselines/main.json`) have their own jobs, all aggregated by `test-status`. `e2e.yml` aggregates through `e2e-status`, with jsonb-parity gating Tier 2's token spend; scheduled runs also require the full-corpus lanes. Both aggregates reject failures, cancellations and unexpected skips. Only a master push reuses results: those of a passed full-suite run of its exact tree (`scripts/ci-reuse.ts`). CI is the ground truth for "did everything pass."
 - **Local fast loop** (`scripts/run-unit-shard.sh` via the parallel wrapper) uses the same weighted partitioner as CI and EXCLUDES `*.slow.test.ts` AND `*.serial.test.ts`. Each shard runs its complete ordered selection with a fresh Bun process per file, without adding workers. Later groups still run after failures; missing summaries or file-completion evidence fail the shard. Local trades coverage for inner-loop speed; CI catches what local skips.
 
 `test/scripts/run-unit-shard.test.ts` pins what the local loop includes, and
@@ -1301,8 +1301,8 @@ normalizes `COVERAGE_DIR` to an absolute path before moving `HOME`, and
 coverage lane). Both names avoid the `GBRAIN_` prefix so the env scrub keeps
 them.
 
-**Two corpora.** `prCorpus` is the 16 coverage-collecting lanes in
-`test.yml` (10 unit shards, 4 serial partitions, `slow-entity-resolve-perf` and
+**Two corpora.** `prCorpus` is the 24 coverage-collecting lanes in
+`test.yml` (18 unit shards, 4 serial partitions, `slow-entity-resolve-perf` and
 `slow-brainbench-e2e`), identical on every PR; the gates run against it.
 `fullCorpus` is the nightly (or manual `full_corpus=true`) set in `e2e.yml`:
 `coverage-full-{unit,serial,slow,e2e}` plus `coverage-full-report`, every lane
@@ -1351,9 +1351,9 @@ writes it, and `--promote` flips `provisional: false` at graduation.
 `coverage-report` job merges them, renders `scripts/render-coverage-summary.ts`
 (with behavioral-vs-structural counts from `scripts/structural-suites.tsv`) to
 the step summary, and runs both gates with `COVERAGE_GATE_ENFORCE: '0'`. It is
-not in `test-status` needs until the gate graduates. Test results are never
-cached. `e2e-status` requires the four `coverage-full-*` execution lanes on
-scheduled runs; only the percentages stay advisory.
+not in `test-status` needs until the gate graduates. `e2e-status` requires the
+four `coverage-full-*` execution lanes on scheduled runs; only the percentages
+stay advisory.
 
 **Bun caveats.** Bun emits line records only, so function coverage is
 informational. There is no subprocess coverage: code reached only through
@@ -1362,10 +1362,10 @@ spawned CLI processes undercounts, and `src/cli.ts` carries a permanent
 record; the summary lists those as a count and a sorted list, never a
 percentage.
 
-**Local smoke** (one shard of ten; this checks the plumbing, not the number):
+**Local smoke** (one shard of 18; this checks the plumbing, not the number):
 
 ```bash
-COVERAGE_DIR=$PWD/.coverage bash scripts/test-shard.sh 1 10 \
+COVERAGE_DIR=$PWD/.coverage bash scripts/test-shard.sh 1 18 \
   && bun scripts/merge-lcov.ts --out-lcov .coverage/merged.lcov --out-json .coverage/summary.json .coverage \
   && bun scripts/render-coverage-summary.ts --summary .coverage/summary.json --structural scripts/structural-suites.tsv
 ```

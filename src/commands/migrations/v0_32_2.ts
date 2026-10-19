@@ -47,9 +47,10 @@ import { loadConfig, toEngineConfig } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
 import { parseFactsFence } from '../../core/facts-fence.ts';
 import { duplicateActiveFenceRows } from '../../core/facts/extract-from-fence.ts';
-import { resolvePageWriteTarget } from '../../core/write-through.ts';
+import { isWriteThroughDisabled, resolvePageWriteTarget } from '../../core/write-through.ts';
 import { serializePageToMarkdown } from '../../core/markdown.ts';
 import { managedPersistenceEnabled } from '../../core/persistence/ownership.ts';
+import { isSourceDbOnlySlug } from '../../core/persistence/source-storage.ts';
 import { OperationError } from '../../core/ops/contract.ts';
 import { fenceableRowCount, fenceUnfencedFacts, planUnfencedFacts, type UnfencedFactsOutcome } from '../../core/facts/unfenced-facts.ts';
 
@@ -262,24 +263,34 @@ async function phaseCVerify(
     // the canonical file in the same publication; the database copy is the
     // one every managed page has, database-only pages included.
     const managed = await managedPersistenceEnabled(engine);
+    const writeThroughOff = !managed && await isWriteThroughDisabled(engine);
 
     for (const g of groups) {
       let body: string;
-      if (managed) {
+      const target = managed ? null : await resolvePageWriteTarget(engine, g.source_markdown_slug, g.source_id);
+      const fileExists = target?.ok === true && existsSync(target.filePath);
+      const root = localPathById.get(g.source_id) ?? (target?.ok ? target.writeRoot : null);
+      let databaseOnly = managed || writeThroughOff || !!root && isSourceDbOnlySlug(root, g.source_markdown_slug, 'refuse');
+      if (!databaseOnly && !fileExists) {
+        const page = await engine.getPage(g.source_markdown_slug, { sourceId: g.source_id });
+        databaseOnly = !!page && !page.source_path?.trim() && !page.source_uri?.trim();
+      }
+      if (databaseOnly) {
         const snapshot = await engine.readPageSnapshot(g.source_markdown_slug, { sourceId: g.source_id });
         if (!snapshot) {
           if (g.all_expired) skippedExpiredNoPage += 1;
           else mismatches.push(`${g.source_markdown_slug} (page missing)`);
           continue;
         }
+        if (snapshot.page.body_storage === 'segmented') {
+          mismatches.push(`${g.source_markdown_slug} (page_body_segmented: verify cannot read its whole body; read it with gbrain get --source ${g.source_id} --body auto -- ${g.source_markdown_slug})`);
+          continue;
+        }
         body = serializePageToMarkdown(snapshot.page, snapshot.tags);
       } else {
-        const localPath = localPathById.get(g.source_id);
-        if (!localPath) continue;
-        const target = await resolvePageWriteTarget(engine, g.source_markdown_slug, g.source_id);
-        if (!target.ok || !existsSync(target.filePath)) {
+        if (!target?.ok || !fileExists) {
           // Skip only an absent file; an unresolvable target is still drift.
-          if (target.ok && g.all_expired) skippedExpiredNoPage += 1;
+          if (target?.ok && g.all_expired) skippedExpiredNoPage += 1;
           else mismatches.push(`${g.source_markdown_slug} (file missing)`);
           continue;
         }

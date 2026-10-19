@@ -343,7 +343,7 @@ export async function doctorReportRemote(
 
   // Surface the migration state marker (previously write-only): a live
   // marker = mid-migration brain, with the exact resume + status commands.
-  checks.push(await checkEmbeddingMigrationState(engine));
+  checks.push(await checkEmbeddingMigrationState(engine, { sourceIds: opts.sourceIds }));
 
   // v0.31.12 subagent runtime enforcement (Layer 3 of 3 — Codex F13).
   // The subagent loop requires native tool-calling. If models.subagent,
@@ -359,13 +359,15 @@ export async function doctorReportRemote(
   // other sources' activity counts/timestamps.
   checks.push(await checkVolunteerChannels(engine, { sourceIds: opts.sourceIds }));
 
-  // 6. Sync freshness check
-  checks.push(await checkSyncFreshness(engine));
+  // 6. Sync freshness check. Every check below that takes { sourceIds } is
+  // confined to the caller's grant (#4592 class): a source-bound token never
+  // reads another source's id, name, counts or timestamps.
+  checks.push(await checkSyncFreshness(engine, { sourceIds: opts.sourceIds }));
   const contentWrites = await (await import('./checks/canonical-content.ts')).checkCanonicalContentWrites(engine, opts.sourceIds);
   if (contentWrites) checks.push(contentWrites);
 
   // v0.41.19.0 (Issue 5): sync --all consolidation nudge for multi-source brains.
-  checks.push(await checkSyncConsolidation(engine));
+  checks.push(await checkSyncConsolidation(engine, { sourceIds: opts.sourceIds }));
 
   // v0.42.x (#1794, 4A): pool-budget nudge when GBRAIN_MAX_CONNECTIONS is set.
   checks.push(await checkPoolBudget(engine));
@@ -373,8 +375,8 @@ export async function doctorReportRemote(
   // v0.42.7 (#1696): link-extraction lag. Strictly SQL (single indexed COUNT),
   // safe on the thin-client/remote path — remote operators on checkout-less
   // Postgres brains are exactly who can't otherwise see the extraction backlog.
-  // Brain-wide here (remote --source scoping is a separate TODO, like orphan_ratio).
-  checks.push(await checkLinksExtractionLag(engine, { remote: true }));
+  // A scoped caller gets each granted source graded on its own (the worst wins).
+  checks.push(await remoteLinksExtractionLag(engine, opts.sourceIds));
 
   // #4576 (related gap): extract_atoms_backlog was absent from the
   // thin-client surface, so an MCP-only caller couldn't see the backlog at
@@ -389,7 +391,7 @@ export async function doctorReportRemote(
   //   schema_pack_source_drift  — per-source pack divergence
   checks.push(await checkSchemaPackActive(engine));
   checks.push(await checkSchemaPackConsistency(engine, { sourceIds: opts.sourceIds }));
-  checks.push(await checkSchemaPackSourceDrift(engine));
+  checks.push(await checkSchemaPackSourceDrift(engine, { sourceIds: opts.sourceIds }));
 
   // 7. v0.32.3 search-lite mode + per-key drift surface.
   checks.push(await checkSearchMode(engine));
@@ -410,24 +412,24 @@ export async function doctorReportRemote(
   // (via mode bundle default or explicit config override), surface
   // whether link density is high enough for the signal to fire
   // meaningfully. <10% inbound coverage warns; >=30% ok with metric.
-  checks.push(await checkGraphSignalsCoverage(engine));
+  checks.push(await checkGraphSignalsCoverage(engine, { sourceIds: opts.sourceIds }));
 
   // 9b. v0.37.0 brainstorm_health: surfaces three brainstorm/lsd readiness
   // signals: (a) migration v79 applied (last_retrieved_at column exists),
   // (b) calibration cold-start status (active_bias_tags empty), (c)
   // search.track_retrieval enabled/disabled. Each surfaces a paste-ready
   // fix hint.
-  checks.push(await checkBrainstormHealth(engine));
+  checks.push(await checkBrainstormHealth(engine, { sourceIds: opts.sourceIds }));
 
   // 10. v0.36.1.0 Hindsight calibration wave (T12) — four new checks:
   //   - abandoned_threads: high-conviction takes never revisited
   //   - calibration_freshness: profile is older than 7 days
   //   - grade_confidence_drift: judge self-reported confidence vs actual accuracy (CDX-11 mitigation)
   //   - voice_gate_health: voice gate failure rate over the last 7 days
-  checks.push(await checkAbandonedThreads(engine));
-  checks.push(await checkCalibrationFreshness(engine));
-  checks.push(await checkGradeConfidenceDrift(engine));
-  checks.push(await checkVoiceGateHealth(engine));
+  checks.push(await checkAbandonedThreads(engine, { sourceIds: opts.sourceIds }));
+  checks.push(await checkCalibrationFreshness(engine, { sourceIds: opts.sourceIds }));
+  checks.push(await checkGradeConfidenceDrift(engine, { sourceIds: opts.sourceIds }));
+  checks.push(await checkVoiceGateHealth(engine, { sourceIds: opts.sourceIds }));
 
   // 11. v0.40.3.0 contextual_retrieval_coverage — surfaces pages with
   //   - chunker_version drift (pre-v40 pages not yet re-embedded)
@@ -442,18 +444,18 @@ export async function doctorReportRemote(
   // issue #1777 — hidden_by_search_policy: chunked pages withheld from default
   // search by the hard-exclude prefix policy. Pure SQL COUNT, safe on the
   // remote/thin-client path.
-  checks.push(await checkHiddenBySearchPolicy(engine));
+  checks.push(await checkHiddenBySearchPolicy(engine, { sourceIds: opts.sourceIds }));
 
   // 11a. issue #972 link_resolution_opportunity — same check the local
   // doctor runs at the equivalent slot in buildChecks. Mirrored for
   // thin-client parity so `gbrain remote doctor` sees the same hint.
-  checks.push(await checkLinkResolutionOpportunity(engine));
+  checks.push(await checkLinkResolutionOpportunity(engine, undefined, { sourceIds: opts.sourceIds }));
 
   // 12. v0.40.5.0 Federated Sync v2 (T12) — federation_health:
-  //   - Per-source lag, embed coverage, failed-job rate.
-  //   - Single-source brain short-circuits to ok.
+  //   - Per-source lag, embed coverage, failed-job rate, for the granted sources only.
+  //   - Single-source brain short-circuits to ok (unscoped callers).
   //   - Three-state: ok / warn / fail.
-  checks.push(await checkFederationHealth(engine));
+  checks.push(await checkFederationHealth(engine, { sourceIds: opts.sourceIds }));
 
   // 13. v0.42 self_upgrade_health: mode, whether behind, recent failures.
   // File-plane only (no engine) — works on thin clients too. Then #5836 unlinked_facts inside the caller's grant.
@@ -466,4 +468,18 @@ export async function doctorReportRemote(
   checks.push(...await remoteWaveHandoff(engine, opts.sourceIds));
 
   return computeDoctorReport(checks, { render: opts.render });
+}
+
+/**
+ * links_extraction_lag for the remote doctor: brain-wide when unscoped;
+ * otherwise each granted source is graded on its own (the `--source` path)
+ * and the worst is reported, so no count, held slug or source id outside the
+ * grant reaches the result.
+ */
+async function remoteLinksExtractionLag(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
+  if (!sourceIds) return checkLinksExtractionLag(engine, { remote: true });
+  const checks: Check[] = [];
+  for (const sourceId of sourceIds) checks.push(await checkLinksExtractionLag(engine, { sourceId, remote: true }));
+  return checks.find(c => c.status === 'fail') ?? checks.find(c => c.status === 'warn') ?? checks[0]
+    ?? { name: 'links_extraction_lag', status: 'ok', message: 'Extraction lag not applicable (no pages)' };
 }

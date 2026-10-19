@@ -12,6 +12,7 @@ import { withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { linkStreamSlugs } from './page-purge.ts';
 import { identityDowngradePurgeHold } from '../sync-identity-downgrades.ts';
+import { atomRetirementPurgeHold } from './atom-retirement-hold.ts';
 import { writerOnboardingPreflight } from './onboarding.ts';
 import { clearPurgePark, notePurgeSourceWriter, PURGE_PARK_LIMIT, purgeParkKey, prunePurgeParks, readPurgeParks, recordPurgeFailure, type PurgePark } from './purge-parks.ts';
 import { ItemRun, type ItemFailure } from '../item-failure.ts';
@@ -78,7 +79,7 @@ interface RecordedTombstone { id: number; source_id: string; slug: string; delet
 async function recordedTombstones(engine: BrainEngine, hours: string): Promise<RecordedTombstone[]> {
   const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; deleted_us: string }>(`SELECT p.id, p.source_id, p.slug,
       floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text AS deleted_us FROM pages p
-    WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${identityDowngradePurgeHold('p')}
+    WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')}
       AND EXISTS (SELECT 1 FROM belief_events e WHERE e.source_id = p.source_id AND e.subject_kind = 'coverage')
     ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [hours]);
   const parks = rows.length ? await readPurgeParks(engine) : new Map<string, PurgePark>();
@@ -123,7 +124,7 @@ async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: num
         const slugs = [...new Set([row.slug, ...await linkStreamSlugs(tx, row.source_id, row.id)])].sort();
         await tx.lockPageKeys(slugs.map(slug => ({ sourceId: row.source_id, slug })));
         return withBeliefBatch(tx, { sourceId: row.source_id, slugs, publicationId, op: 'purge_deleted_pages', hardDeleteEvent: 'page.expired', report },
-          async () => (await tx.executeRaw(`DELETE FROM pages WHERE id = $1 AND deleted_at IS NOT NULL AND deleted_at < now() - ($2 || ' hours')::interval AND ${identityDowngradePurgeHold('pages')} RETURNING id`,
+          async () => (await tx.executeRaw(`DELETE FROM pages WHERE id = $1 AND deleted_at IS NOT NULL AND deleted_at < now() - ($2 || ' hours')::interval AND ${identityDowngradePurgeHold('pages')} AND ${atomRetirementPurgeHold('pages')} RETURNING id`,
             [row.id, hours])).length > 0);
       });
       run.succeed();
@@ -156,7 +157,8 @@ export interface PurgeCandidate { source_id: string; slug: string; cutoff: strin
  * #6741 C: what a purge with these options would do, read-only. The one eligibility selector behind the
  * `pages purge-deleted` dry-run preview, its consent request, the `purge_deleted_pages` op and the real purge (the
  * CLI, the cycle phase and the Minion job), so the preview, the consent and the run cannot disagree. The
- * `--older-than` cutoff and the #6729 rename-recovery hold (identityDowngradePurgeHold) apply to every page, parked
+ * `--older-than` cutoff, the #6729 rename-recovery hold (identityDowngradePurgeHold) and the #7013 restorable-atom hold
+ * (atomRetirementPurgeHold) apply to every page, parked
  * or not, so `retryParked` retries only parked pages the cutoff selects and never a held page.
  */
 export interface PurgeSelection {
@@ -189,7 +191,7 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
   const rows = await engine.executeRaw<{ source_id: string; slug: string; cutoff: string; deleted_us: string }>(
     `SELECT p.source_id, p.slug, (now() - ($1 || ' hours')::interval)::text AS cutoff,
       floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text AS deleted_us FROM pages p JOIN sources s ON s.id = p.source_id
-      WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND NOT s.archived AND ${identityDowngradePurgeHold('p')}
+      WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND NOT s.archived AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')}
       ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [String(hours)]);
   const states = new Map<string, { state: string; physical_error?: string }>();
   if (rows.length) for (const source of (await writerOnboardingPreflight(engine)).sources) states.set(source.source_id, source);

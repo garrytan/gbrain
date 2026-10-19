@@ -40,7 +40,7 @@ export const PREVIEW_APPROVAL_OP = 'repair-approval';
 /** The default `purgeStaleCheckpoints` TTL; an older approved set may already be gone. */
 export const APPROVAL_MAX_AGE_DAYS = 7;
 
-export type PreviewApprovalCommand = 'authorize-legacy' | 'jobs-cancel' | 'stale-atoms' | 'extractor-facts' | 'conversation-labels' | 'captured-facts' | 'loop-facts' | 'ontology-facts' | 'facts-rehome' | 'failed-writes' | 'split-facts' | 'frontmatter' | 'fences' | 'slug-conflicts' | 'managed-sync-orphans' | 'frontmatter-keys' | 'file-drift' | 'stuck-recovery' | 'ghost-pages' | 'origin-twins' | 'receipt-compaction' | 'accepted-takes' | 'rename-identity' | 'overwritten-edits' | 'missing-tables';
+export type PreviewApprovalCommand = 'authorize-legacy' | 'jobs-cancel' | 'stale-atoms' | 'atoms-restore' | 'extractor-facts' | 'conversation-labels' | 'captured-facts' | 'loop-facts' | 'ontology-facts' | 'facts-rehome' | 'failed-writes' | 'split-facts' | 'frontmatter' | 'fences' | 'slug-conflicts' | 'managed-sync-orphans' | 'frontmatter-keys' | 'file-drift' | 'stuck-recovery' | 'ghost-pages' | 'origin-twins' | 'receipt-compaction' | 'accepted-takes' | 'rename-identity' | 'overwritten-edits' | 'missing-tables';
 
 export interface ApprovedSetKey {
   command: PreviewApprovalCommand;

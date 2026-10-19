@@ -192,7 +192,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
       mayPipeline = mayPipeline || q.options.onexecute(connection)
       noteBudget(q)
       lastWritten = q
-      lastExecuted = q
+      lastExecuted = { string: q.string, strings: q.strings }
       return write(toBuffer(q))
         && !q.describeFirst
         && !q.cursorFn
@@ -471,6 +471,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
       remaining = 0
       incomings = null
     }
+
+    if (incoming.length === 0)
+      incoming = Buffer.alloc(0)
   }
 
   async function connect() {
@@ -593,6 +596,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
     incoming = Buffer.alloc(0)
     remaining = 0
     incomings = null
+    lastWritten = null
     clearImmediate(nextWriteTimer)
     // GBrain (#6355): bytes still waiting for the cleared immediate belonged to this socket. Left in place, the next
     // connection's StartupMessage is appended to them and never scheduled for writing (the timer handle is not

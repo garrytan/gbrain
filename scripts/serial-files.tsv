@@ -302,6 +302,7 @@ test/ops-run-onboard-scope-gate.serial.test.ts	R2	R2: mock.module(../src/core/on
 test/oversized-backfill.serial.test.ts	global-state	global-state: installs the process-global embedding transport seam (__setEmbedTransportForTests) and gateway config (configureGateway); swaps GBRAIN_HOME through withEnv
 test/page-summary-length.serial.test.ts	R1	R1: mutates process.env (GBRAIN_AUDIT_DIR)
 test/pathological/a31-migrate-loop-rows.serial.test.ts	global-state	global-state: runMigrateEngine sets the process-wide CLI exit verdict and writes the config under a withEnv-scoped GBRAIN_HOME
+test/pathological/w1-write-through-staging-window.serial.test.ts	R2	R2: mock.module(../../src/core/atomic-write.ts) replaces modules for every file in the process
 test/pending-write-exit.serial.test.ts	global-state	global-state: binds local servers/ports
 test/persistence-drain-latency.serial.test.ts	global-state	global-state: configureGateway changes the process-wide AI gateway; patches process stdout/stderr/console; times event-loop gaps against a bound, so a parallel neighbour would distort the measurement
 test/persistence-image-import.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process

@@ -449,6 +449,23 @@ process.stdout.write('{"event":"continued"}\\n');
     });
   }, 90_000);
 
+  test('seed 5105: finish drains its probe\'s effects, so the probe\'s effect:git:mid a count role may see is reached in every run', async () => {
+    await robotBrain(async ({ world }) => {
+      const reached: string[] = [];
+      world.claimPasses = 0;
+      // Every effect seam is slow, so the probe's git effect reaches its seam only when finish waits for it.
+      installFaultHook(async (point, detail) => {
+        if (point === 'consumer:claiming') { world.claimPasses!++; return; }
+        if (!point.startsWith('effect:')) return;
+        await Bun.sleep(1500);
+        reached.push(`${point}:${detail.requestId}`);
+      });
+      try { await finish(world, new ReferenceModel(world), 'probe only'); }
+      finally { installFaultHook(undefined); }
+      expect(reached.filter(seam => seam.startsWith('effect:git:mid:'))).toHaveLength(1);
+    });
+  }, 90_000);
+
   test('a hook that cannot report its fault emits fault_hook_error and still freezes', async () => {
     const { lines, alive } = await hookChild(`const cyclic: Record<string, unknown> = {}; cyclic.self = cyclic;
 await faultPoint('effect:git:mid', { requestId: 'r1', signal: cyclic as never });`);

@@ -252,7 +252,7 @@ describe('finishCliTeardown — backstop on hung teardown', () => {
       await teardown;
     } finally {
       _resetCliExitVerdictForTests();
-      process.exitCode = prevCode;
+      process.exitCode = prevCode ?? 0;
     }
   });
 
@@ -278,7 +278,7 @@ describe('finishCliTeardown — backstop on hung teardown', () => {
       await teardown;
     } finally {
       _resetCliExitVerdictForTests();
-      process.exitCode = prevCode;
+      process.exitCode = prevCode ?? 0;
     }
   });
 
@@ -305,7 +305,7 @@ describe('finishCliTeardown — backstop on hung teardown', () => {
       resolveHang();
       await teardown;
     } finally {
-      process.exitCode = prevCode;
+      process.exitCode = prevCode ?? 0;
     }
   });
 });
@@ -334,7 +334,7 @@ describe('verdict channel — immune to PGLite WASM process.exitCode writes', ()
       expect(currentExitCode()).toBe(1);
     } finally {
       _resetCliExitVerdictForTests();
-      process.exitCode = prevCode;
+      process.exitCode = prevCode ?? 0;
     }
   });
 
@@ -428,7 +428,7 @@ describe('flushThenExit', () => {
       expect(exits).toEqual([3]);
       expect(process.exitCode).toBe(3); // belt-and-braces for natural exit
     } finally {
-      process.exitCode = prevCode;
+      process.exitCode = prevCode ?? 0;
     }
   });
 
@@ -461,7 +461,7 @@ describe('flushThenExit', () => {
       expect(exits).toEqual([0]);
       expect(fencedAt).toBeGreaterThanOrEqual(0);
     } finally {
-      process.exitCode = prevCode;
+      process.exitCode = prevCode ?? 0;
     }
   });
 
@@ -489,7 +489,7 @@ describe('flushThenExit', () => {
       expect(exits).toEqual([0]);
       expect(Date.now() - t0).toBeGreaterThanOrEqual(100);
     } finally {
-      process.exitCode = prevCode;
+      process.exitCode = prevCode ?? 0;
     }
   });
 
@@ -515,7 +515,7 @@ describe('flushThenExit', () => {
       await sleep(50);
       expect(exits).toEqual([0]);
     } finally {
-      process.exitCode = prevCode;
+      process.exitCode = prevCode ?? 0;
     }
   });
 
@@ -535,7 +535,7 @@ describe('flushThenExit', () => {
         expect(exits).toEqual([0]); // grace 0: exit right after the fence
       });
     } finally {
-      process.exitCode = prevCode;
+      process.exitCode = prevCode ?? 0;
     }
   });
 
@@ -571,7 +571,7 @@ describe('flushThenExit', () => {
       await sleep(400);
       expect(exits).toEqual([0]); // exactly one exit despite guard + late cb
     } finally {
-      process.exitCode = prevCode;
+      process.exitCode = prevCode ?? 0;
     }
   });
 });

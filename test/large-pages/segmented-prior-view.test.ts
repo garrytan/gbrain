@@ -11,10 +11,13 @@
  *    keeps every entry of the prior body (key, summary, detail and slug copies: 12.8x the body for a 6 MiB page).
  * Seams: segmentedPassWork.bytes (segment-blocks.ts) counts bytes read; the heap is sampled after a full collection
  * when classification first reads the new body, with the prior view built and alive, against a baseline taken after a
- * warm-up call on another snapshot (so driver buffers a segment read leaves allocated count in both). The warm-up's
- * new body is small: an in-flight concurrent JIT compilation keeps the values its profiles saw alive as a GC root
- * outside the heap graph, so a sliced line of the warm-up's text could pin that whole text at the sample and not at
- * the baseline (with the 6 MiB new body, its sanitized copy: 8.4 MiB held in about one run in ten).
+ * warm-up call on another snapshot and one small statement on every pooled connection. The pool hands statements out in
+ * turn, so the warm-up and the measured call end on different connections: a connection that kept its last segment
+ * read (its receive buffer, or the statement and its rows) held up to 3 MiB of the prior body that the baseline did not,
+ * so the driver keeps neither (vendor/postgres connection.js). The warm-up's new body is small: an in-flight concurrent
+ * JIT compilation keeps the values its profiles saw alive as a GC root outside the heap graph, so a sliced line of the
+ * warm-up's text could pin that whole text at the sample and not at the baseline (with the 6 MiB new body, its
+ * sanitized copy: 8.4 MiB held in about one run in ten).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -97,6 +100,7 @@ for (const kind of testBackends()) {
         peak = Math.max(peak, process.memoryUsage().heapUsed);
         return parsed.timeline;
       } };
+      await Promise.all(Array.from({ length: 8 }, () => engine.executeRaw('SELECT 1')));
       Bun.gc(true);
       const base = process.memoryUsage().heapUsed;
       expect((await timelineRowsToRemove(engine, body, snapshot, SLUG, 'editing'))?.count).toBe(DROPPED);

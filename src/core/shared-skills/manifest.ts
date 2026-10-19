@@ -1,6 +1,7 @@
 import { opError } from '../ops/contract.ts';
 import { sha256 } from '../persistence/digest.ts';
-import { FAILSAFE_SCHEMA, load } from 'js-yaml';
+import { FAILSAFE_SCHEMA } from 'js-yaml';
+import { loadBoundedYaml as load } from '../data-frontmatter.ts';
 import { SHARED_SKILL_LIMITS, type SharedSkillFileInput, type SkillFileClass, type SkillMetadata, type StoredSkillFile } from './model.ts';
 
 export function skillName(value: unknown, field = 'name'): string {

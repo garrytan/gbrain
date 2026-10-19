@@ -20,13 +20,12 @@ import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'nod
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { formatFenceDate, parseFactsFence, type ParsedFact } from '../facts-fence.ts';
-import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
-import { assertInlineBody } from '../page-body/page-shape.ts';
-import { sanitizeText } from '../batch-rows.ts';
+import { serializePageToMarkdown } from '../markdown.ts';
+import { assertInlineBody, bodyUnread } from '../page-body/page-shape.ts';
 import { contentHash } from '../utils.ts';
 import { withPageLock } from '../page-lock.ts';
 import { assertSourceFilesystemActive, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
-import { resolvePageWriteTarget } from '../write-through.ts';
+import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { getProposal, transitionProposal, type ProposalRow } from '../ai/decide/proposals-store.ts';
@@ -37,6 +36,7 @@ import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { noteBelief } from '../belief/ledger.ts';
 import { beliefStreamSlugs, lockedBeliefBatch } from '../belief/writers.ts';
+import { fileBodyMatchesStored, fileDatabaseDriftToken, mirrorFileBody, readStoredBody, type StoredBody } from './file-body-guard.ts';
 
 export const DECIDE_PROPOSAL_OPERATION = 'decide_proposal';
 
@@ -210,7 +210,13 @@ async function recordedPair(tx: BrainEngine, proposal: PairProposal, action: Pro
   await lockedBeliefBatch(tx, { sourceId: proposal.source_id, slugs, op: DECIDE_PROPOSAL_OPERATION, remote: false, cause: { proposal: proposal.id, action } }, fn);
 }
 
-function publishFile(filePath: string, body: string): void {
+class ProposalFileDrift extends ProposalConflictError {}
+
+const proposalDrift = (slug: string, sourceId: string, when: 'before' | 'during') =>
+  fileDatabaseDriftToken(slug, sourceId, when, 'the proposal and its facts are unchanged');
+
+function publishFile(filePath: string, body: string, expected: string, slug: string, sourceId: string): void {
+  if (!existsSync(filePath) || readFileSync(filePath, 'utf-8') !== expected) throw new ProposalFileDrift(proposalDrift(slug, sourceId, 'during'));
   const tmp = `${filePath}.tmp`;
   assertSourceFilesystemActive();
   writeFileSync(tmp, body, 'utf-8');
@@ -221,22 +227,39 @@ function publishFile(filePath: string, body: string): void {
   renameSync(tmp, filePath);
 }
 
+/** Restore a failed publication only while the checkout still carries this operation's published bytes. */
+function restorePublishedFile(filePath: string, before: string, published: string, slug: string, sourceId: string): void {
+  if (existsSync(filePath) && readFileSync(filePath, 'utf-8') === published) {
+    writeFileSync(filePath, before, 'utf-8');
+    return;
+  }
+  console.warn(`[facts.proposal] ${slug} (file_database_drift: the proposal transaction failed after publication and the file changed again, `
+    + `so its current bytes were preserved instead of restoring the old file. Check the database copy before retrying the proposal. `
+    + `Import the editor's file with gbrain sync --source ${sourceId}; if the database copy should win, re-save it with write-through on; `
+    + `when both changed, ask the user which edit wins)`);
+}
+
 /** Mirror the page body the fence change produced (the #4696 rule: keep the old hash so sync re-imports). */
-async function mirrorBody(tx: BrainEngine, slug: string, sourceId: string, body: string, fromFile: boolean): Promise<string | null> {
+async function mirrorBody(tx: BrainEngine, slug: string, sourceId: string, body: string, fromFile: boolean, expected: StoredBody | null): Promise<string | null> {
+  if (fromFile) {
+    if (!expected || !await mirrorFileBody(tx, sourceId, slug, body, expected)) throw new ProposalFileDrift(proposalDrift(slug, sourceId, 'during'));
+    return (await tx.readPageSnapshot(slug, { sourceId }))?.revision ?? null;
+  }
+  const current = await readStoredBody(tx, sourceId, slug, true);
+  if (!current || !expected || current.compiled_truth !== expected.compiled_truth || current.timeline !== expected.timeline) {
+    throw new ProposalFileDrift(`${slug} (revision_conflict: the database body changed while the proposal ran; nothing changed. Read the current page before deciding the proposal again)`);
+  }
   const page = await tx.getPage(slug, { sourceId });
   if (!page) return null;
   assertInlineBody(page, 'proposal fence mirror');
-  if (fromFile) {
-    const reparsed = parseMarkdown(body, `${slug}.md`);
-    await tx.refreshPageBody(slug, sourceId, sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline), page.content_hash || contentHash(page));
-  } else {
-    await tx.refreshPageBody(slug, sourceId, body, page.timeline ?? '', contentHash({ ...page, compiled_truth: body }));
-  }
+  await tx.createVersion(slug, { sourceId });
+  await tx.refreshPageBody(slug, sourceId, body, page.timeline ?? '', contentHash({ ...page, compiled_truth: body }));
   return (await tx.readPageSnapshot(slug, { sourceId }))?.revision ?? null;
 }
 
 async function withFenceLocks<T>(engine: BrainEngine, slug: string | null, sourceId: string, run: (filePath: string | null) => Promise<T>): Promise<T> {
   if (!slug) return run(null);
+  if (await isWriteThroughDisabled(engine)) return withPageLock(slug, () => run(null), { timeoutMs: 5_000 });
   const target = await resolvePageWriteTarget(engine, slug, sourceId);
   if (!target.ok) return withPageLock(slug, () => run(null), { timeoutMs: 5_000 });
   return withSourceFilesystemLock(engine, target.writeRoot, () => withPageLock(slug, () => run(target.filePath), { timeoutMs: 5_000 }));
@@ -256,7 +279,12 @@ async function acceptUnmanaged(engine: BrainEngine, proposal: PairProposal, stor
     const slug = oldF!.source_markdown_slug;
     const fileBody = filePath && existsSync(filePath) ? readFileSync(filePath, 'utf-8') : null;
     const snapshot = slug ? await engine.readPageSnapshot(slug, { sourceId: fresh.source_id }) : null;
-    const body = fileBody ?? snapshot?.page.compiled_truth ?? null;
+    if (snapshot && bodyUnread(snapshot.page)) return { id: fresh.id, action: 'accept', status: 'refused', reason: `${slug} (page_body_segmented: this proposal needs an inline page; nothing changed)` };
+    const stored = slug ? await readStoredBody(engine, fresh.source_id, slug) : null;
+    if (fileBody !== null && (!stored || !fileBodyMatchesStored(fileBody, slug!, stored))) {
+      return { id: fresh.id, action: 'accept', status: 'refused', reason: proposalDrift(slug!, fresh.source_id, 'before') };
+    }
+    const body = fileBody ?? stored?.compiled_truth ?? null;
     const plan = slug && body !== null ? planAcceptFence(body, oldF!, newF!, formatFenceDate(new Date())) : null;
     const fence = (row: ParsedFact, revision: string | null): FenceState => ({ slug: slug!, row_num: oldF!.row_num!, row, page_revision: revision, file: fileBody !== null });
     const before: SupersedeState = { old: factFields(oldF!), new: factFields(newF!), fence: plan ? fence(plan.before, snapshot?.revision ?? null) : null };
@@ -264,13 +292,14 @@ async function acceptUnmanaged(engine: BrainEngine, proposal: PairProposal, stor
     try {
       // The strike edits a managed fence without authoring the page: it keeps its trust tier (#5575 ENG-1).
       await maintenanceTransaction(engine, (tx) => withTrustKeep(tx, ['pages'], async () => recordedPair(tx, fresh, 'accept', async () => {
-        const revision = plan ? await mirrorBody(tx, slug!, fresh.source_id, plan.body, fileBody !== null) : null;
+        const revision = plan ? await mirrorBody(tx, slug!, fresh.source_id, plan.body, fileBody !== null, stored) : null;
         await expireOld(tx, fresh);
         await finishAccept(tx, fresh, before, plan ? fence(plan.after, revision) : null, store);
-        if (plan && fileBody !== null) { publishFile(filePath!, plan.body); published = true; }
+        if (plan && fileBody !== null) { publishFile(filePath!, plan.body, fileBody, slug!, fresh.source_id); published = true; }
       })));
     } catch (err) {
-      if (published) writeFileSync(filePath!, fileBody!, 'utf-8');
+      if (published) restorePublishedFile(filePath!, fileBody!, plan!.body, slug!, fresh.source_id);
+      if (err instanceof ProposalFileDrift) return { id: fresh.id, action: 'accept', status: 'refused', reason: err.message };
       throw err;
     }
     return { id: fresh.id, action: 'accept', status: 'accepted' };
@@ -290,23 +319,31 @@ async function undoUnmanaged(engine: BrainEngine, proposal: PairProposal, store:
     const { before, after } = states;
     let plan: { body: string } | null = null;
     let fileBody: string | null = null;
+    let stored: StoredBody | null = null;
     if (before.fence && after.fence) {
       fileBody = before.fence.file && filePath && existsSync(filePath) ? readFileSync(filePath, 'utf-8') : null;
-      if (before.fence.file && fileBody === null) return { id: fresh.id, action: 'undo', status: 'refused', reason: 'fence_file_missing' };
-      const body = fileBody ?? (await engine.getPage(before.fence.slug, { sourceId: fresh.source_id }))?.compiled_truth ?? null;
+      if (before.fence.file && fileBody === null && !await isWriteThroughDisabled(engine)) return { id: fresh.id, action: 'undo', status: 'refused', reason: 'fence_file_missing' };
+      const page = await engine.getPage(before.fence.slug, { sourceId: fresh.source_id });
+      if (page && bodyUnread(page)) return { id: fresh.id, action: 'undo', status: 'refused', reason: `${before.fence.slug} (page_body_segmented: this proposal needs an inline page; nothing changed)` };
+      stored = await readStoredBody(engine, fresh.source_id, before.fence.slug);
+      const body = fileBody ?? stored?.compiled_truth ?? null;
       const planned = body === null ? 'changed' : planUndoFence(body, before.fence, after.fence);
       if (planned === 'changed') return { id: fresh.id, action: 'undo', status: 'refused', reason: 'fence_changed' };
+      if (fileBody !== null && (!stored || !fileBodyMatchesStored(fileBody, before.fence.slug, stored))) {
+        return { id: fresh.id, action: 'undo', status: 'refused', reason: proposalDrift(before.fence.slug, fresh.source_id, 'before') };
+      }
       plan = planned;
     }
     let published = false;
     try {
       await maintenanceTransaction(engine, (tx) => withTrustKeep(tx, ['pages'], async () => recordedPair(tx, fresh, 'undo', async () => {
-        if (plan) await mirrorBody(tx, before.fence!.slug, fresh.source_id, plan.body, fileBody !== null);
+        if (plan) await mirrorBody(tx, before.fence!.slug, fresh.source_id, plan.body, fileBody !== null, stored);
         await applyUndoDb(tx, fresh, before, after, store);
-        if (plan && fileBody !== null) { publishFile(filePath!, plan.body); published = true; }
+        if (plan && fileBody !== null) { publishFile(filePath!, plan.body, fileBody, before.fence!.slug, fresh.source_id); published = true; }
       })));
     } catch (err) {
-      if (published) writeFileSync(filePath!, fileBody!, 'utf-8');
+      if (published) restorePublishedFile(filePath!, fileBody!, plan!.body, before.fence!.slug, fresh.source_id);
+      if (err instanceof ProposalFileDrift) return { id: fresh.id, action: 'undo', status: 'refused', reason: err.message };
       throw err;
     }
     return { id: fresh.id, action: 'undo', status: 'undone' };

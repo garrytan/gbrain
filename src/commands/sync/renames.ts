@@ -31,7 +31,8 @@ import {
 import type { SyncResult } from '../sync.ts';
 import { trackedSlugIndex, activeSlugsBySourcePath } from './rename-reconcile.ts';
 import type { TrackedSlugIndex } from './rename-reconcile.ts';
-import { clearLegacyHold, holdRefusedImport, holdRenameDestination, noteScreenedImport } from './holds.ts';
+import { clearLegacyHold, holdRefusedImport, holdRenameDestination, noteScreenedImport, recordLegacyHold, type LegacyHolds } from './holds.ts';
+import { classifyItemFailure } from '../../core/item-failure.ts';
 import { partial, noteTypeWarning, markCompleted } from './sync-run.ts';
 import type { SyncPlan, SyncRun, SyncProgress } from './sync-run.ts';
 import { recordFallbackRename } from '../../core/belief/identity.ts';
@@ -380,6 +381,30 @@ export async function carryRenameIdentity(engine: BrainEngine, sourceId: string,
   if (publication) await markBeliefCommits(engine, [publication]).catch(() => undefined);
 }
 
+/** The reconcile's own "cannot prove the old row stale" verdict: the one throw that keeps the `<rename:…>` sentinel by design. */
+class RenameStalenessUnprovable extends Error {}
+
+/**
+ * GBRA-133 S-67: holds `to` as `rename_reconcile_failed` when finding the stale rows threw something other than the
+ * unprovable verdict or a transient database error (a connection, a timeout, a lock), which a later run retries. The hold records
+ * the cause's class and code only, never its message (it can quote content). False when it does not apply.
+ */
+async function holdUnexpectedReconcileFailure(engine: BrainEngine, holds: LegacyHolds | null, input: { from: string; to: string; error: unknown }): Promise<boolean> {
+  if (!holds?.active || input.error instanceof RenameStalenessUnprovable) return false;
+  const classified = classifyItemFailure(input.error);
+  if (classified.scope === 'run' || classified.code === 'statement_timeout' || classified.code === 'lock_timeout') return false;
+  const name = input.error instanceof Error ? input.error.name : typeof input.error;
+  const code = (input.error as { code?: unknown } | null)?.code;
+  const cause = `${name}${typeof code === 'string' && /^[\w.-]{1,40}$/.test(code) ? ` ${code}` : ''}`;
+  try {
+    await recordLegacyHold(engine, holds, { path: input.to, upstreamVersion: null, refusal: { code: 'rename_reconcile_failed',
+      message: `${input.to} was renamed from ${input.from} and imported, but removing the old page failed unexpectedly (${cause}), so the old page was kept and may be a duplicate.` } });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * #3056: when the cheap rename did not apply, the rename fell back to add
  * semantics; remove the stale old row once the destination materialized.
@@ -388,7 +413,7 @@ export async function carryRenameIdentity(engine: BrainEngine, sourceId: string,
  */
 async function reconcileRenameFallback(
   run: SyncRun,
-  plan: Pick<SyncPlan, 'opts'>,
+  plan: Pick<SyncPlan, 'opts' | 'holds'>,
   ctx: Pick<RenameContext, 'slugLiveness' | 'renameOldSlugs' | 'renameSentinelAlreadyOpen'>,
   from: string,
   to: string,
@@ -445,6 +470,7 @@ async function reconcileRenameFallback(
       // review) — so `staleSlug` below (and the sentinel/remedy text it
       // feeds) can only ever name a genuinely-stale row.
       let staleSlug: string | undefined;
+      let deleting = false;
       try {
         const active = await activeSlugsBySourcePath(
           engine, [from], opts.sourceId ?? DEFAULT_SOURCE_ID,
@@ -504,6 +530,7 @@ async function reconcileRenameFallback(
           }
         }
         if (staleSlugs.length > 0) {
+          deleting = true;
           // Delete every genuinely-stale active row still carrying the
           // old path — with a non-unique source_path there can be more
           // than one, and the rename is checkpointed after this loop, so
@@ -561,7 +588,7 @@ async function reconcileRenameFallback(
           // actionable slug an earlier failure had recorded. `undefined`
           // renders as `?`, which is the truth: not known.
           staleSlug = undefined;
-          throw new Error(
+          throw new RenameStalenessUnprovable(
             `staleness unprovable for ${unprovable.length} row(s) ` +
             `(${unprovable.join(', ')}): the tracked-file slug index is ` +
             `incomplete, so no index miss proves a row stale, and this ` +
@@ -570,6 +597,10 @@ async function reconcileRenameFallback(
           );
         }
       } catch (e: unknown) {
+        // GBRA-133 S-67: a failed delete keeps the sentinel (#3056/#3479: it converges, or `gbrain delete` is its exit), as do
+        // the unprovable verdict and a transient database error; any other throw while finding the stale rows is
+        // deterministic, so this rename is held and the rest of the source syncs.
+        if (!deleting && await holdUnexpectedReconcileFailure(engine, plan.holds, { from, to, error: e })) return false;
         reconcileFailed = true;
         failedFiles.push({
           path: renameSentinelPath(to),

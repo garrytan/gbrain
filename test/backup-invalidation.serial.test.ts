@@ -153,7 +153,7 @@ beforeEach(() => {
 afterEach(() => {
   __setBackupStatusPathForTests(null);
   _resetCliExitVerdictForTests();
-  process.exitCode = savedExitCode;
+  process.exitCode = savedExitCode ?? 0;
   for (const [k, v] of Object.entries(saved)) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;

@@ -155,7 +155,7 @@ describe('runMigrateEngine — facts + config completeness (#4350)', () => {
       if (source) await source.disconnect();
       if (target) await target.disconnect();
       _resetCliExitVerdictForTests();
-      process.exitCode = prevExitCode;
+      process.exitCode = prevExitCode ?? 0;
       if (prevGbrainHome !== undefined) process.env.GBRAIN_HOME = prevGbrainHome; else delete process.env.GBRAIN_HOME;
       if (prevDatabaseUrl !== undefined) process.env.DATABASE_URL = prevDatabaseUrl;
       if (prevGbrainDatabaseUrl !== undefined) process.env.GBRAIN_DATABASE_URL = prevGbrainDatabaseUrl;
@@ -251,7 +251,7 @@ describe('runMigrateEngine — facts-only foreign target guard', () => {
       if (source) await source.disconnect();
       if (target) await target.disconnect();
       _resetCliExitVerdictForTests();
-      process.exitCode = prevExitCode;
+      process.exitCode = prevExitCode ?? 0;
       if (prevGbrainHome !== undefined) process.env.GBRAIN_HOME = prevGbrainHome; else delete process.env.GBRAIN_HOME;
       if (prevDatabaseUrl !== undefined) process.env.DATABASE_URL = prevDatabaseUrl;
       if (prevGbrainDatabaseUrl !== undefined) process.env.GBRAIN_DATABASE_URL = prevGbrainDatabaseUrl;

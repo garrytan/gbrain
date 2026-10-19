@@ -483,7 +483,11 @@ What hardening guarantees:
   dirty file is one the pull must change; then it changes nothing and its
   notice names the files. `gbrain sources set-pull-strategy <id> <rebase|merge>`
   is still accepted and recorded, but both strategies now integrate by merge,
-  because the shared tree is never rebased.
+  because the shared tree is never rebased. A force-pushed upstream is never
+  merged: `gbrain sync` reports `upstream_rewritten` and, after the user
+  agrees, `gbrain sources reset-upstream <id> --expect-local <sha> --expect-upstream <sha>`
+  moves the checkout to the new upstream and keeps the old history under a
+  backup ref ([upstream rewritten](troubleshooting.md#upstream-rewritten)).
 - **Push is never deferred.** `scripts/brain-commit-push.sh "<msg>" <path>`
   delegates to `gbrain git commit-push`: it takes the checkout's writer lock,
   commits only the named paths, merges a rejected push in memory, and refuses

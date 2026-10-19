@@ -100,13 +100,22 @@ export async function checkSourceRoutingHealth(engine: BrainEngine): Promise<Che
  *
  * Single-source brain short-circuits to ok (no federation to check).
  * Each warning carries a paste-ready remediation hint.
+ *
+ * `opts.sourceIds` (the remote caller's grant) confines the dashboard to
+ * those sources: a source-bound token never reads another source's id, lag,
+ * coverage or failed-job count, and the single-source short-circuit is
+ * judged on brain-wide state only for unscoped callers.
  */
-export async function checkFederationHealth(engine: BrainEngine): Promise<Check> {
+export async function checkFederationHealth(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
   try {
     const { loadAllSources } = await import('../../../core/sources-load.ts');
     const { computeAllSourceMetrics } = await import('../../../core/source-health.ts');
-    const sources = await loadAllSources(engine, { includeArchived: false });
-    if (sources.length <= 1) {
+    const allSources = await loadAllSources(engine, { includeArchived: false });
+    const sources = opts.sourceIds ? allSources.filter((s) => opts.sourceIds!.includes(s.id)) : allSources;
+    if (opts.sourceIds && sources.length === 0) {
+      return { name: 'federation_health', status: 'ok', message: 'No sources in scope to check' };
+    }
+    if (!opts.sourceIds && sources.length <= 1) {
       return {
         name: 'federation_health',
         status: 'ok',

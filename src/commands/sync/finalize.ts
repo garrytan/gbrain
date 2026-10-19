@@ -27,13 +27,14 @@ import {
 import { shouldLogIngest } from '../import.ts';
 import type { SyncResult } from '../sync.ts';
 import { settleLegacyHolds } from './holds.ts';
+import { gitlinkFields } from './unsupported-paths.ts';
 import { sweepOrphanedRenameSentinels } from './rename-reconcile.ts';
 import { partial, flushCheckpoint } from './sync-run.ts';
 import type { SyncPlan, SyncRun } from './sync-run.ts';
 
 export async function finishWithoutChanges(
   engine: BrainEngine,
-  plan: Pick<SyncPlan, 'opts' | 'company' | 'gitContextRoot' | 'lastCommit' | 'pin' | 'pullFailed' | 'ckpt' | 'malformedSkipped' | 'totalChanges' | 'holds'>,
+  plan: Pick<SyncPlan, 'opts' | 'company' | 'gitContextRoot' | 'lastCommit' | 'pin' | 'pullFailed' | 'ckpt' | 'malformedSkipped' | 'totalChanges' | 'holds' | 'gitlinks'>,
   swept: number,
 ): Promise<SyncResult | undefined> {
   const { opts, company, gitContextRoot, lastCommit, pin, pullFailed, ckpt, malformedSkipped, totalChanges } = plan;
@@ -91,6 +92,7 @@ export async function finishWithoutChanges(
       embedded: 0,
       pagesAffected: [],
       ...(malformedSkipped.length > 0 ? { malformedSkipped: malformedSkipped.length } : {}),
+      ...gitlinkFields(plan),
     };
   }
   return undefined;
@@ -216,6 +218,7 @@ export async function finalizeIncrementalSync(
     ...(uncommittedDrift ? { uncommitted: uncommittedDrift } : {}),
     ...(extractError ? { extract_error: extractError } : {}),
     ...identityDowngradesOf(plan),
+    ...gitlinkFields(plan),
   };
 }
 

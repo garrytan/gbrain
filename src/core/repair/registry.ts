@@ -50,6 +50,7 @@ import { contentReceiptRootRepair } from './content-receipt-root.ts';
 import { embeddingEffectsRepair } from './embedding-effects.ts';
 import { googleFileModesRepair } from './google-file-modes.ts';
 import { staleAtomsRepair } from './stale-atoms.ts';
+import { atomsRestoreRepair } from './atoms-restore.ts';
 import { extractorFactsRepair } from './extractor-facts.ts';
 import { conversationLabelsRepair } from './conversation-labels.ts';
 import { capturedFactsRepair } from './captured-facts.ts';
@@ -185,6 +186,14 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     summary: 'Retire, by soft delete, page-bound atoms whose source page is gone, or whose source page changed after its current text was already extracted (#5770). '
       + 'Preview-bound: --apply --expect <hash> retires exactly the previewed set; an atom that changed since reports changed_since_preview and is kept. '
       + 'A later extraction that produces a retired atom again restores it. Never touches imported or file-bound atoms.',
+  },
+  'atoms-restore': {
+    handler: atomsRestoreRepair, embeds: 'effect', checks: ['atom_retirements_restorable'], explicit_only: true, preview_bound: true,
+    summary: 'Restore atoms a managed re-extraction retired when its model returned no atoms for their origin (#7013, retired_by: managed-reextract). '
+      + 'Only the latest retired generation of a live origin that no later extraction replaced; imported atoms, stale-atoms retirements and older '
+      + 'generations are kept. Preview-bound: --apply --expect <hash> restores exactly the previewed set (managed: one revision-bound request per atom '
+      + 'that writes the canonical file back, its request id in the outcome); an atom that changed since reports changed_since_preview and stays deleted. '
+      + 'The purge holds these atoms for 30 days after deletion. Runs only when named; never on upgrade.',
   },
   'extractor-facts': {
     handler: extractorFactsRepair, embeds: 'none', checks: ['extractor_facts_expired'], explicit_only: true,

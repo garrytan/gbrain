@@ -39,7 +39,7 @@ import { isCrossSourceLinksEnabled } from '../../../core/link-extraction.ts';
  * Errors during the SQL count → warn with the underlying message.
  * Best-effort: this check never breaks doctor.
  */
-export async function checkGraphSignalsCoverage(engine: BrainEngine): Promise<Check> {
+export async function checkGraphSignalsCoverage(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
   try {
     // Resolve the active graph_signals setting. Read the config key
     // explicitly; when unset, fall through to the mode bundle default.
@@ -72,8 +72,11 @@ export async function checkGraphSignalsCoverage(engine: BrainEngine): Promise<Ch
     }
 
     // Compute global inbound-link density. Counts DISTINCT pages with
-    // at least one inbound edge / total pages.
-    const totalRows = await engine.executeRaw(`SELECT COUNT(*)::int AS n FROM pages WHERE deleted_at IS NULL`);
+    // at least one inbound edge / total pages. A remote caller's grant
+    // confines both sides to its sources (no brain-wide ratio).
+    const scope = opts.sourceIds ? ' AND p.source_id = ANY($1::text[])' : '';
+    const params = opts.sourceIds ? [opts.sourceIds] : undefined;
+    const totalRows = await engine.executeRaw(`SELECT COUNT(*)::int AS n FROM pages p WHERE deleted_at IS NULL${scope}`, params);
     const totalPages = Number((totalRows as any)[0]?.n ?? 0);
 
     if (totalPages === 0) {
@@ -88,7 +91,8 @@ export async function checkGraphSignalsCoverage(engine: BrainEngine): Promise<Ch
       `SELECT COUNT(DISTINCT l.to_page_id)::int AS n
        FROM links l
        JOIN pages p ON p.id = l.to_page_id
-       WHERE p.deleted_at IS NULL`
+       WHERE p.deleted_at IS NULL${scope}`,
+      params,
     );
     const linkedPages = Number((linkedRows as any)[0]?.n ?? 0);
     const pct = (linkedPages / totalPages) * 100;
@@ -146,7 +150,7 @@ export async function checkGraphSignalsCoverage(engine: BrainEngine): Promise<Ch
  * are non-blocking warnings; brainstorm + LSD still work, just with degraded
  * signal.
  */
-export async function checkBrainstormHealth(engine: BrainEngine): Promise<Check> {
+export async function checkBrainstormHealth(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
   // (1) Column probe — fast, single-query.
   try {
     const probeRows = await engine.executeRaw<{ exists: boolean }>(
@@ -208,14 +212,15 @@ export async function checkBrainstormHealth(engine: BrainEngine): Promise<Check>
     };
   }
 
-  // (4) Calibration cold-start — empty active_bias_tags.
+  // (4) Calibration cold-start — empty active_bias_tags. Profiles are per
+  // source; a remote caller's grant reads only its own sources' profiles.
   try {
     const calibRows = await engine.executeRaw<{ active_bias_tags: string[] | null }>(
       `SELECT active_bias_tags
-         FROM calibration_profiles
+         FROM calibration_profiles${opts.sourceIds ? '\n         WHERE source_id = ANY($1::text[])' : ''}
          ORDER BY generated_at DESC
          LIMIT 1`,
-      []
+      opts.sourceIds ? [opts.sourceIds] : []
     );
     if (calibRows.length === 0) {
       return {

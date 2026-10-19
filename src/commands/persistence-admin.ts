@@ -20,6 +20,7 @@ export const WRITER_HELP = `Usage:
     [--category <c>] [--code <c>] [--origin <o>|none] [--json]
   gbrain sources writer movement [<source>] [--wait <dur>] [--warn-only] [--json]
   gbrain sources writer retry-effects <source> --request-id <uuid> [--admin-intent writer_retry_effects --expected-state <admin_state>] [--dry-run] [--json]
+  gbrain sources writer retry-effects <source> --parked-pushes [--dry-run] [--json]
   gbrain sources writer git-durability <source> --enable|--disable [--pat-file <path>] [administration options] [--dry-run] [--json]
   gbrain sources writer claim <source> --path <directory> [administration options] [--dry-run] [--json]
   gbrain sources writer activate --confirm-quiesced [--cleanup-dead-local-locks] [--shared-skills] [administration options] [--dry-run] [--json]
@@ -93,6 +94,10 @@ owner host retry the parked Git effect once under its own authority (recorded as
 retried_under: owner_host); a withdrawal effect is never retried that way.
 git-durability --pat-file retries every parked push of the worktree; requests refused
 on their own are listed in parked_pushes.refused, the result is status partial, and it exits 1.
+retry-effects <source> --parked-pushes does the same without a credential change: one more
+attempt per Git effect of the source's worktree parked on a push (git_push_unavailable,
+push_unconfirmed, integrate_conflict); a push the remote rejected because it moved publishes
+over the remote without moving the checkout (gbrain sources refresh brings remote files in).
 lock sets an opt-in, brain-level writer admin lock (config key persistence.writer_admin_lock)
 and unlock clears it; both are local-only, idempotent and print the resulting state.
 While locked, writer claim, activate and transfer (prepare, accept and cancel) are refused with
@@ -134,7 +139,7 @@ export function adminHostConfig<T extends GBrainConfig>(config: T | null | undef
 
 type Group = 'writer' | 'local-writer';
 const GROUP_ARGV: Record<Group, string[]> = { writer: ['gbrain', 'sources', 'writer'], 'local-writer': ['gbrain', 'auth', 'local-writer'] };
-const BARE_FLAGS = ['--json', '--dry-run', '--replace', '--probe', '--confirm-quiesced', '--self-transfer', '--confirm-relocated-root', '--cleanup-dead-local-locks', '--shared-skills', '--enable', '--disable'];
+const BARE_FLAGS = ['--json', '--dry-run', '--replace', '--probe', '--confirm-quiesced', '--self-transfer', '--confirm-relocated-root', '--cleanup-dead-local-locks', '--shared-skills', '--enable', '--disable', '--parked-pushes'];
 /** A CLI usage refusal: the exact usage in the suggestion, the group's help as the read-only fix. */
 function invalid(group: Group, message: string, suggestion: string) {
   return opError('invalid_params', message, suggestion, {
@@ -259,7 +264,7 @@ export async function runPersistenceAdminCli(group: Group, args: string[], conne
     }
     await writeStdoutFinal(JSON.stringify(result, bigintToStringReplacer, 2) + '\n');
     // #6678: a credential repair that refused some parked pushes on their own is partial and exits 1.
-    if (parsed.operation === 'writer_git_durability' && (result as { status?: unknown }).status === 'partial') setCliExitVerdict(1);
+    if ((parsed.operation === 'writer_git_durability' || parsed.operation === 'writer_retry_effects') && (result as { status?: unknown }).status === 'partial') setCliExitVerdict(1);
   } catch (error) {
     if (!await reportPersistenceCliError(error, args.includes('--json'))) {
       console.error(error instanceof Error ? error.message : String(error));

@@ -72,7 +72,7 @@ export interface BackupAssetVerdict {
   configured_remote?: boolean;
   verification?: {
     state: 'verified' | 'not_checked' | 'unavailable' | 'missing_ref' | 'mismatch' | 'budget_exhausted' | 'stale';
-    /** Why an `unavailable` probe failed: the full two-second slot ran out, or git exited with an error. */
+    /** Why an `unavailable` probe failed: its full slot (`backup.remote_timeout_ms`, default 2 s) ran out, or git exited with an error. */
     cause?: 'timeout' | 'exit';
     checked_at?: string;
     local_commit?: string;
@@ -91,6 +91,8 @@ export interface BackupTotals {
   /** Pages at risk on disk loss (db_only + undeclared DB-only signal). */
   pages_at_risk: number;
   configured_repos?: number;
+  /** #6907: repositories whose remote probe ran out of time: their backup is unconfirmed, not known missing. */
+  remote_timeouts?: number;
 }
 
 export interface BackupStatus {
@@ -146,6 +148,11 @@ export function isVerifiedRecoverable(a: BackupAssetVerdict): boolean {
   return a.state === 'ok' && a.verification?.state === 'verified';
 }
 
+/** #6907: a remote probe that ran out of its slot; nothing says the remote lacks the commits. */
+export function isRemoteTimeout(a: BackupAssetVerdict): boolean {
+  return a.verification?.state === 'unavailable' && a.verification.cause === 'timeout';
+}
+
 /**
  * True when this asset keeps the verdict in warn: an unverified repository,
  * or any asset counted in the no_remote / unpushed / failing totals.
@@ -176,7 +183,7 @@ export function blockingAssetReasons(
     state: a.state,
     reason: a.state === 'no_remote' ? (a.configured_remote === true ? 'remote configured, nothing pushed' : 'no git remote')
       : a.state === 'unknown' ? (surface === 'local' || UNKNOWN_DETAIL_CODES.has(a.detail ?? '') ? a.detail ?? 'unknown' : 'unknown')
-      : a.state === 'ok' ? `remote not verified: ${a.verification?.state ?? 'not_checked'}`
+      : a.state === 'ok' ? (isRemoteTimeout(a) ? 'remote check timed out' : `remote not verified: ${a.verification?.state ?? 'not_checked'}`)
       : a.state,
   }));
 }

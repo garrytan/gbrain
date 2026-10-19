@@ -199,7 +199,7 @@ export async function checkEmbeddingEnvOverride(engine: BrainEngine): Promise<Ch
  * is mid-transition and retrieval may be degraded until it drains. Warn with
  * the exact resume + status commands.
  */
-export async function checkEmbeddingMigrationState(engine: BrainEngine): Promise<Check> {
+export async function checkEmbeddingMigrationState(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
   try {
     const { readMigrationState, migrationSignature, renderResumeCommand } = await import('../../../core/embedding-migration.ts');
     const marker = await readMigrationState(engine);
@@ -216,10 +216,14 @@ export async function checkEmbeddingMigrationState(engine: BrainEngine): Promise
     const s = marker.state;
     let staleNote = '';
     try {
-      const stale = await engine.countStaleChunks({
-        signature: migrationSignature(s.to_model, s.to_dims),
-        includeNullSignature: true,
-      });
+      const signature = migrationSignature(s.to_model, s.to_dims);
+      // A remote caller's grant counts only its own sources' chunks.
+      let stale = 0;
+      if (opts.sourceIds) {
+        for (const sourceId of opts.sourceIds) stale += await engine.countStaleChunks({ sourceId, signature, includeNullSignature: true });
+      } else {
+        stale = await engine.countStaleChunks({ signature, includeNullSignature: true });
+      }
       staleNote = `; ${stale} chunk(s) not yet in the target space`;
     } catch { /* count is best-effort */ }
     return {

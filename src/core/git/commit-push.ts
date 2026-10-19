@@ -18,8 +18,12 @@
  *      (and changes nothing) when HEAD moved or a file it must change is dirty.
  *
  * Managed canonical worktrees are refused: the persistence owner is their
- * only writer. CLI-only; never exposed over MCP (it pushes with host
- * credentials).
+ * only writer. The one exception is a keep-checkout publish (`keepCheckout`,
+ * `--push-only --keep-checkout`): it pushes HEAD, merging a moved remote in
+ * memory, but never moves the checkout and skips its pre-push hook, so `gbrain sources
+ * refresh` stays the only importer of remote files into a managed worktree
+ * (#7010; the owner's Git effects publish this way). CLI-only; never exposed
+ * over MCP (it pushes with host credentials).
  */
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -88,6 +92,8 @@ export interface CommitPushOptions {
   advanceOnlyWhenClean?: boolean;
   /** Push-only: publish HEAD to this remote branch instead of the checked-out branch's upstream (the helper's `--push-only <branch>`). */
   branch?: string;
+  /** Push-only: never advance the checkout and skip its pre-push hook (a managed canonical worktree; see the header). */
+  keepCheckout?: boolean;
 }
 
 export type Resolution = { kind: 'ours' } | { kind: 'theirs' } | { kind: 'file'; path: string };
@@ -98,6 +104,7 @@ interface Ctx {
   remote: string;
   mergeRef: string;
   trackingRef: string;
+  keepCheckout?: boolean;
 }
 
 interface GitRun { code: number; stdout: string; stderr: string }
@@ -202,9 +209,12 @@ function withBranch(ctx: Ctx, branch: string | undefined): Ctx {
   return { ...ctx, mergeRef: `refs/heads/${short}`, trackingRef: `refs/remotes/${ctx.remote}/${short}` };
 }
 
+/** The git-dir entries a rebase, merge, cherry-pick or revert leaves while it is in progress. */
+export const GIT_OPERATION_MARKERS = ['rebase-merge', 'rebase-apply', 'MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'sequencer'] as const;
+
 /** Refuse while another git operation is mid-flight; never abort it for the user. */
-function assertNoOperationInProgress(root: string): void {
-  for (const marker of ['rebase-merge', 'rebase-apply', 'MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'sequencer']) {
+export function assertNoOperationInProgress(root: string): void {
+  for (const marker of GIT_OPERATION_MARKERS) {
     if (existsSync(absGitPath(root, marker))) {
       throw opError('git_operation_in_progress', `A git ${marker.startsWith('rebase') ? 'rebase' : marker.toLowerCase().replace(/_head$/, '')} is in progress in ${root}.`,
         `Finish or abort it first. A stuck rebase may hold another writer's autostash: save it with git stash store <sha from .git/${marker}/autostash> before deleting anything. See docs/guides/shared-checkout-git.md#stuck-rebase.`,
@@ -509,13 +519,13 @@ function conflictError(ctx: Ctx, ours: string, theirs: string, merged: MergeTree
   const compare = `Compare the two versions (this machine's: git show ${local}:<path>; the remote's: git show ${remote}:<path>)`;
   const fix = merged.structural.length
     ? `${preface}The local commit ${local} stays local and the checkout is unchanged. ${merged.structural.map(shellWord).join(', ')} ${merged.structural.length === 1 ? 'is' : 'are'} a file/directory or rename conflict that a per-file choice cannot resolve. ${compare}, then move or remove the local path in a new commit (gbrain git commit-push -m "<msg>" -- <paths>) and rerun gbrain git commit-push --push-only. See docs/guides/shared-checkout-git.md#conflicts.`
-    : `${preface}The local commit ${local} stays local and the checkout is unchanged. ${compare}, then run gbrain git commit-push --push-only --expect-remote ${remote} ${paths.map(p => `--resolve ${shellWord(p)}=ours|theirs`).join(' ')} (ours = this machine's version, theirs = the remote's, or =file:<path> with a merged copy). Until then every push from this checkout reports this conflict. See docs/guides/shared-checkout-git.md#conflicts.`;
+    : `${preface}The local commit ${local} stays local and the checkout is unchanged. ${compare}, then run gbrain git commit-push --push-only${ctx.keepCheckout ? ' --keep-checkout' : ''} --expect-remote ${remote} ${paths.map(p => `--resolve ${shellWord(p)}=ours|theirs`).join(' ')} (ours = this machine's version, theirs = the remote's, or =file:<path> with a merged copy). Until then every push from this checkout reports this conflict. See docs/guides/shared-checkout-git.md#conflicts.`;
   return opError('integrate_conflict', `Local and remote commits both changed ${paths.length} file(s) on ${ctx.branch}; nothing was merged.`, fix,
     { detail: JSON.stringify({ local: ours, remote: theirs, paths, structural: merged.structural }),
       fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
         why: 'Choosing which version of a file wins discards the other side; ask the user before resolving.',
         user_message: `Both this machine and the remote changed ${paths.join(', ')}. Which version should win, or should they be merged by hand?`,
-        ...(merged.structural.length ? {} : { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--path', ctx.root, '--expect-remote', theirs, ...paths.flatMap(p => ['--resolve', `${p}=<ours|theirs>`])] }),
+        ...(merged.structural.length ? {} : { argv: ['gbrain', 'git', 'commit-push', '--push-only', ...(ctx.keepCheckout ? ['--keep-checkout'] : []), '--path', ctx.root, '--expect-remote', theirs, ...paths.flatMap(p => ['--resolve', `${p}=<ours|theirs>`])] }),
         docs: 'docs/guides/shared-checkout-git.md#conflicts' } });
 }
 
@@ -579,7 +589,7 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
   };
   for (let attempt = 0; attempt < MAX_PUSH_ATTEMPTS; attempt++) {
     if (attempt) Atomics.wait(sleeper, 0, 0, Math.min(2000, 50 * 2 ** attempt) + Math.floor(Math.random() * 100));
-    const push = remoteGit(ctx.root, 'push', ['--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
+    const push = remoteGit(ctx.root, 'push', [...(ctx.keepCheckout ? ['--no-verify'] : []), '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
     if (push.code === 0) return { sha: candidate, integrated, confirmed: 'push' };
     lastError = push.stderr.trim();
     if (remoteContains(ctx, candidate)) return onRemote();
@@ -674,14 +684,15 @@ function defaultPublishWaitMs(): number {
 
 export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
   const root = checkoutRoot(opts.repo);
-  assertManagedFilesystemWrite(root);
+  if (opts.keepCheckout && !opts.pushOnly) throw opError('commit_paths_invalid', 'keepCheckout publishes commits already on the branch; it commits nothing.', 'Use --push-only --keep-checkout.');
+  if (!opts.keepCheckout) assertManagedFilesystemWrite(root);
   const cwd = opts.cwd ?? process.cwd();
   const rel = opts.pushOnly ? [] : scopePaths(root, opts.paths ?? [], cwd);
   if (!opts.pushOnly && !opts.message?.trim()) {
     throw opError('commit_paths_invalid', 'A commit message is required.', 'Pass -m "<message>".');
   }
   const upstream = resolveCtx(root);
-  const ctx = withBranch(upstream, opts.branch);
+  const ctx = { ...withBranch(upstream, opts.branch), ...(opts.keepCheckout ? { keepCheckout: true } : {}) };
   const elsewhere = ctx.mergeRef !== upstream.mergeRef;
   assertNoOperationInProgress(root);
 
@@ -721,7 +732,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
       const head = gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
       const published = publish(ctx, start && !isAncestor(root, start, head) ? start : head, resolutions, opts.expectRemote, cwd);
       if (!elsewhere) rmSync(absGitPath(root, CONFLICT_STATE_NAME), { force: true });
-      const moved = published.sha === head || elsewhere ? { checkout: 'unchanged' as const } : advanceWithLock(root, published.sha, head, onlyWhenClean, opts.lockWaitMs);
+      const moved = published.sha === head || elsewhere || opts.keepCheckout ? { checkout: 'unchanged' as const } : advanceWithLock(root, published.sha, head, onlyWhenClean, opts.lockWaitMs);
       return { published, moved };
     } catch (e) {
       if ((e as { code?: string }).code === 'integrate_conflict' && !elsewhere) recordConflict(root, ctx.branch, e);

@@ -8,7 +8,7 @@ can load, and Google source files other local users can read. `gbrain repair`
 fixes those and the other kinds listed in
 [What each kind fixes](#what-each-kind-fixes). Every run is a preview unless
 you pass `--apply`.
-The explicit-only kinds, among them `google-file-modes`, `stale-atoms`, `extractor-facts`,
+The explicit-only kinds, among them `google-file-modes`, `stale-atoms`, `atoms-restore`, `extractor-facts`,
 `captured-facts`, `loop-facts`, `ontology-facts`, `orphan-children`, `failed-writes`, `frontmatter`, `managed-sync-orphans`, `content-receipt-root`, `stuck-recovery`, `aliases` and `rename-identity`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
 `gbrain doctor --remediation-plan` lists the same kinds as repair steps, and
 `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash>` runs them under a budget
@@ -108,7 +108,7 @@ gives each a fresh row number); it never deletes or rewrites a page.
 | `--limit <n>` | Repair at most `n` items per kind in this run (a positive integer; with `--all`, up to `n` for each kind). Rerun the same command to continue. |
 | `--no-embed` | `safe-chunks` and `contextual-mode`: skip the embedding provider. Run `gbrain embed --stale` later. `timeline` and `visibility` pages are re-embedded by their publication either way. |
 | `--all` | Run every automatic kind in order. Explicit-only kinds are listed with their preview command, never run. |
-| `--expect <hash>` | Explicit-only kinds: apply exactly the set the preview printed under this hash. Required with `--apply` for `stale-atoms`, `extractor-facts`, `captured-facts`, `loop-facts`, `failed-writes`, `frontmatter`, `managed-sync-orphans` and `content-receipt-root`. |
+| `--expect <hash>` | Explicit-only kinds: apply exactly the set the preview printed under this hash. Required with `--apply` for `stale-atoms`, `atoms-restore`, `extractor-facts`, `captured-facts`, `loop-facts`, `failed-writes`, `frontmatter`, `managed-sync-orphans` and `content-receipt-root`. |
 | `--include-ambiguous` | `extractor-facts` and `captured-facts`: widen the hashed set to `ambiguous` facts. `frontmatter`: add interpretive file changes. Pass it to both the preview and the apply. See [Extractor facts](#extractor-facts), [Captured facts](#captured-facts) and [Frontmatter](#frontmatter). |
 | `--only <path>`, `--skip <path>` | `frontmatter` only: select source-relative files (repeatable). The hash covers the selection, so pass the same flags to the apply. |
 | `--diff` | `frontmatter` only: print every per-file diff instead of one sample per class (`--json` always carries all of them). |
@@ -1228,6 +1228,58 @@ with the preview and apply commands; a stale hash refuses with
 than the preview also refuses with `preview_changed`. Doctor
 `atom_provenance_drift` names this command when drift crosses its warn
 threshold.
+
+### Atoms restore
+
+A managed atom re-extraction whose model returned no atoms for a page or
+transcript (#7013) retired every earlier atom of that origin: each one was
+soft-deleted and stamped `retired_by: managed-reextract`, and the purge then
+removed it for good. `gbrain repair atoms-restore` brings them back. It is
+explicit-only and preview-bound, and nothing runs on upgrade.
+
+```bash
+gbrain repair atoms-restore --source <id> --json    # preview: each atom with its origin, hash and retirement time, and a hash
+gbrain repair atoms-restore --source <id> --apply --expect <hash>
+```
+
+The preview lists a retired atom only when all of these hold:
+
+- it is not imported (`imported_from`) and carries `retired_by: managed-reextract`
+  (a `stale-atoms` retirement is never listed);
+- its origin is still there: a live page of the same source (`source_slug`), or
+  a transcript (`source_path`);
+- no live atom of the same origin carries a different source hash, so no later
+  extraction replaced it;
+- it belongs to the origin's most recently retired generation (its source hash
+  is the hash of the origin's latest `managed-reextract` retirement), so an older
+  generation that a later non-empty extraction replaced is never revived.
+
+The residuals count what it keeps: `origin_gone`, `replaced` and
+`older_generation`, next to `restorable` and the number of `origins`.
+
+The apply restores exactly the previewed set and checks each atom again first;
+one whose revision or rule match changed since the preview (for example a new
+extraction replaced it) reports `changed_since_preview` and stays deleted. On a
+managed brain each atom is one coordinated request bound to the deleted atom's
+revision: it reverts the atom to the live version its retirement archived
+(same source hash, no `retired_by`/`retired_at`), writes its canonical file
+back, keeps the derived trust tier an extraction gives it, and the outcome names
+the request id (`gbrain write-request -- <id>` reads its receipt). An atom with
+no such version reports `no_version` and stays deleted. A file that differs from the database at the atom's path reports
+`file_conflict` and is left as it is. On an unmanaged brain the atom is
+versioned, restored and has the two keys removed in one transaction. Neither
+changes the origin's extraction state. `--apply` without `--expect` refuses with
+the preview and apply commands; a stale hash or another `--source` refuses with
+[`preview_changed`](#preview-changed).
+
+The batch purge (the maintenance cycle, `gbrain pages purge-deleted` and the
+unmanaged bulk delete) holds every atom the preview would list for 30 days
+after its deletion instead of the usual 72 hours, so an operator who upgrades
+late can still restore it. An explicit `gbrain delete <slug> --purge` is not
+held. Doctor `atom_retirements_restorable` warns while such atoms exist, with
+their count, origins, oldest and newest retirement and the date the first hold
+ends; its fix is the read-only preview. Show the user the preview before
+running the apply.
 
 ### Extractor facts
 

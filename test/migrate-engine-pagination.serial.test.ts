@@ -106,7 +106,7 @@ async function migrate(afterListing?: (source: PGLiteEngine) => Promise<void>) {
     if (source) await source.disconnect();
     if (target) await target.disconnect();
     _resetCliExitVerdictForTests();
-    process.exitCode = prev.exitCode;
+    process.exitCode = prev.exitCode ?? 0;
     if (prev.home !== undefined) process.env.GBRAIN_HOME = prev.home; else delete process.env.GBRAIN_HOME;
     if (prev.url !== undefined) process.env.DATABASE_URL = prev.url;
     if (prev.gbrainUrl !== undefined) process.env.GBRAIN_DATABASE_URL = prev.gbrainUrl;

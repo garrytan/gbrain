@@ -64,8 +64,9 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'backstop-infer-'));
   // The pages have their files, as a local_path brain's pages do (#6398: a DB-only page takes the DB-only fact route).
   for (const p of pages) {
+    const snapshot = (await engine.readPageSnapshot(p.slug, { sourceId: 'default' }))!;
     mkdirSync(join(dir, p.slug, '..'), { recursive: true });
-    writeFileSync(join(dir, `${p.slug}.md`), serializePageToMarkdown(p, []));
+    writeFileSync(join(dir, `${p.slug}.md`), serializePageToMarkdown(snapshot.page, snapshot.tags));
   }
   await engine.executeRaw(`UPDATE sources SET local_path=$1 WHERE id='default'`, [dir]);
   _resetWriteThroughCacheForTest();

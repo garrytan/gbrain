@@ -37,6 +37,7 @@ import {
   saveBackupStatus,
   currentBackupEvidence,
   isVerifiedRecoverable,
+  isRemoteTimeout,
   isRepoAsset,
   assetBlocksRecovery,
   BACKUP_VERIFICATION_MAX_AGE_MS,
@@ -45,7 +46,7 @@ import {
   type BackupComputedBy,
   type BackupStatus,
 } from './status-file.ts';
-import { assessBackupRepository, BACKUP_REMOTE_PROBE_CAP, budgetAllowsProbe, type RemoteProbeBudget } from './repository.ts';
+import { assessBackupRepository, BACKUP_REMOTE_PROBE_CAP, BACKUP_REMOTE_TIMEOUT_KEY, budgetAllowsProbe, resolveBackupRemoteTimeoutMs, type RemoteProbeBudget } from './repository.ts';
 
 /** No silent caps: at most this many deduped git roots are probed per run;
  * anything beyond is logged as skipped. */
@@ -142,7 +143,7 @@ export async function computeBackupCoverage(
   const now = opts.now ?? new Date();
   const assets: BackupAssetVerdict[] = [];
   const remoteBudget: RemoteProbeBudget | undefined = opts.localGitProbes === true && opts.verifyRemoteRefs === true
-    ? { remaining: BACKUP_REMOTE_PROBE_CAP } : undefined;
+    ? { remaining: BACKUP_REMOTE_PROBE_CAP, timeoutMs: resolveBackupRemoteTimeoutMs(await Promise.resolve().then(() => engine.getConfig(BACKUP_REMOTE_TIMEOUT_KEY)).catch(() => null)) } : undefined;
   const previousAge = now.getTime() - Date.parse(opts.previousStatus?.checked_at ?? '');
   const previous = opts.localGitProbes === true && opts.previousStatus && !opts.previousStatus.degraded
     && Number.isFinite(previousAge) && previousAge >= 0 && !isBackupStatusStale(opts.previousStatus, now.getTime())
@@ -391,6 +392,7 @@ export async function computeBackupCoverage(
     failing: assets.filter((a) => a.state === 'failing').length,
     configured_repos: assets.filter(a => a.configured_remote === true).length,
     recoverable_repos: assets.filter(isVerifiedRecoverable).length,
+    remote_timeouts: assets.filter(isRemoteTimeout).length,
     pages_at_risk: pagesAtRisk,
   };
   const maturity = assets.some(assetBlocksRecovery) ? await brainMaturity(engine) : undefined;

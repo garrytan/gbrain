@@ -25,6 +25,7 @@ import { OperationError, opError } from './ops/contract.ts';
 import { CODES } from './error-registry.ts';
 import { acceptedPendingReceipt } from './persistence/accepted-pending.ts';
 import { providerItemRefusal } from './ai/errors.ts';
+import { quotesPath } from './retry-matcher.ts';
 
 /** Every per-item loop that isolates its items, with the inventory row it fixes (reports/GBRA-130-inventory.md). */
 export const ISOLATE_SITES = {
@@ -101,6 +102,8 @@ function sqlstateFailure(state: string): { code: string; scope: 'run' | 'item'; 
 }
 
 const RUN_ERRNOS = new Set(['ENOSPC', 'EMFILE', 'ENFILE', 'EROFS', 'EDQUOT']);
+/** A database socket or driver connection that went away (the codes the connection text below names); a child process's ETIMEDOUT or EPIPE stays the item's. */
+const ITEM_CONNECTION_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'CONNECTION_CLOSED', 'CONNECTION_ENDED', 'CONNECTION_DESTROYED']);
 const ITEM_ERRNOS = new Set(['EACCES', 'EPERM', 'ENOENT', 'ELOOP', 'EISDIR', 'ENOTDIR', 'ENAMETOOLONG', 'EILSEQ']);
 const RUN_ERROR_NAMES: Record<string, string> = { AbortError: 'aborted', LockStolenError: 'lock_stolen', BudgetExhausted: 'budget_exhausted' };
 /** A model or embedding provider's own failure (the gateway's error classes, an HTTP fetch that failed): never the database connection; a provider outage trips the breaker. */
@@ -130,13 +133,15 @@ function classifyOne(error: unknown): ClassifiedItemFailure | null {
     if (sql) return { ...sql, message, requestId: null };
   }
   if (typeof raw === 'string' && RUN_ERRNOS.has(raw)) return { code: 'disk_full', scope: 'run', class: 'transient', message, requestId: null };
+  if (typeof raw === 'string' && ITEM_CONNECTION_CODES.has(raw)) return { code: 'connection_lost', scope: 'run', class: 'transient', message, requestId: null };
   if (typeof raw === 'string' && ITEM_ERRNOS.has(raw)) return { code: 'unreadable_item', scope: 'item', class: 'content', message, requestId: null };
   const refusal = providerItemRefusal(error);
   if (refusal) return { code: refusal, scope: 'item', class: 'content', message, requestId: null };
   if ((typeof name === 'string' && AI_ERROR_NAMES.has(name)) || /^fetch failed\b/i.test(message)) {
     return { code: 'provider_error', scope: 'item', class: 'transient', message, requestId: null };
   }
-  if (/ECONNRESET|ECONNREFUSED|connection (terminated|ended|closed)|Connection terminated|socket hang up/i.test(message)) {
+  // GBRA-133 S-65/S-70: connection text is read only from an uncoded error naming no path; a coded error was decided above.
+  if (raw === undefined && !quotesPath(message) && /ECONNRESET|ECONNREFUSED|connection (terminated|ended|closed)|Connection terminated|socket hang up/i.test(message)) {
     return { code: 'connection_lost', scope: 'run', class: 'transient', message, requestId: null };
   }
   return null;

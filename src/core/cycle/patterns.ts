@@ -23,8 +23,6 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
  *     is refused revision_required).
  */
 
-import { join, dirname } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
@@ -46,6 +44,7 @@ import type { Page, PageType } from '../types.ts';
 // slot and can deadlock a fully-occupied worker (#2050). synthesize.ts
 // drains its own children the same way.
 import { loadAllowedSlugPrefixes, loadOutputRoot, runSubagentsInline } from './synthesize.ts';
+import { reportFileHolds, reverseWriteDreamRefs } from './derived-write-through.ts';
 import { stampDreamProvenance } from './dream-provenance.ts';
 import { probeChatModelWithKey } from '../ai/chat-key-probe.ts';
 import { normalizeModelId } from '../model-id.ts';
@@ -422,10 +421,11 @@ async function runPatternsPass(engine: BrainEngine, opts: PatternsPhaseOpts, con
 
     // #6052: `finalized` leaves out outputs whose managed publication is held (pending or contended); `held` counts them.
     const { quoteVerify, finalized, held, grounding } = await stampPatternOutputs(engine, maintenance, putPageRefs, appends, submitted, derivation, config, cycleSourceId, cycleDate, opts.signal);
+    const fileHolds: string[] = [];
     const reverseWriteCount = maintenance ? await verifyMaintenanceOutputs(engine, maintenance, finalized)
-      : await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
+      : await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal, fileHolds);
     const details = { reflections_considered: submitted.length, reflections_selected: selected, plan_basis: plan.basis, patterns_written: finalized.length,
-      ...(quoteVerify ? { quote_verify: quoteVerify } : {}), reverse_write_count: reverseWriteCount, publish_deferred: held, ...grounding.details,
+      ...(quoteVerify ? { quote_verify: quoteVerify } : {}), reverse_write_count: reverseWriteCount, publish_deferred: held, ...grounding.details, ...(fileHolds.length ? { file_holds: fileHolds } : {}),
       timeline_appends: appends.length, appended_unverified: appendedUnverified, child_outcome: outcome, job_id: job.id };
     const appendedNote = appends.length > 0 ? `; ${appends.length} timeline entr${appends.length === 1 ? 'y' : 'ies'} appended${quoteVerify ? ' (quote-verified)' : ''}` : '';
 
@@ -471,7 +471,7 @@ async function runPatternsPass(engine: BrainEngine, opts: PatternsPhaseOpts, con
     // named nothing; re-running it is exactly the spend bug.
     await engine.setConfig(keys.evidence, new Date(newestEvidenceMs).toISOString());
 
-    return withGroundingStatus(ok(`${writtenRefs.length} pattern page(s) written/updated${appendedNote} (${outcome})`, details), grounding);
+    return reportFileHolds(withGroundingStatus(ok(`${writtenRefs.length} pattern page(s) written/updated${appendedNote} (${outcome})`, details), grounding), fileHolds, 'page');
   } catch (e) {
     return failed(makeError('InternalError', 'PATTERNS_PHASE_FAIL',
       e instanceof Error ? (e.message || 'patterns phase threw') : String(e)));
@@ -718,7 +718,7 @@ async function stampPatternOutputs(engine: BrainEngine, maintenance: Maintenance
   return { quoteVerify: pages ? { ...pages, ...(appended ? { timeline_appends: appended } : {}) } : null, finalized, held: heldSlugs.size, grounding };
 }
 
-type AppendRetry = { report: GroundingReport; stats: { pages: number; entries: number; quarantined: number; repaired: number } };
+type AppendRetry = { report: GroundingReport; stats: { pages: number; entries: number; quarantined: number; repaired: number }; fileHolds: string[] };
 
 /**
  * GBRA-130 A-23: ground the timeline appends earlier runs failed to ground (pattern-grounding.ts), each page against
@@ -749,11 +749,12 @@ async function retryPendingAppends(engine: BrainEngine, opts: PatternsPhaseOpts,
   }
   const report = await finishGroundingRun(engine, run);
   const rewritten = [...run.appendsResolved.keys()].filter(slug => !heldSlugs.has(slug)).map(slug => ({ slug, source_id: sourceId }));
+  const fileHolds: string[] = [];
   if (rewritten.length) {
     if (maintenance) await verifyMaintenanceOutputs(engine, maintenance, rewritten);
-    else await reverseWriteRefs(engine, opts.brainDir, rewritten, sourceId, opts.signal);
+    else await reverseWriteRefs(engine, opts.brainDir, rewritten, sourceId, opts.signal, fileHolds);
   }
-  return { report, stats };
+  return { report, stats, fileHolds };
 }
 
 /**
@@ -763,6 +764,10 @@ async function retryPendingAppends(engine: BrainEngine, opts: PatternsPhaseOpts,
  */
 function withAppendRetry(result: PhaseResult, retried: AppendRetry | null): PhaseResult {
   if (!retried) return result;
+  return reportFileHolds(withGroundingRetry(result, retried), retried.fileHolds, 'page');
+}
+
+function withGroundingRetry(result: PhaseResult, retried: AppendRetry): PhaseResult {
   const { report, stats } = retried;
   const passGrounded = Array.isArray(result.details.grounding_held);
   const failed = [...report.details.grounding_failed, ...((result.details.grounding_failed ?? []) as GroundingReport['details']['grounding_failed'])];
@@ -1080,48 +1085,13 @@ async function countChildTimelineAppends(engine: BrainEngine, childIds: number[]
 
 // ── Reverse-write ────────────────────────────────────────────────────
 
-import { validateSourceId } from '../utils.ts';
 import { renderTimelineEntry } from '../timeline-write-through.ts';
 import { materializedMarker } from '../timeline-marker.ts';
 
-async function reverseWriteRefs(
-  engine: BrainEngine,
-  brainDir: string,
-  refs: Array<{ slug: string; source_id: string }>,
-  nativeSourceId = 'default',
-  signal?: AbortSignal,
-): Promise<number> {
-  let count = 0;
-  for (const { slug, source_id } of refs) {
-    throwIfAborted(signal, '[dream] patterns reverse-write');
-    // v0.32.8 F6: guard against malformed source_id (would let join() break
-    // out of brainDir). validateSourceId throws on `..`, `/`, etc.
-    validateSourceId(source_id);
-    const page = await engine.getPage(slug, { sourceId: source_id });
-    if (!page) continue;
-    const tags = await engine.getTags(slug, { sourceId: source_id });
-    // #4077: re-check after the row reads — an abort that lands during
-    // getPage/getTags must not reach this ref's file write.
-    throwIfAborted(signal, '[dream] patterns reverse-write');
-    try {
-      const md = renderPageToMarkdown(page, tags);
-      // v0.32.8 F6: foreign-source pages land under brainDir/.sources/<id>/<slug>.md
-      // so same-slug-different-source pages don't collide on disk. Pages belonging
-      // to the cycle's own source (#1586: brainDir IS that source's checkout —
-      // legacy 'default' when unscoped) stay at brainDir/<slug>.md so single-source
-      // brains see no change. `.sources/` is a reserved prefix; walkBrainRepo skips dot-dirs.
-      const filePath = source_id === nativeSourceId
-        ? join(brainDir, `${slug}.md`)
-        : join(brainDir, '.sources', source_id, `${slug}.md`);
-      mkdirSync(dirname(filePath), { recursive: true });
-      writeFileSync(filePath, md, 'utf8');
-      count++;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      process.stderr.write(`[dream] reverse-write ${slug}@${source_id} failed: ${msg}\n`);
-    }
-  }
-  return count;
+/** Reverse-render each pattern page to its markdown file (`reverseWriteDreamRefs`, #6982); holds go to `held`. */
+async function reverseWriteRefs(engine: BrainEngine, brainDir: string, refs: Array<{ slug: string; source_id: string }>,
+  nativeSourceId = 'default', signal?: AbortSignal, held?: string[]): Promise<number> {
+  return reverseWriteDreamRefs(engine, brainDir, refs, { phase: 'patterns', nativeSourceId, signal, held, render: renderPageToMarkdown });
 }
 
 function renderPageToMarkdown(page: Page, tags: string[]): string {

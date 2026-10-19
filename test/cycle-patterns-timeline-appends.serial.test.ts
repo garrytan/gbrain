@@ -9,7 +9,7 @@
  * tool-execution ledger, so request ids and receipts are the production ones.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -85,6 +85,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await resetPgliteState(engine);
+  rmSync(brainDir, { recursive: true, force: true });
+  mkdirSync(brainDir);
   await engine.setConfig('version', schemaVersion);
   await engine.setConfig('models.dream.patterns', 'anthropic:claude-sonnet-4-6');
   await engine.setConfig('dream.quote_verify', 'true');

@@ -1,4 +1,4 @@
-import { load, dump, Type, DEFAULT_SCHEMA } from 'js-yaml';
+import { load, dump, Type, DEFAULT_SCHEMA, type Schema } from 'js-yaml';
 import { NAIVE_DATETIME } from './effective-date.ts';
 
 // js-yaml's timestamp type builds `2024-02-30` as March 1 (Date.UTC rolls the
@@ -28,6 +28,57 @@ const calendarTimestamp = new Type('tag:yaml.org,2002:timestamp', {
   represent: baseTimestamp.represent,
 });
 export const FRONTMATTER_SCHEMA = DEFAULT_SCHEMA.extend({ implicit: [calendarTimestamp] });
+
+/**
+ * Most characters a YAML document's aliases may add once expanded. js-yaml
+ * keeps an alias as a reference to its anchor, so a few hundred bytes of nested
+ * anchors (`&a2 [*a1, *a1, ...]`) load instantly and expand exponentially the
+ * first time anything serializes or walks the value. Without aliases the
+ * expanded size never exceeds the text, so the bound is the text length plus
+ * this; real frontmatter that uses anchors at all adds a few hundred.
+ */
+export const MAX_YAML_ALIAS_EXPANSION = 65_536;
+
+/** Shaped like js-yaml's own error (`reason`, `mark`) so every caller's location handling reads it unchanged. */
+export class YamlAliasBoundError extends Error {
+  readonly reason = 'yaml aliases expand past the frontmatter size limit';
+  constructor(readonly mark: { line: number; column: number }) {
+    super('YAML aliases expand past the frontmatter size limit');
+    this.name = 'YamlAliasBoundError';
+  }
+}
+
+/**
+ * The one js-yaml entry point for content gbrain did not write. Loads, then
+ * measures the value as if every alias were copied out (strings by length,
+ * keys by length, other nodes as one; shared nodes memoized, a cycle infinite)
+ * and throws YamlAliasBoundError past the bound, before any caller can walk it.
+ */
+export function loadBoundedYaml(text: string, opts: { schema?: Schema } = {}): unknown {
+  const value = load(text, opts);
+  const limit = text.length + MAX_YAML_ALIAS_EXPANSION;
+  const sizes = new Map<object, number>();
+  const size = (node: unknown): number => {
+    if (typeof node === 'string') return node.length;
+    if (node === null || typeof node !== 'object') return 1;
+    if (ArrayBuffer.isView(node)) return node.byteLength;
+    const known = sizes.get(node);
+    if (known !== undefined) return known;
+    sizes.set(node, Infinity);
+    let total = 1;
+    if (Array.isArray(node)) for (const child of node) { total += size(child); if (total > limit) break; }
+    else for (const [key, child] of Object.entries(node)) { total += key.length + size(child); if (total > limit) break; }
+    sizes.set(node, total);
+    return total;
+  };
+  if (size(value) <= limit) return value;
+  const lines = text.split('\n');
+  const line = Math.max(0, lines.findIndex(row => ALIAS_TOKEN.test(row.replace(QUOTED_SCALAR, ''))));
+  const at = ALIAS_TOKEN.exec((lines[line] ?? '').replace(QUOTED_SCALAR, ''));
+  throw new YamlAliasBoundError({ line, column: at ? at.index + at[0].indexOf('*') : 0 });
+}
+const ALIAS_TOKEN = /(?:^|[\s,[{])\*[^\s,[\]{}]/;
+const QUOTED_SCALAR = /"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'/g;
 
 export interface DataFrontmatter {
   data: Record<string, unknown>;
@@ -84,7 +135,7 @@ export function parseDataFrontmatter(input: string): DataFrontmatter {
   const { language, block } = fenced;
   let value: unknown;
   try {
-    value = block.trim() === '' ? {} : language === 'json' ? JSON.parse(block) : load(block, { schema: FRONTMATTER_SCHEMA });
+    value = block.trim() === '' ? {} : language === 'json' ? JSON.parse(block) : loadBoundedYaml(block, { schema: FRONTMATTER_SCHEMA });
   } catch (error) {
     // Parser messages can contain the document itself. Report only location,
     // so request/job diagnostics never copy private frontmatter into logs.

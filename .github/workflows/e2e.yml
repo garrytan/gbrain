@@ -3,8 +3,6 @@ name: E2E Tests
 on:
   push:
     branches: [master]
-  pull_request:
-    branches: [master]
   # Merge queue (inert until the queue is enabled on master): the PR profile.
   # prepare-e2e classifies the queued change from the compare API (base_sha...
   # head_sha). docs/RELEASING.md#merge-queue.
@@ -51,6 +49,8 @@ jobs:
     # Postgres and HARD-FAILS if DATABASE_URL is missing, so the guard can never
     # silently skip.
     name: JSONB parity (#2339 regression guard)
+    needs: [prepare-e2e]
+    if: ${{ needs.prepare-e2e.outputs.reuse != 'true' }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 15
     services:
@@ -146,13 +146,32 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: read
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
+      reuse: ${{ steps.reuse.outputs.reuse }}
+      reuse-source-run-id: ${{ steps.reuse.outputs.source_run_id }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.3
+      # Master-push reuse (P2, scripts/ci-reuse.ts): a push whose tree equals the
+      # tree of a passed full-suite run skips every full lane and records the
+      # reused run. Any doubt, a crash included, leaves reuse unset: a full run.
+      - id: reuse
+        if: github.event_name == 'push'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/ci-reuse.ts --workflow e2e --sha "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" --output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY" --record "$RUNNER_TEMP/reuse.json"
+      - if: steps.reuse.outputs.reuse == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: reused-full-suite
+          path: ${{ runner.temp }}/reuse.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Select and freeze E2E files
         id: select
         shell: bash
@@ -192,12 +211,13 @@ jobs:
 
   selected-e2e:
     name: Selected E2E (diff-relevant) ${{ matrix.shard }}
-    needs: prepare-e2e
+    needs: [prepare-e2e]
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare-e2e.outputs.matrix) }}
     # 2 vCPUs, up to 8 shards (C1): run-e2e.sh runs one bun process at a time,
     # and a 25-file sample took 442s on 2 cores vs 455s on 4.
+    if: ${{ needs.prepare-e2e.outputs.reuse != 'true' }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 60
     services:
@@ -278,6 +298,8 @@ jobs:
     # Tier 1 stays on 16 vCPUs: on 4 its CLI `init --url` spawns in
     # mechanical.test.ts went from ~2s to past their 15-30s kill timeouts
     # (measured September 29, 2026), while every other E2E lane ran as fast.
+    needs: [prepare-e2e]
+    if: ${{ needs.prepare-e2e.outputs.reuse != 'true' }}
     runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 70
     services:
@@ -456,6 +478,8 @@ jobs:
   # E2E (C3).
   tier1-backend-matrix:
     name: Tier 1 backend matrix (direct + PgBouncer) ${{ matrix.shard }}/2
+    needs: [prepare-e2e]
+    if: ${{ needs.prepare-e2e.outputs.reuse != 'true' }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     # Two weighted shards: the whole matrix took 715s on one 4-vCPU runner
     # (the PR critical path); files run sequentially, so a split halves it.
@@ -688,7 +712,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -697,8 +721,8 @@ jobs:
       - name: Install dependencies (bounded, retried once)
         timeout-minutes: 8
         run: bun scripts/ci-bun-install.ts --frozen-lockfile
-      - name: Coverage shard ${{ matrix.shard }}/10
-        run: scripts/test-shard.sh ${{ matrix.shard }} 10
+      - name: Coverage shard ${{ matrix.shard }}/18
+        run: scripts/test-shard.sh ${{ matrix.shard }} 18
         env:
           COVERAGE_DIR: ${{ runner.temp }}/coverage
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
@@ -1016,7 +1040,7 @@ jobs:
           bun scripts/merge-lcov.ts \
             --out-lcov "$RUNNER_TEMP/coverage-full-merged/lcov.info" \
             --out-json "$RUNNER_TEMP/coverage-full-merged/summary.json" \
-            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,serial,slow,e2e-1,e2e-2,e2e-3,e2e-4 \
+            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,shard-11,shard-12,shard-13,shard-14,shard-15,shard-16,shard-17,shard-18,serial,slow,e2e-1,e2e-2,e2e-3,e2e-4 \
             "$RUNNER_TEMP/coverage-artifacts"
       - name: Coverage summary → step summary
         if: steps.shards.outputs.state == 'complete'
@@ -1043,8 +1067,8 @@ jobs:
   # in e2e-status; baseline comparisons run locally with
   #   bun scripts/ci-executed-counts.ts --base-run <id> --head-run <id>
   executed-receipts:
-    needs: [jsonb-parity, tier1, tier1-backend-matrix, tier2, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-e2e]
-    if: always()
+    needs: [prepare-e2e, jsonb-parity, tier1, tier1-backend-matrix, tier2, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-e2e]
+    if: ${{ needs.prepare-e2e.outputs.reuse != 'true' && always() }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -1102,7 +1126,7 @@ jobs:
   # full-corpus lanes to the aggregate on the nightly schedule only.
   e2e-status:
     needs: [jsonb-parity, tier1, tier1-backend-matrix, tier2, prepare-e2e, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
-    if: always()
+    if: ${{ needs.prepare-e2e.outputs.reuse != 'true' && always() }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
     steps:
@@ -1167,3 +1191,58 @@ jobs:
       - name: Verify complete nightly execution
         if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
         run: bun scripts/verify-nightly-e2e.ts "$RUNNER_TEMP/e2e-execution" 4 "$GITHUB_SHA"
+
+  # Full CI on pull requests (docs/ci-event-parity.md#full-ci-on-pull-requests): the E2E
+  # check merge-train reads. E2E does not run on pull_request events; it runs
+  # in the full-ci dispatch on a pull request's head, on every push to master,
+  # in the merge queue and on the nightly schedule. It succeeds only when
+  # e2e-status did on the same run. Its artifact records the tested tree for
+  # master-push reuse (scripts/ci-reuse.ts).
+  # Event parity (docs/TESTING.md#event-parity): the same job on every event;
+  # EVENT only labels the recorded tree.
+  e2e-full-suite:
+    needs: [prepare-e2e, e2e-status]
+    if: ${{ needs.prepare-e2e.outputs.reuse != 'true' && always() }}
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - name: Require e2e-status
+        env:
+          E2E_STATUS: ${{ needs.e2e-status.result }}
+        run: |
+          if [ "$E2E_STATUS" != success ]; then
+            echo "::error::e2e-full-suite requires e2e-status to succeed on this run (got $E2E_STATUS)"
+            exit 1
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci-full-suite-tree.sh
+          sparse-checkout-cone-mode: false
+      - name: Record the tested tree
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/full-suite
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          WORKFLOW: ${{ github.workflow }}
+          EVENT: ${{ github.event_name }}
+        run: bash scripts/ci-full-suite-tree.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-full-suite-tree
+          path: ${{ runner.temp }}/full-suite/tree.json
+          retention-days: 30
+          overwrite: true
+
+  # Master-push reuse marker (scripts/ci-reuse.ts, scripts/release-gate.ts): exists
+  # only in a push run that reused a passed full-suite run of its exact tree; the
+  # release gate reads its reuse.json.
+  reused-full-suite:
+    needs: [prepare-e2e]
+    if: ${{ needs.prepare-e2e.outputs.reuse == 'true' }}
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 2
+    steps:
+      - env:
+          SOURCE: ${{ needs.prepare-e2e.outputs.reuse-source-run-id }}
+        run: echo "Reused full-suite run $SOURCE (identical tree)"

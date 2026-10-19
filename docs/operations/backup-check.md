@@ -106,7 +106,15 @@ payload includes `configured_repos`, per-asset `configured_remote` and
 
 Trusted local, non-quiet backup CLI and doctor may perform read-only remote
 probes: at most eight refs per sweep, within a shared eight-second probe budget
-and two-second subprocess timeouts, without prompts, pushes or fetches. Pending
+and two-second subprocess timeouts, without prompts, pushes or fetches. For a
+slow remote, `gbrain config set backup.remote_timeout_ms <ms>` (database
+setting; `GBRAIN_BACKUP_REMOTE_TIMEOUT_MS` wins) sets each remote probe's slot,
+clamped to 500-30000 ms; the sweep budget grows to four slots when that is more
+than eight seconds. A probe that runs out of its slot is counted in
+`totals.remote_timeouts` and shown as "remote check timed out": the backup is
+unconfirmed, not missing (#6907). The local dirtiness read stops at the first
+changed path, so a tree with a very large `git status` listing reads `dirty`
+instead of `unknown / probe_failed`. Pending
 and oldest evidence is rotated first rather than probing the same roots each
 time. Evidence expires after one hour even if the configured coverage interval
 is longer. Reuse retains its original timestamp and requires unchanged source
@@ -137,7 +145,7 @@ export is not used, and the remote's host key must already be in `known_hosts`.
 | `verified` | The remote branch HEAD matches a clean local HEAD. | Nothing. |
 | `missing_ref` | The remote answered but has no such branch. | `git push -u origin <branch>` <!-- gbrain-allow-shared-tree-git: one-time first push that creates the remote branch and sets its upstream -->, then `gbrain backup check`. |
 | `mismatch` | The remote HEAD differs from the local HEAD, or the tree changed during the probe. | Push or pull until they match, then `gbrain backup check`. |
-| <a id="remote-unavailable"></a>`unavailable` | `git ls-remote` failed: no network, authentication refused, or an unknown host key. `cause` says which kind: `timeout` (the remote did not answer within its full two-second slot) or `exit` (git exited with an error). The probe passes only `HOME`, `PATH`, `XDG_CONFIG_HOME`, `SSH_AUTH_SOCK`, `GIT_CONFIG_GLOBAL`, `HTTPS_PROXY`/`https_proxy`, `HTTP_PROXY`/`http_proxy`, `NO_PROXY`/`no_proxy` (and `USERPROFILE`, `APPDATA`, `SystemRoot` on Windows). | Run `git -C <root> ls-remote origin` in the same shell; credentials must come from your Git config, a credential helper, `~/.ssh/config` or the SSH agent, not from a prompt or `GIT_SSH_COMMAND`. |
+| <a id="remote-unavailable"></a>`unavailable` | `git ls-remote` failed: no network, authentication refused, or an unknown host key. `cause` says which kind: `timeout` (the remote did not answer within its full slot, `backup.remote_timeout_ms`, default two seconds; reported as "remote check timed out" and counted in `totals.remote_timeouts`, never as a missing backup) or `exit` (git exited with an error). The probe passes only `HOME`, `PATH`, `XDG_CONFIG_HOME`, `SSH_AUTH_SOCK`, `GIT_CONFIG_GLOBAL`, `HTTPS_PROXY`/`https_proxy`, `HTTP_PROXY`/`http_proxy`, `NO_PROXY`/`no_proxy` (and `USERPROFILE`, `APPDATA`, `SystemRoot` on Windows). | Run `git -C <root> ls-remote origin` in the same shell; credentials must come from your Git config, a credential helper, `~/.ssh/config` or the SSH agent, not from a prompt or `GIT_SSH_COMMAND`. |
 | `budget_exhausted` | The sweep's eight-probe or eight-second budget ran out first, or this remote would not have received its full two-second slot. | Run `gbrain backup check` again. |
 | `stale`, `not_checked` | Earlier evidence expired or no probe ran yet. | `gbrain backup check`. |
 
@@ -156,6 +164,8 @@ gbrain config set backup.check_enabled false        # off (file plane)
 gbrain config set backup.check_interval_days 30     # default 30; set rejects values < 1
 GBRAIN_BACKUP_CHECK=0                               # env kill switch (everything)
 GBRAIN_BACKUP_CHECK_DAYS=<n>                        # env interval override (wins over config)
+gbrain config set backup.remote_timeout_ms 6000     # remote probe slot, 500-30000 ms, default 2000 (database)
+GBRAIN_BACKUP_REMOTE_TIMEOUT_MS=<ms>                # env slot override (wins over config)
 ```
 
 Interval values below 1 or non-numeric (env or a hand-edited config file) fall

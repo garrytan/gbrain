@@ -555,6 +555,12 @@ succeed on the release commit.
 - **Backfill:** `gh workflow run release.yml --ref master` gates and publishes
   master HEAD's VERSION. Other refs are refused.
 - The gate waits up to 110 minutes, then fails with the backfill command.
+- **Reused push run:** a push run that reused a passed full-suite run of its
+  exact tree ([master-push reuse](ci-event-parity.md#master-push-reuse))
+  publishes only with a readable `reuse.json` naming the same workflow, the
+  push head and a valid source run. The gate prints the reused run per
+  workflow and writes `test_reused_run_id` / `e2e_reused_run_id` (empty when
+  that workflow ran in full); the `ci-gate` job exposes both as outputs.
 
 ### The `latest-stable` tag
 

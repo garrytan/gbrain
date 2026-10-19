@@ -3,7 +3,7 @@
  * (bounded by the job deadline), and after the first publish that is still
  * pending the job's later publishes do not wait.
  */
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -105,15 +105,18 @@ test('after the first pending publish, the job\'s later publishes do not wait; b
     __setMaintenanceWriteWaitForTests(600);
     const authority = (await maintenancePreflight(engine, sourceId))!;
     const lock = (await acquireWorktree((await getWorktreeBinding(engine, sourceId))!, 1000))!;
+    const waits = spyOn(MaintenanceWriteWait.prototype, 'ms');
     let first: Awaited<ReturnType<typeof pendingAfter>>, second: Awaited<ReturnType<typeof pendingAfter>>;
+    let waited: number[];
     try {
       first = await pendingAfter(publishMaintenancePage(engine, authority, 'wiki/wait-first', page(1), { expectedRevision: null }));
       second = await pendingAfter(publishMaintenancePage(engine, authority, 'wiki/wait-second', page(2), { expectedRevision: null }));
-    } finally { await lock.release(); }
+      waited = waits.mock.results.map(call => call.value as number);
+    } finally { waits.mockRestore(); await lock.release(); }
     expect(first.code).toBe('write_pending');
     expect(first.ms).toBeGreaterThanOrEqual(550);
     expect(second.code).toBe('write_pending');
-    expect(second.ms).toBeLessThan(300);
+    expect(waited).toEqual([600, 0]);
     const fresh = (await maintenancePreflight(engine, sourceId))!;
     for (const [slug, n] of [['wiki/wait-first', 1], ['wiki/wait-second', 2]] as const) {
       const receipt = await publishMaintenancePage(engine, fresh, slug, page(n), { expectedRevision: null });
@@ -128,14 +131,17 @@ test('a job at its deadline publishes without waiting and defers the write', asy
   await fixture(async (engine, sourceId) => {
     const authority = (await maintenancePreflight(engine, sourceId, undefined, { deadlineAtMs: Date.now() - 1 }))!;
     const lock = (await acquireWorktree((await getWorktreeBinding(engine, sourceId))!, 1000))!;
+    const waits = spyOn(MaintenanceWriteWait.prototype, 'ms');
     let result: Awaited<ReturnType<typeof pendingAfter>>;
     let states: Array<{ state: string }>;
+    let waited: number[];
     try {
       result = await pendingAfter(publishMaintenancePage(engine, authority, 'wiki/wait-deadline', page(3), { expectedRevision: null }));
+      waited = waits.mock.results.map(call => call.value as number);
       states = await engine.executeRaw("SELECT state FROM persistence_requests WHERE source_id=$1 AND slug='wiki/wait-deadline'", [sourceId]);
-    } finally { await lock.release(); }
+    } finally { waits.mockRestore(); await lock.release(); }
     expect(result.code).toBe('write_pending');
-    expect(result.ms).toBeLessThan(300);
+    expect(waited).toEqual([0]);
     expect(states).toHaveLength(1);
     expect(states[0].state).not.toBe('committed');
   });

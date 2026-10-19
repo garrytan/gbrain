@@ -12,6 +12,7 @@ import * as os from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { parseMarkdown } from '../src/core/markdown.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import {
   runPhantomRedirectPass,
@@ -248,7 +249,7 @@ describe('tryRedirectPhantom (single phantom orchestration)', () => {
       );
       await putPage('alice', phantomBody);
       writeMd(brainDir, 'alice', phantomBody);
-      writeMd(brainDir, 'people/alice-example', '# alice-example\n');
+      writeMd(brainDir, 'people/alice-example', '# alice-example\n\n## Facts\n\n');
 
       const phantom = await engine.getPage('alice', { sourceId: 'default' });
       expect(phantom).not.toBeNull();
@@ -795,7 +796,8 @@ describe('tryRedirectPhantom — fence placement above the timeline sentinel (#4
       // to reconcile a fence (FACTS_FENCE_BELOW_SENTINEL) — a blind EOF
       // append froze the redirected rows permanently.
       const canonicalBody = `# alice-example\n\nAlice runs acme-example.\n\n---\n\n## Timeline\n\n- 2026-01-01: Founded Acme\n`;
-      await putPage('people/alice-example', canonicalBody, { type: 'person' });
+      const split = parseMarkdown(canonicalBody, 'people/alice-example.md');
+      await engine.putPage('people/alice-example', { title: 'people/alice-example', type: 'person' as never, compiled_truth: split.compiled_truth, timeline: split.timeline, frontmatter: {} });
       writeMd(brainDir, 'people/alice-example', canonicalBody);
 
       const phantomBody = FACT_FENCE(

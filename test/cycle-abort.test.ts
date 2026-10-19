@@ -233,7 +233,7 @@ describe('#4077 — synthesize/patterns cooperative-abort threading', () => {
     expect(postprocess).toBeGreaterThan(-1);
     expect(src.slice(postprocess, src.indexOf(');', postprocess))).toContain('signal: opts.signal');
     expect(src).toContain('if (!maintenance) await stampDreamProvenance(engine, writtenRefs, summaryDate, opts.signal)');
-    expect(src).toContain('reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal)');
+    expect(src).toContain('reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal, fileHolds)');
   });
 
   test('patterns sibling threads the same signal through inline drain, wait, and reverse-write', async () => {
@@ -242,6 +242,6 @@ describe('#4077 — synthesize/patterns cooperative-abort threading', () => {
     expect(src).toContain('signal?: AbortSignal');
     expect(src).toMatch(/runSubagentsInline\([\s\S]{0,240}?opts\.signal/);
     expect(src).toMatch(/waitForCompletionRenewing\(queue, job\.id, \{[\s\S]*?signal: opts\.signal,/);
-    expect(src).toContain('reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal)');
+    expect(src).toContain('reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal, fileHolds)');
   });
 });

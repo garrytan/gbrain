@@ -9,12 +9,25 @@ import { readManagedMode } from '../../../core/persistence/ownership.ts';
 import { legacyLedgerNote } from '../../../core/persistence/legacy-sync-failures.ts';
 import { classifyRecordedFault } from '../../../core/persistence/terminal-classify.ts';
 import { agentFix } from '../check-fix.ts';
+import { readUpstreamDivergences } from '../../../core/sync-upstream-rewrite.ts';
 
 /** #6518 [R18 vi]: the fast check cannot verify a mirror row; a warning there is uncertainty, never recovery. */
 const MIRROR_UNVERIFIED = (count: number) => `${count} mirrored managed sync failure(s) could not be verified without a database connection: `
   + 'a better fast score means less certainty, not that sync recovered. Run gbrain doctor --only sync_failures with the brain reachable.';
 
 export async function checkSyncFailures(engine: BrainEngine | null, opts: { sourceIds?: string[]; remote?: boolean } = {}): Promise<Check | null> {
+  const check = await checkRecordedSyncFailures(engine, opts);
+  const upstream = engine ? await readUpstreamDivergences(engine, opts.sourceIds) : [];
+  if (!upstream.length) return check;
+  const local = opts.remote === false;
+  const note = local ? upstream.map(report => `${report.message} Next${report.fix.ask_user ? ' (ask the user first)' : ''}: ${report.fix.argv!.join(' ')}.`).join(' ')
+    : `${upstream.length} source(s) cannot pull because the checkout and its upstream diverged (${[...new Set(upstream.map(report => report.code))].join(', ')}); local HEAD keeps syncing. Ask the host operator to run gbrain doctor --only sync_failures.`;
+  return { ...check, name: 'sync_failures', status: check?.status === 'fail' ? 'fail' : 'warn', message: check && check.status !== 'ok' ? `${check.message} ${note}` : note,
+    ...(local ? { details: { ...check?.details, upstream } } : {}),
+    ...(check?.fix ? {} : local ? { fix: upstream[0]!.fix } : { fix_unavailable_reason: 'operator_judgement' as const }) };
+}
+
+async function checkRecordedSyncFailures(engine: BrainEngine | null, opts: { sourceIds?: string[]; remote?: boolean }): Promise<Check | null> {
   // #5452: sync refuses an archived source, so its failures cannot be cleared and are not a live health signal.
   const archived = new Set(engine ? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived = true')).map(row => row.id) : []);
   const allManaged = engine ? await readManagedSyncFailures(engine, opts.sourceIds) : [];
