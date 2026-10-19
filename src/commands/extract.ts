@@ -1883,6 +1883,8 @@ async function extractLinksFromDB(
     list.push(ref.source_id);
     slugToSources.set(ref.slug, list);
   }
+  // Under the cross_source opt-in a bare [[name]] looks its basename up in every source; a per-source resolver's own index (#5309) holds only its source.
+  const crossSourceBasenames = crossSource ? buildBasenameIndex(allSlugs) : null;
   // #4304: --since prunes the walk at the ref level (updated_at comes back
   // from listAllPageRefs) instead of a getPage round-trip per corpus page.
   // The resolver maps above are built from the UNFILTERED refs — link
@@ -1954,7 +1956,7 @@ async function extractLinksFromDB(
     const pack = packs.get(source_id);
     if (!pack) throw new Error('Cannot extract links: active schema pack is unavailable.');
     const batch: LinkBatchInput[] = [];
-    if (!resolvers.has(source_id)) resolvers.set(source_id, makeResolver(engine, { mode: 'batch', sourceId: source_id }));
+    if (!resolvers.has(source_id)) resolvers.set(source_id, makeResolver(engine, { mode: 'batch', sourceId: source_id, basenameIndex: crossSourceBasenames ? async () => crossSourceBasenames : undefined }));
     const resolver = resolvers.get(source_id)!;
 
     // --include-frontmatter default OFF in v0.13 (codex tension 5, back-compat).
@@ -2168,6 +2170,8 @@ export async function extractStaleFromDB(
     list.push(ref.source_id);
     slugToSources.set(ref.slug, list);
   }
+  // Mirrors extractLinksFromDB: under cross_source a bare [[name]] sees every source's basenames.
+  const crossSourceBasenames = crossSource ? buildBasenameIndex(allSlugs) : null;
   // #3478: mirrors extractLinksFromDB — only federated sources keep the
   // cross-source 'default' fallback; absent/archived rows fail closed.
   const federatedSourceIds = new Set(
@@ -2231,7 +2235,7 @@ export async function extractStaleFromDB(
         // A segmented body is read block by block (page-body/segment-links.ts, segmentedTimelineText), never as one string.
         const fullContent = isSegmentedPage(snapshot.page) ? null : snapshot.page.compiled_truth + '\n' + snapshot.page.timeline;
         const linkRows: LinkBatchInput[] = [];
-        if (!resolvers.has(page.source_id)) resolvers.set(page.source_id, makeResolver(engine, { mode: 'batch', sourceId: page.source_id }));
+        if (!resolvers.has(page.source_id)) resolvers.set(page.source_id, makeResolver(engine, { mode: 'batch', sourceId: page.source_id, basenameIndex: crossSourceBasenames ? async () => crossSourceBasenames : undefined }));
         const resolver = resolvers.get(page.source_id)!;
         const pageLinkOpts = { skipFrontmatter: !includeFrontmatter, globalBasename, pack, lineGrammar, targetType: (targetSlug: string, targetSourceId?: string) => {
           const resolved = resolveCandidateSources({ targetSlug, targetSourceId, linkType: '', context: '' }, page.slug,
