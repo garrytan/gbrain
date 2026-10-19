@@ -60,6 +60,14 @@ describe('synthesize reads a corpus file and its synced conversation page once',
     expect(await discovered()).toEqual([join(corpus, 'mentor', 'mentor-session.md')]);
   }, 60_000);
 
+  test('the default source without local_path resolves its page file under sync.repo_path', async () => {
+    const { checkout, corpus } = await brainWithLinkedTranscript('mentor-session.md');
+    await engine.executeRaw('UPDATE sources SET local_path = NULL WHERE id = $1', ['default']);
+    await engine.setConfig('sync.repo_path', checkout);
+    await engine.executeRaw('UPDATE pages SET source_path = $1 WHERE slug = $2', ['transcripts/mentor-session.md', 'transcripts/mentor-session']);
+    expect(await discovered()).toEqual([join(corpus, 'mentor', 'mentor-session.md')]);
+  }, 60_000);
+
   test('a conversation page synced from another file is still discovered', async () => {
     const { checkout, corpus } = await brainWithLinkedTranscript('mentor-session.md');
     writeFileSync(join(checkout, 'other.md'), body);

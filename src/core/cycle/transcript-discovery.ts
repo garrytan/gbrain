@@ -501,17 +501,26 @@ function pageDate(fm: Record<string, unknown>, slug: string): string | null {
 }
 
 /**
- * Maps a page row to the realpath of its file in the source checkout, so a
- * page synced from a corpus file (often through a symlinked corpus folder)
- * is recognised as that file. Null when the source has no checkout or the
- * mapping cannot be read; discovery then falls back to the body-hash dedupe.
+ * Maps a page row to the realpath of its file in the source checkout
+ * (`local_path`, or the default source's `sync.repo_path`), so a page synced
+ * from a corpus file (often through a symlinked corpus folder) is recognised
+ * as that file. Null when the source has no checkout, the legacy checkout is
+ * another source's tree, or the mapping cannot be read; discovery then falls
+ * back to the body-hash dedupe.
  */
 async function pageFileResolver(engine: BrainEngine, sourceId: string): Promise<((row: ConversationRow) => string | null) | null> {
   try {
     const [source] = await engine.executeRaw<{ local_path: string | null }>(
       'SELECT local_path FROM sources WHERE id = $1', [sourceId],
     );
-    const localPath = source?.local_path;
+    let localPath = source?.local_path ?? null;
+    if (!localPath && sourceId === 'default') {
+      const repoPath = await engine.getConfig('sync.repo_path');
+      const owned = repoPath
+        ? await engine.executeRaw('SELECT 1 FROM sources WHERE id <> $1 AND local_path = $2 LIMIT 1', [sourceId, repoPath])
+        : [];
+      if (repoPath && owned.length === 0) localPath = repoPath;
+    }
     if (!localPath) return null;
     const slugRootMode = await scannerSlugRootMode(engine, sourceId, localPath);
     const gitScope = sourceGitScope(localPath);
