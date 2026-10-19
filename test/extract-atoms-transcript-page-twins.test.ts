@@ -11,7 +11,8 @@ import type { ChatResult } from '../src/core/ai/gateway.ts';
 let engine: PGLiteEngine;
 let dir: string;
 let root: string;
-const content = 'A note about keeping extraction tied to its original source.';
+// Page discovery only extracts bodies of 500+ characters, so owners must be that long.
+const content = 'A note about keeping extraction tied to its original source. '.repeat(10);
 const contentHash = createHash('sha256').update(content).digest('hex');
 
 beforeAll(async () => {
@@ -38,14 +39,14 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-async function seedPage(sourcePath: string) {
-  await engine.putPage('notes/example', {
-    type: 'note', title: 'Example', compiled_truth: content,
-    timeline: '', frontmatter: {},
+async function seedPage(sourcePath: string, slug = 'notes/example', page: { compiled_truth?: string; frontmatter?: Record<string, unknown> } = {}) {
+  await engine.putPage(slug, {
+    type: 'note', title: 'Example', compiled_truth: page.compiled_truth ?? content,
+    timeline: '', frontmatter: page.frontmatter ?? {},
   }, { sourceId: 'default' });
   await engine.executeRaw(
     'UPDATE pages SET source_path = $1 WHERE source_id = $2 AND slug = $3',
-    [sourcePath, 'default', 'notes/example'],
+    [sourcePath, 'default', slug],
   );
 }
 
@@ -105,7 +106,6 @@ test('keeps a transcript inside the root without a page row', async () => {
   expect(result.details.duplicates_skipped).toBe(0);
 });
 
-
 test('keeps a transcript whose twin page has a non-extractable type', async () => {
   const file = join(root, 'example.md');
   writeFileSync(file, content);
@@ -118,4 +118,33 @@ test('keeps a transcript whose twin page has a non-extractable type', async () =
   expect(calls).toBe(1);
   expect(result.details.transcript_page_twins_skipped).toBe(0);
   expect(result.details.duplicates_skipped).toBe(0);
+});
+
+test.each([
+  ['a markdown-greenfield import', { frontmatter: { imported_from: 'markdown-greenfield' } }],
+  ['a body below the page extraction minimum', { compiled_truth: 'Too short for page discovery.' }],
+])('keeps a transcript whose twin page discovery would skip: %s', async (_state, page) => {
+  const file = join(root, 'example.md');
+  writeFileSync(file, content);
+  await seedPage('example.md', 'notes/example', page);
+  const { result, calls } = await extract(file);
+  expect(calls).toBe(1);
+  expect(result.details.transcript_page_twins_skipped).toBe(0);
+});
+
+test('drops a twin under a source-root source in a Git subdirectory', async () => {
+  // The source is <repo>/docs pinned to source-root, so page `docs/session` lives at <repo>/docs/docs/session.md.
+  mkdirSync(join(root, '.git'));
+  const sourceRoot = join(root, 'docs');
+  mkdirSync(join(sourceRoot, 'docs'), { recursive: true });
+  const file = join(sourceRoot, 'docs', 'session.md');
+  writeFileSync(file, content);
+  await engine.executeRaw(
+    `UPDATE sources SET local_path = $1, config = COALESCE(config, '{}'::jsonb) || '{"slug_root_mode":"source-root"}'::jsonb WHERE id = $2`,
+    [sourceRoot, 'default'],
+  );
+  await seedPage('docs/session.md', 'docs/session');
+  const { result, calls } = await extract(file);
+  expect(calls).toBe(0);
+  expect(result.details.transcript_page_twins_skipped).toBe(1);
 });
