@@ -78,7 +78,7 @@ import { resolveCycleDate, utcDate } from './cycle-date.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { stampDreamProvenance, summaryProvenanceLines } from './dream-provenance.ts';
 import { putDerivedPage, summaryDerivation, withTranscriptTaint } from './dream-taint.ts';
-import { findTranscriptCompletion, partitionCompletedSynthesis, synthesisHash } from './synthesize-completion.ts';
+import { findTranscriptCompletion, partitionCompletedSynthesis, synthesisInput } from './synthesize-completion.ts';
 
 // Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7), the
 // allow-list loader to filing-rules.ts (#2397); patterns.ts and the
@@ -735,9 +735,9 @@ async function runPhaseSynthesizeInner(
         budgetExhaustedDeferrals.push(basename(t.filePath));
         continue; // budget gone — defer the rest, don't submit more children
       }
-      const hash = synthesisHash(t);
-      const hash16 = hash.slice(0, 16);
-      const hash6 = hash.slice(0, 6);
+      const input = synthesisInput(successfulV2Keys, t, synthesisIdentity);
+      const hash16 = input.hash.slice(0, 16);
+      const hash6 = input.hash.slice(0, 6);
 
       // D8: legacy-key migration safety. If this content hash already
       // completed under the pre-v2 path-based key family — single-chunk OR
@@ -784,7 +784,8 @@ async function runPhaseSynthesizeInner(
       const refusal = breaker && dreamBreakerRefusal(breaker,
         `dream:synth-v2:${encodeURIComponent(synthesisIdentity)}:filename:${encodeURIComponent(basename(t.filePath))}:${hash16}`);
       if (refusal) { process.stderr.write(`[dream] ${t.basename}: ${refusal}\n`); skipReports.push({ filePath: t.filePath, reason: refusal }); continue; }
-      const chunks = splitTranscriptByBudget(t.content, t.contentHash, maxCharsPerChunk);
+      const chunks = splitTranscriptByBudget(input.text, input.hash, maxCharsPerChunk);
+      chunks[0] = input.head + chunks[0];
 
       // D5 cap hit: log + skip; do NOT write to dream_verdicts. Closes the
       // poison-pill class — next cycle re-attempts under whatever budget
@@ -866,8 +867,9 @@ async function runPhaseSynthesizeInner(
       // (adversarial finding). Coalesced rows are another run's bookkeeping
       // and must not be cancelled.
       const transcriptFreshIds: number[] = [];
+      // The prompt's slug suffix names the hash the children are keyed under.
       const prompts = chunks.map((chunk, i) => buildSynthesisPrompt(
-        t, chunk, i, chunks.length, priorContradictionsBlock, config.outputRoot,
+        { ...t, contentHash: input.hash }, chunk, i, chunks.length, priorContradictionsBlock, config.outputRoot,
         buildTriageMapBlock(triageVerdict, chunk, chunks.length),
         manifestBlock,
         allowedSlugPrefixes,
@@ -2812,8 +2814,9 @@ function buildSynthesisPrompt(
       : `- Observation date: unknown (today is ${cycleDate}; never resolve relative dates against it — keep them as written)`;
   const baseSlugSegment = sanitizeForSlug(t.basename) || `session-${dateHint}`;
   const isChunked = chunkTotal > 1;
-  const hash6 = synthesisHash(t).slice(0, 6);
-  const hashSuffix = isChunked ? `${hash6}-c${chunkIdx}` : hash6;
+  const hashSuffix = isChunked
+    ? `${t.contentHash.slice(0, 6)}-c${chunkIdx}`
+    : t.contentHash.slice(0, 6);
   const chunkBanner = isChunked
     ? `\n- This is CHUNK ${chunkIdx + 1} of ${chunkTotal} from the same transcript. Different chunks process different sections; do not assume continuity with other chunks.`
     : '';

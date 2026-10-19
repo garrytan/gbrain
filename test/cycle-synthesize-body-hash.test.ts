@@ -85,6 +85,40 @@ async function run(dryRun: boolean): Promise<{ candidates: number; already_synth
   }
 }
 
+async function seedVerdict(filePath: string, fileHash: string): Promise<void> {
+  await engine.putDreamVerdict(filePath, fileHash, {
+    worth_processing: true, reasons: ['seed'], score: 0.9, content_type: null, segments: [], entities: [],
+    model: TIER_DEFAULTS.utility, triage_version: TRIAGE_VERSION,
+  });
+}
+
+/** A real run whose children are cancelled as soon as they are queued; returns every subagent job it left. */
+async function submit(): Promise<Array<{ idempotency_key: string; suffix: string | null; prompt: string }>> {
+  let stopped = false;
+  const cancelChildren = (async () => {
+    while (!stopped) {
+      await new Promise(r => setTimeout(r, 50));
+      try {
+        await engine.executeRaw(
+          `UPDATE minion_jobs SET status = 'cancelled', finished_at = now()
+            WHERE name = 'subagent' AND status IN ('waiting', 'active')`);
+      } catch { /* race against shutdown is fine */ }
+    }
+  })();
+  try {
+    await run(false);
+  } finally {
+    stopped = true;
+    await cancelChildren;
+  }
+  return engine.executeRaw(
+    `SELECT idempotency_key, data->>'oneshot_slug_suffix' AS suffix, data->>'prompt' AS prompt
+       FROM minion_jobs WHERE name = 'subagent' ORDER BY idempotency_key`);
+}
+
+// 350K-char chunks (the max_prompt_tokens floor), so LONG_BODY splits in three.
+const LONG_BODY = Array.from({ length: 16_000 }, (_, i) => `Mentor: line ${i}, what did you trade today?\n`).join('');
+
 afterEach(() => {
   rmSync(brainDir, { recursive: true, force: true });
   rmSync(corpusDir, { recursive: true, force: true });
@@ -117,29 +151,58 @@ describe('synthesis completions keyed on the transcript body', () => {
 
   test('a new synthesis is keyed and slugged on the body hash', async () => {
     const { filePath, fileHash } = writeTranscript('title: Mentor session\n');
-    await engine.putDreamVerdict(filePath, fileHash, {
-      worth_processing: true, reasons: ['seed'], score: 0.9, content_type: null, segments: [], entities: [],
-      model: TIER_DEFAULTS.utility, triage_version: TRIAGE_VERSION,
-    });
-    let stopped = false;
-    const cancelChildren = (async () => {
-      while (!stopped) {
-        await new Promise(r => setTimeout(r, 50));
-        try {
-          await engine.executeRaw(
-            `UPDATE minion_jobs SET status = 'cancelled', finished_at = now()
-              WHERE name = 'subagent' AND status IN ('waiting', 'active')`);
-        } catch { /* race against shutdown is fine */ }
-      }
-    })();
-    try {
-      await run(false);
-    } finally {
-      stopped = true;
-      await cancelChildren;
-    }
-    const jobs = await engine.executeRaw<{ idempotency_key: string; suffix: string }>(
-      `SELECT idempotency_key, data->>'oneshot_slug_suffix' AS suffix FROM minion_jobs WHERE name = 'subagent'`);
-    expect(jobs).toEqual([{ idempotency_key: key(sha256(BODY)), suffix: sha256(BODY).slice(0, 6) }]);
+    await seedVerdict(filePath, fileHash);
+    const jobs = await submit();
+    expect(jobs.map(({ idempotency_key, suffix }) => ({ idempotency_key, suffix })))
+      .toEqual([{ idempotency_key: key(sha256(BODY)), suffix: sha256(BODY).slice(0, 6) }]);
+  }, 60_000);
+
+  test('a frontmatter edit leaves chunk bounds where they were', async () => {
+    await engine.setConfig('dream.synthesize.max_prompt_tokens', '100000');
+    const before = writeTranscript('title: Mentor session\n', LONG_BODY);
+    await seedVerdict(before.filePath, before.fileHash);
+    const first = await submit();
+    await engine.executeRaw(`DELETE FROM minion_jobs WHERE name = 'subagent'`);
+    const after = writeTranscript(`title: Mentor session\ndescription: ${'long '.repeat(400)}\n`, LONG_BODY);
+    await seedVerdict(after.filePath, after.fileHash);
+    const second = await submit();
+    expect(first.map(j => j.idempotency_key)).toEqual([0, 1, 2].map(i => `${key(sha256(LONG_BODY))}:c${i}of3`));
+    expect(second.map(j => j.idempotency_key)).toEqual(first.map(j => j.idempotency_key));
+    // Only the first chunk carries the frontmatter; the others are the same body text.
+    expect(second.slice(1).map(j => j.prompt)).toEqual(first.slice(1).map(j => j.prompt));
+  }, 120_000);
+
+  test('a chunk set started under the full-file hash finishes under its own keys', async () => {
+    await engine.setConfig('dream.synthesize.max_prompt_tokens', '100000');
+    const { filePath, fileHash } = writeTranscript('title: Mentor session\n', LONG_BODY);
+    await seedVerdict(filePath, fileHash);
+    await seedCompleted(`${key(fileHash)}:c0of3`);
+    const jobs = await submit();
+    expect(jobs.map(({ idempotency_key, suffix }) => ({ idempotency_key, suffix }))).toEqual([
+      { idempotency_key: `${key(fileHash)}:c0of3`, suffix: null },
+      { idempotency_key: `${key(fileHash)}:c1of3`, suffix: `${fileHash.slice(0, 6)}-c1` },
+      { idempotency_key: `${key(fileHash)}:c2of3`, suffix: `${fileHash.slice(0, 6)}-c2` },
+    ]);
+  }, 120_000);
+
+  test('a legacy completion keyed on the full-file hash survives a later frontmatter-only edit', async () => {
+    await engine.setConfig('models.dream.triage', 'no-such-provider:judge');
+    const { filePath, fileHash } = writeTranscript('title: Mentor session\n');
+    await seedCompleted(`dream:synth:${filePath}:${fileHash.slice(0, 16)}`);
+    expect(await run(false)).toEqual({ candidates: 0, already_synthesized: 1 });
+    writeTranscript('title: Mentor session\ntype: conversation\n');
+    expect(await run(true)).toEqual({ candidates: 0, already_synthesized: 1 });
+  }, 60_000);
+
+  test('prose between two horizontal rules is part of the hashed text', async () => {
+    const filePath = join(corpusDir, NAME);
+    const original = `---\nWe keep the customer contract.\n---\n\n${BODY}`;
+    writeFileSync(filePath, original);
+    await seedVerdict(filePath, sha256(original));
+    await submit();
+    await engine.executeRaw(`UPDATE minion_jobs SET status = 'completed' WHERE name = 'subagent'`);
+    writeFileSync(filePath, `---\nWe cancel the customer contract.\n---\n\n${BODY}`);
+    await engine.setConfig('models.dream.triage', 'no-such-provider:judge');
+    expect(await run(true)).toEqual({ candidates: 1, already_synthesized: 0 });
   }, 60_000);
 });
