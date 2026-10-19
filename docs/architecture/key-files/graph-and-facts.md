@@ -44,12 +44,9 @@ unknown; existing canonical-write and sweep handling of those rows is unchanged.
 `prepareAutomaticLinks`, DB/stale extraction, filesystem extraction, and sweep
 share that ownership, so attendee re-extraction cannot delete a meeting claim,
 and removing the meeting's evidence can remove it. `link-reconciliation.ts` owns
-the shared source/default/federation resolution policy, re-exported by the extract
-command. Its metadata and bounded endpoint loaders, and automatic link preparation,
-share `LIVE_LINK_SOURCES_SQL`: only undeleted pages in unarchived sources supply
-endpoints. An explicit archived-source target is `missing_target`, without fallback
-to another source's copy. Filesystem attendance uses file evidence with database
-endpoint metadata;
+source policy. Endpoint loaders and automatic preparation exclude archived sources
+(`missing_target` for qualified refs). Filesystem attendance uses file evidence and
+database metadata;
 missing, ambiguous, or denied attendance resolution preserves the prior graph and
 does not advance extraction watermarks. Incomplete local preparation still allows
 `put_page` to commit the note, with auto-link error metadata and retryable extraction.
