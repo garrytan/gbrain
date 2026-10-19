@@ -13,6 +13,16 @@ function directory() {
 afterEach(() => { for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true }); });
 
 describe('exact reconciliation CLI', () => {
+  test('empty db-only cache removal is an explicit preview, separate from adoption and apply', () => {
+    expect(parseReconcileArgs(['workspace', 'meetings/example', '--remove-empty-db-only-cache', '--out', 'preview.json']))
+      .toMatchObject({ operation: 'writer_reconcile_preview', params: { source_id: 'workspace', slug: 'meetings/example', remove_empty_db_only_cache: true } });
+    for (const extra of [['--adopt-slug-path'], ['--auto-additive'], ['--backups'],
+      ['--from', 'preview.json', '--decisions', 'choices.json'],
+      ['--apply', 'preview.json', '--request-id', '20000000-0000-4000-8000-000000000001']]) {
+      expect(() => parseReconcileArgs(['workspace', 'meetings/example', '--remove-empty-db-only-cache', ...extra])).toThrow();
+    }
+    expect(() => parseReconcileArgs(['workspace', '--audit', '--remove-empty-db-only-cache'])).toThrow();
+  });
   test('defaults to preview with explicit identities and keeps artifact paths off the wire', () => {
     expect(parseReconcileArgs(['workspace', 'people/example', '--brain', 'host', '--out', 'preview.json', '--json'])).toEqual({
       operation: 'writer_reconcile_preview', params: { source_id: 'workspace', slug: 'people/example' }, brain: 'host',

@@ -350,13 +350,20 @@ async function compareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 's
       const held = await heldFileRefusal(engine, row, root, path, 'drift', options.remote === true);
       if (held) throw held;
       // #6394: a page that never recorded its file reconciles against the file at its slug path only when adopted explicitly.
-      const adopt = !snapshot.page.source_path && !snapshot.page.source_uri ? ['--adopt-slug-path'] : [];
+      const noOrigin = !snapshot.page.source_path && !snapshot.page.source_uri;
+      const dbOnly = publishesDatabaseOnly(root, row.slug, snapshot);
+      const emptyCache = noOrigin && before.length === 0 && isSourceDbOnlySlug(root, row.slug, 'not_db_only');
+      const adopt = emptyCache ? ['--remove-empty-db-only-cache'] : noOrigin && !dbOnly ? ['--adopt-slug-path'] : [];
       // #6693: a committed Git change sync has not imported yet (another agent's commit), on a page that records its file.
-      if (!adopt.length && await committedPendingImport(engine, row.source_id, root, path)) throw pendingImportRefusal(row, options.remote === true);
+      if (!noOrigin && await committedPendingImport(engine, row.source_id, root, path)) throw pendingImportRefusal(row, options.remote === true);
       throw opError('source_changed', 'The canonical file contains an uncoordinated local edit.',
-        `On the brain host, run gbrain sources reconcile ${row.source_id} ${row.slug} --brain <brain id, host by default> --preview${adopt.length ? ' --adopt-slug-path (the page records no file of its own, so the preview adopts the file at its slug path)' : ''}, review and apply the resolved preview, then retry this write with a new request_id. Neither copy was overwritten.`,
-        { detail: 'file_database_drift', fix: readFix(`Previews how page ${row.slug}'s canonical file and database copy reconcile; a preview never changes canonical content.`,
-          { argv: ['gbrain', 'sources', 'reconcile', row.source_id, row.slug, '--brain', 'host', '--preview', ...adopt] }) });
+        noOrigin && dbOnly && !emptyCache
+          ? 'This database-only page has an unrecognized cache. Preserve and inspect its unpublished content with the operator; origin adoption is not supported for this storage policy. Empty-cache recovery accepts only zero bytes. Neither copy was overwritten.'
+          : `On the brain host, run gbrain sources reconcile ${row.source_id} ${row.slug} --brain <brain id, host by default> --preview${adopt.length ? ` ${adopt[0]}` : ''}, review and apply the resolved preview, then retry this write with a new request_id. ${emptyCache ? 'The preview removes only the empty cache and keeps the database page unchanged. ' : ''}Neither copy was overwritten.`,
+        { detail: 'file_database_drift', fix: noOrigin && dbOnly && !emptyCache
+          ? readFix('Shows the database-only page and its recorded source path for operator inspection.', { argv: ['gbrain', 'get', '--source', row.source_id, '--', row.slug] })
+          : readFix(emptyCache ? 'Previews removal of the empty cache without changing the database page.' : `Previews how page ${row.slug}'s canonical file and database copy reconcile; a preview never changes canonical content.`,
+            { argv: ['gbrain', 'sources', 'reconcile', row.source_id, row.slug, '--brain', 'host', '--preview', ...adopt] }) });
     }
   } else if (before && !snapshot && content !== null && beforeHash() !== fileContentHash(content)
     && !(options.capture && beforeHash() === options.capture.hash)) {

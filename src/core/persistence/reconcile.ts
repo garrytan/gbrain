@@ -21,6 +21,7 @@ import { isTerminal } from './model.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
+import { emptyCacheResult } from './reconcile-cache.ts';
 
 export { assertReconcileOutputPath } from './reconcile-backup.ts';
 export type { ReconcileArtifact } from './reconcile-state.ts';
@@ -91,7 +92,7 @@ async function config(engine: BrainEngine): Promise<GBrainConfig> {
   return await loadConfigWithEngine(engine, loadConfig()) ?? { engine: engine.kind } as GBrainConfig;
 }
 export async function runReconcilePreview(engine: BrainEngine, params: Record<string, unknown>): Promise<Record<string, unknown> & { preview: ReconcileArtifact }> {
-  strictReconcileKeys(params, ['source_id', 'slug', 'from', 'decisions', 'output_path', 'auto_additive', 'accept_suggested', 'adopt_slug_path'], ['source_id', 'slug']);
+  strictReconcileKeys(params, ['source_id', 'slug', 'from', 'decisions', 'output_path', 'auto_additive', 'accept_suggested', 'adopt_slug_path', 'remove_empty_db_only_cache'], ['source_id', 'slug']);
   const auto = params.auto_additive === true;
   if (params.auto_additive !== undefined && typeof params.auto_additive !== 'boolean'
     || params.accept_suggested !== undefined && (typeof params.accept_suggested !== 'boolean' || !auto)) {
@@ -107,12 +108,19 @@ export async function runReconcilePreview(engine: BrainEngine, params: Record<st
     await assertReconcileOutputPath(engine, sourceId, params.output_path);
   }
   const from = params.from === undefined ? undefined : validateReconcileArtifact(params.from);
+  const cache = params.remove_empty_db_only_cache === true || from?.action === 'remove_empty_db_only_cache';
+  if (params.remove_empty_db_only_cache !== undefined && typeof params.remove_empty_db_only_cache !== 'boolean'
+    || cache && (params.auto_additive !== undefined || params.accept_suggested !== undefined || params.adopt_slug_path !== undefined || params.decisions !== undefined
+      || from !== undefined && from.action !== 'remove_empty_db_only_cache')) {
+    throw opError('invalid_params', 'Empty-cache removal cannot merge content or adopt an origin.',
+      'Create a separate --remove-empty-db-only-cache preview, then apply that preview unchanged.');
+  }
   if (params.decisions !== undefined && !from) throw opError('invalid_params', 'Decisions require the previous private preview artifact.',
     'Pass the preview being resolved along with the decisions (CLI: --from with the preview file written by --out).');
   if (from && (from.preconditions.source_id !== sourceId || from.preconditions.slug !== slug)) throw opError('invalid_params', 'The previous preview names a different page.',
     `Use the preview made for ${slug} in '${sourceId}', or run the command with the source and slug that preview file names.`);
   const state = await readReconcileState(engine, sourceId, slug, from?.preconditions.assessment_at,
-    { adoptSlugPath: params.adopt_slug_path === true || (from !== undefined && reconcilePreviewAdopts(from)) });
+    { adoptSlugPath: params.adopt_slug_path === true || (from !== undefined && reconcilePreviewAdopts(from)), removeEmptyDbOnlyCache: cache });
   if (from) assertPreimages(from, state);
   const database = reconcileCanonical(state.snapshot.page, state.snapshot.tags);
   const classification = auto ? classifyDrift(state.file, database) : undefined;
@@ -124,22 +132,24 @@ export async function runReconcilePreview(engine: BrainEngine, params: Record<st
     autoDecisions = chosen.auto;
   }
   if (autoDecisions.length) assertAutoDecisions(autoDecisions, state.file, database, decisions);
-  const prepared = await prepareReconcileResult(engine, state, decisions);
+  const prepared = cache ? emptyCacheResult(state) : await prepareReconcileResult(engine, state, decisions);
   const reviewRequired = classification?.verdict === 'review_required';
   const preview: ReconcileArtifact = { format_version: autoDecisions.length ? 2 : 1, preview_id: from?.preview_id ?? randomUUID(), preconditions: state.pins,
+    ...(cache ? { action: 'remove_empty_db_only_cache' as const } : {}),
     preimages: JSON.parse(stableJson({ file_base64: state.raw.toString('base64'), database: state.snapshot, stored_page: state.storedPage })),
     decisions, conflicts: prepared.conflicts, result: prepared.result, result_digest: digest(prepared.result),
     status: prepared.conflicts.length || reviewRequired ? 'needs_resolution' : 'ready', ...(autoDecisions.length ? { auto_decisions: autoDecisions } : {}) };
   await assertReconcileSize(engine, preview);
   const git = { dirty: classification?.verdict === 'no_drift' ? canonicalFileGitDirty(state.root, state.path) : null, root: state.root, path: relative(state.root, state.path) };
   return { source_id: sourceId, slug, preview_id: preview.preview_id, status: preview.status,
+    ...(cache ? { action: preview.action, next_action: 'Review removal of this zero-byte cache, then apply the private preview with a new request ID. The database page stays unchanged and database-only. Retry the blocked write separately with a new request ID.' } : {}),
     ...(classification ? { classification: classification.verdict, drift_paths: classification.paths,
       auto_decided_paths: autoDecisions.map(d => d.path), next_action: additiveNextAction(classification, preview.status, git),
       ...(git.dirty === null ? {} : { git_dirty: git.dirty }) } : {}),
     conflict_paths: prepared.conflicts.map(c => c.path), protected_paths: prepared.protectedPaths,
     migrated_scan_paths: prepared.scanPaths, relative_path: state.pins.relative_path,
     line_endings: state.raw.includes(Buffer.from('\r\n')) ? 'crlf' : 'lf',
-    formatting_only: digest(state.file) === digest(reconcileCanonical(state.snapshot.page, state.snapshot.tags)) &&
+    formatting_only: !cache && digest(state.file) === digest(reconcileCanonical(state.snapshot.page, state.snapshot.tags)) &&
       sha256(serializePageToMarkdown(state.snapshot.page, state.snapshot.tags)) !== state.pins.raw_file_hash,
     result_digest: preview.result_digest, preview };
 }
@@ -149,6 +159,8 @@ export async function runReconcileApply(engine: BrainEngine, params: Record<stri
     'Pass keep_file_bytes: true to leave a canonical file that already holds the resolved result byte for byte, or omit it.');
   const { sourceId, slug, authority } = await authorizeReconcile(engine, params.source_id, params.slug);
   const artifact = validateReconcileArtifact(params.preview);
+  if (artifact.action && params.keep_file_bytes !== undefined) throw opError('invalid_params', 'Empty-cache removal cannot keep file bytes.',
+    'Apply the empty-cache preview without keep_file_bytes.');
   artifact.decisions = reconcileDecisions(artifact.decisions);
   const requestId = requireUuid(params.request_id as string);
   if (artifact.preconditions.source_id !== sourceId || artifact.preconditions.slug !== slug || artifact.status !== 'ready' || artifact.conflicts.length) {
@@ -175,7 +187,7 @@ export async function runReconcileApply(engine: BrainEngine, params: Record<stri
     const state = await readReconcileState(engine, sourceId, slug, artifact.preconditions.assessment_at, adopt);
     assertPreimages(artifact, state);
     assertAutoDecisions(artifact.auto_decisions ?? [], state.file, reconcileCanonical(state.snapshot.page, state.snapshot.tags), artifact.decisions);
-    const prepared = await prepareReconcileResult(engine, state, artifact.decisions);
+    const prepared = artifact.action === 'remove_empty_db_only_cache' ? emptyCacheResult(state) : await prepareReconcileResult(engine, state, artifact.decisions);
     if (!prepared.ready || digest(prepared.result) !== artifact.result_digest) staleReconcile('resolved content or canonical policy changed');
     const preparedReplay = await replay();
     if (preparedReplay) return preparedReplay;

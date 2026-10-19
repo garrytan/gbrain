@@ -26,6 +26,7 @@ import type { AutoDecision } from './reconcile-additive.ts';
 import { publishesDatabaseOnly, readCanonicalAsImported } from './page-prepare.ts';
 import { isMirrorOnlyPage } from './mirror-read-only.ts';
 import { hardenedGitSync } from '../hardened-git.ts';
+import { isSourceDbOnlySlug } from './source-storage.ts';
 
 export interface ReconcilePins {
   brain_id: string; source_id: string; source_incarnation: string; slug: string; page_id: number;
@@ -33,6 +34,8 @@ export interface ReconcilePins {
   raw_file_hash: string; relative_path: string; policy_digest: string; withdrawals_digest: string; assessment_at: string;
 }
 export interface ReconcileArtifact {
+  /** Explicit file-only recovery; never inferred from absent provenance. */
+  action?: 'remove_empty_db_only_cache';
   /** 2 when the preview carries #5974 automatic decisions. */
   format_version: 1 | 2; preview_id: string; preconditions: ReconcilePins;
   preimages: { file_base64: string; database: PageSnapshot; stored_page: Record<string, unknown> };
@@ -46,7 +49,7 @@ export interface ReconcileState {
   importPath: string;
   storedPage: Record<string, unknown>; file: ParsedPage; pins: ReconcilePins;
   /** `slug_derived`: a database-only page matched to the canonical file at its slug path. */
-  origin: 'recorded' | 'slug_derived';
+  origin: 'recorded' | 'slug_derived' | 'database_only_cache';
   /** The `source_path` apply records for a `slug_derived` origin. */
   originSourcePath: string | null;
 }
@@ -77,8 +80,9 @@ export async function reconcilePolicyDigest(engine: BrainEngine, sourceId: strin
  */
 export const ABSENT_FILE_HASH = '0'.repeat(64);
 /** The read options a stored preview implies: its slug-path adoption, and whether it observed the file absent. */
-export function reconcileReadOptions(artifact: Pick<ReconcileArtifact, 'preimages' | 'preconditions'>): { adoptSlugPath: boolean; fileGone: boolean } {
-  return { adoptSlugPath: reconcilePreviewAdopts(artifact), fileGone: artifact.preconditions.raw_file_hash === ABSENT_FILE_HASH };
+export function reconcileReadOptions(artifact: Pick<ReconcileArtifact, 'preimages' | 'preconditions' | 'action'>): { adoptSlugPath: boolean; fileGone: boolean; removeEmptyDbOnlyCache: boolean } {
+  return { adoptSlugPath: reconcilePreviewAdopts(artifact), fileGone: artifact.preconditions.raw_file_hash === ABSENT_FILE_HASH,
+    removeEmptyDbOnlyCache: artifact.action === 'remove_empty_db_only_cache' };
 }
 /**
  * #6712 wave: where a missing canonical file's deletion stands in Git. `in_head`: still committed at HEAD (deleted only in
@@ -147,7 +151,7 @@ async function assertSoleFileClaim(engine: BrainEngine, target: FileClaimTarget)
  * slug, a never-filed derive-phase page) or a mirror-only page never adopts one.
  */
 export async function readReconcileState(engine: BrainEngine, sourceId: string, slug: string, assessmentAt = new Date().toISOString(),
-  opts: { adoptSlugPath?: boolean; fileGone?: boolean } = {}): Promise<ReconcileState> {
+  opts: { adoptSlugPath?: boolean; fileGone?: boolean; removeEmptyDbOnlyCache?: boolean } = {}): Promise<ReconcileState> {
   const binding = await getWorktreeBinding(engine, sourceId);
   if (!binding?.local_path || binding.owner_host_id !== localHostId() || binding.state !== 'active') {
     throw new OperationError('owner_unavailable', 'Reconciliation requires the existing active owner on this host.', 'Run repair on the current owner; repair never claims or activates a source.');
@@ -165,15 +169,22 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
   const recorded = recordedPathFromFileUri(snapshot.page.source_uri, root);
   const mode = await scannerSlugRootMode(engine, sourceId, root);
   const recordedPath = recordedReconcilePath(root, snapshot.page, mode);
+  const cache = opts.removeEmptyDbOnlyCache === true;
+  if (cache && (opts.adoptSlugPath || opts.fileGone || snapshot.page.source_path != null || snapshot.page.source_uri != null
+    || !isSourceDbOnlySlug(root, slug, 'refuse') || await isMirrorOnlyPage(engine, sourceId, slug))) {
+    throw opError('source_changed', 'Empty-cache recovery requires a declared database-only page with no recorded origin.',
+      'Nothing changed. Read the page and storage policy; this recovery never adopts an origin or changes storage policy.');
+  }
   const marked = !recordedPath && isDatabaseOnlyPage({ ...snapshot.page,
     database_only_reason: await isUnboundSourcePage(engine, sourceId, slug) ? 'unbound_source' : null });
   const adoptable = !recordedPath && !marked && opts.adoptSlugPath === true && !snapshot.page.source_uri
     && !publishesDatabaseOnly(root, slug, snapshot) && !await isMirrorOnlyPage(engine, sourceId, slug);
-  const derived = marked || adoptable ? slugDerivedOrigin(root, slug, mode) : null;
-  const origin = derived ? 'slug_derived' : 'recorded';
+  const derived = cache || marked || adoptable ? slugDerivedOrigin(root, slug, mode) : null;
+  const origin = cache ? 'database_only_cache' : derived ? 'slug_derived' : 'recorded';
   const path = recordedPath ?? derived?.path ?? null;
   if (!path || !isWriteTargetContained(path, root)) throw opError('source_changed', 'The page has no unambiguous confined recorded Markdown origin.',
-    `Page ${slug} in '${sourceId}' records no Markdown file inside the source checkout, so there is nothing to reconcile it against; nothing changed. ${!recordedPath && !marked && !snapshot.page.source_uri && opts.adoptSlugPath !== true
+    `Page ${slug} in '${sourceId}' records no Markdown file inside the source checkout, so there is nothing to reconcile it against; nothing changed. ${isSourceDbOnlySlug(root, slug, 'not_db_only') && !snapshot.page.source_path && !snapshot.page.source_uri
+      ? 'For a zero-byte cache only, preview with --remove-empty-db-only-cache; nonempty files require operator inspection and are never discarded by this recovery.' : !recordedPath && !marked && !snapshot.page.source_uri && opts.adoptSlugPath !== true && !publishesDatabaseOnly(root, slug, snapshot)
       ? `If the file at its slug path is this page's canonical file, preview again with --adopt-slug-path (gbrain sources reconcile ${sourceId} ${slug} --preview --adopt-slug-path) to adopt it; otherwise check its recorded source path with the command in fix.` : 'Check its recorded source path with the command in fix.'}`,
     { fix: readFix('Shows the page and its recorded source path.', { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] }) });
   let size: number;
@@ -203,6 +214,15 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
   await assertSoleFileClaim(engine, { sourceId, slug, pageId: snapshot.page.id, root, mode, path, canonicalPath,
     recordedUri: recorded ? snapshot.page.source_uri ?? null : null });
   const raw = readFileSync(path), text = raw.toString('utf8');
+  if (cache) {
+    if (raw.length !== 0) throw opError('source_changed', 'The database-only cache is not empty; recovery will not discard unpublished content.',
+      'Nothing changed. Inspect and preserve the file with the operator; empty-cache recovery accepts exactly zero bytes, not whitespace or Markdown.');
+    const pins = await reconcilePins(engine, { brain_id: brain.brain_id, sourceId, binding, snapshot, slug, assessmentAt, root, path, canonicalPath, rawFileHash: sha256(raw) });
+    // Storage declarations live in gbrain.yml, outside the ordinary DB policy digest.
+    pins.policy_digest = digest({ policy: pins.policy_digest, storage: sha256(readFileSync(join(root, 'gbrain.yml'))) });
+    return { binding, root, path, importPath: scannerSourcePath(root, path, mode), raw, snapshot, storedPage,
+      file: reconcileCanonical(snapshot.page, snapshot.tags), pins, origin, originSourcePath: null };
+  }
   if (!Buffer.from(text).equals(raw)) throw opError('invalid_params', 'The canonical file must contain valid UTF-8.',
     `Nothing changed. Re-save the canonical file of ${slug} in '${sourceId}' as UTF-8, then preview the page again.`);
   try { parseDataFrontmatter(text); }
@@ -239,7 +259,8 @@ async function reconcilePins(engine: BrainEngine, input: { brain_id: string; sou
     policy_digest: await reconcilePolicyDigest(engine, input.sourceId), withdrawals_digest: digest({ withdrawals: snapshot.withdrawals, global_purges: snapshot.globalPurges ?? null }), assessment_at: input.assessmentAt };
 }
 /** #6394: a preview made with --adopt-slug-path recorded a page with no origin; apply and publication adopt the same pinned file. */
-export function reconcilePreviewAdopts(artifact: Pick<ReconcileArtifact, 'preimages'>): boolean {
+export function reconcilePreviewAdopts(artifact: Pick<ReconcileArtifact, 'preimages' | 'action'>): boolean {
+  if (artifact.action === 'remove_empty_db_only_cache') return false;
   const stored = (artifact.preimages as { stored_page?: { source_path?: unknown; source_uri?: unknown } | null } | null)?.stored_page;
   return stored != null && stored.source_path == null && stored.source_uri == null;
 }
@@ -249,7 +270,7 @@ export function assertReconcilePins(expected: ReconcilePins, actual: ReconcilePi
 export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
   validateReconcileJson(value);
   const v2 = (value as Record<string, unknown> | null)?.format_version === 2;
-  strictReconcileKeys(value, ['format_version', 'preview_id', 'preconditions', 'preimages', 'decisions', 'conflicts', 'result', 'result_digest', 'status',
+  strictReconcileKeys(value, ['format_version', 'preview_id', 'preconditions', 'preimages', 'decisions', 'conflicts', 'result', 'result_digest', 'status', 'action',
     ...(v2 ? ['auto_decisions'] : [])], ['format_version', 'preview_id', 'preconditions', 'preimages', 'decisions', 'conflicts', 'result', 'result_digest', 'status',
     ...(v2 ? ['auto_decisions'] : [])]);
   if (v2) {
@@ -292,6 +313,13 @@ export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
       'Pass the preview file exactly as reconcile wrote it with --out; change it only through --decisions. If it was edited, make a fresh preview.');
   }
   for (const key of ['brain_id', 'source_incarnation', 'worktree_id', 'revision']) requireUuid(value.preconditions[key] as string);
+  if (value.action !== undefined && (value.action !== 'remove_empty_db_only_cache' || value.format_version !== 1
+    || value.status !== 'ready' || value.decisions.length !== 0 || value.conflicts.length !== 0
+    || value.preimages.file_base64 !== '' || value.preconditions.raw_file_hash !== sha256(Buffer.alloc(0))
+    || value.preimages.stored_page.source_path != null || value.preimages.stored_page.source_uri != null
+    || digest(reconcileCanonical((value.preimages.database as unknown as PageSnapshot).page, value.preimages.database.tags as string[])) !== value.result_digest)) {
+    throw opError('invalid_params', 'Malformed empty-cache recovery artifact.', 'Generate a fresh --remove-empty-db-only-cache preview and apply it unchanged.');
+  }
   requireUuid(value.preview_id as string);
   for (const key of ['binding_digest', 'raw_file_hash', 'policy_digest', 'withdrawals_digest']) {
     if (!/^[a-f0-9]{64}$/.test(value.preconditions[key] as string)) {

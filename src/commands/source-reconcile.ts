@@ -22,6 +22,7 @@ import { reportPersistenceCliError } from './persistence-delegate.ts';
 
 export const RECONCILE_HELP = `Usage:
   gbrain sources reconcile <source> <slug> --brain <id> [--preview] [--adopt-slug-path] [--out <new-file>] [--json]
+  gbrain sources reconcile <source> <slug> --brain <id> --preview --remove-empty-db-only-cache --out <new-file> [--json]
   gbrain sources reconcile <source> <slug> --brain <id> --preview --from <preview-file>
     --decisions <decisions-file> --out <new-file> [--json]
   gbrain sources reconcile <source> <slug> --brain <id> --preview --auto-additive [--accept-suggested]
@@ -40,7 +41,11 @@ file as the page's origin. A page that records no origin and carries no
 database-only marker (an older write) is previewed against the file at its slug
 path only with --adopt-slug-path; the preview pins that file, apply records it
 as the page's origin, and the flag is refused for pages that are database-only
-by design. --out creates a new
+by design. For a declared storage.db_only page with no origin, use
+--remove-empty-db-only-cache to preview removal of an exactly zero-byte regular
+cache. Apply removes only that file: the page, history, privacy, storage policy
+and ownership stay unchanged. Nonempty files, links and shared claims refuse.
+This option cannot combine with adoption or content decisions. --out creates a new
 private file outside canonical worktrees; it never replaces an existing file.
 Resolve conflicts with JSON-Pointer decisions and inspect the resolved preview
 before applying. Apply preserves both originals and uses the current canonical
@@ -88,7 +93,7 @@ export interface ReconcileCliArgs {
 export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
   const flags = new Map<string, string | true>();
   const positional: string[] = [];
-  const boolean = new Set(['--preview', '--audit', '--backups', '--json', '--auto-additive', '--accept-suggested', '--classify', '--adopt-slug-path', '--conflicts']);
+  const boolean = new Set(['--preview', '--audit', '--backups', '--json', '--auto-additive', '--accept-suggested', '--classify', '--adopt-slug-path', '--conflicts', '--remove-empty-db-only-cache']);
   const values = new Set(['--brain', '--out', '--from', '--decisions', '--apply', '--request-id', '--limit', '--after', '--remove-backup', '--window']);
   for (let i = 0; i < args.length; i++) {
     const token = args[i];
@@ -127,6 +132,11 @@ export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
       `Reconcile one page at a time by its exact slug; an --audit run for source ${source} lists the pages that need it.`);
   }
   const applying = flags.has('--apply');
+  if (flags.has('--remove-empty-db-only-cache') && (applying || backups || audit
+    || ['--adopt-slug-path', '--auto-additive', '--accept-suggested', '--decisions'].some(flag => flags.has(flag)))) {
+    throw opError('invalid_params', '--remove-empty-db-only-cache only creates a file-removal preview.',
+      'Preview the exact page with --remove-empty-db-only-cache and --out, then apply the written artifact in a separate command.');
+  }
   if (applying && ['--preview', '--from', '--decisions', '--out', '--audit', '--backups', '--remove-backup'].some(flag => flags.has(flag))) {
     throw opError('invalid_params', 'Apply cannot be combined with preview, decisions, output, or audit options.',
       'Run apply on its own: the resolved preview file after --apply, --request-id and --brain only. Make or resolve previews in a separate command first.');
@@ -175,6 +185,7 @@ export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
   if (applying) params.request_id = flags.get('--request-id');
   if (flags.has('--auto-additive')) params.auto_additive = true;
   if (flags.has('--adopt-slug-path')) params.adopt_slug_path = true;
+  if (flags.has('--remove-empty-db-only-cache')) params.remove_empty_db_only_cache = true;
   if (flags.has('--accept-suggested')) params.accept_suggested = true;
   if (flags.has('--classify')) params.classify = true;
   if (flags.has('--conflicts')) params.conflicts = true;
