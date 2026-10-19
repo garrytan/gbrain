@@ -231,17 +231,17 @@ describe('BudgetTracker.reserve', () => {
   });
 
   test('claude-cli:<alias> chat model under a cap prices at the canonical model rate (no no_pricing throw)', () => {
-    // `gbrain enrich --thin` with chat_model = claude-cli:haiku TX2 hard-failed
-    // at reserve() with reason no_pricing at EVERY --max-usd tried: the
-    // gateway reserves with the pre-alias-resolution model string, and
-    // `haiku` is a recipe alias, not a pricing key. lookupPricing resolves
-    // recipe aliases, so the alias prices exactly like the dated id it maps
-    // to — at reserve(), record() and isModelPriceable() alike.
-    expect(isModelPriceable('claude-cli:haiku', 'chat')).toBe(true);
+    // `gbrain enrich --thin` with a claude-cli alias as chat_model TX2
+    // hard-failed at reserve() with reason no_pricing at EVERY --max-usd
+    // tried: the gateway reserves with the pre-alias-resolution model string,
+    // and an alias is not a pricing key. lookupPricing resolves recipe
+    // aliases, so the alias prices exactly like the dated id it maps to — at
+    // reserve(), record() and isModelPriceable() alike.
+    expect(isModelPriceable('claude-cli:claude-haiku-4-5', 'chat')).toBe(true);
     const t = new BudgetTracker({ maxCostUsd: 5.0, label: 'test', auditPath });
     expect(() =>
       t.reserve({
-        modelId: 'claude-cli:haiku',
+        modelId: 'claude-cli:claude-haiku-4-5',
         estimatedInputTokens: 1_000_000,
         maxOutputTokens: 0,
         kind: 'chat',
@@ -259,6 +259,18 @@ describe('BudgetTracker.reserve', () => {
     // the alias and the dated id project the same cost.
     expect(audit[0].projected_cost_usd).toBeCloseTo(1.0, 6);
     expect(audit[1].projected_cost_usd).toBe(audit[0].projected_cost_usd);
+  });
+
+  test('a claude-cli family name under a cap reserves at the newest model of the family', () => {
+    // `claude-cli:haiku` is not pinned: the CLI runs the newest Haiku, so the
+    // reservation prices Haiku 5.5 ($0.10/1M input under 100k tokens), not 4.5.
+    const t = new BudgetTracker({ maxCostUsd: 5.0, label: 'test', auditPath });
+    expect(() =>
+      t.reserve({ modelId: 'claude-cli:haiku', estimatedInputTokens: 50_000, maxOutputTokens: 0, kind: 'chat' }),
+    ).not.toThrow();
+    const audit = readAudit();
+    expect(audit.map((e) => e.event)).toEqual(['reserve']);
+    expect(audit[0].projected_cost_usd).toBeCloseTo(0.005, 9);
   });
 
   test('claude-cli:<dated-id> resolves Anthropic pricing via the model tail (parity guard for the alias path)', () => {

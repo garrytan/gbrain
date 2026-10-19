@@ -113,11 +113,14 @@ describe('claude-cli recipe registration', () => {
     expect(recipe!.touchpoints.expansion!.default_timeout_ms).toBe(30_000);
   });
 
-  test('recipe aliases map short names to canonical model ids', async () => {
-    const { getRecipe } = await import('../src/core/ai/recipes/index.ts');
-    const recipe = getRecipe('claude-cli');
-    expect(recipe!.aliases!['sonnet']).toBe('claude-sonnet-4-6');
-    expect(recipe!.aliases!['haiku']).toBe('claude-haiku-4-5-20251001');
+  test('family names pass through to the CLI unpinned; ids and id aliases resolve as before', async () => {
+    const { resolveRecipe } = await import('../src/core/ai/model-resolver.ts');
+    for (const family of ['haiku', 'sonnet', 'opus']) {
+      expect(resolveRecipe(`claude-cli:${family}`).parsed.modelId).toBe(family);
+    }
+    expect(resolveRecipe('claude-cli:claude-haiku-5-5').parsed.modelId).toBe('claude-haiku-5-5');
+    expect(resolveRecipe('claude-cli:claude-haiku-4-5').parsed.modelId).toBe('claude-haiku-4-5-20251001');
+    expect(resolveRecipe('claude-cli:claude-sonnet-4-6-20250929').parsed.modelId).toBe('claude-sonnet-4-6');
   });
 });
 
@@ -187,6 +190,26 @@ describe('claude-cli LanguageModel — text-only round trip', () => {
 
       expect(result.usage.cachedInputTokens).toBeUndefined();
     });
+  });
+
+  test('reports the model the CLI ran for a family name as the response model', async () => {
+    await withStubEnv(async () => {
+      stageResponse(baseEnvelope('ok', { modelUsage: { 'claude-haiku-5-5': { inputTokens: 12, outputTokens: 34 } } }));
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-cli:haiku');
+      expect(model.modelId).toBe('haiku');
+      const result = await model.doGenerate({
+        prompt: [userMessage('hi')],
+      } as LanguageModelV2CallOptions);
+      expect(result.response).toEqual({ modelId: 'claude-haiku-5-5' });
+    });
+  });
+
+  test('names no response model unless the CLI reports exactly one', async () => {
+    const { claudeCliServedModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+    expect(claudeCliServedModel(undefined)).toBeUndefined();
+    expect(claudeCliServedModel({})).toBeUndefined();
+    expect(claudeCliServedModel({ 'claude-opus-5-5': {}, 'claude-haiku-5-5': {} })).toBeUndefined();
   });
 
   test('strips provider prefixes from the model id', async () => {

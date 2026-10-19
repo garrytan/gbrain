@@ -2,6 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import {
   compareAnthropicVersions,
   newerAnthropicModel,
+  newestInFamily,
   parseAnthropicModelId,
 } from '../../src/core/ai/anthropic-model-ids.ts';
 
@@ -41,6 +42,21 @@ describe('compareAnthropicVersions', () => {
     expect(compareAnthropicVersions(p('claude-sonnet-5'), p('claude-sonnet-4-6'))).toBeGreaterThan(0);
     expect(compareAnthropicVersions(p('claude-opus-4-7'), p('claude-opus-4-8'))).toBeLessThan(0);
     expect(compareAnthropicVersions(p('claude-haiku-4-5'), p('claude-haiku-4-5-20251001'))).toBe(0);
+  });
+});
+
+describe('newestInFamily', () => {
+  test('picks the highest version of the family, so a newer row moves it', () => {
+    const ids = ['claude-haiku-4-5-20251001', 'claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1', 'claude-3-5-haiku-20241022'];
+    expect(newestInFamily('haiku', ids)?.id).toBe('claude-haiku-5-5');
+    expect(newestInFamily('haiku', [...ids, 'claude-haiku-5-6'])?.id).toBe('claude-haiku-5-6');
+    expect(newestInFamily('sonnet', ids)?.id).toBe('claude-sonnet-5-5');
+  });
+
+  test('a non-family name or a family absent from the ids is null', () => {
+    expect(newestInFamily('opus', ['claude-haiku-5-5'])).toBeNull();
+    expect(newestInFamily('fable', ['claude-fable-5-1'])).toBeNull();
+    expect(newestInFamily('claude-haiku-5-5', ['claude-haiku-5-5'])).toBeNull();
   });
 });
 

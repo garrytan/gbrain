@@ -201,7 +201,7 @@ describe('BudgetMeter pricing.overrides (#4312)', () => {
       budgetUsd: 0.001, phase: 'propose_takes', auditPath,
       pricingOverrides: parsePricingOverrides('{"claude-cli:claude-haiku-4-5-20251001": 0}'),
     });
-    const r = meter.check({ modelId: 'claude-cli:haiku', ...big });
+    const r = meter.check({ modelId: 'claude-cli:claude-haiku-4-5', ...big });
     expect(r.allowed).toBe(true);
     expect(r.estimatedCostUsd).toBe(0);
   });
