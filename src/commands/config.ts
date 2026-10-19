@@ -55,6 +55,7 @@ export function isSensitiveConfigKey(key: string): boolean {
  * next key cannot be added to only one branch (which would silently route
  * `unset` to the DB plane). */
 const FILE_PLANE_DOTTED_KEYS: ReadonlySet<string> = new Set([
+  'links.reference_index_max_pages', 'links.reference_index_max_bytes',
   'push.allow_unverified_remote',
   'hooks.stop_push_debounce_min',
   'backup.check_enabled',
@@ -550,6 +551,12 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
     console.log(`Set ${key} = ${on} (file plane: ~/.gbrain/config.json)`);
   } else if (key === 'persistence.write_wait_ms') { await setFileWriteWait(cfg, value, saveConfig);
   } else if (key === 'doctor.default_budget_ms') { (await import('./doctor/default-budget.ts')).setDoctorDefaultBudget(cfg, value, saveConfig);
+  } else if (key === 'links.reference_index_max_pages' || key === 'links.reference_index_max_bytes') {
+    const { parseReferenceLimit } = await import('../core/source-local-reference-limits.ts');
+    const n = parseReferenceLimit(key, value);
+    cfg.links = { ...cfg.links, [key.slice('links.'.length)]: n };
+    saveConfig(cfg);
+    console.log(`Set ${key} = ${n} (file plane)`);
   } else if (key === 'migrate.graduation') {
     const on = isConfigTruthy(value);
     cfg.migrate = { ...(cfg.migrate ?? {}), graduation: on };

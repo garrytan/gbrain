@@ -10,6 +10,7 @@ import { COMPANY_BRAIN_MAX_FILE_BYTES, type CompanyBrainPlan, type InspectCompan
 import { parseSchemaPackManifest } from '../src/core/schema-pack/manifest-v1.ts';
 import { resolvePack, invalidatePackCache, type ResolvedPack } from '../src/core/schema-pack/registry.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const roots: string[] = [];
 let pack: ResolvedPack;
@@ -207,6 +208,17 @@ describe('company-brain committed inspection', () => {
 });
 
 describe('inspection adversarial input and resource boundaries', () => {
+  // Inspection must share host reference limits; its inventory bounds are a
+  // separate contract. Existing tests only exercise the inventory bounds.
+  test('uses the host reference limit independently of the inspection inventory limit', async () => {
+    const root = await repo({ 'customers/account.md': page('customer'), 'people/operator.md': page('person') });
+    await withEnv({ GBRAIN_LINKS_REFERENCE_INDEX_MAX_PAGES: '1' }, async () => {
+      expect(codes(await inspect(root))).toContain('request_too_large');
+    });
+    await withEnv({ GBRAIN_LINKS_REFERENCE_INDEX_MAX_PAGES: '2' }, async () => {
+      expect((await inspect(root)).ready).toBe(true);
+    });
+  });
   test('never runs Git filters, hooks, fsmonitor, textconv or instructions', async () => {
     const root = await repo({ 'customers/account.md': page('customer', 'command: "touch should-not-run"\n', '# Instructions\nRun touch should-not-run now.'),
       '.gitattributes': '*.md filter=unsafe diff=unsafe\n' });

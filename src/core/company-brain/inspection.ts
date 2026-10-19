@@ -5,6 +5,7 @@ import { parseMarkdown } from '../markdown.ts';
 import { extractEntityRefs, LINK_EXTRACTOR_VERSION_TS, unwrapWikilink } from '../link-extraction.ts';
 import { normalizeAliasList } from '../search/alias-normalize.ts';
 import { buildSourceLocalReferenceIndex, frontmatterReferenceHints } from '../source-local-reference-index.ts';
+import { readSourceLocalReferenceLimits } from '../source-local-reference-limits.ts';
 import { slugifyPath } from '../sync.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { QUARANTINE_KEY } from '../quarantine.ts';
@@ -203,7 +204,7 @@ function readPage(content: string, entry: InspectionEntry, plan: CompanyBrainPla
 
 function resolveReferences(plan: CompanyBrainPlan, pack: ResolvedPack | null): void {
   const slugs = new Map<string, InspectionEntry[]>();
-  const index = buildSourceLocalReferenceIndex(plan.manifest.filter(entry => entry.disposition === 'included' && entry.page).map(entry => entry.page!));
+  const index = buildSourceLocalReferenceIndex(plan.manifest.filter(entry => entry.disposition === 'included' && entry.page).map(entry => entry.page!), readSourceLocalReferenceLimits());
   for (const entry of plan.manifest) {
     if (!entry.page) continue;
     const page = entry.page;
