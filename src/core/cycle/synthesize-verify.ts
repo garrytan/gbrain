@@ -686,7 +686,23 @@ const PUNCT_EDGE = /[.,;:!?]/;
  * in another's mouth.
  */
 export function groundQuote(inner: string, t: GroundedTranscript): GroundResult {
-  if (!t.tolerant) return groundQuoteSpan(inner, t, true);
+  if (!t.tolerant) {
+    const full = groundQuoteSpan(inner, t, false);
+    if (full.status !== 'none') return full;
+    // Closing punctuation may belong to the writer rather than the quoted
+    // source. Try only exact/normalized words before the near-match ladder;
+    // unlike tolerant mode, never drop leading elision or editorial brackets.
+    const core = inner.replace(/[.,;:!?]+\s*$/u, '');
+    if (core !== inner && core.length >= MIN_QUOTE_CHARS && core.split(/\s+/).filter(Boolean).length >= 2) {
+      const match = groundQuoteSpan(core, t, false);
+      if (match.status === 'exact') {
+        const [start, end] = match.spans[0]!;
+        return { status: 'normalized', replacement: t.content.slice(start, end), spans: match.spans };
+      }
+      if (match.status === 'normalized') return match;
+    }
+    return groundQuoteSpan(inner, t, true);
+  }
   const bare = withoutInsertions(inner);
   const forms = [...new Set([inner, quoteCore(inner), bare, quoteCore(bare)])]
     .filter((form, i) => i === 0 || form.split(/\s+/).filter(Boolean).length >= 2);
