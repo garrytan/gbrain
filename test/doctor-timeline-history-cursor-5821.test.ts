@@ -80,3 +80,32 @@ test('a row repaired between runs of one pass is not counted when the pass ends'
   const last = await run();
   expect(last).toMatchObject({ status: 'ok', details: { count: 'exact', materializable_rows: 0, pages_inspected: PAGES } });
 });
+
+test('a recount that runs out of budget carries every found page and never completes the pass', async () => {
+  for (let i = 0; i < PAGES; i++) await addDatabaseOnlyRow(i);
+  const first = await run();
+  expect(first.details).toMatchObject({ truncated: true, count: 'lower_bound', materializable_rows: CAP, pages_inspected: CAP });
+  const key = 'doctor.timeline_history.scan:default';
+  const before = JSON.parse((await engine.getConfig(key))!);
+  // An already expired budget: the recount reaches no page, so the scan must wait.
+  const expired = await timelineHistoryCheck(engine, 'default', { pageCap: CAP, timeBudgetMs: -1 });
+  expect(expired.details).toMatchObject({ truncated: true, count: 'lower_bound', pages_inspected: CAP });
+  const after = JSON.parse((await engine.getConfig(key))!);
+  expect(after.cursor).toBe(before.cursor);
+  expect([...after.found].sort()).toEqual([...before.found].sort());
+  expect(after.last).toBeUndefined();
+  let last;
+  for (let i = 0; i < 3; i++) { last = await run(); if ((last.details as { count?: string }).count === 'exact') break; }
+  expect(last).toMatchObject({ status: 'warn', details: { count: 'exact', materializable_rows: PAGES, pages_affected: PAGES, pages_inspected: PAGES } });
+});
+
+test('an unfinished recount never completes the pass, even when the scan has nothing left', async () => {
+  for (let i = 0; i < PAGES; i++) await addDatabaseOnlyRow(i);
+  const first = await timelineHistoryCheck(engine, 'default', { pageCap: PAGES - 1 });
+  expect(first.details).toMatchObject({ truncated: true, materializable_rows: PAGES - 1 });
+  // The only page past the cursor loses its timeline rows: the next scan finds nothing to inspect.
+  await engine.executeRaw(`DELETE FROM timeline_entries WHERE page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = 'default')`, [`notes/timeline-${PAGES - 1}`]);
+  const expired = await timelineHistoryCheck(engine, 'default', { pageCap: PAGES - 1, timeBudgetMs: -1 });
+  expect(expired.details).toMatchObject({ truncated: true, count: 'lower_bound' });
+  expect(JSON.parse((await engine.getConfig('doctor.timeline_history.scan:default'))!).last).toBeUndefined();
+});
