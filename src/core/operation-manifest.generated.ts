@@ -1969,6 +1969,10 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "required": true,
         "description": "Slug of the page whose timeline entries to return."
       },
+      "source_id": {
+        "type": "string",
+        "description": "One source, or '__all__'."
+      },
       "after": {
         "type": "string",
         "description": "Return entries on or after this date (YYYY-MM-DD)"

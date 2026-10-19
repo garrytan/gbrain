@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 242920,
-    "stdoutSha256": "746130fbb9b8f33b5e8f81d8b9377ae133c1f3866c76c891b155f9d50971cb3e",
+    "stdoutBytes": 243065,
+    "stdoutSha256": "f3c28d8926e723f345203b1d75cb459f890480f9a713b177a23b89b83e574966",
     "toolNames": [
       "remember",
       "entity",
@@ -2372,6 +2372,7 @@
           "min_trust": "string?",
           "since": "string?",
           "slug": "string",
+          "source_id": "string?",
           "until": "string?"
         },
         "required_scopes": [],
@@ -2407,6 +2408,10 @@
             },
             "slug": {
               "description": "Slug of the page whose timeline entries to return.",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "One source, or '__all__'.",
               "type": "string"
             },
             "until": {
