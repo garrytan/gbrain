@@ -20,8 +20,8 @@
 // to quote). It NEVER fails the install: every path exits 0.
 
 import { which } from 'bun';
-import { realpathSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { lstatSync, realpathSync } from 'node:fs';
+import { resolve, win32 } from 'node:path';
 
 // Repo modules load dynamically inside try/catch: a static import of a file
 // that is not on disk (a Docker dependency layer, a partial checkout) would
@@ -39,16 +39,31 @@ async function runtimeRefusalMessage(): Promise<string | null> {
 export function postinstallSkipReason(
   bin: string,
   packageRoot: string,
-  options: { platform?: NodeJS.Platform; realpath?: (path: string) => string } = {},
+  options: {
+    platform?: NodeJS.Platform;
+    realpath?: (path: string) => string;
+    isRegularFile?: (path: string) => boolean;
+  } = {},
 ): string | undefined {
-  const { platform = process.platform, realpath = realpathSync } = options;
+  const {
+    platform = process.platform,
+    realpath = realpathSync,
+    isRegularFile = (path: string) => lstatSync(path, { throwIfNoEntry: false })?.isFile() ?? false,
+  } = options;
   try {
     const root = realpath(packageRoot);
     const binaryPath = realpath(bin);
     const separator = platform === 'win32' ? '\\' : '/';
-    if (!binaryPath.startsWith(root + separator)) {
-      return 'gbrain on PATH resolves outside this package';
+    if (binaryPath.startsWith(root + separator)) return;
+
+    // Windows global launchers are regular shims, not symlinks. Preserve
+    // their existing behavior without parsing versioned metadata or batch
+    // scripts. lstat keeps foreign symlinks outside this exception.
+    if (platform === 'win32' && isRegularFile(bin)) {
+      const extension = win32.extname(bin).toLowerCase();
+      if (extension === '.cmd' || (extension === '.exe' && isRegularFile(bin.slice(0, -4) + '.bunx'))) return;
     }
+    return 'gbrain on PATH resolves outside this package';
   } catch {
     return 'could not resolve gbrain on PATH to this package';
   }
@@ -86,9 +101,8 @@ if (import.meta.main) {
     process.exit(0);
   }
 
-  // A dev checkout may find a different install on PATH. Global installs and
-  // bun-link launchers are symlinks into their own package: compare real paths
-  // with a directory boundary, including when the package root is a symlink.
+  // A dev checkout may find a different install on PATH. Check resolved
+  // package ownership, preserving the existing Windows shim behavior.
   const skipReason = postinstallSkipReason(bin, resolve(import.meta.dir, '..'));
   if (skipReason) {
     console.error(`[gbrain] postinstall skipped: ${skipReason}. Run \`gbrain apply-migrations --yes\` manually.`);
