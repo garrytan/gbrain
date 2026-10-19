@@ -10,7 +10,7 @@ import { MERGE_PRECONDITION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/p
 
 import { opError, type Operation } from './contract.ts';
 import { opTransport } from './op-fix.ts';
-import { readPolicyOpts } from './context.ts';
+import { assertExplicitSourceLive, federatedSearchScope, parseSourceIdParam, readPolicyOpts } from './context.ts';
 import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
 import { stampRowTrust } from '../eligibility/stamp.ts';
 import {
@@ -75,6 +75,7 @@ const get_timeline: Operation = {
   description: 'Get timeline entries for a page, optionally filtered by date window. To change or remove an entry, edit its bullet in the page\'s Timeline section with edit_page (expected_revision from get_page include_content:true): the row follows the page.',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose timeline entries to return.' },
+    source_id: { type: 'string', description: "One source, or '__all__'." },
     after: { type: 'string', description: 'Return entries on or after this date (YYYY-MM-DD)' },
     before: { type: 'string', description: 'Return entries on or before this date (YYYY-MM-DD)' },
     since: { type: 'string', description: 'Alias for after; accepted for agent callers' },
@@ -83,9 +84,12 @@ const get_timeline: Operation = {
     min_trust: MIN_TRUST_PARAM,
   },
   handler: async (ctx, p) => {
-    // #2200: route through sourceScopeOpts so a federated grant reaches the
-    // engine via TimelineOpts.sourceIds; scalar/unset unchanged.
-    const scope = await readPolicyOpts(ctx);
+    const sourceIdParam = parseSourceIdParam(p.source_id, 'get_timeline', { allowAll: true });
+    // Preserve the existing ambient scope when omitted; explicit reads use
+    // get_page's admission rules, with the grant checked before liveness.
+    const sourceScope = sourceIdParam === undefined ? undefined : federatedSearchScope(ctx, sourceIdParam);
+    await assertExplicitSourceLive(ctx, sourceIdParam);
+    const scope = await readPolicyOpts(ctx, sourceScope);
     // #4352 remediation: a `visibility: private` page's timeline reads
     // exactly like a missing page's ([]) for untrusted callers — no
     // existence oracle.

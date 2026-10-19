@@ -122,7 +122,7 @@ directory pinned by `.gbrain-source`) is bound to that source. Its
 unqualified reads stay on the bound source. It may still name another
 source in an explicit `source_id` read (`search`, `query`, `get_page`,
 `list_pages`, `resolve_slugs`, `recall`, `get_links`, `get_backlinks`,
-`traverse_graph`) when that source is
+`traverse_graph`, `get_timeline`) when that source is
 `federated=true`; the result holds only the named source's rows. Writes
 still go to the bound source only.
 
@@ -136,6 +136,21 @@ still go to the bound source only.
 `search_by_image`, `open_loops` and the code-intel tools keep their stricter
 rule: an explicit `source_id` must be inside the connection's own source or
 grant.
+
+### A timeline from one source
+
+Pass `source_id` to `get_timeline` to read the same source as a preceding
+`get_page` call, even when several sources hold the same slug:
+
+```bash
+gbrain timeline notes/example --source-id wiki
+```
+
+`source_id: '__all__'` uses the caller's readable scope. Omitting `source_id`
+keeps the existing timeline scope. An explicit source must be live and within
+the caller's read admission; a missing page still returns an empty timeline.
+
+**Say to your agent:** *"Show the timeline for notes/example in the wiki source."*
 
 ### Links, backlinks and the graph across sources
 
