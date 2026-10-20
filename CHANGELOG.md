@@ -10,6 +10,14 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.325.0] - 2026-10-20
+
+### Changed
+
+- Repeated reads and sync preparation of a large facts fence reuse its parsed rows, reducing CPU spent parsing unchanged Markdown. The cache is bounded by entries, text size and row count; each caller receives independent mutable rows, and every read still applies its current withdrawals and privacy filters.
+
+To take advantage of v0.60.325.0, run `gbrain upgrade`.
+
 ## [0.60.324.0] - 2026-10-20
 
 **Agents can now add to a page without rewriting it, and write pages larger than one request.** Before, adding a line to a long conversation log meant sending the whole page back with put_page, which got slower as the page grew, and a remote or thin client could not write a page bigger than its connection's request limit at all. Now `append_page` adds text to the end of a page in time proportional to the text added, upload sessions carry a page of any size up to the page ceiling in parts, and `edit_page` can edit a very large page by rewriting only the stretch it changes.
