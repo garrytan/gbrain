@@ -16,7 +16,7 @@ import { isInsideGitRepo, hasTrackedContent } from '../git-remote.ts';
 import { containsPath, getWorktreeBinding, humanManifestProgress, type WorktreeBinding, type WorktreeManifest, worktreeManifest } from './ownership.ts';
 import { manifestDifferences, storedManifestScope, type WorktreeManifestScope } from './worktree-manifest.ts';
 import { localHostId } from './identity.ts';
-import { advanceTopology, lockTopologyPrincipal, lockTopologyRows, settleTopologyRequests, topologyCanonicalStamp, topologyPrincipal, withTopologyLocks } from './topology-locks.ts';
+import { advanceTopology, inspectTopologyPhysicalRoot, lockTopologyPrincipal, lockTopologyRows, settleTopologyRequests, topologyCanonicalStamp, topologyPrincipal, withTopologyLocks } from './topology-locks.ts';
 import { priorTopologyChange, recordTopologyChange, topologyReceipt } from './topology-receipts.ts';
 import { isWriteRequestId } from './types.ts';
 import { withCoordinatedWrite } from './context.ts';
@@ -156,6 +156,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
   const retire=['archive','remove','purge'].includes(input.operation);
   const manifestRequired=!retire||(await engine.executeRaw<{digest:string|null}>(
     `SELECT w.manifest->>'digest' AS digest FROM persistence_source_bindings b JOIN persistence_worktrees w ON w.id=b.worktree_id WHERE b.source_id=$1`,[input.sourceId])).some(row=>!row.digest);
+  if(input.dryRun) await inspectTopologyPhysicalRoot(engine,input.sourceId,root?.worktree,{relocation:input.operation==='rebind'});
   if(input.dryRun) return {dry_run:true,operation:input.operation,source_id:input.sourceId,source_incarnation:before?.incarnation??null,path:root?.source??before?.local_path??null,manifest_required:manifestRequired};
   return withTopologyLocks(engine,input.sourceId,async bindings=>{
     // Hash canonical bytes while holding native exclusion, without a database

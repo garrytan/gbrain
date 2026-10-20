@@ -18,6 +18,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'fs';
 import { join } from 'path';
@@ -90,6 +91,26 @@ describe('detectInstalledSlugs', () => {
     expect(set.has('brain-ops')).toBe(true);
     expect(set.has('idea-ingest')).toBe(true);
     expect(set.size).toBe(2);
+  });
+
+  it('#6985: counts scaffolded skills (regular SKILL.md, no receipt) and ignores symlinks', () => {
+    const { workspace, skillsDir } = scratchWorkspace(null);
+    const [scaffolded, linkedFile, linkedDir, empty] = currentRecommendedSet().map((s) => s.slug);
+    mkdirSync(join(skillsDir, scaffolded));
+    writeFileSync(join(skillsDir, scaffolded, 'SKILL.md'), '# scaffolded\n');
+    const outside = mkdtempSync(join(tmpdir(), 'advisory-outside-'));
+    cleanup.push(outside);
+    writeFileSync(join(outside, 'SKILL.md'), '# elsewhere\n');
+    mkdirSync(join(skillsDir, linkedFile));
+    symlinkSync(join(outside, 'SKILL.md'), join(skillsDir, linkedFile, 'SKILL.md'));
+    symlinkSync(outside, join(skillsDir, linkedDir));
+    mkdirSync(join(skillsDir, empty));
+    expect([...detectInstalledSlugs(skillsDir, workspace)]).toEqual([scaffolded]);
+
+    const advisory = buildAdvisory({ version: '0.60.307.0', context: 'upgrade', targetWorkspace: workspace, targetSkillsDir: skillsDir });
+    expect(advisory).not.toContain(`  - ${scaffolded}\n`);
+    expect(advisory).toContain(`  - ${linkedFile}\n`);
+    expect(advisory).not.toContain('scaffold --all');
   });
 });
 

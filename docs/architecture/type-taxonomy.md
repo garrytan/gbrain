@@ -54,6 +54,11 @@ binds any uncovered legacy type to `note` with
 The pack also declares `question`, the owner-private annotation type
 the pinned-question writer stamps on its pages (non-extractable, no
 folder prefix), so pinned questions never read as undeclared types.
+It also declares `code` (the code importer's page type, non-extractable
+media, no folder prefix) and `extract_receipt` (the extract receipt
+writer's page type under `extracts/`, a non-extractable annotation), so
+imported code and extraction receipts never read as undeclared types and
+the catch-all retype leaves them alone.
 
 ## Subtypes (declared in frontmatter post-unify)
 

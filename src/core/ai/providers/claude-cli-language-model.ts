@@ -365,6 +365,18 @@ function claudeCliVersion(env: NodeJS.ProcessEnv): string | null {
 }
 
 /**
+ * #6918: Claude Code thinks by default on Claude 5 models, and the API needs
+ * thinking.budget_tokens of at least 1024 and below max_tokens, so a call
+ * capped at 1024 output tokens or fewer runs with thinking off.
+ */
+export const CLAUDE_THINKING_BUDGET_FLOOR = 1024;
+
+export function thinkingDisabledBelowFloor(maxOutputTokens: number | undefined): boolean {
+  return typeof maxOutputTokens === 'number' && Number.isInteger(maxOutputTokens) && maxOutputTokens > 0
+    && maxOutputTokens <= CLAUDE_THINKING_BUDGET_FLOOR;
+}
+
+/**
  * Spawn `claude --print` with the contamination-suppression flags and return
  * the parsed `--output-format json` envelope. Aborts propagate to SIGTERM on
  * the child.
@@ -382,8 +394,9 @@ function runClaude(
     const outputCap = typeof maxOutputTokens === 'number' && Number.isInteger(maxOutputTokens) && maxOutputTokens > 0
       ? String(maxOutputTokens)
       : undefined;
+    const thinkingOff = thinkingDisabledBelowFloor(maxOutputTokens);
     const settings = outputCap
-      ? JSON.stringify({ disableAllHooks: true, env: { CLAUDE_CODE_MAX_OUTPUT_TOKENS: outputCap } })
+      ? JSON.stringify({ disableAllHooks: true, env: { CLAUDE_CODE_MAX_OUTPUT_TOKENS: outputCap, ...(thinkingOff ? { MAX_THINKING_TOKENS: '0' } : {}) } })
       : '{"disableAllHooks":true}';
     const args = [
       '--print',
@@ -440,6 +453,7 @@ function runClaude(
     const hermeticConfigDir = resolveHermeticConfigDir();
     if (hermeticConfigDir) env.CLAUDE_CONFIG_DIR = hermeticConfigDir;
     if (outputCap) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = outputCap;
+    if (thinkingOff) env.MAX_THINKING_TOKENS = '0';
     const child = spawn(claudeBin(), args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: ensureCleanCwd(),
@@ -755,13 +769,14 @@ export class ClaudeCliLanguageModel implements LanguageModelV2 {
 
     // #6791: a continued answer is rebuilt from its segments, or refused
     // before any tool block in its tail can be parsed and dispatched.
+    const thinking = thinkingDisabledBelowFloor(options.maxOutputTokens) ? { thinking: 'disabled_below_floor' } : null;
     const answer = resolveClaudeCliAnswer(result, options.maxOutputTokens);
     if (answer.kind === 'unproven') {
       return {
         content: [{ type: 'text', text: '' }],
         finishReason: 'length',
         usage,
-        providerMetadata: continuationUnprovenMetadata(answer.reason),
+        providerMetadata: { 'claude-cli': { ...continuationUnprovenMetadata(answer.reason)['claude-cli'], ...thinking } },
         ...response,
         warnings: [],
       };
@@ -788,6 +803,7 @@ export class ClaudeCliLanguageModel implements LanguageModelV2 {
       content,
       finishReason: claudeCliFinishReason(result.stop_reason, toolCalls.length > 0),
       usage,
+      ...(thinking ? { providerMetadata: { 'claude-cli': thinking } } : {}),
       ...response,
       warnings: [],
     };

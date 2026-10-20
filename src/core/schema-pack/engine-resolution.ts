@@ -17,12 +17,11 @@ export async function engineSchemaInput(
   engine: Pick<BrainEngine, 'getConfig'> | null | undefined,
   options: EngineSchemaOptions,
 ): Promise<LoadActivePackInput> {
-  const dbConfig = await readDbSchemaPack(engine);
+  const [dbConfig, sourceValue] = await Promise.all([readDbSchemaPack(engine),
+    (async () => options.sourceId ? engine?.getConfig(`schema_pack.source.${options.sourceId}`) : undefined)()]);
   const perSourceDb = new Map<string, string>();
-  if (options.sourceId) {
-    const value = (await engine?.getConfig(`schema_pack.source.${options.sourceId}`))?.trim();
-    if (value) perSourceDb.set(options.sourceId, value);
-  }
+  const value = sourceValue?.trim();
+  if (options.sourceId && value) perSourceDb.set(options.sourceId, value);
   return { ...options, cfg: loadConfigFileOnly(), dbConfig, perSourceDb };
 }
 

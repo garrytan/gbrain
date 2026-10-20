@@ -40,7 +40,7 @@ import { JobDeferredError, UnrecoverableError } from './types.ts';
 import { RateLeaseUnavailableError } from './handlers/subagent.ts';
 import { SpendGroupRefusedError, type SpendRefusalEnvelope } from './spend-authorization.ts';
 import { LocalConfigurationError, isLocalConfigurationError } from './configuration-error.ts';
-import { basename, delimiter, resolve } from 'node:path';
+import { basename, delimiter, resolve, win32 } from 'node:path';
 
 /** Grace between group-SIGTERM and group-SIGKILL on abort. Deliberately
  *  inside the worker's 30s force-evict window so the evict path stays a
@@ -419,8 +419,23 @@ export function resolveChildCliInvocation(
   return null;
 }
 
+/** What signalling a process tree achieved: delivered to a live tree, the
+ * tree was already gone, or delivery failed (the tree's state is unknown). */
+export type ProcessTreeSignal = 'signalled' | 'gone' | 'failed';
+
+/** The Windows tree kill, by ABSOLUTE path like /bin/kill on POSIX:
+ * SIGTERM asks every process in the tree to close (`/T`), SIGKILL forces it
+ * (`/T /F`). A windowless console process refuses the polite form, so on
+ * Windows SIGTERM usually fails and the caller's SIGKILL escalation ends it. */
+export function taskkillCommand(pid: number, signal: 'SIGTERM' | 'SIGKILL'): [string, string[]] {
+  return [
+    win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'),
+    ['/PID', String(pid), '/T', ...(signal === 'SIGKILL' ? ['/F'] : [])],
+  ];
+}
+
 /**
- * Signal an entire process GROUP.
+ * Signal an entire process GROUP (POSIX) or process TREE (Windows).
  *
  * Children are spawned `detached: true`. Tini creates another group for its
  * child, so callers must also signal that observed group. Neither group
@@ -428,31 +443,45 @@ export function resolveChildCliInvocation(
  *
  * Bun's process.kill() rejects negative pids (oven-sh/bun#15791), so on any
  * throw other than ESRCH we fall back to POSIX /bin/kill, which
- * group-signals fine on darwin + linux. Returns true when the signal was
- * delivered to a live group; false when the group is already gone (ESRCH —
- * success for our purposes) or delivery failed.
+ * group-signals fine on darwin + linux.
+ *
+ * Windows has no process groups: taskkill `/T` walks the tree by parent pid
+ * from `pid`. A descendant whose parent already exited is no longer in that
+ * tree, so it survives (the orphaned-descendant limit); exit 128 means `pid`
+ * itself is gone.
  */
-export function killProcessGroup(pid: number, signal: 'SIGTERM' | 'SIGKILL'): boolean {
-  if (!Number.isInteger(pid) || pid <= 1) return false;
+export function signalProcessTree(
+  pid: number, signal: 'SIGTERM' | 'SIGKILL', platform: NodeJS.Platform = process.platform,
+): ProcessTreeSignal {
+  if (!Number.isInteger(pid) || pid <= 1) return 'failed';
+  if (platform === 'win32') {
+    const [command, args] = taskkillCommand(pid, signal);
+    const res = spawnSync(command, args, { stdio: 'ignore', timeout: 10_000 });
+    return res.status === 0 ? 'signalled' : res.status === 128 ? 'gone' : 'failed';
+  }
   try {
     process.kill(-pid, signal);
-    return true;
+    return 'signalled';
   } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
-    if (code === 'ESRCH') return false; // group already gone
+    if ((e as NodeJS.ErrnoException).code === 'ESRCH') return 'gone';
     // RangeError on Bun (negative pid unsupported) or EPERM etc. — fall back
     // to /bin/kill by ABSOLUTE path (a PATH-resolved binary in a kill path is
     // an unnecessary indirection; security review). This is the NORMAL path
     // in Bun-compiled production binaries; the sync exec is ~1-3ms and only
     // runs on abort/shutdown, never in the claim/renewal hot loop.
     try {
-      const sigName = signal.replace(/^SIG/, '');
-      const res = spawnSync('/bin/kill', ['-s', sigName, '--', `-${pid}`], { stdio: 'ignore' });
-      return res.status === 0;
+      const res = spawnSync('/bin/kill', ['-s', signal.replace(/^SIG/, ''), '--', `-${pid}`], { stdio: 'ignore' });
+      return res.status === 0 ? 'signalled' : 'failed';
     } catch {
-      return false;
+      return 'failed';
     }
   }
+}
+
+/** True when the signal was delivered to a live group or tree; false when it
+ * is already gone or delivery failed (`signalProcessTree` tells them apart). */
+export function killProcessGroup(pid: number, signal: 'SIGTERM' | 'SIGKILL'): boolean {
+  return signalProcessTree(pid, signal) === 'signalled';
 }
 
 /**

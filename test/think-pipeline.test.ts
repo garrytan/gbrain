@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, afterEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { operationsByName } from '../src/core/operations.ts';
@@ -7,6 +7,8 @@ import { sanitizeTakeForPrompt, renderTakesBlock } from '../src/core/think/sanit
 import { resolveCitations, parseInlineCitations, normalizeStructuredCitations } from '../src/core/think/cite-render.ts';
 import { runGather, renderPagesBlock } from '../src/core/think/gather.ts';
 import { withoutAnthropicKey } from './helpers/no-anthropic-key.ts';
+import { configureGateway, resetGateway, __setGenerateTextTransportForTests } from '../src/core/ai/gateway.ts';
+import { __resetChatFallbackHopNoticeForTests } from '../src/core/ai/fallback-hop-queue.ts';
 
 let engine: PGLiteEngine;
 let alicePageId: number;
@@ -537,6 +539,56 @@ describe('runThink — #1698 explicit-model hard error', () => {
     const result = await withoutAnthropicKey(() => runThink(engine, { question: 'nonexplicit bad', model: 'bogusprovider:foo' }));
     expect(result.warnings).toContain('MODEL_NOT_USABLE:unknown_provider');
     expect(result.synthesisOk).toBe(false);
+  });
+});
+
+describe('runThink — chat_fallback_chain answer', () => {
+  afterEach(() => {
+    __setGenerateTextTransportForTests(null);
+    __resetChatFallbackHopNoticeForTests();
+    resetGateway();
+  });
+
+  test('modelUsed names the chain model that answered, not the one that failed', async () => {
+    configureGateway({
+      chat_model: 'openai:gpt-5.2',
+      chat_fallback_chain: ['deepseek:deepseek-chat'],
+      env: { OPENAI_API_KEY: 'fake-openai', DEEPSEEK_API_KEY: 'fake-deepseek' },
+    });
+    __setGenerateTextTransportForTests((async (args: any) => {
+      if (args.model.modelId === 'gpt-5.2') throw Object.assign(new Error('upstream 503'), { status: 503 });
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ answer: 'Alice founded Acme.', citations: [], gaps: [] }) }],
+        finishReason: 'stop',
+        usage: { inputTokens: 3, outputTokens: 2 },
+      };
+    }) as any);
+
+    const result = await runThink(engine, { question: 'who founded Acme', model: 'openai:gpt-5.2' });
+
+    expect(result.answer).toBe('Alice founded Acme.');
+    expect(result.modelUsed).toBe('deepseek:deepseek-chat');
+    expect(result.requested_model).toBe('openai:gpt-5.2');
+    expect(result.fallback_reason).toContain('upstream 503');
+  });
+
+  test('an answer from the requested model carries no fallback fields', async () => {
+    configureGateway({
+      chat_model: 'openai:gpt-5.2',
+      chat_fallback_chain: ['deepseek:deepseek-chat'],
+      env: { OPENAI_API_KEY: 'fake-openai', DEEPSEEK_API_KEY: 'fake-deepseek' },
+    });
+    __setGenerateTextTransportForTests((async () => ({
+      content: [{ type: 'text', text: JSON.stringify({ answer: 'Alice founded Acme.', citations: [], gaps: [] }) }],
+      finishReason: 'stop',
+      usage: { inputTokens: 3, outputTokens: 2 },
+    })) as any);
+
+    const result = await runThink(engine, { question: 'who founded Acme', model: 'openai:gpt-5.2' });
+
+    expect(result.modelUsed).toBe('openai:gpt-5.2');
+    expect(result.requested_model).toBeUndefined();
+    expect(result.fallback_reason).toBeUndefined();
   });
 });
 

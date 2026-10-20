@@ -11,9 +11,10 @@
  *   stored before the upgrade as unapplied.
  */
 import { CONFIG_ROLLBACK_WINDOWS, type ConfigRollbackWindow } from './wire-skew.ts';
+import type { BrainEngine } from './engine.ts';
 
 export const SYNC_TUNABLE_KEYS = ['sync.bulk_size', 'sync.lanes', 'sync.exclude', 'sync.include_hidden', 'sync.include_working_tree', 'sync.holds',
-  'sync.write_through', 'sync.cost_gate_min_usd', 'sync.on_commit', 'sync.freshness_target_seconds'] as const;
+  'sync.write_through', 'sync.cost_gate_min_usd', 'sync.on_commit', 'sync.freshness_target_seconds', 'sync.admission'] as const;
 
 /**
  * #6858 ask 6, option C (Garry's "rec", via GBRA-108): a resident serve starts a managed source's sync when its
@@ -41,8 +42,8 @@ export const RETIRED_SYNC_KEYS = {
     replacement: { env: 'GBRAIN_SYNC_HOLD_ESCALATE_COUNT', default: '50' } },
   'sync.hold_escalate_pct': { key: 'sync.hold_escalate_pct', retired_in: '0.60.266.0', tuned: 'the share of a run\'s screened imports above which it escalates, in percent',
     replacement: { env: 'GBRAIN_SYNC_HOLD_ESCALATE_PCT', default: '5' } },
-  'sync.parser_regression': { key: 'sync.parser_regression', retired_in: '0.60.266.0', tuned: 'whether sync stops (stop) or holds the file (hold) when bytes that imported before are refused',
-    replacement: { env: 'GBRAIN_SYNC_PARSER_REGRESSION', default: 'stop' } },
+  'sync.parser_regression': { key: 'sync.parser_regression', retired_in: '0.60.266.0', tuned: 'whether sync holds the file (hold) or stops (stop) when bytes that imported before are refused',
+    replacement: { env: 'GBRAIN_SYNC_PARSER_REGRESSION', default: 'hold' } },
   'sync.knock_on_refreeze_limit': { key: 'sync.knock_on_refreeze_limit', retired_in: '0.60.255.0', tuned: 'the knock-on re-freeze budget', replacement: null },
   'sync.knock_on_run_limit': { key: 'sync.knock_on_run_limit', retired_in: '0.60.255.0', tuned: 'the knock-on re-freeze budget per run', replacement: null },
 } as const satisfies Record<string, RetiredSyncKey>;
@@ -128,8 +129,18 @@ export function syncKeySetNotice(key: string): { writes: boolean; lines: string[
  * `gbrain config get|set` of a retired or rollback key. `get` prints the value in effect (stdout) and its origin
  * (stderr); `set` prints the key's notice. True when the command is done: every `get`, and the `set` of a retired key,
  * which writes nothing. A rollback key's `set` returns false so the write goes ahead; any other key returns false.
+ * #6712 PR 4b: `get sync.admission` prints the value in effect (`normal` when unset) and when it was set.
  */
-export async function handleSyncKeyConfig(engine: { getConfig(key: string): Promise<string | null> }, action: 'get' | 'set', key: string): Promise<boolean> {
+export async function handleSyncKeyConfig(engine: Pick<BrainEngine, 'getConfig' | 'executeRaw'>, action: 'get' | 'set', key: string): Promise<boolean> {
+  if (action === 'get' && key === 'sync.admission') {
+    const { readSyncAdmissionSetting } = await import('./persistence/sync-admission.ts');
+    const setting = await readSyncAdmissionSetting(engine);
+    console.log(setting.value);
+    console.error(`[config] source: ${setting.stored === null ? 'default (unset)'
+      : setting.stored !== setting.value ? `brain config holds ${JSON.stringify(setting.stored.slice(0, 40))}, which is not a value; managed sync reads it as ${setting.value} (fail closed)`
+      : `brain config${setting.set_at ? `, set at ${setting.set_at}` : ' (set_at unknown)'}`}${setting.value === 'normal' ? '' : '. Restore the default with gbrain config set sync.admission normal'}.`);
+    return true;
+  }
   if (!retiredSyncKey(key) && !rollbackSyncKey(key)) return false;
   if (action === 'set') {
     const notice = syncKeySetNotice(key)!;

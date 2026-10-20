@@ -56,6 +56,9 @@ export const ERROR_CATALOGUE = {
   recovery_choice_refused: { code: 'recovery_choice_refused', docs: 'docs/guides/repair.md#recovery-choice-refused' },
   // #6650: a withdrawal-mirror effect recovery only finishes forward, so stuck-recovery lists it as refused.
   recovery_effect_unsupported: { code: 'recovery_effect_unsupported', docs: 'docs/guides/repair.md#recovery-effect-unsupported' },
+  // LPH (d): a recovery record a newer gbrain wrote is refused unread; a segmented mirror waits for older writers.
+  recovery_version_unsupported: { code: 'recovery_version_unsupported', docs: 'docs/guides/write-refusals.md#recovery_version_unsupported' },
+  segmented_mirror_writer_gate: { code: 'segmented_mirror_writer_gate', docs: 'docs/guides/write-refusals.md#segmented_mirror_writer_gate' },
   colon_slug_windows_write_through: { code: 'colon_slug_windows_write_through', docs: 'docs/guides/write-refusals.md#colon_slug_windows_write_through' },
   embedding_auth_failed: { code: 'embedding_auth_failed', docs: 'docs/guides/write-refusals.md#embedding_auth_failed' },
   activation_source_path_missing: { code: 'source_changed', docs: 'docs/guides/write-refusals.md#activation_source_path_missing' },
@@ -100,6 +103,12 @@ export const ERROR_CATALOGUE = {
   sync_drain_capacity_paused: { code: 'capacity_paused', docs: 'docs/guides/write-refusals.md#drain-capacity-paused' },
   sync_drain_head_blocked: { code: 'drain_stalled', docs: 'docs/guides/write-refusals.md#head-blocked' },
   sync_drain_lease_held: { code: 'sync_drain_lease_held', docs: 'docs/guides/write-refusals.md#sync_drain_lease_held' },
+  // #6712 PR 4b: the live pass's stops (design v3.2 §9).
+  sync_drain_not_converged: { code: 'not_converged', docs: 'docs/guides/write-refusals.md#drain-not-converged' },
+  sync_drain_admission_paused: { code: 'admission_paused', docs: 'docs/guides/write-refusals.md#drain-admission-paused' },
+  sync_drain_grant_scope: { code: 'grant_scope', docs: 'docs/guides/write-refusals.md#drain-grant-scope' },
+  sync_drain_reconcile_host_required: { code: 'reconcile_host_required', docs: 'docs/guides/write-refusals.md#drain-reconcile-host-required' },
+  sync_drain_reconcile_read_incomplete: { code: 'reconcile_read_incomplete', docs: 'docs/guides/write-refusals.md#drain-reconcile-read-incomplete' },
   // D8 `gbrain setup <harness>` (src/commands/setup.ts).
   setup_harness_unsupported: { code: 'setup_harness_unsupported', docs: 'docs/guides/repair.md#setup-harness-unsupported' },
   setup_owner_conflict: { code: 'setup_owner_conflict', docs: 'docs/guides/repair.md#setup-owner-conflict' },

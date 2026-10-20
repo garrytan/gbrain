@@ -43,11 +43,11 @@ export function splitEmbeddingSignature(signature: string): { model: string; dim
   return { model: signature.slice(0, separator), dims };
 }
 
-export function currentSpaceChunkPredicate(colId: string, modelParam: number, dimsParam: number): string {
-  return `COALESCE(cc.${colId} IS NOT NULL
-              AND cc.model = $${modelParam}
-              AND cc.embedded_text_hash = md5(cc.chunk_text)
-              AND vector_dims(cc.${colId}) = $${dimsParam}::int, false)`;
+export function currentSpaceChunkPredicate(colId: string, modelParam: number, dimsParam: number, alias = 'cc'): string {
+  return `COALESCE(${alias}.${colId} IS NOT NULL
+              AND ${alias}.model = $${modelParam}
+              AND ${alias}.embedded_text_hash = md5(${alias}.chunk_text)
+              AND vector_dims(${alias}.${colId}) = $${dimsParam}::int, false)`;
 }
 
 export async function lockEmbeddingSources(tx: Pick<BrainEngine, 'executeRaw'>, sourceId?: string): Promise<string[]> {
@@ -166,13 +166,22 @@ export async function countRestampOnlyChunks(
   engine: Pick<BrainEngine, 'executeRaw'>,
   opts: { signature: string; sourceId?: string; includeNullSignature?: boolean },
 ): Promise<number> {
+  return (await measureRestampOnlyChunks(engine, opts)).chunks;
+}
+
+/** countRestampOnlyChunks plus their text size, so a paid estimate can leave them out. */
+export async function measureRestampOnlyChunks(
+  engine: Pick<BrainEngine, 'executeRaw'>,
+  opts: { signature: string; sourceId?: string; includeNullSignature?: boolean },
+): Promise<{ chunks: number; chars: number }> {
   const colId = quoteIdentifier((await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name);
   const { model, dims } = splitEmbeddingSignature(opts.signature);
   const sigClause = opts.includeNullSignature
     ? '(p.embedding_signature IS NULL OR p.embedding_signature <> $1)'
     : 'p.embedding_signature IS NOT NULL AND p.embedding_signature <> $1';
-  const rows = await engine.executeRaw<{ count: number | string }>(
-    `SELECT count(*)::int AS count FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+  const rows = await engine.executeRaw<{ count: number | string; chars: number | string }>(
+    `SELECT count(*)::int AS count, COALESCE(sum(length(cc.chunk_text)), 0)::bigint AS chars
+       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
       WHERE p.deleted_at IS NULL AND ${sigClause}
         AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
         AND NOT ${pageBudgetLimitedFilter('p')}
@@ -180,7 +189,7 @@ export async function countRestampOnlyChunks(
         AND ${currentSpaceChunkPredicate(colId, 2, 3)}`,
     [opts.signature, model, dims, opts.sourceId ?? null],
   );
-  return Number(rows[0]?.count ?? 0);
+  return { chunks: Number(rows[0]?.count ?? 0), chars: Number(rows[0]?.chars ?? 0) };
 }
 
 export async function invalidateStaleSignatureEmbeddingsGuarded(

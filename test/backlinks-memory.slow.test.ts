@@ -27,8 +27,9 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const CHILD = new URL('./helpers/backlinks-rss-child.ts', import.meta.url).pathname;
+const CHILD = fileURLToPath(new URL('./helpers/backlinks-rss-child.ts', import.meta.url));
 const SIZES_MIB = [48, 192, 384];
 const roots: string[] = [];
 afterAll(() => { while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true }); });

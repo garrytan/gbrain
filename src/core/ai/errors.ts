@@ -267,7 +267,7 @@ const PER_ITEM_HTTP_STATUSES = new Set([400, 408, 413, 422]);
 export const BILLING_MESSAGE_RE =
   /insufficient_quota|quota exceeded|exceeded your (?:current )?quota|credit balance is too low|spend limit|billing_not_active|billing hard limit|payment required/i;
 const AUTH_MESSAGE_RE =
-  /authentication_error|permission_error|invalid (?:x-)?api[-_ ]?key|api key (?:is )?(?:invalid|expired|missing)|unauthorized/i;
+  /authentication_error|permission_error|invalid (?:x-)?api[-_ ]?key|api key (?:is )?(?:invalid|expired|missing)|unauthorized|failed to authenticate|oauth session expired/i;
 export const RATE_MESSAGE_RE = /rate[-_ ]?limit(?:ed|_error)?\b|too many requests/i;
 // Provider phrasings for an unknown or inaccessible model: OpenAI
 // `model_not_found` / "does not exist or you do not have access" (404),

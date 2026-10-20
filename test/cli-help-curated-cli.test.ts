@@ -20,8 +20,9 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadCuratedHelp } from '../src/cli/help/render.ts';
+import { fileURLToPath } from 'node:url';
 
-const REPO = new URL('..', import.meta.url).pathname;
+const REPO = fileURLToPath(new URL('..', import.meta.url));
 const CURATED = ['doctor', 'import', 'serve', 'apply-migrations', 'autopilot', 'status', 'onboard'];
 
 async function cli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {

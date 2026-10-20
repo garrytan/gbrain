@@ -36,6 +36,8 @@ import { jsonGuardActive, jsonRequested, setCliExitVerdict, writeJsonDocument } 
 import { BUDGET_STOP_EXIT_CODE } from '../core/exit-codes.ts';
 import { opError, type OperationError } from '../core/ops/contract.ts';
 import { usageError, writeCliError, writeCliRefusal } from '../cli/cli-error.ts';
+import { cliRenderContext, renderAction, shellQuote, type Action } from '../core/agent-output.ts';
+import { codeEntry } from '../core/error-catalogue.ts';
 import { fetchSource } from '../core/sources-load.ts';
 import { existsSync } from 'fs';
 import { resolve } from 'node:path';
@@ -450,9 +452,14 @@ Options:
                       (the default phase when --drain is set). Holds the
                       cycle lock once, processes batches until the backlog
                       empties or --window elapses, reports {extracted,
-                      remaining, stopped}, and exits 3 unless the backlog
-                      drained (printing the rerun command) so a cron/agent
-                      loop knows to run again. Use this to grind down an
+                      remaining, stopped}. Exits 0 when the backlog drained;
+                      11 when running again can continue (window, budget,
+                      batch cap, deadline, lock, an unknown count, a rate
+                      limit or transient provider failure), printing the
+                      rerun command; 1 when it cannot until something
+                      changes (provider auth, billing, unknown model or
+                      content block; no_progress), printing the fix. --json
+                      adds status, retryable and code. Use this to grind down an
                       extract_atoms backlog on a brain whose pack doesn't
                       run the phase in the routine cycle.
   --window <seconds>  Drain window, a hard deadline: no page or transcript
@@ -666,23 +673,39 @@ async function runDrain(
     );
   }
   const { drainBudgetNotice, usd } = await import('../core/cycle/extract-atoms-budget-notice.ts');
+  const { drainOutcome } = await import('../core/cycle/extract-atoms-drain-outcome.ts');
+  // #6817: one stop → exit/status/retryable mapping, shared with the Minion handler.
+  const outcome = drainOutcome(result);
   const budgetNotice = result.stopped === 'budget' ? drainBudgetNotice(result) : null;
+  const fix = outcome.retryable || !outcome.code ? undefined : codeEntry(outcome.code)?.fix;
   if (opts.json) {
-    const done = result.stopped === 'drained' && result.remaining === 0;
-    await writeJsonDocument(JSON.stringify(done ? result : { ...result, resume_command: drainCommand(opts),
+    await writeJsonDocument(JSON.stringify(outcome.status === 'ok' ? result : {
+      ...result, status: outcome.status, retryable: outcome.retryable, code: outcome.code,
+      ...(outcome.reason ? { reason: outcome.reason } : {}),
+      ...(outcome.retryable ? { resume_command: drainCommand(opts) } : {}),
+      ...(fix ? { fix: renderAction(fix, cliRenderContext()) } : {}),
       ...(budgetNotice ? { notices: [budgetNotice] } : {}) }, null, 2));
   } else {
     console.log(`[drain] extracted ${result.extracted} atom(s) across ${result.batches} batch(es); ${result.remaining ?? '?'} remaining (stopped: ${result.stopped})`);
   }
   // null remaining = the final count query failed; do not report success.
-  if (result.stopped === 'drained' && result.remaining === 0) return;
+  if (outcome.status === 'ok') return;
+  const stop = `[drain] stopped: ${result.stopped}${outcome.status === 'provider_failure' ? ` (${outcome.reason})` : ''}; ${result.remaining ?? '?'} page(s) remaining.`;
   process.stderr.write(budgetNotice
     ? `[drain] stopped: budget; spent ${usd(result.spent_usd)} of the ${usd(result.budget_usd)} per-run cap (cycle.extract_atoms.budget_usd); ` +
       `${result.remaining ?? '?'} page(s) remaining. Rerun: ${drainCommand(opts)}, or raise the cap: gbrain config set cycle.extract_atoms.budget_usd <usd>\n`
-    : `[drain] stopped: ${result.stopped}; ${result.remaining ?? '?'} page(s) remaining. ` +
-      `Rerun: ${drainCommand(opts)}\n`,
+    : outcome.retryable
+      ? `${stop} Rerun: ${drainCommand(opts)}\n`
+      : `${stop} Fix: ${nonRetryableFixLine(outcome.code!, fix!)}\n`,
   );
-  process.exit(EXIT_DRAIN_INCOMPLETE);
+  process.exit(outcome.exit);
+}
+
+/** The registry suggestion for a non-retryable drain stop, plus its read-only check when the prose does not already name it. */
+function nonRetryableFixLine(code: string, fix: Action): string {
+  const suggestion = codeEntry(code)!.suggestion;
+  const check = shellQuote(fix.argv ?? []);
+  return suggestion.includes(check) ? suggestion : `${suggestion} Read-only check: ${check}`;
 }
 
 function drainCommand(opts: DreamArgs): string {

@@ -27,6 +27,7 @@
  * and an operator runs `gbrain repair planner-stats --apply`.
  */
 import type { BrainEngine } from './engine.ts';
+import { lockTableForAnalyze } from './analyze-lock.ts';
 import { PLANNER_STATS_TABLES, type PlannerStatsTable } from './planner-stats-schema.ts';
 
 export const PLANNER_STATS_MIN_PENDING = 500;
@@ -192,7 +193,11 @@ export async function readPlannerTableStates(engine: BrainEngine): Promise<Plann
   return engine.kind === 'pglite' ? readPlannerStatsState(engine) : readPostgresPlannerStats(engine);
 }
 
-/** `gbrain repair planner-stats --apply`: one bounded ANALYZE on the brain host (Postgres: 60 s statement, 2 s lock timeout). */
+/**
+ * `gbrain repair planner-stats --apply`: one bounded ANALYZE on the brain host (Postgres: 60 s statement; a table
+ * another session holds, such as a running autovacuum, throws `lockTableForAnalyze`'s 55P03 at once instead of
+ * waiting and cancelling the vacuum, #7083).
+ */
 export async function repairPlannerTable(engine: BrainEngine, table: PlannerStatsTable): Promise<void> {
   if (!PLANNER_STATS_TABLES.includes(table)) throw new Error(`Not a planner statistics table: ${table}`);
   if (engine.kind === 'pglite') {
@@ -202,8 +207,45 @@ export async function repairPlannerTable(engine: BrainEngine, table: PlannerStat
   await engine.transaction(async tx => {
     await tx.executeRaw("SET LOCAL statement_timeout = '60s'");
     await tx.executeRaw("SET LOCAL lock_timeout = '2s'");
+    await lockTableForAnalyze(tx, table);
     await tx.executeRaw(`ANALYZE ${table}`);
   });
+}
+
+/** Below this many rows a hot table's vacuum finishes in seconds, so its dead rows are never reported as starved. */
+export const VACUUM_STARVATION_MIN_ROWS = 100_000;
+/** A hot table past autovacuum's vacuum threshold with no completed vacuum for this long is starved. */
+export const VACUUM_STARVATION_HOURS = 24;
+
+/** A hot Postgres table whose dead rows passed autovacuum's vacuum threshold while no vacuum completed for a day. */
+export interface VacuumStarvation { table: PlannerStatsTable; dead_rows: number; threshold: number; vacuumed_at: string | null; vacuum_running: boolean }
+
+/**
+ * #7083 (Postgres; [] on PGLite): hot tables of at least VACUUM_STARVATION_MIN_ROWS rows holding more dead rows than
+ * autovacuum's vacuum threshold (`autovacuum_vacuum_threshold` + `autovacuum_vacuum_scale_factor` x rows, the server
+ * settings) whose last completed VACUUM or autovacuum is over VACUUM_STARVATION_HOURS old or unrecorded. Postgres
+ * cancels an autovacuum whenever another session waits a second for a lock it holds (an ANALYZE, an index build, a
+ * LOCK), so a table one of them keeps meeting is never vacuumed, and its dead rows stay in every index.
+ * `vacuum_running`: an autovacuum worker holds a lock on the table now (pg_locks, which every role can read).
+ */
+export async function readVacuumStarvation(engine: BrainEngine): Promise<VacuumStarvation[]> {
+  if (engine.kind !== 'postgres') return [];
+  const rows = await engine.executeRaw<{ table_name: PlannerStatsTable; dead_rows: string | number; threshold: number;
+    vacuumed_at: string | Date | null; vacuum_running: boolean }>(
+    `SELECT s.relname AS table_name, s.n_dead_tup AS dead_rows, v.threshold,
+            GREATEST(s.last_vacuum, s.last_autovacuum) AS vacuumed_at,
+            EXISTS (SELECT 1 FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+                     WHERE l.relation = s.relid AND l.granted AND a.backend_type = 'autovacuum worker') AS vacuum_running
+       FROM pg_stat_user_tables s JOIN pg_class c ON c.oid = s.relid
+       CROSS JOIN LATERAL (SELECT current_setting('autovacuum_vacuum_threshold')::float8
+         + current_setting('autovacuum_vacuum_scale_factor')::float8 * GREATEST(c.reltuples, 0) AS threshold) v
+      WHERE s.schemaname = current_schema() AND s.relname = ANY($1::text[])
+        AND c.reltuples >= $2 AND s.n_dead_tup > v.threshold
+        AND COALESCE(GREATEST(s.last_vacuum, s.last_autovacuum) < now() - make_interval(hours => $3::int), true)
+      ORDER BY array_position($1::text[], s.relname::text)`,
+    [[...PLANNER_STATS_TABLES], VACUUM_STARVATION_MIN_ROWS, VACUUM_STARVATION_HOURS]);
+  return rows.map(row => ({ table: row.table_name, dead_rows: Number(row.dead_rows), threshold: Math.round(Number(row.threshold)),
+    vacuumed_at: row.vacuumed_at == null ? null : new Date(row.vacuumed_at).toISOString(), vacuum_running: !!row.vacuum_running }));
 }
 
 async function readWatermarks(engine: BrainEngine, tables: readonly PlannerStatsTable[]): Promise<Map<PlannerStatsTable, number>> {

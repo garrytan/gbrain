@@ -276,7 +276,11 @@ async function worktreeRecoveryPending(engine: BrainEngine, binding: WorktreeBin
   try { const held = await probe(); return held?.publication === true || held?.topology === true; }
   finally { await lock.release(); }
 }
-/** Never wait on a sync: an unexhausted cursor names its own resume command. */
+/**
+ * Never wait on a sync: an unexhausted cursor names its own resume command. #6712 PR 4b (design v3.2 §3.3): a
+ * non-company source's pass is never stranded by a checkout move (it reconciles whatever HEAD it pins next), so only
+ * cursors refuse: a company brain's, and a legacy one the first pass has not retired yet.
+ */
 async function assertNoUnfinishedSync(engine: BrainEngine, members: string[]): Promise<void> {
   const [cursor] = await engine.executeRaw<{ source_id: string; header: Record<string, unknown> }>(`SELECT c.completed_keys->0->>'sourceId' AS source_id,
     c.completed_keys->0 AS header
@@ -549,7 +553,10 @@ export async function resumeWorktreeRefreshes(engine: BrainEngine, opts: { hostI
         if (after.state !== row.state) moved++;
       });
     } catch (error) {
-      if (!(error instanceof OperationError && ['write_pending', 'recovery_required', 'refresh_recovery_required', 'owner_unavailable'].includes(error.code))) throw error;
+      // GBRA-130 A-34: one refresh's unexpected failure leaves that row for the next owner start and never stops the others or the topology scan.
+      if (!(error instanceof OperationError && ['write_pending', 'recovery_required', 'refresh_recovery_required', 'owner_unavailable'].includes(error.code))) {
+        console.error(`[gbrain] worktree refresh ${row.id} (${row.source_ids.join(', ')}) did not converge at owner start (${String((error as { code?: unknown } | null)?.code ?? (error as Error)?.name ?? 'error')}); it stays ${row.state} and the next owner start retries it. Check it with gbrain sources writer status ${row.source_ids[0]}.`);
+      }
     } finally { await lock.release(); }
   }
   return moved;

@@ -439,8 +439,8 @@ src/core/persistence/segmented-apply.ts	stageSegmentedImport	field	INLINE	input.
 src/core/persistence/semantic-pages.ts	prepareSemanticPageMutation	call:serializePageToMarkdown	SEGW	assertInlineBody first
 src/core/persistence/semantic-pages.ts	prepareSemanticPageMutation	field	SEGW	assertInlineBody after the identity check (tag and timeline writes refuse)
 src/core/persistence/sync-prepare.ts	prepareManagedSyncCode	field	INLINE	code pages are never segmented
-src/core/persistence/sync-prepare.ts	prepareManagedSyncMutation	call:serializePageToMarkdown	SEGW	lane 1d file
-src/core/persistence/sync-prepare.ts	prepareManagedSyncMutation	field	SEGW	lane 1d file: preserveProtectedTakes over fenceBody (an unread body is fence-free)
+src/core/persistence/sync-prepare.ts	prepareSyncMutation	call:serializePageToMarkdown	SEGW	lane 1d file
+src/core/persistence/sync-prepare.ts	prepareSyncMutation	field	SEGW	lane 1d file: preserveProtectedTakes over fenceBody (an unread body is fence-free)
 src/core/persistence/takes-prepare.ts	prepare	call:serializePageToMarkdown	SEGW	
 src/core/persistence/writer-guard-schema.ts	MANAGED_WRITER_GUARD_FUNCTION_SQL	sql	STREAM	managed-writer guard tuple (lane 1a adds body_generation)
 src/core/pglite-engine.ts	PGLiteEngine.putPage	call:putPage	SEGW	delegation to engine-sql putPage
@@ -482,6 +482,7 @@ src/core/repair/overwritten-edits.ts	versionMarkdown	call:serializePageToMarkdow
 src/core/repair/overwritten-edits.ts	versionMarkdown	field	SEGW	inline versions only: overwriteContent returns null for a segmented version, which answers version_changed
 src/core/repair/overwritten-edits.ts	versionMarkdown	sql	SEGW	selects body_storage; a segmented version answers version_changed
 src/core/repair/safe-chunks.ts	safeChunksRepair	sql	META	
+src/core/repair/segmented-mirror.ts	fileHoldsWithdrawnRows	field	NONE	the overlay result of one file fragment (a facts fence block) for the region digests (body-digests.ts); no page body is read
 src/core/repair/slug-conflicts.ts	pageContent	call:serializePageToMarkdown	SEGW	
 src/core/repair/split-facts.ts	mergeOne	call:serializePageToMarkdown	SEGW	
 src/core/repair/split-facts.ts	mergeSplitFacts	call:serializePageToMarkdown	SEGW	

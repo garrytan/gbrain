@@ -147,6 +147,7 @@ CHECKS=(
   "check:no-double-retry"
   "check:batch-audit-site"
   "check:engine-dynamic-import"
+  "check:file-url-pathname"
   "check:grok-pin"
   "check:opencode-pin"
   "check:pin-doc-privacy"

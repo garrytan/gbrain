@@ -142,8 +142,12 @@ async function dump(e: BrainEngine, source: string): Promise<Record<string, unkn
     receipts: await rows(`SELECT jsonb_build_object('kind',r.intent->>'kind','path',r.intent->>'path','state',r.state,'error_code',r.error_code,'error_message',r.error_message,
         'outcome',r.outcome - 'revision','slug',r.slug,'page_id',r.page_id,'publication_started',r.publication_started,'compacted',r.compacted) AS r
       FROM persistence_requests r WHERE r.source_id=$1 AND r.intent->>'kind' LIKE 'managed_sync_%'`),
+    // #6712 PR 4b: a pass reserves its embedding spend in one sync-pass-cost row per admitted group, and lanes group pages
+    // differently, so those rows compare as one total per incarnation (each page's own estimate, summed: GBRA-130).
     provenance: await rows(`SELECT jsonb_build_object('op',op,'record',completed_keys) AS r FROM op_checkpoints
-      WHERE completed_keys->0->>'source_id'=$1 AND op NOT LIKE 'managed-sync%'`),
+      WHERE completed_keys->0->>'source_id'=$1 AND op NOT LIKE 'managed-sync%' AND op <> 'sync-pass-cost'`),
+    reserved: await rows(`SELECT jsonb_build_object('incarnation',completed_keys->0->>'incarnation','usd',round(sum((completed_keys->0->>'usd')::numeric),12)::text) AS r
+      FROM op_checkpoints WHERE op='sync-pass-cost' AND completed_keys->0->>'source_id'=$1 GROUP BY completed_keys->0->>'incarnation'`),
   };
 }
 
@@ -173,7 +177,7 @@ test('lanes and --no-lanes publish the same rows, effects and receipts over impo
   }
   const left = await dump(engine, laned.id), right = await dump(engine, serial.id);
   if (dumpFile) writeFileSync(dumpFile, JSON.stringify(left, null, 1));
-  for (const table of ['pages', 'chunks', 'page_aliases', 'slug_aliases', 'tags', 'links', 'timeline', 'facts', 'takes', 'versions', 'chronicle', 'effects', 'receipts', 'provenance'] as const) {
+  for (const table of ['pages', 'chunks', 'page_aliases', 'slug_aliases', 'tags', 'links', 'timeline', 'facts', 'takes', 'versions', 'chronicle', 'effects', 'receipts', 'provenance', 'reserved'] as const) {
     expect(left[table]!.length).toBeGreaterThan(0);
   }
   const differences = Object.keys(left).flatMap(table => {

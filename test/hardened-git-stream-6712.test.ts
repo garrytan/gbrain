@@ -5,14 +5,17 @@
  * these reads runs the checkout's clean/process filter or textconv, while
  * porcelain on the same checkout does.
  */
-import { afterAll, afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, describe, expect, spyOn, test } from 'bun:test';
+import * as childProcess from 'node:child_process';
 import { execFileSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { chmodSync, existsSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assertHardenedGitArgs, hardenedGitStream, hardenedStreamComplete, NulRecordSplitter, type HardenedGitStreamResult } from '../src/core/hardened-git.ts';
-import { __setSyncGitStreamForTests, probeDirtiness, readBlobs, readIndexLevel, readRenameHints, readTreeLevel, SyncTreeReadIncomplete } from '../src/core/persistence/sync-git-stream.ts';
+import { __setSyncGitStreamForTests, hashWorkingLevel, probeDirtiness, readBlobs, readIndexLevel, readRenameHints, readTreeLevel, SyncTreeReadIncomplete } from '../src/core/persistence/sync-git-stream.ts';
 
 const dirs: string[] = [];
 afterAll(() => { for (const dir of dirs) rmSync(dir, { recursive: true, force: true }); });
@@ -90,6 +93,26 @@ describe('hardenedGitStream', () => {
     expect(hardenedStreamComplete(lined)).toBe(false);
     await expect(hardenedGitStream(root, ['status', '--porcelain'], { timeoutMs: 10_000 })).rejects.toThrow(/hardened git refuses/);
   });
+
+  // #7053: under Bun a child's stdout that turns readable as the child exits can lose its readiness (its one-shot epoll
+  // registration fired and was never re-armed, the record and EOF left unread), so 'exit' arrives and stdout never ends or
+  // closes. The read waited for 'close' with nothing to bound it: its timeout only SIGKILLs a child that is already gone.
+  test('a child that exited while its stdout stopped delivering fails the read instead of hanging it', async () => {
+    const child = Object.assign(new EventEmitter(), { pid: 4242, stdout: new PassThrough(), stdin: null, kill: () => true });
+    const spawn = spyOn(childProcess, 'spawn').mockImplementation((() => {
+      setTimeout(() => { child.stdout.write('100644 blob 708d805e8798c0eba388e1826208be3929aabf5f'); child.emit('exit', 0, null); }, 10);
+      return child;
+    }) as unknown as typeof childProcess.spawn);
+    try {
+      const chunks: Buffer[] = [];
+      const read = hardenedGitStream('/nonexistent-root', ['ls-tree', '-r', '-z', 'HEAD', '--', '.'], { timeoutMs: 120_000, onChunk: chunk => { chunks.push(chunk); } });
+      expect(await Promise.race([read, new Promise(resolve => setTimeout(() => resolve('still waiting'), 10_000))])).toEqual({ ok: false, reason: 'stalled' });
+      expect(Buffer.concat(chunks).toString()).toBe('100644 blob 708d805e8798c0eba388e1826208be3929aabf5f');
+      child.stdout.write('\tlate\0');
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(chunks.length).toBe(1);
+    } finally { spawn.mockRestore(); }
+  }, 15_000);
 
   test('a non-zero exit, a byte cap, a timeout and an external signal are each reported as such', async () => {
     const root = repo({ 'a.md': 'a\n' });
@@ -281,7 +304,7 @@ describe('probeDirtiness verdicts', () => {
 });
 
 describe('forced probe: repository filters and textconv never run (design probe 28)', () => {
-  test('1,000 passes of every read leave no marker, while porcelain on the same checkout leaves one', async () => {
+  test('1,000 passes of every read (working-mode hashing included) leave no marker, while porcelain on the same checkout leaves one', async () => {
     const root = repo({ 'a.md': 'alpha\n', 'b.md': 'bravo\n', 'c.md': 'charlie\r\n' });
     const from = git(root, 'rev-parse', 'HEAD').trim();
     git(root, 'mv', 'a.md', 'renamed.md');
@@ -307,14 +330,17 @@ describe('forced probe: repository filters and textconv never run (design probe 
     const pass = async () => {
       const tree = await readTreeLevel(root, 'HEAD', '');
       const index = await readIndexLevel(root);
-      const [hints, read, verdicts] = await Promise.all([readRenameHints(root, from, 'HEAD'), readBlobs(root, blobs, 1024), probeDirtiness(root, root, paths, tree, index)]);
-      return { hints, read, verdicts };
+      const [hints, read, verdicts, working] = await Promise.all([readRenameHints(root, from, 'HEAD'), readBlobs(root, blobs, 1024), probeDirtiness(root, root, paths, tree, index),
+        hashWorkingLevel(root, root, paths, tree)]);
+      return { hints, read, verdicts, working: working.probes };
     };
     const first = await pass();
     expect(first.hints).toEqual([{ from: 'a.md', to: 'renamed.md', oid: blobOid('alpha\n') }]);
     expect(first.read.size).toBe(2);
     expect(Object.fromEntries([...first.verdicts].map(([path, probe]) => [path, probe.dp])))
       .toEqual({ 'renamed.md': 'clean', 'b.md': 'unknown', 'c.md': 'unknown', '.gitattributes': 'untracked', 'missing.md': 'untracked' });
+    expect(Object.fromEntries([...first.working].map(([path, probe]) => [path, probe.dp])))
+      .toEqual({ 'renamed.md': 'clean', 'b.md': 'unknown', 'c.md': 'unknown', '.gitattributes': 'untracked', 'missing.md': 'deleted' });
     for (let done = 1; done < 1000; done += 8) await Promise.all(Array.from({ length: Math.min(8, 1000 - done) }, pass));
     expect(ran()).toEqual([]);
 

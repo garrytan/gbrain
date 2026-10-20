@@ -27,6 +27,7 @@ import {
   HOOK_EVENTS,
   type HookHeartbeatEntry,
 } from '../src/commands/hook.ts';
+import { writeHeartbeat } from '../src/core/context/hook-heartbeat.ts';
 import { pushStatusPathForRoot } from '../src/core/workspace-push.ts';
 import {
   ensureIpcSecret,
@@ -1029,6 +1030,26 @@ describe('session-end', () => {
     expect(existsSync(spooled('sess-drift.txt'))).toBe(false);
   });
 
+  test('a Claude Code session with only slash commands is empty_session, not parser_drift', async () => {
+    const projRoot = join(tmp, 'projects');
+    const transcript = seedTranscript(join(projRoot, 'p1'), 'empty.jsonl', [
+      JSON.stringify({ type: 'permission-mode', permissionMode: 'default', sessionId: 'sess-empty' }),
+      JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '<system-reminder>session renamed</system-reminder>' } }),
+      JSON.stringify({ type: 'system', subtype: 'local_command', content: '<command-name>/rename</command-name>' }),
+      JSON.stringify({ type: 'cost-state', sessionId: 'sess-empty' }),
+    ]);
+    const ws = join(tmp, 'ws');
+    mkdirSync(ws, { recursive: true });
+    await runHook(['session-end'], {
+      stdin: JSON.stringify({ session_id: 'sess-empty', transcript_path: transcript, cwd: ws }),
+      transcriptRoot: projRoot,
+    });
+    const hb = await lastHeartbeat();
+    expect(hb?.reason).toBe('empty_session');
+    expect(hb?.outcome).not.toBe('error');
+    expect(existsSync(await hookStatusPath())).toBe(false);
+  });
+
   test('confinement rejection: degraded heartbeat, no corpus write [S3#8]', async () => {
     const outside = join(tmp, 'outside.jsonl');
     writeFileSync(outside, userLine('outside content') + '\n');
@@ -1101,6 +1122,17 @@ describe('heartbeat', () => {
     expect(lines.length).toBe(HEARTBEAT_MAX_LINES);
     // The newest entry survived the compaction.
     expect(JSON.parse(lines[lines.length - 1]).event).toBe('stop');
+  });
+
+  test('#6794: every allowlisted key round-trips through writeHeartbeat', async () => {
+    const entry: Record<string, string | number> = {};
+    HEARTBEAT_ALLOWED_KEYS.forEach((key, i) => {
+      entry[key] = key === 'outcome' ? 'ok' : key === 'duration_ms' ? i : `v-${key}`;
+    });
+    await writeHeartbeat(entry as unknown as HookHeartbeatEntry);
+    const [written] = await readHeartbeatTail(1);
+    expect(Object.keys(written).sort()).toEqual([...HEARTBEAT_ALLOWED_KEYS].sort());
+    expect(written).toEqual(entry as unknown as HookHeartbeatEntry);
   });
 
   test('readHeartbeatTail returns the last n entries oldest→newest', async () => {

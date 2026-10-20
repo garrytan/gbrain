@@ -586,14 +586,14 @@
               "string",
               "string",
               "array<string>",
-              "array<string>",
-              "array<string>",
               "string",
+              "array<string>",
+              "array<string>",
               "number",
               "number"
             ],
-            "sql": "SELECT * FROM facts WHERE source_id = $1 AND COALESCE(valid_from, created_at) >= $2 AND entity_slug = $3 AND source_session = $4 AND consolidated_at IS NULL AND kind = ANY($5::text[]) AND visibility = ANY($6::text[]) AND source != ALL($7::text[]) AND fact ILIKE $8 ESCAPE '\\' ORDER BY COALESCE(valid_from, created_at) DESC, id DESC LIMIT $9 OFFSET $10",
-            "textSha256": "a635199e1e8bc1742eaa0209a8bc5b296098640ab38aa287635fe9195fa696ae"
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND COALESCE(valid_from, created_at) >= $2 AND entity_slug = $3 AND source_session = $4 AND source != ALL($5::text[]) AND fact ILIKE $6 ESCAPE '\\' AND consolidated_at IS NULL AND kind = ANY($7::text[]) AND visibility = ANY($8::text[]) ORDER BY COALESCE(valid_from, created_at) DESC, id DESC LIMIT $9 OFFSET $10",
+            "textSha256": "1b9e94f79ae9ab62cb04bc9501d94a5b3c7e02b6b208f25f3ec7c840e9d2e978"
           }
         ],
         "default": [
@@ -606,7 +606,7 @@
               "number"
             ],
             "sql": "SELECT * FROM facts WHERE source_id = $1 AND created_at >= $2 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4",
-            "textSha256": "3f0a5fa0e5e1a4338c4d9a10f70015aef0d1d34504c0161ce43eae3a104f6beb"
+            "textSha256": "b91c27c57a63ae4eeed4b01a43c5b9c43bc16d06e7960e87a68898d91577d0ac"
           }
         ]
       },

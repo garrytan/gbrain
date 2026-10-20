@@ -175,7 +175,9 @@ sections). A link may keep a `mentions` row beside a typed one.
 `all`) and `as_of`; `traverse_graph` walks live relationships (read history with
 `get_links` or `get_backlinks`). When a default read leaves relationships
 out, the response carries a `former_relationships_hidden` notice with the exact call
-that shows them, and `gbrain.temporal` response metadata with the count.
+that shows them, and `gbrain.temporal` response metadata with the count. Both filters run before the
+500-row page cap, so a hidden relationship never takes a row; on a paged read the count
+covers the rows that page spans.
 
 Recipe for "where did alice-example work in 2022":
 

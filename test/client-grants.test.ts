@@ -342,6 +342,13 @@ describe('client capability grants', () => {
     expect(() => parseRescopeGrantArgs(['--if-version', '-1'])).toThrow('non-negative');
   });
 
+  test('#6993 no grant flag parses as print-only on both client spellings; --repair alone still refuses', () => {
+    expect(parseClientRescopeArgs('client-example', ['--json'])).toMatchObject({ printOnly: true, patch: {} });
+    expect(parseRescopeGrantArgs(['--json'])).toMatchObject({ printOnly: true, patch: {} });
+    expect(parseClientRescopeArgs('client-example', ['--sources', 'default']).printOnly).toBe(false);
+    expect(() => parseRescopeGrantArgs(['--repair'])).toThrow('with --repair');
+  });
+
   test('operations all drops the snapshot and the profile; a csv still sets a snapshot', () => {
     expect(parseRescopeGrantArgs(['--allowed-operations', 'all']).patch).toEqual({ allowedOperations: null, profile: null });
     expect(parseClientRescopeArgs('client-example', ['--operations', 'all']).patch).toEqual({ allowedOperations: null, profile: null });

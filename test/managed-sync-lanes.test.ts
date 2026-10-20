@@ -333,8 +333,9 @@ test('a page edited after its freeze fails alone inside a lane group; the group 
   // The edited page's group is held in preparation until a later lane group has applied and waits for its turn behind it,
   // so the refusal always lands while that group waits (the window CI hit only under load: the group sent back to the
   // queue made every lane group waiting behind it yield, `predecessor_requeued`, and count as a fallback).
+  // #6712 PR 4b: a pass's intents carry no index; the zero-padded paths give the manifest order.
   const requestRow = async (requestId: string | undefined) => (await engine!.executeRaw<{ slug: string; idx: number }>(
-    "SELECT slug, (intent->>'index')::int AS idx FROM persistence_requests WHERE request_id=$1::uuid", [requestId ?? null]))[0];
+    "SELECT slug, substring(slug from 'n([0-9]+)$')::int AS idx FROM persistence_requests WHERE request_id=$1::uuid", [requestId ?? null]))[0];
   let behind: () => void = () => {};
   const laterGroupWaiting = new Promise<void>(resolve => { behind = resolve; });
   let waited = false, reached = false;

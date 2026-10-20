@@ -4,6 +4,7 @@ import type { BrainEngine } from '../engine.ts';
 import { loadConfig, loadConfigWithEngine } from '../config.ts';
 import { loadOperatorLiterals } from '../content-sanity-literals.ts';
 import { parseMarkdown } from '../markdown.ts';
+import { alignWithStored } from './align-stored.ts';
 import { parseDataFrontmatter } from '../data-frontmatter.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -19,7 +20,8 @@ import { localHostId } from './identity.ts';
 import { isDatabaseOnlyPage, slugDerivedOrigin } from './unbound-pages.ts';
 import { isUnboundSourcePage } from './unbound-source.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
-import { digest, requireUuid, sha256, stableJson } from './digest.ts';
+import { digest, gitBlobOid, requireUuid, sha256, stableJson } from './digest.ts';
+import { SYNC_ORIGIN_DELETED_OP } from './sync-pass-row.ts';
 import { reconcileCanonical, strictReconcileKeys, validateReconcileJson, type ReconcileConflict, type ReconcileDecision } from './reconcile-merge.ts';
 import type { ParsedPage } from '../import-file.ts';
 import type { AutoDecision } from './reconcile-additive.ts';
@@ -97,6 +99,62 @@ export function canonicalDeletionState(root: string, path: string): 'in_head' | 
   const listed = hardenedGitSync(root, ['ls-tree', '-z', '--full-tree', 'HEAD', '--', repoPath], limits);
   if (!listed.ok) return 'unknown';
   return listed.stdout.toString('utf8').split('\0').some(entry => entry.split('\t')[1] === repoPath) ? 'in_head' : 'gone';
+}
+/**
+ * #6712 PR 4b: the deleted side of a held `file_drift` file that is present (design v3.2 §4, classifier row 9). A deleted page
+ * still at the origin is `tombstone_edited` (the newest one; `pageId` names the held one when it is still there); with no
+ * page row left, a `deleted` marker at the origin (`sync-origin-deleted`) is `purged_differs`. The result pins what a
+ * resolution is bound to: the file's bytes, the tombstone's id and revision, the marker's value.
+ */
+export interface DeletedDriftTarget {
+  state: 'tombstone_edited' | 'purged_differs';
+  root: string;
+  /** Absolute path of the file, and its source-relative spelling. */
+  path: string;
+  relative_path: string;
+  source_path: string;
+  raw: Buffer;
+  raw_file_hash: string;
+  tombstone: { page_id: number; slug: string; revision: string } | null;
+  marker_digest: string | null;
+}
+/** Why a held path no longer has a deleted side to resolve; a fresh sync re-classifies it. */
+export type DeletedDriftChange = 'file_gone' | 'live_page' | 'no_deletion' | 'deleted_same';
+export async function readDeletedDriftTarget(engine: BrainEngine, sourceId: string, input: { path: string; sourcePath: string; pageId?: number | null }):
+  Promise<DeletedDriftTarget | { changed: DeletedDriftChange }> {
+  const binding = await getWorktreeBinding(engine, sourceId);
+  if (!binding?.local_path || binding.owner_host_id !== localHostId() || binding.state !== 'active') {
+    throw new OperationError('owner_unavailable', 'Reconciliation requires the existing active owner on this host.', 'Run repair on the current owner; repair never claims or activates a source.');
+  }
+  const root = realpathSync(join(binding.local_path, binding.relative_path));
+  const path = join(root, ...input.path.split('/'));
+  if (!isWriteTargetContained(path, root)) throw opError('source_changed', 'The held file is outside its registered source.',
+    `Nothing changed. ${input.path} resolves outside source '${sourceId}''s checkout (a symlinked directory or a moved checkout); inspect the owner before previewing again.`);
+  try {
+    const info = lstatSync(path);
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) throw opError('source_changed', 'The held file is not an ordinary file; repair does not replace it.',
+      `Nothing changed. Make ${input.path} in '${sourceId}' a regular file (not a symlink, directory or hard link), then preview again.`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { changed: 'file_gone' };
+    throw error;
+  }
+  const raw = readFileSync(path);
+  const pin = { root, path, relative_path: input.path, source_path: input.sourcePath, raw, raw_file_hash: sha256(raw) };
+  const claims = await engine.executeRaw<{ id: number; slug: string; deleted: boolean }>(
+    `SELECT id, slug, deleted_at IS NOT NULL AS deleted FROM pages WHERE source_id=$1 AND source_path=$2 ORDER BY deleted_at DESC NULLS FIRST, id DESC`, [sourceId, input.sourcePath]);
+  if (claims.some(row => !row.deleted)) return { changed: 'live_page' };
+  const tombstone = claims.find(row => Number(row.id) === input.pageId) ?? claims[0];
+  if (tombstone) {
+    const snapshot = await engine.readPageSnapshot(tombstone.slug, { sourceId, includeDeleted: true });
+    if (!snapshot || Number(snapshot.page.id) !== Number(tombstone.id) || !snapshot.page.deleted_at) staleReconcile('the deleted page changed during the preview');
+    return { state: 'tombstone_edited', ...pin, tombstone: { page_id: Number(tombstone.id), slug: tombstone.slug, revision: snapshot.revision }, marker_digest: null };
+  }
+  const [marker] = await engine.executeRaw<{ value: { kind?: string; blob_oids?: unknown } | null }>('SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
+    [SYNC_ORIGIN_DELETED_OP, `${sourceId}:${binding.source_incarnation}:${input.sourcePath}`]);
+  if (!marker?.value || marker.value.kind === 'legacy') return { changed: 'no_deletion' };
+  const held = Array.isArray(marker.value.blob_oids) ? marker.value.blob_oids : [];
+  if (held.includes(gitBlobOid(raw, 'sha1')) || held.includes(gitBlobOid(raw, 'sha256'))) return { changed: 'deleted_same' };
+  return { state: 'purged_differs', ...pin, tombstone: null, marker_digest: digest(marker.value) };
 }
 /** Whether `root` or an ancestor holds a `.git` entry (a checkout Git should answer for). */
 function insideGitCheckout(root: string): boolean {
@@ -214,7 +272,7 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
   const importPath = scannerSourcePath(root, path, mode);
   const reading = reconcileFileReading(text, importPath, snapshot.page);
   const parsed = parseMarkdown(reading.content, `${slug}.md`, { validate: true, expectedSlug: slug });
-  if (reading.inferred) parsed.type = snapshot.page.type;
+  alignWithStored(parsed, snapshot.page, reading.inferred);
   const errors = parsed.errors?.filter(e => !['MISSING_OPEN', 'MISSING_CLOSE', 'EMPTY_FRONTMATTER'].includes(e.code)) ?? [];
   if (!errors.length && !parsed.errors?.some(e => e.code === 'MISSING_CLOSE') && parsed.slug !== slug) {
     // #5966 (W14 P1.7): a well-formed file whose path derives another slug is a legacy render of a slug the

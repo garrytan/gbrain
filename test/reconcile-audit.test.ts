@@ -10,6 +10,9 @@ import { activatePersistence } from '../src/core/persistence/activation.ts';
 import { registerLocalWriter, revokeLocalWriter } from '../src/core/persistence/identity.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { auditCanonicalSource, runReconcileAudit } from '../src/core/persistence/reconcile-audit.ts';
+import { liveFileDrift } from '../src/core/persistence/drift-conflicts.ts';
+import { importFromContent } from '../src/core/import-file.ts';
+import { loadActivePackForEngine } from '../src/core/schema-pack/engine-resolution.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 
@@ -79,6 +82,39 @@ test('audit reports database-only pages separately; a legacy row without source_
   const collided = await runReconcileAudit(engine, { source_id: source });
   expect(collided.database_only).toBe(0);
   expect(collided.findings.find(row => row.slug === 'd-db-only')?.reason).not.toBe('database_only');
+}), 60_000);
+
+test('a page typed by a schema pack path rule, whose file has no type line, is not drift', () => fixture(async (root, source) => {
+  const packDir = join(process.env.GBRAIN_HOME!, '.gbrain', 'schema-packs', 'path-typed');
+  mkdirSync(packDir, { recursive: true });
+  writeFileSync(join(packDir, 'pack.yaml'), `api_version: gbrain-schema-pack-v1
+name: path-typed
+version: 1.0.0
+extends: gbrain-base-v2
+page_types:
+  - name: standup
+    primitive: temporal
+    path_prefixes: [standups/]
+    aliases: []
+    extractable: false
+    expert_routing: false
+    subtypes:
+      - name: daily
+        when:
+          path_pattern: '^standups/'
+`);
+  await withEnv({ GBRAIN_SCHEMA_PACK: 'path-typed' }, async () => {
+    const slug = 'standups/monday';
+    const content = '---\ntitle: Monday\n---\nA synthetic standup.\n';
+    const pack = await loadActivePackForEngine(engine, { remote: false, sourceId: source });
+    await importFromContent(engine, slug, content, { sourceId: source, sourcePath: `${slug}.md`, activePack: pack.manifest, noEmbed: true });
+    expect((await engine.readPageSnapshot(slug, { sourceId: source }))?.page).toMatchObject({ type: 'standup', frontmatter: { subtype: 'daily' } });
+    mkdirSync(join(root, 'standups'));
+    writeFileSync(join(root, `${slug}.md`), content);
+    const report = await runReconcileAudit(engine, { source_id: source });
+    expect(report.findings.map(row => row.slug)).toEqual(['b', 'c']);
+    expect(await liveFileDrift(engine, source, slug)).toMatchObject({ still_present: false, reason: 'agrees' });
+  });
 }), 60_000);
 
 test('audit cursor is bounded, explicit and not a source checkpoint', () => fixture(async (_root, source) => {

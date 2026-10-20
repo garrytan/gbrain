@@ -15,7 +15,8 @@ import { localHostId } from './identity.ts';
 import { acquireWorktree, getWorktreeBinding, guardOwnership, type WorktreeBinding } from './ownership.ts';
 import { chargePreparationAttempt, clearResolvedRecovery, completeWrite, getWriteRequestById, lockCounters, markRecovering, prepareRecovery, releaseUnpublishedClaim } from './journal.ts';
 import type { WaitingOn } from './claim-phase.ts';
-import { preparationKind } from './preparation-budget.ts';
+import { PREPARATION_BUDGET_KEYS, preparationKind } from './preparation-budget.ts';
+import { chargeTransientInterruption, transientInterruption, type TransientInterruption } from './transient-retry.ts';
 import { readWriteSwitchSnapshot } from './switches.ts';
 import { isSharedReadFailure } from './bounded-reads.ts';
 import { isTerminal, principalKey, requestPrincipal, recoveryFiles, type FileRecoveryRecord, type RecoveryRecord, type WriteRequest } from './model.ts';
@@ -79,6 +80,11 @@ interface PreparedMutationBase {
    */
   postimage?: PageSnapshot | null;
   validate?(tx: BrainEngine): Promise<void>;
+  /**
+   * #6712 PR 4b: runs in the publication transaction right after its effects are queued, so it sees the request's own
+   * Git effect (a writeback import's folded pass stamp, sync-pass-fold.ts); it may add to the outcome. Absent for every other write.
+   */
+  afterEffects?(tx: BrainEngine, outcome: Record<string, unknown>): Promise<void>;
   /** #5575: the tier and origin of the rows apply writes; absent: the request's channel tier (trust/channel.ts). */
   trust?: WriteTrust;
   /**
@@ -199,19 +205,11 @@ function requestError(error: unknown): PublicationFailure {
   return ownerExceptionFailure(error);
 }
 function conflictCode(code: string): boolean { return ['revision_required','revision_conflict','revision_backfill_pending','source_changed','page_identity_changed',SYNC_CURSOR_REPLACED].includes(code); }
+/** The terminal state of an unpublished failure: `admission_paused` (#6712 PR 4b, a destructive write `sync.admission` paused at publication) is `cancelled`. */
+function failureState(code: string): 'conflict' | 'failed' | 'cancelled' { return code === 'admission_paused' ? 'cancelled' : conflictCode(code) ? 'conflict' : 'failed'; }
 export function transientDatabaseFailure(error: unknown): boolean {
   return ['40001','40P01','55P03','57014','53300','57P01','57P02','57P03','08000','08003','08006','08001','08004',
     'ECONNRESET','ECONNREFUSED','ETIMEDOUT','CONNECTION_CLOSED','CONNECTION_ENDED'].includes(String((error as {code?:string})?.code));
-}
-/**
- * The SQLSTATE of a transient failure that ended this write's own statement while the database stayed up (57014: a
- * statement timeout or cancel), else null. It throws the preparation away and recurs while the write's work outlasts
- * its bound, so it is charged like a cut-off preparation (`chargedInterruption`). Contention with other transactions
- * (a lock timeout, a serialization failure, a deadlock) clears when they finish, and a lost connection or a database
- * shutting down or out of connections is not the write's doing: neither is charged, so a restart never fails a write.
- */
-function writeInterruption(error: unknown): string | null {
-  return String((error as {code?:string})?.code) === '57014' ? '57014' : null;
 }
 /**
  * Flip lane C: the shared-read failures (`sharedReadFailure`) already charged. A group's memoized read the database cancelled
@@ -220,43 +218,52 @@ function writeInterruption(error: unknown): string | null {
  * released uncounted. A read cancelled on every pass so still reaches the limit, one member at a time, never unbounded.
  */
 const chargedSharedReads = new WeakSet<object>();
-function writeInterruptedFailure(row: WriteRequest, sqlstate: string, attempts: number, limit: number): PublicationFailure {
+/**
+ * Large-pages hardening (b)/(c): the terminal failure once a write's transient interruptions (transient-retry.ts) pass
+ * persistence.max_transient_retries: `attempts` interruptions, `limit` retries. The detail keeps the shipped
+ * `origin`/`sqlstate`/`attempts`/`limit` fields and adds the cause and the key the limit came from.
+ */
+function writeInterruptedFailure(row: WriteRequest, interruption: TransientInterruption, attempts: number, limit: number): PublicationFailure {
   const fix = preparationKind(row) === 'sync'
     ? `The file is held and the rest of the source syncs; reduce the load, then gbrain sources retry-held ${row.source_id} and the same gbrain sync with the same options.`
     : 'Submit the write again with a new request_id once the database is less loaded.';
+  const what = interruption.cause === 'publication_ceiling'
+    ? `Publication of this write ran past persistence.publication_ceiling_ms and was cancelled ${attempts} time(s)${interruption.sqlstate ? ` (SQLSTATE ${interruption.sqlstate})` : ''}`
+    : `The database ended this write's statements ${attempts} time(s) (SQLSTATE ${interruption.sqlstate}, a statement timeout or cancel)`;
   return { code: 'write_interrupted',
-    message: `The database ended this write's statements ${attempts} time(s) (SQLSTATE ${sqlstate}, a statement timeout or cancel), the limit of persistence.max_preparation_attempts (${limit}); it is not prepared again. `
+    message: `${what}; it was retried with backoff ${limit} time(s), the limit of ${TRANSIENT_RETRIES_KEY} (${limit}), and is not prepared again. `
       + `Run gbrain sources writer status --source ${row.source_id} --json to see the load on the owner. ${fix}`,
-    detail: { origin: 'database_interruption', sqlstate, attempts, limit } as unknown as PublicationFailureDetail };
+    detail: { origin: 'database_interruption', cause: interruption.cause, sqlstate: interruption.sqlstate, attempts, limit, limit_key: TRANSIENT_RETRIES_KEY } as unknown as PublicationFailureDetail };
 }
+const TRANSIENT_RETRIES_KEY = PREPARATION_BUDGET_KEYS.transientRetries;
 /**
- * Flip lane C: the limit an interruption (`writeInterruption`) is charged against, persistence.max_preparation_attempts.
- * Null when the failure is not an interruption, the `preparation_deadlines` switch is off (nothing is counted, as
- * before), or the database cannot be read (the claim is then released uncounted).
+ * The transient interruption `error` reports (transient-retry.ts) and the retries it is charged against,
+ * persistence.max_transient_retries. Null when the failure is not one, the `preparation_deadlines` switch is off
+ * (nothing is counted and no backoff applies, as before), or the database cannot be read (released uncounted).
  */
-async function interruptionCharge(engine: BrainEngine, error: unknown): Promise<{ sqlstate: string; limit: number } | null> {
-  const sqlstate = writeInterruption(error);
-  if (!sqlstate) return null;
+async function interruptionCharge(engine: BrainEngine, error: unknown, interruption = transientInterruption(error)): Promise<{ interruption: TransientInterruption; limit: number } | null> {
+  if (!interruption) return null;
   if (isSharedReadFailure(error)) {
     if (chargedSharedReads.has(error as object)) return null;
     chargedSharedReads.add(error as object);
   }
   try {
     const { switches, preparation } = await readWriteSwitchSnapshot(engine);
-    return switches.preparation_deadlines ? { sqlstate, limit: preparation.maxAttempts } : null;
+    return switches.preparation_deadlines ? { interruption, limit: preparation.transientRetries } : null;
   } catch { return null; }
 }
 /**
- * Flip lane C: the recovery route's charge, returning the terminal `write_interrupted` failure once the count reaches the
- * limit. It runs in its own statement before `markRecovering`: the request already holds its recovery record, which the
- * expired-owner sweep never takes, so a crash in between leaves the one charge for the owner's recovery to finish.
+ * Flip lane C: the recovery route's charge: `failure` is the terminal `write_interrupted` once the count passes the
+ * limit, else null (the restored request goes back to the queue with the backoff the charge scheduled). It runs in its
+ * own statement before `markRecovering`: the request already holds its recovery record, which the expired-owner sweep
+ * never takes, so a crash in between leaves the one charge for the owner's recovery to finish. Null when not charged.
  */
-async function chargedInterruption(engine: BrainEngine, row: WriteRequest, error: unknown): Promise<PublicationFailure | null> {
+export async function chargedInterruption(engine: BrainEngine, row: WriteRequest, error: unknown): Promise<{ failure: PublicationFailure | null } | null> {
   const charge = await interruptionCharge(engine, error);
   if (!charge) return null;
   try {
-    const attempts = await chargePreparationAttempt(engine, row);
-    return attempts >= charge.limit ? writeInterruptedFailure(row, charge.sqlstate, attempts, charge.limit) : null;
+    const attempts = await chargeTransientInterruption(engine, row);
+    return { failure: attempts > charge.limit ? writeInterruptedFailure(row, charge.interruption, attempts, charge.limit) : null };
   } catch { return null; }
 }
 /**
@@ -308,29 +315,39 @@ export async function finishPreparationStalled(engine: BrainEngine, row: WriteRe
   return engine.transaction(tx => completeWrite(tx, row, 'failed', {}, failure));
 }
 
+/**
+ * Flip lane C: releases a held claim whose work a transient interruption ended, charged in the transaction that releases
+ * or finishes it. A crash before it commits leaves the claim uncharged (the expired-owner sweep charges a preparing claim
+ * once), after it the charged outcome; never both. The release carries the backoff the charge scheduled
+ * (`next_attempt_at`), so no claim waits it out; past the limit the claim ends `failed`/`write_interrupted`. Null when
+ * nothing was charged (not an interruption, the switch off, or the database refused). `interruption` is the
+ * classification when the caller made it inside the cancelled publication (a lane group's release runs after it).
+ */
+export async function releaseChargedInterruption(engine: BrainEngine, row: WriteRequest, error: unknown, stage: PublicationStage,
+  reason = 'database_contention', interruption = transientInterruption(error)): Promise<WriteRequest | null> {
+  const charge = await interruptionCharge(engine, error, interruption);
+  if (!charge) return null;
+  const done = await engine.transaction(async tx => {
+    const attempts = await chargeTransientInterruption(tx, row);
+    if (attempts > charge.limit) return completeWrite(tx, row, 'failed', {}, withAttempt(writeInterruptedFailure(row, charge.interruption, attempts, charge.limit), stage));
+    await releaseUnpublishedClaim(tx, row, reason);
+    return null;
+  }).then(outcome => ({ outcome }), () => null);
+  if (!done) return null;
+  await faultPoint('persistence:interruption_charged', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation });
+  return done.outcome ?? (await getWriteRequestById(engine, row.id))!;
+}
+
 export async function finishUnpublishedFailure(engine: BrainEngine, row: WriteRequest, error: unknown,
   stage: PublicationStage = 'publication'): Promise<WriteRequest> {
-  const charge = await interruptionCharge(engine, error);
-  if (charge) {
-    // Flip lane C: charged in the transaction that releases or finishes the claim. A crash before it commits leaves the claim
-    // uncharged (the expired-owner sweep charges a preparing claim once), after it the charged outcome; never both.
-    const done = await engine.transaction(async tx => {
-      const attempts = await chargePreparationAttempt(tx, row);
-      if (attempts >= charge.limit) return completeWrite(tx, row, 'failed', {}, withAttempt(writeInterruptedFailure(row, charge.sqlstate, attempts, charge.limit), stage));
-      await releaseUnpublishedClaim(tx, row, 'database_contention');
-      return null;
-    }).then(outcome => ({ outcome }), () => null);
-    if (done) {
-      await faultPoint('persistence:interruption_charged', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation });
-      return done.outcome ?? (await getWriteRequestById(engine, row.id))!;
-    }
-  }
+  const charged = await releaseChargedInterruption(engine, row, error, stage);
+  if (charged) return charged;
   const failure = withAttempt(requestError(error), stage);
   if (mayReprepare(row, failure) || transientDatabaseFailure(error)) {
     await releaseUnpublishedClaim(engine, row, transientDatabaseFailure(error) ? 'database_contention' : 'revision_changed_repreparing');
     return (await getWriteRequestById(engine, row.id))!;
   }
-  return engine.transaction(tx => completeWrite(tx, row, conflictCode(failure.code) ? 'conflict' : 'failed', {}, failure));
+  return engine.transaction(tx => completeWrite(tx, row, failureState(failure.code), {}, failure));
 }
 
 /**
@@ -576,6 +593,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       decoratePublicationOutcome(row, prepared, outcome, final, files.length, skill);
       await recordPublicationFenceTrend(tx, row, outcome);
       await timePublicationStep('effects', row.slug, () => queuePublicationEffects(tx, row, final, outcome, prepared));
+      if (prepared.afterEffects) await withCoordinatedWrite(tx, [row.source_id], () => prepared.afterEffects!(tx, outcome), publicationAttribution(row, prepared.trust));
       await hooks.boundary?.('before_commit', row);
       const committed = await completeWrite(tx, current, 'committed', outcome, undefined, current);
       transactionBodyCompleted = true;
@@ -595,10 +613,13 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
     if (recovery) {
       // Even a rejected prepare can retain a journal record; do not leave that
       // record unaccounted or let a sibling publication bypass its recovery.
-      const interrupted = transactionBodyCompleted ? null : await chargedInterruption(engine, row, error);
-      if (!transactionBodyCompleted && writeInterruption(error)) await faultPoint('persistence:recovery_interruption_charged', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation });
-      const failure = interrupted || (!transactionBodyCompleted && !mayReprepare(row, requestError(error)) && !transientDatabaseFailure(error))
-        ? withAttempt(interrupted ?? requestError(error), published ? 'after_file_publication' : 'publication') : undefined;
+      // A charged interruption under the limit is retried after its backoff whatever error it surfaced as (a publication the
+      // ceiling cancelled can reject with a bare AbortError); past the limit it is the terminal failure.
+      const charged = transactionBodyCompleted ? null : await chargedInterruption(engine, row, error);
+      if (!transactionBodyCompleted && transientInterruption(error)) await faultPoint('persistence:recovery_interruption_charged', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation });
+      const terminal = charged ? charged.failure
+        : !transactionBodyCompleted && !mayReprepare(row, requestError(error)) && !transientDatabaseFailure(error) ? requestError(error) : null;
+      const failure = terminal ? withAttempt(terminal, published ? 'after_file_publication' : 'publication') : undefined;
       try { await markRecovering(engine, row, failure ? 'publication_failed' : published ? 'commit_outcome_uncertain' : 'publication_not_started', failure); }
       catch { /* database outage: durable recovery record remains discoverable */ }
       if (lock) {
@@ -713,7 +734,7 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       // Withdrawal is authoritative DB state and is never rolled back here.
       const failure: PublicationFailure | undefined = terminalError ?? (current.error_code ? {code:current.error_code,message:current.error_message ?? 'Publication failed before database completion.',
         ...(current.error_detail ? { detail: current.error_detail as unknown as PublicationFailureDetail } : {})} : undefined);
-      if (failure) return completeWrite(tx, current, conflictCode(failure.code) ? 'conflict' : 'failed', {}, failure);
+      if (failure) return completeWrite(tx, current, failureState(failure.code), {}, failure);
       for (const key of ['brain', `worktree:${current.worktree_id}`]) await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes-$2 WHERE key=$1', [key, Number(current.recovery_bytes)]);
       const [queued] = await tx.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='queued',execution_token=NULL,
         claim_expires_at=NULL,recovery=NULL,recovery_bytes=0,publication_started=false,blocked_reason=NULL,updated_at=now()

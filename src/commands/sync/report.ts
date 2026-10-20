@@ -112,8 +112,9 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
     case 'dry_run':
       break; // already printed in performSync
     case 'blocked_by_failures': {
-      if (result.runId) {
-        write(`Sync BLOCKED at ${result.toCommit}: committed counts are cumulative for run ${result.runId}.`);
+      if (result.runId || (result.pass && result.failures?.length)) {
+        write(result.runId ? `Sync BLOCKED at ${result.toCommit}: committed counts are cumulative for run ${result.runId}.`
+          : `Sync BLOCKED at ${result.toCommit.slice(0, 8)}: ${result.failedFiles ?? 0} file(s) failed.`);
         for (const failure of result.failures ?? []) write(`  ${formatManagedSyncFailure(failure)}`);
         const retries = [...new Set((result.failures ?? []).map(failure => managedSyncRetryCommand(failure)))];
         write(retries.length

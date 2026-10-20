@@ -4,8 +4,9 @@
  * Three seams share one reject list (src/core/entity-name-quality.ts):
  *   1. enrichEntity refuses to MINT a page for a single generic token or a
  *      bare @handle (existing pages stay trusted — update path unaffected).
- *   2. buildGazetteer drops single-generic-token PERSON titles so an
- *      already-minted junk page stops accreting mention edges.
+ *   2. buildGazetteer drops single-generic-token titles of every page type
+ *      (#6958; person-only before) so an already-minted junk page stops
+ *      accreting mention edges.
  *   3. The junk_entity_hubs doctor check surfaces near-empty pages with
  *      huge edge counts (warn + list, never auto-delete).
  */
@@ -18,7 +19,7 @@ import {
   isJunkEntityName,
 } from '../src/core/entity-name-quality.ts';
 import { enrichEntity } from '../src/core/enrichment-service.ts';
-import { buildGazetteer } from '../src/core/by-mention.ts';
+import { buildGazetteer, type DroppedName } from '../src/core/by-mention.ts';
 import {
   checkJunkEntityHubs,
   JUNK_HUB_EDGE_THRESHOLD,
@@ -134,28 +135,35 @@ describe('enrichEntity mint gate (#4222)', () => {
 
 // ── 3. buildGazetteer drop ──────────────────────────────────────────────
 
-describe('buildGazetteer generic person-title drop (#4222)', () => {
+describe('buildGazetteer generic-title drop (#4222, #6958)', () => {
   beforeEach(truncateAll);
 
-  test('single-generic-token person title is dropped; multi-token and non-person kept', async () => {
+  test('single-generic-token titles are dropped for every type; multi-token titles kept', async () => {
     await engine.putPage('people/will', {
       type: 'person', title: 'Will', compiled_truth: 'junk hub magnet', timeline: '',
     });
     await engine.putPage('people/will-smith', {
       type: 'person', title: 'Will Smith', compiled_truth: 'a real person', timeline: '',
     });
-    // Non-person types are NOT dropped (scope pin: the gate is person-only).
+    // #6958: the gate is no longer person-only.
     await engine.putPage('companies/info', {
       type: 'company', title: 'Info', compiled_truth: 'a company', timeline: '',
     });
+    await engine.putPage('companies/info-labs-example', {
+      type: 'company', title: 'Info Labs Example', compiled_truth: 'a real company', timeline: '',
+    });
 
-    const gazetteer = await buildGazetteer(engine);
+    const dropped: DroppedName[] = [];
+    const gazetteer = await buildGazetteer(engine, { dropped });
 
     const willBucket = gazetteer.get('will') ?? [];
     expect(willBucket.some(e => e.slug === 'people/will')).toBe(false);
     expect(willBucket.some(e => e.slug === 'people/will-smith')).toBe(true);
     const infoBucket = gazetteer.get('info') ?? [];
-    expect(infoBucket.some(e => e.slug === 'companies/info')).toBe(true);
+    expect(infoBucket.some(e => e.slug === 'companies/info')).toBe(false);
+    expect(infoBucket.some(e => e.slug === 'companies/info-labs-example')).toBe(true);
+    expect(dropped.filter(d => d.reason === 'generic_token').map(d => d.slug).sort())
+      .toEqual(['companies/info', 'people/will']);
   });
 });
 

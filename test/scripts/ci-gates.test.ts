@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { load } from 'js-yaml';
-import { UNIT_SHARDS } from '../../scripts/sharding.ts';
+import { UNIT_SHARDS, UNIT_SHARDS_PER_JOB } from '../../scripts/sharding.ts';
 
 const root = join(import.meta.dir, '..', '..');
 type Job = { needs?: string | string[]; if?: string; steps: Array<{ name?: string; run?: string; uses?: string; env?: Record<string, string>; if?: string; with?: Record<string, string>; 'timeout-minutes'?: number }> };
@@ -76,6 +76,25 @@ describe('CI execution evidence', () => {
     expect(aggregate(unit, 'test-status', 'push', { typecheck: 'failure' })).toBe(1);
   });
 
+  test('macOS 26 validation typechecks in its own job, under a measured step timeout, saves its state on every outcome, and its verify skips tsc (#6056)', () => {
+    const mac = loadWorkflow('macos-validation.yml') as Workflow & { jobs: Record<string, Job & { 'runs-on'?: string }> };
+    const job = mac.jobs.typecheck;
+    expect(job['runs-on']).toBe('macos-26');
+    expect(job.if).toBe(mac.jobs['macos-26'].if);
+    const tsc = job.steps.find(step => step.run === 'bun run typecheck')!;
+    expect(tsc['timeout-minutes']).toBe(15);
+    const restore = job.steps.find(step => step.uses?.startsWith('actions/cache/restore@') && step.with?.path === 'node_modules/.cache/gbrain-typecheck.tsbuildinfo')!;
+    expect(restore.with!.key).toBe(unit.jobs.typecheck.steps.find(step => step.uses?.startsWith('actions/cache/restore@') && step.with?.path === restore.with!.path)!.with!.key);
+    const save = job.steps.find(step => step.uses?.startsWith('actions/cache/save@'))!;
+    expect(save.if).toBe('always()');
+    expect(save.with).toEqual({ path: restore.with!.path, key: restore.with!.key });
+    expect(job.steps.indexOf(restore)).toBeLessThan(job.steps.indexOf(tsc));
+    expect(job.steps.indexOf(save)).toBeGreaterThan(job.steps.indexOf(tsc));
+    const verify = mac.jobs['macos-26'].steps.find(step => step.run?.includes('bun run verify'))!;
+    expect(verify.env?.GBRAIN_VERIFY_SKIP_TYPECHECK).toBe('1');
+    expect(JSON.stringify(mac.jobs['macos-26'].steps)).not.toContain('gbrain-typecheck.tsbuildinfo');
+  });
+
   test('unit aggregate rejects failed, cancelled or skipped required jobs', () => {
     expect(unit.jobs['test-status'].if).toBe("${{ needs.changes.outputs.reuse != 'true' && always() && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}");
     expect(unit.jobs['test-status'].needs).toEqual([
@@ -127,15 +146,29 @@ describe('CI execution evidence', () => {
   });
 
   test('unit shard count agrees across the matrix, the shard step and the coverage manifest', () => {
-    const job = unit.jobs.test as Job & { strategy: { matrix: { shard: number[] } } };
-    const shards = job.strategy.matrix.shard;
+    const job = unit.jobs.test as Job & { strategy: { matrix: { shards: number[][] } } };
+    const packs = job.strategy.matrix.shards;
+    expect(packs.map(pack => pack.length)).toEqual(packs.map(() => UNIT_SHARDS_PER_JOB));
+    const shards = packs.flat();
     expect(shards).toEqual(Array.from({ length: UNIT_SHARDS }, (_, i) => i + 1));
-    const run = job.steps.find(step => step.run?.includes('scripts/test-shard.sh'))!;
-    expect(run.name).toBe(`Run test shard \${{ matrix.shard }}/${shards.length}`);
-    expect(run.run).toContain(`scripts/test-shard.sh \${{ matrix.shard }} ${shards.length}`);
+    const run = job.steps.find(step => step.run?.includes('scripts/test-shard-pack.sh'))!;
+    expect(run.name).toBe(`Run test shards \${{ join(matrix.shards, ' and ') }} of ${shards.length}`);
+    expect(run.run).toBe(`bash scripts/test-shard-pack.sh ${shards.length} \${{ join(matrix.shards, ' ') }}`);
     const merge = unit.jobs['coverage-report'].steps.find(step => step.name === 'Merge lanes')!.run!;
     const expected = /--manifest-expect (\S+)/.exec(merge)![1].split(',').filter(lane => lane.startsWith('shard-'));
     expect(expected).toEqual(shards.map(shard => `shard-${shard}`));
+  });
+
+  test('each packed unit shard uploads its own receipts, coverage lane and timing log', () => {
+    const job = unit.jobs.test as Job;
+    const pack = job.steps.find(step => step.run?.includes('scripts/test-shard-pack.sh'))!;
+    expect(pack.env).toEqual({ GBRAIN_SHARD_PACK_DIR: '${{ runner.temp }}/shards' });
+    const uploads = job.steps.filter(step => step.uses?.startsWith('actions/upload-artifact@')).map(step => [step.with!.name, step.with!.path]);
+    expect(uploads).toEqual(Array.from({ length: UNIT_SHARDS_PER_JOB }, (_, i) => `\${{ matrix.shards[${i}] }}`).flatMap(shard => [
+      [`receipts-unit-${shard}`, `\${{ runner.temp }}/shards/${shard}/receipts`],
+      [`coverage-shard-${shard}`, `\${{ runner.temp }}/shards/${shard}/coverage`],
+      [`timings-unit-${shard}`, `\${{ runner.temp }}/shards/${shard}/unit.log`],
+    ]));
   });
 
   test('the nightly coverage-full-unit lane runs the same unit partition', () => {

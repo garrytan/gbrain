@@ -9,6 +9,8 @@ import { registerSignalOwner } from '../../core/process-cleanup.ts';
 import { MinionWorker, type UnhealthyReason } from '../../core/minions/worker.ts';
 import type { MinionQueue } from '../../core/minions/queue.ts';
 import type { BrainEngine } from '../../core/engine.ts';
+import { loadConfig } from '../../core/config.ts';
+import { startPersistenceConsumer } from '../../core/persistence/service.ts';
 
 export async function maybeRunWorkerStartupRecovery(
   queue: MinionQueue,
@@ -248,13 +250,24 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
   // cannot exit(143) ahead of the drain and orphan in-flight jobs.
   const releaseSignalOwner = registerSignalOwner('jobs-work', () => worker.requestShutdown());
 
+  // GBRA-133 PR 2a.4: the worker is a resident; its notifier syncs this host's sources on commit (sync.on_commit) and
+  // drains wanted markers. One owner per host (the notifier lease); it never delays the first claim.
+  const { startResidentNotifier } = await import('../../core/notifier/resident.ts');
+  const notifier = startResidentNotifier(engine, { resident: 'jobs-worker', log: line => console.error(line) });
+  // GBRA-133 2a.4: a queued sync job wakes the idle claim loop (LISTEN on a direct session, a short poll otherwise).
+  const { startSyncQueueWake } = await import('../../core/minions/sync-queue-wake.ts');
+  const syncQueueWake = await startSyncQueueWake(engine, worker.idleWaiter, { queue: queueName });
+  startWorkerPersistenceConsumer(engine);
+
   try {
     reportWorkerStarting('worker_startup');
     worker.once('ready', () => reportWorkerReady(childIdentity));
     await worker.start();
   } finally {
+    await notifier?.stop().catch(() => undefined);
     unregisterWorker();
     releaseSignalOwner();
+    await syncQueueWake.stop();
     if (worker.configurationError) {
       const releases = worker.configurationReleaseResults;
       const unconfirmed = releases.filter(result => result.outcome === 'unconfirmed').length;
@@ -296,6 +309,22 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
     if (worker.drainForced) {
       process.exit(WORKER_EXIT_DRAIN_FORCED);
     }
+  }
+}
+
+/**
+ * #7002: a resident worker joins the persistence-consumer election at boot (Postgres only; this function runs after the
+ * PGLite branch returned). Under the existing election it starts waiter-only beside a live owner and promotes itself
+ * when that owner lapses, so queued effects drain after a serve stops even while no job runs. persistence.single_consumer
+ * keeps its meaning (service.ts is unchanged). engine.disconnect() stops it through registerBeforeDisconnect.
+ */
+export function startWorkerPersistenceConsumer(engine: BrainEngine, log: (line: string) => void = (line) => console.error(line)): boolean {
+  try {
+    startPersistenceConsumer(engine, loadConfig() ?? { engine: engine.kind });
+    return true;
+  } catch (error) {
+    log(`[gbrain jobs] persistence consumer did not start: ${error instanceof Error ? error.message : String(error)}; queued effects wait for the next resident owner`);
+    return false;
   }
 }
 

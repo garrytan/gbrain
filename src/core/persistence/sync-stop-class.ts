@@ -32,7 +32,7 @@ export function receiptClass(row: WriteRequest): 'transport' | 'page' | 'systemi
 /**
  * #6712 (#6565): a stop the next plain sync re-freezes in place: a database refusal the fault table retries (an
  * unrecognised P0001 or a 55000 raised under a page write surfaces as `storage_error`). A content, consent or option
- * refusal is never one: its receipt stays the diagnosis until the next sync retries it from HEAD (`retryRecordedFailure`).
+ * refusal is never one: its receipt stays the diagnosis until the next sync takes the path again (a pass re-classifies it at HEAD).
  */
 export function resumableStop(row: WriteRequest): boolean {
   const verdict = classifySyncFault({ code: row.error_code ?? 'storage_error', message: row.error_message ?? null });
@@ -70,7 +70,8 @@ export function replaysContentRefusal(failed: WriteRequest, recorded: { gbrain_v
  * holds the working-tree bytes that refused (the frozen `rawHash`). Bytes decide, never the
  * file's mtime against the stop's database timestamp: those are two clocks, and a correction written within their skew
  * (a filesystem timestamp lags the wall clock by up to a scheduler tick) read as unwritten and replayed the refusal.
- * Committing the file, editing it or upgrading gbrain retries it.
+ * Committing the file, editing it or upgrading gbrain retries it. #6712 PR 4b: the pass replays what its last blocked pass
+ * stopped on (sync-pass-run.ts, under sync.holds=fail).
  */
 export function replaysUnchangedRefusal(failed: WriteRequest, recorded: RecordedStop,
   entry: { root: string; intent: { path?: string | null; rawHash?: string | null }; target: string; head: () => string }): boolean {

@@ -7,11 +7,13 @@
  * is parsed as it streams; nothing but the result maps is held, so a
  * 600k-path tree costs its map and one chunk.
  */
-import { lstatSync, realpathSync } from 'node:fs';
+import { lstatSync, realpathSync, type BigIntStats } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { hardenedGitStream, hardenedStreamComplete, NulRecordSplitter, type HardenedGitStreamResult } from '../hardened-git.ts';
 import { gitBlobOid, sha256 } from './digest.ts';
 import { readSyncFile } from './sync-discovery.ts';
+import { faultPointNow } from './fault-points.ts';
+import { loopYield, type LoopYield } from './sync-yield.ts';
 
 export type Dp = 'clean' | 'clean_eol' | 'clean_lfs' | 'modified' | 'deleted' | 'staged' | 'untracked' | 'unknown';
 export interface GitTreeEntry { mode: string; oid: string }
@@ -45,11 +47,65 @@ function outcome(result: HardenedGitStreamResult): string {
 
 const malformed = (read: string, record: string) => new SyncTreeReadIncomplete(read, `malformed record ${JSON.stringify(record.slice(0, 80))}`);
 
-async function readRecords(gitRoot: string, args: string[], read: string, visit: (record: string) => void): Promise<void> {
+async function readRecords(gitRoot: string, args: string[], read: string, visit: (record: Buffer) => void, shared?: LoopYield): Promise<void> {
   const splitter = new NulRecordSplitter();
-  const result = await gitStream(gitRoot, args, { timeoutMs: READ_TIMEOUT_MS,
-    onChunk: chunk => { for (const record of splitter.push(chunk)) visit(record.toString('utf8')); } });
+  // A 600k-path read arrives faster than it parses: past the stretch budget, the stream waits one macrotask.
+  const step = shared ?? loopYield();
+  const visitChunk = (chunk: Buffer) => {
+    if (shared) faultPointNow('sync:level_chunk', { read });
+    const records = splitter.push(chunk);
+    for (const record of records) visit(record);
+    return step.due(records.length) ? step.pause() : undefined;
+  };
+  // A budget shared with the level's cursor (sync-yield.ts `turnYield`): a chunk waits a turn the cursor already spent.
+  const take = (chunk: Buffer) => shared?.over() ? shared.pause().then(() => visitChunk(chunk)) : visitChunk(chunk);
+  // Bun can close the stream (and hand the next chunk) before a held chunk settles: chunks chain here and the read waits for the last.
+  let tail: Promise<void> | undefined;
+  const result = await gitStream(gitRoot, args, { timeoutMs: READ_TIMEOUT_MS, onChunk: chunk => {
+    const held = tail ? tail.then(() => take(chunk)) : take(chunk);
+    if (!held) return;
+    const settled: Promise<void> = held.finally(() => { if (tail === settled) tail = undefined; });
+    return tail = settled;
+  } });
+  await tail;
   if (!hardenedStreamComplete(result) || !splitter.atRecordBoundary) throw new SyncTreeReadIncomplete(read, outcome(result));
+}
+
+/** The common modes and `ls-tree` types as one string each, so a 600k-entry map holds no per-entry copy and a read decodes none. */
+const MODE_NAMES = ['100644', '100755', '120000', '160000', '040000'], TYPE_NAMES = ['blob', 'commit', 'tree'];
+
+/** `record.toString('latin1', start, end)`, as the one string of `names` it spells when it spells one. */
+function latin1Named(record: Buffer, start: number, end: number, names: readonly string[]): string {
+  next: for (const name of names) {
+    if (name.length !== end - start) continue;
+    for (let i = 0; i < name.length; i++) if (record[start + i] !== name.charCodeAt(i)) continue next;
+    return name;
+  }
+  return record.toString('latin1', start, end);
+}
+
+/** Whether an `ls-files -s` record (its first tab at `tab`) is exactly `<mode> <oid> 0` of `entry`: the parse it skips reads stage 0 at the entry's blob and mode. */
+function sameIndexRecord(record: Buffer, tab: number, entry: GitTreeEntry): boolean {
+  const { mode, oid } = entry;
+  if (tab !== mode.length + oid.length + 3 || record[mode.length] !== 32 || record[tab - 2] !== 32 || record[tab - 1] !== 48) return false;
+  for (let i = 0; i < mode.length; i++) if (record[i] !== mode.charCodeAt(i)) return false;
+  for (let i = 0; i < oid.length; i++) if (record[mode.length + 1 + i] !== oid.charCodeAt(i)) return false;
+  return true;
+}
+
+/**
+ * One `<mode> <a> <b>\t<path>` record (`ls-tree`: type and OID; `ls-files -s`: OID and stage), its fields decoded straight
+ * from the record's bytes as strings of their own (no substring keeps the record alive), or null when the header before the
+ * tab has fewer than three fields (a fourth is ignored, as `split(' ')` did).
+ */
+function headerFields(record: Buffer): { mode: string; a: string; b: string; path: string } | null {
+  const tab = record.indexOf(9);
+  const first = tab < 0 ? -1 : record.indexOf(32);
+  const second = first < 0 || first > tab ? -1 : record.indexOf(32, first + 1);
+  if (second < 0 || second > tab) return null;
+  const third = record.indexOf(32, second + 1);
+  return { mode: latin1Named(record, 0, first, MODE_NAMES), a: latin1Named(record, first + 1, second, TYPE_NAMES), b: record.toString('latin1', second + 1, third < 0 || third > tab ? tab : third),
+    path: record.toString('utf8', tab + 1) };
 }
 
 function* lines(items: readonly string[], terminator: string): Generator<Buffer> {
@@ -62,28 +118,63 @@ function* lines(items: readonly string[], terminator: string): Generator<Buffer>
  * Symlinks (120000) and gitlinks (160000) are kept with their mode so a caller
  * can mark them unknown.
  */
-export async function readTreeLevel(gitRoot: string, commit: string, scope: string): Promise<Map<string, GitTreeEntry>> {
+export async function readTreeLevel(gitRoot: string, commit: string, scope: string, shared?: LoopYield): Promise<Map<string, GitTreeEntry>> {
   const tree = new Map<string, GitTreeEntry>();
-  await readRecords(gitRoot, ['ls-tree', '-r', '-z', commit, '--', scope === '' ? '.' : scope], 'ls-tree', record => {
-    const tab = record.indexOf('\t');
-    const [mode = '', type = '', oid = ''] = tab < 0 ? [] : record.slice(0, tab).split(' ');
-    if (!OID.test(oid)) throw malformed('ls-tree', record);
-    if (type === 'blob' || type === 'commit') tree.set(record.slice(tab + 1), { mode, oid });
-  });
+  await walkTreeLevel(gitRoot, commit, scope, (path, mode, oid) => tree.set(path, { mode, oid }), shared);
   return tree;
 }
 
+/** `readTreeLevel`'s entries handed to `visit` in `ls-tree` order as they arrive, none kept: a caller that needs only a pass over `T` holds no map of it. */
+export async function walkTreeLevel(gitRoot: string, commit: string, scope: string, visit: (path: string, mode: string, oid: string) => void, shared?: LoopYield): Promise<void> {
+  await readRecords(gitRoot, ['ls-tree', '-r', '-z', commit, '--', scope === '' ? '.' : scope], 'ls-tree', record => {
+    const fields = headerFields(record);
+    if (!fields || !OID.test(fields.b)) throw malformed('ls-tree', record.toString('utf8'));
+    if (fields.a === 'blob' || fields.a === 'commit') visit(fields.path, fields.mode, fields.b);
+  }, shared);
+}
+
 /** `X`: the index (never the worktree), keyed by Git-root-relative path; a conflicted path keeps its highest stage. */
-export async function readIndexLevel(gitRoot: string): Promise<Map<string, GitIndexEntry>> {
+export async function readIndexLevel(gitRoot: string, shared?: LoopYield): Promise<Map<string, GitIndexEntry>> {
   const index = new Map<string, GitIndexEntry>();
   await readRecords(gitRoot, ['ls-files', '-s', '-z'], 'ls-files', record => {
-    const tab = record.indexOf('\t');
-    const [mode = '', oid = '', stage = ''] = tab < 0 ? [] : record.slice(0, tab).split(' ');
-    if (!OID.test(oid) || !/^[0-3]$/.test(stage)) throw malformed('ls-files', record);
-    const path = record.slice(tab + 1);
-    if ((index.get(path)?.stage ?? -1) < Number(stage)) index.set(path, { mode, oid, stage: Number(stage) });
-  });
+    const fields = headerFields(record);
+    if (!fields || !OID.test(fields.a) || !/^[0-3]$/.test(fields.b)) throw malformed('ls-files', record.toString('utf8'));
+    const stage = Number(fields.b);
+    if ((index.get(fields.path)?.stage ?? -1) < stage) index.set(fields.path, { mode: fields.mode, oid: fields.a, stage });
+  }, shared);
   return index;
+}
+
+/**
+ * `X` as committed mode reads it: only the tree paths whose index entry differs from `T` (OID, mode or a non-zero stage,
+ * the highest stage kept; null: absent from the index). A 600k-path checkout whose index matches its tree holds no second
+ * map of every path. Paths outside `tree` are not kept; when some tree path never appeared, the index is read whole
+ * once more to name them.
+ */
+export async function readIndexDelta(gitRoot: string, tree: Map<string, GitTreeEntry>, shared?: LoopYield): Promise<Map<string, GitIndexEntry | null>> {
+  const delta = new Map<string, GitIndexEntry | null>();
+  let same = 0;
+  await readRecords(gitRoot, ['ls-files', '-s', '-z'], 'ls-files', record => {
+    const tab = record.indexOf(9);
+    const matched = tab < 0 ? undefined : tree.get(record.toString('utf8', tab + 1));
+    if (matched && sameIndexRecord(record, tab, matched)) { same++; return; }
+    const fields = headerFields(record);
+    if (!fields || !OID.test(fields.a) || !/^[0-3]$/.test(fields.b)) throw malformed('ls-files', record.toString('utf8'));
+    const committed = tree.get(fields.path);
+    if (!committed) return;
+    const stage = Number(fields.b);
+    if (stage === 0 && fields.a === committed.oid && fields.mode === committed.mode) { same++; return; }
+    if ((delta.get(fields.path)?.stage ?? -1) < stage) delta.set(fields.path, { mode: fields.mode, oid: fields.a, stage });
+  }, shared);
+  if (same + delta.size === tree.size) return delta;
+  const index = await readIndexLevel(gitRoot, shared);
+  const whole = new Map<string, GitIndexEntry | null>();
+  for (const [path, committed] of tree) {
+    const indexed = index.get(path);
+    if (!indexed) whole.set(path, null);
+    else if (indexed.stage !== 0 || indexed.oid !== committed.oid || indexed.mode !== committed.mode) whole.set(path, indexed);
+  }
+  return whole;
 }
 
 /**
@@ -94,7 +185,8 @@ export async function readIndexLevel(gitRoot: string): Promise<Map<string, GitIn
 export async function readRenameHints(gitRoot: string, from: string, to: string): Promise<GitRenameHint[]> {
   const byOid = new Map<string, { deleted: string[]; added: string[] }>();
   let meta: string | null = null;
-  await readRecords(gitRoot, ['diff-tree', '-r', '-z', '--no-renames', from, to], 'diff-tree', record => {
+  await readRecords(gitRoot, ['diff-tree', '-r', '-z', '--no-renames', from, to], 'diff-tree', bytes => {
+    const record = bytes.toString('utf8');
     if (meta === null) {
       if (!record.startsWith(':')) throw malformed('diff-tree', record);
       meta = record;
@@ -206,10 +298,18 @@ interface ReadFile { path: string; sha256: string; localOid: string; foldedOid: 
  * `hash-object --no-filters --stdin-paths` per batch and must agree with the
  * bytes read here; attributes from one `check-attr -z --stdin`. A present,
  * readable file also reports its raw OID and sha256 under `staged` and
- * `untracked`, for working mode.
+ * `untracked`.
+ *
+ * `working` (design v3.2 §2.1, the working level is the physical bytes):
+ * the index is not read. A path is `deleted` when no file backs it, whatever
+ * the index says; a present file outside the tree is `untracked` with its raw
+ * OID; every other present file is judged from its bytes against the tree,
+ * through the same `clean_eol`/`clean_lfs` domains. So a staged edit, a staged
+ * new file, `git rm --cached`, a staged deletion and a staged file removed from
+ * disk probe exactly as the same disk does with a pristine index.
  */
 export async function probeDirtiness(root: string, gitRoot: string, paths: string[], tree: Map<string, GitTreeEntry>,
-  index: Map<string, GitIndexEntry>, opts: { batch?: number } = {}): Promise<Map<string, DirtinessProbe>> {
+  index: Map<string, GitIndexEntry>, opts: { batch?: number; working?: boolean; step?: LoopYield } = {}): Promise<Map<string, DirtinessProbe>> {
   const batch = Math.max(1, opts.batch ?? 2000);
   const results = new Map<string, DirtinessProbe>();
   const firstOid = tree.values().next().value?.oid ?? index.values().next().value?.oid ?? '';
@@ -217,19 +317,21 @@ export async function probeDirtiness(root: string, gitRoot: string, paths: strin
   let realRoot: string | null = null;
   let realGitRoot: string | null = null;
   try { realRoot = realpathSync.native(root); realGitRoot = realpathSync.native(gitRoot); } catch {}
+  const step = opts.step ?? loopYield();
   for (let start = 0; start < paths.length; start += batch) {
     const decided = new Map<string, Dp | null>();
     const read: ReadFile[] = [];
     for (const path of paths.slice(start, start + batch)) {
+      if (step.due()) await step.pause();
       const committed = tree.get(path);
       const indexed = index.get(path);
-      let dp: Dp | null = !committed && !indexed ? 'untracked'
+      let dp: Dp | null = opts.working ? (committed ? null : 'untracked') : !committed && !indexed ? 'untracked'
         : !committed || !indexed || indexed.oid !== committed.oid || indexed.mode !== committed.mode || indexed.stage !== 0 ? 'staged' : null;
       let bytes: Buffer | null = null;
       let unreadable = realRoot === null || realGitRoot === null;
       const sourcePath = unreadable ? '' : relative(realRoot!, join(realGitRoot!, path)).split(sep).join('/');
       if (!unreadable) { try { bytes = readSyncFile(root, sourcePath); } catch { unreadable = true; } }
-      if (dp === null && !unreadable && bytes === null) dp = 'deleted';
+      if ((dp === null || opts.working) && !unreadable && bytes === null) dp = 'deleted';
       const hashable = bytes !== null && !path.includes('\n') && !path.startsWith('"');
       if (dp === null && (committed!.mode === '120000' || committed!.mode === '160000' || unreadable || !hashable)) dp = 'unknown';
       decided.set(path, dp);
@@ -245,6 +347,7 @@ export async function probeDirtiness(root: string, gitRoot: string, paths: strin
     const [rawOids, attrs] = await Promise.all([hashRaw(gitRoot, read.map(file => file.path)), readAttributes(gitRoot, undecided)]);
     const lfs: Array<{ file: ReadFile; treeOid: string; executableMatches: boolean }> = [];
     for (const [i, file] of read.entries()) {
+      if (step.due()) await step.pause();
       const rawOid = rawOids?.[i] === file.localOid ? file.localOid : null;
       const settle = (dp: Dp) => { results.set(file.path, { dp, rawOid, rawSha256: file.sha256 }); };
       const prior = decided.get(file.path);
@@ -304,4 +407,126 @@ async function readAttributes(gitRoot: string, paths: string[]): Promise<Map<str
     attrs.set(fields[i]!, entry);
   }
   return paths.every(path => ATTRIBUTES.every(name => attrs.get(path)?.[name] !== undefined)) ? attrs : null;
+}
+
+/**
+ * The working stat cache (design v3.2 §2.1, Git's freshness contract). Each
+ * Git-root-relative path maps to the `lstat` key `dev:ino:mode:uid:size:mtime_ns:ctime_ns`
+ * it had when its bytes were hashed, or `absent`. A user can restore `mtime` but
+ * not `ctime`, so a same-size, same-inode edit still changes the key. Plain JSON;
+ * entries are self-contained, so two caches of one root merge by spreading
+ * their entries.
+ */
+export interface WorkingStatCache { v: 1; root: string; entries: Record<string, string> }
+
+const WORKING_RACY_WINDOW_NS = 2_000_000_000n;
+const WORKING_HASH_ATTEMPTS = 3;
+const WORKING_STAT_CACHES_REMEMBERED = 64;
+const ABSENT = 'absent';
+const STAT_KEY = /^\d+:\d+:\d+:\d+:\d+:\d+:\d+$/;
+/** Entries a cache keeps (by path order); a path beyond the bound reads as changed [estimated]. */
+export const WORKING_STAT_CACHE_MAX_ENTRIES = 100_000;
+
+/** The cache key of one bigint `lstat`, or null when it cannot vouch for the file (no stat, or no `ctime`). */
+export function workingStatKey(stats: Pick<BigIntStats, 'dev' | 'ino' | 'mode' | 'uid' | 'size' | 'mtimeNs' | 'ctimeNs'> | null): string | null {
+  if (!stats || !stats.ctimeNs) return null;
+  return [stats.dev, stats.ino, stats.mode, stats.uid, stats.size, stats.mtimeNs, stats.ctimeNs].join(':');
+}
+
+/** `absent` for a path nothing backs, its key, or null for any other stat failure (uncertain). */
+function statAt(root: string, path: string): string | null {
+  try { return workingStatKey(lstatSync(join(root, path), { bigint: true })); }
+  catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? ABSENT : null; }
+}
+
+function rootStill(root: string): boolean {
+  try { return realpathSync.native(root) === root; } catch { return false; }
+}
+
+/**
+ * The idle tick's working-mode check: every path in `paths` or in the cache whose
+ * stat no longer matches its entry is changed, as is a path the cache does not
+ * hold (new, racy when hashed, past the bound), a stat that fails or has no
+ * `ctime`, and every path when there is no cache or its root moved. Uncertainty is
+ * never "no change". Returns the changed paths, sorted, and the cache without
+ * them.
+ */
+export function workingChanged(cache: WorkingStatCache | null, paths: Iterable<string>): { changed: string[]; cache: WorkingStatCache | null } {
+  const all = new Set(paths);
+  if (!cache || !rootStill(cache.root)) return { changed: [...all].sort(), cache: null };
+  for (const path of Object.keys(cache.entries)) all.add(path);
+  const changed: string[] = [];
+  const entries: Record<string, string> = {};
+  for (const path of [...all].sort()) {
+    const entry = cache.entries[path];
+    if (entry !== undefined && statAt(cache.root, path) === entry) entries[path] = entry;
+    else changed.push(path);
+  }
+  return { changed, cache: { v: 1, root: cache.root, entries } };
+}
+
+/**
+ * The working level of `paths` (`probeDirtiness` with `working`, every path hashed:
+ * full rounds rehash unconditionally) and the stat cache it leaves. Each path is
+ * stat'd before and after its bytes are hashed; a path whose stat moved is
+ * discarded and rehashed, up to three attempts, and one still moving keeps its
+ * last probe but no entry. An entry is written only for a stable stat whose
+ * `mtime` and `ctime` are older than 2 s before that attempt began (a racy entry is
+ * left out, so the next pass rehashes it), and only for a probe with a level
+ * (raw bytes read, or `deleted` with nothing at the path). `afterHash` runs between
+ * the hash and the re-stat (tests inject an edit there).
+ */
+export async function hashWorkingLevel(root: string, gitRoot: string, paths: string[], tree: Map<string, GitTreeEntry>,
+  opts: { batch?: number; maxEntries?: number; afterHash?: (paths: string[]) => void | Promise<void> } = {}): Promise<{ probes: Map<string, DirtinessProbe>; cache: WorkingStatCache | null }> {
+  let realGitRoot: string | null = null;
+  try { realGitRoot = realpathSync.native(gitRoot); } catch {}
+  const statOf = (path: string) => (realGitRoot === null ? null : statAt(realGitRoot, path));
+  const probes = new Map<string, DirtinessProbe>();
+  const entries = new Map<string, string>();
+  let pending = [...new Set(paths)];
+  for (let attempt = 0; attempt < WORKING_HASH_ATTEMPTS && pending.length > 0; attempt++) {
+    const racyFrom = BigInt(Date.now()) * 1_000_000n - WORKING_RACY_WINDOW_NS;
+    const before = new Map(pending.map(path => [path, statOf(path)]));
+    const probed = await probeDirtiness(root, gitRoot, pending, tree, new Map(), { batch: opts.batch, working: true });
+    await opts.afterHash?.(pending);
+    const moved: string[] = [];
+    for (const path of pending) {
+      const probe = probed.get(path)!;
+      probes.set(path, probe);
+      const key = before.get(path)!;
+      if (statOf(path) !== key) { moved.push(path); continue; }
+      if (key === null) continue;
+      const [mtimeNs = '0', ctimeNs = '0'] = key === ABSENT ? [] : key.split(':').slice(5);
+      const vouched = key === ABSENT ? probe.dp === 'deleted' : probe.rawOid !== null && BigInt(mtimeNs) < racyFrom && BigInt(ctimeNs) < racyFrom;
+      if (vouched) entries.set(path, key);
+    }
+    pending = moved;
+  }
+  if (realGitRoot === null) return { probes, cache: null };
+  const kept = [...entries.keys()].sort().slice(0, Math.max(0, opts.maxEntries ?? WORKING_STAT_CACHE_MAX_ENTRIES));
+  return { probes, cache: { v: 1, root: realGitRoot, entries: Object.fromEntries(kept.map(path => [path, entries.get(path)!])) } };
+}
+
+/** A serialized cache (a pass row's copy), or null for anything that is not one; null reads as "everything changed". */
+export function parseWorkingStatCache(value: unknown): WorkingStatCache | null {
+  if (!value || typeof value !== 'object') return null;
+  const { v, root, entries } = value as Record<string, unknown>;
+  if (v !== 1 || typeof root !== 'string' || !entries || typeof entries !== 'object' || Array.isArray(entries)) return null;
+  const list = Object.entries(entries as Record<string, unknown>);
+  if (list.length > WORKING_STAT_CACHE_MAX_ENTRIES || !list.every(([, key]) => typeof key === 'string' && (key === ABSENT || STAT_KEY.test(key)))) return null;
+  return { v: 1, root, entries: Object.fromEntries(list) as Record<string, string> };
+}
+
+const rememberedCaches = new Map<string, WorkingStatCache>();
+
+/** Keeps a cache in this process under `key` (the pass uses `<source>:<incarnation>`); the least recently stored past 64 are dropped. */
+export function rememberWorkingStatCache(key: string, cache: WorkingStatCache): void {
+  rememberedCaches.delete(key);
+  rememberedCaches.set(key, cache);
+  while (rememberedCaches.size > WORKING_STAT_CACHES_REMEMBERED) rememberedCaches.delete(rememberedCaches.keys().next().value!);
+}
+
+/** The cache this process remembered under `key`, or null. */
+export function recallWorkingStatCache(key: string): WorkingStatCache | null {
+  return rememberedCaches.get(key) ?? null;
 }

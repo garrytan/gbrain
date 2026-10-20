@@ -51,6 +51,28 @@ export interface LiveWorker extends WorkerRegistryEntry {
   nice_now: number | null;
 }
 
+/**
+ * The registry directory exists but cannot be listed (EACCES on it or a
+ * parent, ENOTDIR, ...). Worker liveness is unknown: callers report it as
+ * unknown with this errno and path, never as zero workers.
+ */
+export class WorkerRegistryUnreadableError extends Error {
+  readonly path: string;
+  readonly errno: string;
+  constructor(path: string, errno: string, cause: unknown) {
+    super(`worker registry unreadable (${errno}): ${path}`, { cause });
+    this.name = 'WorkerRegistryUnreadableError';
+    this.path = path;
+    this.errno = errno;
+  }
+}
+
+/** The safe evidence of a failed registry read: errno and path, or the error class name for anything else. */
+export function workerRegistryReadFailure(err: unknown): { errno: string; path: string | null } {
+  if (err instanceof WorkerRegistryUnreadableError) return { errno: err.errno, path: err.path };
+  return { errno: err instanceof Error ? err.name : 'unknown', path: null };
+}
+
 /** Directory holding one file per live worker. Brain-isolated via GBRAIN_HOME. */
 export function workerRegistryDir(): string {
   return gbrainPath('workers');
@@ -206,23 +228,26 @@ const PID_REUSE_TOLERANCE_MS = 5000;
  * confirmed-dead entries (pruning their files), filters by brain id, applies the
  * PID-reuse guard, and re-measures each live worker's niceness now.
  *
+ * Only a missing registry directory (ENOENT) is an empty registry; any other
+ * listing failure throws WorkerRegistryUnreadableError (existsSync() answers
+ * false for an unsearchable parent too, so it is not used as the gate).
  * `getNice` is injectable for tests.
  */
 export function readWorkers(
   getNice: (pid: number) => number | null = (pid) => getEffectiveNiceness(pid),
 ): LiveWorker[] {
   const dir = workerRegistryDir();
-  if (!existsSync(dir)) return [];
-
-  const brainId = currentBrainId();
-  const live: LiveWorker[] = [];
-
   let files: string[];
   try {
     files = readdirSync(dir).filter((f) => f.startsWith('worker-') && f.endsWith('.json'));
-  } catch {
-    return [];
+  } catch (e) {
+    const errno = (e as NodeJS.ErrnoException)?.code;
+    if (errno === 'ENOENT') return [];
+    throw new WorkerRegistryUnreadableError(dir, errno ?? 'unknown', e);
   }
+
+  const brainId = currentBrainId();
+  const live: LiveWorker[] = [];
 
   for (const f of files) {
     const full = join(dir, f);

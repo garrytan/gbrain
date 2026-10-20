@@ -50,7 +50,7 @@ import { activationSuppressionNotice, suppressionSummary } from '../eligibility/
 import { stampPageTrust, stampRowTrust } from '../eligibility/stamp.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
-import { parseRelativeSince } from '../facts/since-parse.ts';
+import { parseSinceParam } from '../facts/since-parse.ts';
 import { parseQuestionParam, questionRecallNotices, rankFactsByQuestion, recallHintNotice, unlinkedNamesakes, type EntityCandidate, type QuestionRecall } from '../facts/question-recall.ts';
 
 // ============================================================
@@ -433,7 +433,7 @@ const recall: Operation = {
       const { resolveEntitySlug } = await import('../entities/resolve.ts');
       const resolvedLists = await Promise.all(factSources.map(async (src) => {
         const slug = (await resolveEntitySlug(ctx.engine, src, entityParam)) ?? entityParam;
-        return { slug, rows: await readEntityFacts(ctx, src, slug, limit, s => ctx.engine.listFactsByEntity(src, s!, listOpts)) };
+        return { slug, rows: await readEntityFacts(ctx, src, slug, limit, s => ctx.engine.listFactsByEntity(src, s!, { ...listOpts, sessionId: sessionParam ?? undefined })) };
       }));
       ambiguousEntity = await unlinkedNamesakes(ctx.engine, resolvedLists.map(l => l.rows.map(r => ({ ...r, entity_slug: l.slug }))));
       rows = ambiguousEntity ? [] : mergeNewest(resolvedLists.map(l => l.rows), (rec) => rec.valid_from ?? rec.created_at);
@@ -1355,37 +1355,7 @@ export function clampRecallLimit(raw: unknown): number {
   return Math.min(raw, 100);
 }
 
-/**
- * Parse a `since` parameter into a Date. Accepts ISO 8601, plain duration
- * shorthand ("8 hours ago", "3 days ago", "30m", "1h", "2d", "7d"), Unix
- * epoch millis, or a relative phrase (since-parse.ts: "6 weeks ago",
- * "last month"). Returns null on unparseable input.
- */
-export function parseSinceParam(raw: unknown): Date | null {
-  if (raw == null) return null;
-  if (typeof raw === 'number' && Number.isFinite(raw)) return new Date(raw);
-  if (typeof raw !== 'string') return null;
-  const s = raw.trim();
-  if (!s) return null;
-
-  // Try ISO first.
-  const iso = Date.parse(s);
-  if (Number.isFinite(iso)) return new Date(iso);
-
-  // "N (minutes|hours|days) ago" or compact forms.
-  const ago = s.match(/^(\d+)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?)(?:\s+ago)?$/i);
-  if (ago) {
-    const n = parseInt(ago[1], 10);
-    const unit = ago[2].toLowerCase();
-    const ms =
-      unit.startsWith('s') ? n * 1000 :
-      unit.startsWith('m') ? n * 60 * 1000 :
-      unit.startsWith('h') ? n * 60 * 60 * 1000 :
-      n * 24 * 60 * 60 * 1000;
-    return new Date(Date.now() - ms);
-  }
-  return parseRelativeSince(s);
-}
+export { parseSinceParam } from '../facts/since-parse.ts';
 
 /**
  * MEMORY_VERBS v1 — parse the `remember` verb's `ttl` param into a

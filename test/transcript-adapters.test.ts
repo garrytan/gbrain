@@ -37,6 +37,7 @@ import {
   openclawAdapter,
   type OpenclawLineResult,
 } from '../src/core/transcripts/openclaw.ts';
+import { Database } from 'bun:sqlite';
 import { hermesAdapter } from '../src/core/transcripts/hermes.ts';
 import {
   grokAdapter,
@@ -532,6 +533,31 @@ describe('hermesAdapter', () => {
     // The original store is untouched and still readable after copy-then-read.
     const again = await drain(hermesAdapter.parse(dbPath));
     expect(again.sessions).toHaveLength(2);
+  });
+
+  test('json:-prefixed block arrays unwrap to text, image blocks become a placeholder (#6815)', async () => {
+    const d = tdir();
+    const dbPath = buildHermesFixture(d);
+    const db = new Database(dbPath);
+    try {
+      db.prepare('INSERT INTO sessions (id, source, started_at) VALUES (?, ?, ?)').run('hermes-fixture-4', 'cli', 1786176000);
+      const ins = db.prepare('INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)');
+      ins.run('hermes-fixture-4', 'user', 'json:' + JSON.stringify([
+        { type: 'text', text: 'What does this widget-co screenshot show?' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,' + 'A'.repeat(4096) } },
+      ]), 1786176005);
+      ins.run('hermes-fixture-4', 'assistant', 'json:[{"type": "text", "text": "The acme-example pricing page."}]', 1786176010);
+      ins.run('hermes-fixture-4', 'user', 'json: is how I label it', 1786176015);
+    } finally {
+      db.close();
+    }
+    const { sessions } = await drain(hermesAdapter.parse(dbPath));
+    const s4 = sessions.find((s) => s.meta.sessionId === 'hermes-fixture-4')!;
+    expect(s4.messages.map((m) => m.text)).toEqual([
+      'What does this widget-co screenshot show?\n[image]',
+      'The acme-example pricing page.',
+      'json: is how I label it',
+    ]);
   });
 
   test('detect requires the sqlite magic', async () => {

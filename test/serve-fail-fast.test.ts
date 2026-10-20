@@ -12,8 +12,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { serveFailFastRequested } from '../src/core/serve-fail-fast.ts';
+import { fileURLToPath } from 'node:url';
 
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 let home: string;
 
 beforeAll(() => {

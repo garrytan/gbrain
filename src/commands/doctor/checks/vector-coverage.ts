@@ -10,7 +10,8 @@
  */
 import { loadConfig } from '../../../core/config.ts';
 import { AUDIT_ROW_SOURCES } from '../../../core/facts/audit-sources.ts';
-import { eligibleFactEmbedding, staleFactEmbedding } from '../../../core/facts/embedding-identity.ts';
+import { eligibleFactEmbedding, partiallyEmbeddedFact, staleFactEmbedding } from '../../../core/facts/embedding-identity.ts';
+import { EMBED_MAX_CHARS } from '../../../core/ai/embed-batch-plan.ts';
 import { takesAutoEmbedEnabled } from '../../../core/embed-takes.ts';
 import type { Check } from '../../doctor.ts';
 import { agentFix } from '../check-fix.ts';
@@ -40,9 +41,11 @@ async function runFactTakeVectors(ctx: DoctorContext): Promise<Check[]> {
   try {
     const sources = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id'))
       .filter(s => !ctx.orphanRatioSourceId || s.id === ctx.orphanRatioSourceId);
-    const factRows = await engine.executeRaw<{ source_id: string; missing: number; stale: number }>(
-      `SELECT f.source_id, count(*) FILTER (WHERE f.embedding IS NULL)::int AS missing, count(*)::int AS stale
-         FROM facts f WHERE ($1::text IS NULL OR f.source_id = $1) AND ${eligibleFactEmbedding} AND ${staleFactEmbedding}
+    const factRows = await engine.executeRaw<{ source_id: string; missing: number; stale: number; partial: number }>(
+      `SELECT f.source_id, count(*) FILTER (WHERE f.embedding IS NULL)::int AS missing,
+              count(*) FILTER (WHERE ${staleFactEmbedding})::int AS stale,
+              count(*) FILTER (WHERE NOT ${staleFactEmbedding} AND ${partiallyEmbeddedFact})::int AS partial
+         FROM facts f WHERE ($1::text IS NULL OR f.source_id = $1) AND ${eligibleFactEmbedding}
         GROUP BY f.source_id`,
       [ctx.orphanRatioSourceId ?? null, [...AUDIT_ROW_SOURCES], model, dims]);
     const bySource: SourceVectors[] = [];
@@ -55,7 +58,12 @@ async function runFactTakeVectors(ctx: DoctorContext): Promise<Check[]> {
       if (row.facts_stale || row.takes_stale) bySource.push(row);
     }
     const sum = (key: keyof Omit<SourceVectors, 'source_id'>) => bySource.reduce((n, r) => n + r[key], 0);
-    const facts = { missing: sum('facts_missing'), other_model: sum('facts_stale') - sum('facts_missing'), stale: sum('facts_stale') };
+    const partiallyEmbedded = factRows.filter(r => sources.some(s => s.id === r.source_id)).reduce((n, r) => n + Number(r.partial), 0);
+    const facts = { missing: sum('facts_missing'), other_model: sum('facts_stale') - sum('facts_missing'), stale: sum('facts_stale'),
+      partially_embedded: partiallyEmbedded };
+    const partialNote = partiallyEmbedded
+      ? ` ${partiallyEmbedded} fact(s) are partially embedded: longer than ${EMBED_MAX_CHARS} characters, so their vector covers only the start of the fact. They stay current and are never re-embedded or charged again.`
+      : '';
     const takes = { missing_or_changed: sum('takes_missing'), other_model: sum('takes_stale') - sum('takes_missing'), stale: sum('takes_stale') };
     const takesFix = await takesAutoEmbedEnabled(engine) ? 'gbrain embed --stale' : 'gbrain takes embed';
     const factSources = bySource.filter(r => r.facts_stale).map(r => r.source_id);
@@ -64,7 +72,7 @@ async function runFactTakeVectors(ctx: DoctorContext): Promise<Check[]> {
       ...factSources.map(id => `gbrain embed --facts --stale --source ${id} --dry-run --json`),
     ];
     if (facts.stale === 0 && takes.stale === 0) {
-      checks.push({ name: 'fact_take_vectors', status: 'ok', message: `Every active fact and take has a ${model} vector for its current text.`,
+      checks.push({ name: 'fact_take_vectors', status: 'ok', message: `Every active fact and take has a ${model} vector for its current text.${partialNote}`,
         details: { applicable: true, model, dims, facts, takes, by_source: [] } });
       return checks;
     }
@@ -73,7 +81,7 @@ async function runFactTakeVectors(ctx: DoctorContext): Promise<Check[]> {
       status: 'warn',
       message: `${facts.stale} active fact(s) and ${takes.stale} active take(s) have no ${model} (${dims}d) vector for their current text ` +
         `(facts: ${facts.missing} missing, ${facts.other_model} from another model or text; takes: ${takes.missing_or_changed} missing or claim changed, ${takes.other_model} from another model). ` +
-        `Vector dedup, consolidation and semantic take search skip them. Fix: ${fix.join('; ')}`,
+        `Vector dedup, consolidation and semantic take search skip them. Fix: ${fix.join('; ')}${partialNote && `.${partialNote}`}`,
       details: { code: 'stale_vectors', applicable: true, model, dims, facts, takes, by_source: bySource,
         cause: 'facts and takes without a current-model vector', fix, docs: VECTOR_COVERAGE_DOCS },
       fix: factSources.length

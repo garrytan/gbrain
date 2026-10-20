@@ -434,3 +434,4 @@ test/backup-preflight-6649.serial.test.ts	global-state	global-state: R3: constru
 test/windows-ipc-long-path-6573.serial.test.ts	R1	R1: mutates process.env (USERPROFILE) to place the per-user run dir under a non-ASCII profile path; native windows-latest only
 test/coordination-lock.serial.test.ts	global-state	global-state: withEnv holds GBRAIN_HOME and GBRAIN_COORDINATION_HOME across awaited PGLite claims and transfers, and real native lock files are held across them
 test/context-assemble-load-warning.serial.test.ts	R2	R2: mock.module(../src/core/engine-factory.ts) replaces modules for every file in the process; R1: mutates process.env (GBRAIN_HOME, DATABASE_URL, GBRAIN_DATABASE_URL)
+test/search-tune-apply-truthful.serial.test.ts	R2	R2: mock.module(../src/core/search/tune-recommendations.ts) replaces modules for every file in the process

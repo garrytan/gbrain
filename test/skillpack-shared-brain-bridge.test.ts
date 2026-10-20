@@ -34,6 +34,22 @@ test('active shared brains inventory unchanged owned copies without installing o
   expect(readFileSync(f.statePath, 'utf8')).toBe(before);
 });
 
+test('#6922: shared deps a remove --harness kept are not a pending legacy copy once no owned slug remains', async () => {
+  const f = fixture();
+  mkdirSync(join(f.dest, 'conventions'));
+  writeFileSync(join(f.dest, 'conventions', 'style.md'), 'shared convention');
+  const ledger = JSON.parse(readFileSync(f.statePath, 'utf8'));
+  ledger.entries[0].written._shared = { mode: 'full', files: { 'conventions/style.md': sha256('shared convention') } };
+  writeFileSync(f.statePath, JSON.stringify(ledger));
+  expect((await sharedBrainBridgePlan(f))?.migration.owned_unchanged).toEqual(['recall/SKILL.md', 'conventions/style.md']);
+  delete ledger.entries[0].written.recall;
+  writeFileSync(f.statePath, JSON.stringify(ledger));
+  const result = await sharedBrainBridgePlan(f);
+  expect(result?.reason).toBe('follow_approval_required');
+  expect(result?.migration).toEqual({ owned_unchanged: [], modified: [], missing: [], ownership: 'ledger' });
+  expect(readFileSync(join(f.dest, 'conventions', 'style.md'), 'utf8')).toBe('shared convention');
+});
+
 test('edited and escaping ledger paths remain visible conflicts without modifying user files', async () => {
   const f = fixture(); writeFileSync(join(f.dest, 'recall', 'SKILL.md'), 'local user changes');
   const ledger = JSON.parse(readFileSync(f.statePath, 'utf8'));

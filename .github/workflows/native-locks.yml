@@ -105,14 +105,39 @@ jobs:
         env:
           GBRAIN_CI_DISABLE_TEST_ENV_FILE: '1'
           GBRAIN_TEST_REQUIRE_CASE_INSENSITIVE: ${{ runner.os != 'Linux' && '1' || '0' }}
+          # Per-file bound for this target: the slowest suite's p99 over 68-78 runs of each
+          # target (2026-10-19), plus max(60 s, 15%), rounded up to 30 s. The slowest suite is
+          # backup-portability-native everywhere: p99 94 s linux-x64, 75 s linux-arm64, 36 s
+          # darwin-arm64, 105 s darwin-x64, 303 s win32-arm64, 462 s win32-x64. Each bound
+          # still fires inside the 15-minute job timeout after the slowest observed setup.
+          GBRAIN_NATIVE_SUITE_BOUND_S: ${{ fromJSON('{"linux-x64-glibc":"180","linux-arm64-glibc":"150","darwin-arm64":"120","darwin-x64":"180","win32-x64":"540","win32-arm64":"390"}')[matrix.target] }}
+        # A file still running at its target's bound is stuck: its process table and, on macOS,
+        # a native stack sample go to the log before it is killed, because a job the timeout
+        # cancels keeps no log at all.
         run: |
           status=0
-          bun --no-env-file test --timeout=180000 test/persistence-publication-native.serial.test.ts || status=1
-          bun --no-env-file test --timeout=180000 test/persistence-git-publication.test.ts || status=1
-          bun --no-env-file test --timeout=180000 test/persistence-sync-origin-native.test.ts || status=1
-          bun --no-env-file test --timeout=180000 test/backup-portability-native.serial.test.ts || status=1
-          bun --no-env-file test --timeout=180000 test/export-publication-native.test.ts || status=1
-          bun --no-env-file test --timeout=180000 test/native-export-publication.test.ts || status=1
+          bound_s="$GBRAIN_NATIVE_SUITE_BOUND_S"
+          case "$bound_s" in ''|*[!0-9]*) echo "::error::GBRAIN_NATIVE_SUITE_BOUND_S is not set for this target"; exit 1 ;; esac
+          bounded() {
+            bun --no-env-file test --timeout=180000 "$1" &
+            pid=$!
+            for _ in $(seq 1 "$bound_s"); do
+              if ! kill -0 "$pid" 2>/dev/null; then wait "$pid"; return $?; fi
+              sleep 1
+            done
+            echo "::error::$1 was still running after $bound_s s, this target's bound (its slowest suite's measured p99 plus margin); process table and stack sample follow, then it is killed"
+            ps -A -o pid,ppid,stat,etime,command 2>/dev/null || ps -ef
+            if command -v sample >/dev/null 2>&1; then sample "$pid" 3 2>&1 | head -200; fi
+            kill -TERM "$pid" 2>/dev/null; sleep 5; kill -KILL "$pid" 2>/dev/null
+            wait "$pid" 2>/dev/null
+            return 1
+          }
+          bounded test/persistence-publication-native.serial.test.ts || status=1
+          bounded test/persistence-git-publication.test.ts || status=1
+          bounded test/persistence-sync-origin-native.test.ts || status=1
+          bounded test/backup-portability-native.serial.test.ts || status=1
+          bounded test/export-publication-native.test.ts || status=1
+          bounded test/native-export-publication.test.ts || status=1
           exit "$status"
       - name: Build the published CLI platforms and verify persistent writes
         if: matrix.target == 'linux-x64-glibc' || matrix.target == 'darwin-arm64'

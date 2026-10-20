@@ -206,7 +206,7 @@ Classic brains / advanced (classic sync, processing opt-outs, one-off repair):
 
 Subcommands:
   gbrain sync status --source <id> [--json]
-                       Where a managed catch-up stands: cursor, pages
+                       Where a managed catch-up stands: pass or cursor, pages
                        committed in the last 10 minutes, each hold and the
                        last error with class / safe_actions / needs_human,
                        and the next action (for an operator agent's loop).

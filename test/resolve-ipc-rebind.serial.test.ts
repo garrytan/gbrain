@@ -28,10 +28,11 @@ import {
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { fileURLToPath } from 'node:url';
 
 const INTERVAL_MS = 300;
 const cfg = { engine: 'postgres' as const, database_url: 'postgresql://user@db.example.invalid:5432/rebind-brain' };
-const BINDING_MODULE = new URL('../src/mcp/resolve-ipc-binding.ts', import.meta.url).pathname;
+const BINDING_MODULE = fileURLToPath(new URL('../src/mcp/resolve-ipc-binding.ts', import.meta.url));
 
 let engine: PGLiteEngine;
 let tmp: string;

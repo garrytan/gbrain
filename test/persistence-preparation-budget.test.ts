@@ -36,14 +36,14 @@ describe('budget table', () => {
 });
 
 describe('config key family', () => {
-  test('defaults: 120 s budgets, 600 s ceiling, 2 attempts', () => {
-    expect(resolvePreparationPolicy(new Map())).toEqual({ syncMs: 120_000, maintenanceMs: 120_000, ceilingMs: 600_000, maxAttempts: 2 });
+  test('defaults: 120 s budgets, 600 s ceiling, 2 attempts, 5 transient retries', () => {
+    expect(resolvePreparationPolicy(new Map())).toEqual({ syncMs: 120_000, maintenanceMs: 120_000, ceilingMs: 600_000, maxAttempts: 2, transientRetries: 5 });
   });
   test('configured values are read; invalid ones keep their default; the ceiling floors at the larger budget plus 30 s', () => {
     const policy = resolvePreparationPolicy(new Map([
       [PREPARATION_BUDGET_KEYS.syncMs, '300000'], [PREPARATION_BUDGET_KEYS.maintenanceMs, 'abc'],
       [PREPARATION_BUDGET_KEYS.ceilingMs, '60000'], [PREPARATION_BUDGET_KEYS.maxAttempts, '3']]));
-    expect(policy).toEqual({ syncMs: 300_000, maintenanceMs: 120_000, ceilingMs: 330_000, maxAttempts: 3 });
+    expect(policy).toEqual({ syncMs: 300_000, maintenanceMs: 120_000, ceilingMs: 330_000, maxAttempts: 3, transientRetries: 5 });
     expect(resolvePreparationPolicy(new Map([[PREPARATION_BUDGET_KEYS.maxAttempts, '11']])).maxAttempts).toBe(2);
   });
   test('config set refuses out-of-range values with the range and example, and ignores other keys', () => {

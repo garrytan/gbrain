@@ -4,6 +4,7 @@ import { withRetry, BULK_RETRY_OPTS, RetryAbortError } from './retry.ts';
 import { FENCE_REPAIR_ATTEMPT_OP } from './fence-repair/attempts.ts';
 import { FENCE_CANDIDATE_OP, FENCE_SCAN_OP } from './fence-repair/census-store.ts';
 import { FENCE_UNCOMMITTED_OP } from './fence-repair/uncommitted.ts';
+import { SYNC_PASS_ROW_OPS } from './persistence/sync-pass-row.ts';
 
 /** Max paths per append-INSERT round-trip; bounds the param-array size. */
 const APPEND_CHUNK = 1000;
@@ -491,9 +492,10 @@ export function syncFingerprint(p: { sourceId?: string; lastCommit: string }): s
  * sync holds, their summary while it counts any, retry requests, sync
  * import provenance, the blocked-cursor conversion log, and the #6188 fence
  * census (candidates and scan cursors), paid fence-repair attempt claims
- * and memos, and uncommitted legacy fence-repair notices of a live source
- * incarnation leave only on resolution (or with
- * the incarnation), and connector hold-retry requests and stuck-recovery
+ * and memos, uncommitted legacy fence-repair notices, and the #6712 managed
+ * sync pass row, deletion markers, withheld mass-delete record and cost
+ * reservations (`SYNC_PASS_ROW_OPS`) of a live source incarnation leave only
+ * on resolution (or with the incarnation), and connector hold-retry requests and stuck-recovery
  * resolution audit entries never expire (#5988, #6650); a managed purge's
  * tombstone failure records and parks (#6741, purge-parks.ts) leave only with
  * their tombstone, its purge or a rearm; an open #6729 rename-identity downgrade
@@ -514,10 +516,11 @@ export async function purgeStaleCheckpoints(
            AND op NOT IN ('managed-atoms','managed-atoms-generation','managed-connector','managed-connector-retry','managed-connector-state','managed-connector-migration')
            AND op<>'connector-hold-retry'
            AND op<>'stuck-recovery-resolution'
+           AND op<>'sync-admission'
            AND op<>'purge-deleted-park'
            AND NOT (op='sync-identity-downgrade' AND completed_keys->0->>'disposition' IS NULL AND EXISTS (
              SELECT 1 FROM pages p WHERE p.id::text=op_checkpoints.fingerprint AND p.deleted_at=(op_checkpoints.completed_keys->0->>'old_deleted_at')::timestamptz))
-           AND NOT (op IN ('sync-hold','sync-hold-retry','sync-import-provenance','sync-hold-summary','sync-conversions','${FENCE_CANDIDATE_OP}','${FENCE_SCAN_OP}','${FENCE_REPAIR_ATTEMPT_OP}','${FENCE_UNCOMMITTED_OP}')
+           AND NOT (op IN ('sync-hold','sync-hold-retry','sync-import-provenance','sync-hold-summary','sync-conversions','${FENCE_CANDIDATE_OP}','${FENCE_SCAN_OP}','${FENCE_REPAIR_ATTEMPT_OP}','${FENCE_UNCOMMITTED_OP}',${SYNC_PASS_ROW_OPS.map(op => `'${op}'`).join(',')})
              AND NOT (op='sync-hold-summary' AND COALESCE((completed_keys->0->>'count')::int,0)=0)
              AND EXISTS (SELECT 1 FROM sources s WHERE s.id=op_checkpoints.completed_keys->0->>'source_id'
                AND s.incarnation::text=op_checkpoints.completed_keys->0->>'incarnation'))

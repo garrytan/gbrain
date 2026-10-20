@@ -46,3 +46,17 @@ export const TRAVERSE_PATH_ROW_CAP = 5000;
  * paths (a 12-page clique at depth 5 took 22 s).
  */
 export const TRAVERSE_WALK_ROW_CAP = 20000;
+
+/**
+ * Default rows per get_links / get_backlinks call (#6876, decision D4). The
+ * cap is applied by the ops, after every filter and the source/identity merge;
+ * `engine.getLinks` / `getBacklinks` stay complete unless a caller opts into
+ * a page. One place to change it.
+ */
+export const LINK_READ_DEFAULT_LIMIT = 500;
+
+/** Largest `limit` a get_links / get_backlinks call accepts. */
+export const LINK_READ_MAX_LIMIT = 5000;
+
+/** get_links / get_backlinks rows carry at most this much edge context (cut in SQL, ellipsis-terminated). */
+export const LINK_READ_CONTEXT_MAX_CHARS = 2000;

@@ -18,6 +18,12 @@
  *     and a repair that changes them is exactly what makes the next sync
  *     re-screen it.
  *
+ * #6712 PR 4b (design v3.2 §3.7, CEO N4): a non-company source's pass adds
+ * nothing here. A pass freezes and admits under the drain lease and its
+ * freeze re-checks each candidate's revision, so busy means its open
+ * requests (the first arm) only; the cursor arm stays for company brains and
+ * for a legacy cursor the first pass has not retired yet.
+ *
  * The read fails closed: a query that throws, or an unfinished cursor whose
  * manifest cannot be read, makes every candidate busy (`unknown` names why).
  * Callers check once when they plan and again at coordinated admission of

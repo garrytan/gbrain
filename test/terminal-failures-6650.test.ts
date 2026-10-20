@@ -14,7 +14,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { randomUUID } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { classifyTerminal, terminalKnockOnSql, supersessionSql, type TerminalInput } from '../src/core/persistence/terminal-classify.ts';
+import { classifyTerminal, CONNECTOR_RETRY_LINEAGE_MAX_DEPTH, terminalKnockOnSql, supersessionSql, type TerminalInput } from '../src/core/persistence/terminal-classify.ts';
 import { isSyncKnockOn, knockOnDetail } from '../src/core/persistence/sync-knock-on.ts';
 import { WINDOW_CANCEL_MESSAGE } from '../src/core/persistence/sync-window.ts';
 import { readTerminalFailureSummary, readTerminalFailures, readTerminalThresholds, sevenDayMedian, validateTerminalConfigValue, TERMINAL_HISTORICAL_SQL,
@@ -88,7 +88,7 @@ describe('classifyTerminal', () => {
 const SOURCE = 'tf-a';
 const OTHER = 'tf-archived';
 async function seed(o: { source?: string; slug: string; operation?: string; state: string; code?: string | null; message?: string | null; detail?: unknown; recovery?: unknown;
-  compacted?: boolean; digest?: string; hoursAgo?: number; build?: string; kind?: string; blocked?: string }): Promise<string> {
+  compacted?: boolean; digest?: string; hoursAgo?: number; build?: string; kind?: string; blocked?: string; intent?: object }): Promise<string> {
   const requestId = randomUUID();
   await engine.executeRaw(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,source_incarnation,slug,digest,authority,intent_bytes,terminal_reservation,
       state,error_code,error_message,error_detail,recovery,compacted,intent,completed_at,updated_at,admitter_version,blocked_reason)
@@ -96,7 +96,7 @@ async function seed(o: { source?: string; slug: string; operation?: string; stat
       now()-($13::double precision*interval '1 hour'),now()-($13::double precision*interval '1 hour'),$14,$15)`,
   [requestId, o.operation ?? 'put_page', o.source ?? SOURCE, o.slug, o.digest ?? randomUUID(), o.state, o.code ?? null, o.compacted ? null : o.message ?? null,
     o.detail === undefined ? null : JSON.stringify(o.detail), o.recovery === undefined ? null : JSON.stringify(o.recovery), o.compacted === true,
-    o.compacted ? null : JSON.stringify(o.kind ? { kind: o.kind } : { content: 'x' }), o.hoursAgo ?? 1, o.build ?? '0.60.216.0', o.blocked ?? null]);
+    o.compacted ? null : JSON.stringify(o.intent ?? (o.kind ? { kind: o.kind } : { content: 'x' })), o.hoursAgo ?? 1, o.build ?? '0.60.216.0', o.blocked ?? null]);
   return requestId;
 }
 
@@ -171,6 +171,87 @@ for (const kind of testBackends()) describe(`the aggregate, doctor and the drill
     const defect = (await terminalFailuresCheck(engine))!;
     expect(defect.status).toBe('warn');
     expect(defect.message).toContain('owner_exception/storage_error ×1');
+  });
+
+  // #6824: the old tests only replace page writes or repeat an identical digest. Connector retries
+  // change the digest by recording retryOf, so exercise the real readers, without a new test seam.
+  test('a committed connector retry resolves only its linked refusal, retaining the audit rows', async () => {
+    const intent = { kind: 'connector_v2_checkpoint', connector: 'google', configHash: 'unchanged' };
+    const slug = '__managed_connector_checkpoint__';
+    const failed = await seed({ slug, operation: 'submit_job', state: 'conflict', code: 'source_changed', intent });
+    const unlinked = await seed({ slug, operation: 'submit_job', state: 'conflict', code: 'source_changed', intent });
+    await seed({ slug, operation: 'submit_job', state: 'committed', intent: { ...intent, retryOf: failed, retryBase: failed, retryAttempt: 1 } });
+    const summary = await readTerminalFailureSummary(engine);
+    expect(summary.status).toBe('ok');
+    if (summary.status !== 'ok') throw new Error('unknown');
+    expect(summary.sources[0]).toMatchObject({ historical_rows: 1, unresolved: { rows: 1 } });
+    const listing = await readTerminalFailures(engine, { sourceId: SOURCE, state: 'all' });
+    if (listing.status !== 'ok') throw new Error('unknown');
+    expect(listing.rows!.find(r => r.request_id === failed)).toMatchObject({ disposition: 'superseded', historical: true });
+    expect(listing.rows!.find(r => r.request_id === unlinked)).toMatchObject({ disposition: 'unknown', historical: false });
+    expect(await engine.executeRaw('SELECT state,error_code FROM persistence_requests WHERE request_id=$1::uuid', [failed]))
+      .toEqual([{ state: 'conflict', error_code: 'source_changed' }]);
+  });
+
+  test('committed connector retry chains resolve their ancestors but not a sibling refusal', async () => {
+    for (const kind of ['connector_v2_import', 'connector_v2_delete', 'connector_v2_checkpoint']) {
+      const intent = { kind, connector: 'google', configHash: 'same' };
+      const slug = `notes/${kind}`;
+      const base = await seed({ slug, operation: 'submit_job', state: 'conflict', code: 'source_changed', intent });
+      const retry = await seed({ slug, operation: 'submit_job', state: 'failed', code: 'storage_error', intent: { ...intent, retryOf: base, retryBase: base } });
+      const sibling = await seed({ slug, operation: 'submit_job', state: 'conflict', code: 'source_changed', intent: { ...intent, retryOf: base, retryBase: base } });
+      await seed({ slug, operation: 'submit_job', state: 'committed', intent: { ...intent, retryOf: retry, retryBase: base } });
+      const listing = await readTerminalFailures(engine, { sourceId: SOURCE, state: 'all' });
+      if (listing.status !== 'ok') throw new Error('unknown');
+      for (const request of [base, retry]) expect(listing.rows!.find(r => r.request_id === request)).toMatchObject({ disposition: 'superseded', historical: true });
+      expect(listing.rows!.find(r => r.request_id === sibling)).toMatchObject({ disposition: 'unknown', historical: false });
+    }
+  });
+
+  test(`a connector retry lineage is followed back at most CONNECTOR_RETRY_LINEAGE_MAX_DEPTH (${CONNECTOR_RETRY_LINEAGE_MAX_DEPTH}) hops`, async () => {
+    const chain = async (hops: number) => {
+      const intent = { kind: 'connector_v2_import', connector: 'google', configHash: 'deep' };
+      const slug = `notes/depth-${hops}`;
+      const base = await seed({ slug, operation: 'submit_job', state: 'conflict', code: 'source_changed', intent });
+      let previous = base;
+      for (let i = 1; i < hops; i++) previous = await seed({ slug, operation: 'submit_job', state: 'failed', code: 'storage_error', intent: { ...intent, retryOf: previous, retryBase: base, retryAttempt: i } });
+      await seed({ slug, operation: 'submit_job', state: 'committed', intent: { ...intent, retryOf: previous, retryBase: base, retryAttempt: hops } });
+      return base;
+    };
+    const superseded = async (requestId: string) => (await engine.executeRaw<{ superseded: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_requests c
+      WHERE ${supersessionSql('r', 'c')}) AS superseded FROM persistence_requests r WHERE r.request_id=$1::uuid`, [requestId]))[0]!.superseded;
+    expect(await superseded(await chain(CONNECTOR_RETRY_LINEAGE_MAX_DEPTH))).toBe(true);
+    expect(await superseded(await chain(CONNECTOR_RETRY_LINEAGE_MAX_DEPTH + 1))).toBe(false);
+  });
+
+  test('connector replacement proof excludes noncommits, mismatched identities and missing lineage', async () => {
+    const intent = { kind: 'connector_v2_import', connector: 'google', configHash: 'same' };
+    const failed = await seed({ slug: 'notes/retry', operation: 'submit_job', state: 'conflict', code: 'source_changed', intent });
+    const replacement = async (state: string, overrides: object = {}) => seed({ slug: 'notes/retry', operation: 'submit_job', state,
+      intent: { ...intent, retryBase: failed, retryOf: failed, retryAttempt: 1 }, ...overrides });
+    const candidates = [];
+    for (const state of ['queued', 'running', 'recovering', 'failed', 'conflict', 'cancelled']) candidates.push(await replacement(state));
+    candidates.push(await replacement('committed', { source: OTHER }));
+    candidates.push(await replacement('committed', { slug: 'notes/other' }));
+    candidates.push(await replacement('committed', { operation: 'extract_facts' }));
+    candidates.push(await replacement('committed', { intent: { ...intent, retryOf: randomUUID() } }));
+    candidates.push(await replacement('committed', { intent: { ...intent, retryBase: failed } }));
+    candidates.push(await replacement('committed', { intent: { ...intent, retryOf: 'invalid-uuid' } }));
+    candidates.push(await replacement('committed', { intent: { ...intent, kind: 'facts_extract', retryOf: failed } }));
+    candidates.push(await replacement('committed', { compacted: true }));
+    const otherPrincipal = await replacement('committed');
+    await engine.executeRaw("UPDATE persistence_requests SET principal_id='someone-else' WHERE request_id=$1::uuid", [otherPrincipal]);
+    candidates.push(otherPrincipal);
+    const otherPrincipalKind = await replacement('committed');
+    await engine.executeRaw("UPDATE persistence_requests SET principal_kind='oauth_client' WHERE request_id=$1::uuid", [otherPrincipalKind]);
+    candidates.push(otherPrincipalKind);
+    const otherIncarnation = await replacement('committed');
+    await engine.executeRaw('UPDATE persistence_requests SET source_incarnation=$2::uuid WHERE request_id=$1::uuid', [otherIncarnation, randomUUID()]);
+    candidates.push(otherIncarnation);
+    const rows = await engine.executeRaw<{ request_id: string; matches: boolean }>(`SELECT c.request_id::text, ${supersessionSql('r', 'c')} AS matches
+      FROM persistence_requests r CROSS JOIN persistence_requests c WHERE r.request_id=$1::uuid AND c.request_id=ANY($2::uuid[])`, [failed, candidates]);
+    expect(rows).toHaveLength(candidates.length);
+    expect(rows.filter(r => r.matches)).toEqual([]);
   });
 
   test('a spike warns secondarily, against the zero-filled 7-day median, with its thresholds named as config keys', async () => {

@@ -114,6 +114,19 @@ describe('groundQuote — the repair ladder', () => {
     }
   });
 
+  test.each([
+    { name: 'normalized terminal emoji', content: 'hello  world 😂', quote: 'hello world 😂', replacement: 'hello  world 😂', status: 'normalized' },
+    { name: 'normalized emoji before following text', content: 'prefix hello  world 😂 following text', quote: 'hello world 😂', replacement: 'hello  world 😂', status: 'normalized' },
+    { name: 'non-BMP lowercase at both endpoints', content: 'prefix 𐐀 HELLO  WORLD 𐐁 suffix', quote: '𐐨 hello world 𐐩', replacement: '𐐀 HELLO  WORLD 𐐁', status: 'normalized' },
+    { name: 'near last shared token ends in emoji', content: 'alpha beta gamma delta😂', quote: 'alpha beta gamma delta😂 extra', replacement: 'alpha beta gamma delta😂', status: 'near' },
+    { name: 'lowercase expansion at both endpoints', content: 'prefix İ HELLO  WORLD İ suffix', quote: 'i̇ hello world i̇', replacement: 'İ HELLO  WORLD İ', status: 'normalized' },
+    { name: 'normalized ASCII control', content: 'prefix HELLO  WORLD suffix', quote: 'hello world', replacement: 'HELLO  WORLD', status: 'normalized' },
+  ])('$name returns the complete verbatim slice and span (#6860)', ({ content, quote, replacement, status }) => {
+    const result = groundQuote(quote, groundSource('/t/unicode.txt', content));
+    const start = content.indexOf(replacement);
+    expect(result).toEqual({ status, replacement, spans: [[start, start + replacement.length]] });
+  });
+
   test('heavy paraphrase (low overlap) → none (caller quarantines)', () => {
     const g = groundQuote('our fundamental product philosophy centers customer delight above metrics', t);
     expect(g.status).toBe('none');
@@ -131,6 +144,35 @@ describe('groundQuote — the repair ladder', () => {
     ].join('\n'));
     const g = groundQuote('the deploy failed because the cache was stale in some region', twin);
     expect(g.status).toBe('none');
+  });
+});
+
+describe('groundQuote — strict closing punctuation inside the marks (#6952)', () => {
+  const content = '**alice-example** (10:02): The deal desk is always open at the right price for us.\n\n**bob-example** (10:03): Fine, send terms.\n';
+  const strict = groundSource('conversations/2026-10-01-acme-example', content);
+  const start = content.indexOf('always open at the right price');
+  const span: Array<[number, number]> = [[start, start + 'always open at the right price'.length]];
+
+  test.each(['.', ',', '?', '!', '…'])('a verbatim quote ending in %s grounds exact on its core', (mark) => {
+    expect(groundQuote(`always open at the right price${mark}`, strict)).toEqual({ status: 'exact', spans: span });
+  });
+
+  test('a normalized core substitutes the verbatim source slice', () => {
+    expect(groundQuote('ALWAYS open at the  right price.', strict)).toEqual({
+      status: 'normalized', replacement: 'always open at the right price', spans: span,
+    });
+  });
+
+  test('verifyBody keeps the quote and quarantines nothing', () => {
+    const body = '## Reflection\n\nalice-example said the desk is "always open at the right price." That framing recurs.\n';
+    const r = verifyBody(body, [strict]);
+    expect(r.quarantined).toEqual([]);
+    expect(r.body).toBe(body);
+  });
+
+  test('strict grounding still refuses absent words and keeps no bracket folding', () => {
+    expect(groundQuote('always open at the wrong price.', strict).status).toBe('none');
+    expect(groundQuote('[T]he deal desk is always open.', strict).status).toBe('none');
   });
 });
 
@@ -543,6 +585,33 @@ describe('verifyAndRepairDreamPages — PGLite write-back integration', () => {
     // Quarantined text has no chunks: keyword search cannot reach it.
     const hits = await engine.searchKeyword('rewrite entire engine Rust', { limit: 5 });
     expect(hits.filter(h => h.slug === slug)).toHaveLength(0);
+  }, 60_000);
+
+  test('repaired emoji quotes persist with complete spans and survive a JSONB page payload roundtrip (#6860)', async () => {
+    const transcript = 'user: hello  brave world 😂';
+    const since = await readVerifyEpoch(engine);
+    const slug = 'wiki/personal/reflections/2026-08-31-emoji-abc456';
+    await importFromContent(engine, slug, [
+      '---', 'type: note', '---', 'The user said "hello brave world 😂".',
+      '', '## Timeline', '', '- **2026-08-31** | session — Said "hello brave world 😂"',
+    ].join('\n'), { noEmbed: true, remote: false, sourceId: 'default' });
+
+    const stats = await verifyAndRepairDreamPages(engine, [{ slug, source_id: 'default', raw_source: '/t/emoji.md' }],
+      new Map([['/t/emoji.md', { content: transcript }]]), { since, checkedAt: '2026-08-31' });
+    expect(stats.errors).toBe(0);
+    expect(stats).toMatchObject({ pages_checked: 1, pages_repaired: 1, normalized_fixed: 2 });
+
+    const page = await engine.getPage(slug, { sourceId: 'default' });
+    expect(page).toBeDefined();
+    const serialized = JSON.stringify(page);
+    const [row] = await engine.executeRaw<{ payload: typeof page }>('SELECT $1::text::jsonb AS payload', [serialized]);
+    expect(row.payload).toEqual(JSON.parse(serialized));
+    expect(row.payload!.compiled_truth).toBe('The user said "hello  brave world 😂".');
+    expect(row.payload!.timeline).toContain('Said "hello  brave world 😂"');
+    expect(row.payload!.frontmatter.grounding).toMatchObject({
+      sources: ['/t/emoji.md'],
+      quotes: [{ text: 'hello brave world 😂', source: '/t/emoji.md', speaker: 'user', span: [6, transcript.length] }],
+    });
   }, 60_000);
 
   test('re-projection deletes the rows of quarantined bullets and keeps database-only timeline history (#5567)', async () => {

@@ -639,6 +639,20 @@
         {
           "category": "ops",
           "details": {
+            "age_seconds": null,
+            "docs": "docs/guides/error-codes.md#sync_admission_restricted",
+            "set_at": null,
+            "stored": null,
+            "value": "normal"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "sync.admission is normal: managed sync admits everything it classifies.",
+          "name": "sync_admission_restricted",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
             "docs": "docs/guides/repair.md#receipt-compaction",
             "last_compaction": {
               "at": "<ts>",
@@ -928,7 +942,7 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "RLS enabled on 148/148 public tables",
+          "message": "RLS enabled on 151/151 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -942,14 +956,14 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "1264 column(s) verified against live schema",
+          "message": "1302 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 148 table(s) the applied migrations create exist.",
+          "message": "All 151 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -1312,6 +1326,7 @@
             "preparation_policy": {
               "maintenance_preparation_ms": "<volatile>",
               "max_preparation_attempts": 2,
+              "max_transient_retries": 5,
               "preparation_ceiling_ms": "<volatile>",
               "sync_preparation_ms": "<volatile>"
             },
@@ -2217,6 +2232,28 @@
           "elapsed_ms": "<volatile>",
           "message": "No commit→searchable samples in the last 24 h (no managed sync imported a new commit).",
           "name": "managed_sync_latency",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "docs": "docs/guides/on-commit-sync.md",
+            "sources": [
+              {
+                "pending_markers": 0,
+                "reason": null,
+                "resident": null,
+                "source_id": "default",
+                "stalled": false,
+                "state": null
+              }
+            ],
+            "sync_on_commit": false
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "sync.on_commit is off; residents still run explicit sync requests. notifier for default: none running; idle.",
+          "name": "commit_notifier",
+          "severity": "info",
           "status": "ok"
         },
         {
@@ -3345,7 +3382,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "Active pack gbrain-base-v2@1.4.0+1c5ba903 is current (no successor declared)",
+          "message": "Active pack gbrain-base-v2@1.5.0+4604112a is current (no successor declared)",
           "name": "pack_upgrade_available",
           "status": "ok"
         },

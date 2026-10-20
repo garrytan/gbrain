@@ -13,6 +13,10 @@
  * key under it would make the resumed run and the next full sync disagree
  * about which files are pages. The write is updateSourceConfig's single-key
  * merge, so every other config key survives. Follows `mirror-readonly`.
+ * #6712 PR 4b (design v3.2 §3.7): a non-company source has no cursor, so it
+ * also refuses while a sync holds the source's drain lease (a pass classifies
+ * under the strategy it pinned) or while a `--full` episode is open (its
+ * selection, strategy included, is what the episode closes over).
  *
  * Contributed by @rokas-tarasevicius (PR #5955); the surface here is the
  * reviewed minimum of that PR.
@@ -27,6 +31,15 @@ export async function unfinishedManagedSyncRuns(engine: BrainEngine, sourceId: s
     SELECT c.fingerprint AS cursor_key,c.completed_keys->0->>'runId' AS run_id,(c.completed_keys->0->>'index')::int AS index
       FROM op_checkpoints c JOIN sources s ON s.id=c.completed_keys->0->>'sourceId' AND s.incarnation::text=c.completed_keys->0->>'incarnation'
      WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true' AND s.id=$1 ORDER BY c.updated_at`, [sourceId]);
+}
+
+/** Why a strategy change would cut under a running or unfinished pass: a live drain lease, or an open episode (read-only). */
+export async function unfinishedManagedSyncPass(engine: BrainEngine, sourceId: string): Promise<{ lease: string | null; episode: { opened_at: string; full_id: string | null } | null }> {
+  const [{ readDrainHolder }, { readPassRow }] = await Promise.all([import('../core/persistence/sync-lease.ts'), import('../core/persistence/sync-pass-row.ts')]);
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+  const holder = await readDrainHolder(engine, sourceId);
+  const episode = source ? (await readPassRow(engine, sourceId, source.incarnation))?.value.obligations.episode : undefined;
+  return { lease: holder ? `${holder.kind}${holder.started_at ? ` since ${holder.started_at}` : ''}` : null, episode: episode ? { opened_at: episode.opened_at, full_id: episode.full_id ?? null } : null };
 }
 
 export async function runSetStrategy(engine: BrainEngine, args: string[]): Promise<void> {
@@ -55,6 +68,14 @@ export async function runSetStrategy(engine: BrainEngine, args: string[]): Promi
     console.error(`Error [sync_run_unfinished]: source "${id}" has ${unfinished.length} unfinished managed sync run(s) (cursor ${run.cursor_key.slice(0, 12)}${run.run_id ? `, run ${run.run_id.slice(0, 8)}` : ''}${run.index !== null ? `, at index ${run.index}` : ''}).`);
     console.error(`  Its frozen manifest was classified under the current strategy; changing it now would make the resumed run and the next full sync disagree about which files are pages.`);
     console.error(`  Finish the run first (gbrain sync --source ${id} --no-pull resumes it; gbrain sync status --source ${id} --json shows what holds it), or retire a run nothing can resume (gbrain repair managed-sync-orphans --source ${id}), then set the strategy.`);
+    process.exit(1);
+  }
+  const pass = config.strategy !== strategy ? await unfinishedManagedSyncPass(engine, id) : { lease: null, episode: null };
+  if (pass.lease || pass.episode) {
+    console.error(`Error [sync_run_unfinished]: source "${id}" has ${pass.lease ? `a sync running (${pass.lease})` : `an open full re-import (opened ${pass.episode!.opened_at})`}.`);
+    console.error(pass.lease ? `  It classifies the checkout under the current strategy; changing it now would make the running pass and the next one disagree about which files are pages.`
+      : `  It re-imports the source under the selection it was opened with, strategy included; changing the strategy now would leave it unable to close.`);
+    console.error(`  ${pass.lease ? 'Wait for the sync to finish' : `Finish it first (gbrain sync --source ${id} --no-pull continues it)`}; gbrain sync status --source ${id} --json shows where it stands. Then set the strategy.`);
     process.exit(1);
   }
   await engine.updateSourceConfig(id, { strategy });

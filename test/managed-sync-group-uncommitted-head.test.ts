@@ -72,14 +72,16 @@ test.each([['one group', false], ['a group admitted ahead in a drain', true]] as
         expect(members.length).toBeGreaterThanOrEqual(drain ? 4 : 2);
         expect(members.every(member => member.state === 'queued')).toBe(true);
         expect(await cancelWriteRequest(engine, requestPrincipal(members[0]!), members[0]!.request_id)).toMatchObject({ state: 'cancelled' });
-        const blocked = await s.sync({ bulk: BULK });
-        expect(blocked).toMatchObject({ status: 'blocked_by_failures', added: 0, managedWrite: { slug: 'notes/n0' } });
+        // #6712 PR 4b (design v3.2 §3.1, request identity): the cancelled head is an earlier pass's receipt, so the next pass
+        // re-classifies its path and imports it under a request of its own instead of stopping on it.
+        const next = await s.sync({ bulk: BULK });
+        expect(next).toMatchObject({ status: 'first_sync', pass: { outcome: 'synced' } });
         const states = () => engine.executeRaw<{ slug: string; state: string }>('SELECT slug,state FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY sequence', [members.map(member => member.id)]);
         await waitFor(async () => (await states()).every(row => !['queued', 'running'].includes(row.state)), { timeoutMs: 30_000, label: 'the members settle' });
         const after = await states();
         expect(after[0]).toMatchObject({ slug: 'notes/n0', state: 'cancelled' });
         expect(after.slice(1).filter(row => row.state !== 'committed').map(row => `${row.slug} ${row.state}`)).toEqual([]);
-        expect(await engine.getPage('notes/n0', { sourceId: s.id })).toBeNull();
+        expect(await engine.getPage('notes/n0', { sourceId: s.id })).not.toBeNull();
         for (const member of members.slice(1)) expect(await engine.getPage(member.slug, { sourceId: s.id })).not.toBeNull();
         await s.sync({ bulk: BULK, retryFailed: true });
         for (const slug of slugs) expect(await engine.getPage(slug, { sourceId: s.id })).not.toBeNull();

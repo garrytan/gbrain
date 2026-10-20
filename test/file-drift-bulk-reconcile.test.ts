@@ -7,10 +7,11 @@
  * carried through the printed apply command, so executing that exact command
  * applies exactly the selected pages. `--keep` is refused on file-drift with a
  * pointer at `--prefer database`. An opt-in `storage.keep_db` list in
- * gbrain.yml lets the trusted local maintenance worker on the canonical owner
- * host reconcile drifted pages under those prefixes with the database copy, one
- * rate-limited request per page; doctor `maintenance_write_drift` echoes the
- * policy, how many drifted pages it matches and their receipt cost.
+ * gbrain.yml lets the owner host's managed sync pass reconcile drifted pages
+ * under those prefixes with the database copy, one request per page bound to
+ * the bytes it froze (#6712 PR 4b, repair/keep-db-policy.ts); doctor
+ * `maintenance_write_drift` echoes the policy, how many drifted pages it
+ * matches and their receipt cost.
  *
  * Runs on PGLite, and on Postgres when DATABASE_URL is set
  * (test/e2e/file-drift-bulk-reconcile-postgres.test.ts).
@@ -226,6 +227,21 @@ for (const backend of testBackends()) describe(`C7 bulk file-drift reconcile (${
     expect(await stillDrifted(sourceId, [...CONCEPTS, PERSON])).toEqual([PERSON]);
   }), 240_000);
 
+  test('#6991 --all-drifted and the survey list a conflicted page the live check cannot classify as unknown, never repaired', () => fixture(async ({ root, sourceId, ctx }) => {
+    await driftedPages(root, ctx);
+    rmSync(join(root, `${PERSON}.md`));
+    expect((await liveFileDrift(engine, sourceId, PERSON)).still_present).toBeNull();
+    const preview = (await json(['file-drift', '--source', sourceId, '--all-drifted', '--prefer', 'database'])).results[0]!;
+    expect(preview).toMatchObject({ mode: 'dry_run', affected: 3, residuals: { unknown_canonical_file_missing: 1 } });
+    expect(preview.sample).toEqual(CONCEPTS.map(slug => `${sourceId}:${slug}`));
+    const unknown = (preview.listing as Array<{ item: string; class: string; detail: string }>).filter(entry => entry.class === 'unknown');
+    expect(unknown).toEqual([{ item: `${sourceId}:${PERSON}`, class: 'unknown', detail: expect.stringContaining('canonical_file_missing: Not classified or repaired.') }]);
+    const survey = (await json(['file-drift', '--source', sourceId])).results[0]!;
+    expect(survey.residuals).toMatchObject({ unknown_canonical_file_missing: 1 });
+    expect((survey.listing as Array<{ item: string; class: string }>).find(entry => entry.item === `${sourceId}:${PERSON}`)?.class).toBe('unknown');
+    expect(JSON.stringify((survey.details as { next_actions: string[] }).next_actions)).not.toContain('unknown');
+  }), 240_000);
+
   test('the globs are bound into the preview hash: --skip narrows the set, and an apply under other globs refuses preview_changed', () => fixture(async ({ root, sourceId, ctx }) => {
     await driftedPages(root, ctx);
     const scope = await resolveRepairScope(engine, sourceId);
@@ -254,7 +270,33 @@ for (const backend of testBackends()) describe(`C7 bulk file-drift reconcile (${
     expect(bad).toMatchObject({ code: 'invalid_params' });
   }), 240_000);
 
-  test('storage.keep_db: the owner host submits one rate-limited reconcile per drifted page under the prefixes; elsewhere and for callers nothing changes', () => fixture(async ({ root, sourceId, ctx }) => {
+  /** The pass's freeze and admission of one committed, clean keep_db page (repair/keep-db-policy.ts, #6712 PR 4b). */
+  async function keepDbPass(root: string, sourceId: string) {
+    execFileSync('git', ['-c', 'user.name=c7-test', '-c', 'user.email=c7-test@example.com', 'add', '-A'], { cwd: root });
+    execFileSync('git', ['-c', 'user.name=c7-test', '-c', 'user.email=c7-test@example.com', 'commit', '-q', '-m', 'file-only edits'], { cwd: root });
+    const { admitKeepDbReconcile, freezeKeepDbReconcile } = await import('../src/core/repair/keep-db-policy.ts');
+    const freeze = async (slug: string) => {
+      const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+      return freezeKeepDbReconcile(engine, { sourceId, slug, pageId: snapshot.page.id, revision: snapshot.revision, path: `${slug}.md`,
+        frozenBytes: execFileSync('git', ['show', `HEAD:${slug}.md`], { cwd: root }), classified: { cls: 'keep_db' }, mode: 'committed', dirty: 'clean' });
+    };
+    const artifact = async (slug: string) => {
+      const result = await freeze(slug);
+      if (!('artifact' in result)) throw new Error(`freeze of ${slug} refused ${result.refused}`);
+      return result.artifact;
+    };
+    const admitArtifact = (frozen: Awaited<ReturnType<typeof artifact>>, admission?: () => Promise<null>) => admitKeepDbReconcile(engine, frozen,
+      { passId: randomUUID(), remote: false, inTx: async () => {}, ...(admission ? { admission } : {}) });
+    const admit = async (slug: string, admission?: () => Promise<null>) => admitArtifact(await artifact(slug), admission);
+    return { freeze, artifact, admitArtifact, admit };
+  }
+  const settled = async (result: Awaited<ReturnType<Awaited<ReturnType<typeof keepDbPass>>['admit']>>) => {
+    if (!('request' in result)) throw new Error(`admission refused ${result.refused}`);
+    const { waitForWrite } = await import('../src/core/persistence/service.ts');
+    return { ...result, request: await waitForWrite(engine, result.request, { engine: engine.kind } as never, 30_000) };
+  };
+
+  test('storage.keep_db: the owner host\'s sync pass admits one DB-wins reconcile per drifted page under the prefixes; elsewhere and for callers nothing changes', () => fixture(async ({ root, sourceId, ctx }) => {
     writeFileSync(join(root, 'gbrain.yml'), 'storage:\n  keep_db:\n    - concepts/\n');
     await driftedPages(root, ctx);
     const doctor = await maintenanceWriteDriftCheck(engine, [sourceId]);
@@ -262,42 +304,42 @@ for (const backend of testBackends()) describe(`C7 bulk file-drift reconcile (${
       receipt_cost: { lifetime_ids: 3, receipt_bytes: 3 * 16_384 } }] } });
     expect(doctor.message).toContain('storage.keep_db');
 
-    const { runKeepDbPolicy } = await import('../src/core/repair/keep-db-policy.ts');
+    const { readKeepDbPolicy } = await import('../src/core/repair/keep-db-policy.ts');
     const ownerHost = () => existingLocalHostId()!;
     const before = await requests(sourceId);
-    const elsewhere = await runKeepDbPolicy(engine, { hostId: randomUUID(), sourceIds: [sourceId] });
-    expect(elsewhere.submitted).toBe(0);
+    expect(await readKeepDbPolicy(engine, sourceId, randomUUID())).toBeNull();
+    expect(await readKeepDbPolicy(engine, sourceId, ownerHost())).toEqual({ source_id: sourceId, keep_db: ['concepts/'] });
+    const pass = await keepDbPass(root, sourceId);
+    expect(await pass.freeze(PERSON)).toEqual({ refused: 'outside_keep_db' });
     expect(await requests(sourceId)).toBe(before);
 
     const ids = (await engine.executeRaw<{ lifetime_ids: string }>("SELECT lifetime_ids::text FROM persistence_counters WHERE key LIKE 'principal:%' ORDER BY lifetime_ids DESC LIMIT 1"))[0]!;
     await engine.setConfig('persistence.limits.principal_lifetime_ids', ids.lifetime_ids);
-    const full = await runKeepDbPolicy(engine, { hostId: ownerHost(), sourceIds: [sourceId] });
-    expect(full).toMatchObject({ submitted: 0, stopped: 'capacity' });
+    expect(await pass.admit(CONCEPTS[0]!)).toEqual({ refused: 'capacity' });
     expect(await requests(sourceId)).toBe(before);
     await engine.unsetConfig('persistence.limits.principal_lifetime_ids');
 
-    const first = await runKeepDbPolicy(engine, { hostId: ownerHost(), sourceIds: [sourceId], limit: 2 });
-    expect(first).toMatchObject({ submitted: 2, stopped: 'rate_limit' });
+    for (const slug of CONCEPTS.slice(0, 2)) expect((await settled(await pass.admit(slug))).request.state).toBe('committed');
     expect(await requests(sourceId)).toBe(before + 2);
     expect(await stillDrifted(sourceId, [...CONCEPTS, PERSON])).toEqual([CONCEPTS[2]!, PERSON]);
-    const second = await runKeepDbPolicy(engine, { hostId: ownerHost(), sourceIds: [sourceId], limit: 2 });
-    expect(second.submitted).toBe(1);
-    expect(await stillDrifted(sourceId, [...CONCEPTS, PERSON])).toEqual([PERSON]);
-    expect(readFileSync(join(root, `${CONCEPTS[0]}.md`), 'utf8')).not.toContain('A line added in the file only.');
-    const third = await runKeepDbPolicy(engine, { hostId: ownerHost(), sourceIds: [sourceId] });
-    expect(third.submitted).toBe(0);
+    const third = await pass.artifact(CONCEPTS[2]!);
+    const once = await settled(await pass.admitArtifact(third));
+    expect(once.request.state).toBe('committed');
+    expect(await pass.admitArtifact(third)).toMatchObject({ replayed: true, request: { request_id: once.request.request_id } });
     expect(await requests(sourceId)).toBe(before + 3);
-    const reconciles = await engine.executeRaw<{ slug: string; state: string }>(
-      "SELECT slug, state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='canonical_reconcile' ORDER BY slug", [sourceId]);
-    expect(reconciles).toEqual(CONCEPTS.map(slug => ({ slug, state: 'committed' })));
+    expect(await stillDrifted(sourceId, [...CONCEPTS, PERSON])).toEqual([PERSON]);
+    expect(await pass.freeze(CONCEPTS[0]!)).toEqual({ refused: 'bytes_changed' });
+    expect(readFileSync(join(root, `${CONCEPTS[0]}.md`), 'utf8')).not.toContain('A line added in the file only.');
+    const reconciles = await engine.executeRaw<{ slug: string; state: string; request_id: string }>(
+      "SELECT slug, state, request_id FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='canonical_reconcile' ORDER BY slug", [sourceId]);
+    expect(reconciles.map(({ slug, state }) => ({ slug, state }))).toEqual(CONCEPTS.map(slug => ({ slug, state: 'committed' })));
     await refusedWrite(ctx, PERSON);
   }), 240_000);
 
-  test('storage.keep_db at 81% of a cumulative cap: the worker is refused write_capacity_backpressure and writes no receipt (#6696 A5)', () => fixture(async ({ root, sourceId, ctx }) => {
+  test('storage.keep_db at 81% of a cumulative cap: the pass\'s admission is refused write_capacity_backpressure and writes no receipt (#6696 A5)', () => fixture(async ({ root, sourceId, ctx }) => {
     writeFileSync(join(root, 'gbrain.yml'), 'storage:\n  keep_db:\n    - concepts/\n');
     await driftedPages(root, ctx);
-    const { runKeepDbPolicy } = await import('../src/core/repair/keep-db-policy.ts');
-    const ownerHost = existingLocalHostId()!;
+    const pass = await keepDbPass(root, sourceId);
     const [writer] = await engine.executeRaw<{ key: string }>("SELECT 'principal:'||principal_kind||':'||principal_id AS key FROM persistence_requests WHERE source_id=$1 LIMIT 1", [sourceId]);
     const lifetime = async () => (await engine.executeRaw<{ n: string }>('SELECT lifetime_ids::text AS n FROM persistence_counters WHERE key=$1', [writer!.key]))[0]!.n;
     const used = Number(await lifetime());
@@ -307,9 +349,9 @@ for (const backend of testBackends()) describe(`C7 bulk file-drift reconcile (${
     await engine.setConfig('persistence.limits.principal_lifetime_ids', String(limit));
     const before = await requests(sourceId);
     // The default seam sees the pause line before preparing anything.
-    expect(await runKeepDbPolicy(engine, { hostId: ownerHost, sourceIds: [sourceId] })).toMatchObject({ submitted: 0, stopped: 'write_capacity_backpressure' });
+    expect(await pass.admit(CONCEPTS[0]!)).toEqual({ refused: 'write_capacity_backpressure' });
     // Admission itself refuses this background producer even with the seam open.
-    expect(await runKeepDbPolicy(engine, { hostId: ownerHost, sourceIds: [sourceId], admission: async () => null })).toMatchObject({ submitted: 0, stopped: 'write_capacity_backpressure' });
+    expect(await pass.admit(CONCEPTS[0]!, async () => null)).toEqual({ refused: 'write_capacity_backpressure' });
     expect(await requests(sourceId)).toBe(before);
     expect(await lifetime()).toBe(String(used));
     expect(await stillDrifted(sourceId, [...CONCEPTS])).toEqual([...CONCEPTS]);

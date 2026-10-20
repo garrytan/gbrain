@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 255,
+    "count": 257,
     "gaps": [
       17,
       18,
@@ -40,7 +40,9 @@
       "PLANNER_REPAIR_TABLES": "008725595e099adba279d4292661eb4a59930b777c35db43c340220f7f12e093",
       "TOKEN_TTL_MAX_SECONDS": "f4a45bec6ec0bacc859dc57732ceb76cec7eb72f242b5a6c89d47190d0525ab4",
       "TOKEN_TTL_MIN_SECONDS": "441d8ce6bd21f753de90abd3013eaa9992a469ea60c590f1005533618199aa25",
-      "analyzeAfterIndexBuild": "7c24d458f4d7c0c9055c6371d02375075f25e16de937bc44e2b0a94b9983f3e0",
+      "analyzeAfterIndexBuild": "8d627df6b496e1c197a244f8519aeaf3aebcd23e3f7cf514576d453a4270e33a",
+      "analyzeDeferred": "e627ca5e77ce0b79cf5eae7c749a0c9275f04bc186704e3f3a6e05121bb78442",
+      "analyzeYieldingToVacuum": "edba1beff1547ea5c2e9f902efe44ab24e8d7016b2253603dcbba92d4137ca9a",
       "backfillChunkVectors": "1c8cc09a28aa3e906fe2f112b71cd3aa61f750a99984e35a029cff9458272aa1",
       "backfillPageVectors": "a325a5eee3bab49723af311f21b38a1ee4a0eaff1fb3c7e1539aa4dcb287ed66",
       "buildIndexOnline": "aea86be06da261a76f6fad15def8f417cb5318c7991d2ded3cd86aeed82fb2cc",
@@ -53,6 +55,7 @@
       "getFtsLanguage": "0d790b4c4af1f67a2a1bbd59470beb13f434917b381931baf8404a41c5d903db",
       "grantFromRow": "2d0603bb0f964d7e45e04aa76bac54cd4f6f63c91a8d9f028b60b4792bc1695e",
       "hnswMaxDimsForType": "a187cdcc520f813b7c39da97ce53da58509232ed9f851627ef41abfe1b68bd26",
+      "lockTableForAnalyze": "b6e4f173cffd877d2cfd85af813aa694a6d2c32907eaea613c6879800d3a7b44",
       "migrateAutoThinkToPins": "34267fe3b1cc4ab2850ddcf9ba18ce73d959678233a53de238c85231e6b71470",
       "migrateConnectorCheckpoints": "5c13e69a334bfc5275c7d555c4e7b28e034569f086dd4bd70b4b78fa4770dc7a",
       "migrateLegacyTokens": "6e4abe3670127e7a495b56ecbf9f5789edd3a7362d45704656c2210a85b27f4c",
@@ -69,7 +72,7 @@
       "tableRows": "906d2413b13d76a06d5910885e47ed5c544be4ff3a2266e83146715721b24270",
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67"
     },
-    "latest": 260,
+    "latest": 262,
     "records": [
       {
         "handler": {
@@ -2683,8 +2686,11 @@
             "PERSISTENCE_SYNC_RUN_INDEXES",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -3275,8 +3281,11 @@
             "PAGES_RECONCILE_NAME_INDEXES",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -3327,8 +3336,11 @@
             "PERSISTENCE_COMMITTED_WATERMARK_INDEX",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -3354,8 +3366,11 @@
             "PERSISTENCE_SYNC_WATERMARK_INDEX",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -3480,8 +3495,11 @@
             "FACT_PURGES_SUBJECT_INDEX",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -3590,8 +3608,11 @@
             "OPEN_LOOPS_COUNTERPARTY_SOURCE_INDEX",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -3615,10 +3636,13 @@
           "helpers": [
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
             "ensureFactsFtsIndex",
             "getFtsLanguage",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -3669,8 +3693,11 @@
             "PAGES_NAME_LOOKUP_INDEXES",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -3695,8 +3722,11 @@
             "PERSISTENCE_REQUEST_SLUG_INTENT_INDEX",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -3812,8 +3842,11 @@
             "CONTENT_CHUNKS_OCCURRENCE_INDEX",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -3847,8 +3880,11 @@
             "BELIEF_FACTS_STREAM_INDEX",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -3873,8 +3909,11 @@
             "PERSISTENCE_REQUEST_ID_INDEX",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -3912,8 +3951,11 @@
             "CONTENT_CHUNKS_GENERATION_INDEX",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -3951,8 +3993,11 @@
             "INGEST_LOG_UNMARKED_INDEX",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -3990,8 +4035,11 @@
             "CONTENT_CHUNKS_OCCURRENCE_GENERATION_INDEX",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -4051,8 +4099,11 @@
             "INGEST_LOG_MARKED_INDEX",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -4077,8 +4128,11 @@
             "PAGES_SEGMENTED_BODY_BYTES_INDEX",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
             "buildIndexOnline",
             "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
             "tableRows"
@@ -4095,6 +4149,32 @@
         "transaction": false,
         "verify": "absent",
         "version": 260
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "persistence_request_transient_retries",
+        "sql": {
+          "length": 208,
+          "sha256": "3ab9a442fb2e2c6999cbca77df5bf5acf77aed37cf3c3de8547becbd7addeff0"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 261
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "commit_notifier",
+        "sql": {
+          "length": 1716,
+          "sha256": "92b10ec00767e181fc76c3e945a9085e37c16f06ba6235512ae6b55c409ba695"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 262
       }
     ],
     "versions": [
@@ -4352,7 +4432,9 @@
       257,
       258,
       259,
-      260
+      260,
+      261,
+      262
     ]
   },
   "normalizer": "migrations-record-v1"

@@ -189,7 +189,7 @@ export async function bindResolveIpcForServe(
     // catch would otherwise swallow the error and start NO listener).
     // Kill switch: GBRAIN_SERVE_SYNC_IPC=0 → the kinds are simply not
     // registered and clients get 'unsupported_kind' (the polite refusal).
-    let syncHandlers: Pick<IpcHandlers, 'sync_start' | 'sync_status' | 'sync_abort'> = {};
+    let syncHandlers: Pick<IpcHandlers, 'sync_start' | 'sync_status' | 'sync_abort' | 'sync_nudge'> = {};
     if (process.env.GBRAIN_SERVE_SYNC_IPC !== '0') {
       try {
         const runner = await import('../core/serve-sync-runner.ts');
@@ -202,6 +202,8 @@ export async function bindResolveIpcForServe(
             }),
           sync_status: (req) => runner.getDelegatedSyncStatus(req.jobId, typeof req.afterLine === 'number' ? req.afterLine : 0),
           sync_abort: (req) => runner.abortDelegatedSync(req.jobId),
+          // GBRA-133 PR 2a: a wanted marker recorded through this serve, acknowledged, and a nudge to its notifier.
+          sync_nudge: async (req) => (await import('../core/notifier/nudge.ts')).recordSyncNudge(engine, req),
         };
       } catch (e) {
         process.stderr.write(

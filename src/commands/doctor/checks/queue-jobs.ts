@@ -13,6 +13,22 @@ import { queueWorkerAlive, runWaitingJobsFix } from '../../../core/minions/no-wo
 /** Local alias; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveEnvNumber = resolveEnvNumber;
 
+type RegistryFailure = { errno: string; path: string | null };
+
+/** A remote doctor caller never sees the host's filesystem path to the worker registry. */
+function registryFailureDetails(failure: RegistryFailure, remote: boolean): Record<string, unknown> {
+  return {
+    worker_registry_unreadable: true,
+    worker_registry_errno: failure.errno,
+    ...(remote ? { worker_registry_path_redacted: true } : { worker_registry_path: failure.path }),
+  };
+}
+
+function registryFailureLabel(failure: RegistryFailure, remote: boolean): string {
+  if (remote) return `${failure.errno}; path withheld from remote callers, run \`gbrain doctor\` on the brain host`;
+  return `${failure.errno}${failure.path ? ` at ${failure.path}` : ''}`;
+}
+
 /**
  * v0.41.18.0 batch_retry_health doctor check (codex H-9 thresholds).
  *
@@ -47,6 +63,7 @@ export async function computeQueueHealthCheck(
     waitingDepthThreshold?: number;
     oldWaitingHours?: number;
     readWorkers?: () => Array<{ queue: string }>;
+    remote?: boolean;
   } = {},
 ): Promise<Check> {
   if (engine.kind === 'pglite') return computePgliteQueueHealth(engine, opts.readWorkers);
@@ -126,11 +143,16 @@ export async function computeQueueHealthCheck(
 
     // Read the live-worker registry unconditionally (was: only when old
     // embed-backfill rows existed) — the structured `details.worker_alive`
-    // below needs it on every run. Cheap: one directory enumeration.
-    const workers = opts.readWorkers
-      ? opts.readWorkers()
-      : (await import('../../../core/minions/worker-registry.ts')).readWorkers();
-    const liveWorkerQueues = new Set(workers.map((w) => w.queue));
+    // below needs it on every run. Cheap: one directory enumeration. An
+    // unreadable registry is unknown liveness (null), never "no worker".
+    const registry = await import('../../../core/minions/worker-registry.ts');
+    let liveWorkerQueues: Set<string> | null = null;
+    let registryFailure: { errno: string; path: string | null } | null = null;
+    try {
+      liveWorkerQueues = new Set((opts.readWorkers ?? registry.readWorkers)().map((w) => w.queue));
+    } catch (e) {
+      registryFailure = registry.workerRegistryReadFailure(e);
+    }
 
     // Minions-visibility wave: structured details so machine callers stop
     // parsing prose. depth = total waiting jobs; oldest_age_seconds = age of
@@ -164,7 +186,8 @@ export async function computeQueueHealthCheck(
         },
         null,
       ),
-      worker_alive: waitingByQueue.every((r) => liveWorkerQueues.has(r.queue)),
+      worker_alive: liveWorkerQueues === null ? null : waitingByQueue.every((r) => liveWorkerQueues.has(r.queue)),
+      ...(registryFailure ? registryFailureDetails(registryFailure, opts.remote === true) : {}),
     };
 
     const problems: string[] = [];
@@ -187,8 +210,16 @@ export async function computeQueueHealthCheck(
       );
     }
     for (const row of oldWaitingRows) {
-      if (liveWorkerQueues.has(row.queue)) continue;
+      if (liveWorkerQueues?.has(row.queue)) continue;
       const hours = Math.max(1, Math.round(Number(row.oldest_age_seconds ?? 0) / 3600));
+      if (registryFailure) {
+        problems.push(
+          `${row.depth} ${row.name} job(s) have waited on queue '${row.queue}' for up to ${hours}h; ` +
+          `the worker registry is unreadable (${registryFailureLabel(registryFailure, opts.remote === true)}), ` +
+          `so worker liveness is unknown. Check that directory's permissions, then run \`gbrain jobs supervisor status\`.`
+        );
+        continue;
+      }
       problems.push(
         `${row.depth} ${row.name} job(s) have waited on queue '${row.queue}' for up to ${hours}h ` +
         `and no live worker is registered for that queue. ` +
@@ -289,7 +320,9 @@ export async function computeQueueHealthCheck(
         details,
       };
     }
-    const noWorkerQueue = oldWaitingRows.find(r => !liveWorkerQueues.has(r.queue))?.queue;
+    const noWorkerQueue = liveWorkerQueues === null
+      ? undefined
+      : oldWaitingRows.find(r => !liveWorkerQueues.has(r.queue))?.queue;
     return {
       name: 'queue_health',
       status: 'warn',
@@ -354,7 +387,7 @@ async function computePgliteQueueHealth(engine: BrainEngine, readWorkers?: () =>
  */
 export async function computeWedgedQueueCheck(
   engine: BrainEngine,
-  opts: { readWorkers?: () => Array<{ queue: string }> } = {},
+  opts: { readWorkers?: () => Array<{ queue: string }>; remote?: boolean } = {},
 ): Promise<Check> {
   if (engine.kind !== 'postgres') {
     return { name: 'wedged_queue', status: 'ok', message: 'PGLite — no queue to check' };
@@ -407,33 +440,29 @@ export async function computeWedgedQueueCheck(
     // operator toward restarting a worker that was never there — a queue
     // with no worker needs `start`, not `stop && start`.
     let liveWorkers: Array<{ queue: string }> = [];
-    let registryReadable = true;
+    let registryFailure: { errno: string; path: string | null } | null = null;
+    const registry = await import('../../../core/minions/worker-registry.ts');
     try {
-      // Lazy import mirrors computeQueueHealthCheck's own registry access
-      // above — the registry module stays off this file's eager import
-      // graph and only loads once a wedge actually needs the signal.
-      const getLiveWorkers = opts.readWorkers
-        ?? (await import('../../../core/minions/worker-registry.ts')).readWorkers;
-      liveWorkers = getLiveWorkers();
-    } catch {
+      liveWorkers = (opts.readWorkers ?? registry.readWorkers)();
+    } catch (e) {
       // A registry read error must not turn this check green (the queue is
       // demonstrably wedged) — but it also must not fabricate a liveness
       // verdict either way. Fall through to the liveness-unknown wording.
-      registryReadable = false;
+      registryFailure = registry.workerRegistryReadFailure(e);
     }
-    if (!registryReadable) {
+    if (registryFailure) {
       return {
         name: 'wedged_queue',
         status: 'fail',
         message:
-          `Wedged queue(s) — worker registry unreadable, worker liveness unknown: ` +
+          `Wedged queue(s) — worker registry unreadable (${registryFailureLabel(registryFailure, opts.remote === true)}), worker liveness unknown: ` +
           `${wedged.map((w) => w.label).join('; ')}. ` +
           `If a worker is running for the queue, restart it: ` +
           '`gbrain jobs supervisor stop && gbrain jobs supervisor start [--queue <name>]`; ' +
           'if none is, start one: `gbrain jobs supervisor start --queue <name> --detach`.',
         details: {
           wedged_queues: wedged.length,
-          worker_registry_unreadable: true,
+          ...registryFailureDetails(registryFailure, opts.remote === true),
           threshold_minutes: thresholdMin,
         },
       };

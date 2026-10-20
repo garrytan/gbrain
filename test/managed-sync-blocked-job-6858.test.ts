@@ -111,14 +111,14 @@ test('#6858: a freshness sync job whose managed run is blocked ends dead with th
     const stale = await readBrainHealthBands(engine, { sourceIds: [s.id] }, Date.now() + 2_000_000 + nth);
     expect(stale).toMatchObject({ status: 'attention', sync_blocked: { band: '1-9' } });
 
-    // A resumed run saves its cursor after the recorded stop while the failure row stays until the run finishes: it is
-    // draining, not blocked. A stop recorded again after that save is blocked again.
-    const [{ key }] = await engine.executeRaw<{ key: string }>("SELECT fingerprint AS key FROM op_checkpoints WHERE op='managed-sync-failure' AND completed_keys->0->>'source_id'=$1", [s.id]);
-    await engine.executeRaw("UPDATE op_checkpoints SET updated_at=now()+interval '1 minute' WHERE op='managed-sync' AND fingerprint=$1", [key]);
+    // #6712 PR 4b: a resumed pass records itself open in its pass row while the failure row stays until a pass converges:
+    // it is draining, not blocked. A pass that stops blocked again is blocked again, with the write's code.
+    const outcome = (value: string) => engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,telemetry,outcome}',to_jsonb($2::text)) WHERE op='managed-sync-pass' AND completed_keys->0->>'source_id'=$1", [s.id, value]);
+    await outcome('open');
     expect(await readBlockedManagedSyncs(engine, [s.id])).toEqual([]);
     expect(await check()).toEqual([expect.objectContaining({ name: 'managed_sync_blocked', status: 'ok' })]);
     expect((await readBrainHealthBands(engine, { sourceIds: [s.id] }, Date.now() + 3_000_000 + nth)).sync_blocked.band).toBe('none');
-    await engine.executeRaw("UPDATE op_checkpoints SET updated_at=now()+interval '2 minutes' WHERE op='managed-sync-failure' AND fingerprint=$1", [key]);
+    await outcome('blocked');
     expect(await readBlockedManagedSyncs(engine, [s.id])).toEqual([expect.objectContaining({ source_id: s.id, code: 'source_changed' })]);
     nth++;
     await disposePersistenceConsumer(engine);

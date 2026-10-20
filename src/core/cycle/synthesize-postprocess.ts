@@ -7,6 +7,7 @@ import { opError } from '../ops/contract.ts';
 import { ItemRun } from '../item-failure.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { publicationHold } from '../persistence/accepted-pending.ts';
+import { isWriteCapacityWait, outstandingCapacityOf } from '../persistence/admission-retry.ts';
 import { authorizeStoredRequest } from '../persistence/authority.ts';
 import { digest } from '../persistence/digest.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
@@ -392,10 +393,20 @@ export function withPostprocessConflicts(conflicts: PostprocessConflict[], resul
 /**
  * A publish that is still pending after its wait (#5854) or whose admission
  * gave up on database contention without recording anything (#6051) is
- * deferred, never failed: the next cycle derives the same request id. Every
- * other error is rethrown. A contended publish writes one stderr line naming it.
+ * deferred, never failed: the next cycle derives the same request id. So is
+ * an unadmitted publish refused by a known positive outstanding-request cap
+ * (`queue_capacity` with outstanding/limit counts, a principal or brain scope
+ * and no write receipt): it waits for other writes to settle. A zero cap,
+ * cumulative quotas, unknown capacity and a refusal carrying a receipt are
+ * rethrown with every other error. A contended or capacity-blocked publish
+ * writes one stderr line naming it.
  */
 export function deferPublishOrThrow(error: unknown, what: string): void {
+  const capacity = isWriteCapacityWait(error) && error.writeRequest == null ? outstandingCapacityOf(error) : null;
+  if (capacity?.scope && capacity.limit !== null && capacity.limit > 0) {
+    process.stderr.write(`[dream] synthesize: ${what} deferred, ${capacity.scope} outstanding write capacity is full (${capacity.outstanding}/${capacity.limit}); the next cycle admits it\n`);
+    return;
+  }
   const deferral = publicationHold(error);
   if (!deferral) throw error;
   if (deferral === 'contention') {

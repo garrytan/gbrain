@@ -401,7 +401,9 @@ describe('maybeDelegateManagedSyncToServe (the Postgres ladder, client half)', (
     expect(outcome.pid).toBe(4242);
     expect(outcome.result).toMatchObject({ status: 'first_sync', added: 5, pagesAffected: expect.any(Array) });
     expect(outcome.result.drain).toMatchObject({ outcome: 'synced', written: 5, remaining: 0 });
-    expect(outcome.result.managedCursor).toMatchObject({ index: 5, total: 5 });
+    // #6712 PR 4b: the serve drains a live pass (no cursor); its summary rides the SyncResult back.
+    expect(outcome.result.pass).toMatchObject({ outcome: 'synced', stop_reason: null, candidates: 5, settled: 5, remaining: 0 });
+    expect(outcome.result.managedCursor).toBeUndefined();
     expect(captured.some(l => l.includes('running the managed catch-up inside it as this CLI\'s writer'))).toBe(true);
     expect(captured.some(l => l.startsWith('[sync] managed catch-up: 5 entries frozen'))).toBe(true);
     // Every request the drain admitted carries this CLI's registration, so the in-process grant and revocation checks applied.

@@ -42,6 +42,12 @@
 #      beforeAll then sizes its PGLite schema from nothing, and a `-t`
 #      filtered run or a throw before an inline restore leaves it empty.
 #      Comments do not count either way (#6514).
+#  R8: no scratch directory inside the source tree
+#      (`join(import.meta.dir, '.tmp-...')`). Guards such as
+#      test-reads-source-smell walk test/ in the same lane, and a scratch
+#      directory created and removed by another file mid-walk fails them with
+#      ENOENT (import-file.test.ts did this to test-reads-source-smell).
+#      Use mkdtempSync(join(tmpdir(), '...')).
 #
 # Scope:
 #  - Recursively scans `test/**/*.test.ts`.
@@ -184,6 +190,8 @@ GATEWAY_CODE_SCAN='
   END { if (calls != "" && !restored) printf "%s", calls }
 '
 UNCONFIGURE_PATTERN='(__unconfigureGatewayForTests|_clearGatewayForTests)[[:space:]]*\('
+# R8: a scratch path joined onto this file's own directory.
+SOURCE_TREE_SCRATCH_PATTERN="(import\\.meta\\.dir(name)?|__dirname)[[:space:]]*,[[:space:]]*['\"\`]\\.?tmp[-_./'\"\`]"
 # R7: same comment removal; a resetGateway call counts only inside an
 # afterEach/afterAll block (brace depth from the hook's line) or on the
 # hook line itself. Prints the unconfigure lines when no hook restore is left.
@@ -210,7 +218,7 @@ UNCONFIGURE_CODE_SCAN='
   }
   END { if (calls != "" && !restored) printf "%s", calls }
 '
-CANDIDATES="$(guard_candidates -E -e "$ENV_MUTATION_PATTERN" -e "$MODULE_MOCK_PATTERN" -e "$ENGINE_PATTERN" -e "$GATEWAY_PATTERN" -e "$VERDICT_PATTERN" -e "$UNCONFIGURE_PATTERN" <<< "$FILE_LIST")"
+CANDIDATES="$(guard_candidates -E -e "$ENV_MUTATION_PATTERN" -e "$MODULE_MOCK_PATTERN" -e "$ENGINE_PATTERN" -e "$GATEWAY_PATTERN" -e "$VERDICT_PATTERN" -e "$UNCONFIGURE_PATTERN" -e "$SOURCE_TREE_SCRATCH_PATTERN" <<< "$FILE_LIST")"
 
 violations=0
 file_count=0
@@ -299,6 +307,11 @@ while IFS= read -r f; do
       emit_violation "$f" "R7" "__unconfigureGatewayForTests()/_clearGatewayForTests() with no resetGateway() in an afterEach/afterAll hook; an empty gateway is process-global, so the next file's beforeAll sizes its schema from nothing. Add afterEach(() => resetGateway()) (an inline restore does not survive a throw or a -t filter) or rename to *.serial.test.ts" "$unrestored"
     fi
   fi
+  # R8: scratch directory inside the source tree.
+  scratch_lines=$(grep -nE "$SOURCE_TREE_SCRATCH_PATTERN" "$f" 2>/dev/null || true)
+  if [ -n "$scratch_lines" ]; then
+    emit_violation "$f" "R8" "scratch directory inside the source tree; tree walkers in the same lane (test-reads-source-smell) fail with ENOENT when it is created or removed mid-walk. Use mkdtempSync(join(tmpdir(), '...'))" "$scratch_lines"
+  fi
 done <<EOF
 $FILE_LIST
 EOF
@@ -318,6 +331,7 @@ if [ $violations -gt 0 ]; then
   echo "    before the run it checks) with _resetCliExitVerdictForTests()."
   echo "  - For __unconfigureGatewayForTests(), call resetGateway() in"
   echo "    afterEach or afterAll; it puts back the preload's baseline gateway."
+  echo "  - For a scratch directory, use mkdtempSync(join(tmpdir(), '...'))."
   echo
   echo "Or, if this is a baseline file from before the lint shipped,"
   echo "add it to scripts/check-test-isolation.allowlist (with a TODO"

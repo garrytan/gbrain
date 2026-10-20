@@ -105,7 +105,8 @@ export const CODE_CALLERS_DESCRIPTION =
   "every caller (the people who'd be affected by your change). Returns direct " +
   "callers from the tree-sitter call graph. Use during plan-mode to size " +
   "the change. Defaults to source-scoped; for multi-source brains pass source_id " +
-  "or all_sources=true. " +
+  "or all_sources=true. `resolved:false` marks a call matched by name only: the resolver links calls within one " +
+  "file, so a cross-file call stays unresolved and may name a different symbol with the same name. " +
   "Returns: `{symbol, count, callers: [{from_symbol_qualified, to_symbol_qualified, edge_type, resolved}]}`. " +
   "Example: `{symbol:'parseMarkdown', count:4, callers:[{from_symbol_qualified:'callerInA', " +
   "to_symbol_qualified:'parseMarkdown', edge_type:'calls', resolved:true}]}`.";

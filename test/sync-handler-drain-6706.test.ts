@@ -180,9 +180,14 @@ test('an accepted remote sync job drains through the handler: worker drain contr
     const accepted = await prepareRemoteJob(ctx, 'sync', { noPull: true });
     const remoteJob = { ...job(910_100, { ...accepted.data, lanes: 8, drain: false }), submission_authority: accepted.authority } as MinionJobContext;
     try {
-      const result = await withSubmissionAuthority(accepted.authority, () => makeSyncHandler(engine)({ ...remoteJob, data: accepted.data } as MinionJobContext)) as Record<string, unknown>;
-      expect(result).toMatchObject({ outcome: 'synced', drain: { outcome: 'synced' } });
+      // #6712 PR 4b (design v3.2 §5): a remote caller admits its one-sided work and never stamps; the pass ends
+      // reconcile_host_required, so the job ends for the owner host with every page it admitted standing.
+      progress.length = 0;
+      const run = withSubmissionAuthority(accepted.authority, () => makeSyncHandler(engine)({ ...remoteJob, data: accepted.data } as MinionJobContext));
+      await expect(run).rejects.toThrow(`Managed sync of source ${f.id} is blocked(reconcile_host_required, 0 entries left)`);
+      expect(progress.at(-1)).toMatchObject({ blocked: true, outcome: 'blocked', drain: { outcome: 'blocked', stop_reason: 'reconcile_host_required' } });
       expect(await pageCount(engine, f.id)).toBe(3);
+      expect((await engine.executeRaw<{ c: string | null }>('SELECT last_commit AS c FROM sources WHERE id=$1', [f.id]))[0]!.c).toBeNull();
       const { planJobDrain } = await import('../src/core/minions/handlers/sync-job-drain.ts');
       // Drain controls in a remote job's data are never read: lanes stay 1 and drain stays on.
       expect((await planJobDrain(engine, remoteJob)).opts).toMatchObject({ drain: true, lanes: 1 });

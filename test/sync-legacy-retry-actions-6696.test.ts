@@ -10,6 +10,10 @@
  *
  * Regression that fails it: the "no longer records them" text, a legacy failure that survives the retry, or a cursor-less
  * row with no printed way out.
+ *
+ * #6712 PR 4b: a non-company source keeps no cursor, so its first live pass retires every older-key cursor of the
+ * incarnation with its failure row (`retireLegacyCursors`); the first test seeds the two unfinished cursors an older gbrain
+ * left instead of running one, and none of them remains after the retry.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -26,7 +30,8 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readManagedSyncFailures, recordManagedSyncFailure } from '../src/core/persistence/sync-failures.ts';
-import { __setManagedCursorKeyForTests } from '../src/core/persistence/sync-cursor-key.ts';
+import { resolveManagedSyncContext } from '../src/core/persistence/sync-discovery.ts';
+import { managedSyncAuthority } from '../src/core/persistence/sync-authority.ts';
 import { managedSyncOrphansRepair } from '../src/core/repair/managed-sync-orphans.ts';
 import { runRepair } from '../src/core/repair/core.ts';
 import { repairSpec } from '../src/core/repair/registry.ts';
@@ -70,9 +75,6 @@ afterAll(async () => {
 
 const cursorKeys = async (engine: BrainEngine, id: string) => (await engine.executeRaw<{ key: string; syncOptions: Record<string, unknown> | null }>(
   "SELECT fingerprint AS key,completed_keys->0->'syncOptions' AS \"syncOptions\" FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [id]));
-/** A run recorded before cursors kept their options: strip them from the header. */
-const stripOptions = (engine: BrainEngine, key: string) => engine.executeRaw(
-  "UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0}',(completed_keys->0)-'syncOptions') WHERE op='managed-sync' AND fingerprint=$1", [key]);
 const failureKeys = async (engine: BrainEngine, id: string) => (await engine.executeRaw<{ key: string }>(
   "SELECT fingerprint AS key FROM op_checkpoints WHERE op='managed-sync-failure' AND completed_keys->0->>'source_id'=$1 ORDER BY fingerprint", [id])).map(row => row.key);
 
@@ -115,21 +117,27 @@ const actionLine = (out: string, label: RegExp) => {
   return found!.slice(found!.lastIndexOf(': ') + 2).trim();
 };
 
-/** Runs `fn` as an older gbrain whose cursor key for this source is `key`, with the other older cursor out of its sight. */
-async function legacy<T>(engine: BrainEngine, key: string, fn: () => Promise<T>, hide?: string): Promise<T> {
-  const park = (fingerprint: string, op: string) => engine.executeRaw("UPDATE op_checkpoints SET op=$2 WHERE fingerprint=$1 AND op IN ('managed-sync','managed-sync-parked')", [fingerprint, op]);
-  __setManagedCursorKeyForTests(() => key);
-  if (hide) await park(hide, 'managed-sync-parked');
-  try { return await fn(); } finally { __setManagedCursorKeyForTests(null); if (hide) await park(hide, 'managed-sync'); }
+/** An unfinished cursor (and manifest) an older gbrain left under `key`, recorded before cursors kept their options. */
+async function legacyCursor(engine: BrainEngine, id: string, key: string, ageMinutes: number, extra: Record<string, unknown> = {}) {
+  const [source] = await engine.executeRaw<{ incarnation: string; root: string }>('SELECT incarnation::text AS incarnation, local_path AS root FROM sources WHERE id=$1', [id]);
+  const context = await resolveManagedSyncContext(engine, { sourceId: id, noPull: true } as SyncOpts);
+  const authority = await managedSyncAuthority(engine, id, source!.incarnation, source!.root);
+  const runId = `run-${key}`, at = new Date(Date.now() - ageMinutes * 60_000).toISOString();
+  const entries = [0, 1, 2, 3].map(i => ({ path: `notes/n${i}.md`, sourcePath: `notes/n${i}.md`, action: 'import', working: false, slug: `notes/n${i}`, pageId: null, revision: null }));
+  const binding = { ...context.binding, owner_epoch: String((context.binding as { owner_epoch?: unknown }).owner_epoch), topology_generation: String(context.binding.topology_generation) };
+  const cursor = { binding, root: context.root, gitRoot: context.gitRoot, sourceId: id, incarnation: source!.incarnation, from: null, target: git(source!.root, 'rev-parse', 'HEAD'),
+    slugMode: 'git-root', discoveredAt: at, runId, index: 1, total: entries.length, authority, processingOptions: { noEmbed: false, noExtract: false, noSchemaPack: false },
+    counts: { added: 1, modified: 0, deleted: 0, chunks: 0 }, ...extra };
+  await engine.executeRaw('INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,$3::text::jsonb,$4::timestamptz)', ['managed-sync', key, JSON.stringify([cursor]), at]);
+  await engine.executeRaw('INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,$3::text::jsonb,$4::timestamptz)', ['managed-sync-manifest', runId, JSON.stringify(entries), at]);
 }
 const orphanCommand = (id: string) => `gbrain repair managed-sync-orphans --source ${id}`;
 
 test('legacy failures under older keys: one --retry-failed folds their cursors in and settles them; the printed repair settles the cursor-less row', async () => withEnv(env, async () => { for (const engine of engines) {
   const { id, run, failure } = await fixture(engine);
   const fullKey = `${id}-full`, excludeKey = `${id}-exclude`;
-  expect(await legacy(engine, fullKey, () => run({ full: true }))).toMatchObject({ status: 'partial' });
-  expect(await legacy(engine, excludeKey, () => run({ exclude: ['archive/**'] }), fullKey)).toMatchObject({ status: 'partial' });
-  await stripOptions(engine, fullKey); await stripOptions(engine, excludeKey);
+  await legacyCursor(engine, id, fullKey, 60);
+  await legacyCursor(engine, id, excludeKey, 10);
   const noCursorKey = `legacy-${randomUUID()}`;
   await failure(fullKey, 'notes/n1.md'); await failure(excludeKey, 'notes/n2.md'); await failure(noCursorKey, 'assets/data.bin');
   expect((await readManagedSyncFailures(engine, [id])).filter(row => row.syncOptions)).toEqual([]);
@@ -139,8 +147,8 @@ test('legacy failures under older keys: one --retry-failed folds their cursors i
   expect(out).toContain('Retrying 3 previously-failed file(s)...');
   expect(out).toContain(`1 of them belong to no sync run any more`);
   expect(out).toContain(orphanCommand(id));
-  // The newer older-key cursor finished in place under its own key; the --full one was superseded with its failure.
-  expect((await cursorKeys(engine, id)).map(row => row.key)).toEqual([excludeKey]);
+  // The first pass retired both older-key cursors with their failures; the cursor-less row is left to the printed repair.
+  expect((await cursorKeys(engine, id)).map(row => row.key)).toEqual([]);
   expect(await failureKeys(engine, id)).toEqual([noCursorKey]);
 
   await runAction(engine, orphanCommand(id));
@@ -152,7 +160,7 @@ test('a cursor-less legacy failure for a file no run imports is named with the o
   const { id, run, failure } = await fixture(engine);
   // A --full run that finished and was retired: its failure row outlived its cursor and never recorded the options.
   const fullKey = `${id}-full`;
-  expect(await legacy(engine, fullKey, () => run({ full: true }, { maxPages: 1000, maxMs: 60_000 }))).toMatchObject({ status: 'first_sync' });
+  expect(await run({ full: true }, { maxPages: 1000, maxMs: 60_000 })).toMatchObject({ status: 'first_sync' });
   await engine.executeRaw("DELETE FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1", [fullKey]);
   await failure(fullKey, 'assets/data.bin');
   const out = await capture(() => runSyncInner(engine, ['--source', id, '--no-pull', '--retry-failed']));

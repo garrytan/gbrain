@@ -27,8 +27,12 @@ function logLines(raw: string): LogLine[] {
     return [{ job: m[1]!.trim(), step: m[2]!.trim(), timestampMs: Date.parse(m[3]!), text: m[4]!.replace(/\x1b\[[0-9;]*m/g, "") }];
   });
 }
+/** The shards a test.yml unit job ran: `test (3)` alone, `test (3, 4)` packed by scripts/test-shard-pack.sh. */
+function unitJobShards(job: string): string[] | undefined {
+  return /^test \((\d+(?:, \d+)*)\)$/.exec(job)?.[1]!.split(", ");
+}
 function isJob(job: string, lane: Lane, e2eProfile: E2EProfile = "selected"): boolean {
-  if (lane === "unit") return /^test \(\d+\)$/.test(job);
+  if (lane === "unit") return unitJobShards(job) !== undefined;
   if (lane === "serial") return /^serial-tests(?: \(\d+\))?$/.test(job);
   if (e2eProfile === "full") return /^coverage-full-e2e(?: \(\d+\))?$/.test(job);
   return /^Selected E2E \(diff-relevant\)(?: \(\d+\)| \d+)?$/.test(job);
@@ -267,7 +271,9 @@ async function main(): Promise<void> {
     if (info.conclusion !== "success") throw new Error(`run ${run} is not successful`);
     const jobs = info.jobs.filter((j: { name: string }) => isJob(j.name, lane, e2eProfile));
     if (!jobs.length || jobs.some((j: { conclusion: string }) => j.conclusion !== "success")) throw new Error(`run ${run} has no complete ${lane} lane`);
-    expectedJobs = jobs.map((j: { name: string }) => j.name);
+    // A packed unit job captured each of its shards as job `test (N)`.
+    expectedJobs = lane === "unit" ? jobs.flatMap((j: { name: string }) => unitJobShards(j.name)!.map(shard => `test (${shard})`))
+      : jobs.map((j: { name: string }) => j.name);
     commit = info.headSha;
     if (lane === "serial") {
       if (jobs.some((j: { databaseId: number }) => !Number.isInteger(j.databaseId) || j.databaseId < 1)) throw new Error("serial: missing job identity");

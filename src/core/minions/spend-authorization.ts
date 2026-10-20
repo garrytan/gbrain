@@ -23,7 +23,7 @@ import { opError } from '../ops/contract.ts';
 import { loadPricingOverrides } from '../budget/budget-tracker.ts';
 import { withAIInvocationGuard } from '../ai/invocation-guard.ts';
 import { GroupBudgetRefusal, RESERVATION_TTL_MS, readGroupSpend, reserveGroup, settle, type GroupSpend } from './budget-meter.ts';
-import { actualCents, maximumInvocationCents } from './delegated-spend.ts';
+import { actualCents, maximumInvocationCents, unboundedInvocationCause } from './delegated-spend.ts';
 import { UnrecoverableError } from './errors.ts';
 import { RateLeaseUnavailableError } from './rate-leases.ts';
 import type { MinionJob, MinionJobContext } from './types.ts';
@@ -178,7 +178,7 @@ export function noteChildSpendEnforcement(features: readonly string[]): void {
 export function childSpendEnforcementReady(): boolean { return childSpendEnforcement; }
 
 /** The resume command: the producer's argv with a doubled `--max-usd`, or null for a legacy row. */
-function resumeArgv(record: SpendAuthorization, capUsd: number): string[] | null {
+function resumeArgv(record: SpendAuthorization, capUsd: number | null): string[] | null {
   if (!record.argv) return null;
   const argv: string[] = [];
   for (let i = 0; i < record.argv.length; i++) {
@@ -187,7 +187,7 @@ function resumeArgv(record: SpendAuthorization, capUsd: number): string[] | null
     if (/^--max-(usd|cost|cost-usd)=/.test(a) || a === '--yes' || a === '-y' || a === '--no-confirm') continue;
     argv.push(a);
   }
-  return [...argv, '--max-usd', resumeMaxUsd(capUsd).toFixed(2), '--yes'];
+  return capUsd === null ? [...argv, '--yes'] : [...argv, '--max-usd', resumeMaxUsd(capUsd).toFixed(2), '--yes'];
 }
 
 /** The terminal envelope for a group that ran out (`kind: 'cost'`) or met an unpriced model under a user cap. */
@@ -195,10 +195,25 @@ export async function spendRefusal(
   engine: BrainEngine,
   job: Pick<MinionJob, 'id' | 'name'>,
   record: SpendAuthorization,
-  cause: { kind: 'cost'; overdueHolds?: boolean } | { kind: 'no_pricing'; model: string },
+  cause: { kind: 'cost'; overdueHolds?: boolean } | { kind: 'no_pricing' | 'no_context_ceiling'; model: string },
 ): Promise<SpendGroupRefusedError> {
   const group = groupAmounts(record, await readGroupSpend(engine, `group:${record.group_id}`));
   const listArgv = ['gbrain', 'jobs', 'list', '--group', record.group_id, '--json'];
+  if (cause.kind === 'no_context_ceiling') {
+    const capped = resumeArgv(record, null);
+    const rerun = capped ? shellQuote(capped) : `${record.command} with --yes instead of --max-usd`;
+    const e = opError('no_context_ceiling',
+      `Job ${job.id} (${record.command}) stopped: ${cause.model} has a known price, but gbrain knows no context-token ceiling for it, so the most one call could cost under the user's $${record.cap_usd!.toFixed(2)} cap cannot be bounded. No provider call was made.`,
+      `Do not retry unchanged and do not change the price (it is already known). Ask the user to choose: rerun without the user cap (${rerun}; the default cap then applies and this model runs unmetered with a warning), or have the brain-host operator supply ${cause.model}'s context size (its context-token ceiling from the provider's model page).`,
+      { why: 'A user-set cap is enforced per provider attempt by reserving the most that attempt could cost, which needs the model\'s input ceiling as well as its price.',
+        docs: 'docs/guides/write-refusals.md#no_context_ceiling',
+        fix: { ...(capped ? { argv: capped } : {}), ask_user: true, consent: ['paid'], actor: 'agent', requires_exclusive: false,
+          why: `Reruns ${record.command} without the user cap, so ${cause.model} runs unmetered under the default cap.`,
+          user_message: `${cause.model} has a known price but no known context size, so your $${record.cap_usd!.toFixed(2)} cap can't bound its calls. Rerun ${record.command} without your cap (that model then runs unmetered), or tell me the model's context size so the operator can declare it?`,
+          inputs: [{ name: 'context_tokens', how: `${cause.model}'s context window in tokens, from the provider's model page (OpenRouter lists it as context_length); the brain-host operator declares it.` }],
+          verify: { argv: listArgv } } });
+    return new SpendGroupRefusedError({ ...e.toJSON(), group } as SpendRefusalEnvelope);
+  }
   if (cause.kind === 'no_pricing') {
     const e = opError('no_pricing',
       `Job ${job.id} (${record.command}) stopped: gbrain has no price for ${cause.model}, so the user's $${record.cap_usd!.toFixed(2)} cap cannot be enforced. No provider call was made.`,
@@ -212,7 +227,7 @@ export async function spendRefusal(
   const derived = record.cap_source === 'derived';
   const resume = resumeArgv(record, cap);
   const n = resumeMaxUsd(cap);
-  const reconcile = cause.overdueHolds && group.overdue_usd > 0
+  const reconcile = cause.kind === 'cost' && cause.overdueHolds && group.overdue_usd > 0
     ? ` $${group.overdue_usd.toFixed(2)} of it is held by attempts that never reported usage; they count as spent until reconciled.`
     : '';
   const message = `Job ${job.id} (${record.command}) stopped: its group ${record.group_id} reached the $${cap.toFixed(2)} ${derived ? 'cost cap derived from the estimate' : `${record.cap_source} cost cap`} `
@@ -295,10 +310,13 @@ export async function runWithJobSpend<T>(
   const guard = async (call: Parameters<Parameters<typeof withAIInvocationGuard>[0]>[0]) => {
     const max = maximumInvocationCents(call, pricingOverrides);
     if (max === null) {
-      if (record.cap_source === 'user') throw (seen.refusal = await spendRefusal(engine, job, record, { kind: 'no_pricing', model: call.model }));
+      const kind = unboundedInvocationCause(call, pricingOverrides);
+      if (record.cap_source === 'user') throw (seen.refusal = await spendRefusal(engine, job, record, { kind, model: call.model }));
       if (!warned) {
         warned = true;
-        process.stderr.write(`[budget] BUDGET_TRACKER_NO_PRICING: model "${call.model}" has no known price; job ${job.id} runs it unmetered under its ${record.cap_source} $${record.cap_usd!.toFixed(2)} cap. Register its rate with \`gbrain pricing set\` to meter it.\n`);
+        process.stderr.write(kind === 'no_context_ceiling'
+          ? `[budget] BUDGET_TRACKER_NO_PRICING: model "${call.model}" has a known price but no known context-token ceiling; job ${job.id} runs it unmetered under its ${record.cap_source} $${record.cap_usd!.toFixed(2)} cap.\n`
+          : `[budget] BUDGET_TRACKER_NO_PRICING: model "${call.model}" has no known price; job ${job.id} runs it unmetered under its ${record.cap_source} $${record.cap_usd!.toFixed(2)} cap. Register its rate with \`gbrain pricing set\` to meter it.\n`);
       }
     }
     let hold;

@@ -9,20 +9,13 @@ import { ISOLATE_SITES } from '../../src/core/item-failure.ts';
 
 /** [row id, owner or disposition, what goes wrong] */
 export const DEFERRED: ReadonlyArray<readonly [string, string, string]> = [
-  ['A-5', 'GBRA-101 (4b)', 'A publication whose transaction **always** hits 57014 or 55P03 is released as database_contention without charging an attempt'],
-  ['A-6', 'GBRA-101 (4b)', 'Managed sync drain'],
-  ['A-7', 'GBRA-101 (4b)', 'Managed freeze of one entry'],
   ['A-8', 'GBRA-129', 'Managed discovery: two pages claim one source_path, or the page at the file\'s slug records another origin'],
-  ['A-14', 'GBRA-101 (journal.ts is 4b-touched)', 'Compaction selects the 100 oldest eligible receipts, but it does not filter out each worktree\'s newest committed sync receipt there'],
   ['A-16', 'next wave (effect variant fixed with C-1)', 'A staging-bytes recovery, or a terminal request that still holds a recovery record, has no preview-bound exit (only the withdrawal-mirror effect variant is fixed)'],
-  ['A-17', 'GBRA-101 (4b)', 'Managed discovery'],
   ['A-19', 'deferred (intentional gate; narrow later)', 'Legacy rename reconcile'],
-  ['A-20', 'GBRA-101 (4b)', 'Managed screen'],
-  ['A-28', 'GBRA-101 (4b)', 'gbrain sync unblock --source <id> --apply (the documented operator exit for held files) calls runContentLane for fence and slug-conflict holds with...'],
+  ['A-20', 'not reproducible (4b): frontmatter validation is pack-independent, pinned by test/sync-pack-independent-frontmatter-6712.test.ts; real if that guard fails', 'Managed screen'],
   ['A-29', 'deferred (intentional gate; narrow later)', 'One live job (waiting/active/delayed/waiting-children/paused) whose submission_authority is SQL NULL, malformed, or a future version written by a n...'],
   ['A-32', 'deferred: next wave (test.todo)', 'Legacy un-syncable sweep'],
   ['A-33', 'deferred: next wave (test.todo)', 'Full sync reconcile delete'],
-  ['A-34', 'GBRA-101 (4b)', 'Owner-startup refresh recovery: rows ordered by created_at LIMIT 16 with no rotation'],
   ['A-35', 'deferred: next wave (test.todo)', 'drainEffects runs the noop-settle loop first'],
   ['A-37', 'deferred: next wave (test.todo)', 'extract_atoms, unmanaged'],
   ['A-38', 'deferred: next wave (test.todo)', 'Managed extract_facts on a connector source (always windowed by sourceChangedSince)'],
@@ -37,17 +30,13 @@ export const DEFERRED: ReadonlyArray<readonly [string, string, string]> = [
   ['A-56', 'deferred: next wave (test.todo)', 'Legacy facts backstop per page: catch { /* per-page enqueue is best-effort */ } with no counter'],
   ['A-57', 'GBRA-101 (4b)', 'Managed per-file prepare/screen: loadActivePackForEngine(...).catch(() => null)'],
   ['A-58', 'deferred: next wave (test.todo)', 'Legacy import, file gone from disk branch: clearLegacyHold is outside any try, so a DB error there escapes importOnePath and aborts the whole drain...'],
-  ['A-59', 'GBRA-101 (4b)', 'If the movement read fails, writer status shows movement: [], which looks the same as "no movement"'],
   ['A-61', 'deferred: next wave (test.todo)', 'The comment says "the next settlement retries"'],
   ['A-62', 'deferred: next wave (test.todo)', 'doctor --remediate --resume with pending_embed_sources from a budget-exhausted checkpoint: one source\'s embed error aborts the run before any job s...'],
   ['A-63', 'deferred: next wave (test.todo)', 'gbrain repair file-drift --source <id> --all-drifted preview: a plain Error for one slug (fs EACCES/ENAMETOOLONG on the canonical path, a YAML or d...'],
   ['A-64', 'deferred: next wave (test.todo)', 'Fences\' managed write rethrows codes other than the changed/sync_in_progress set'],
-  ['A-66', 'GBRA-101 (4b)', 'In the per-file catch branch, await opts.onFileResult?.(…) sits outside any try, so a throw from sync\'s ledger callback escapes and aborts the whol...'],
   ['A-67', 'deferred (intentional gate; narrow later)', 'Jobs fail as a whole when any single page or file was refused (#5904, #6273 intent: never report success over unwritten rows)'],
   ['B-1', 'GBRA-129', 'Two live pages record one source_path'],
   ['B-2', 'GBRA-101 (4b)', 'One page in the source whose stored source_path is empty, absolute or contains ../'],
-  ['B-3', 'GBRA-101 (4b)', 'Two origins for one slug differ only by case or backslash spelling (People/X.md recorded, plus a new people/x.md in the tree)'],
-  ['B-4', 'GBRA-101 (4b)', 'A file takes over the page at its slug whose explicit frontmatter id differs'],
   ['B-8', 'deferred: next wave (test.todo)', 'Rename A→B leaves alias A→B; a later put_page, import, restore or sync creates a live page at A'],
   ['B-11', 'deferred: next wave (test.todo)', 'NFD and NFC spellings are accepted as two different slugs (probe: validateSlug of people/jose + U+0301 is not equal to the NFC people/josé)'],
   ['B-13', 'deferred: next wave (test.todo)', 'Frontmatter id is not unique per source'],
@@ -67,7 +56,6 @@ export const DEFERRED: ReadonlyArray<readonly [string, string, string]> = [
   ['C-19', 'GBRA-101 (4b)', 'Generic invalid_params refusal, and a writer queue with a null heartbeat'],
   ['C-20', 'GBRA-101 (4b)', 'Holds survive an authorized DB-only delete (#6600)'],
   ['C-21', 'GBRA-101 (4b)', 'On macOS, case-colliding paths: refresh_dirty has no safe recovery'],
-  ['C-22', 'GBRA-95', 'stuck-recovery refuses a large-file recovery: "resolve it by hand"'],
 ];
 
 describe('GBRA-130 inventory rows not yet fixed here', () => {

@@ -137,16 +137,40 @@ export async function registerLocalWriter(engine: BrainEngine, lane: 'cli' | 'st
 }
 
 async function ensureLocalWriter(engine: BrainEngine, lane: 'cli' | 'stdio', grant: LocalGrant, path: string): Promise<LocalRegistration> {
+  return (await ensureLocalWriterRow(engine, lane, grant, path)).local;
+}
+/** `ensureLocalWriter` with the row it read (undefined when it inserted the registration). */
+async function ensureLocalWriterRow(engine: BrainEngine, lane: 'cli' | 'stdio', grant: LocalGrant, path: string): Promise<{ local: LocalRegistration; existing?: LocalWriterRow }> {
   const local = privateJson<LocalRegistration>(path, () => ({ id: randomUUID(), credential: randomBytes(32).toString('hex'), lane }));
   if (local.lane !== lane || typeof local.credential !== 'string' || typeof local.id !== 'string') throw invalidIdentityFile('Local writer registration is invalid.', path, `${lane} writer registration`);
-  const [existing] = await engine.executeRaw<{ revoked_at: unknown; credential_hash: string; lane: string }>(
-    'SELECT revoked_at,credential_hash,lane FROM persistence_local_writers WHERE id=$1::uuid', [local.id]);
+  const [existing] = await engine.executeRaw<LocalWriterRow>(
+    'SELECT revoked_at,credential_hash,lane,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid', [local.id]);
   if (existing?.revoked_at != null) throw new OperationError('permission_denied', 'This local writer registration was revoked.', 'Explicitly register a new writer to authorize future work.');
   if (existing && (existing.lane !== lane || existing.credential_hash !== sha256(local.credential))) throw credentialMismatch(path, local.id, lane);
   // A registered writer is left as it is (the insert would conflict and do nothing).
   if (!existing) await engine.executeRaw(`INSERT INTO persistence_local_writers(id,lane,credential_hash,grant_ceiling)
     VALUES($1::uuid,$2,$3,$4::text::jsonb) ON CONFLICT(id) DO NOTHING`, [local.id, lane, sha256(local.credential), JSON.stringify(grant)]);
-  return local;
+  return { local, ...(existing ? { existing } : {}) };
+}
+/**
+ * #6712 PR 4b: `registerLocalWriter(engine, lane)` and `withVerifiedLocalRegistration` in one read of the registration:
+ * the row the registration check read also verifies it (a row it had to insert is verified by a fresh read). `brainId` is
+ * the persistence identity when the caller read it already.
+ */
+export async function withRegisteredLocalWriter<T>(engine: BrainEngine, lane: 'cli' | 'stdio', run: (writer: VerifiedLocalWriter) => Promise<T>, brainId?: string): Promise<T> {
+  const brain = brainId ?? await brainIdentity(engine);
+  const { local, existing } = await ensureLocalWriterRow(engine, lane, defaultGrant(), join(persistenceHome(), `${brain}.${lane}.json`));
+  const writer = existing ? verifiedFromRow(local, existing) : await verifyLocalWriter(engine, local);
+  return verifiedLocalWriter.run(writer, () => registeredRow.run({ id: local.id, row: existing }, () => run(writer)));
+}
+/** The row `withRegisteredLocalWriter` read: it answers the next plain read of that writer's row inside `run`, once. */
+const registeredRow = new AsyncLocalStorage<{ id: string; row?: LocalWriterRow }>();
+export function takeRegisteredWriterRow(id: string): LocalWriterRow | undefined {
+  const seed = registeredRow.getStore();
+  if (seed?.id !== id || !seed.row) return undefined;
+  const { row } = seed;
+  seed.row = undefined;
+  return row;
 }
 
 /** Commit replacement and revocation together, then atomically publish the private credential. */
@@ -193,8 +217,12 @@ export async function readLocalWriter(engine: SqlEngine, lane: 'cli' | 'stdio'):
   return local;
 }
 export async function verifyLocalWriter(engine: SqlEngine, local: LocalRegistration, lock = false): Promise<{ principal: Principal; grant: LocalGrant; remote: boolean }> {
-  const [row] = await engine.executeRaw<{ lane: string; credential_hash: string; grant_ceiling: LocalGrant; revoked_at: unknown }>(
+  const [row] = await engine.executeRaw<LocalWriterRow>(
     `SELECT lane,credential_hash,grant_ceiling,revoked_at FROM persistence_local_writers WHERE id=$1::uuid${lock ? ' FOR SHARE' : ''}`, [local.id]);
+  return verifiedFromRow(local, row);
+}
+export interface LocalWriterRow { lane: string; credential_hash: string; grant_ceiling: LocalGrant; revoked_at: unknown }
+function verifiedFromRow(local: LocalRegistration, row: LocalWriterRow | undefined): { principal: Principal; grant: LocalGrant; remote: boolean } {
   const actual = Buffer.from(sha256(local.credential));
   const expected = Buffer.from(row?.credential_hash ?? '');
   if (!row || row.revoked_at != null || row.lane !== local.lane || actual.length !== expected.length || !timingSafeEqual(actual, expected)) {

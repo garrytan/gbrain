@@ -30,7 +30,8 @@ export function contentRepairCommit(path: string, receipt: Pick<ContentRepairRec
 }
 export interface ParkedTarget { slug?: string; error_code: string }
 /** `page_body_segmented`: a segmented page an older binary's mirror or Git scan passed by; this one mirrors and commits it. */
-export interface SkippedTarget { slug: string; reason: 'metafile' | 'file_database_drift' | 'page_body_segmented' | 'withdrawal_not_mirrored' }
+/** `preview_changed`: a `gbrain repair segmented-mirror` target whose file or render no longer has the hash its preview approved (`data.approved_file`). */
+export interface SkippedTarget { slug: string; reason: 'metafile' | 'file_database_drift' | 'page_body_segmented' | 'withdrawal_not_mirrored' | 'preview_changed' }
 /** The code a page behind a failed withdrawal mirror is parked with: its file may still hold the withdrawn text. */
 export const WITHHELD_BY_MIRROR = 'withdrawal_mirror_failed';
 /** A Git or withdrawal target parks after this many consecutive execution failures. */
@@ -83,6 +84,8 @@ export interface PersistenceEffect {
     retried?: number;
     /** #5396: scan targets passed without a file publication (a sync-skip metafile, or a file with an uncoordinated local edit). */
     skipped?: SkippedTarget[];
+    /** A `gbrain repair segmented-mirror` target: the file and render SHA-256 its preview approved; the mirror rewrites the file only while both still match. */
+    approved_file?: { slug: string; file_sha256: string; expected_sha256: string };
     /** GBRA-130 A-12: pages whose file this withdrawal mirror rewrote, recorded by its recovery with the cursor step. */
     published?: string[];
     /** The SHA-256 of the bytes this mirror wrote to each published page's file, at the page revision it rendered. */

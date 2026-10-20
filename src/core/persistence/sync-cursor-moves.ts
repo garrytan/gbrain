@@ -19,6 +19,7 @@ export function waivedCursor(cursor: Cursor, waived: NoopWaiver, index = cursor.
     waived: { imports: prior.imports + (waived.kind === 'import' ? 1 : 0), deletes: prior.deletes + (waived.kind === 'delete' ? 1 : 0) } } };
   if (waived.kernel.includes('contextual_mode')) next.counts.skippedContextualMode = (next.counts.skippedContextualMode ?? 0) + 1;
   if (waived.kernel.includes('canonical_file_differs')) next.counts.skippedCanonicalBytes = (next.counts.skippedCanonicalBytes ?? 0) + 1;
+  if (cursor.passId && waived.kernel.length) next.passLegacyWaived = [...cursor.passLegacyWaived ?? [], index];
   return next;
 }
 /** #6643: the cursor's settled indexes with its current entry added (it passes that entry without a commit). */
@@ -48,7 +49,10 @@ export function settledPast(cursor: Cursor, index: number): Cursor {
  */
 export function promoteWindow(cursor: Cursor): Cursor {
   const [first, ...rest] = cursor.window ?? [];
-  if (cursor.pending || !first?.length || first[0]!.intent.index !== cursor.index) return cursor;
+  if (cursor.pending || !first?.length) return cursor;
+  // A pass's intents carry no index (cursorIntent): its window head is the entry at the cursor's index by path, never frozen again under the same request.
+  const head = first[0]!.intent;
+  if (typeof head.index === 'number' ? head.index !== cursor.index : head.path == null || head.path !== cursor.entries[cursor.index]?.path) return cursor;
   const next: Cursor = { ...cursor, pending: first[0], group: first };
   if (rest.length) next.window = rest; else delete next.window;
   return next;

@@ -169,8 +169,8 @@ async function stageTarget(session: GitSession, relativePath: string): Promise<{
     parent = dirname(parent);
   }
   const scope = relative(root, parent).split(sep).join('/') || '.';
-  const deleted = await git(session, ['diff', '--name-only', '--diff-filter=D', '--no-renames', '-z', '--', scope]);
-  const staged = await git(session, ['diff', '--cached', '--name-only', '--diff-filter=D', '--no-renames', '-z', '--', scope]);
+  const deleted = await git(session, ['diff', '--name-only', '--relative', '--diff-filter=D', '--no-renames', '-z', '--', scope]);
+  const staged = await git(session, ['diff', '--cached', '--name-only', '--relative', '--diff-filter=D', '--no-renames', '-z', '--', scope]);
   if (deleted.code !== 0 || staged.code !== 0) throw gitFailure('Cannot inspect canonical Git deletions.', `git diff could not list the deletions under ${scope}.`);
   for (const entry of new Set(`${deleted.stdout}${staged.stdout}`.split('\0').filter(Boolean))) {
     if (existsSync(join(root, entry))) continue;
@@ -234,8 +234,12 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
       if (out.code !== 0) throw gitFailure('Cannot inspect the canonical Git target.', `git ${args[0]} failed for this group of ${paths.length} file(s).`);
       return out.stdout;
     };
+    // #7091: ls-files and `diff --relative` print paths relative to the root, but status prints them relative to the
+    // repository toplevel; a root below the toplevel (local_path <repo>/brain) strips its prefix so every listing compares.
+    const prefix = paths.length ? (await git(session, ['rev-parse', '--show-prefix'])).stdout.replace(/\n$/, '') : '';
     const tracked = new Set((await list(['ls-files', '-z'])).split('\0').filter(Boolean));
-    const dirty = new Set((await list(['status', '--porcelain', '-z', '--no-renames', '--untracked-files=all'])).split('\0').filter(Boolean).map(entry => entry.slice(3)));
+    const dirty = new Set((await list(['status', '--porcelain', '-z', '--no-renames', '--untracked-files=all'])).split('\0').filter(Boolean)
+      .map(entry => entry.slice(3)).map(path => path.startsWith(prefix) ? path.slice(prefix.length) : path));
     const changed: { requested: string; path: string }[] = [];
     const staged: string[] = [];
     // #6665: a tracked path absent on disk is staged as a removal without trusting status, which can
@@ -256,7 +260,7 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
     if (staged.length) {
       const add = await git(session, ['add', '-A', '--', ...new Set(staged)]);
       if (add.code !== 0) throw gitFailure('Cannot stage the canonical Git target.', `git add failed for this group of ${new Set(staged).size} file(s).`);
-      const diff = await git(session, ['diff', '--cached', '--name-only', '-z', '--no-renames', '--', ...new Set(staged)]);
+      const diff = await git(session, ['diff', '--cached', '--name-only', '--relative', '-z', '--no-renames', '--', ...new Set(staged)]);
       if (diff.code !== 0) throw gitFailure('Cannot compare the canonical Git target.', `git diff --cached failed for this group of ${new Set(staged).size} file(s).`);
       const indexed = new Set(diff.stdout.split('\0').filter(Boolean));
       for (const [requested, path] of normalized) {
@@ -270,7 +274,7 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
       const rm = await git(session, [...NO_FSCACHE, 'rm', '--cached', '--quiet', '--ignore-unmatch', '--', ...removals]);
       if (rm.code !== 0) throw gitFailure('Cannot stage the canonical Git target removal.', `git rm --cached failed for this group of ${removals.length} removed file(s).`);
       const kept = await git(session, [...NO_FSCACHE, 'ls-files', '-z', '--', ...removals]);
-      const diff = await git(session, ['diff', '--cached', '--name-only', '-z', '--no-renames', '--', ...removals]);
+      const diff = await git(session, ['diff', '--cached', '--name-only', '--relative', '-z', '--no-renames', '--', ...removals]);
       if (kept.code !== 0 || diff.code !== 0) throw gitFailure('Cannot compare the canonical Git target removal.', `git ls-files or git diff --cached failed for this group of ${removals.length} removed file(s).`);
       const still = new Set(kept.stdout.split('\0').filter(Boolean));
       const indexed = new Set(diff.stdout.split('\0').filter(Boolean));
@@ -297,6 +301,18 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
     for (const c of changed) results.set(c.requested, outcome);
   });
   return results;
+}
+
+/**
+ * #7089: whether `root`'s branch has commits its upstream (the local remote-tracking ref, never fetched) lacks; false
+ * without an upstream. A Git effect whose target is absent asks this before completing: its removal may have been
+ * committed by an earlier attempt whose push failed, and only a root that is ahead owes a push.
+ */
+export async function gitRootAhead(root: string, signal?: AbortSignal): Promise<boolean> {
+  return withSession(root, signal, undefined, false, async session => {
+    const count = await git(session, ['rev-list', '--count', '@{upstream}..HEAD']);
+    return count.code === 0 && Number(count.stdout.trim()) > 0;
+  });
 }
 
 /** Git's refusal of a push because the remote branch moved (LC_ALL=C keeps it untranslated). */
@@ -385,13 +401,16 @@ export const DURABILITY_NOT_ENABLED = { git: 'skipped', reason: 'durability_not_
  * locked the worktree. Without one, the binding's recorded git_durability
  * decides (#5182): `enabled`/`disabled` never consult the legacy hook probe,
  * and an unrecorded binding falls back to the probe, fail-closed.
+ * #7089: an absent target pushes when the root is ahead of its upstream (an
+ * earlier attempt may have committed its removal and failed to push); on a
+ * root that is not ahead it completes without a push, as before.
  */
 export async function publishGitEffect(root: string, relativePath: string, signal?: AbortSignal,
   hardened?: boolean, note?: GitCommitNote, binding?: Pick<WorktreeBinding, 'git_durability'> | null, owner?: GitEffectOwner): Promise<Record<string, unknown>> {
   if (!(hardened ?? (await gitDurabilityPolicy(binding, root)).durable)) return { ...DURABILITY_NOT_ENABLED };
   const outcome = (await commitGitTargets(root, [relativePath], signal, note ? new Map([[relativePath, note]]) : undefined, owner)).get(relativePath)!;
   if (outcome instanceof OperationError) throw outcome;
-  if (outcome.reason === 'target_absent') return outcome;
+  if (outcome.reason === 'target_absent' && !(await gitRootAhead(root, signal))) return outcome;
   const pushed = await pushGitRoot(root, signal);
-  return { git: outcome.git, ...pushed };
+  return { ...outcome, ...pushed };
 }

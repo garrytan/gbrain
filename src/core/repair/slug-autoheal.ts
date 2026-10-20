@@ -11,8 +11,9 @@
  * - only `absent_page`; a line naming an existing page (file-backed or database-only), another type, or anything the
  *   model would judge is left exactly as held, with nothing recorded, for the maintenance run and a person;
  * - only the bytes sync held: a file edited since (a newer draft) waits for the next sync to re-screen it;
- * - never while the source has an unfinished managed sync cursor (another drainer, or this run's own resumable
- *   stop), and every write re-reads the busy set at admission, so no file whose publication is in flight is edited;
+ * - never while the source has an unfinished managed sync (another drainer, or this run's own resumable stop: an
+ *   unfinished cursor, or an open, stopped or episode-holding pass), and every write re-reads the busy set at
+ *   admission, so no file whose publication is in flight is edited;
  * - only under local authority: a sync a remote job or agent submitted defers to the maintenance run;
  * - the declared slug is checked again inside the publication: a page, an alias or a file at its path written since
  *   the heal read the source refuses the write;
@@ -32,6 +33,9 @@ import { readGitSourceHolds } from '../persistence/sync-holds.ts';
 import { contentRepairLaneCurrent } from '../persistence/sync-fault-class.ts';
 import { FENCE_REPAIR_ENABLED_KEY, fenceRepairEnabled } from '../fence-repair/config.ts';
 import { absentSlugHealRun, healAbsentSlugLine } from './slug-conflicts.ts';
+import { inspectLock, syncLockId } from '../db-lock.ts';
+import { currentDrainLease } from '../persistence/sync-lease.ts';
+import { readLivePassRows } from '../persistence/sync-pass-row.ts';
 
 export const SLUG_AUTO_REMOVE_KEY = 'sync.slug_conflicts.auto_remove';
 /** The longest one sync spends healing; a caller deadline that comes sooner wins. */
@@ -73,7 +77,7 @@ function noticeOf(sourceId: string, r: Omit<SlugHealReport, 'notice' | 'preview_
   if (r.skipped) {
     const why = r.skipped === 'disabled' ? `${SLUG_AUTO_REMOVE_KEY} is false` : r.skipped === 'lane_paused' ? `content repair is paused (${FENCE_REPAIR_ENABLED_KEY} false)`
       : r.skipped === 'remote_authority' ? 'this sync runs under a remote job or agent, which may import but not rewrite files'
-      : r.skipped === 'sync_unfinished' ? 'the source still has an unfinished sync cursor' : 'this host may not write the source checkout';
+      : r.skipped === 'sync_unfinished' ? 'the source still has an unfinished sync' : 'this host may not write the source checkout';
     return `[sync] ${r.pending} held file(s) of source ${sourceId} have a stray frontmatter slug: line; sync left them held because ${why}. `
       + `Preview the repair with gbrain repair content --source ${sourceId} --no-llm (read-only); the maintenance run applies it when the lane is on.`;
   }
@@ -82,11 +86,19 @@ function noticeOf(sourceId: string, r: Omit<SlugHealReport, 'notice' | 'preview_
     + `${left ? `; ${left} held file(s) need more than that and stay for the content-repair lane` : ''}. Opt out: gbrain config set ${SLUG_AUTO_REMOVE_KEY} false.`;
 }
 
-/** Whether the source has a managed sync cursor that has not finished (a drain in progress, or a resumable stop). */
+/**
+ * Whether the source's sync has not finished: a managed sync cursor that has not finished (a company brain's drain in
+ * progress, or a resumable stop), or, for a source the live pass syncs (#6712 PR 4b, design v3.2 §9), another drainer
+ * holding its drain lease, a newest pass that is still open or ended other than `synced`/`up_to_date`, or an open episode.
+ */
 async function unfinishedCursor(engine: BrainEngine, sourceId: string): Promise<boolean> {
   const rows = await engine.executeRaw(`SELECT 1 FROM op_checkpoints WHERE op='managed-sync' AND COALESCE(completed_keys->0->>'done','false')<>'true'
     AND completed_keys->0->>'sourceId'=$1 LIMIT 1`, [sourceId]);
-  return rows.length > 0;
+  if (rows.length > 0) return true;
+  const lease = await inspectLock(engine, syncLockId(sourceId));
+  if (lease && !lease.ttl_expired && lease.acquisition_token !== currentDrainLease(sourceId)?.token) return true;
+  const pass = (await readLivePassRows(engine, [sourceId])).get(sourceId)?.value;
+  return !!pass && (!['synced', 'up_to_date'].includes(pass.telemetry.outcome) || !!pass.obligations.episode);
 }
 
 /** The post-sync heal of one managed source; returns the result with the report and the held fields it cleared. Never throws. */

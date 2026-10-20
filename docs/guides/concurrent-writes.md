@@ -503,6 +503,12 @@ on providers. `withdrawal_capacity` or `withdrawal_provenance` refuses the
 attempt before ledger, expiry, revision or chunk changes. Matching malformed
 fences need canonical repair.
 
+A facts fence that crosses a forced segment cut is read whole and checked in
+one batch, so one such fence over 16,384 rows (or 8 MiB of rows to check)
+refuses `withdrawal_capacity` with reason `split_fence_rows`, naming the page
+and the fence's row count. Split that fence into fences of at most 16,384 rows,
+write the page again, then retry.
+
 When the claim itself is carried by more than 256 pages, the refusal names the
 matched count and up to 20 matched pages. Reduce the matched set, then retry:
 forget the entity-scoped copies of the fact first (each withdrawal changes only

@@ -87,7 +87,14 @@ export function hardenedGitSync(root: string, args: string[], limits: { timeoutM
 }
 
 export type HardenedGitStreamResult = { ok: true; exitCode: 0; signal: null; bytes: number; endsWithNul: boolean }
-  | { ok: false; reason: 'exit' | 'signal' | 'timeout' | 'too_large' | 'unavailable'; status?: number; signal?: NodeJS.Signals };
+  | { ok: false; reason: 'exit' | 'signal' | 'timeout' | 'too_large' | 'unavailable' | 'stalled'; status?: number; signal?: NodeJS.Signals };
+
+/**
+ * How long stdout may sit idle after Git exited while it is being read (not held by `onChunk`). Bun can lose the readiness
+ * of a child's stdout that turns readable as the child exits (#7053: the one-shot poll fired and was never re-armed, the
+ * output and EOF left unread), so `close` never comes; such a run fails as `stalled` instead of waiting forever.
+ */
+const EXITED_STDOUT_IDLE_MS = 5_000;
 export type HardenedGitInput = string | Buffer | Iterable<Buffer | string> | AsyncIterable<Buffer | string>;
 
 /**
@@ -96,10 +103,12 @@ export type HardenedGitInput = string | Buffer | Iterable<Buffer | string> | Asy
  * buffered here) and feeding `stdin` with backpressure. The process is killed
  * with SIGKILL past `timeoutMs` or `maxBytes` of stdout. A throw from
  * `onChunk` or from a `stdin` iterable kills the process and rejects, so a
- * caller never mistakes a run cut short for a finished one.
+ * caller never mistakes a run cut short for a finished one. An `onChunk` that
+ * returns a promise holds stdout until it settles (a large read yields to the
+ * event loop between chunks); a rejection fails the run like a throw.
  */
 export async function hardenedGitStream(root: string, args: string[],
-  opts: { stdin?: HardenedGitInput; timeoutMs: number; maxBytes?: number; onChunk?: (chunk: Buffer) => void }): Promise<HardenedGitStreamResult> {
+  opts: { stdin?: HardenedGitInput; timeoutMs: number; maxBytes?: number; onChunk?: (chunk: Buffer) => void | Promise<void> }): Promise<HardenedGitStreamResult> {
   assertHardenedGitArgs(args);
   return await new Promise<HardenedGitStreamResult>((accept, reject) => {
     const child = spawn('git', [...HARDENED_GIT_ARGS, '-C', root, ...args],
@@ -109,16 +118,27 @@ export async function hardenedGitStream(root: string, args: string[],
     let stopped: 'timeout' | 'too_large' | undefined;
     let failure: { error: unknown } | undefined;
     let settled = false;
-    const settle = (outcome: () => void): void => { if (settled) return; settled = true; clearTimeout(timer); outcome(); };
+    let exited = false;
+    let holding = false;
+    let idle: ReturnType<typeof setTimeout> | undefined;
+    const settle = (outcome: () => void): void => { if (settled) return; settled = true; clearTimeout(timer); clearTimeout(idle); outcome(); };
     const fail = (error: unknown): void => { failure ??= { error }; child.kill('SIGKILL'); };
     const timer = setTimeout(() => { stopped ??= 'timeout'; child.kill('SIGKILL'); }, opts.timeoutMs);
+    const watchIdle = (): void => {
+      clearTimeout(idle);
+      if (exited && !holding) idle = setTimeout(() => settle(() => failure ? reject(failure.error) : accept({ ok: false, reason: stopped ?? 'stalled' })), EXITED_STDOUT_IDLE_MS);
+    };
     child.stdout?.on('data', (chunk: Buffer) => {
-      if (stopped || failure) return;
+      if (settled || stopped || failure) return;
       bytes += chunk.length;
       if (opts.maxBytes !== undefined && bytes > opts.maxBytes) { stopped = 'too_large'; child.kill('SIGKILL'); return; }
       last = chunk[chunk.length - 1] ?? last;
-      try { opts.onChunk?.(chunk); } catch (error) { fail(error); }
+      let held: void | Promise<void>;
+      try { held = opts.onChunk?.(chunk); } catch (error) { fail(error); return; }
+      if (held) { holding = true; child.stdout?.pause(); held.then(() => { holding = false; watchIdle(); child.stdout?.resume(); }, fail); }
+      watchIdle();
     });
+    child.on('exit', () => { exited = true; watchIdle(); });
     child.on('error', () => { if (child.pid === undefined) settle(() => accept({ ok: false, reason: 'unavailable' })); });
     child.on('close', (code: number | null, signal: NodeJS.Signals | null) => settle(() => {
       if (failure) reject(failure.error);

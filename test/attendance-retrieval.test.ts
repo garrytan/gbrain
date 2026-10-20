@@ -752,7 +752,12 @@ for (const kind of testBackends()) {
       const replace = engine.replaceDerivedLinks;
       engine.replaceDerivedLinks = async () => { throw new Error('Injected replacement failure'); };
       try {
-        await apply();
+        await expect(apply()).rejects.toMatchObject({
+          code: 'extract_write_lost',
+          failures: expect.arrayContaining([expect.objectContaining({
+            kind: 'links', error: expect.objectContaining({ message: 'Injected replacement failure' }),
+          })]),
+        });
         expect(await stamp()).toEqual(before);
         expect(await attendees()).toEqual([person]);
       } finally { engine.replaceDerivedLinks = replace; }

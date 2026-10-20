@@ -3,9 +3,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { keylessBrainEnv } from './helpers/provider-env.ts';
+import { fileURLToPath } from 'node:url';
 
-const CLI = new URL('../src/cli.ts', import.meta.url).pathname;
-const FIXTURE = new URL('./fixtures/managed-atoms-cli-brain.ts', import.meta.url).pathname;
+const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
+const FIXTURE = fileURLToPath(new URL('./fixtures/managed-atoms-cli-brain.ts', import.meta.url));
 
 interface Result { exitCode: number; stdout: string; stderr: string; timedOut: boolean; }
 async function run(command: string[], env: Record<string, string>, home: string, timeoutMs = 60_000): Promise<Result> {

@@ -685,6 +685,9 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
           overwrite: true
+      # Tier 2 runs keyless by decision (no paid spend): its bare `bun test`
+      # step does not set GBRAIN_TEST_KEEP_PROVIDER_KEYS, so the test preload
+      # strips the keys and this notice names the skip.
       - name: Provider-key coverage notice
         if: ${{ !cancelled() }}
         env:
@@ -712,7 +715,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -721,8 +724,8 @@ jobs:
       - name: Install dependencies (bounded, retried once)
         timeout-minutes: 8
         run: bun scripts/ci-bun-install.ts --frozen-lockfile
-      - name: Coverage shard ${{ matrix.shard }}/18
-        run: scripts/test-shard.sh ${{ matrix.shard }} 18
+      - name: Coverage shard ${{ matrix.shard }}/22
+        run: scripts/test-shard.sh ${{ matrix.shard }} 22
         env:
           COVERAGE_DIR: ${{ runner.temp }}/coverage
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
@@ -971,6 +974,8 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # scripts/run-e2e.sh passes the keys to its tests (it exports this).
+          GBRAIN_TEST_KEEP_PROVIDER_KEYS: '1'
         run: bash scripts/e2e-provider-key-notice.sh
       - name: Upload coverage
         if: always()
@@ -1040,7 +1045,7 @@ jobs:
           bun scripts/merge-lcov.ts \
             --out-lcov "$RUNNER_TEMP/coverage-full-merged/lcov.info" \
             --out-json "$RUNNER_TEMP/coverage-full-merged/summary.json" \
-            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,shard-11,shard-12,shard-13,shard-14,shard-15,shard-16,shard-17,shard-18,serial,slow,e2e-1,e2e-2,e2e-3,e2e-4 \
+            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,shard-11,shard-12,shard-13,shard-14,shard-15,shard-16,shard-17,shard-18,shard-19,shard-20,shard-21,shard-22,serial,slow,e2e-1,e2e-2,e2e-3,e2e-4 \
             "$RUNNER_TEMP/coverage-artifacts"
       - name: Coverage summary → step summary
         if: steps.shards.outputs.state == 'complete'

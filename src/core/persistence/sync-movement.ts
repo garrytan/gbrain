@@ -34,6 +34,15 @@
  * `startMovementWatch` is the serve's unref'd ticker that prints one
  * `[gbrain notice managed_sync_not_moving]` when a source flips to not moving
  * and one line when it moves again.
+ *
+ * #6712 PR 4b (design v3.2 §3.7): a non-company source has a pass row, not a
+ * cursor, and the backlog reader returns it as an entry with `pass` set; it
+ * lands in the additive `pass` field (`cursor` stays the cursor's). The pass
+ * row's last write is progress. Pending means not `nothing_pending`
+ * (`passHealth`: converged at HEAD and the newest pass ended `synced` or
+ * `up_to_date`). A pass that keeps stopping (`blocked`, a `not_converged`
+ * streak, a `settle_mismatch` streak) is `not_moving` whatever else is live:
+ * every tick may commit pages, yet the source never converges.
  */
 import type { BrainEngine } from '../engine.ts';
 import { readManagedSyncBacklog, type ManagedSyncBacklog } from './sync-drain.ts';
@@ -68,6 +77,8 @@ export interface SourceMovement {
   /** The watermark the verdict used: the newest of a commit, a head step advance and the drain's cursor advance. */
   last_progress_at: string | null;
   cursor: (Pick<ManagedSyncBacklog, 'index' | 'total' | 'remaining' | 'held' | 'last_progress_at' | 'resume_command' | 'resume_args'>) | null;
+  /** #6712 PR 4b: the source's pending pass row (the backlog's pass entry), null when it has none or nothing is pending. */
+  pass: (Pick<ManagedSyncBacklog, 'index' | 'total' | 'remaining' | 'held' | 'last_progress_at' | 'resume_command' | 'resume_args'> & NonNullable<ManagedSyncBacklog['pass']>) | null;
   head: MovementHead | null;
   holds: MovementHolds;
   /** Managed requests admitted on the worktree and not yet settled (queued or running). */
@@ -164,15 +175,18 @@ export async function readSourceMovement(engine: BrainEngine, opts: { sourceIds?
     const ownerHere = binding.owner_host_id === null ? null : binding.owner_host_id === host;
     const claimLive = !!claim && (claim.phase === 'preparing' || claim.phase === 'publishing');
     const consumer: SourceMovement['live']['consumer'] = claimLive ? 'claim' : ownerHere !== false && localConsumer ? 'local' : ownerHere !== false && await liveHeartbeat() ? 'heartbeat' : null;
-    const cursor = backlog.get(binding.source_id) ?? null;
+    const entry = backlog.get(binding.source_id) ?? null;
+    const cursor = entry && !entry.pass ? entry : null;
+    const pass = entry?.pass ? { index: entry.index, total: entry.total, remaining: entry.remaining, held: entry.held, last_progress_at: entry.last_progress_at,
+      resume_command: entry.resume_command, resume_args: entry.resume_args, ...entry.pass } : null;
     const holds: MovementHolds = { count: Number(holdRow?.count ?? 0), stalled: Number(holdRow?.stalled ?? 0), fences: Number(holdRow?.fences ?? 0), concurrent: Number(holdRow?.concurrent ?? 0), last_hold_at: iso(holdRow?.updated_at) };
     const lastCommitAt = iso(mark?.last_commit_at);
     const admitted = Number(mark?.admitted ?? 0);
-    const progressAt = newest(lastCommitAt, claimLive ? head?.step_since : null, cursor?.last_progress_at);
+    const progressAt = newest(lastCommitAt, claimLive ? head?.step_since : null, cursor?.last_progress_at, pass?.last_progress_at);
     const sampledAt = new Date(now).toISOString();
     const base = { source_id: binding.source_id, sampled_at: sampledAt, last_commit_at: lastCommitAt, last_progress_at: progressAt,
       cursor: cursor ? { index: cursor.index, total: cursor.total, remaining: cursor.remaining, held: cursor.held, last_progress_at: cursor.last_progress_at, resume_command: cursor.resume_command, resume_args: cursor.resume_args } : null,
-      head, holds, admitted, admitted_since: iso(mark?.admitted_since), live: { drain: !!drain || !!jobDrain, drain_pid: drain?.holder_pid ?? null, drain_job_id: jobDrain, consumer }, ceiling_ms: policy.ceilingMs, owner_is_this_host: ownerHere,
+      pass, head, holds, admitted, admitted_since: iso(mark?.admitted_since), live: { drain: !!drain || !!jobDrain, drain_pid: drain?.holder_pid ?? null, drain_job_id: jobDrain, consumer }, ceiling_ms: policy.ceilingMs, owner_is_this_host: ownerHere,
       writer_status_command: writerStatusCommand(binding.source_id) };
     out.push(unknown ? { ...base, movement_state: 'unknown', data_moving: null, not_moving_since: null, unknown } : { ...base, ...verdict(base, now) });
   }
@@ -180,7 +194,8 @@ export async function readSourceMovement(engine: BrainEngine, opts: { sourceIds?
 }
 
 function verdict(m: Omit<SourceMovement, 'movement_state' | 'data_moving' | 'not_moving_since'>, now: number): Pick<SourceMovement, 'movement_state' | 'data_moving' | 'not_moving_since'> {
-  if (!m.cursor) return { movement_state: 'nothing_pending', data_moving: null, not_moving_since: null };
+  if (!m.cursor && !m.pass) return { movement_state: 'nothing_pending', data_moving: null, not_moving_since: null };
+  if (m.pass?.stuck) return { movement_state: 'not_moving', data_moving: false, not_moving_since: m.pass.stuck_since };
   const driving = m.live.drain || (m.admitted > 0 && m.live.consumer !== null);
   if (!driving) return { movement_state: 'parked', data_moving: null, not_moving_since: null };
   if (m.holds.last_hold_at && (!m.last_commit_at || m.holds.last_hold_at > m.last_commit_at) && m.last_progress_at && m.holds.last_hold_at >= m.last_progress_at) {
@@ -199,11 +214,14 @@ export function formatSourceMovement(m: SourceMovement): string | null {
     return `${m.source_id}: managed sync movement UNKNOWN: the sync backlog could not be read (${m.unknown?.reason ?? 'backlog_read_failed'}: ${m.unknown?.error ?? 'no detail'}); this is not a report that nothing is pending. Recheck: gbrain sources writer movement ${m.source_id}`;
   }
   const where = m.head?.step ? ` head at step ${m.head.step}${m.head.waiting_on && m.head.waiting_on !== 'unknown' ? ` (waiting on ${m.head.waiting_on})` : ''}${m.head.owner ? `, ${m.head.owner.kind} pid ${m.head.owner.pid}` : ''};` : '';
+  const work = m.cursor ?? m.pass!;
+  if (m.pass?.stuck) return `${m.source_id}: managed sync NOT CONVERGING: every pass since ${m.pass.stuck_since} stopped ${m.pass.stuck}${m.pass.stop_reason ? ` (${m.pass.stop_reason})` : ''}, `
+    + `${m.pass.remaining} path(s) unsettled; inspect: gbrain sync status --source ${m.source_id} --json`;
   switch (m.movement_state) {
     case 'not_moving': return `${m.source_id}: managed sync NOT MOVING since ${m.not_moving_since} (no committed page or step advance for longer than ${Math.round(m.ceiling_ms / 1000)}s while a ${m.live.drain ? 'sync' : 'consumer'} is live);${where} inspect: ${m.writer_status_command}`;
-    case 'parked': return `${m.source_id}: managed sync parked at ${m.cursor!.index}/${m.cursor!.total} (no sync or consumer is live; informational). Resume: ${m.cursor!.resume_command}`;
+    case 'parked': return `${m.source_id}: managed sync parked at ${work.index}/${work.total} (no sync or consumer is live; informational). Resume: ${work.resume_command}`;
     case 'held': return `${m.source_id}: managed sync advancing by holds only (${m.holds.count} held, newest ${m.holds.last_hold_at}); the containment is working, not a stall.`;
-    default: return `${m.source_id}: managed sync moving (last progress ${m.last_progress_at ?? 'unknown'}, ${m.cursor!.remaining} remaining).`;
+    default: return `${m.source_id}: managed sync moving (last progress ${m.last_progress_at ?? 'unknown'}, ${work.remaining} remaining).`;
   }
 }
 
@@ -212,12 +230,14 @@ export type MovementVerdict = 'moved' | 'within_allowance' | 'held' | 'parked' |
 export function judgeMovement(before: SourceMovement | undefined, after: SourceMovement): MovementVerdict {
   if (after.movement_state === 'nothing_pending' || after.movement_state === 'unknown') return after.movement_state;
   if (before?.movement_state === 'unknown') return 'unknown';
+  if (after.pass?.stuck) return 'not_moving';
   if (!before) return after.movement_state === 'moving' ? 'moved' : after.movement_state;
   if (after.last_commit_at && (!before.last_commit_at || after.last_commit_at > before.last_commit_at)) return 'moved';
   if (after.holds.last_hold_at && (!before.holds.last_hold_at || after.holds.last_hold_at > before.holds.last_hold_at)) return 'held';
   if (after.movement_state === 'parked') return 'parked';
   const stepAdvanced = after.head?.step_since && (!before.head || before.head.request_id !== after.head.request_id || before.head.step_since !== after.head.step_since);
-  if (stepAdvanced || (after.cursor && before.cursor && after.cursor.index > before.cursor.index)) return 'within_allowance';
+  const passAdvanced = after.pass && before.pass && (after.pass.pass_id !== before.pass.pass_id || after.pass.last_progress_at !== before.pass.last_progress_at);
+  if (stepAdvanced || passAdvanced || (after.cursor && before.cursor && after.cursor.index > before.cursor.index)) return 'within_allowance';
   return 'not_moving';
 }
 

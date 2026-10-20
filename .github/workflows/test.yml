@@ -815,19 +815,27 @@ jobs:
   # head before merge (merge-train requires full-suite), on every push to master
   # and on the nightly schedule.
   test:
+    name: test (${{ join(matrix.shards, ', ') }})
     needs: [changes]
     if: ${{ needs.changes.outputs.reuse != 'true' && (github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
     # Pure matrix shard — no verify, no serial. Each shard runs its slice
     # of the unit test set under one `bun test` invocation.
     #
-    # 18 shards (UNIT_SHARDS in scripts/sharding.ts): ~10,200s of mined file
-    # time (run 39121354115) is ~567s per shard. A shard's mined weight must
-    # fit this job's 22 minutes twice over, after a minute of setup, with a
-    # minute to spare (UNIT_SHARD_BUDGET_MS, 600s;
-    # test/scripts/unit-shard-budget.test.ts). At 10 (~950s per shard)
-    # shards ran 0.8-1.4x their prediction and shard 5 was cancelled at the
-    # timeout on master run 39121354115; 17 fits by 48 ms, so the next test
-    # file would fail it.
+    # Two shards per runner (UNIT_SHARDS_PER_JOB, scripts/test-shard-pack.sh):
+    # one shard keeps 1.1-1.5 of the 4 vCPUs busy, so a runner runs two at
+    # once, each with its own coverage lane, receipts and timing log under the
+    # per-shard artifact names. Weights mined from these jobs include that
+    # contention: run 39181487354 (green, 9 jobs, 460 vCPU-minutes against
+    # 568 for 18 solo jobs) mined ~12,640s of file time, ~1.4x the solo
+    # weights.
+    #
+    # 22 shards (UNIT_SHARDS in scripts/sharding.ts): those ~12,640s are ~575s
+    # per shard. A shard's mined weight must fit this job's 22 minutes twice
+    # over, after a minute of setup, with a minute to spare
+    # (UNIT_SHARD_BUDGET_MS, 600s; test/scripts/unit-shard-budget.test.ts).
+    # At 18 the packed weights put every shard at ~702s; at 10 (~950s per
+    # shard) shards ran 0.8-1.4x their prediction and shard 5 was cancelled
+    # at the timeout on master run 39121354115.
     #
     # Partition policy is weight-aware LPT bin-packing via scripts/sharding.ts
     # (replaces FNV-1a path hash). Weights live in scripts/test-weights.json,
@@ -845,7 +853,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+        shards: [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12], [13, 14], [15, 16], [17, 18], [19, 20], [21, 22]]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -872,6 +880,7 @@ jobs:
       # predicted weight (test-shard.sh prints it) with high steal or a
       # different model name is a slow or silently downgraded runner draw,
       # not a test regression; the same shard at low steal is the tests.
+      # The memory sampler runs until the job ends: two shards share 16 GB.
       - name: Runner diagnostics (before shard)
         shell: bash
         run: |
@@ -879,12 +888,12 @@ jobs:
           echo "loadavg: $(cat /proc/loadavg)"
           awk '/^cpu /{print "steal_jiffies", $9}' /proc/stat
           lscpu | grep -m1 'Model name'
-      - name: Run test shard ${{ matrix.shard }}/18
+          (while true; do free -m | awk '/^Mem:/{print $3, $7}' >> "$RUNNER_TEMP/mem.log"; sleep 5; done) > /dev/null 2>&1 &
+      - name: Run test shards ${{ join(matrix.shards, ' and ') }} of 22
         shell: bash
-        run: bun scripts/capture-test-log.ts --job 'test (${{ matrix.shard }})' --out "$RUNNER_TEMP/unit.log" -- bash scripts/test-shard.sh ${{ matrix.shard }} 18
+        run: bash scripts/test-shard-pack.sh 22 ${{ join(matrix.shards, ' ') }}
         env:
-          COVERAGE_DIR: ${{ runner.temp }}/coverage
-          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+          GBRAIN_SHARD_PACK_DIR: ${{ runner.temp }}/shards
       - name: Runner diagnostics (after shard)
         if: always()
         shell: bash
@@ -893,36 +902,63 @@ jobs:
           echo "loadavg: $(cat /proc/loadavg)"
           awk '/^cpu /{print "steal_jiffies", $9}' /proc/stat
           lscpu | grep -m1 'Model name'
-      - name: Upload receipts
+          echo "memory MB: peak used $(sort -n -k1 "$RUNNER_TEMP/mem.log" | tail -1 | cut -d' ' -f1), least available $(sort -n -k2 "$RUNNER_TEMP/mem.log" | head -1 | cut -d' ' -f2), total $(free -m | awk '/^Mem:/{print $2}')"
+      - name: Upload receipts (shard ${{ matrix.shards[0] }})
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: receipts-unit-${{ matrix.shard }}
-          path: ${{ runner.temp }}/receipts
+          name: receipts-unit-${{ matrix.shards[0] }}
+          path: ${{ runner.temp }}/shards/${{ matrix.shards[0] }}/receipts
           retention-days: 14
           if-no-files-found: warn
           overwrite: true
-      - name: Upload coverage (shard lane)
+      - name: Upload coverage (shard lane ${{ matrix.shards[0] }})
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
-          name: coverage-shard-${{ matrix.shard }}
-          path: ${{ runner.temp }}/coverage
+          name: coverage-shard-${{ matrix.shards[0] }}
+          path: ${{ runner.temp }}/shards/${{ matrix.shards[0] }}/coverage
           retention-days: 14
           if-no-files-found: ignore
           overwrite: true
-      - name: Upload unit timing log
+      - name: Upload unit timing log (shard ${{ matrix.shards[0] }})
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: timings-unit-${{ matrix.shard }}
-          path: ${{ runner.temp }}/unit.log
+          name: timings-unit-${{ matrix.shards[0] }}
+          path: ${{ runner.temp }}/shards/${{ matrix.shards[0] }}/unit.log
+          retention-days: 14
+          overwrite: true
+      - name: Upload receipts (shard ${{ matrix.shards[1] }})
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: receipts-unit-${{ matrix.shards[1] }}
+          path: ${{ runner.temp }}/shards/${{ matrix.shards[1] }}/receipts
+          retention-days: 14
+          if-no-files-found: warn
+          overwrite: true
+      - name: Upload coverage (shard lane ${{ matrix.shards[1] }})
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: coverage-shard-${{ matrix.shards[1] }}
+          path: ${{ runner.temp }}/shards/${{ matrix.shards[1] }}/coverage
+          retention-days: 14
+          if-no-files-found: ignore
+          overwrite: true
+      - name: Upload unit timing log (shard ${{ matrix.shards[1] }})
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: timings-unit-${{ matrix.shards[1] }}
+          path: ${{ runner.temp }}/shards/${{ matrix.shards[1] }}/unit.log
           retention-days: 14
           overwrite: true
 
 
   # ──────────────────────────────────────────────────────────────────────
-  # coverage-report: merges the PR corpus (18 unit + 4 serial + 2 slow
+  # coverage-report: merges the PR corpus (22 unit + 4 serial + 2 slow
   # lanes) into one honest number, renders it to the step summary, and runs
   # the diff + baseline gates in report-only mode (COVERAGE_GATE_ENFORCE=0).
   # ADVISORY during the report-only window: deliberately NOT in test-status's
@@ -966,7 +1002,7 @@ jobs:
           bun scripts/merge-lcov.ts \
             --out-lcov "$RUNNER_TEMP/coverage-merged/lcov.info" \
             --out-json "$RUNNER_TEMP/coverage-merged/summary.json" \
-            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,shard-11,shard-12,shard-13,shard-14,shard-15,shard-16,shard-17,shard-18,serial-1,serial-2,serial-3,serial-4,slowperf,slowbrainbench \
+            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,shard-11,shard-12,shard-13,shard-14,shard-15,shard-16,shard-17,shard-18,shard-19,shard-20,shard-21,shard-22,serial-1,serial-2,serial-3,serial-4,slowperf,slowbrainbench \
             "$RUNNER_TEMP/coverage-artifacts"
       - name: Coverage summary → step summary
         run: bun scripts/render-coverage-summary.ts --summary "$RUNNER_TEMP/coverage-merged/summary.json" --structural scripts/structural-suites.tsv >> "$GITHUB_STEP_SUMMARY"

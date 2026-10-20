@@ -18,6 +18,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveAutopilotPositionals } from '../src/commands/autopilot.ts';
+import { fileURLToPath } from 'node:url';
 
 describe('resolveAutopilotPositionals (#1525)', () => {
   test('maps subcommand spellings onto their canonical flags', () => {
@@ -82,7 +83,7 @@ describe('resolveAutopilotPositionals (#1525)', () => {
   });
 });
 
-const REPO = new URL('..', import.meta.url).pathname;
+const REPO = fileURLToPath(new URL('..', import.meta.url));
 
 async function runCli(cliArgs: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-autopilot-pos-'));

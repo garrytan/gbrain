@@ -26,6 +26,9 @@ import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import { applyRedaction, planRedaction } from '../secret-scan.ts';
 import { LINK_EXTRACTION_GENERATION_KEY } from '../line-grammar.ts';
 import { linkExtractorWatermarkFor } from '../link-extraction-watermark.ts';
+import { NON_EMPLOYER_PREFIXES, NON_EMPLOYER_TYPES } from '../link-target-roles.ts';
+import { entityTypePredicateSql, resolvePersonTypes } from '../schema-pack/entity-types.ts';
+import { renderFragment, sqlFragment } from '../engine-sql/fragment.ts';
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
@@ -190,24 +193,34 @@ async function findCandidateGroups(engine: BrainEngine, maxSubjects: number): Pr
   // decided on a half-reconciled graph. Before any change (generation unset) every subject is eligible, as before.
   const generation = await engine.getConfig(LINK_EXTRACTION_GENERATION_KEY);
   const pendingCutoff = generation ? linkExtractorWatermarkFor(generation) : null;
-  const rows = await engine.executeRaw<CandidateRow>(
-    `WITH live AS (
+  // #6953: works_at members are admitted before grouping and LIMIT, so mistyped newer groups cannot starve valid
+  // ones: the subject must be person-like by its source's pack (resolvePersonTypes; a pack that does not load admits
+  // no works_at subject), and the target neither person-like nor a non-employer type (untyped: by slug directory).
+  const personTypes = await resolvePersonTypes(engine, null);
+  const isPerson = (alias: 'f' | 't') => entityTypePredicateSql(alias, personTypes.filter);
+  const sql = renderFragment(sqlFragment`WITH live AS (
        SELECT lr.* FROM link_relationships lr
-        WHERE lr.scope = 'all' AND lr.semantics = 'state' AND lr.valid_ranges @> $1::date
+         JOIN pages f ON f.id = lr.from_page_id AND f.deleted_at IS NULL
+         JOIN pages t ON t.id = lr.to_page_id AND t.deleted_at IS NULL
+        WHERE lr.scope = 'all' AND lr.semantics = 'state' AND lr.valid_ranges @> ${today}::date
+          AND (lr.link_type <> 'works_at' OR (${isPerson('f')} AND NOT ${isPerson('t')} AND
+            CASE WHEN NULLIF(t.type, '') IS NOT NULL THEN NOT (t.type = ANY(${[...NON_EMPLOYER_TYPES]}::text[]))
+              ELSE NOT EXISTS (SELECT 1 FROM unnest(${[...NON_EMPLOYER_PREFIXES]}::text[]) AS prefix(value)
+                WHERE starts_with(t.slug, prefix.value)) END))
      ), multi AS (
        SELECT source_id, from_page_id, link_type FROM live
         GROUP BY 1, 2, 3 HAVING count(DISTINCT to_page_id) >= 2
-        ORDER BY max(refreshed_at) DESC LIMIT $2
+        ORDER BY max(refreshed_at) DESC LIMIT ${maxSubjects}
      )
      SELECT l.source_id, l.from_page_id, l.to_page_id, l.link_type, l.valid_ranges::text AS valid_ranges,
             l.last_start, l.recorded_at, l.evidence_hash,
             f.slug AS subject_slug, f.title AS subject_title, t.slug AS target_slug, t.title AS target_title
        FROM live l JOIN multi m USING (source_id, from_page_id, link_type)
        JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL
-         AND ($3::timestamptz IS NULL OR f.links_extracted_at >= $3::timestamptz)
+         AND (${pendingCutoff}::timestamptz IS NULL OR f.links_extracted_at >= ${pendingCutoff}::timestamptz)
        JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL
-      ORDER BY l.from_page_id, l.link_type, l.last_start NULLS FIRST, t.slug`,
-    [today, maxSubjects, pendingCutoff]);
+      ORDER BY l.from_page_id, l.link_type, l.last_start NULLS FIRST, t.slug`);
+  const rows = await engine.executeRaw<CandidateRow>(sql.text, sql.params);
   const groups = new Map<string, SubjectGroup>();
   for (const r of rows) {
     const key = `${r.from_page_id}\0${r.link_type}`;

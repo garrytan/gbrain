@@ -1,0 +1,37 @@
+{
+  "schema": "gbrain-ci-manifest/v1",
+  "workflow": "Test",
+  "event": "workflow_dispatch",
+  "sha": "13366cdef9f0c62eb62fd5e2e06be513eb4d39c4",
+  "run_id": 39170735990,
+  "run_attempt": 1,
+  "complete": true,
+  "problems": [],
+  "files": [
+    {
+      "file": "test/large-pages/segmented-prior-view.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/large-pages/segmented-prior-view.test.ts",
+      "lane": "pg-arms-bun-1.4.3",
+      "arm": "postgres",
+      "executed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/large-pages/segmented-prior-view.test.ts",
+      "lane": "unit",
+      "arm": "",
+      "executed": 2,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "failures": []
+}

@@ -29,8 +29,9 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import type { Subprocess } from 'bun';
 import { freePort } from './helpers/serve-http.ts';
+import { fileURLToPath } from 'node:url';
 
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 
 interface ServeProc {
   proc: Subprocess;

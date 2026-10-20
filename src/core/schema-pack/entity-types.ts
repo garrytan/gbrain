@@ -37,6 +37,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { joinFragments, sqlFragment, trustedSql, type SqlFragment } from '../engine-sql/fragment.ts';
 import type { SchemaPackManifest } from './manifest-v1.ts';
+import { buildAliasGraph, expandClosure } from './closure.ts';
 
 /** The pre-pack hardcoded list; still entities while a pack leaves them undeclared. */
 export const LEGACY_ENTITY_TYPES: readonly string[] = ['entity', 'person', 'company', 'organization'];
@@ -72,6 +73,15 @@ export function entityTypesFromPack(pack: Pick<SchemaPackManifest, 'page_types'>
   return [...out].sort();
 }
 
+/**
+ * #6953: person-like type names under one resolved pack, sorted: `person`
+ * plus every type in its alias closure (a type declaring `aliases: [person]`,
+ * and the types `person` declares). Primitive sharing does not count.
+ */
+export function personTypesFromPack(pack: SchemaPackManifest): string[] {
+  return expandClosure('person', buildAliasGraph(pack));
+}
+
 const SOURCE_OVERRIDE_PREFIX = 'schema_pack.source.';
 
 /**
@@ -83,10 +93,26 @@ export async function resolveEntityTypes(
   engine: Pick<BrainEngine, 'getConfig' | 'executeRaw'>,
   scope: readonly string[] | null,
 ): Promise<EntityTypeResolution> {
+  return resolveTypeFilter(engine, scope, entityTypesFromPack);
+}
+
+/** The person-like type filter (personTypesFromPack) for a reading, resolved per source like resolveEntityTypes. */
+export async function resolvePersonTypes(
+  engine: Pick<BrainEngine, 'getConfig' | 'executeRaw'>,
+  scope: readonly string[] | null,
+): Promise<EntityTypeResolution> {
+  return resolveTypeFilter(engine, scope, personTypesFromPack);
+}
+
+async function resolveTypeFilter(
+  engine: Pick<BrainEngine, 'getConfig' | 'executeRaw'>,
+  scope: readonly string[] | null,
+  fromPack: (pack: SchemaPackManifest) => string[],
+): Promise<EntityTypeResolution> {
   const { loadActivePackForLocalEngine } = await import('./best-effort.ts');
   const typesFor = async (sourceId?: string) => {
     const pack = await loadActivePackForLocalEngine(engine, sourceId ? { sourceId } : {});
-    return pack ? entityTypesFromPack(pack.manifest) : null;
+    return pack ? fromPack(pack.manifest) : null;
   };
   const unresolved: string[] = [];
   let defaults: string[] | null;

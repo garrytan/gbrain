@@ -15,7 +15,9 @@
  *   - completes with a structural refusal (`stopReason` 'refusal' or
  *     'content_filter'), the signal `mapStopReason` derives for this purpose.
  * A result a chain entry produced carries `fallbackFrom` (the call's own model),
- * so callers that cache or key on model identity can tell it apart.
+ * so callers that cache or key on model identity can tell it apart, and
+ * `fallbackReason` (why that model did not answer: "failed (<first error line>)"
+ * or "refused (...)", at most 200 characters of the error).
  * With `chat_fallback_on_refusal: false` (`onRefusal: false` here) a refusal
  * ends the walk instead: a structural refusal is returned and a provider
  * content block (`providerContentBlockReason`) is thrown, so content one
@@ -108,8 +110,9 @@ export async function chatWithFallback(
 ): Promise<ChatResult> {
   const onRefusal = options.onRefusal !== false;
   const models = chatFallbackAttempts(primary, chain);
+  let primaryCause: string | undefined;
   const answered = (result: ChatResult, model: string): ChatResult =>
-    model === models[0] ? result : { ...result, fallbackFrom: models[0] };
+    model === models[0] ? result : { ...result, fallbackFrom: models[0], ...(primaryCause ? { fallbackReason: primaryCause } : {}) };
   let refused: ChatResult | null = null;
   let primaryError: unknown;
   for (let i = 0; ; i++) {
@@ -119,6 +122,7 @@ export async function chatWithFallback(
       const result = await attempt({ ...opts, model, allowFallback: false });
       if (next === undefined || !isStructuralRefusal(result) || !onRefusal || opts.abortSignal?.aborted) return answered(result, model);
       refused ??= answered(result, model);
+      if (i === 0) primaryCause = `refused (stopReason ${result.stopReason})`;
       console.warn(`[ai.gateway] chat ${result.model} stopped with ${result.stopReason}; trying ${next} from chat_fallback_chain`);
       queueFirstHop(result.model, next, `stopReason ${result.stopReason}`, true);
     } catch (err) {
@@ -139,8 +143,10 @@ export async function chatWithFallback(
         }
         throw primaryError ?? err;
       }
+      const cause = blocked !== undefined ? `content block ${blocked}` : hopReason(err);
+      if (i === 0) primaryCause = blocked !== undefined ? `refused (${cause})` : `failed (${cause})`;
       console.warn(`[ai.gateway] chat ${model} failed (${hopReason(err)}); trying ${next} from chat_fallback_chain`);
-      queueFirstHop(model, next, blocked !== undefined ? `content block ${blocked}` : hopReason(err), blocked !== undefined);
+      queueFirstHop(model, next, cause, blocked !== undefined);
     }
   }
 }

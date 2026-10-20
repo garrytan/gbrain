@@ -17,7 +17,7 @@ import { assertReconcilePins, readReconcileState, reconcilePreviewAdopts, reconc
 import { prepareReconcileResult } from './reconcile-prepare.ts';
 import { assertReconcileOutputPath, assertReconcileSize, manageReconcileBackups, retainReconcileBackup } from './reconcile-backup.ts';
 import type { LocalGrant } from './identity.ts';
-import { isTerminal } from './model.ts';
+import { isTerminal, type WriteRequest } from './model.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
@@ -151,12 +151,27 @@ export async function runReconcileApply(engine: BrainEngine, params: Record<stri
   const artifact = validateReconcileArtifact(params.preview);
   artifact.decisions = reconcileDecisions(artifact.decisions);
   const requestId = requireUuid(params.request_id as string);
+  return admitReconcileArtifact(engine, { sourceId, slug, authority, artifact, requestId, keepFileBytes: params.keep_file_bytes === true },
+    async (row, replayed) => writeResponse(replayed && isTerminal(row) ? row : await waitForWrite(engine, row, await config(engine))));
+}
+
+/**
+ * Admits one ready reconcile artifact for an authorized page (`authorizeReconcile`): it re-reads the page and file, checks
+ * the preimages, retains the backup and admits the request, replaying a prior request under the same id. `settle` runs on
+ * the admitted or replayed row inside the same refusal handling. `intentExtra` rides the stored intent without entering the
+ * digest; `transaction` wraps the admission transaction (`admitWrite`). #6712 PR 4b: the sync pass's keep_db admission
+ * (repair/keep-db-policy.ts) uses both and settles without waiting for publication.
+ */
+export async function admitReconcileArtifact<T>(engine: BrainEngine, input: { sourceId: string; slug: string; authority: Awaited<ReturnType<typeof authorizeReconcile>>['authority'];
+  artifact: ReconcileArtifact; requestId: string; keepFileBytes?: boolean; intentExtra?: Record<string, unknown>;
+  transaction?: <U>(fn: (tx: BrainEngine) => Promise<U>) => Promise<U> }, settle: (row: WriteRequest, replayed: boolean) => Promise<T>): Promise<T> {
+  const { sourceId, slug, authority, artifact, requestId } = input;
   if (artifact.preconditions.source_id !== sourceId || artifact.preconditions.slug !== slug || artifact.status !== 'ready' || artifact.conflicts.length) {
     throw opError('invalid_params', 'Apply requires a ready preview for this exact source and page.',
       `Nothing was submitted. Resolve every conflict first (preview with --from and --decisions until status is ready), then apply that resolved preview for ${slug} in '${sourceId}'.`);
   }
   // #6643: `gbrain repair file-drift --prefer file` keeps the file's own bytes when they already parse to the resolved result.
-  const callerIntent = { kind: 'canonical_reconcile', preview: artifact, ...(params.keep_file_bytes === true ? { keep_file_bytes: true } : {}) };
+  const callerIntent = { kind: 'canonical_reconcile', preview: artifact, ...(input.keepFileBytes ? { keep_file_bytes: true } : {}) };
   const expectedDigest = intentDigest({ operation: 'put_page', sourceId, slug, callerIntent });
   await assertPageRequestIdentity(engine, authority.principal, requestId);
   const replay = async () => {
@@ -164,7 +179,7 @@ export async function runReconcileApply(engine: BrainEngine, params: Record<stri
     if (!prior) return null;
     assertReplayIntent(prior, expectedDigest);
     await authorizeStoredRequest(engine, prior);
-    return writeResponse(isTerminal(prior) ? prior : await waitForWrite(engine, prior, await config(engine)));
+    return settle(prior, true);
   };
   const prior = await replay();
   if (prior) return prior;
@@ -187,8 +202,8 @@ export async function runReconcileApply(engine: BrainEngine, params: Record<stri
     const row = await admitWrite(engine, { principal: authority.principal, operation: 'put_page', sourceId,
       sourceIncarnation: state.pins.source_incarnation, slug, pageId: state.pins.page_id, worktreeId: state.pins.worktree_id,
       topologyGeneration: state.binding.topology_generation, requestId, authority, callerIntent,
-      intent: { ...callerIntent, backup_reference: reference } });
-    return writeResponse(await waitForWrite(engine, row, await config(engine)));
+      intent: { ...callerIntent, ...input.intentExtra, backup_reference: reference } }, undefined, input.transaction);
+    return await settle(row, false);
   } catch (error) {
     const racedReplay = await replay();
     if (racedReplay) return racedReplay;

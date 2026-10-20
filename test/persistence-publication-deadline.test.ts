@@ -158,6 +158,12 @@ for (const kind of testBackends()) {
           // The signal discarded the transaction's connection: nothing committed, and the claim went back to the queue.
           expect(done.state).toBe('queued');
           expect(await engine.getPage(slug, { sourceId: 'default' })).toBeNull();
+          // The ceiling cancel counts against persistence.max_transient_retries and backs the claim off first.
+          const [charged] = await engine.executeRaw<{ n: number; waiting: boolean }>(
+            'SELECT transient_interruptions AS n, next_attempt_at > now() AS waiting FROM persistence_requests WHERE id=$1::uuid', [row.id]);
+          expect(charged).toEqual({ n: 1, waiting: true });
+          expect(await claimNextWrite(engine, localHostId())).toBeNull();
+          await engine.executeRaw('UPDATE persistence_requests SET next_attempt_at=now() WHERE id=$1::uuid', [row.id]);
           const again = (await claimNextWrite(engine, localHostId()))!;
           expect(again.id).toBe(row.id);
           done = await publishMutation(engine, again, await preparePageMutation(engine, again, context().config), localHostId());

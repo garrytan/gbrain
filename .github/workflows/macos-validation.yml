@@ -16,8 +16,8 @@ name: macOS 26 validation
 #   #5286  the published signed darwin-arm64 release binary: codesign --verify
 #          --strict and --version against the release tag.
 #   #5810  every tracked *.sh parses under /bin/bash (GNU bash 3.2), and
-#          `bun run verify` passes with `bash` resolving to /bin/bash
-#          (typecheck included, under a 240 s per-check cap on this runner).
+#          `bun run verify` passes with `bash` resolving to /bin/bash.
+#   #6056  typecheck on macOS, in its own job (test.yml's typecheck shape).
 
 on:
   schedule:
@@ -51,16 +51,6 @@ jobs:
       - name: Install dependencies (bounded, retried once)
         timeout-minutes: 8
         run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
-      # #6056: the verify step's typecheck ran cold on every nightly and was
-      # killed at the 240 s cap. Restore the incremental tsbuildinfo from the
-      # newest earlier run with the same bun.lock + tsconfig.json (rolling
-      # key, saved under this run's SHA); same shape as test.yml's verify job.
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
-        with:
-          path: node_modules/.cache/gbrain-typecheck.tsbuildinfo
-          key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-${{ github.sha }}
-          restore-keys: |
-            tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-
       - name: Runner identity
         run: |
           sw_vers
@@ -105,15 +95,11 @@ jobs:
         env:
           GBRAIN_BASH32: /bin/bash
           GBRAIN_TEST_BASH32_REQUIRE: '1'
-          # #6056: a cold tsc takes 110-142 s alone on this 3-core arm64
-          # runner (121-167 s inside verify), past the 120 s per-check cap that
-          # Linux keeps. Typecheck runs here too, so this runner's cap is 240 s
-          # (about 1.4x the slowest measured run); test.yml's Linux verify job
-          # keeps the default 120 s. The cap is not raised further: the
-          # tsbuildinfo cache above makes the usual run incremental, and two
-          # workers (typecheck heads the CHECKS list, so it gets a core to
-          # itself with one other check beside it instead of sharing three
-          # cores with the whole pool) keep a cold run under it.
+          # #6056: tsc runs in the typecheck job below, not in this pool.
+          GBRAIN_VERIFY_SKIP_TYPECHECK: '1'
+          # This 3-core arm64 runner keeps the 240 s per-check cap and two
+          # workers it ran with when tsc was in the pool; test.yml's Linux
+          # verify job keeps the default 120 s.
           GBRAIN_VERIFY_TIMEOUT: '240'
           GBRAIN_VERIFY_MAX_PARALLEL: '2'
         # tsc peaks near 3.5 GB of heap; the typecheck script sets its own
@@ -128,3 +114,48 @@ jobs:
           bun run check:bash32
           git fetch --no-tags --depth=1 origin +refs/heads/master:refs/remotes/origin/master
           bun run verify
+
+  typecheck:
+    name: macOS 26 typecheck
+    # #6056: tsc ran inside the verify step's pool, cold on every nightly (the
+    # tsbuildinfo cache was saved only after a fully green job, so a red
+    # nightly never saved it), and was killed at the 240 s per-check cap:
+    # 110-142 s alone on this 3-core arm64 runner, 121-167 s inside verify.
+    # Same shape as test.yml's typecheck job: its own job, a step timeout from
+    # measurement, and the incremental state saved on every outcome. Step
+    # timeout: 3 x the worst measured run is about 15 minutes (282 s from an
+    # older commit's state, run 39168836406; a cold run is no faster).
+    # Same gate as macos-26 (named exception, docs/TESTING.md#event-parity).
+    if: |
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'macos-validation')
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.3
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      # Rolling key: every run saves under its own SHA and the next run
+      # restores the newest one for the same bun.lock + tsconfig.json. After
+      # the install, which (re)creates node_modules.
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: node_modules/.cache/gbrain-typecheck.tsbuildinfo
+          key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-${{ github.sha }}
+          restore-keys: |
+            tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-
+      - name: Typecheck (tsc, incremental)
+        timeout-minutes: 15
+        run: bun run typecheck
+      # Saved even when tsc finds type errors or another job fails: tsc
+      # writes its state on an error too, so the next run starts warm.
+      - name: Save the typecheck state
+        if: always()
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: node_modules/.cache/gbrain-typecheck.tsbuildinfo
+          key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-${{ github.sha }}

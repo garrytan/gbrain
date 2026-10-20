@@ -12,6 +12,7 @@ import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { setPackRelationSemantics } from '../src/core/link-validity.ts';
 import { linkTypeRanks, NON_RANKING_LINK_TYPES, rankingLinkSql } from '../src/core/link-ranking-policy.ts';
 import { loadPackFromFile } from '../src/core/schema-pack/loader.ts';
+import { fileURLToPath } from 'node:url';
 import { INVARIANCE_ROWS, amendmentsVersusReplacement, databaseToday, frontmatterRecordsSince, futureAmendsStayVisible,
   runInvarianceRow, useExamplePack } from './helpers/amends-ranking-scenarios.ts';
 
@@ -36,7 +37,7 @@ describe('ranking participation policy', () => {
   });
 
   test('the bundled example pack is a valid manifest declaring amends as an event mapped from frontmatter', () => {
-    const manifest = loadPackFromFile(new URL('../examples/schema-packs/amends-example/pack.yaml', import.meta.url).pathname);
+    const manifest = loadPackFromFile(fileURLToPath(new URL('../examples/schema-packs/amends-example/pack.yaml', import.meta.url)));
     expect(manifest.link_types).toEqual([{ name: 'amends', temporal: 'event' }, { name: 'supersedes' }]);
     expect(manifest.frontmatter_links).toEqual([
       { page_type: 'contract', fields: ['amends'], link_type: 'amends' },

@@ -15,6 +15,11 @@
  *   ignores cancellation may keep its root blocked, measured from the claim;
  * - `persistence.max_preparation_attempts` (default 2, 1 to 10): the request is
  *   finished `failed`/`preparation_stalled` once its counter reaches it.
+ * - `persistence.max_transient_retries` (default 5, 0 to 20): how many transient
+ *   interruptions (a statement the database ended with 57014, a publication
+ *   cancelled at its ceiling) a request is retried after, with backoff, before it
+ *   ends `failed`/`write_interrupted` (transient-retry.ts). Its own budget: a
+ *   transient interruption never charges `max_preparation_attempts`.
  *
  * `remember`, `put_page` and `edit_page` without an internal intent keep the
  * consumer's `preparationMs` (30 s). The deadlines sit behind the
@@ -31,6 +36,7 @@ export const PREPARATION_BUDGET_KEYS = {
   maintenanceMs: 'persistence.maintenance_preparation_ms',
   ceilingMs: 'persistence.preparation_ceiling_ms',
   maxAttempts: 'persistence.max_preparation_attempts',
+  transientRetries: 'persistence.max_transient_retries',
 } as const;
 export type PreparationBudgetKey = keyof typeof PREPARATION_BUDGET_KEYS;
 export const PREPARATION_BUDGET_CONFIG_KEYS: readonly string[] = Object.values(PREPARATION_BUDGET_KEYS);
@@ -40,8 +46,9 @@ export interface PreparationPolicy {
   maintenanceMs: number;
   ceilingMs: number;
   maxAttempts: number;
+  transientRetries: number;
 }
-export const DEFAULT_PREPARATION_POLICY: Readonly<PreparationPolicy> = Object.freeze({ syncMs: 120_000, maintenanceMs: 120_000, ceilingMs: 600_000, maxAttempts: 2 });
+export const DEFAULT_PREPARATION_POLICY: Readonly<PreparationPolicy> = Object.freeze({ syncMs: 120_000, maintenanceMs: 120_000, ceilingMs: 600_000, maxAttempts: 2, transientRetries: 5 });
 /** The ceiling must leave an abandoned preparation this much past the larger budget before the root is freed. */
 export const PREPARATION_CEILING_GRACE_MS = 30_000;
 const RANGES: Record<PreparationBudgetKey, { min: number; max: number; unit: string }> = {
@@ -49,6 +56,7 @@ const RANGES: Record<PreparationBudgetKey, { min: number; max: number; unit: str
   maintenanceMs: { min: 1_000, max: 3_600_000, unit: 'milliseconds' },
   ceilingMs: { min: 60_000, max: 3_600_000, unit: 'milliseconds' },
   maxAttempts: { min: 1, max: 10, unit: 'attempts' },
+  transientRetries: { min: 0, max: 20, unit: 'retries' },
 };
 
 function parseWhole(raw: string | null | undefined): number | null {

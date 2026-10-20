@@ -183,6 +183,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'sync_freshness',
   // #6858 ask 6: p95 commit→searchable of managed sources over 24 h (doctor/checks/managed-sync-latency.ts).
   'managed_sync_latency',
+  // GBRA-133 PR 2a: the resident that syncs each local source on commit, or none with the fix (doctor/checks/commit-notifier.ts).
+  'commit_notifier',
   // #5063: source checkouts with commits not on their upstream or stale uncommitted changes.
   'git_convergence',
   // #5186: an ownership marker committed to a source checkout's Git index.
@@ -308,6 +310,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'managed_sync_blocked',
   // #6712 PR 4a: the read-only convergence shadow's counts (doctor/checks/managed-sync-convergence.ts).
   'managed_sync_convergence',
+  // #6712 PR 4b: sync.admission is not normal, so managed sync admits less than it classifies (doctor/checks/sync-admission.ts).
+  'sync_admission_restricted',
   'persistence_session_timeouts',
   // #6317: consumer heartbeat rows and host identity (doctor/checks/persistence-consumers.ts).
   'two_consumers_on_host',

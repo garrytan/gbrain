@@ -9,7 +9,7 @@
  * the CLI exits BUDGET_STOP_EXIT_CODE with the command that resumes.
  */
 import type { CapSource } from './consent.ts';
-import { BudgetExhausted, BudgetTracker } from './budget/budget-tracker.ts';
+import { BudgetExhausted, BudgetTracker, type PricingOverrides } from './budget/budget-tracker.ts';
 import { withBudgetTracker } from './ai/gateway.ts';
 import { shellQuote } from './shell-quote.ts';
 
@@ -29,10 +29,14 @@ export interface EmbedCostStopFields {
   resume_command?: string;
 }
 
-/** Null when the authorization carries no finite positive cap (nothing to meter). */
-export function embedCostCap(capUsd: number | null | undefined, capSource: CapSource | null | undefined): EmbedCostCap | null {
+/**
+ * Null when the authorization carries no finite positive cap (nothing to meter).
+ * `pricingOverrides` is the brain's `pricing.overrides` (loadPricingOverrides),
+ * so an operator-declared rate prices the run the same way a queued embed job does.
+ */
+export function embedCostCap(capUsd: number | null | undefined, capSource: CapSource | null | undefined, pricingOverrides?: PricingOverrides): EmbedCostCap | null {
   if (typeof capUsd !== 'number' || !Number.isFinite(capUsd) || capUsd <= 0) return null;
-  const tracker = new BudgetTracker({ maxCostUsd: capUsd, label: 'embed', ...(capSource ? { capSource } : {}) });
+  const tracker = new BudgetTracker({ maxCostUsd: capUsd, label: 'embed', ...(capSource ? { capSource } : {}), ...(pricingOverrides ? { pricingOverrides } : {}) });
   const controller = new AbortController();
   let refusal: BudgetExhausted | null = null;
   // The refusal itself (cost, or a model with no price under a user cap) is kept for the verdict.

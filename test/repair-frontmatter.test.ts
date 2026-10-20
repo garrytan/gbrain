@@ -262,7 +262,7 @@ test('apply refuses while an unfinished managed sync cursor still names a select
   const hash = preview.apply_command.split('--expect ')[1]!.split(' ')[0]!;
   const runId = randomUUID();
   await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-sync',$1,$2::text::jsonb)`,
-    [`fixture-${runId}`, JSON.stringify([{ sourceId: s.id, runId, index: 0, total: 1 }])]);
+    [`fixture-${runId}`, JSON.stringify([{ sourceId: s.id, incarnation: (await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [s.id]))[0]!.incarnation, runId, index: 0, total: 1 }])]);
   await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-sync-manifest',$1,$2::text::jsonb)`,
     [runId, JSON.stringify([{ path: 'notes/roundup.md', sourcePath: 'notes/roundup.md', action: 'import', working: false }])]);
   try {

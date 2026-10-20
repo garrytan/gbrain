@@ -69,3 +69,4 @@ test/e2e/oauth-owner-consent-source-postgres.test.ts
 test/e2e/entity-names-parity-postgres.test.ts
 test/e2e/segment-gc-parity.test.ts
 test/e2e/doctor-entry-deadline-postgres.test.ts
+test/e2e/s-sync-queue-wake-postgres.test.ts

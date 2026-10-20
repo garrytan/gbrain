@@ -192,6 +192,35 @@ describe('9. OAuth clients', () => {
     expect((await tokenRow('tok-all')).allowed_operations).toBeNull();
   }, 180_000);
 
+  test('#6993 rescope --client with no grant flag prints the stored grants and writes nothing; an unknown id is client_not_found', async () => {
+    const client = await withBrain(async engine => {
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+      return provider.registerClientManual('client-print-example', ['client_credentials'], 'read write');
+    });
+    const before = await clientRow(client.clientId);
+    const human = await cli('auth', 'rescope', '--client', client.clientId);
+    expect(human.exitCode).toBe(0);
+    expect(human.stdout).toContain(`OAuth client grants: client-print-example (${client.clientId})`);
+    expect(human.stdout).toContain('No change made.');
+    const alias = await cli('auth', 'rescope-client', client.clientId, '--json');
+    expect(alias.exitCode).toBe(0);
+    const body = JSON.parse(alias.stdout) as { written: boolean; changed: boolean; revision: number; principal_grant: unknown };
+    expect(body).toMatchObject({ written: false, changed: false, revision: before.grant_revision });
+    expect(body.principal_grant).toBeDefined();
+    expect(await clientRow(client.clientId)).toEqual(before);
+
+    const missing = await cli('auth', 'rescope', '--client', 'client-missing-example', '--json');
+    expect(missing.exitCode).toBe(1);
+    const error = JSON.parse(missing.stdout) as { error: { code: string; fix: { argv: string[] } } };
+    expect(error.error.code).toBe('client_not_found');
+    expect(error.error.fix.argv.slice(0, 4)).toEqual(['gbrain', 'auth', 'clients', '--json']);
+    expect(missing.stderr).toContain('Fix: Run gbrain auth clients --json');
+
+    const repairOnly = await cli('auth', 'rescope', '--client', client.clientId, '--repair');
+    expect(repairOnly.exitCode).toBe(1);
+    expect(repairOnly.stderr).toContain('with --repair');
+  }, 180_000);
+
   test('a bare name that matches both a token and a client refuses as ambiguous', async () => {
     const client = await withBrain(async engine => {
       const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });

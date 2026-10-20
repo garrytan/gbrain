@@ -24,8 +24,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { fileURLToPath } from 'node:url';
 
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 
 const KEY = 'models.tier.subagent';
 const BASELINE = 'anthropic:claude-haiku-4-5';

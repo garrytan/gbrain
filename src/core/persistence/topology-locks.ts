@@ -70,13 +70,27 @@ export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string
         `The worktree holding source ${item.source_id || sourceId} is owned by host ${item.owner_host_id}, not this host (${localHostId()}), or has no coordination path here, so nothing changed. Run the lifecycle command on the owning host; moving ownership is a separate, deliberate writer transfer.`,
         {fix:ownerStatusFix(sourceId)});
       await take(item.coordination_path);
-      if(!item.local_path||!existsSync(item.local_path)) continue;
-      const identity={worktreeId:item.worktree_id,coordinationPath:item.coordination_path};
-      if(opts.relocation&&item.source_id===sourceId&&additionalRoot&&item.local_path!==additionalRoot&&realpathSync(item.local_path)===additionalRoot) inspectRelocatedPhysicalRoot(item.local_path,additionalRoot,identity);
-      else assertPhysicalRoot(item.local_path,identity);
+      assertBindingPhysicalRoot(item,sourceId,additionalRoot,opts);
     }
     return await run(bindings);
   } finally { for (const handle of handles.reverse()) await handle.release(); }
+}
+
+function assertBindingPhysicalRoot(item: TopologyBinding, sourceId: string, additionalRoot: string|undefined, opts: { relocation?: boolean }): void {
+  if(!item.local_path||!existsSync(item.local_path)) return;
+  const identity={worktreeId:item.worktree_id,coordinationPath:item.coordination_path};
+  if(opts.relocation&&item.source_id===sourceId&&additionalRoot&&item.local_path!==additionalRoot&&realpathSync(item.local_path)===additionalRoot) inspectRelocatedPhysicalRoot(item.local_path,additionalRoot,identity);
+  else assertPhysicalRoot(item.local_path,identity);
+}
+
+/**
+ * #6849: a lifecycle dry run predicts the physical-root refusal the real run hits in withTopologyLocks for the
+ * source's own binding on this host. Read-only: it takes no lock and writes no stamp, reservation or row.
+ */
+export async function inspectTopologyPhysicalRoot(engine: BrainEngine, sourceId: string, additionalRoot?: string, opts: { relocation?: boolean } = {}): Promise<void> {
+  const binding = await getWorktreeBinding(engine, sourceId);
+  if (!binding || binding.owner_host_id !== localHostId() || !binding.coordination_path) return;
+  assertBindingPhysicalRoot(binding, sourceId, additionalRoot, opts);
 }
 
 /**

@@ -3327,4 +3327,53 @@ DO \$rls\$ BEGIN
   END IF;
 END \$rls\$;
 -- END GENERATED from src/core/belief/schema.ts (BELIEF_LEDGER_SCHEMA_SQL)
+
+-- GBRA-133 PR 2a (migration v262): commit notifier wanted markers, the
+-- per-host notifier lease and per-source notifier state + coverage record
+-- (src/core/notifier/store.ts).
+CREATE TABLE IF NOT EXISTS sync_wanted_markers (
+  source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  intent TEXT NOT NULL CHECK (intent IN ('freshness','pull','full')),
+  source_incarnation TEXT,
+  wanted_head TEXT,
+  generation BIGINT NOT NULL DEFAULT 1,
+  first_due_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  requested_by TEXT NOT NULL,
+  job_id BIGINT,
+  PRIMARY KEY (source_id, intent)
+);
+CREATE TABLE IF NOT EXISTS sync_notifier_leases (
+  host_id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL,
+  fence BIGINT NOT NULL DEFAULT 1,
+  resident_kind TEXT NOT NULL,
+  pid INTEGER,
+  renewed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sync_notifier_sources (
+  source_id TEXT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+  source_incarnation TEXT,
+  syncer_host_id TEXT,
+  syncer_recorded_at TIMESTAMPTZ,
+  state TEXT NOT NULL DEFAULT 'idle' CHECK (state IN ('idle','due','running','retry','operator_blocked')),
+  reason TEXT,
+  first_due_at TIMESTAMPTZ,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_retry_at TIMESTAMPTZ,
+  last_progress_at TIMESTAMPTZ,
+  last_error_code TEXT,
+  last_error TEXT,
+  last_error_at TIMESTAMPTZ,
+  trace_path TEXT,
+  observed_head TEXT,
+  observed_at TIMESTAMPTZ,
+  detection_mode TEXT CHECK (detection_mode IN ('watch','poll')),
+  owner_host_id TEXT,
+  owner_kind TEXT,
+  owner_pid INTEGER,
+  owner_seen_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `;

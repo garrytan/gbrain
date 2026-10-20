@@ -1172,7 +1172,7 @@ async function runPhaseSynthesizeInner(
     const summarySlug = buildDreamSummarySlug(config.outputRoot, summaryDate);
     const writtenSlugs = writtenRefs.map(r => r.slug);
     if (SUMMARY_SLUG_RE.test(summarySlug) && !publishPending) {
-      const preserveSummary = maintenance && !writtenRefs.length && await engine.readPageSnapshot(summarySlug, { sourceId: cycleSourceId });
+      const preserveSummary = !writtenRefs.length && await engine.readPageSnapshot(summarySlug, { sourceId: cycleSourceId });
       if (!preserveSummary) await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, finalizedRefs.map(r => r.slug), childOutcomes, cycleSourceId, opts.signal, maintenance)
         .then(held => held && fileHolds.push(held), (e: unknown) => { deferPublishOrThrow(e, summarySlug); publishPending++; });
     }

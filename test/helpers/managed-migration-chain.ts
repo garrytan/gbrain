@@ -14,8 +14,9 @@ import { assertSafeE2eDatabaseUrl } from './db-guard.ts';
 import { durableGitRepo } from './git-publication.ts';
 import { LEGACY_FILE_SLUG, seedLegacyManagedContent, type LegacySeed } from './managed-legacy-fixture.ts';
 import { withEnv } from './with-env.ts';
+import { fileURLToPath } from 'node:url';
 
-const REPO = new URL('../..', import.meta.url).pathname.replace(/\/$/, '');
+const REPO = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 const PROVIDER_KEYS = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'VOYAGE_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY',
   'OPENROUTER_API_KEY', 'DEEPSEEK_API_KEY', 'GROQ_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'ZEROENTROPY_API_KEY'];
 

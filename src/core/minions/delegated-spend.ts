@@ -37,6 +37,11 @@ export function maximumInvocationCents(call: AIInvocation, overrides?: PricingOv
   return Math.ceil((call.maxInputTokens! * Math.max(p.input * 2, p.read, p.write) + maxOutputTokens! * p.output) / 100) / 100;
 }
 
+/** Why maximumInvocationCents is null: a known price with no declared input ceiling is `no_context_ceiling` (#6990). */
+export function unboundedInvocationCause(call: AIInvocation, overrides?: PricingOverrides): 'no_pricing' | 'no_context_ceiling' {
+  return prices(call, overrides) && !Number.isSafeInteger(call.maxInputTokens) ? 'no_context_ceiling' : 'no_pricing';
+}
+
 export function actualCents(call: AIInvocation, usage: AIInvocationUsage | null, overrides?: PricingOverrides): number | null {
   const p = prices(call, overrides);
   if (!p || !usage) return null;

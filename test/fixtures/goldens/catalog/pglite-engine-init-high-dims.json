@@ -413,6 +413,14 @@
       "subagent_tool_executions.subagent_tool_executions_job_id_fkey": "f FOREIGN KEY (job_id) REFERENCES minion_jobs(id) ON DELETE CASCADE",
       "subagent_tool_executions.subagent_tool_executions_pkey": "p PRIMARY KEY (id)",
       "subagent_tool_executions.subagent_tool_executions_stable_id": "u UNIQUE (job_id, message_idx, ordinal)",
+      "sync_notifier_leases.sync_notifier_leases_pkey": "p PRIMARY KEY (host_id)",
+      "sync_notifier_sources.sync_notifier_sources_detection_mode_check": "c CHECK ((detection_mode = ANY (ARRAY['watch'::text, 'poll'::text])))",
+      "sync_notifier_sources.sync_notifier_sources_pkey": "p PRIMARY KEY (source_id)",
+      "sync_notifier_sources.sync_notifier_sources_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "sync_notifier_sources.sync_notifier_sources_state_check": "c CHECK ((state = ANY (ARRAY['idle'::text, 'due'::text, 'running'::text, 'retry'::text, 'operator_blocked'::text])))",
+      "sync_wanted_markers.sync_wanted_markers_intent_check": "c CHECK ((intent = ANY (ARRAY['freshness'::text, 'pull'::text, 'full'::text])))",
+      "sync_wanted_markers.sync_wanted_markers_pkey": "p PRIMARY KEY (source_id, intent)",
+      "sync_wanted_markers.sync_wanted_markers_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "synthesis_evidence.synthesis_evidence_pkey": "p PRIMARY KEY (synthesis_page_id, take_page_id, take_row_num)",
       "synthesis_evidence.synthesis_evidence_synthesis_page_id_fkey": "f FOREIGN KEY (synthesis_page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "synthesis_evidence.synthesis_evidence_take_page_id_take_row_num_fkey": "f FOREIGN KEY (take_page_id, take_row_num) REFERENCES takes(page_id, row_num) ON DELETE CASCADE",
@@ -923,6 +931,15 @@
       "subagent_tool_executions": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "sync_notifier_leases": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "sync_notifier_sources": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "sync_wanted_markers": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "synthesis_evidence": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1380,6 +1397,9 @@
       "subagent_rate_leases_pkey": "CREATE UNIQUE INDEX subagent_rate_leases_pkey ON public.subagent_rate_leases USING btree (id)",
       "subagent_tool_executions_pkey": "CREATE UNIQUE INDEX subagent_tool_executions_pkey ON public.subagent_tool_executions USING btree (id)",
       "subagent_tool_executions_stable_id": "CREATE UNIQUE INDEX subagent_tool_executions_stable_id ON public.subagent_tool_executions USING btree (job_id, message_idx, ordinal)",
+      "sync_notifier_leases_pkey": "CREATE UNIQUE INDEX sync_notifier_leases_pkey ON public.sync_notifier_leases USING btree (host_id)",
+      "sync_notifier_sources_pkey": "CREATE UNIQUE INDEX sync_notifier_sources_pkey ON public.sync_notifier_sources USING btree (source_id)",
+      "sync_wanted_markers_pkey": "CREATE UNIQUE INDEX sync_wanted_markers_pkey ON public.sync_wanted_markers USING btree (source_id, intent)",
       "synthesis_evidence_pkey": "CREATE UNIQUE INDEX synthesis_evidence_pkey ON public.synthesis_evidence USING btree (synthesis_page_id, take_page_id, take_row_num)",
       "tags_page_id_tag_key": "CREATE UNIQUE INDEX tags_page_id_tag_key ON public.tags USING btree (page_id, tag)",
       "tags_pkey": "CREATE UNIQUE INDEX tags_pkey ON public.tags USING btree (id)",
@@ -3187,7 +3207,9 @@
           "41 preparation_attempts integer/int4 NOT NULL DEFAULT 0",
           "42 client_request_id text/text NULL",
           "43 admitter_segment_reader boolean/bool NULL",
-          "44 consumer_segment_reader boolean/bool NULL"
+          "44 consumer_segment_reader boolean/bool NULL",
+          "45 transient_interruptions integer/int4 NOT NULL DEFAULT 0",
+          "46 next_attempt_at timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -3686,6 +3708,59 @@
           "13 gbrain_tool_use_id uuid/uuid NULL",
           "14 started_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "15 ended_at timestamp with time zone/timestamptz NULL"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
+      "sync_notifier_leases": {
+        "columns": [
+          "1 host_id text/text NOT NULL",
+          "2 owner_id text/text NOT NULL",
+          "3 fence bigint/int8 NOT NULL DEFAULT 1",
+          "4 resident_kind text/text NOT NULL",
+          "5 pid integer/int4 NULL",
+          "6 renewed_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "7 expires_at timestamp with time zone/timestamptz NOT NULL"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
+      "sync_notifier_sources": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 source_incarnation text/text NULL",
+          "3 syncer_host_id text/text NULL",
+          "4 syncer_recorded_at timestamp with time zone/timestamptz NULL",
+          "5 state text/text NOT NULL DEFAULT 'idle'::text",
+          "6 reason text/text NULL",
+          "7 first_due_at timestamp with time zone/timestamptz NULL",
+          "8 attempts integer/int4 NOT NULL DEFAULT 0",
+          "9 next_retry_at timestamp with time zone/timestamptz NULL",
+          "10 last_progress_at timestamp with time zone/timestamptz NULL",
+          "11 last_error_code text/text NULL",
+          "12 last_error text/text NULL",
+          "13 last_error_at timestamp with time zone/timestamptz NULL",
+          "14 trace_path text/text NULL",
+          "15 observed_head text/text NULL",
+          "16 observed_at timestamp with time zone/timestamptz NULL",
+          "17 detection_mode text/text NULL",
+          "18 owner_host_id text/text NULL",
+          "19 owner_kind text/text NULL",
+          "20 owner_pid integer/int4 NULL",
+          "21 owner_seen_at timestamp with time zone/timestamptz NULL",
+          "22 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
+      "sync_wanted_markers": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 intent text/text NOT NULL",
+          "3 source_incarnation text/text NULL",
+          "4 wanted_head text/text NULL",
+          "5 generation bigint/int8 NOT NULL DEFAULT 1",
+          "6 first_due_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "7 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "8 requested_by text/text NOT NULL",
+          "9 job_id bigint/int8 NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

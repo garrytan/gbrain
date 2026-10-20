@@ -2,7 +2,9 @@
  * #5988 Lane B: managed sync holds a file gbrain refuses deterministically
  * instead of blocking the source. The rest imports, the checkpoint advances,
  * the hold stays until the file changes, leaves, or a newer reader imports
- * it, and blocked cursors from older releases convert in place.
+ * it. #6712 PR 4b: a non-company source runs the live pass, so there is no blocked cursor to convert in place: a failed
+ * receipt an older release left is kept as it was while the next pass holds or imports the file, and a blocked pass's
+ * opt-outs ride its episode.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
@@ -15,11 +17,13 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import { readManagedSyncFailures } from '../src/core/persistence/sync-failures.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
 import { GIT_HOLD_OP, SYNC_IMPORT_PROVENANCE_OP, gitHoldItem, readGitSourceHolds, recordContentHoldRepair, requestGitHoldRetry } from '../src/core/persistence/sync-holds.ts';
 import { CONTENT_REPAIR_LANE_VERSION } from '../src/core/persistence/sync-fault-class.ts';
 import { printSyncResult, type SyncOpts, type SyncResult } from '../src/commands/sync.ts';
-import { gitHoldStatusLines, readGitHoldStatuses } from '../src/core/persistence/connector-status.ts';
+import { readGitHoldStatuses } from '../src/core/persistence/connector-status.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -235,10 +239,18 @@ test('#6729: an inexact rename onto a broken file is a delete plus an add; the o
   expect((await listIdentityDowngrades(engine, [s.id])).map(record => [record.old_slug, record.new_slug])).toEqual([['notes/old', 'notes/new']]);
 }), 240_000);
 
-test('the hold write and the cursor step past it commit together: a crash between them persists neither', () => each(async engine => {
+// #6712 PR 4b: a non-company pass steps an in-memory round batch, not a cursor row, so the hold write commits in the
+// transaction of the batch step that passes its file (sync-pass-batch.ts passBatchStep), and the pass row is saved after.
+// A crash inside that transaction persists neither the hold nor the step (no hold or summary row, no request for the
+// file, the pass row still open with nothing held), and the next pass holds the file once. A crash after the hold
+// committed but before the pass saved its row leaves the hold beside a stale pass row; the next pass completes the sync
+// without a second hold (the one record, one attempt) and without re-importing what the crashed pass committed.
+test('the hold write and the batch step past it commit together: a crash between them persists neither, and a crash before the pass row save leaves one hold the next pass completes without duplicating', () => each(async engine => {
   const s = await source(engine, { 'notes/a.md': note('A'), 'notes/broken.md': FOLDED, 'notes/c.md': note('C') });
-  const cursor = async () => (await engine.executeRaw<{ header: { runId: string; index: number; counts: { held?: number } } }>(
-    "SELECT completed_keys->0 AS header FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [s.id]))[0]?.header;
+  const passRow = async (id: string) => (await engine.executeRaw<{ v: { telemetry: { pass_id: string; outcome: string; counts: { held?: number } } } }>(
+    "SELECT completed_keys->0 AS v FROM op_checkpoints WHERE op='managed-sync-pass' AND fingerprint LIKE $1", [id + ':%']))[0]?.v.telemetry;
+  const receipts = (id: string) => engine.executeRaw<{ path: string | null; state: string; pass_id: string }>(
+    "SELECT intent->>'path' AS path,state,intent->>'passId' AS pass_id FROM persistence_requests WHERE source_id=$1 ORDER BY sequence", [id]);
   const target = engine as unknown as { transaction: (this: unknown, fn: (tx: BrainEngine) => Promise<unknown>) => Promise<unknown> };
   const inherited = Object.getPrototypeOf(engine).transaction as typeof target.transaction;
   let injected = 0;
@@ -255,24 +267,65 @@ test('the hold write and the cursor step past it commit together: a crash betwee
       return typeof value === 'function' ? value.bind(t) : value;
     } }) as BrainEngine));
   };
-  try { await s.sync().catch(error => error); }
+  let crashed: unknown;
+  try { crashed = await s.sync().then(() => null, error => error); }
   finally { delete (target as Partial<typeof target>).transaction; }
   expect(injected).toBe(1);
+  expect(String((crashed as Error | null)?.message)).toContain('injected crash after the hold write');
   expect(await s.holdRows()).toEqual([]);
-  const stopped = await cursor();
-  const [manifest] = await engine.executeRaw<{ entries: Array<{ path: string }> }>("SELECT completed_keys AS entries FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1", [stopped!.runId]);
-  expect(manifest!.entries[stopped!.index]!.path).toBe('notes/broken.md');
-  expect(stopped!.counts.held ?? 0).toBe(0);
+  const stopped = (await passRow(s.id))!;
+  expect(stopped).toMatchObject({ outcome: 'open' });
+  expect(stopped.counts.held ?? 0).toBe(0);
   expect(await s.lastCommit()).toBeNull();
+  expect(await receipts(s.id)).toEqual([{ path: 'notes/a.md', state: 'committed', pass_id: stopped.pass_id }]);
+  expect(await engine.getPage('notes/c', { sourceId: s.id })).toBeNull();
 
-  // Without the crash the same cursor resumes: the hold and the step past it land together.
+  // Without the crash the next pass holds the file once and imports the rest; notes/a.md is not imported again.
   const resumed = await s.sync();
-  expect(resumed).toMatchObject({ status: 'first_sync', held_count: 1 });
-  expect((await s.holds()).map(hold => hold.path)).toEqual(['notes/broken.md']);
+  expect(resumed).toMatchObject({ status: 'first_sync', held_count: 1, held: [{ path: 'notes/broken.md', code: 'invalid_frontmatter' }], pass: { outcome: 'synced' } });
+  expect((await s.holds()).map(hold => [hold.path, hold.run_id, hold.meta.attempts])).toEqual([['notes/broken.md', resumed.pass!.pass_id, 1]]);
   expect(await engine.getPage('notes/c', { sourceId: s.id })).not.toBeNull();
+  expect((await receipts(s.id)).filter(row => row.path === 'notes/a.md')).toHaveLength(1);
+  expect((await passRow(s.id))!.counts.held).toBe(1);
+  expect(await s.lastCommit()).toBe(git(s.root, 'rev-parse', 'HEAD'));
+
+  // The hold committed, then the process died before the pass saved its row.
+  const t = await source(engine, { 'notes/a.md': note('A'), 'notes/broken.md': FOLDED, 'notes/c.md': note('C') });
+  let killed = 0;
+  installFaultHook(async (point, detail) => {
+    if (point !== 'sync:mid_checkpoint' || detail.sourceId !== t.id || killed) return;
+    if (!(await t.holds()).length) return;
+    killed++;
+    throw new Error('injected kill after the hold committed');
+  });
+  try { await expect(t.sync()).rejects.toThrow('injected kill after the hold committed'); }
+  finally { installFaultHook(undefined); }
+  expect(killed).toBe(1);
+  const [hold] = await t.holds();
+  const lagging = (await passRow(t.id))!;
+  expect(hold).toMatchObject({ path: 'notes/broken.md', code: 'invalid_frontmatter', run_id: lagging.pass_id, meta: { attempts: 1 } });
+  expect(lagging).toMatchObject({ outcome: 'open' });
+  expect(lagging.counts.held ?? 0).toBe(0);
+  expect(await t.lastCommit()).toBeNull();
+  const rows = await t.holdRows();
+  const completed = await t.sync();
+  expect(completed).toMatchObject({ status: 'first_sync', holds_outstanding: 1, pass: { outcome: 'synced' } });
+  expect(await t.holdRows()).toEqual(rows);
+  expect(await engine.getPage('notes/c', { sourceId: t.id })).not.toBeNull();
+  expect(await engine.getPage('notes/broken', { sourceId: t.id })).toBeNull();
+  expect((await receipts(t.id)).filter(row => row.path === 'notes/a.md')).toHaveLength(1);
+  expect(await t.lastCommit()).toBe(git(t.root, 'rev-parse', 'HEAD'));
+  expect(await readManagedSyncFailures(engine, [s.id, t.id])).toEqual([]);
 }), 180_000);
 
-test('a cursor blocked by a pre-upgrade failed receipt converts in place: held when still broken, imported when now readable', () => each(async engine => {
+// #6712 PR 4b: a non-company source has no blocked cursor to convert; a legacy cursor row is retired by the first pass
+// (sync-pass-cursor-retirement-6712), which re-classifies the file. A failed receipt an older release left for the file
+// (here: a blocked pass under sync.holds=fail, its error rewritten to the older text) is not converted or rewritten: once
+// holds are on, the next pass holds the file when its bytes still refuse and imports it under a request of its own when
+// they now read, and the old receipt stays exactly as it was.
+test('a pre-upgrade failed receipt is left as it was by the pass: the file is held when still broken and imported under a new request when now readable', () => each(async engine => {
+  const receipts = (id: string) => engine.executeRaw<{ request_id: string; state: string; error_code: string | null; error_message: string | null; path: string | null; pass_id: string }>(
+    "SELECT request_id::text AS request_id,state,error_code,error_message,intent->>'path' AS path,intent->>'passId' AS pass_id FROM persistence_requests WHERE source_id=$1 ORDER BY sequence", [id]);
   await engine.setConfig('sync.holds', 'fail');
   const s = await source(engine, { 'notes/broken.md': FOLDED, 'notes/roundup.md': AUTHOR, 'notes/ok.md': note('Ok') });
   expect((await s.sync()).status).toBe('blocked_by_failures');
@@ -280,69 +333,96 @@ test('a cursor blocked by a pre-upgrade failed receipt converts in place: held w
   // The exact text an older release stored for this refusal.
   await engine.executeRaw("UPDATE persistence_requests SET error_code='invalid_params',error_message=$2 WHERE request_id=$1::uuid",
     [failed!.request_id, 'Invalid YAML frontmatter: bad indentation of a mapping entry (3:1)']);
+  const old = await receipts(s.id);
+  expect(old).toEqual([expect.objectContaining({ request_id: failed!.request_id, state: 'failed', error_code: 'invalid_params', path: 'notes/broken.md' })]);
   await engine.unsetConfig('sync.holds');
-  const converted = await s.sync();
-  expect(converted.converted_from_failed).toEqual([failed!.request_id]);
-  expect(converted).toMatchObject({ status: 'first_sync', held_count: 1 });
-  expect(converted.held?.[0]?.path).toBe('notes/broken.md');
+  const held = await s.sync();
+  expect(held).toMatchObject({ status: 'first_sync', held_count: 1, held: [{ path: 'notes/broken.md', code: 'invalid_frontmatter' }], pass: { outcome: 'synced' } });
+  expect(held.converted_from_failed).toBeUndefined();
+  expect(await engine.getPage('notes/broken', { sourceId: s.id })).toBeNull();
   expect(await engine.getPage('notes/ok', { sourceId: s.id })).not.toBeNull();
-  // sources status keeps the conversion as history after later runs.
-  await s.sync();
-  const status = (await readGitHoldStatuses(engine, [s.id])).get(s.id)!;
-  expect(status.recent_conversions).toMatchObject([{ request_id: failed!.request_id, path: 'notes/broken.md', outcome: 'held' }]);
-  expect(gitHoldStatusLines(s.id, status).join('\n')).toContain(`${failed!.request_id} (notes/broken.md): held`);
+  expect((await engine.getPage('notes/roundup', { sourceId: s.id }))?.title).toBe('Payments roundup');
+  expect((await s.holds()).map(hold => [hold.path, hold.code, hold.run_id, hold.meta.attempts])).toEqual([['notes/broken.md', 'invalid_frontmatter', held.pass!.pass_id, 1]]);
+  const after = await receipts(s.id);
+  expect(after[0]).toEqual(old[0]);
+  // The still-broken file is held by the screen, so the pass admits no request for it.
+  expect(after.slice(1).map(row => [row.path, row.state, row.pass_id]).sort()).toEqual([[null, 'committed', held.pass!.pass_id], ['notes/ok.md', 'committed', held.pass!.pass_id],
+    ['notes/roundup.md', 'committed', held.pass!.pass_id]].sort());
+  expect(await s.sync()).toMatchObject({ status: 'up_to_date', holds_outstanding: 1 });
+  expect(await receipts(s.id)).toEqual(after);
+  expect((await readGitHoldStatuses(engine, [s.id])).get(s.id)).toMatchObject({ count: 1, items: [{ path: 'notes/broken.md', code: 'invalid_frontmatter' }] });
 
-  // Already fixed: a working-tree cursor re-freezes the fixed bytes in place under a new request and imports them.
+  // Already fixed: a working-tree pass imports the fixed bytes under a new request; the old receipt stays as it was.
   await engine.setConfig('sync.holds', 'fail');
   const t = await source(engine, { 'notes/ok.md': note('Ok') });
   t.write('notes/draft.md', FOLDED);
   expect((await t.sync({ workingTree: true })).status).toBe('blocked_by_failures');
-  const [draft] = await engine.executeRaw<{ request_id: string }>("SELECT request_id::text AS request_id FROM persistence_requests WHERE source_id=$1 AND state='failed'", [t.id]);
+  const [draft] = await receipts(t.id);
+  expect(draft).toMatchObject({ state: 'failed', error_code: 'invalid_params', path: 'notes/draft.md' });
   await engine.unsetConfig('sync.holds');
   t.write('notes/draft.md', AUTHOR);
   const fixed = await t.sync({ workingTree: true });
-  expect(fixed.converted_from_failed).toEqual([draft!.request_id]);
-  expect(fixed.status).not.toBe('blocked_by_failures');
+  expect(fixed).toMatchObject({ status: 'synced', pass: { outcome: 'synced' } });
+  expect(fixed.held_count ?? 0).toBe(0);
   expect((await engine.getPage('notes/draft', { sourceId: t.id }))?.title).toBe('Payments roundup');
   expect(await t.holds()).toEqual([]);
-  // No hold remains, but the conversion still shows in sources status.
-  expect((await readGitHoldStatuses(engine, [t.id])).get(t.id)).toMatchObject({ count: 0, items: [],
-    recent_conversions: [{ request_id: draft!.request_id, path: 'notes/draft.md', outcome: 'refrozen' }] });
+  const drafts = (await receipts(t.id)).filter(row => row.path === 'notes/draft.md');
+  expect(drafts).toEqual([draft, expect.objectContaining({ state: 'committed', error_code: null, pass_id: fixed.pass!.pass_id })]);
+  expect(drafts[1]!.request_id).not.toBe(draft!.request_id);
+  expect(await readManagedSyncFailures(engine, [s.id, t.id])).toEqual([]);
 }), 240_000);
 
-test('a flagless sync converts a --no-embed cursor with its stored options, and the loop guard mints no receipt per run', () => each(async engine => {
+// #6712 PR 4b: a non-company source keeps its opt-outs on the pass row's episode, not on a cursor. The --no-embed pass
+// that blocked under sync.holds=fail opened an episode carrying them, so the next flagless pass inherits them
+// (result.inherited_options, as sync-pass-cursor-retirement-6712 shows for a legacy cursor's options) and every request it
+// admits carries noEmbed. Repeated syncs of a refusal the pass held mint no new receipt per run, under the hold policy
+// or sync.holds=fail.
+test('a flagless pass inherits a blocked --no-embed pass\'s options from its episode, and repeated syncs of a held refusal mint no receipt per run, under the hold policy or sync.holds=fail', () => each(async engine => {
+  const receipts = (id: string) => engine.executeRaw<{ request_id: string; path: string | null; state: string; no_embed: boolean | null }>(
+    "SELECT request_id::text AS request_id,intent->>'path' AS path,state,(intent->'processingOptions'->>'noEmbed')::boolean AS no_embed FROM persistence_requests WHERE source_id=$1 ORDER BY sequence", [id]);
   await engine.setConfig('sync.holds', 'fail');
   const s = await source(engine, { 'notes/broken.md': FOLDED });
-  expect((await s.sync({ noEmbed: true })).status).toBe('blocked_by_failures');
+  const blocked = await s.sync({ noEmbed: true });
+  expect(blocked).toMatchObject({ status: 'blocked_by_failures', pass: { outcome: 'blocked' } });
+  const [row] = await engine.executeRaw<{ episode: { inherited: { noEmbed: boolean; from: string } } }>(
+    "SELECT completed_keys->0->'obligations'->'episode' AS episode FROM op_checkpoints WHERE op='managed-sync-pass' AND fingerprint LIKE $1", [s.id + ':%']);
+  expect(row!.episode.inherited).toMatchObject({ noEmbed: true, from: 'flag' });
   await engine.unsetConfig('sync.holds');
   s.write('notes/broken.md', note('Fixed in the working tree only'));
-  // Pinned bytes still refuse, so the entry is held; the stored --no-embed survives the flagless run.
-  const converted = await performManagedSync(engine, { sourceId: s.id, noPull: true });
-  expect(converted.held_count).toBe(1);
-  const [cursor] = await engine.executeRaw<{ completed_keys: Array<{ processingOptions: { noEmbed: boolean } }> }>(
-    "SELECT completed_keys FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [s.id]);
-  expect(cursor!.completed_keys[0]!.processingOptions.noEmbed).toBe(true);
-  const requests = await engine.executeRaw<{ intent: { processingOptions?: { noEmbed: boolean } } }>('SELECT intent FROM persistence_requests WHERE source_id=$1', [s.id]);
-  expect(requests.every(row => !row.intent.processingOptions || row.intent.processingOptions.noEmbed === true)).toBe(true);
+  // Pinned bytes still refuse, so the file is held; the stored --no-embed survives the flagless run.
+  const held = await performManagedSync(engine, { sourceId: s.id, noPull: true });
+  expect(held).toMatchObject({ status: 'first_sync', held_count: 1, held: [{ path: 'notes/broken.md', code: 'invalid_frontmatter' }] });
+  expect(held.inherited_options).toContain('noEmbed');
+  const admitted = await receipts(s.id);
+  expect(admitted.length).toBeGreaterThan(1);
+  expect(admitted.every(receipt => receipt.no_embed === true)).toBe(true);
+  for (let run = 0; run < 2; run++) expect((await performManagedSync(engine, { sourceId: s.id, noPull: true })).status).toBe('up_to_date');
+  expect(await receipts(s.id)).toEqual(admitted);
 
-  // Loop guard: a stored content refusal the screen does not reproduce is re-frozen at most once for the same bytes.
+  // A stored content refusal the screen does not reproduce (a pinned-worktree conflict whose receipt carries an older
+  // YAML refusal text): the next pass under the hold policy holds the file worktree_dirty under one new receipt, and
+  // neither later plain syncs nor sync.holds=fail mint another.
   const t = await source(engine, { 'notes/z.md': note('Z') });
   await t.sync();
   t.write('notes/z.md', note('Z committed')); commit(t.root, 'change z');
   t.write('notes/z.md', note('Z newer uncommitted edit'));
-  // #6340 holds this refusal when holds are on; `sync.holds=fail` leaves the blocked cursor the loop guard is about.
   await engine.setConfig('sync.holds', 'fail');
   try { expect((await t.sync()).status).toBe('blocked_by_failures'); } finally { await engine.executeRaw("DELETE FROM config WHERE key='sync.holds'"); }
   await engine.executeRaw("UPDATE persistence_requests SET error_code='invalid_params',error_message='Invalid YAML frontmatter: bad indentation of a mapping entry (3:1)' WHERE source_id=$1 AND state IN ('failed','conflict')", [t.id]);
-  await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,pending,converted}','true'::jsonb)
-    WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1`, [t.id]);
-  const receipts = async () => (await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1', [t.id])).length;
-  const before = await receipts();
-  for (let run = 0; run < 2; run++) expect((await t.sync()).status).toBe('blocked_by_failures');
-  expect(await receipts()).toBe(before);
+  const stored = await receipts(t.id);
+  const rescreened = await t.sync();
+  expect(rescreened).toMatchObject({ status: 'synced', held: [{ path: 'notes/z.md', code: 'worktree_dirty' }] });
+  const once = await receipts(t.id);
+  expect(once.slice(0, stored.length)).toEqual(stored);
+  expect(once.slice(stored.length).filter(receipt => receipt.path === 'notes/z.md')).toEqual([expect.objectContaining({ state: 'conflict' })]);
+  for (let run = 0; run < 2; run++) expect((await t.sync()).status).toBe('up_to_date');
+  await engine.setConfig('sync.holds', 'fail');
+  try { for (let run = 0; run < 2; run++) expect((await t.sync()).status).toBe('up_to_date'); } finally { await engine.executeRaw("DELETE FROM config WHERE key='sync.holds'"); }
+  expect(await receipts(t.id)).toEqual(once);
+  expect((await t.holds()).map(hold => [hold.path, hold.code, hold.meta.attempts])).toEqual([['notes/z.md', 'worktree_dirty', 1]]);
 }), 240_000);
 
-test('parser regression: stops only when provenance proves the same bytes imported validated; hold policy continues; no provenance holds normally', () => each(async engine => {
+test('parser regression: GBRAIN_SYNC_PARSER_REGRESSION=stop stops only when provenance proves the same bytes imported validated; the default holds and continues; no provenance holds normally', () => each(async engine => {
   const s = await source(engine, { 'notes/a.md': note('A'), 'notes/ok.md': note('Ok') });
   await s.sync();
   const page = (await engine.getPage('notes/a', { sourceId: s.id }))!;
@@ -354,14 +434,16 @@ test('parser regression: stops only when provenance proves the same bytes import
   await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,raw_sha256}',to_jsonb($3::text)) WHERE op=$1 AND fingerprint LIKE $2`,
     [SYNC_IMPORT_PROVENANCE_OP, `${s.id}:%:${page.id}`, sha256(FOLDED)]);
   const head = await s.lastCommit();
-  await expect(s.sync()).rejects.toMatchObject({ code: 'sync_parser_regression' });
+  await withEnv({ GBRAIN_SYNC_PARSER_REGRESSION: 'stop' }, () => expect(s.sync()).rejects.toMatchObject({ code: 'sync_parser_regression' }));
   expect(await s.lastCommit()).toBe(head);
   // #6712 PR 2: a stored sync.parser_regression (retired) is not applied; the process's GBRAIN_SYNC_PARSER_REGRESSION is.
   await engine.setConfig('sync.parser_regression', 'hold');
-  await expect(s.sync({ retryFailed: true })).rejects.toMatchObject({ code: 'sync_parser_regression' });
+  await withEnv({ GBRAIN_SYNC_PARSER_REGRESSION: 'stop' }, () => expect(s.sync({ retryFailed: true })).rejects.toMatchObject({ code: 'sync_parser_regression' }));
   expect(await s.lastCommit()).toBe(head);
+  await engine.setConfig('sync.parser_regression', 'stop');
+  // GBRA-108: with the variable unset the default holds (and a stored stop is not applied either).
+  const held = await withEnv({ GBRAIN_SYNC_PARSER_REGRESSION: undefined }, () => s.sync({ retryFailed: true }));
   await engine.unsetConfig('sync.parser_regression');
-  const held = await withEnv({ GBRAIN_SYNC_PARSER_REGRESSION: 'hold' }, () => s.sync({ retryFailed: true }));
   expect(held.held?.[0]).toMatchObject({ path: 'notes/a.md', code: 'parser_regression' });
   expect(await s.lastCommit()).not.toBe(head);
 

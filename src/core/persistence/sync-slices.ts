@@ -29,13 +29,6 @@ export function syncCursorOptions(opts: SyncOpts): SyncCursorOptions {
 }
 const sliceFingerprint = (sourceId: string, incarnation: string, options: SyncCursorOptions) => `${sourceId}:${incarnation}:${digest(options)}`;
 
-export async function readSyncSlice(engine: Exec, sourceId: string, incarnation: string, options: SyncCursorOptions): Promise<SyncSliceCursor | null> {
-  const [row] = await engine.executeRaw<{ record: SyncSliceCursor }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [SYNC_SLICE_OP, sliceFingerprint(sourceId, incarnation, options)]);
-  const record = row?.record;
-  if (!record || (record.phase !== 'import' && record.phase !== 'delete') || typeof record.target !== 'string' || typeof record.head !== 'string') return null;
-  return { phase: record.phase, after: typeof record.after === 'string' ? record.after : null, head: record.head, target: record.target };
-}
 export async function writeSyncSlice(tx: Exec, sourceId: string, incarnation: string, options: SyncCursorOptions, slice: SyncSliceCursor): Promise<void> {
   await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
     ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,

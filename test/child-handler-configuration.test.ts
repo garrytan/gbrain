@@ -3,9 +3,10 @@ import { checkChildReadiness } from '../src/core/minions/child-readiness.ts';
 import { runJobInChild } from '../src/core/minions/child-job-runner.ts';
 import { LocalConfigurationError } from '../src/core/minions/configuration-error.ts';
 import { detectTini } from '../src/core/minions/spawn-helpers.ts';
+import { fileURLToPath } from 'node:url';
 
 test('actual isolated handler fault after healthy readiness preserves typed outcome and confirms supported cleanup', async () => {
-  const invocation = { cmd: process.execPath, argsPrefix: [new URL('./fixtures/child-configuration-handler.ts', import.meta.url).pathname] };
+  const invocation = { cmd: process.execPath, argsPrefix: [fileURLToPath(new URL('./fixtures/child-configuration-handler.ts', import.meta.url))] };
   const tiniPath = detectTini();
   await checkChildReadiness({ invocation, tiniPath });
   const events: string[] = [];

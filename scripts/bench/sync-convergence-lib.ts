@@ -24,7 +24,11 @@ import { PGBOUNCER_IMAGE } from './managed-sync-catchup-lib.ts';
 
 /** Bump when fixture paths or bytes change, so cached fixtures are regenerated. */
 export const FIXTURE_CONTENT_VERSION = 1;
-export const PRESETS: Record<string, number> = { '61k': 61_000, '600k': 600_000 };
+/** Every every-th file (i % every === every - 1) is a large Markdown file of bytes plus up to bytes/16 more. */
+export interface LargeBlobs { every: number; bytes: number }
+export interface FixtureShape { files: number; large?: LargeBlobs }
+export const PRESETS: Record<string, FixtureShape> = { '61k': { files: 61_000 }, '600k': { files: 600_000 },
+  '6858': { files: 308_000, large: { every: 100, bytes: 2_150_000 } } };
 const COMMITTER = 'Bench Fixture <bench@example.invalid>';
 const BASE_TIME = 1_700_000_000;
 
@@ -40,6 +44,7 @@ const FILLER = (() => {
   }
   return out;
 })();
+const FILLER_BYTES = Buffer.from(FILLER);
 
 /** The git path of file i: two levels of 100-way directory fan-out. */
 export function fixturePath(i: number): string {
@@ -47,11 +52,19 @@ export function fixturePath(i: number): string {
   return `d${pad(i % 100)}/e${pad(Math.floor(i / 100) % 100)}/note-${i}.md`;
 }
 
-/** The bytes of file i (ASCII, 1-2 KB), optionally with a drift marker appended. */
-export function fixtureContent(i: number, drift?: number): Buffer {
+/** The bytes of file i (ASCII, 1-2 KB, or a large file under large), optionally with a drift marker appended. */
+export function fixtureContent(i: number, drift?: number, large?: LargeBlobs): Buffer {
   const length = 1024 + ((i * 7919) % 1024);
   const offset = (i * 131) % 4096;
   const tail = drift === undefined ? '' : `\nDrift edit ${drift}.\n`;
+  if (large && i % large.every === large.every - 1) {
+    const body = Buffer.alloc(large.bytes + ((i * 7919) % (large.bytes >> 4)));
+    for (let at = 0, k = i; at < body.length; at += 4096) {
+      k = (Math.imul(k, 1103515245) + 12345) >>> 0;
+      FILLER_BYTES.copy(body, at, k % 4096, (k % 4096) + Math.min(4096, body.length - at));
+    }
+    return Buffer.concat([Buffer.from(`---\ntitle: Note ${i}\n---\nSynthetic body ${i}.\n\n`), body, Buffer.from(`\n${tail}`)]);
+  }
   return Buffer.from(`---\ntitle: Note ${i}\n---\nSynthetic body ${i}.\n\n${FILLER.slice(offset, offset + length)}\n${tail}`);
 }
 
@@ -95,7 +108,7 @@ function inlineFile(path: string, bytes: Buffer): Buffer[] {
   return [Buffer.from(`M 100644 inline ${path}\ndata ${bytes.length}\n`), bytes, Buffer.from('\n')];
 }
 
-export interface Fixture { dir: string; repo: string; files: number; base: string; cached: boolean; generate_ms: number; timings_ms: Record<string, number> }
+export interface Fixture { dir: string; repo: string; files: number; large?: LargeBlobs; base: string; cached: boolean; generate_ms: number; timings_ms: Record<string, number> }
 
 /**
  * The cached fixture repository for files files, generated on first use: one
@@ -103,13 +116,13 @@ export interface Fixture { dir: string; repo: string; files: number; base: strin
  * materialize the worktree and an index refresh so the index is stat-clean.
  * A READY stamp marks a complete generation; anything else is regenerated.
  */
-export async function ensureFixture(cacheDir: string, files: number, log: (line: string) => void): Promise<Fixture> {
-  const dir = join(cacheDir, `${files}-v${FIXTURE_CONTENT_VERSION}`);
+export async function ensureFixture(cacheDir: string, files: number, log: (line: string) => void, large?: LargeBlobs): Promise<Fixture> {
+  const dir = join(cacheDir, `${files}${large ? `-L${large.every}x${large.bytes}` : ''}-v${FIXTURE_CONTENT_VERSION}`);
   const repo = join(dir, 'repo');
   const ready = join(dir, 'READY');
   if (existsSync(ready)) {
     const stamp = JSON.parse(readFileSync(ready, 'utf8')) as { base: string; files: number; timings_ms?: Record<string, number> };
-    if (stamp.files === files) return { dir, repo, files, base: stamp.base, cached: true, generate_ms: 0, timings_ms: stamp.timings_ms ?? {} };
+    if (stamp.files === files) return { dir, repo, files, large, base: stamp.base, cached: true, generate_ms: 0, timings_ms: stamp.timings_ms ?? {} };
   }
   const started = performance.now();
   rmSync(dir, { recursive: true, force: true });
@@ -119,7 +132,7 @@ export async function ensureFixture(cacheDir: string, files: number, log: (line:
   log(`fixture: generating ${files} files with git fast-import in ${repo}`);
   await fastImport(repo, async write => {
     await write(`commit refs/heads/main\ncommitter ${COMMITTER} ${BASE_TIME} +0000\ndata 18\nsynthetic fixture\n`);
-    for (let i = 0; i < files; i++) for (const part of inlineFile(fixturePath(i), fixtureContent(i))) await write(part);
+    for (let i = 0; i < files; i++) for (const part of inlineFile(fixturePath(i), fixtureContent(i, undefined, large))) await write(part);
     await write('\n');
   });
   const imported = performance.now();
@@ -129,8 +142,8 @@ export async function ensureFixture(cacheDir: string, files: number, log: (line:
   git(repo, ['update-index', '-q', '--refresh']);
   const refreshed = performance.now();
   const base = git(repo, ['rev-parse', 'HEAD']);
-  for (const i of files > 1 ? [0, files - 1] : [0]) {
-    const expected = gitBlobOid(fixtureContent(i), base.length === 64 ? 'sha256' : 'sha1');
+  for (const i of [...new Set([0, files - 1, ...(large && files >= large.every ? [large.every - 1] : [])])]) {
+    const expected = gitBlobOid(fixtureContent(i, undefined, large), base.length === 64 ? 'sha256' : 'sha1');
     const actual = git(repo, ['rev-parse', `HEAD:${fixturePath(i)}`]);
     if (actual !== expected) throw new Error(`fixture blob mismatch for ${fixturePath(i)}: git ${actual}, generator ${expected}`);
   }
@@ -139,7 +152,7 @@ export async function ensureFixture(cacheDir: string, files: number, log: (line:
     index_refresh: Math.round(refreshed - materialized), total: Math.round(generate_ms) };
   log(`fixture: ${JSON.stringify(timings_ms)} ms`);
   writeFileSync(ready, JSON.stringify({ base, files, content_version: FIXTURE_CONTENT_VERSION, timings_ms }) + '\n');
-  return { dir, repo, files, base, cached: false, generate_ms, timings_ms };
+  return { dir, repo, files, large, base, cached: false, generate_ms, timings_ms };
 }
 
 /** Moves main and the worktree back to the fixture's base commit (a previous run's drift commit is discarded). */
@@ -156,7 +169,7 @@ export async function applyDrift(fixture: Fixture, k: number): Promise<{ head: s
   const message = `drift ${indices.length}\n`;
   await fastImport(fixture.repo, async write => {
     await write(`commit refs/heads/main\ncommitter ${COMMITTER} ${BASE_TIME + 60} +0000\ndata ${message.length}\n${message}from ${from}\n`);
-    for (const [j, i] of indices.entries()) for (const part of inlineFile(fixturePath(i), fixtureContent(i, j))) await write(part);
+    for (const [j, i] of indices.entries()) for (const part of inlineFile(fixturePath(i), fixtureContent(i, j, fixture.large))) await write(part);
     await write('\n');
   });
   git(fixture.repo, ['read-tree', '-u', '--reset', 'refs/heads/main']);
@@ -213,7 +226,7 @@ export async function seedSource(engine: BrainEngine, input: { sourceId: string;
       const rows: Array<{ slug: string; title: string; body: string; path: string; revision: string }> = [];
       const disk = new Map<string, { sha: string; oid: string; revision: string }>();
       for (let i = start; i < end; i++) {
-        const path = fixturePath(i), bytes = fixtureContent(i), revision = randomUUID();
+        const path = fixturePath(i), bytes = fixtureContent(i, undefined, fixture.large), revision = randomUUID();
         rows.push({ slug: resolveSlugForPath(path), title: `Note ${i}`, body: `Synthetic body ${i}.`, path, revision });
         disk.set(path, { sha: sha256(bytes), oid: gitBlobOid(bytes, format), revision });
       }
@@ -339,13 +352,24 @@ export function breakdown(rounds: ReadonlyArray<Record<string, number>>): Record
 }
 
 /** Samples process.memoryUsage().rss every everyMs: phasePeak() is the maximum since the last mark(), stop() the overall maximum. */
-export function startRssSampler(everyMs: number): { phasePeak: () => number; mark: () => void; stop: () => { peak: number; samples: number } } {
-  let peak = process.memoryUsage().rss, phase = peak, samples = 1;
-  const timer = setInterval(() => { const rss = process.memoryUsage().rss; samples++; if (rss > peak) peak = rss; if (rss > phase) phase = rss; }, everyMs);
+/**
+ * RSS every `everyMs` (overall and per phase peaks), and the event loop's lag: how late each tick fired past `everyMs`,
+ * the longest stretch a pass kept timers from running (#6712 PR 4b, ruling 4).
+ */
+export function startRssSampler(everyMs: number): { phasePeak: () => number; phaseLag: () => number; mark: () => void; stop: () => { peak: number; samples: number; maxLagMs: number } } {
+  let peak = process.memoryUsage().rss, phase = peak, samples = 1, last = performance.now(), maxLag = 0, phaseLag = 0;
+  const timer = setInterval(() => {
+    const now = performance.now(), lag = Math.max(0, now - last - everyMs);
+    last = now;
+    if (lag > maxLag) maxLag = lag;
+    if (lag > phaseLag) phaseLag = lag;
+    const rss = process.memoryUsage().rss; samples++; if (rss > peak) peak = rss; if (rss > phase) phase = rss;
+  }, everyMs);
   return {
     phasePeak: () => Math.max(phase, process.memoryUsage().rss),
-    mark: () => { phase = process.memoryUsage().rss; },
-    stop: () => { clearInterval(timer); return { peak: Math.max(peak, process.memoryUsage().rss), samples }; },
+    phaseLag: () => Math.round(phaseLag),
+    mark: () => { phase = process.memoryUsage().rss; phaseLag = 0; },
+    stop: () => { clearInterval(timer); return { peak: Math.max(peak, process.memoryUsage().rss), samples, maxLagMs: Math.round(maxLag) }; },
   };
 }
 

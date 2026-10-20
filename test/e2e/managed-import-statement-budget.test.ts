@@ -12,7 +12,8 @@
  * one per 500 rows); the transaction stays within its budget; no statement text
  * runs per row or per code reference anywhere in the sync.
  * Fails when: a per-row statement enters the import, a chunked insert loses its
- * batching, or the publication transaction grows past its budget.
+ * batching, or the publication transaction grows past its budget (the folded pass stamp inside it has its own budget,
+ * #6712 PR 4b).
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -22,12 +23,22 @@ import { hasDatabase } from './helpers.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { readSqlTrace, type StatementRecord } from '../helpers/statement-counter.ts';
-import { byText, chunkOf, CHUNKED, PAGE_SLUG, prepareManagedImport, publicationOf } from '../helpers/managed-import-budget.ts';
+import { byText, chunkOf, CHUNKED, PAGE_SLUG, prepareManagedImport, publicationOf, splitFoldBlock } from '../helpers/managed-import-budget.ts';
 import type { YcShapedPage } from '../helpers/yc-shaped-page.ts';
 import { withEnv } from '../helpers/with-env.ts';
 
-/** About 10% over the measured publication transaction at 1x (#6712 L6 measured 67 on Postgres; 317 before code references were batched). */
+/** About 10% over the import's own statements in the publication transaction at 1x (#6712 L6 measured 67 on Postgres; 317 before code references were batched); the folded stamp is budgeted apart. */
 const PUBLICATION_BUDGET = 74;
+/**
+ * #6712 PR 4b: the folded pass stamp, budgeted on its own inside the same transaction (about 10% over 17 measured on
+ * Postgres). A writeback import publishes the source checkpoint here instead of as a separate checkpoint request, so these
+ * statements replace that request's stamp, admission, claim and effect transactions (a net 46 fewer statements across the
+ * PGLite run): the savepoint and its release (2); the sync lease check (1); the pass row read, the recovery and open-work
+ * read, the request high-water mark and the open-at-stamp read (4); the source's last_commit and slug mode (1); the
+ * fold proof (1) and its SET LOCAL jit = off (1); the checkpoint-blocker check (1); the proof's two page reads (2); the last_commit update, the pass
+ * row write, the normalized-fences read and the checkpoint row write (4).
+ */
+const FOLD_BUDGET = 19;
 const PER_ROW_CEILING = 40;
 const SIZES = [0.5, 1, 2] as const;
 
@@ -44,7 +55,7 @@ function measured(scale: number): Promise<Measured> {
   return run;
 }
 async function measure(scale: number): Promise<Measured> {
-  // One file for every size: the trace buffers process-wide and flushes into the first file it was given.
+  // One file for every size: the trace writes each pool's records to the file it was created with.
   const trace = join(home, 'trace.jsonl');
   return withEnv({ GBRAIN_SQL_TRACE: trace, GBRAIN_SQL_TRACE_LABEL: 'import-budget', GBRAIN_HOME: join(home, `home-${scale}`) }, async () => {
     const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!, 'instance', 6);
@@ -89,9 +100,14 @@ d('managed import statement budget (Postgres)', () => {
 
   test('the publication transaction stays within its budget at 1x', async () => {
     const { publication } = await measured(1);
-    const statements = publication.filter(record => record.kind === 'execute' || record.kind === 'simple');
-    expect(statements.length).toBeLessThanOrEqual(PUBLICATION_BUDGET);
+    expect(splitFoldBlock(publication).imported.length).toBeLessThanOrEqual(PUBLICATION_BUDGET);
   }, 300_000);
+
+  test('the folded pass stamp stays within its own budget at 1x', async () => {
+    const { fold } = splitFoldBlock((await measured(1)).publication);
+    expect(fold.length).toBeGreaterThan(0);
+    expect(fold.length).toBeLessThanOrEqual(FOLD_BUDGET);
+  }, 240_000);
 
   test('no statement runs per row or per code reference anywhere in the import', async () => {
     for (const scale of SIZES) {

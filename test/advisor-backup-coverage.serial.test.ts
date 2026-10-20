@@ -301,7 +301,7 @@ describe('collectBackupCoverage remote (remote:true)', () => {
       warnCache({
         overall: 'ok',
         totals: { assets: 1, no_remote: 0, unpushed: 0, failing: 0, recoverable_repos: 1, pages_at_risk: 0 },
-        assets: [{ kind: 'source_repo', id: 'fine-src', state: 'ok' }],
+        assets: [{ kind: 'source_repo', id: 'fine-src', state: 'ok', verification: { state: 'verified', checked_at: '2026-06-01T00:00:00Z' } }],
       }),
     );
     const { engine } = makeEngine();
@@ -316,6 +316,62 @@ describe('collectBackupCoverage remote (remote:true)', () => {
     const findings = await collectBackupCoverage.collect(ctx(engine, { remote: true }));
     expect(findings).toEqual([]);
     expect(existsSync(nagPath)).toBe(false);
+  });
+});
+
+// ── #6942: the remote branch reads the cache through currentBackupEvidence ──
+
+describe('collectBackupCoverage remote — cached evidence age (#6942)', () => {
+  const NOW = Date.parse('2026-06-01T00:00:00Z');
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const hour = 60 * 60 * 1000;
+  function verifiedOkCache(verifiedAt: number, over: Partial<BackupStatus> = {}): BackupStatus {
+    return warnCache({
+      overall: 'ok',
+      checked_at: iso(verifiedAt),
+      totals: { assets: 1, no_remote: 0, unpushed: 0, failing: 0, recoverable_repos: 1, pages_at_risk: 0 },
+      assets: [{
+        kind: 'source_repo',
+        id: 'xylophone-secret-source-991',
+        state: 'ok',
+        verification: { state: 'verified', checked_at: iso(verifiedAt) },
+      }],
+      ...over,
+    });
+  }
+  const noEngine = { executeRaw: async () => { throw new Error('remote collect must not query the engine'); } } as unknown as AdvisorContext['engine'];
+
+  test('fresh verified proof (10 minutes old) → zero findings', async () => {
+    saveBackupStatus(verifiedOkCache(NOW - 10 * 60 * 1000));
+    expect(await collectBackupCoverage.collect(ctx(noEngine, { remote: true }))).toEqual([]);
+    expect(existsSync(nagPath)).toBe(false);
+  });
+
+  test('expired verified proof (2 hours old) under a cached ok → aggregate warn naming the stale remote check', async () => {
+    saveBackupStatus(verifiedOkCache(NOW - 2 * hour));
+    const findings = await collectBackupCoverage.collect(ctx(noEngine, { remote: true }));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.id).toBe('backup_coverage_aggregate');
+    expect(findings[0]?.severity).toBe('warn');
+    expect(findings[0]?.title).toStartWith('1 of 1 knowledge assets lack verified recovery (1 remote not verified: stale)');
+    expect(JSON.stringify(findings)).not.toContain('xylophone-secret-source-991');
+    expect(existsSync(nagPath)).toBe(false);
+  });
+
+  test('future-dated cache and proof → aggregate warn, never trusted as ok', async () => {
+    saveBackupStatus(verifiedOkCache(NOW + 48 * hour));
+    const findings = await collectBackupCoverage.collect(ctx(noEngine, { remote: true }));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.id).toBe('backup_coverage_aggregate');
+    expect(findings[0]?.title).toContain('remote not verified: stale');
+  });
+
+  test('degraded cache with a fresh proof → aggregate warn', async () => {
+    saveBackupStatus(verifiedOkCache(NOW - 10 * 60 * 1000, { degraded: true }));
+    const findings = await collectBackupCoverage.collect(ctx(noEngine, { remote: true }));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.id).toBe('backup_coverage_aggregate');
+    expect(findings[0]?.severity).toBe('warn');
   });
 });
 

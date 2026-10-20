@@ -44,7 +44,8 @@ export const HERMES_SPEC_TARGET: HostSpecTarget = {
     'title, started_at REAL (epoch seconds), ended_at, cwd, model. messages: ' +
     'session_id, role, content TEXT, timestamp REAL. The import keeps role ' +
     "user/assistant rows with non-empty content; content that looks like a " +
-    'JSON block array is unwrapped to its text blocks. active/compacted ' +
+    'JSON block array (bare or json:-prefixed) is unwrapped to its text ' +
+    'blocks, image blocks as an [image] placeholder. active/compacted ' +
     'flags are IGNORED (the archive wants full history, not the live ' +
     'context window). PROVISIONAL: no populated production sample verified.',
 };
@@ -59,14 +60,20 @@ function epochToIso(v: unknown): string {
   return new Date(Math.round(v * 1000)).toISOString();
 }
 
-/** Unwrap content that is a JSON block array; pass plain text through. */
+/** Hermes stores list-shaped message content as this prefix plus the JSON array. */
+const CONTENT_JSON_PREFIX = 'json:';
+const IMAGE_PLACEHOLDER = '[image]';
+const IMAGE_BLOCK_TYPES = new Set(['image_url', 'image', 'input_image']);
+
+/** Unwrap content that is a JSON block array (bare or `json:`-prefixed); image blocks become a placeholder; pass plain text through. */
 function contentToText(content: unknown): string {
   if (typeof content !== 'string') return '';
   const t = content.trim();
   if (!t) return '';
-  if (t.startsWith('[')) {
+  const json = t.startsWith(CONTENT_JSON_PREFIX) ? t.slice(CONTENT_JSON_PREFIX.length).trimStart() : t;
+  if (json.startsWith('[')) {
     try {
-      const blocks = JSON.parse(t) as unknown;
+      const blocks = JSON.parse(json) as unknown;
       if (Array.isArray(blocks)) {
         const parts: string[] = [];
         for (const block of blocks) {
@@ -74,6 +81,7 @@ function contentToText(content: unknown): string {
           else if (typeof block === 'object' && block !== null) {
             const b = block as Record<string, unknown>;
             if (typeof b.text === 'string' && b.text.trim()) parts.push(b.text);
+            else if (typeof b.type === 'string' && IMAGE_BLOCK_TYPES.has(b.type)) parts.push(IMAGE_PLACEHOLDER);
           }
         }
         return parts.join('\n').trim();

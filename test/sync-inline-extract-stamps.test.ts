@@ -225,4 +225,31 @@ describe('#1696 — inline sync extract stamps links_extracted_at', () => {
     expect(timeline.processed).toEqual(['_note', '.github/note', 'companies/acme']);
     expect(slugsSafeToStamp(links, timeline)).toEqual(['_note', '.github/note', 'companies/acme']);
   }, 60_000);
+  // #6954: the sync timeline hook used to swallow a failed entry write and stamp the page anyway.
+  test('a timeline write sync loses leaves the page due and reports it', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    writeAcme('Acme is a company.\n\n## Timeline\n- **2026-01-02** | Signed the term sheet');
+    git('git add -A && git commit -m "add timeline"');
+    await engine.executeRaw(`CREATE OR REPLACE FUNCTION test_lose_timeline() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'timeline write lost'; END $$ LANGUAGE plpgsql`);
+    await engine.executeRaw('CREATE TRIGGER test_lose_timeline BEFORE INSERT ON timeline_entries FOR EACH ROW EXECUTE FUNCTION test_lose_timeline()');
+    let result: Awaited<ReturnType<typeof performSync>>;
+    try {
+      result = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    } finally {
+      await engine.executeRaw('DROP TRIGGER IF EXISTS test_lose_timeline ON timeline_entries');
+      await engine.executeRaw('DROP FUNCTION IF EXISTS test_lose_timeline()');
+    }
+    expect(result.extract_error ?? '').toContain('timeline write lost');
+    expect(await stampOf('companies/acme')).toBeNull();
+
+    const { extractLinksForSlugs, extractTimelineForSlugs, slugsSafeToStamp } = await import('../src/commands/extract.ts');
+    const retried = slugsSafeToStamp(
+      await extractLinksForSlugs(engine, repoPath, ['companies/acme']),
+      await extractTimelineForSlugs(engine, repoPath, ['companies/acme']),
+    );
+    expect(retried).toEqual(['companies/acme']);
+    const [row] = await engine.executeRaw<{ n: number | string }>(
+      `SELECT count(*) AS n FROM timeline_entries t JOIN pages p ON p.id = t.page_id WHERE p.source_id = 'default' AND p.slug = 'companies/acme'`);
+    expect(Number(row!.n)).toBe(1);
+  }, 60_000);
 });

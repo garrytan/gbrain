@@ -116,6 +116,8 @@ export interface ExtractAtomsDrainDeps {
     budget?: { spentUsd: number; capUsd: number };
     /** #6503: items the batch cut at `cycle.extract_atoms.max_input_chars` (partial disposition, not complete). */
     inputTruncated?: number;
+    /** #6817: with `providerFailure`, what the outage was; unset reads as `transient`. */
+    providerFailureClass?: DrainProviderFailureClass;
   }>;
   /**
    * Count remaining eligible-but-unextracted pages, or null on query error.
@@ -154,6 +156,14 @@ export interface ExtractAtomsDrainOpts {
 export type DrainStop =
   | 'drained' | 'window' | 'deadline' | 'lock_lost' | 'aborted'
   | 'no_progress' | 'max_batches' | 'provider_failure' | 'budget';
+
+/**
+ * #6817: why every item of a provider_failure batch failed. `auth`, `billing`,
+ * `model_not_found` and `content_block` repeat on every retry until someone
+ * changes the key, plan, model or content; `rate_limit` and `transient`
+ * (5xx, timeout, network, an unclassified error) can clear on their own.
+ */
+export type DrainProviderFailureClass = 'auth' | 'billing' | 'model_not_found' | 'content_block' | 'rate_limit' | 'transient';
 
 export const DRAIN_COUNT_TIMEOUT_MS = 60_000;
 
@@ -217,6 +227,8 @@ export interface ExtractAtomsDrainResult {
   budget_usd?: number;
   /** #6503: items cut at the input cap across every batch; the model did not read their tails and they are not marked complete. */
   input_truncated?: number;
+  /** #6817: with `status: 'provider_failure'`, the failing batch's class (`transient` when the batch named none). */
+  provider_failure_class?: DrainProviderFailureClass;
 }
 
 /**
@@ -251,6 +263,7 @@ export async function runExtractAtomsDrain(
   // the returned `status`, independent of how `stopped` reads after the
   // final (possibly overriding) remaining-count check below.
   let providerFailure = false;
+  let providerFailureClass: DrainProviderFailureClass = 'transient';
   // #4539: accumulate per-item failure visibility across batches.
   let failureCount = 0;
   // #4730: bounded typed per-item records (batch order, sanitized).
@@ -274,6 +287,7 @@ export async function runExtractAtomsDrain(
     last_error: lastError,
     ...(stopped === 'budget' && budget ? { spent_usd: budget.spentUsd, budget_usd: budget.capUsd } : {}),
     input_truncated: inputTruncated,
+    ...(providerFailure ? { provider_failure_class: providerFailureClass } : {}),
   });
   try {
     return await deps.withLock(async (signal) => {
@@ -380,6 +394,7 @@ export async function runExtractAtomsDrain(
           // drain as a clean completion.
           if (r.providerFailure) {
             providerFailure = true;
+            providerFailureClass = r.providerFailureClass ?? 'transient';
             stopped = 'provider_failure';
             break;
           }
@@ -434,6 +449,18 @@ export async function runExtractAtomsDrain(
     if (lock?.aborted && err === lock.reason) return result('lock_lost', lastCount);
     throw err;
   }
+}
+
+/**
+ * #6817: classify a batch whose every item failed. The phase's whole-run halt
+ * class (`details.aborted_global_error`) wins; a batch whose every failure is
+ * a provider content block is `content_block`; anything else is `transient`,
+ * because nothing shows that retrying cannot succeed.
+ */
+export function batchProviderFailureClass(halted: unknown, failures: ReadonlyArray<{ reason: string }>): DrainProviderFailureClass {
+  if (halted === 'auth' || halted === 'billing' || halted === 'model_not_found' || halted === 'rate_limit') return halted;
+  if (failures.length > 0 && failures.every(f => f.reason.startsWith('provider blocked content'))) return 'content_block';
+  return 'transient';
 }
 
 // ─── Shared wiring helper (v0.42.x #1685 DECISION 5A) ──────────────────────
@@ -536,6 +563,7 @@ export async function runExtractAtomsDrainForSource(
           extracted: Number(d.atoms_extracted ?? 0),
           skipped: Number(d.duplicates_skipped ?? 0),
           providerFailure: failures.length > 0 && itemsSucceeded === 0,
+          providerFailureClass: batchProviderFailureClass(d.aborted_global_error, typedFailures),
           failureCount: failures.length,
           failures: typedFailures,
           budgetSkipped: Number(d.pages_skipped_budget ?? 0) + Number(d.transcripts_skipped_budget ?? 0),

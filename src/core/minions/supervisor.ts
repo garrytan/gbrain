@@ -47,7 +47,7 @@ import { dirname, resolve } from 'path';
 import { hostname } from 'os';
 import type { BrainEngine } from '../engine.ts';
 import { tryAcquireDbLock, waitForDbLockTakeover, inspectLock, isLockHolderLive, type DbLockHandle } from '../db-lock.ts';
-import { currentBrainId, readWorkers } from './worker-registry.ts';
+import { currentBrainId, readWorkers, workerRegistryReadFailure } from './worker-registry.ts';
 import { autopilotOperatorPauseMarkerPath, autopilotPaused } from '../autopilot-paths.ts';
 import { registerSignalOwner, triggerCleanupAndExit } from '../process-cleanup.ts';
 import { resolveEnvNumber } from '../env-number.ts';
@@ -335,7 +335,7 @@ export interface QueueSubmitState {
   depth?: number;
   /** Age of the oldest waiting job on the queue, or null when depth is 0. */
   oldest_waiting_age_seconds?: number | null;
-  /** A supervisor DB lock is live, a registered worker serves the queue, or a live-lock active job proves one exists. */
+  /** A supervisor DB lock is live, a registered worker serves the queue, or a live-lock active job proves one exists. Absent when the worker registry is unreadable and nothing else proves a worker (liveness unknown). */
   worker_alive?: boolean;
   /** The autopilot pause marker is present — nothing will start until it clears. */
   paused?: boolean;
@@ -427,14 +427,14 @@ async function probeQueueStateInner(
   } catch {
     // Pre-migration brains lack the locks table — registry/active signals stand.
   }
-  let registeredWorker = false;
+  // An unreadable registry leaves the other signals standing, but their absence is then unknown liveness, not "no worker".
+  let registeredWorker = false, registryErrno: string | null = null;
   try {
     registeredWorker = readWorkers().some((w) => w.queue === queue);
-  } catch {
-    // Registry dir unreadable — remaining signals stand.
-  }
+  } catch (e) { registryErrno = workerRegistryReadFailure(e).errno; }
 
   const workerAlive = supervisorLive || registeredWorker || sig.activeHealthy > 0;
+  const livenessUnknown = !workerAlive && registryErrno !== null;
   const paused = autopilotPaused();
 
   // Same operator knob the doctor's queue_health depth check reads.
@@ -445,11 +445,8 @@ async function probeQueueStateInner(
       ? 'system paused by the operator (gbrain autopilot resume clears it) — job will not start until the pause clears'
       : 'system paused for migration — job will not start until the pause clears');
   }
-  if (!workerAlive) {
-    warnings.push(
-      `no live worker detected for queue '${queue}' — job will wait until one starts (gbrain jobs work --queue ${queue})`,
-    );
-  }
+  if (livenessUnknown) warnings.push(`worker liveness unknown for queue '${queue}': the worker registry is unreadable (${registryErrno}); check gbrain jobs supervisor status`);
+  else if (!workerAlive) warnings.push(`no live worker detected for queue '${queue}' — job will wait until one starts (gbrain jobs work --queue ${queue})`);
   if (sig.waiting > threshold) {
     warnings.push(`waiting depth ${sig.waiting} exceeds GBRAIN_QUEUE_WAITING_THRESHOLD (${threshold})`);
   }
@@ -457,7 +454,7 @@ async function probeQueueStateInner(
   const state: QueueSubmitState = {
     depth: sig.waiting,
     oldest_waiting_age_seconds: oldestAge,
-    worker_alive: workerAlive,
+    ...(livenessUnknown ? {} : { worker_alive: workerAlive }),
   };
   if (paused) state.paused = true;
   if (warnings.length > 0) state.warning = warnings.join('; ');

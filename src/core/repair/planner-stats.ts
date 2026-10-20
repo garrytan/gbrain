@@ -17,6 +17,7 @@
  * it. On Postgres this repair is the recovery (autovacuum waits for 10% of the
  * rows to change), run by an operator.
  */
+import { analyzeDeferred } from '../analyze-lock.ts';
 import { PLANNER_STATS_TABLES, type PlannerStatsTable } from '../planner-stats-schema.ts';
 import { readExpressionIndexesWithoutStats, readPlannerTableStates, repairPlannerTable } from '../planner-stats.ts';
 import { missingSearchStatistics, refreshProjectionStatistics } from '../search/projection-statistics.ts';
@@ -49,7 +50,12 @@ export const plannerStatsRepair: RepairHandler = {
   async apply(ctx, item) {
     if (item.slug === SEARCH_STATISTICS_ITEM) return refreshProjectionStatistics(ctx.engine);
     if (!PLANNER_STATS_TABLES.includes(item.slug as PlannerStatsTable)) return false;
-    await repairPlannerTable(ctx.engine, item.slug as PlannerStatsTable);
+    try {
+      await repairPlannerTable(ctx.engine, item.slug as PlannerStatsTable);
+    } catch (error) {
+      if (!analyzeDeferred(error)) throw error;
+      return { applied: false, outcome: 'deferred', reason: `another session (a vacuum, an ANALYZE or an index build) holds ${item.slug}; the repair never waits on it, so it cannot cancel an autovacuum (#7083). Rerun the repair once that session finishes.` };
+    }
     return true;
   },
 };

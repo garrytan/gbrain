@@ -1,0 +1,46 @@
+{
+  "workflow_runs": [
+    {
+      "conclusion": "success",
+      "created_at": "2026-10-18T23:01:27Z",
+      "event": "push",
+      "head_branch": "master",
+      "head_repository": {
+        "full_name": "garrytan/gbrain"
+      },
+      "head_sha": "f1d9093164aae6e861646dc51a9a00b16d357988",
+      "html_url": "https://github.com/garrytan/gbrain/actions/runs/39174731800",
+      "id": 39174731800,
+      "name": "Test",
+      "path": ".github/workflows/test.yml",
+      "repository": {
+        "full_name": "garrytan/gbrain"
+      },
+      "run_attempt": 1,
+      "run_number": 10229,
+      "status": "completed",
+      "workflow_id": 258320022
+    },
+    {
+      "conclusion": "success",
+      "created_at": "2026-10-18T22:05:57Z",
+      "event": "workflow_dispatch",
+      "head_branch": "capy/gbra135-ci-cost",
+      "head_repository": {
+        "full_name": "garrytan/gbrain"
+      },
+      "head_sha": "13366cdef9f0c62eb62fd5e2e06be513eb4d39c4",
+      "html_url": "https://github.com/garrytan/gbrain/actions/runs/39170735990",
+      "id": 39170735990,
+      "name": "Test",
+      "path": ".github/workflows/test.yml",
+      "repository": {
+        "full_name": "garrytan/gbrain"
+      },
+      "run_attempt": 1,
+      "run_number": 10224,
+      "status": "completed",
+      "workflow_id": 258320022
+    }
+  ]
+}

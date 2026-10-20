@@ -368,8 +368,9 @@ export const PAGE_REMOVAL_OPERATIONS: readonly string[] = ['delete_page', 'purge
  * failed request `r` (both `persistence_requests` aliases): the same intent committed, failed or still pending; a later
  * page removal committed or pending; for a `put_page`, any later write committed or pending, or a later caller
  * `put_page` that failed (the newer content); #6834: for a refused sync checkpoint, any later committed checkpoint of the
- * source (both read by kind; a compacted row, which keeps no kind, by its operation). `r` must expose `id`.
- * Literal strings only; NULL-safe for a compacted `c` (no intent).
+ * source (both read by kind; a compacted row, which keeps no kind, by its operation); #6824: for a refused connector
+ * write, a later committed connector retry whose recorded `retryOf` lineage reaches it (connectorRetrySql). `r` must
+ * expose `id`. Literal strings only; NULL-safe for a compacted `c` (no intent).
  */
 export function supersessionSql(r: string, c: string): string {
   const removals = PAGE_REMOVAL_OPERATIONS.map(op => `'${op}'`).join(',');
@@ -379,7 +380,38 @@ export function supersessionSql(r: string, c: string): string {
     OR (${r}.slug='__managed_sync_checkpoint__' AND ${r}.operation='submit_job' AND ${c}.state='committed' AND ${c}.operation='submit_job'
       AND COALESCE((SELECT k.intent->>'kind' FROM persistence_requests k WHERE k.id=${r}.id),'managed_sync_checkpoint')='managed_sync_checkpoint'
       AND COALESCE(${c}.intent->>'kind','managed_sync_checkpoint')='managed_sync_checkpoint')
-    OR (${r}.operation='put_page' AND ${c}.state='failed' AND ${c}.operation='put_page' AND COALESCE(NOT (${c}.intent ? 'kind'), false))))`;
+    OR (${r}.operation='put_page' AND ${c}.state='failed' AND ${c}.operation='put_page' AND COALESCE(NOT (${c}.intent ? 'kind'), false))
+    OR ${connectorRetrySql(r, c)}))`;
+}
+
+/** Hops a connector retry's `retryOf` lineage is followed back; a longer chain leaves the refusal unresolved (fail closed). */
+export const CONNECTOR_RETRY_LINEAGE_MAX_DEPTH = 32;
+const CONNECTOR_WRITE_KINDS = `'connector_v2_import','connector_v2_delete','connector_v2_checkpoint'`;
+const UUID_TEXT = `'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'`;
+
+/**
+ * #6824: a connector retry records `retryBase`/`retryOf`/`retryAttempt` in its intent, so its digest never equals the
+ * refusal it replaces. A committed retry `c` (read whole as `cc` by its unique sequence) supersedes the refused `r`
+ * (read whole as `k` by id; callers may pass narrow row aliases) only when every hop of its
+ * recorded `retryOf` chain, back to `r`, has the same principal, source and incarnation, operation, slug and connector
+ * intent kind, at a lower sequence, within CONNECTOR_RETRY_LINEAGE_MAX_DEPTH hops. Another refusal of the same item with
+ * no recorded link is not proof. Each hop is one lookup on the (principal_kind, principal_id, request_id) unique index.
+ */
+function connectorRetrySql(r: string, c: string): string {
+  return `(${r}.operation='submit_job' AND ${c}.operation='submit_job' AND ${c}.state='committed' AND COALESCE(${c}.intent ? 'retryOf', false)
+      AND EXISTS (SELECT 1 FROM persistence_requests k, persistence_requests cc WHERE k.id=${r}.id AND cc.sequence=${c}.sequence
+        AND k.intent->>'kind' IN (${CONNECTOR_WRITE_KINDS})
+        AND cc.intent->>'kind'=k.intent->>'kind' AND cc.principal_kind=k.principal_kind AND cc.principal_id=k.principal_id
+        AND cc.source_incarnation=k.source_incarnation
+        AND EXISTS (WITH RECURSIVE lineage(request_id, sequence, intent, depth) AS (
+            SELECT cc.request_id, cc.sequence, cc.intent, 0
+            UNION ALL
+            SELECT p.request_id, p.sequence, p.intent, l.depth+1 FROM lineage l JOIN persistence_requests p
+              ON p.principal_kind=k.principal_kind AND p.principal_id=k.principal_id
+              AND p.request_id=CASE WHEN l.intent->>'retryOf' ~ ${UUID_TEXT} THEN (l.intent->>'retryOf')::uuid END
+            WHERE l.depth<${CONNECTOR_RETRY_LINEAGE_MAX_DEPTH} AND p.sequence<l.sequence AND p.source_id=k.source_id
+              AND p.source_incarnation=k.source_incarnation AND p.operation=k.operation AND p.slug=k.slug AND p.intent->>'kind'=k.intent->>'kind')
+          SELECT 1 FROM lineage WHERE request_id=k.request_id)))`;
 }
 
 /** The order that picks the most telling superseding request: the same intent committed, then the same intent, then the oldest later write. */

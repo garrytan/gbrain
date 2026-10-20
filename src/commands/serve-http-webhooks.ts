@@ -709,24 +709,8 @@ function mountGitHubWebhook(app: Express, ctx: ServeHttpContext): void {
         return;
       }
 
-      // Submit sync job with priority -10 (above autopilot's 0).
       try {
-        const queue = new MinionQueue(engine);
-        const job = await queue.add(
-          'sync',
-          {
-            sourceId: source.id,
-            noExtract: false,
-            auto_embed_backfill: true,
-            embed_reason: 'webhook',
-          },
-          {
-            priority: -10,
-            idempotency_key: `webhook:sync:${source.id}:${Math.floor(Date.now() / 30_000)}`,
-            maxWaiting: 1,
-          },
-        );
-        res.status(202).json({ job_id: job.id, source_id: source.id });
+        await submitGitHubPush(engine, source.id, (parsed as { after?: unknown }).after, res);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('webhook: queue submission error:', msg);
@@ -734,4 +718,49 @@ function mountGitHubWebhook(app: Express, ctx: ServeHttpContext): void {
       }
     },
   );
+}
+
+const PUSHED_SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+
+/** The part of an Express response the push answer writes. */
+export interface PushAnswerSink { status(code: number): { json(body: unknown): unknown } }
+
+/**
+ * GBRA-133 PR 2a.3: a verified push for a tracked branch. The pushed commit is recorded as a wanted marker first, so
+ * it is never lost to coalescing: a classic source queues one sync (priority -10, single flight per source through
+ * maxPending 1; this replaced the 30 s idempotency bucket, which dropped a second push inside the bucket while the
+ * first job ran) and a later run re-checks the marker. A managed source never pulls, so instead of a 202 for a job
+ * that cannot import the push it answers refresh_required (409) with the gbrain sources refresh fix, keeping the
+ * marker until the source reaches that commit.
+ */
+export async function submitGitHubPush(engine: BrainEngine, sourceId: string, after: unknown, res: PushAnswerSink): Promise<void> {
+  const wantedHead = typeof after === 'string' && PUSHED_SHA.test(after) && !/^0+$/.test(after) ? after : null;
+  const { recordTriggerMarker } = await import('../core/notifier/nudge.ts');
+  const recorded = await recordTriggerMarker(engine, { sourceId, intent: 'pull', wantedHead, requestedBy: 'webhook' });
+  if (!recorded) { res.status(404).json({ error: 'unknown_source', source_id: sourceId }); return; }
+  const { marker, managed } = recorded;
+  const base = { source_id: sourceId, wanted_head: marker.wanted_head, marker_generation: marker.generation };
+  if (managed) {
+    const { opError } = await import('../core/ops/contract.ts');
+    const error = opError('refresh_required', `A push arrived for managed source ${sourceId}; a managed source never pulls, so the pushed commit waits for a refresh.`,
+      `Run gbrain sources refresh ${sourceId} on the brain host; the resident notifier then syncs the refreshed checkout.`,
+      { fix: { argv: ['gbrain', 'sources', 'refresh', sourceId], consent: [], actor: 'user', requires_exclusive: false,
+        why: 'Fast-forwards the managed checkout to its upstream under the writer lock and runs the managed --no-pull sync.' } });
+    res.status(409).json({ ...error.toJSON(), ...base, status: 'refresh_required' });
+    return;
+  }
+  const queue = new MinionQueue(engine);
+  const job = await queue.add(
+    'sync',
+    {
+      sourceId,
+      noExtract: false,
+      auto_embed_backfill: true,
+      embed_reason: 'webhook',
+    },
+    { priority: -10, maxPending: 1 },
+  );
+  const { attachMarkerJob } = await import('../core/notifier/store.ts');
+  await attachMarkerJob(engine, sourceId, marker.intent, marker.generation, job.id);
+  res.status(202).json({ job_id: job.id, ...base, action: job.coalesced ? 'coalesced' : 'queued' });
 }

@@ -307,7 +307,11 @@ export async function unionLinksAcrossIdentity(
   slug: string,
   links: Link[],
   direction: 'out' | 'in',
-  opts: { sourceId?: string; allowedSources?: string[]; excludePrivate?: boolean; temporal?: import('./link-validity.ts').EdgeTemporalOpts } = {},
+  opts: {
+    sourceId?: string; allowedSources?: string[]; excludePrivate?: boolean; temporal?: import('./link-validity.ts').EdgeTemporalOpts;
+    /** #6876: the caller's keyset page, applied to each member read; `onMemberRead` sees each member's rows before the merge. */
+    page?: import('./link-validity.ts').LinkReadPage; onMemberRead?: (rows: Link[]) => void;
+  } = {},
 ): Promise<Link[]> {
   if (!(await isIdentityUnionEnabled(engine))) return links;
   let members: EntityIdentityMember[];
@@ -346,10 +350,12 @@ export async function unionLinksAcrossIdentity(
         ...(opts.allowedSources?.length ? { sourceIds: opts.allowedSources } : {}),
         excludePrivate: opts.excludePrivate,
         ...(opts.temporal ? { temporal: opts.temporal } : {}),
+        ...(opts.page ? { page: opts.page } : {}),
       };
       const memberLinks = direction === 'out'
         ? await engine.getLinks(m.slug, memberScope)
         : await engine.getBacklinks(m.slug, memberScope);
+      opts.onMemberRead?.(memberLinks);
       for (const l of memberLinks) {
         // Federated engine reads span same-slug pages across the grant. Keep
         // this identity member's concrete pair, not a same-slug non-member.

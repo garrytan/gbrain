@@ -102,19 +102,24 @@ const VOLATILE = new Set(['id', 'created_at', 'updated_at', 'snapshot_at', 'last
   'principal_id', 'revision_principal_id', 'write_principal_id', 'last_write_principal_id', 'archived_principal_id', 'knowledge_revision', 'text_projection_revision',
   'revision', 'expected_revision', 'salience_touched_at', 'last_retrieved_at', 'links_extracted_at', 'emotional_weight_recomputed_at', 'embedding',
   'embedding_image', 'embedding_multimodal', 'edges_backfilled_at', 'search_vector', 'content_hash', 'revision_write_request_id', 'coordination_path',
-  'lastAt', 'startedAt']);
+  'lastAt', 'startedAt', 'duration_ms', 'timings_ms']);
+
+const FOLD_BASE_IDS = new Set(['.intent.stamp.fold.base.xmin', '.intent.stamp.fold.base.snapshot', '.intent.stamp.fold.base.own']);
 
 /** Every page-derived row the sync wrote, with ids, times, UUIDs and the checkout path replaced by labels. */
 async function dump(e: BrainEngine, root: string): Promise<Record<string, string[]>> {
   const pages = await e.executeRaw<{ id: number; slug: string }>('SELECT id,slug FROM pages WHERE source_id=$1', [SOURCE]);
   const slugOf = new Map(pages.map(p => [Number(p.id), p.slug]));
-  const norm = (value: unknown, key = ''): unknown => {
+  const norm = (value: unknown, key = '', path = ''): unknown => {
     if (value === null || value === undefined) return null;
     if (value instanceof Date) return '<time>';
-    if (Array.isArray(value)) return value.map(v => norm(v, key));
+    // #6712 PR 4b: a folded stamp records the Postgres snapshot it read its base under (its xmin, the snapshot and its own
+    // transaction id, GBRA-108), transaction ids as run-specific as a UUID.
+    if (FOLD_BASE_IDS.has(path)) return `<${key}>`;
+    if (Array.isArray(value)) return value.map(v => norm(v, key, path));
     if (typeof value === 'object') {
       return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([k]) => !VOLATILE.has(k)).sort(([a], [b]) => a < b ? -1 : 1)
-        .map(([k, v]) => [k, /(^|_)page_id$|^pageId$/.test(k) && v != null ? `page(${slugOf.get(Number(v)) ?? 'other'})` : norm(v, k)]));
+        .map(([k, v]) => [k, /(^|_)page_id$|^pageId$/.test(k) && v != null ? `page(${slugOf.get(Number(v)) ?? 'other'})` : norm(v, k, `${path}.${k}`)]));
     }
     if (typeof value === 'string') {
       const text = value.replaceAll(root, '<root>');

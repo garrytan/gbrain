@@ -136,12 +136,51 @@ describe('data-safety native CI coverage', () => {
     expect(step!.env).toEqual({
       GBRAIN_CI_DISABLE_TEST_ENV_FILE: '1',
       GBRAIN_TEST_REQUIRE_CASE_INSENSITIVE: "${{ runner.os != 'Linux' && '1' || '0' }}",
+      GBRAIN_NATIVE_SUITE_BOUND_S: expect.stringContaining('[matrix.target]'),
     });
-    expect(step!.run!.trim().split('\n')).toEqual([
-      'status=0',
-      ...suites.map(suite => `bun --no-env-file test --timeout=180000 ${suite} || status=1`),
-      'exit "$status"',
-    ]);
+    const lines = step!.run!.trim().split('\n');
+    expect(lines[0]).toBe('status=0');
+    expect(lines).toContain('  bun --no-env-file test --timeout=180000 "$1" &');
+    expect(lines.filter(line => line.startsWith('bounded '))).toEqual(suites.map(suite => `bounded ${suite} || status=1`));
+    expect(lines.at(-1)).toBe('exit "$status"');
+  });
+
+  test('every native target has its own suite bound, above that target\'s slowest measured suite and inside the job timeout', () => {
+    const job = workflow.jobs.native as unknown as { steps: Step[]; strategy: { matrix: { target: string[] } }; 'timeout-minutes': number };
+    const step = job.steps.find(entry => entry.name === 'Verify native data-safety contracts')!;
+    const mapping = /fromJSON\('(\{.*\})'\)\[matrix\.target\]/.exec(step.env!.GBRAIN_NATIVE_SUITE_BOUND_S!)![1]!;
+    const bounds = JSON.parse(mapping) as Record<string, string>;
+    expect(Object.keys(bounds).sort()).toEqual([...job.strategy.matrix.target].sort());
+    // Slowest observed backup-portability-native durations (seconds) per target, 68-78 runs each, 2026-10-19.
+    const measuredMax: Record<string, number> = { 'linux-x64-glibc': 94, 'linux-arm64-glibc': 75, 'darwin-arm64': 36, 'darwin-x64': 105, 'win32-arm64': 304, 'win32-x64': 463 };
+    for (const [target, bound] of Object.entries(bounds)) {
+      expect(Number(bound)).toBeGreaterThanOrEqual(measuredMax[target]! + 60);
+      expect(Number(bound)).toBeLessThan(job['timeout-minutes'] * 60 - 300);
+    }
+  });
+
+  test('a target with no bound fails the step before running any suite', () => {
+    const step = workflow.jobs.native.steps.find(entry => entry.name === 'Verify native data-safety contracts')!;
+    const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
+      bun() { printf '%s\\n' "$4"; }
+      ${step.run}
+    `], { env: { PATH: process.env.PATH ?? '' } });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout.toString()).toContain('::error::GBRAIN_NATIVE_SUITE_BOUND_S is not set for this target');
+    expect(result.stdout.toString()).not.toContain('test/');
+  });
+
+  test('a stuck native safety suite is named, sampled and killed inside the job timeout, and the step fails', () => {
+    const step = workflow.jobs.native.steps.find(entry => entry.name === 'Verify native data-safety contracts')!;
+    const stuck = suites[2]!;
+    const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
+      bun() { if [[ "$4" == "$GBRAIN_TEST_STUCK_SUITE" ]]; then exec sleep 600; fi; printf '%s\\n' "$4"; }
+      ${step.run}
+    `], { env: { PATH: process.env.PATH ?? '', GBRAIN_TEST_STUCK_SUITE: stuck, GBRAIN_NATIVE_SUITE_BOUND_S: '2' }, timeout: 60_000 });
+    expect(result.exitCode).toBe(1);
+    const stdout = result.stdout.toString();
+    expect(stdout).toContain(`::error::${stuck} was still running after 2 s, this target's bound`);
+    expect(stdout.trim().split('\n').filter(line => line.startsWith('test/'))).toEqual(suites.filter(suite => suite !== stuck));
   });
 
   for (const failed of ['', ...suites]) test(`every native safety suite runs and failures remain fatal (${failed || 'all pass'})`, () => {
@@ -149,7 +188,7 @@ describe('data-safety native CI coverage', () => {
     const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
       bun() { printf '%s\\n' "$4"; [[ "$4" != "$GBRAIN_TEST_FAILED_SUITE" ]]; }
       ${step.run}
-    `], { env: { PATH: process.env.PATH ?? '', GBRAIN_TEST_FAILED_SUITE: failed } });
+    `], { env: { PATH: process.env.PATH ?? '', GBRAIN_TEST_FAILED_SUITE: failed, GBRAIN_NATIVE_SUITE_BOUND_S: '60' } });
     expect(result.exitCode).toBe(failed ? 1 : 0);
     expect(result.stdout.toString().trim().split('\n')).toEqual(suites);
   });

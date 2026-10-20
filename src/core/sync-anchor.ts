@@ -270,6 +270,8 @@ export async function writeSyncAnchor(
           [value, sourceId],
         );
       }
+      // GBRA-133 PR 2a: the host that advanced a classic source is the one whose resident notifier watches it.
+      await (await import('./notifier/store.ts')).recordLocalSyncer(engine, sourceId);
     } else {
       // #4369: repo_path repoints require directory-identity EQUALITY
       // (ownsSourceSyncAnchor); last_commit advances above use the weaker

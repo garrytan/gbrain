@@ -11,17 +11,28 @@
  * older than 6 hours, never fail (they may be deliberate work in progress).
  * Being behind is reported, not judged: sync pulls.
  *
+ * #7089: a managed canonical checkout this host owns, with Git durability on,
+ * whose commits are not on the upstream while no Git effect of its worktree is
+ * queued, running or parked, warns at once (`stranded`): nothing will push
+ * them, so the fix pushes them with the keep-checkout publish. #7091: so does
+ * one with tracked files modified under its source root (a root below the
+ * toplevel included): no effect will commit them, so the fix asks the user to
+ * commit them, then pushes.
+ *
  * The same entry emits `tracked_ownership_marker` (#5186) for the same roots.
  */
 import { execFileSync } from '../../../core/spawn.ts';
-import { statSync } from 'node:fs';
-import { join } from 'node:path';
+import { realpathSync, statSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
+import type { Action } from '../../../core/agent-output.ts';
 import { parseSourceConfig } from '../../../core/sources-load.ts';
 import { isConnectorSourceKind } from '../../../core/persistence/connector-identity.ts';
 import { isPhysicalRootMetadata } from '../../../core/persistence/root-metadata.ts';
 import { isManagedFilesystemPath } from '../../../core/persistence/filesystem-guard.ts';
+import { existingLocalHostId } from '../../../core/persistence/identity.ts';
+import { gitDurabilityPolicy } from '../../../core/persistence/git-durability-policy.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { doctorVerify } from '../check-fix.ts';
 
@@ -32,14 +43,44 @@ const MAX_ROOTS = 50;
 const MAX_DIRTY_PATHS = 200;
 
 interface RootReport { root: string; source_ids: string[]; branch: string | null; ahead: number; behind: number; dirty: number;
-  oldest_unpushed_at: string | null; oldest_dirty_at: string | null; status: 'ok' | 'warn' | 'fail' }
+  oldest_unpushed_at: string | null; oldest_dirty_at: string | null; status: 'ok' | 'warn' | 'fail'; stranded?: true; uncommitted_pages?: string[] }
+
+const canonicalPath = (path: string) => { try { return realpathSync(path); } catch { return path; } };
+
+/**
+ * #7089: the canonical checkouts this host owns with Git durability on and no Git effect of their worktree queued,
+ * running or parked: commits there that are not on the upstream have no effect left to push them. Keyed by the
+ * checkout's toplevel (#7091: a binding's local_path may sit below it), each with its source roots' toplevel-relative prefixes.
+ */
+async function unwatchedDurableRoots(engine: BrainEngine): Promise<Map<string, string[]>> {
+  const hostId = existingLocalHostId();
+  if (!hostId) return new Map();
+  const bindings = await engine.executeRaw<{ local_path: string; git_durability: 'enabled' | 'disabled' | null; relative_paths: string[] | null }>(
+    `SELECT h.local_path,h.git_durability,
+       (SELECT array_agg(b.relative_path) FROM persistence_source_bindings b WHERE b.worktree_id=h.worktree_id) AS relative_paths
+     FROM persistence_host_bindings h JOIN persistence_worktrees w ON w.id=h.worktree_id
+     WHERE h.host_id=$1::uuid AND w.owner_host_id=$1::uuid AND w.state='active' AND NOT EXISTS (
+       SELECT 1 FROM persistence_effects e WHERE e.worktree_id=h.worktree_id AND e.kind='git' AND e.state IN ('queued','running','failed'))`,
+    [hostId]).catch(() => []);
+  const roots = new Map<string, string[]>();
+  for (const binding of bindings) {
+    const durable = await gitDurabilityPolicy(binding, binding.local_path).then(policy => policy.durable, () => false);
+    const top = durable ? git(binding.local_path, ['rev-parse', '--show-toplevel'])?.trim() : undefined;
+    if (!top) continue;
+    const prefixes = (binding.relative_paths?.length ? binding.relative_paths : ['']).map(path =>
+      relative(canonicalPath(top), canonicalPath(join(binding.local_path, path))).split(sep).join('/'));
+    roots.set(canonicalPath(top), [...roots.get(canonicalPath(top)) ?? [], ...prefixes]);
+  }
+  return roots;
+}
 
 function git(root: string, args: string[]): string | null {
   try { return execFileSync('git', ['-C', root, ...args], { stdio: ['ignore', 'pipe', 'ignore'], timeout: GIT_TIMEOUT_MS }).toString(); }
   catch { return null; }
 }
 
-function probe(root: string, sourceIds: string[], now: number): RootReport | { root: string; source_ids: string[]; skipped: string } {
+/** `tracked` collects each probed toplevel's modified tracked paths (toplevel-relative). */
+function probe(root: string, sourceIds: string[], now: number, tracked: Map<string, string[]>): RootReport | { root: string; source_ids: string[]; skipped: string } {
   const top = git(root, ['rev-parse', '--show-toplevel'])?.trim();
   if (!top) return { root, source_ids: sourceIds, skipped: 'not a git checkout' };
   const counts = git(top, ['rev-list', '--left-right', '--count', '@{u}...HEAD'])?.trim().split(/\s+/).map(Number);
@@ -51,6 +92,7 @@ function probe(root: string, sourceIds: string[], now: number): RootReport | { r
   for (let i = 0; i < entries.length; i++) {
     if (entries[i].length < 4) continue;
     changed.push(entries[i].slice(3));
+    if (!entries[i].startsWith('??') && !entries[i].startsWith('!!')) tracked.set(top, [...tracked.get(top) ?? [], entries[i].slice(3)]);
     if (/^[RC]/.test(entries[i])) i++;
   }
   const mtimes = changed.slice(0, MAX_DIRTY_PATHS).flatMap(path => { try { return [statSync(join(top, path)).mtimeMs]; } catch { return []; } });
@@ -82,12 +124,23 @@ export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now())
   const roots = await sourceRoots(engine);
   if (!roots.size) return null;
   const byTop = new Map<string, RootReport | { root: string; source_ids: string[]; skipped: string }>();
+  const tracked = new Map<string, string[]>();
   for (const [root, ids] of [...roots].slice(0, MAX_ROOTS)) {
-    const report = probe(root, ids, now);
+    const report = probe(root, ids, now, tracked);
     const prior = byTop.get(report.root);
     byTop.set(report.root, prior ? { ...prior, source_ids: [...prior.source_ids, ...ids] } : report);
   }
   const reports = [...byTop.values()].filter((r): r is RootReport => !('skipped' in r));
+  const unwatched = reports.some(r => r.ahead > 0 || tracked.has(r.root)) ? await unwatchedDurableRoots(engine) : new Map<string, string[]>();
+  for (const report of reports) {
+    const prefixes = unwatched.get(canonicalPath(report.root));
+    if (!prefixes) continue;
+    const pages = [...new Set(tracked.get(report.root) ?? [])].filter(path => prefixes.some(prefix => !prefix || path.startsWith(`${prefix}/`))).slice(0, MAX_DIRTY_PATHS);
+    if (report.ahead === 0 && !pages.length) continue;
+    report.stranded = true;
+    if (pages.length) report.uncommitted_pages = pages;
+    if (report.status === 'ok') report.status = 'warn';
+  }
   const skipped = [...byTop.values()].filter((r): r is { root: string; source_ids: string[]; skipped: string } => 'skipped' in r);
   const details = { roots: reports, skipped, ...(roots.size > MAX_ROOTS ? { not_probed: roots.size - MAX_ROOTS } : {}),
     warn_after_hours: GIT_CONVERGENCE_WARN_MS / 3_600_000, fail_after_hours: GIT_CONVERGENCE_FAIL_MS / 3_600_000, fetched: false };
@@ -104,7 +157,29 @@ export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now())
   const remedy = bad.some(r => isManagedFilesystemPath(r.root))
     ? 'Commit and push them: on a managed canonical worktree the persistence owner commits and pushes page writes (gbrain sources writer status <source> --json shows parked pushes; gbrain sources writer git-durability <source> --enable turns them on), and files that are not pages are committed and pushed with plain git in the checkout, never pulled or rebased; elsewhere gbrain sources push --path <root> for a bootstrap workspace, or git push in the checkout'
     : 'Commit and push them (gbrain sources push --path <root> for a bootstrap workspace, or git push in the checkout)';
-  return { name: 'git_convergence', status: bad.some(r => r.status === 'fail') ? 'fail' : 'warn', details,
+  const stranded = bad.filter(r => r.stranded);
+  const status = bad.some(r => r.status === 'fail') ? 'fail' : 'warn';
+  const uncommitted = stranded.find(r => r.uncommitted_pages);
+  if (uncommitted) {
+    const pages = uncommitted.uncommitted_pages!;
+    const push: Action = { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', uncommitted.root], consent: [], actor: 'agent', requires_exclusive: false,
+      why: 'Publishes the commit just made without moving the checkout.', verify: doctorVerify('git_convergence') };
+    return { name: 'git_convergence', status, details,
+      message: `Git checkouts have not converged with their upstream: ${lines.join(' | ')}. ${uncommitted.root} is a managed checkout with Git durability on, ${pages.length} tracked file(s) modified under its source root (${pages.slice(0, 5).join(', ')}${pages.length > 5 ? ', ...' : ''}) and no Git effect queued, running or parked, so no effect will commit them (#7091: earlier releases committed no edits to tracked pages when the source root sits below the repository top). Review and commit them with plain git, then push with the keep-checkout publish. ${remedy}; this compares with the last fetched upstream and does not fetch.`,
+      fix: { ask_user: true, argv: ['git', '-C', uncommitted.root, 'commit', '-m', 'gbrain: persist canonical memory update', '--', ...pages], consent: [], actor: 'user', requires_exclusive: false,
+        why: `These tracked files under a durable managed source root differ from the last commit and no Git effect will commit them; committing writes them to the checkout's history, so the user reviews them first.${stranded.length > 1 ? ` ${stranded.length - 1} other checkout(s) are stranded too, see details.roots (stranded).` : ''}`,
+        user_message: `${pages.length} page file(s) in ${uncommitted.root} were edited but never committed (${pages.slice(0, 5).join(', ')}${pages.length > 5 ? ', ...' : ''}), so they are not on the remote. Commit them and push?`,
+        verify: doctorVerify('git_convergence'), then: push } };
+  }
+  if (stranded.length) {
+    const first = stranded[0]!;
+    return { name: 'git_convergence', status, details,
+      message: `Git checkouts have not converged with their upstream: ${lines.join(' | ')}. ${stranded.map(r => r.root).join(', ')} ${stranded.length === 1 ? 'is a managed checkout' : 'are managed checkouts'} with Git durability on and no Git effect queued, running or parked, so no effect will push ${stranded.length === 1 ? 'its' : 'their'} commits; push them with the keep-checkout publish, which merges a moved remote in memory and never moves the checkout. ${remedy}; this compares with the last fetched upstream and does not fetch.`,
+      fix: { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', first.root], consent: [], actor: 'agent', requires_exclusive: false,
+        why: `${first.root} has ${first.ahead} commit(s) not on its upstream and no Git effect left to push them (#7089); this publishes the commits already on the branch and commits nothing. A conflict with the remote is reported with the user's choice as its fix.${stranded.length > 1 ? ` ${stranded.length - 1} other checkout(s) need the same, see details.roots (stranded).` : ''}`,
+        verify: doctorVerify('git_convergence') } };
+  }
+  return { name: 'git_convergence', status, details,
     message: `Git checkouts have not converged with their upstream: ${lines.join(' | ')}. ${remedy}; this compares with the last fetched upstream and does not fetch.` };
 }
 

@@ -284,6 +284,25 @@ test('status verifies each independent credential, not just the first healthy ha
   expect(missing.token_verified).toBe(false);
 });
 
+test('#6798: --status prints the stale-epoch hint only for a superseded enrollment, and as a condition without the brain', async () => {
+  const f = fixture();
+  expect(await applyHarness(flags('--source', 'workspace'), f.deps)).toBe(0);
+  const entry = f.receipt().shared_skills![0];
+  const installationId = JSON.parse(readFileSync(join(entry.root, 'shared-skills', 'receipt.json'), 'utf8')).installation_id;
+  const statusText = async (lookup: HarnessDeps['supersededEnrollments']) => {
+    f.output.length = 0;
+    await statusHarness(flags(), { ...f.deps, supersededEnrollments: lookup });
+    return f.output.find(line => line.includes(`shared skills (${entry.host})`))!;
+  };
+  const current = await statusText(async () => []);
+  expect(current).toContain('native activation unverified.');
+  expect(current).not.toContain('--refresh-skills');
+  expect(await statusText(async () => { throw new Error('brain unavailable'); }))
+    .toContain('(if the brain reports a newer enrollment epoch: gbrain bootstrap harness --refresh-skills)');
+  expect(await statusText(async () => [{ host: entry.host, installation_id: installationId, local_epoch: 1, server_epoch: 2, active: false }]))
+    .toContain('enrollment superseded (server epoch 2, inactive): gbrain bootstrap harness --refresh-skills');
+});
+
 test('implicit source binding preserves the existing federated source ceiling for each principal', async () => {
   const f = fixture();
   expect(await applyHarness(parseHarnessArgs(['--yes', '--no-hooks']), f.deps)).toBe(0);

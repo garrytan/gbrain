@@ -11,7 +11,7 @@ import type { GBrainConfig } from '../config.ts';
 import { prepareManagedSyncMutation, type SyncIntent } from './sync-prepare.ts';
 import { heldGitPaths, readSyncImportProvenances, syncImportParserFor, recordSyncImportProvenances, syncDiskProvenance, type SyncImportProvenance, type SyncImportProvenanceBase } from './sync-holds.ts';
 import { sameParser } from './sync-prescreen.ts';
-import { isSyncReadBound } from './sync-screen.ts';
+import { isSyncReadBound, isUnreadableSyncFile } from './sync-screen.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { sha256 } from './digest.ts';
 import { startClaimPhase } from './claim-phase.ts';
@@ -28,6 +28,18 @@ import { noteDrainSql } from './drain-step.ts';
 import { REVISION_BACKFILL_PENDING } from '../page-state/types.ts';
 import { withScreeningPaths } from './screening-paths.ts';
 import { withBoundedReadSession } from './bounded-reads.ts';
+import { isPassBatchKey, passBatchHead } from './sync-pass-batch.ts';
+
+/**
+ * The cursor row a waiver commits beside, locked FOR UPDATE (the fixed order: the page guard, then the cursor). #6712 PR 4b:
+ * a live pass's batch has no row; its head is read under the drain lease instead (`passBatchHead`).
+ */
+async function heldCursorHead(tx: BrainEngine, key: string, sourceId: string): Promise<{ run_id: string | null; index: number | string | null; request_id: string | null } | undefined> {
+  if (isPassBatchKey(key)) return passBatchHead(tx, key, sourceId);
+  const [held] = await tx.executeRaw<{ run_id: string | null; index: number | string | null; request_id: string | null }>(`SELECT completed_keys->0->>'runId' AS run_id,
+    completed_keys->0->'index' AS index,completed_keys->0->'pending'->>'requestId' AS request_id FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR UPDATE`, [key]);
+  return held;
+}
 
 export interface WaiverCursor { sourceId: string; incarnation: string; root: string; gitRoot: string; slugMode: 'git-root' | 'source-root';
   binding: { worktree_id: string }; authority: SyncAuthority; runId: string; index: number }
@@ -118,12 +130,11 @@ export async function waiveNoopEntry<C extends WaiverCursor>(engine: BrainEngine
   const intent = pending.intent;
   return engine.transaction(async tx => {
     await tx.lockPageKeys([{ sourceId: cursor.sourceId, slug: pending.slug }]);
-    const [held] = await tx.executeRaw<{ run_id: string | null; index: number | string | null; request_id: string | null }>(`SELECT completed_keys->0->>'runId' AS run_id,
-      completed_keys->0->'index' AS index,completed_keys->0->'pending'->>'requestId' AS request_id FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR UPDATE`, [key]);
+    const held = await heldCursorHead(tx, key, cursor.sourceId);
     if (held?.run_id !== cursor.runId || Number(held.index) !== cursor.index || held.request_id !== pending.requestId) return reread(tx);
     const snapshot = await tx.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
     if (waived.kind === 'delete') {
-      if (!softDeletedAt(snapshot, pending) || readSyncFile(cursor.root, intent.path!) !== null) return null;
+      if (!softDeletedAt(snapshot, pending) || waiverRead(cursor.root, intent.path!) !== null) return null;
       try { await assertSyncPageOrigin(tx, cursor.sourceId, intent.sourcePath!, pending.pageId, true, syncOriginScope(cursor)); }
       catch { return null; }
     } else if (snapshot?.page.id !== pending.pageId || snapshot.page.deleted_at != null || snapshot.revision !== intent.expected_revision) return null;
@@ -195,8 +206,7 @@ export async function waiveNoopRun<C extends WaiverCursor>(engine: BrainEngine, 
     return await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('lock_timeout','2s',true),set_config('statement_timeout','10s',true)");
       await tx.lockPageKeys(run.map(entry => ({ sourceId: cursor.sourceId, slug: entry.pending.slug })));
-      const [held] = await tx.executeRaw<{ run_id: string | null; index: number | string | null; request_id: string | null }>(`SELECT completed_keys->0->>'runId' AS run_id,
-        completed_keys->0->'index' AS index,completed_keys->0->'pending'->>'requestId' AS request_id FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR UPDATE`, [key]);
+      const held = await heldCursorHead(tx, key, cursor.sourceId);
       if (held?.run_id !== cursor.runId || Number(held.index) !== cursor.index || held.request_id != null) return { cursor: await reread(tx), waived: 0 };
       await faultPoint('sync:mid_waiver_run', { sourceId: cursor.sourceId });
       // The run's screens may span many entries: an owner change since the first one sends the run back to the per-entry path.
@@ -223,7 +233,7 @@ export async function waiveNoopRun<C extends WaiverCursor>(engine: BrainEngine, 
           const page = bySlug.get(pending.slug);
           const revision = page ? page.knowledge_revision == null ? REVISION_BACKFILL_PENDING : String(page.knowledge_revision) : null;
           if (!page || Number(page.id) !== pending.pageId || revision !== pending.intent.expected_revision) break chunks;
-          if (waived.kind === 'delete' ? !page.deleted || readSyncFile(cursor.root, pending.intent.path!) !== null : page.deleted) break chunks;
+          if (waived.kind === 'delete' ? !page.deleted || waiverRead(cursor.root, pending.intent.path!) !== null : page.deleted) break chunks;
           if ((checks[2 * i] as unknown[]).length || checks[2 * i + 1] !== true) break chunks;
           const provenance = waivedProvenance(cursor, pending, waived, revision!);
           if (provenance === false) break chunks;
@@ -278,8 +288,7 @@ export async function waivePrescreenedRun<C extends WaiverCursor & { binding: { 
     return await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('lock_timeout','2s',true),set_config('statement_timeout','10s',true)");
       await tx.lockPageKeys(run.map(entry => ({ sourceId: cursor.sourceId, slug: entry.slug })));
-      const [held] = await tx.executeRaw<{ run_id: string | null; index: number | string | null; request_id: string | null }>(`SELECT completed_keys->0->>'runId' AS run_id,
-        completed_keys->0->'index' AS index,completed_keys->0->'pending'->>'requestId' AS request_id FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR UPDATE`, [key]);
+      const held = await heldCursorHead(tx, key, cursor.sourceId);
       if (held?.run_id !== cursor.runId || Number(held.index) !== cursor.index || held.request_id != null) return { cursor: await reread(tx), waived: 0 };
       await faultPoint('sync:prescreened', { sourceId: cursor.sourceId });
       const binding = await getWorktreeBinding(tx, cursor.sourceId);
@@ -299,8 +308,7 @@ export async function waivePrescreenedRun<C extends WaiverCursor & { binding: { 
           if (!page || Number(page.id) !== entry.pageId || page.knowledge_revision !== entry.revision || unfinished[i]!.length || holds.has(entry.path)) break chunks;
           if (kernelPageWork(page, { sourcePath: entry.sourcePath, embeddingRequested: input.embeddingRequested }) !== null) break chunks;
           if (!record?.disk_sha256 || record.revision !== entry.revision || !sameParser(record.parser, syncImportParserFor(entry.sourcePath, pack?.identity ?? null))) break chunks;
-          let bytes: Buffer | null;
-          try { bytes = readSyncFile(cursor.root, entry.path); } catch (error) { if (isSyncReadBound(error)) break chunks; throw error; }
+          const bytes = waiverRead(cursor.root, entry.path);
           if (!bytes || sha256(bytes) !== record.disk_sha256) break chunks;
           valid++;
         }
@@ -327,14 +335,23 @@ export async function wouldWaiveEntry(engine: BrainEngine, cursor: WaiverCursor,
 }
 
 /**
+ * GBRA-133 S-68: a waiver's read of the working-tree file; undefined when the freeze would hold it (over the read bound, or
+ * `file_unreadable`: a symlink, a FIFO, a permission error), so the entry is not waived and goes on to admission instead of
+ * failing the run.
+ */
+function waiverRead(root: string, path: string): Buffer | null | undefined {
+  try { return readSyncFile(root, path); } catch (error) { if (isSyncReadBound(error) || isUnreadableSyncFile(error)) return undefined; throw error; }
+}
+
+/**
  * #6712: the import provenance a waived import records in its waiver transaction, from the file read there: false when
  * the file no longer has the frozen raw hash (the entry is not waived), null for a waiver that records none (a delete,
  * or an import whose preparation carried no provenance, such as a code file).
  */
 function waivedProvenance(cursor: WaiverCursor, pending: WaiverEntry, waived: NoopWaiver, revision: string): Omit<SyncImportProvenance, 'recorded_at' | 'validated'> | false | null {
   if (waived.kind !== 'import') return null;
-  const bytes = readSyncFile(cursor.root, pending.intent.path!);
-  if ((bytes === null ? null : sha256(bytes)) !== pending.intent.rawHash) return false;
+  const bytes = waiverRead(cursor.root, pending.intent.path!);
+  if (bytes === undefined || (bytes === null ? null : sha256(bytes)) !== pending.intent.rawHash) return false;
   if (!waived.provenance) return null;
   return { ...waived.provenance, page_id: pending.pageId!, revision, ...syncDiskProvenance(bytes, pending.intent.target) };
 }

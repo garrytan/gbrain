@@ -28,7 +28,7 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
-import { resolveCliCodeScope, positionalArgs, parseFlag } from './code-scope.ts';
+import { resolveCliCodeScope, positionalArgs, parseFlag, UNRESOLVED_CALL_LABEL } from './code-scope.ts';
 import { resolveCodeReadiness, readinessHint } from '../core/code-graph-readiness.ts';
 import { legacyNestedErrorDocument } from '../core/agent-output.ts';
 
@@ -103,7 +103,7 @@ export async function runCodeCallers(engine: BrainEngine, args: string[]): Promi
     } else {
       console.log(`${edges.length} caller(s) for "${sym}":`);
       for (const e of edges) {
-        const res = e.resolved ? 'resolved' : 'unresolved';
+        const res = e.resolved ? 'resolved' : UNRESOLVED_CALL_LABEL;
         console.log(`  ${e.from_symbol_qualified}  → ${e.to_symbol_qualified}  [${res}]`);
       }
       if (hint) console.log(hint);

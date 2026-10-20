@@ -54,7 +54,9 @@ const DEFAULT_WEIGHTS_PATH = resolve(REPO_ROOT, "scripts/test-weights.json");
  * test.yml's unit matrix size, also e2e.yml's coverage-full-unit matrix;
  * test/scripts/unit-shard-budget.test.ts pins both workflows to it.
  */
-export const UNIT_SHARDS = 18;
+export const UNIT_SHARDS = 22;
+/** Unit shards each test.yml `test` job runs at once (scripts/test-shard-pack.sh); test/scripts/ci-gates.test.ts pins the matrix to it. */
+export const UNIT_SHARDS_PER_JOB = 2;
 /** test.yml's `test` job `timeout-minutes: 22`: the only bound on a unit shard, its setup steps included. */
 export const UNIT_JOB_TIMEOUT_MS = 22 * 60 * 1000;
 /** The job's steps before the shard (checkout, Bun, cache restores, install): 10-20 s measured on a warm cache. */
@@ -77,6 +79,15 @@ export function unitShards(root: string, n: number = UNIT_SHARDS): string[][] {
 }
 
 export type WeightMap = Map<string, number>;
+
+/**
+ * test.yml's unit partition with each shard's mined weight (`root`'s scripts/test-weights.json): the plan
+ * test/scripts/unit-shard-budget.test.ts and the ci:ubicloud gate both hold to UNIT_SHARD_BUDGET_MS.
+ */
+export function unitShardPlan(root: string): { shard: number; files: string[]; ms: number }[] {
+  const weights = loadWeights(join(root, "scripts/test-weights.json"));
+  return unitShards(root).map((files, i) => ({ shard: i + 1, files, ms: Math.round(predictedWeight(files, weights).totalMs) }));
+}
 
 export class WeightsLoadError extends Error {
   constructor(public readonly path: string, public readonly cause: unknown) {

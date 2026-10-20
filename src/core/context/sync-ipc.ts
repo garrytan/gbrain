@@ -296,3 +296,35 @@ export interface SyncAbortResponse {
   state?: DelegatedSyncState;
   error?: string;
 }
+
+/**
+ * GBRA-133 PR 2a: sync_nudge (secret-gated, protocol 2, versioned by `version`). A client that cannot sync now (
+ * `gbrain sync trigger`, or a delegated sync the serve answered `busy`) records what it wants as a wanted marker
+ * through the serve that holds the PGLite brain, which acknowledges with the marker and nudges its notifier. An
+ * absent `intent` lets the serve pick (managed: freshness, classic: pull); a freshness marker with no `wantedHead`
+ * takes the checkout's HEAD as the serve reads it. An older serve answers unknown_kind:sync_nudge.
+ */
+export const SYNC_NUDGE_VERSION = 1;
+
+export interface SyncNudgeRequest {
+  kind: 'sync_nudge';
+  protocol: 2;
+  version: number;
+  secret: string;
+  sourceId: string;
+  intent?: 'freshness' | 'pull' | 'full';
+  wantedHead?: string | null;
+  requestedBy: 'sync_trigger' | 'delegated_sync';
+}
+
+export interface SyncNudgeResponse {
+  ok: boolean;
+  protocol: 2;
+  version?: number;
+  acked?: boolean;
+  marker?: { source_id: string; intent: 'freshness' | 'pull' | 'full'; generation: number; wanted_head: string | null; first_due_at: string };
+  /** Whether a notifier runs in that serve (false: GBRAIN_NOTIFIER=0 there; the marker waits for a resident). */
+  notifier?: boolean;
+  resident?: string | null;
+  error?: string;
+}

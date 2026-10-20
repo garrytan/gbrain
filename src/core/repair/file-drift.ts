@@ -42,6 +42,15 @@
  * (bound to its revision, path and owner; the mass-delete valve applies). A file deleted only in the worktree (still
  * committed at HEAD) is not drift: the preview lists it `deletion_uncommitted` with its route (commit the deletion, or
  * `gbrain repair ghost-pages`) and resolves nothing.
+ *
+ * #6712 PR 4b: `--held [--side both|unknown|deleted [--state tombstone_edited|purged_differs|file_gone]]` selects the
+ * source's held `file_drift` pages of one Decision (design v3.2 §4). A selection of several sides or states is refused
+ * (`file_drift_mixed_selection`) and a deleted side needs `--state` (`file_drift_state_required`), because the two
+ * options do opposite things in each state. Both/unknown pages resolve as above, `file_gone` as the wave's file-gone
+ * modes; `tombstone_edited` and `purged_differs` (a deleted page, or a deletion marker, at the origin of a file that
+ * differs) resolve `--prefer database` by removing the file through a coordinated publication (`prepareDriftFileRemoval`;
+ * the deletion stands) and `--prefer file` by importing the file's bytes through the managed file repair (the tombstone is
+ * restored, or a new page created; a marker stays for sync to retire). The preview lists each page's action verb.
  */
 import { randomUUID } from 'node:crypto';
 import { closeSync, constants, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -49,7 +58,7 @@ import { join, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { configDir } from '../config.ts';
 import { flushDirectory } from '../fs-durable.ts';
-import { OperationError, opError } from '../ops/contract.ts';
+import { OperationError, opError, type OperationContext } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import { validateSlug } from '../utils.ts';
 import { matchesRepairPath } from './path-glob.ts';
@@ -61,7 +70,13 @@ import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, sa
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 import { auditDriftConflicts, DRIFT_CLASSES, driftClass, liveFileDrift, type DriftClass } from '../persistence/drift-conflicts.ts';
 import { protectedReconcileKey, reconcileCanonical, RECONCILE_SCAN_KEYS, type ReconcileDecision } from '../persistence/reconcile-merge.ts';
-import { ABSENT_FILE_HASH, canonicalDeletionState, missingFileRoute, readReconcileState, type ReconcileArtifact } from '../persistence/reconcile-state.ts';
+import { ABSENT_FILE_HASH, canonicalDeletionState, missingFileRoute, readDeletedDriftTarget, readReconcileState, type DeletedDriftChange, type DeletedDriftTarget, type ReconcileArtifact } from '../persistence/reconcile-state.ts';
+import { clearGitHold, fileDriftActionVerb, fileDriftSide, FILE_DRIFT_DELETED_STATES, FILE_DRIFT_SIDES, GIT_HOLD_OP, heldDriftPreviewArgv, type FileDriftDeletedState, type FileDriftSide, type GitHoldRecord } from '../persistence/sync-holds.ts';
+import { prepareRepairPublication, repairScreenConfig, submitManagedFileRepair } from '../persistence/file-repair.ts';
+import { maintenancePreflight, submitMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
+import type { PreparedMutation } from '../persistence/coordinator.ts';
+import type { WriteRequest } from '../persistence/model.ts';
+import { resolveSlugForPath } from '../sync.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { gitDurabilityPolicy } from '../persistence/git-durability-policy.ts';
 import { ghostPageNow, scanGhostSource, type GhostOwner, type GhostPage } from '../ghost-pages.ts';
@@ -85,7 +100,28 @@ export interface ArtifactPage { slug: string; prefer: DriftSide; class?: DriftCl
   file_gone?: true }
 /** #6712 wave: a page whose canonical file is gone from the last commit, resolved `--prefer file`: soft-delete exactly that page. */
 export interface SoftDeletePage { slug: string; prefer: 'file'; exceptions: DriftException[]; soft_delete: { ghost: GhostPage; owner: GhostOwner } }
-type PlannedPage = ArtifactPage | SoftDeletePage;
+/**
+ * #6712 PR 4b: what a held deleted-side resolution is bound to (design v3.2 §4): the file's bytes, the tombstone's id and
+ * revision (`tombstone_edited`) or the deletion marker's value (`purged_differs`), and the hold it clears.
+ */
+export interface DeletedDriftPin { state: 'tombstone_edited' | 'purged_differs'; path: string; source_path: string; raw_file_hash: string;
+  page_id: number | null; revision: string | null; marker_digest: string | null; observed_at: string }
+/** #6712 PR 4b `--prefer database` on a deleted side: the deletion stands and the file is removed by a coordinated publication. */
+export interface RemoveFilePage { slug: string; prefer: 'database'; exceptions: DriftException[]; remove_file: DeletedDriftPin }
+/** #6712 PR 4b `--prefer file` on a deleted side: the file's bytes are imported (restoring the tombstone, or as a new page). */
+export interface ImportFilePage { slug: string; prefer: 'file'; exceptions: DriftException[]; import_file: DeletedDriftPin & { result_digest: string } }
+type PlannedPage = ArtifactPage | SoftDeletePage | RemoveFilePage | ImportFilePage;
+/** #6712 PR 4b: one held `file_drift` page a `--held` selection resolves. */
+interface HeldTarget { hold: GitHoldRecord; side: FileDriftSide; state?: FileDriftDeletedState }
+
+/** The coordinated removal `--prefer database` admits for a held file whose page is deleted (prepared by `prepareDriftFileRemoval`). */
+export const FILE_DRIFT_REMOVE_INTENT = 'managed_maintenance_file_drift_remove';
+const DELETED_CHANGES: Record<DeletedDriftChange, string> = {
+  file_gone: 'the file is gone now, so nothing is left to resolve',
+  live_page: 'a live page records the file again, so it is no longer a deleted-side Decision',
+  no_deletion: 'no deleted page or deletion marker is left at its origin; the next sync re-classifies it',
+  deleted_same: 'the file holds the bytes the deleted page had, so the deletion already stands',
+};
 
 const ALL_DRIFTED_LIMIT = 1000;
 const TOP_FIELDS = ['title', 'type', 'compiled_truth', 'timeline'] as const;
@@ -93,7 +129,8 @@ const artifactDirectory = () => join(canonicalFilesystemPath(configDir()), 'repa
 const escapePointer = (key: string) => key.replace(/~/g, '~0').replace(/\//g, '~1');
 
 function previewCommand(sourceId: string, opts: RepairPlanOptions): string {
-  const select = opts.allDrifted ? ` --all-drifted${opts.driftClass ? ` --class ${opts.driftClass}` : ''}${opts.since ? ` --since ${opts.since}` : ''}`
+  const select = opts.held ? ` --held${opts.side ? ` --side ${opts.side}` : ''}${opts.state ? ` --state ${opts.state}` : ''}`
+    : opts.allDrifted ? ` --all-drifted${opts.driftClass ? ` --class ${opts.driftClass}` : ''}${opts.since ? ` --since ${opts.since}` : ''}`
     : [...(opts.slugs ?? []).map(slug => ` --slug ${slug}`), ...(opts.requests ?? []).map(id => ` --request ${id}`)].join('');
   const globs = [...(opts.only ?? []).flatMap(glob => ['--only', glob]), ...(opts.skip ?? []).flatMap(glob => ['--skip', glob])];
   return `gbrain repair file-drift --source ${sourceId}${select}${globs.length ? ` ${shellQuote(globs)}` : ''} --prefer ${opts.prefer ?? '<file|database>'}`;
@@ -183,8 +220,9 @@ function readArtifact(hash: string, command: string): Map<string, PlannedPage> {
  * path (`not_selected` counts the pages they leave out), before the class check and the bound; an exact selection
  * is narrowed by the plan from the same live check.
  */
-async function selectSlugs(engine: BrainEngine, sourceId: string, opts: RepairPlanOptions): Promise<{ slugs: string[]; classes: Map<string, DriftClass>; notSelected: number }> {
+async function selectSlugs(engine: BrainEngine, sourceId: string, opts: RepairPlanOptions): Promise<{ slugs: string[]; classes: Map<string, DriftClass>; notSelected: number; unknown: UnknownDrift[] }> {
   const classes = new Map<string, DriftClass>();
+  const unknown: UnknownDrift[] = [];
   if (opts.allDrifted) {
     const drifted: string[] = [];
     let notSelected = 0;
@@ -192,8 +230,9 @@ async function selectSlugs(engine: BrainEngine, sourceId: string, opts: RepairPl
     do {
       const page = await auditDriftConflicts(engine, sourceId, { trusted: true, excludePrivate: false }, { limit: 100, cursor });
       for (const row of page.conflicts) {
-        if (row.still_present.value !== true) continue;
+        if (row.still_present.value === false) continue;
         if (!selectedByGlobs(row.path, opts) || !sinceSelects(row.last_seen, opts.since)) { notSelected++; continue; }
+        if (row.still_present.value === null) { unknown.push({ slug: row.slug, reason: row.still_present.reason }); continue; }
         drifted.push(row.slug); classes.set(row.slug, row.class ?? 'error');
       }
       cursor = page.next ?? undefined;
@@ -206,7 +245,7 @@ async function selectSlugs(engine: BrainEngine, sourceId: string, opts: RepairPl
         `Preview one class at a time: ${previewCommand(sourceId, { ...opts, driftClass: [...counts.keys()][0] })}, and so on for each class; or name pages with --slug.`,
         { fix: readFix('Lists the drifted pages with their drift class, read-only.', { argv: ['gbrain', 'sources', 'reconcile', sourceId, '--brain', 'host', '--audit', '--conflicts', '--json'] }) });
     }
-    return { slugs: drifted.filter(slug => !opts.driftClass || classes.get(slug) === opts.driftClass), classes, notSelected };
+    return { slugs: drifted.filter(slug => !opts.driftClass || classes.get(slug) === opts.driftClass), classes, notSelected, unknown };
   }
   const slugs = new Set(opts.slugs ?? []);
   if (opts.requests?.length) {
@@ -219,17 +258,90 @@ async function selectSlugs(engine: BrainEngine, sourceId: string, opts: RepairPl
       { fix: readFix('Lists the conflict receipts of this source grouped by slug, read-only.', { argv: ['gbrain', 'sources', 'reconcile', sourceId, '--brain', 'host', '--audit', '--conflicts', '--json'] }) });
     for (const row of rows) slugs.add(row.slug);
   }
-  return { slugs: [...slugs].sort(), classes, notSelected: 0 };
+  return { slugs: [...slugs].sort(), classes, notSelected: 0, unknown };
+}
+
+/** #6991: a conflicted page the live check could not classify; it is listed and counted, never repaired. */
+interface UnknownDrift { slug: string; reason: string }
+
+function unknownDriftDetail(sourceId: string, { slug, reason }: UnknownDrift): string {
+  const kept = 'Not classified or repaired.';
+  if (reason === 'not_owner_host') return `${reason}: ${kept} Run the drift audit for source ${sourceId} on its active canonical owner host.`;
+  if (reason === 'page_missing') return `${reason}: ${kept} The page is gone from the database; decide its content by hand, no --prefer applies to it.`;
+  if (reason === 'canonical_file_missing') return `${reason}: ${kept} Its canonical file is missing; preview it alone with --slug ${slug} to choose a side.`;
+  if (reason === 'error') return `${reason}: ${kept} The live check failed unexpectedly; rerun gbrain sources reconcile ${sourceId} --audit --conflicts --json.`;
+  return `${reason}: ${kept} The live check refused; preview it alone with --slug ${slug} to see the refusal.`;
+}
+
+/**
+ * #6712 PR 4b `--held`: the source's held `file_drift` pages of one side (and, for a deleted side, one state), narrowed by
+ * the `--only` / `--skip` globs over the held file path. Without `--side` the narrowed holds must all be one Decision;
+ * holds of several sides or states are refused (`file_drift_mixed_selection`), and a deleted side always needs `--state`
+ * (`file_drift_state_required`): its two actions are opposite. Holds an older gbrain wrote with `sides: database` have
+ * no side and are listed with their single-page route.
+ */
+async function selectHeld(engine: BrainEngine, sourceId: string, opts: RepairPlanOptions & { prefer: DriftSide }):
+  Promise<{ targets: HeldTarget[]; notSelected: number; legacy: GitHoldRecord[] }> {
+  const rows = await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT h.completed_keys->0 AS record FROM op_checkpoints h
+    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+    WHERE h.op=$1 AND s.id=$2 AND h.completed_keys->0->>'code'='file_drift' ORDER BY h.fingerprint`, [GIT_HOLD_OP, sourceId]);
+  const targets: HeldTarget[] = [], legacy: GitHoldRecord[] = [];
+  let notSelected = 0;
+  for (const { record } of rows) {
+    if (!selectedByGlobs(record.path, opts)) { notSelected++; continue; }
+    const side = fileDriftSide(record.meta);
+    if (!side || side === 'deleted' && !record.meta.state) { legacy.push(record); continue; }
+    targets.push({ hold: record, side, ...(side === 'deleted' ? { state: record.meta.state } : {}) });
+  }
+  const key = (target: Pick<HeldTarget, 'side' | 'state'>) => target.state ? `${target.side}/${target.state}` : target.side;
+  const groups = new Map<string, { side: FileDriftSide; state?: FileDriftDeletedState; count: number }>();
+  for (const target of targets) {
+    const group = groups.get(key(target)) ?? { side: target.side, ...(target.state ? { state: target.state } : {}), count: 0 };
+    group.count++; groups.set(key(target), group);
+  }
+  const narrower = (group: { side: FileDriftSide; state?: FileDriftDeletedState }) => heldCommand(sourceId, group.side, group.state, opts.prefer, opts);
+  const statusFix = readFix('Lists the held files of this source with their side and state, read-only.', { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] });
+  if (!opts.side && groups.size > 1) {
+    const listed = [...groups.entries()].map(([name, group]) => `${name}=${group.count}`).join(', ');
+    throw opError('file_drift_mixed_selection', `The held file-drift pages of '${sourceId}' are ${groups.size} different Decisions (${listed}); one --prefer must not resolve them in bulk.`,
+      `Nothing was previewed. Preview one Decision at a time: ${[...groups.values()].map(narrower).join('; ')}.`, { fix: statusFix });
+  }
+  const only = !opts.side && groups.size === 1 ? [...groups.values()][0]! : null;
+  if (only?.side === 'deleted') throw stateRequired(sourceId, opts, [only.state!]);
+  return { targets: targets.filter(target => !opts.side || target.side === opts.side && (!opts.state || target.state === opts.state)).slice(0, ALL_DRIFTED_LIMIT),
+    notSelected, legacy };
+}
+
+/** #6712 PR 4b: the `--held` preview of one Decision, keeping the run's `--only` / `--skip` globs. */
+function heldCommand(sourceId: string, side: FileDriftSide, state: FileDriftDeletedState | undefined, prefer: DriftSide, opts: Pick<RepairPlanOptions, 'only' | 'skip'>): string {
+  const argv = heldDriftPreviewArgv(sourceId, side, state, prefer);
+  return shellQuote([...argv.slice(0, -2), ...(opts.only ?? []).flatMap(glob => ['--only', glob]), ...(opts.skip ?? []).flatMap(glob => ['--skip', glob]), ...argv.slice(-2)]);
+}
+
+/** #6712 PR 4b: `--side deleted` without `--state` (or a held selection that is all one deleted state) names the state to resolve. */
+function stateRequired(sourceId: string, opts: RepairPlanOptions, states: readonly FileDriftDeletedState[]): OperationError {
+  const prefer = opts.prefer ?? 'database';
+  const commands = states.map(state => `${heldCommand(sourceId, 'deleted', state, prefer, opts)} (--prefer ${prefer}: ${fileDriftActionVerb('deleted', state, prefer)})`);
+  return opError('file_drift_state_required', 'Resolving held deleted-side file drift needs --state: --prefer file and --prefer database do opposite things in each state.',
+    `Nothing was previewed. Name the state: ${commands.join('; ')}.`,
+    { fix: readFix('Lists the held files of this source with their side and state, read-only.', { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] }) });
 }
 
 function validateOptions(scope: RepairScope, opts: RepairPlanOptions | undefined): asserts opts is RepairPlanOptions & { prefer: DriftSide } {
   if (opts?.remote !== false) throw trustedCliRequired('gbrain repair file-drift runs only for the trusted local CLI on the brain host.');
-  const usage = 'gbrain repair file-drift --source <id> (--slug <slug>... | --request <id>... | --all-drifted [--class <name>] [--since <ISO-8601|7d>]) [--only <glob>]... [--skip <glob>]... --prefer file|database';
+  const usage = 'gbrain repair file-drift --source <id> (--slug <slug>... | --request <id>... | --all-drifted [--class <name>] [--since <ISO-8601|7d>] | --held [--side both|unknown|deleted [--state tombstone_edited|purged_differs|file_gone]]) [--only <glob>]... [--skip <glob>]... --prefer file|database';
   if (scope.source_ids.length !== 1) throw opError('invalid_params', 'gbrain repair file-drift needs exactly one --source.', `Name the source: ${usage}`);
   if (opts.prefer !== 'file' && opts.prefer !== 'database') throw opError('invalid_params', 'gbrain repair file-drift needs --prefer file or --prefer database.',
     `Choose the side whose content wins (protected metadata, tags union, protected takes and private facts are kept either way): ${usage}`);
-  const modes = [opts.slugs?.length ? 1 : 0, opts.requests?.length ? 1 : 0, opts.allDrifted ? 1 : 0].reduce((a, b) => a + b, 0);
-  if (modes !== 1) throw opError('invalid_params', 'Select pages one way: --slug, --request or --all-drifted.', `Pick one selection: ${usage}`);
+  const modes = [opts.slugs?.length ? 1 : 0, opts.requests?.length ? 1 : 0, opts.allDrifted ? 1 : 0, opts.held ? 1 : 0].reduce((a, b) => a + b, 0);
+  if (modes !== 1) throw opError('invalid_params', 'Select pages one way: --slug, --request, --all-drifted or --held.', `Pick one selection: ${usage}`);
+  if ((opts.side || opts.state) && !opts.held) throw opError('invalid_params', '--side and --state only narrow --held.', `Drop them, or select the held pages with --held: ${usage}`);
+  if (opts.side && !(FILE_DRIFT_SIDES as readonly string[]).includes(opts.side)) throw opError('invalid_params', `Unknown file-drift side '${opts.side}'.`,
+    `Pass --side ${FILE_DRIFT_SIDES.join(', --side ')}; gbrain sources status ${scope.source_ids[0]} --json lists each held file's side.`);
+  if (opts.state && !(FILE_DRIFT_DELETED_STATES as readonly string[]).includes(opts.state)) throw opError('invalid_params', `Unknown deleted-side state '${opts.state}'.`,
+    `Pass --state ${FILE_DRIFT_DELETED_STATES.join(', --state ')} with --side deleted; gbrain sources status ${scope.source_ids[0]} --json lists each held file's state.`);
+  if (opts.state && opts.side !== 'deleted') throw opError('invalid_params', '--state only narrows --side deleted.', `Drop --state, or pass --side deleted with it: ${usage}`);
+  if (opts.side === 'deleted' && !opts.state) throw stateRequired(scope.source_ids[0]!, opts, FILE_DRIFT_DELETED_STATES);
   if (opts.driftClass && !opts.allDrifted) throw opError('invalid_params', '--class only narrows --all-drifted.', `Drop --class, or use it with --all-drifted: ${usage}`);
   if (opts.since && !opts.allDrifted) throw opError('invalid_params', '--since only narrows --all-drifted.', `Drop --since, or use it with --all-drifted: ${usage}`);
   if (opts.driftClass && !(DRIFT_CLASSES as readonly string[]).includes(opts.driftClass)) throw opError('invalid_params', `Unknown drift class '${opts.driftClass}'.`,
@@ -263,7 +375,12 @@ async function survey(engine: BrainEngine, scope: RepairScope, opts: Pick<Repair
     do {
       const page = await auditDriftConflicts(engine, sourceId, { trusted: true, excludePrivate: false }, { limit: 100, cursor });
       for (const row of page.conflicts) {
-        if (row.still_present.value !== true || !sinceSelects(row.last_seen, opts.since)) continue;
+        if (row.still_present.value === false || !sinceSelects(row.last_seen, opts.since)) continue;
+        if (row.still_present.value === null) {
+          residuals[`unknown_${row.still_present.reason}`] = (residuals[`unknown_${row.still_present.reason}`] ?? 0) + 1;
+          listing.push({ item: `${sourceId}:${row.slug}`, class: 'unknown', detail: unknownDriftDetail(sourceId, { slug: row.slug, reason: row.still_present.reason }) });
+          continue;
+        }
         const kind = row.class ?? 'error';
         counts.set(kind, (counts.get(kind) ?? 0) + 1);
         residuals[`drifted_${kind}`] = (residuals[`drifted_${kind}`] ?? 0) + 1;
@@ -324,7 +441,7 @@ async function fileGonePage(engine: BrainEngine, sourceId: string, slug: string,
   Promise<{ page: PlannedPage; detail: string } | { skip: string; detail: string }> {
   const now = await ghostPageNow(engine, sourceId, slug);
   if (!now.ghost) return { skip: `unknown_${now.reason}`, detail: now.reason };
-  if (!opts.allDrifted && !selectedByGlobs(now.ghost.path, opts)) return { skip: 'not_selected', detail: now.ghost.path };
+  if (!opts.allDrifted && !opts.held && !selectedByGlobs(now.ghost.path, opts)) return { skip: 'not_selected', detail: now.ghost.path };
   const binding = await getWorktreeBinding(engine, sourceId);
   const root = join(binding!.local_path!, binding!.relative_path);
   const deletion = canonicalDeletionState(root, join(root, ...now.ghost.path.split('/')));
@@ -336,6 +453,98 @@ async function fileGonePage(engine: BrainEngine, sourceId: string, slug: string,
     throw opError('source_changed', 'The page or its canonical path changed during the preview.', `Nothing was written. Preview ${slug} in '${sourceId}' again.`);
   }
   return { page, detail: `recreates its missing file ${now.ghost.path} from the page` };
+}
+
+/**
+ * #6712 PR 4b: the resolution of a held file whose page is deleted (design v3.2 §4): a tombstone at its origin
+ * (`tombstone_edited`) or a deletion marker with no page row left (`purged_differs`). `--prefer database` keeps the
+ * deletion and removes the file through a coordinated publication; `--prefer file` imports the file's bytes through the
+ * managed file repair, which restores the tombstone or creates a new page and leaves the marker for sync to retire.
+ */
+async function deletedPage(engine: BrainEngine, sourceId: string, target: HeldTarget & { state: 'tombstone_edited' | 'purged_differs' }, prefer: DriftSide):
+  Promise<{ page: PlannedPage; detail: string } | { skip: string; detail: string }> {
+  const { hold, state } = target;
+  const live = await readDeletedDriftTarget(engine, sourceId, { path: hold.path, sourcePath: hold.source_path, pageId: hold.page_id });
+  if ('changed' in live) return { skip: `resolved_${live.changed}`, detail: DELETED_CHANGES[live.changed] };
+  if (live.state !== state) return { skip: 'state_changed', detail: `it is ${live.state} now; preview it with ${shellQuote(heldDriftPreviewArgv(sourceId, 'deleted', live.state, prefer, hold.path))}` };
+  const slug = live.tombstone?.slug ?? hold.slug ?? resolveSlugForPath(hold.source_path);
+  const pin: DeletedDriftPin = { state, path: hold.path, source_path: hold.source_path, raw_file_hash: live.raw_file_hash, page_id: live.tombstone?.page_id ?? null,
+    revision: live.tombstone?.revision ?? null, marker_digest: live.marker_digest, observed_at: hold.observed_at };
+  const detail = `${fileDriftActionVerb('deleted', state, prefer)}: ${hold.path}`;
+  if (prefer === 'database') return { page: { slug, prefer, exceptions: [], remove_file: pin }, detail };
+  const snapshot = await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
+  if ((snapshot ? Number(snapshot.page.id) : null) !== pin.page_id) {
+    return { skip: 'slug_taken', detail: `page ${slug} already exists for another file, so ${hold.path} cannot be imported under that slug; give the file a slug: line of its own, commit it and sync` };
+  }
+  const content = live.raw.toString('utf8');
+  if (!Buffer.from(content).equals(live.raw)) throw opError('invalid_params', 'The held file must contain valid UTF-8.', `Nothing changed. Re-save ${hold.path} in '${sourceId}' as UTF-8, then preview it again.`);
+  const publication = await prepareRepairPublication(engine, { sourceId, slug, sourcePath: hold.source_path, path: hold.path, root: live.root, content, snapshot, base: snapshot,
+    ...await repairScreenConfig(engine, sourceId) });
+  if (publication.status !== 'ready') throw opError('invalid_params', `${hold.path} does not import as written (${publication.status === 'refused' ? publication.refusal.code : 'it would store a canonical overlay'}).`,
+    `Nothing changed. Fix the file, commit it and sync, or preview --prefer database to keep the deletion: ${shellQuote(heldDriftPreviewArgv(sourceId, 'deleted', state, 'database', hold.path))}`);
+  return { page: { slug, prefer, exceptions: [], import_file: { ...pin, result_digest: publication.digest } }, detail };
+}
+
+/** #6712 PR 4b: the deleted-side pin as the preview hash and the publication read it again. */
+async function assertDeletedPin(engine: BrainEngine, sourceId: string, pin: DeletedDriftPin): Promise<DeletedDriftTarget> {
+  const live = await readDeletedDriftTarget(engine, sourceId, { path: pin.path, sourcePath: pin.source_path, pageId: pin.page_id });
+  const why = 'changed' in live ? DELETED_CHANGES[live.changed] : live.state !== pin.state ? `it is ${live.state} now`
+    : live.raw_file_hash !== pin.raw_file_hash ? 'the file bytes changed'
+    : (live.tombstone?.page_id ?? null) !== pin.page_id || (live.tombstone?.revision ?? null) !== pin.revision ? 'the deleted page changed'
+    : live.marker_digest !== pin.marker_digest ? 'its deletion marker changed' : null;
+  if ('changed' in live || why !== null) throw opError('changed_since_preview', `${pin.path} changed since its file-drift resolution was previewed: ${why}.`,
+    `Nothing was written for ${pin.path}. Preview again with ${shellQuote(heldDriftPreviewArgv(sourceId, 'deleted', pin.state, 'database', pin.path))} (or --prefer file) and apply its new hash.`,
+    { fix: readFix('Lists the held files of this source with their side and state, read-only.', { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] }) });
+  return live;
+}
+
+/**
+ * #6712 PR 4b: the preparer of `managed_maintenance_file_drift_remove`, the coordinated removal of a held file whose page is
+ * deleted. It re-reads the deleted side bound to the preview (file bytes, tombstone id and revision or marker value) here
+ * and again under the publication guard, removes the file through the page file target (a recovery record, the Git
+ * effect commits the removal) and clears the hold it resolves in the publishing transaction. The page row is untouched.
+ */
+export async function prepareDriftFileRemoval(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
+  const pin = row.intent?.target as DeletedDriftPin | undefined;
+  if (row.authority.remote || !pin || typeof pin.path !== 'string' || typeof pin.source_path !== 'string' || typeof pin.raw_file_hash !== 'string'
+    || (pin.page_id ?? null) !== (row.page_id === null || row.page_id === undefined ? null : Number(row.page_id))) {
+    throw opError('invalid_params', 'The file-drift removal intent does not name its held file.',
+      `Request ${row.request_id} in source ${row.source_id} does not name the held file it removes, so nothing changed. Preview the repair again with gbrain repair file-drift --source ${row.source_id} --held --side deleted.`);
+  }
+  const live = await assertDeletedPin(engine, row.source_id, pin);
+  return { observedRevision: pin.revision, file: { root: live.root, path: live.path, content: null, expectedBeforeHash: pin.raw_file_hash },
+    validate: async tx => { await assertDeletedPin(tx, row.source_id, pin); },
+    apply: async tx => ({ status: 'file_removed', slug: row.slug, source_id: row.source_id, path: pin.path, state: pin.state,
+      hold_cleared: await clearGitHold(tx, { sourceId: row.source_id, incarnation: row.source_incarnation, path: pin.path, observedAt: pin.observed_at }) }) };
+}
+
+/**
+ * #6712 PR 4b: one held deleted-side page applied as previewed. `remove_file` admits the coordinated removal, bound to the
+ * pin; `import_file` re-reads the pin and submits the managed file repair of the exact previewed bytes and result.
+ */
+async function applyDeletedSide(ctx: OperationContext, page: ApprovedPage, artifact: RemoveFilePage | ImportFilePage, requestId: string, embed: boolean): Promise<RepairItemOutcome> {
+  const pin = 'remove_file' in artifact ? artifact.remove_file : artifact.import_file;
+  const action = 'remove_file' in artifact ? 'remove_file' : 'import_file';
+  try {
+    if ('remove_file' in artifact) {
+      await assertDeletedPin(ctx.engine, page.source_id, pin);
+      const authority = await maintenancePreflight(ctx.engine, page.source_id);
+      if (!authority) throw opError('owner_unavailable', 'Removing a held file needs the managed write path.',
+        `Managed persistence is off for this brain, so ${pin.path} was not removed. Held file-drift pages exist only on managed sources; check the source with gbrain sources status ${page.source_id} --json.`);
+      await submitMaintenanceIntent(ctx.engine, authority, artifact.slug, { kind: FILE_DRIFT_REMOVE_INTENT, expected_revision: pin.revision,
+        ...(pin.page_id !== null ? { deleted_page: true } : {}), target: pin }, requestId);
+    } else {
+      const live = await assertDeletedPin(ctx.engine, page.source_id, pin);
+      await asLocalCli(ctx.engine, () => submitManagedFileRepair(ctx, { sourceId: page.source_id, requestId, slug: artifact.slug, path: pin.path, sourcePath: pin.source_path,
+        content: live.raw.toString('utf8'), beforeHash: pin.raw_file_hash, resultDigest: artifact.import_file.result_digest, ...(pin.revision ? { expected_revision: pin.revision } : {}),
+        noEmbed: !embed, holdObservedAt: pin.observed_at }));
+    }
+    return { applied: true, outcome: 'repaired', detail: { request_id: requestId, prefer: artifact.prefer, action, state: pin.state } };
+  } catch (error) {
+    if (acceptedPendingReceipt(error) || !(error instanceof OperationError) || ['owner_unavailable', 'writer_lock_unavailable', 'writer_busy', 'write_pending'].includes(error.code)) throw error;
+    const changed = ['changed_since_preview', 'revision_conflict', 'page_identity_changed', 'page_not_found', 'source_changed'].includes(error.code);
+    return { applied: false, outcome: changed ? 'changed_since_preview' : 'refused', reason: error.code, detail: { request_id: requestId, action, message: error.message } };
+  }
 }
 
 function item(page: ApprovedPage, index: number, hash: string, last: boolean, prefer: DriftSide): DriftItem {
@@ -353,7 +562,8 @@ export const fileDriftRepair: RepairHandler = {
     const only = [...new Set(opts.only ?? [])].sort();
     const skip = [...new Set(opts.skip ?? [])].sort();
     const selection = digest({ prefer: opts.prefer, slugs: opts.slugs ?? [], requests: opts.requests ?? [], all: opts.allDrifted === true, class: opts.driftClass ?? null,
-      ...(opts.since ? { since: opts.since } : {}), ...(only.length ? { only } : {}), ...(skip.length ? { skip } : {}) });
+      ...(opts.since ? { since: opts.since } : {}), ...(only.length ? { only } : {}), ...(skip.length ? { skip } : {}),
+      ...(opts.held ? { held: true, side: opts.side ?? null, state: opts.state ?? null } : {}) });
     if (opts.apply) {
       if (!opts.expect) throw new OperationError('invalid_params', 'gbrain repair file-drift --apply applies only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints with --expect <preview-hash>.`, 'docs/guides/repair.md#explicit-only-repair-kinds');
@@ -373,17 +583,45 @@ export const fileDriftRepair: RepairHandler = {
       const items = approved.items.map((page, index) => item(page, index, opts.expect!, index === approved.items.length - 1, opts.prefer));
       return { items: items.filter(entry => afterCursor(entry.cursor, after)), preview_hash: opts.expect, residuals: {} };
     }
-    const { slugs, classes, notSelected } = await selectSlugs(engine, sourceId, opts);
+    const held = opts.held ? await selectHeld(engine, sourceId, opts) : null;
+    const { slugs, classes, notSelected, unknown } = held
+      ? { slugs: [], classes: new Map<string, DriftClass>(), notSelected: held.notSelected, unknown: [] as UnknownDrift[] } : await selectSlugs(engine, sourceId, opts);
     const assessmentAt = new Date().toISOString();
     const pages: PlannedPage[] = [];
     const listing: NonNullable<RepairPlan['listing']> = [];
     const residuals: Record<string, number> = notSelected ? { not_selected: notSelected } : {};
     const count = (key: string) => { residuals[key] = (residuals[key] ?? 0) + 1; };
+    for (const hold of held?.legacy ?? []) {
+      count('legacy_side');
+      listing.push({ item: `${sourceId}:${hold.slug ?? hold.path}`, class: 'legacy_side',
+        detail: `held before holds named a side; preview it alone with gbrain repair file-drift --source ${sourceId} --slug ${hold.slug ?? '<slug>'} --prefer ${opts.prefer}` });
+    }
+    for (const row of unknown) {
+      count(`unknown_${row.reason}`);
+      listing.push({ item: `${sourceId}:${row.slug}`, class: 'unknown', detail: unknownDriftDetail(sourceId, row) });
+    }
+    const targets: Array<{ slug: string | null; held?: HeldTarget }> = held ? held.targets.map(target => ({ slug: target.hold.slug, held: target })) : slugs.map(slug => ({ slug }));
     await asLocalCli(engine, async () => {
-      for (const slug of slugs) {
+      for (const { slug: targetSlug, held: target } of targets) {
+        const label = targetSlug ?? target?.hold.path ?? '';
         try {
+          if (target?.state === 'tombstone_edited' || target?.state === 'purged_differs') {
+            const resolved = await deletedPage(engine, sourceId, { ...target, state: target.state }, opts.prefer);
+            if ('skip' in resolved) { count(resolved.skip); listing.push({ item: `${sourceId}:${label}`, class: resolved.skip, detail: resolved.detail }); continue; }
+            await authorizeReconcile(engine, sourceId, resolved.page.slug);
+            pages.push(resolved.page);
+            listing.push({ item: `${sourceId}:${resolved.page.slug}`, class: `prefer_${opts.prefer}`, detail: resolved.detail });
+            continue;
+          }
+          if (targetSlug === null) { count('no_page'); listing.push({ item: `${sourceId}:${label}`, class: 'no_page', detail: 'the hold names no page; the next sync re-classifies it' }); continue; }
+          const slug = targetSlug;
           await authorizeReconcile(engine, sourceId, slug);
           const live = await liveFileDrift(engine, sourceId, slug);
+          if (target && (target.state === 'file_gone') !== (live.reason === 'canonical_file_missing')) {
+            count('side_changed');
+            listing.push({ item: `${sourceId}:${slug}`, class: 'side_changed', detail: `its file is ${live.reason === 'canonical_file_missing' ? 'gone' : 'present'} now; gbrain sources status ${sourceId} --json shows its current Decision after the next sync` });
+            continue;
+          }
           if (live.reason === 'canonical_file_missing') {
             const gone = await fileGonePage(engine, sourceId, slug, opts, assessmentAt);
             if ('skip' in gone) {
@@ -395,7 +633,7 @@ export const fileDriftRepair: RepairHandler = {
             listing.push({ item: `${sourceId}:${slug}`, class: `prefer_${opts.prefer}`, detail: gone.detail });
             continue;
           }
-          if (!opts.allDrifted && !selectedByGlobs(live.path, opts)) { count('not_selected'); continue; }
+          if (!opts.allDrifted && !opts.held && !selectedByGlobs(live.path, opts)) { count('not_selected'); continue; }
           if (live.still_present !== true) {
             count(live.still_present === false ? 'no_drift' : `unknown_${live.reason}`);
             listing.push({ item: `${sourceId}:${slug}`, class: live.still_present === false ? 'no_drift' : 'unknown', detail: live.reason });
@@ -409,21 +647,26 @@ export const fileDriftRepair: RepairHandler = {
         } catch (error) {
           if (!(error instanceof OperationError) || ['owner_unavailable', 'writer_registration_required'].includes(error.code)) throw error;
           count(`refused_${error.code}`);
-          listing.push({ item: `${sourceId}:${slug}`, class: 'refused', detail: `${error.code}: ${error.message}` });
+          listing.push({ item: `${sourceId}:${label}`, class: 'refused', detail: `${error.code}: ${error.message}` });
         }
       }
     });
     const hash = previewHash({ kind: 'file-drift-v1', brain_id: scope.brain_id, source_id: sourceId, selection,
       pages: pages.map(page => 'soft_delete' in page ? [page.slug, page.soft_delete.ghost.revision, ABSENT_FILE_HASH, 'soft_delete']
+        : 'remove_file' in page ? [page.slug, page.remove_file.revision, page.remove_file.raw_file_hash, 'remove_file', page.remove_file.state, page.remove_file.marker_digest]
+        : 'import_file' in page ? [page.slug, page.import_file.revision, page.import_file.raw_file_hash, page.import_file.result_digest, page.import_file.state, page.import_file.marker_digest]
         : [page.slug, page.preview.preconditions.revision, page.preview.preconditions.raw_file_hash, page.preview.result_digest]) });
     // #6712 wave: a recreated file stays only once committed; without Git durability the next sync imports the committed deletion again.
     const recreated = pages.flatMap(page => 'preview' in page && page.file_gone ? [page.preview.preconditions.relative_path] : []);
+    // #6712 PR 4b: a removed file is gone only once its deletion is committed; without Git durability the next sync finds the committed file held again.
+    const removed = pages.flatMap(page => 'remove_file' in page ? [page.remove_file.path] : []);
     let warnings: string[] = [];
-    if (recreated.length) {
+    if (recreated.length || removed.length) {
       const binding = await getWorktreeBinding(engine, sourceId);
       const root = join(binding!.local_path!, binding!.relative_path);
       if (!(await gitDurabilityPolicy(binding, root).catch(() => ({ durable: false }))).durable) {
-        warnings = [`Git durability is off for ${sourceId}, so the apply leaves each recreated file uncommitted. Commit it afterwards (git -C ${root} add -- ${recreated.join(' ')} && git -C ${root} commit), or the next sync imports the committed deletion again.`];
+        if (recreated.length) warnings.push(`Git durability is off for ${sourceId}, so the apply leaves each recreated file uncommitted. Commit it afterwards (git -C ${root} add -- ${recreated.join(' ')} && git -C ${root} commit), or the next sync imports the committed deletion again.`);
+        if (removed.length) warnings.push(`Git durability is off for ${sourceId}, so the apply leaves each removed file's deletion uncommitted. Commit it afterwards (git -C ${root} add -- ${removed.join(' ')} && git -C ${root} commit), or the next sync holds the committed file again.`);
       }
     }
     let artifact: string | undefined;
@@ -436,8 +679,12 @@ export const fileDriftRepair: RepairHandler = {
     return { items: pages.map((page, index) => item({ source_id: sourceId, slug: page.slug, artifact_digest: digest(page), selection }, index, hash, index === pages.length - 1, opts.prefer)),
       preview_hash: hash, residuals, listing, ...(warnings.length ? { warnings } : {}),
       details: { prefer: opts.prefer, ...(artifact ? { artifact } : {}),
-        pages: pages.map(page => 'soft_delete' in page ? { slug: page.slug, action: 'soft_delete', path: page.soft_delete.ghost.path, exceptions: page.exceptions }
-          : { slug: page.slug, ...(page.file_gone ? { action: 'recreate_file' } : {}), ...(page.class ? { class: page.class } : {}), adopt_slug_path: page.adopt_slug_path, exceptions: page.exceptions, result_digest: page.preview.result_digest }),
+        pages: pages.map(page => 'soft_delete' in page ? { slug: page.slug, action: 'soft_delete', path: page.soft_delete.ghost.path, verb: fileDriftActionVerb('deleted', 'file_gone', 'file'), exceptions: page.exceptions }
+          : 'remove_file' in page ? { slug: page.slug, action: 'remove_file', state: page.remove_file.state, path: page.remove_file.path, verb: fileDriftActionVerb('deleted', page.remove_file.state, 'database'), exceptions: page.exceptions }
+          : 'import_file' in page ? { slug: page.slug, action: 'import_file', state: page.import_file.state, path: page.import_file.path, verb: fileDriftActionVerb('deleted', page.import_file.state, 'file'), exceptions: page.exceptions, result_digest: page.import_file.result_digest }
+          : { slug: page.slug, ...(page.file_gone ? { action: 'recreate_file' } : {}), ...(page.class ? { class: page.class } : {}),
+            verb: page.file_gone ? fileDriftActionVerb('deleted', 'file_gone', 'database') : fileDriftActionVerb('both', undefined, page.prefer),
+            adopt_slug_path: page.adopt_slug_path, exceptions: page.exceptions, result_digest: page.preview.result_digest }),
         protections: 'Protected metadata stays as the database holds it, tags are the union of both sides, and protected takes and private fact rows are kept; exceptions lists each page\'s.' } };
   },
   async apply(ctx, entry, opts): Promise<RepairItemOutcome> {
@@ -447,7 +694,8 @@ export const fileDriftRepair: RepairHandler = {
     if (!artifact || digest(artifact) !== page.artifact_digest) throw previewChangedError(opts?.expect ?? hash, command);
     const requestId = requestIdFor(hash, page);
     let outcome: RepairItemOutcome;
-    if ('soft_delete' in artifact) {
+    if ('remove_file' in artifact || 'import_file' in artifact) outcome = await applyDeletedSide(ctx, page, artifact, requestId, opts?.embed !== false);
+    else if ('soft_delete' in artifact) {
       const retired = await retireGhost(ctx, artifact.soft_delete.ghost, artifact.soft_delete.owner, async () => requestId);
       outcome = retired.applied ? { applied: true, outcome: 'repaired', detail: { request_id: requestId, prefer: 'file', action: 'soft_delete' } }
         : { applied: false, outcome: 'changed_since_preview', reason: retired.outcome === 'file_restored' ? 'file_restored' : 'revision_conflict', detail: { request_id: requestId, message: retired.reason } };
@@ -469,6 +717,7 @@ export const fileDriftRepair: RepairHandler = {
   },
   render(details) {
     const lines: string[] = [];
+    for (const page of (details.pages ?? []) as Array<{ slug: string; verb?: string; path?: string }>) if (page.verb) lines.push(`  ${page.slug}: ${page.verb}${page.path ? ` (${page.path})` : ''}`);
     for (const action of (details.next_actions ?? []) as string[]) lines.push(`  ${action}`);
     if (typeof details.artifact === 'string') lines.push(`  private artifact (each page's resolved result and exceptions): ${details.artifact}`);
     if (typeof details.protections === 'string') lines.push(`  ${details.protections}`);

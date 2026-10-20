@@ -52,6 +52,8 @@ beforeAll(async()=>{
     await setup.setConfig('search.mcp_keyword_only','true');
     // #6340 holds a pinned-worktree conflict when holds are on; `sync.holds=fail` keeps the failure receipt the diagnostics test below is about.
     await setup.setConfig('sync.holds','fail');
+    // #6712 PR 4b (design §6): a selection flag scopes a pass, which never stamps last_commit; the configured exclusion keeps the first sync a first_sync.
+    await setup.setConfig('sync.exclude','excluded.md');
     await setup.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES('workspace','workspace',$1,'{}')",[root]);
     const code = 'export function residentExample() { return 4; }\n';
     writeFileSync(join(root,'example.ts'),code);
@@ -72,7 +74,7 @@ afterAll(async()=>{
 
 test('actual CLI sync and page reads delegate to a real non-serve stdio owner before opening PGLite',async()=>{
   expect(inspectLockHolder(databasePath)).toMatchObject({held:true,serve:false});
-  const synced=await cli(['sync','--source','workspace','--no-pull','--exclude','excluded.md','--json','--no-hard-deadline']);
+  const synced=await cli(['sync','--source','workspace','--no-pull','--json','--no-hard-deadline']);
   expect({code:synced.code,err:synced.err}).toMatchObject({code:0});
   expect(JSON.parse(synced.out)).toMatchObject({schema_version:1,source_id:'workspace',sync_status:'first_sync',added:1});
   expect(synced.err).toContain('registered PGLite owner');
@@ -108,13 +110,18 @@ test('remote stdio credentials cannot request trusted stale extraction',async()=
 
 test('resident-owner failure JSON retains safe scoped diagnostics and the frozen receipt without a local ledger',async()=>{
   const path=join(root,'a.md');
-  const pinned=execFileSync('git',['-C',root,'show','HEAD:a.md'],{encoding:'utf8'});
   const current=await cli(['call','get_page',JSON.stringify({slug:'a',source_id:'workspace'})]);
   expect(current.code).toBe(0);
   const updated=await cli(['call','put_page',JSON.stringify({slug:'a',source_id:'workspace',
     expected_revision:JSON.parse(current.out).revision,content:'A newer coordinated database observation.\n'})]);
   expect(updated.code).toBe(0);
   expect(JSON.parse(updated.out).state).toBe('committed');
+  // #6712 PR 4b: the pass imports only a committed change it has not recorded (design §2.3); an uncommitted edit over a
+  // recorded blob (the coordinated write's included) settles as `dirty`. So another checkout's change is committed and an
+  // uncommitted edit sits over that new pin: the import the pass owes refuses against the working file.
+  writeFileSync(path,'A committed observation from another checkout.\n');
+  execFileSync('git',['-C',root,'-c','user.name=Example','-c','user.email=example@example.invalid','commit','-qm','another checkout','--','a.md']);
+  const pinned=execFileSync('git',['-C',root,'show','HEAD:a.md'],{encoding:'utf8'});
   writeFileSync(path,'PRIVATE_RESIDENT_DIAGNOSTIC_CONTENT_CANARY\n');
   const args=['sync','--source','workspace','--full','--no-pull','--no-embed','--exclude','excluded.md','--exclude','example.ts','--json','--no-hard-deadline'];
   const blocked=await cli(args);

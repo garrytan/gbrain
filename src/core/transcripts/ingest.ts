@@ -47,7 +47,7 @@ import { classifyItemFailure, ItemRun } from '../item-failure.ts';
 import { unchangedPutPage } from '../persistence/put-page-screen.ts';
 import { canonicalJson } from '../remediation-step.ts';
 import type { FileDiagnostics, ParsedSession, TranscriptAdapter, TranscriptFormat } from './types.ts';
-import { detectAdapter } from './detect.ts';
+import { detectAdapter, type DetectResult } from './detect.ts';
 import {
   loadImportRedactionPatterns,
   redactSession,
@@ -137,6 +137,19 @@ export interface IngestFileOutcome {
   /** Adapter degraded to a bounded read (e.g. codex head+tail) — part of the file was never scanned. */
   truncated: boolean;
   error?: string;
+  /** The filesystem error code when the file could not be read (ENOENT, EACCES, ...). */
+  errno?: string;
+}
+
+/** The per-file refusal: what was refused and the next step. Nothing of a refused file is imported; other files in the run are unaffected. */
+function detectRefusal(detected: Extract<DetectResult, { ok: false }>): string {
+  if (detected.reason === 'unknown_format') return `unknown format (tried: ${detected.tried.join(', ')}); pass an explicit format flag`;
+  if (detected.reason === 'symlink') return 'symlink: transcript import never follows a symlink; pass the real file path instead. This file was not imported.';
+  const errno = detected.errno ?? 'unknown error';
+  const step = errno === 'ENOENT' ? 'the path does not exist; check it and retry'
+    : errno === 'EACCES' || errno === 'EPERM' ? 'ask the file owner to grant read access, then retry this file with the same format'
+    : 'retry this file once the filesystem error clears';
+  return `unreadable (${errno}): ${step}. This file was not imported.`;
 }
 
 export interface TranscriptsIngestResult {
@@ -240,10 +253,8 @@ export async function runTranscriptsIngest(
       adapters: opts.adapters,
     });
     if (!detected.ok) {
-      fileOutcome.error =
-        detected.reason === 'unknown_format'
-          ? `unknown format (tried: ${detected.tried.join(', ')}); pass an explicit format flag`
-          : detected.reason;
+      fileOutcome.error = detectRefusal(detected);
+      if (detected.errno) fileOutcome.errno = detected.errno;
       result.erroredFiles++;
       result.cleanScan = false;
       done++;

@@ -271,6 +271,10 @@
       },
       {
         "category": "ops",
+        "name": "sync_admission_restricted"
+      },
+      {
+        "category": "ops",
         "name": "persistence_compaction"
       },
       {
@@ -768,6 +772,10 @@
       {
         "category": "brain",
         "name": "managed_sync_latency"
+      },
+      {
+        "category": "brain",
+        "name": "commit_notifier"
       },
       {
         "category": "brain",

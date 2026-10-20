@@ -141,6 +141,14 @@ export function escapeFenceCell(s: string): string {
   return encodeFenceMarkers(s.replace(/\|/g, '\\|').replace(/\r\n?|\n/g, '<br>'));
 }
 
+/** The most claim forms one segment-text statement tests per row; a longer list runs in batches of this size. */
+export const CLAIM_FORMS_BATCH = 512;
+
+/** Each claim lowered, plain and as a facts-fence cell stores it (escapeFenceCell), deduplicated: the forms stored text holds it in. */
+export function claimTextForms(claims: readonly string[]): string[] {
+  return [...new Set(claims.flatMap(claim => [claim.toLowerCase(), escapeFenceCell(claim).toLowerCase()]).filter(Boolean))];
+}
+
 /**
  * A fence rewrite refused because the fence it starts from does not parse
  * cleanly. Every rewriter re-renders the rows the parser returned, so

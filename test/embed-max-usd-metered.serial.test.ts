@@ -114,6 +114,28 @@ describe('embed --max-usd is metered', () => {
     expect(calls).toBe(1);
   });
 
+  test('#6984: the cap prices with pricing.overrides (an operator rate replaces the shipped one)', async () => {
+    await engine.setConfig('pricing.overrides', JSON.stringify({ 'openai:text-embedding-3-large': { pricePerMTok: 0.0001 } }));
+    try {
+      const { exit } = await cli(['--slugs', ...SLUGS, '--max-usd', '0.10']);
+      expect(exit).toBe(0);
+      expect(calls).toBe(SLUGS.length);
+      expect(await embedded()).toEqual(SLUGS);
+    } finally { await engine.unsetConfig('pricing.overrides'); }
+  });
+
+  test('#6984: a model priced only by pricing.overrides runs under a user cap instead of refusing no_pricing', async () => {
+    configureGateway({ embedding_model: 'openrouter:qwen/qwen3-embedding-8b', embedding_dimensions: DIMS, env: { OPENROUTER_API_KEY: 'sk-or-test-fake' } });
+    __setEmbedTransportForTests((async ({ values }: { values: string[] }) => { calls++; return { embeddings: values.map(() => new Array(DIMS).fill(0.001)), usage: { tokens: 10 } }; }) as never);
+    await engine.setConfig('pricing.overrides', JSON.stringify({ 'openrouter:qwen/qwen3-embedding-8b': { pricePerMTok: 0.01 } }));
+    try {
+      const { out, exit } = await cli(['--slugs', ...SLUGS, '--max-usd', '0.10']);
+      expect(out).not.toContain('no_pricing');
+      expect(exit).toBe(0);
+      expect(await embedded()).toEqual(SLUGS);
+    } finally { await engine.unsetConfig('pricing.overrides'); }
+  });
+
   test('a free provider needs no authorization and runs unmetered', async () => {
     configureGateway({ embedding_model: 'ollama:nomic-embed-text', embedding_dimensions: DIMS, env: {} });
     __setEmbedTransportForTests((async ({ values }: { values: string[] }) => { calls++; return { embeddings: values.map(() => new Array(DIMS).fill(0.001)), usage: { tokens: tokensPerCall } }; }) as never);
@@ -142,5 +164,22 @@ describe('embed --stale --images --max-usd is metered', () => {
     expect(JSON.parse(out.slice(out.search(/^\{/m)))).toMatchObject({ reason: 'cost_cap', rebuilt: 1, failures: 0 });
     expect(exit).toBe(BUDGET_STOP_EXIT_CODE);
     expect(fetches).toBe(1);
+  });
+
+  test('#6984: --images prices the cap with pricing.overrides too', async () => {
+    let fetches = 0;
+    globalThis.fetch = (async () => {
+      fetches++;
+      return new Response(JSON.stringify({ data: [{ embedding: Array.from({ length: 1024 }, () => 0.1) }], usage: { total_tokens: 1_000_000 } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    configureGateway({ embedding_model: 'voyage:voyage-multimodal-3', embedding_multimodal_model: 'voyage:voyage-multimodal-3', embedding_dimensions: 1024, env: { VOYAGE_API_KEY: 'test-key' } });
+    await engine.executeRaw("UPDATE content_chunks SET embedding_image = NULL WHERE page_id IN (SELECT id FROM pages WHERE source_id = 'img')");
+    await engine.setConfig('pricing.overrides', JSON.stringify({ 'voyage:voyage-multimodal-3': { pricePerMTok: 0.0001 } }));
+    try {
+      const { out, exit } = await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: 'true' }, () => cli(['--stale', '--images', '--source', 'img', '--max-usd', '0.10', '--json']));
+      expect(JSON.parse(out.slice(out.search(/^\{/m)))).toMatchObject({ rebuilt: 2, failures: 0 });
+      expect(exit).toBe(0);
+      expect(fetches).toBe(2);
+    } finally { await engine.unsetConfig('pricing.overrides'); }
   });
 });

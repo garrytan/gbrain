@@ -36,6 +36,7 @@ import { fenceIssuesWire, fenceStep, type FenceIssueWire } from './fence-repair/
 import type { FenceCtx, FenceFix, FencePage, FenceReason } from './fence-repair/types.ts';
 import { effectiveVisibility } from './search/private-visibility.ts';
 import { CODE_FILE_MAX_BYTES, PAGE_MAX_BYTES } from './page-size-policy.ts';
+import { sliceMemo } from './persistence/slice-memo.ts';
 
 /** Largest Markdown page import admits: the Wave A ceiling (page-size-policy.ts). */
 export const MAX_FILE_SIZE = PAGE_MAX_BYTES;
@@ -63,7 +64,11 @@ export interface ImportSanityConfig {
  * write-gate keys ride the same lift; an unreadable value falls back to the
  * defaults (flag for both), never to `off`.
  */
-export async function loadImportSanityConfig(engine: BrainEngine): Promise<ImportSanityConfig> {
+export function loadImportSanityConfig(engine: BrainEngine): Promise<ImportSanityConfig> {
+  return sliceMemo(engine, 'import-sanity', () => readImportSanityConfig(engine));
+}
+
+async function readImportSanityConfig(engine: BrainEngine): Promise<ImportSanityConfig> {
   const baseCfg = loadConfig();
   let effectiveCfg = baseCfg;
   // One whole-table read answers the DB config lift and the write-gate keys (#6007 statement budget).

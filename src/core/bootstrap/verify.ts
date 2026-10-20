@@ -36,7 +36,7 @@ import { pendingReceiptOf, pollCommand, resolveCliWriteWaitMs, WRITE_WAIT_ENV } 
 import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../spawn.ts';
 import { join, resolve } from 'node:path';
 
 import type { BrainEngine } from '../engine.ts';

@@ -40,3 +40,23 @@ export function resolveAutopilotDispatchTimeoutMs(
     ? Math.max(intervalDerivedTimeoutMs, FULL_CYCLE_TIMEOUT_FLOOR_MS)
     : intervalDerivedTimeoutMs;
 }
+
+/**
+ * Co-stamp an automatic atom drain's window and job deadline. The drain
+ * checks its window only between items and hard-stops at the job deadline
+ * (#5809, dead-lettering the job and aborting the paid call in flight), so
+ * the deadline covers the window plus one final item: two chat calls (a
+ * schema-rejecting provider retries once) and a minute to publish. The
+ * window is clamped so the deadline stays within the full-cycle anchor; a
+ * longer interval-derived deadline still wins. Manual drains are unchanged.
+ */
+export function resolveAutopilotAutoDrainBounds(
+  intervalTimeoutMs: number,
+  requestedWindowSeconds: number,
+  chatTimeoutMs: number,
+): { windowSeconds: number; timeoutMs: number } {
+  const completionAllowanceMs = Math.ceil(2 * chatTimeoutMs + 60_000);
+  const maxWindowSeconds = Math.max(1, Math.floor((FULL_CYCLE_TIMEOUT_FLOOR_MS - completionAllowanceMs) / 1000));
+  const windowSeconds = Math.min(Math.max(1, Math.floor(requestedWindowSeconds)), maxWindowSeconds);
+  return { windowSeconds, timeoutMs: Math.max(intervalTimeoutMs, windowSeconds * 1000 + completionAllowanceMs) };
+}

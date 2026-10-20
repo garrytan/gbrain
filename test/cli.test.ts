@@ -3,10 +3,11 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { surfaceFileSource } from './helpers/source-surface.ts';
+import { fileURLToPath } from 'node:url';
 
 // test-reads-source-ok[structural]: two kept pins need the dispatcher's text: the handleCliOnly case-label census (switch labels cannot be enumerated at runtime) and the local-op normalize call site (bigints only reach it from Postgres, never PGLite).
 const cliSource = surfaceFileSource('cli', 'src/cli/main.ts');
-const repoRoot = new URL('..', import.meta.url).pathname;
+const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
 function isolatedEnv(home: string): Record<string, string> {
   const env: Record<string, string> = {};
@@ -215,7 +216,7 @@ describe('ask alias', () => {
 
   test('ask does NOT appear in --tools-json output', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--tools-json'], {
-      cwd: new URL('..', import.meta.url).pathname,
+      cwd: fileURLToPath(new URL('..', import.meta.url)),
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -230,7 +231,7 @@ describe('ask alias', () => {
 describe('CLI dispatch integration', () => {
   test('--version outputs version', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--version'], {
-      cwd: new URL('..', import.meta.url).pathname,
+      cwd: fileURLToPath(new URL('..', import.meta.url)),
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -241,7 +242,7 @@ describe('CLI dispatch integration', () => {
 
   test('unknown command prints error and exits 2 (usage)', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'notacommand'], {
-      cwd: new URL('..', import.meta.url).pathname,
+      cwd: fileURLToPath(new URL('..', import.meta.url)),
       stdout: 'pipe',
       stderr: 'pipe',
     });

@@ -9,15 +9,17 @@ import type { OperationContext } from '../src/core/ops/contract.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { readPassRow } from '../src/core/persistence/sync-pass-row.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
-import { INCOMPLETE_SYNC_RECEIPT_SQL, checkpointRetryCommand, findIncompleteSyncReceipt, formatCheckpointTimeoutHint, readRequestIndexStates } from '../src/core/persistence/checkpoint-validation.ts';
+import { INCOMPLETE_SYNC_RECEIPT_SQL, OPEN_PASS_WORK_SQL, checkpointRetryCommand, findIncompleteSyncReceipt, formatCheckpointTimeoutHint, readRequestIndexStates } from '../src/core/persistence/checkpoint-validation.ts';
 import { persistenceOperations } from '../src/core/ops/persistence.ts';
 import { printManagedSyncDiagnostic } from '../src/commands/sync-diagnostics.ts';
 import { WRITE_ERROR_CODES } from '../src/core/persistence/types.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { stampByCheckpoint } from './helpers/pass-fold.ts';
 
 // #5762: the managed sync checkpoint validation ran one OR predicate with a
 // correlated sub-select over all of persistence_requests under the
@@ -92,13 +94,13 @@ test('#5762 the three index probes find exactly what the former predicate found'
   await engine.executeRaw('DELETE FROM persistence_requests WHERE source_id=$1', [f.id]);
 }), 180_000);
 
-/** Makes the checkpoint's validation statement fail inside the coordinator's own transaction. */
+/** Makes the checkpoint's validation statement (#6712 PR 4b: the pass stamp's) fail inside the coordinator's own transaction. */
 function failValidation(engine: BrainEngine, failure: 'timeout' | 'lock'): () => void {
   const transaction = engine.transaction;
   engine.transaction = async function<T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>): Promise<T> {
     return transaction.call(this, tx => run(new Proxy(tx, { get(target, property) {
       if (property === 'executeRaw') return async (sql: string, params?: unknown[]) => {
-        if (sql !== INCOMPLETE_SYNC_RECEIPT_SQL) return target.executeRaw(sql, params);
+        if (sql !== OPEN_PASS_WORK_SQL) return target.executeRaw(sql, params);
         // Postgres raises a real statement timeout under the coordinator's own 5 s budget; PGLite has none, so the error is injected.
         if (failure === 'timeout' && engine.kind === 'postgres') return target.executeRaw('SELECT pg_sleep(8)::text AS request_id');
         throw Object.assign(new Error(failure === 'timeout' ? 'canceling statement due to statement timeout' : 'canceling statement due to lock timeout'),
@@ -111,24 +113,37 @@ function failValidation(engine: BrainEngine, failure: 'timeout' | 'lock'): () =>
   return () => { engine.transaction = transaction; };
 }
 
-/** Runs the fixture's sync until its checkpoint validation times out terminally. */
+/**
+ * Runs the fixture's sync until its checkpoint validation times out terminally. The validation under test is the checkpoint
+ * request's, so the pass stamps by that request rather than folding the stamp into its import (#6926).
+ */
 async function timedOutSync(engine: BrainEngine, f: Awaited<ReturnType<typeof fixture>>) {
   const restore = failValidation(engine, 'timeout');
   let result: Awaited<ReturnType<typeof performManagedSync>>;
   try {
-    result = await performManagedSync(engine, f.opts);
+    result = await stampByCheckpoint(() => performManagedSync(engine, f.opts));
     // A real 5 s statement timeout outlasts the sync's own 5 s wait; the same options then report the terminal outcome.
     for (let waited = 0; result.status === 'partial' && waited < 30_000; waited += 250) {
       await new Promise(resolve => setTimeout(resolve, 250));
       const [row] = await engine.executeRaw<{ state: string }>("SELECT state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_checkpoint' ORDER BY sequence DESC LIMIT 1", [f.id]);
-      if (row?.state === 'failed') result = await performManagedSync(engine, f.opts);
+      if (row?.state === 'failed') result = await stampByCheckpoint(() => performManagedSync(engine, f.opts));
     }
   } finally { restore(); }
   return result;
 }
 
-const checkpointRuns = (engine: BrainEngine, sourceId: string) => engine.executeRaw<{ state: string; error_code: string | null; run_id: string }>(
-  "SELECT state, error_code, intent->>'runId' AS run_id FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_checkpoint' ORDER BY sequence", [sourceId]);
+/** #6712 PR 4b: a pass's checkpoint intent names its pass (`passId`), not a cursor run. */
+const checkpointRuns = (engine: BrainEngine, sourceId: string) => engine.executeRaw<{ state: string; error_code: string | null; pass_id: string }>(
+  "SELECT state, error_code, intent->>'passId' AS pass_id FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_checkpoint' ORDER BY sequence", [sourceId]);
+/** The pass id the source's pass row names now. */
+const currentPassId = async (engine: BrainEngine, sourceId: string) => {
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text FROM sources WHERE id=$1', [sourceId]);
+  return (await readPassRow(engine, sourceId, source!.incarnation))!.value.telemetry.pass_id;
+};
+/** Every page request of the source: rediscovering the run would admit the pages again. */
+const pageRequests = (engine: BrainEngine, sourceId: string) => engine.executeRaw<{ slug: string; state: string }>(
+  "SELECT slug, state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind' IN ('managed_sync_import','managed_sync_delete') ORDER BY slug, sequence", [sourceId]);
+const ADMITTED_ONCE = [{ slug: 'a', state: 'committed' }, { slug: 'b', state: 'committed' }];
 
 test('#5762 a validation statement timeout fails the checkpoint terminally with a typed code and a filled hint; other writes proceed', async () => each(async engine => {
   const f = await fixture(engine);
@@ -158,23 +173,34 @@ test('#5762 a validation statement timeout fails the checkpoint terminally with 
 
   // The printed retry admits a fresh run that commits.
   expect((await performManagedSync(engine, { ...f.opts, retryFailed: true })).status).toBe('first_sync');
-  // #6735: it re-validated the pinned checkpoint of the timed-out run; it did not rediscover the manifest under a new run.
+  // #6735 through the pass (#6712 PR 4b, design v3.2 §3.1, §3.3): the retry's pass validated a fresh stamp; it admitted no page write again.
   const runs = await checkpointRuns(engine, f.id);
-  expect(runs.at(-1)).toMatchObject({ state: 'committed', run_id: runs[0]!.run_id });
+  expect(runs.map(row => [row.state, row.error_code])).toEqual([['failed', 'checkpoint_validation_timeout'], ['committed', null]]);
+  expect(runs[1]!.pass_id).toBe(await currentPassId(engine, f.id));
+  expect(runs[1]!.pass_id).not.toBe(runs[0]!.pass_id);
+  expect(await pageRequests(engine, f.id)).toEqual(ADMITTED_ONCE);
 }), 180_000);
 
 test('#6735 a plain resume re-validates a checkpoint whose validation timed out, once per invocation', async () => each(async engine => {
   const f = await fixture(engine);
   expect(await timedOutSync(engine, f)).toMatchObject({ status: 'blocked_by_failures', failureCodes: [{ code: 'checkpoint_validation_timeout', count: 1 }] });
   const [failed] = await checkpointRuns(engine, f.id);
-  // A timeout that persists is revived once by the next invocation, then recorded again: the run is never rediscovered.
+  expect(await pageRequests(engine, f.id)).toEqual(ADMITTED_ONCE);
+  // #6712 PR 4b (design v3.2 §3.1, §3.3): a timeout that persists is validated once by the next invocation's pass, in its
+  // own stamp, then recorded again; no page write is admitted again.
   expect(await timedOutSync(engine, f)).toMatchObject({ status: 'blocked_by_failures', failureCodes: [{ code: 'checkpoint_validation_timeout', count: 1 }] });
-  expect((await checkpointRuns(engine, f.id)).map(row => [row.state, row.error_code, row.run_id]))
-    .toEqual([['failed', 'checkpoint_validation_timeout', failed!.run_id], ['failed', 'checkpoint_validation_timeout', failed!.run_id]]);
-  // Once validation fits its budget, the plain sync the run stopped on commits that same checkpoint.
+  const second = await currentPassId(engine, f.id);
+  expect(second).not.toBe(failed!.pass_id);
+  expect((await checkpointRuns(engine, f.id)).map(row => [row.state, row.error_code, row.pass_id]))
+    .toEqual([['failed', 'checkpoint_validation_timeout', failed!.pass_id], ['failed', 'checkpoint_validation_timeout', second]]);
+  expect(await pageRequests(engine, f.id)).toEqual(ADMITTED_ONCE);
+  // Once validation fits its budget, the plain sync commits its pass's stamp, still without admitting a page again.
   expect((await performManagedSync(engine, f.opts)).status).toBe('first_sync');
-  expect((await checkpointRuns(engine, f.id)).map(row => [row.state, row.run_id]))
-    .toEqual([['failed', failed!.run_id], ['failed', failed!.run_id], ['committed', failed!.run_id]]);
+  const third = await currentPassId(engine, f.id);
+  expect((await checkpointRuns(engine, f.id)).map(row => [row.state, row.pass_id]))
+    .toEqual([['failed', failed!.pass_id], ['failed', second], ['committed', third]]);
+  expect(third).not.toBe(second);
+  expect(await pageRequests(engine, f.id)).toEqual(ADMITTED_ONCE);
   expect(await engine.executeRaw('SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL ORDER BY slug', [f.id])).toEqual([{ slug: 'a' }, { slug: 'b' }]);
 }), 180_000);
 

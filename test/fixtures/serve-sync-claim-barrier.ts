@@ -11,9 +11,9 @@ PGLiteEngine.prototype.transactionDirect = async function<T>(fn: (engine: BrainE
   const result = await transaction.call(this, fn, opts) as T;
   const row = result as WriteRequest | null;
   if (!stopped && row?.state === 'running' && row.source_id === 'workspace' && row.slug === 'topics/note-0003'
-    && row.intent?.kind === 'managed_sync_import' && typeof row.intent.runId === 'string') {
+    && row.intent?.kind === 'managed_sync_import' && typeof row.intent.passId === 'string') {
     stopped = true;
-    writeFileSync(marker, JSON.stringify({ requestId: row.request_id, runId: row.intent.runId }), { flag: 'wx', mode: 0o600 });
+    writeFileSync(marker, JSON.stringify({ requestId: row.request_id, passId: row.intent.passId }), { flag: 'wx', mode: 0o600 });
     await new Promise<never>((_, reject) => setTimeout(() => reject(new Error('The sync claim barrier was not interrupted.')), 120_000));
   }
   return result;

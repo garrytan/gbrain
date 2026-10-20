@@ -134,15 +134,47 @@ function parseToml(text: string): Record<string, unknown> {
  * appending to a broken file could only deepen the damage.
  */
 export function detectForeignCodexServer(configText: string, name: string): boolean {
-  const lines = configText.replace(/\r\n/g, '\n').split('\n');
-  const { remainder } = stripBlock(lines);
-  const parsed = parseToml(remainder.join('\n'));
-  const servers = parsed.mcp_servers;
-  if (typeof servers !== 'object' || servers === null) return false;
-  return (servers as Record<string, unknown>)[name] !== undefined;
+  const server = outsideServer(configText, name);
+  return server !== undefined && !isToolsOnly(server);
 }
 
-function renderBlock(block: CodexHttpServerBlock): string[] {
+/** `mcp_servers.<name>` as defined outside our managed block, or undefined. */
+function outsideServer(configText: string, name: string): unknown {
+  const { remainder } = stripBlock(configText.replace(/\r\n/g, '\n').split('\n'));
+  const servers = parseToml(remainder.join('\n')).mcp_servers;
+  return isTable(servers) ? servers[name] : undefined;
+}
+
+/**
+ * Codex's per-tool settings for a server (`[mcp_servers.<name>.tools.<tool>]`,
+ * e.g. `approval_mode = "approve"` from "always allow", #6799): tool name to
+ * scalar settings. Null for any other shape, which stays a foreign edit.
+ */
+export type CodexToolPolicy = Record<string, Record<string, string | number | boolean>>;
+
+const isTable = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+export function codexToolPolicy(value: unknown): CodexToolPolicy | null {
+  if (!isTable(value)) return null;
+  for (const settings of Object.values(value)) {
+    if (!isTable(settings) || Object.values(settings).some(v => !['string', 'number', 'boolean'].includes(typeof v))) return null;
+  }
+  return value as CodexToolPolicy;
+}
+
+/** A server table holding nothing but a valid tool policy: Codex's approvals, not a server definition. */
+function isToolsOnly(server: unknown): boolean {
+  return isTable(server) && Object.keys(server).join(',') === 'tools' && codexToolPolicy(server.tools) !== null;
+}
+
+/** Tools whose Codex settings sit outside our managed block (removing the block would orphan them). */
+export function codexToolsOutsideBlock(configText: string, name: string): string[] {
+  const server = outsideServer(configText, name);
+  return isToolsOnly(server) ? Object.keys((server as { tools: CodexToolPolicy }).tools) : [];
+}
+
+function renderBlock(block: CodexHttpServerBlock, tools: CodexToolPolicy = {}): string[] {
   // http_headers inline table, NOT `bearer_token`: codex-cli >=0.149 rejects
   // bearer_token for streamable_http at config load (#4574); this shape loads
   // on 0.147.x and 0.149.x.
@@ -151,18 +183,24 @@ function renderBlock(block: CodexHttpServerBlock): string[] {
     `[mcp_servers.${block.name}]`,
     `url = ${tomlString(block.url)}`,
     `http_headers = { Authorization = ${tomlString(`Bearer ${block.bearerToken}`)} }`,
+    ...Object.entries(tools).flatMap(([tool, settings]) => [
+      `[mcp_servers.${block.name}.tools.${tomlKey(tool)}]`,
+      ...Object.entries(settings).map(([k, v]) => `${tomlKey(k)} = ${typeof v === 'string' ? tomlString(v) : String(v)}`),
+    ]),
     CODEX_TOML_BLOCK_END,
   ];
 }
 
 /** Post-render assertion shared by the writer and the snippet renderer: our
- * table's keys are EXACTLY [http_headers, url], and the http_headers inline
+ * table's keys are EXACTLY [http_headers, url] (plus a `tools` table of
+ * Codex's own per-tool settings, #6799), and the http_headers inline
  * table carries EXACTLY the Authorization header we wrote. Returns an error
  * string (caller prefixes its own context) or null when valid. */
 function validateOurKeys(ours: unknown): string | null {
   const ourKeys = typeof ours === 'object' && ours !== null ? Object.keys(ours as object).sort() : [];
-  if (ourKeys.join(',') !== 'http_headers,url') {
-    return `keys are [${ourKeys.join(', ')}], expected exactly [http_headers, url]`;
+  const withTools = ourKeys.join(',') === 'http_headers,tools,url' && codexToolPolicy((ours as Record<string, unknown>).tools) !== null;
+  if (ourKeys.join(',') !== 'http_headers,url' && !withTools) {
+    return `keys are [${ourKeys.join(', ')}], expected exactly [http_headers, url] (plus Codex tool settings)`;
   }
   const headers = (ours as Record<string, unknown>).http_headers;
   const headerKeys = typeof headers === 'object' && headers !== null ? Object.keys(headers as object) : [];
@@ -231,9 +269,15 @@ export function writeCodexHttpServerBlock(
   const lines = rawText.replace(/\r\n/g, '\n').split('\n');
 
   const { remainder, hadBlock } = stripBlock(lines);
+  // #6799: Codex's tool approvals written inside our block are carried into the new one.
+  const span = findBlock(lines);
+  const priorServers = span.begin === -1 ? undefined : parseToml(lines.slice(span.begin, span.end + 1).join('\n')).mcp_servers;
+  const prior = isTable(priorServers) ? priorServers[block.name] : undefined;
+  const carried: CodexToolPolicy = (isTable(prior) && codexToolPolicy(prior.tools)) || {};
 
   // Foreign ownership guard — a duplicate table definition is a hard TOML
-  // parse error that would brick codex entirely.
+  // parse error that would brick codex entirely. A table holding only Codex's
+  // tool settings is not a server definition (#6799).
   const remainderText = remainder.join('\n');
   let parsedRemainder: Record<string, unknown>;
   try {
@@ -245,7 +289,7 @@ export function writeCodexHttpServerBlock(
     );
   }
   const servers = parsedRemainder.mcp_servers;
-  if (typeof servers === 'object' && servers !== null && (servers as Record<string, unknown>)[block.name] !== undefined) {
+  if (isTable(servers) && servers[block.name] !== undefined && !isToolsOnly(servers[block.name])) {
     throw new Error(
       `[mcp_servers.${block.name}] is already defined in ${configPath} outside the gbrain-managed block — ` +
         `refusing to double-define it (that is a hard TOML parse error). ` +
@@ -258,13 +302,15 @@ export function writeCodexHttpServerBlock(
   const trimmed = [...remainder];
   while (trimmed.length > 0 && trimmed[trimmed.length - 1].trim() === '') trimmed.pop();
   const body = trimmed.length > 0 ? [...trimmed, ''] : [];
-  const nextLines = [...body, ...renderBlock(block), ''];
+  const nextLines = [...body, ...renderBlock(block, carried), ''];
   const nextText = nextLines.join('\n');
 
   // Post-render validation: parse + assert OUR table's keys are exactly ours.
   const rendered = parseToml(nextText);
   const renderedServers = rendered.mcp_servers as Record<string, unknown> | undefined;
-  const problem = validateOurKeys(renderedServers?.[block.name]);
+  const ours = renderedServers?.[block.name] as Record<string, unknown> | undefined;
+  const lost = Object.keys(carried).find(tool => canonicalJson((ours?.tools as CodexToolPolicy | undefined)?.[tool]) !== canonicalJson(carried[tool]));
+  const problem = validateOurKeys(ours) ?? (lost === undefined ? null : `Codex settings for tool ${lost} did not round-trip`);
   if (problem !== null) {
     throw new Error(
       `post-render validation failed: [mcp_servers.${block.name}] ${problem} — original file left untouched.`,

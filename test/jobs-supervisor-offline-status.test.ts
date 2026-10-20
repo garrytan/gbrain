@@ -51,4 +51,31 @@ describe('supervisor status without a database connection', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  test('an unreadable worker registry reports workers unknown instead of aborting status', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'supervisor-status-registry-unreadable-'));
+    try {
+      mkdirSync(join(home, '.gbrain'), { recursive: true });
+      writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({
+        engine: 'postgres',
+        database_url: 'postgresql://127.0.0.1:1/gbrain_test',
+      }));
+      writeFileSync(join(home, '.gbrain', 'workers'), 'not a directory');
+      const pidFile = join(home, 'supervisor.pid');
+      writeFileSync(pidFile, `${process.pid}\n`);
+      const result = await runCli(['jobs', 'supervisor', 'status', '--pid-file', pidFile, '--json'], {
+        home,
+        timeoutMs: 10_000,
+        env: { GBRAIN_AUDIT_DIR: join(home, 'audit') },
+      });
+      expect(result.exitCode).toBe(0);
+      const status = JSON.parse(result.stdout);
+      expect(status.running).toBe(true);
+      expect(status.workers).toBeNull();
+      expect(status.worker_registry_unreadable).toBe(true);
+      expect(status.worker_registry_errno).toBe('ENOTDIR');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

@@ -318,10 +318,10 @@ export async function doctorReportRemote(
 
   // 5. Queue health (Postgres-only). PGLite has no minion_jobs in the same
   // shape; skip the check there with an informational message.
-  checks.push(await computeQueueHealthCheck(engine));
+  checks.push(await computeQueueHealthCheck(engine, { remote: opts.remote !== false }));
 
   // issue #1801 — wedged_queue (cross-surface parity with buildChecks).
-  checks.push(await computeWedgedQueueCheck(engine));
+  checks.push(await computeWedgedQueueCheck(engine, { remote: opts.remote !== false }));
   checks.push(await computeOrphanedPrivateQueueCheck(engine));
 
   // #2194 fix #5 — warn when autopilot fan-out exceeds worker concurrency.

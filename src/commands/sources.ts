@@ -74,16 +74,18 @@ import { deleteSourceRow } from '../core/source-delete.ts';
 import { USAGE_EXIT_CODE } from '../core/exit-codes.ts';
 import { isSyncStrategy } from '../core/sync.ts';
 import { pullStrategyOf } from '../core/git-remote.ts';
+import { isValidSourceId } from '../core/source-id.ts';
+import { opError } from '../core/ops/contract.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
-// Shared with source-resolver.ts — canonical shape.
-const SOURCE_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
-
 function validateSourceId(id: string): void {
-  if (!SOURCE_ID_RE.test(id)) {
-    throw new Error(
+  if (!isValidSourceId(id)) {
+    throw opError(
+      'invalid_params',
       `Invalid source id "${id}". Must be 1-32 lowercase alnum chars with optional interior hyphens (e.g. "wiki", "yc-media").`,
+      'Use 1-32 lowercase letters, digits and interior hyphens, for example: gbrain sources attach wiki. gbrain sources list shows the existing ids.',
+      { fix: { argv: ['gbrain', 'sources', 'list', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists the existing source ids to attach to.' } },
     );
   }
 }

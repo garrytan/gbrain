@@ -90,7 +90,7 @@ export interface UrlClonePullBlock {
 
 /** Tracked files of `root` whose index or working copy differs from HEAD. */
 export function trackedChanges(root: string): string[] {
-  const out = execFileSync('git', ['-C', root, 'diff', '--name-only', '-z', 'HEAD', '--'], { env: gitChildEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) as string;
+  const out = execFileSync('git', ['-C', root, 'diff', '--name-only', '--relative', '-z', 'HEAD', '--'], { env: gitChildEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) as string;
   return out.split('\0').filter(Boolean).sort();
 }
 

@@ -180,7 +180,7 @@ async function showSupervisorStatus(
 ): Promise<void> {
   const { readSupervisorEvents, summarizeCrashes } = await import('../../core/minions/handlers/supervisor-audit.ts');
   const { readSupervisorPid } = await import('../../core/minions/supervisor-pid.ts');
-  const { readWorkers } = await import('../../core/minions/worker-registry.ts');
+  const { readWorkers, workerRegistryReadFailure } = await import('../../core/minions/worker-registry.ts');
 
   const pidStatus = readSupervisorPid(pidFile);
   const supervisorPid = pidStatus.pid;
@@ -224,12 +224,19 @@ async function showSupervisorStatus(
   const maxCrashesEvent = events.filter(e => e.event === 'max_crashes_exceeded').pop() ?? null;
 
   // Niceness (issue #1815): measure live workers + the supervisor itself.
-  const workers = readWorkers().map(w => ({
-    pid: w.pid,
-    queue: w.queue,
-    nice_requested: w.nice_requested,
-    nice: w.nice_now,
-  }));
+  // workers is null when the registry is unreadable: liveness unknown, not zero.
+  let workers: Array<{ pid: number; queue: string; nice_requested: number | null; nice: number | null }> | null = null;
+  let workerRegistryError: { errno: string; path: string | null } | null = null;
+  try {
+    workers = readWorkers().map(w => ({
+      pid: w.pid,
+      queue: w.queue,
+      nice_requested: w.nice_requested,
+      nice: w.nice_now,
+    }));
+  } catch (e) {
+    workerRegistryError = workerRegistryReadFailure(e);
+  }
   const supervisorNice = pidfileRunning && supervisorPid !== null
     ? getEffectiveNiceness(supervisorPid)
     : null;
@@ -263,6 +270,7 @@ async function showSupervisorStatus(
     max_crashes_exceeded: !!maxCrashesEvent,
     nice: supervisorNice,
     workers,
+    ...(workerRegistryError ? { worker_registry_unreadable: true, worker_registry_errno: workerRegistryError.errno, worker_registry_path: workerRegistryError.path } : {}),
   };
 
   if (jsonMode) {
@@ -282,7 +290,10 @@ async function showSupervisorStatus(
     console.log(`  Crashes (24h):     ${summary.total} (runtime=${summary.by_cause.runtime_error} oom=${summary.by_cause.oom_or_external_kill} unknown=${summary.by_cause.unknown} legacy=${summary.by_cause.legacy})`);
     console.log(`  Clean exits (24h): ${summary.clean_exits}`);
     if (supervisorNice !== null) console.log(`  Nice (supervisor): ${formatNice(supervisorNice)}`);
-    for (const w of workers) {
+    if (workerRegistryError) {
+      console.log(`  Workers:       unknown (worker registry unreadable: ${workerRegistryError.errno}${workerRegistryError.path ? ` at ${workerRegistryError.path}` : ''})`);
+    }
+    for (const w of workers ?? []) {
       const req = w.nice_requested !== null && w.nice !== null && w.nice_requested !== w.nice
         ? ` (requested ${formatNice(w.nice_requested)})` : '';
       console.log(`  Worker pid ${w.pid} [${w.queue}]: nice ${w.nice !== null ? formatNice(w.nice) : '?'}${req}`);

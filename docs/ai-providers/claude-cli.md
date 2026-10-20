@@ -98,6 +98,14 @@ stdin:
   gbrain's own hooks therefore still fires inside claude-cli calls; gbrain's
   Stop hook, the serve-side harvest and the sweep all skip those
   self-captures, so nothing is extracted from them.
+- A call with an output cap carries it as `CLAUDE_CODE_MAX_OUTPUT_TOKENS` in
+  both the `--settings` env and the child env. Claude Code thinks by default
+  on Claude 5 models, and the API needs a thinking budget of at least 1024
+  tokens below that cap, so a call capped at 1024 tokens or fewer (the
+  `models doctor` probe, query-intent and classification calls) also sets
+  `MAX_THINKING_TOKENS=0` in both places and reports
+  `providerMetadata['claude-cli'].thinking = 'disabled_below_floor'`. A larger
+  cap leaves thinking to the CLI.
 - The subprocess env is a copy of gbrain's own process env with the
   cloud-auth routing variables scrubbed before spawn: the three direct-API
   keys (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`)

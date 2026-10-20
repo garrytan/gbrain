@@ -15,6 +15,7 @@ import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { deriveDateContext, localToUtcIso, parseConversation } from '../../src/core/conversation-parser/parse.ts';
 import type { Page } from '../../src/core/types.ts';
+import { fileURLToPath } from 'node:url';
 
 function makePage(frontmatter: Record<string, unknown>): Page {
   return {
@@ -56,7 +57,7 @@ describe('localToUtcIso', () => {
     expect(localToUtcIso('2024-03-15', 9, 0, 'Etc/GMT+5')).toBe('2024-03-15T14:00:00Z');
   });
   test('independent of the host timezone', () => {
-    const script = `import { localToUtcIso } from ${JSON.stringify(new URL('../../src/core/conversation-parser/parse.ts', import.meta.url).pathname)};
+    const script = `import { localToUtcIso } from ${JSON.stringify(fileURLToPath(new URL('../../src/core/conversation-parser/parse.ts', import.meta.url)))};
       console.log(JSON.stringify([localToUtcIso('2024-03-15', 9, 0, 'Asia/Tokyo'), localToUtcIso('2024-11-03', 1, 30, 'America/New_York'), localToUtcIso('2024-03-10', 2, 30, 'America/New_York')]));`;
     for (const TZ of ['Pacific/Kiritimati', 'America/Anchorage', 'UTC']) {
       const out = execFileSync(process.execPath, ['-e', script], { env: { ...process.env, TZ }, encoding: 'utf8' }).trim();

@@ -134,6 +134,32 @@ describe('extract-atoms-drain handler', () => {
     expect(await lockRows()).toEqual([]);
   });
 
+  // #6817: one stop mapping for the CLI and this handler. A permanent provider
+  // outage dead-letters once; a transient one keeps the retry under backoff.
+  test('an auth failure on every item dead-letters at once; a transient one retries (#6817)', async () => {
+    await seedEligiblePage('notes/provider-probe');
+    const cases = [
+      { error: () => Object.assign(new Error('401 Unauthorized: invalid x-api-key'), { status: 401 }), cls: 'auth' as const, final: true },
+      { error: () => new Error('provider unavailable'), cls: 'transient' as const, final: false },
+    ];
+    for (const c of cases) {
+      await engine.executeRaw('DELETE FROM gbrain_cycle_locks');
+      __setChatTransportForTests(async () => { throw c.error(); });
+      let direct: ExtractAtomsDrainResult;
+      let err: unknown;
+      try {
+        direct = await runExtractAtomsDrainForSource(engine, { sourceId: 'default', windowSeconds: 120 });
+        err = await makeExtractAtomsDrainHandler(engine)(drainJob(new AbortController().signal)).then(() => null, (e: unknown) => e);
+      } finally {
+        __setChatTransportForTests(null);
+      }
+      expect({ status: direct.status, cls: direct.provider_failure_class }).toEqual({ status: 'provider_failure', cls: c.cls });
+      expect(err).toBeInstanceOf(Error);
+      expect(err instanceof UnrecoverableError).toBe(c.final);
+      expect((err as Error).message.includes('retrying')).toBe(!c.final);
+    }
+  });
+
   // #5832: withRefreshingLock aborts the signal it hands its work when the
   // cycle lock's lease is lost; that signal must reach the model call even for
   // a caller that passes no signal of its own (gbrain dream --drain).

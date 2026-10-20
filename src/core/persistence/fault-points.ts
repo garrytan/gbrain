@@ -45,6 +45,30 @@ export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${Effect
   | 'purge:sweep_chunk' | 'purge:carrying_lookup'
   // W1: before each keyset batch of the belief ledger's purge redaction (belief/purge.ts); a 57014 from the hook models its statement timeout.
   | 'purge:ledger_redaction'
+  // #6712 PR 4b: after a page-row deletion of a managed Git source wrote its origin's deletion marker (sync-markers.ts), before the row goes.
+  | 'purge:marker_written'
+  // #6712 PR 4b: before each round of a pass reads its level (`round`), and after it read it (`level`: its statements and its
+  // confirm-round verdict), before it applies.
+  | 'sync:round_start' | 'sync:level_read'
+  // GBRA-133 S-69: as a pass starts batching a level's entries (sync-pass-run.ts `batchEntries`); a hook that throws models a
+  // rejection there, including a non-Error one.
+  | 'sync:batch_entries'
+  // #6712 PR 4b: the level's overlapping reads, which share one loop budget (sync-yield.ts `turnYield`): a Git chunk as its
+  // records are visited (`read`: ls-tree or ls-files; a synchronous hook), an `I⋈P` result in hand before the shared budget
+  // decides whether it waits a turn, and the same result right before its rows are taken.
+  | 'sync:level_chunk' | 'sync:level_result' | 'sync:level_take' | 'sync:closure_walk'
+  // #6712 PR 4b: a taken confirm round about to patch the previous round's origin domain (sync-pass-narrow.ts); a hook that
+  // throws makes it build the domain whole (`confirm.narrow: 'forced'`).
+  | 'sync:level_narrow'
+  // #6712 PR 4b: before a confirm round's proof sets its parallel scans (sync-pass-confirm.ts `parallelProof`); a hook that
+  // throws makes the server refuse the setting, as a restricted role or a managed host does.
+  | 'sync:confirm_parallel'
+  // #6712 PR 4b (#6926): inside the round's last import's publication, before its folded stamp's checks (sync-pass-fold.ts); a hook
+  // that throws models a failed check statement there: the stamp rolls back to its savepoint and the pass stamps by its checkpoint request.
+  | 'sync:pass_fold'
+  // GBRA-108: before each slice of a legacy sweep is screened (sync-pass-apply.ts); a hook that throws stops the pass mid-sweep,
+  // as a kill or the drain's governor does.
+  | 'sync:legacy_slice'
   // #6650: `gbrain repair stuck-recovery` (recovery-resolve.ts): after the backup is durable (before its journal step), after the prior
   // bytes are written (before their journal step), after a --keep disk write is abandoned (its journal step written), and after recoverPublication returns.
   | 'stuck_recovery:backed_up' | 'stuck_recovery:written' | 'stuck_recovery:abandoned' | 'stuck_recovery:recovered'
@@ -65,7 +89,10 @@ export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${Effect
  * cancellation (settle on abort) and one that ignores it (hang on).
  */
 /** `writeId` is the write request row: rows of a caller-bound replay share one `requestId` (crash-robot per-request seams key on the row). */
-export interface FaultDetail { requestId?: string; writeId?: string; effectId?: string; sourceId?: string; operation?: string | null; signal?: AbortSignal; slug?: string; path?: string }
+export interface FaultDetail { requestId?: string; writeId?: string; effectId?: string; sourceId?: string; operation?: string | null; signal?: AbortSignal; slug?: string; path?: string;
+  round?: number; read?: string; level?: { statements: number; confirm: { taken: boolean; reason: string | null; rows: number; narrow?: string } | null; reused?: number;
+    /** `sync:level_read`: the level and the input it was read with (sync-pass.ts `readShadowLevel`), for probes that read it again. */
+    shadow?: unknown; input?: unknown } }
 /** Postgres returns `persistence_effects.id` (bigserial) as a BigInt; `faultPoint` hands hooks its decimal string (#6584). */
 export type FaultDetailInput = Omit<FaultDetail, 'effectId'> & { effectId?: string | number | bigint };
 type FaultHook = (point: FaultPoint, detail: FaultDetail) => Promise<void> | void;
@@ -82,6 +109,10 @@ export const EFFECT_FAULT_POINTS: Record<EffectKind, FaultPoint> = {
 let installed: FaultHook | undefined;
 /** Gate workers only. */
 export function installFaultHook(hook: FaultHook | undefined): void { installed = hook; }
+/** A seam inside synchronous work: the hook runs to its first await, and what it returns is not awaited. */
+export function faultPointNow(point: FaultPoint, detail: FaultDetailInput = {}): void {
+  if (installed) void faultPoint(point, detail).catch(() => undefined);
+}
 /** Whether a hook is installed: a seam that must not delay a synchronous send in production checks it first. */
 export function faultHookInstalled(): boolean { return installed !== undefined; }
 export async function faultPoint(point: FaultPoint, detail: FaultDetailInput = {}): Promise<void> {

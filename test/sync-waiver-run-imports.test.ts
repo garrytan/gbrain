@@ -5,6 +5,11 @@
  * screen of an entry the cursor does not yet name validates against this run's cursor
  * with nothing pending; the run's transaction re-checks each file's bytes and the
  * owner epoch, so an edit or an owner change after the screens still ends the run.
+ *
+ * #6712 PR 4b: a non-company source syncs by the live pass, whose batch drains through
+ * the same waiver runs on a batch cursor with no cursor row; the pass's result (`pass`)
+ * says what the cursor row said: an edited file still ends the run and the pass converges,
+ * and an owner change blocks the pass with nothing settled.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
@@ -51,10 +56,18 @@ async function syncedSource(engine: BrainEngine, n: number) {
 }
 const importRequests = (engine: BrainEngine, id: string) => engine.executeRaw<{ slug: string; state: string }>(
   "SELECT slug,state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence", [id]);
-function countTransactions(engine: BrainEngine): { engine: BrainEngine; count: () => number } {
-  let count = 0;
-  return { count: () => count, engine: new Proxy(engine, { get(target, key) {
-    if (key === 'transaction') return (fn: (tx: BrainEngine) => Promise<unknown>) => { count++; return target.transaction(fn); };
+/**
+ * The engine's transactions, with the pass's round snapshots counted apart: on Postgres each pass round reads its level in
+ * one `REPEATABLE READ, READ ONLY` transaction (`withRoundSnapshot`, sync-pass.ts); PGLite (one connection) runs those
+ * reads without a transaction. They are bounded by rounds, not files, so they are asserted per round instead.
+ */
+function countTransactions(engine: BrainEngine): { engine: BrainEngine; count: () => number; snapshots: () => number } {
+  let count = 0, snapshots = 0;
+  return { count: () => count, snapshots: () => snapshots, engine: new Proxy(engine, { get(target, key) {
+    if (key === 'transaction') return (fn: (tx: BrainEngine) => Promise<unknown>) => {
+      if (new Error().stack?.includes('withRoundSnapshot')) snapshots++; else count++;
+      return target.transaction(fn);
+    };
     const value = Reflect.get(target, key);
     return typeof value === 'function' ? value.bind(target) : value;
   } }) };
@@ -74,6 +87,7 @@ test('a full re-sync of unchanged files waives them in one waiver-run transactio
       expect((await importRequests(engine, f.id)).length).toBe(before);
       // The per-entry path takes two transactions per file (24 here); the run takes one for all twelve.
       expect(counted.count()).toBeLessThan(8);
+      expect(counted.snapshots()).toBeLessThanOrEqual(engine.kind === 'postgres' ? result.pass!.round : 0);
     } finally { await disposePersistenceConsumer(counted.engine); }
   }
 }), 120_000);
@@ -95,8 +109,9 @@ test('a file edited after its screen ends the waiver run before it: earlier file
       const admitted = (await importRequests(engine, f.id)).slice(before);
       expect(new Set(admitted.map(row => row.slug))).toEqual(new Set(['n03']));
       expect(admitted[0]!.state).toBe('conflict');
-      const [cursor] = await engine.executeRaw<{ index: number; done: boolean }>("SELECT (completed_keys->0->>'index')::int AS index,(completed_keys->0->>'done')::boolean AS done FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [f.id]);
-      expect(cursor).toMatchObject({ index: 8, done: true });
+      // The pass keeps no cursor row: it settled all eight candidates of its round and converged.
+      expect(await engine.executeRaw("SELECT 1 FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [f.id])).toEqual([]);
+      expect(result.pass).toMatchObject({ kind: 'full', outcome: 'synced', stop_reason: null, candidates: 8, remaining: 0 });
     } finally { installFaultHook(undefined); await disposePersistenceConsumer(engine); }
   }
 }), 120_000);
@@ -117,14 +132,14 @@ test('an owner change during a waiver run\'s screens waives nothing: the run fal
       const value = Reflect.get(target, key);
       return typeof value === 'function' ? value.bind(target) : value;
     } });
+    const before = (await importRequests(engine, f.id)).length;
     try {
       const outcome = await performManagedSync(proxy, { sourceId: f.id, ...OPTS, full: true }).then(result => ({ result }), (error: unknown) => ({ error }));
       expect(bumped).toBe(true);
-      // The run re-reads the owner epoch under its lock and passes nothing; the head's per-entry screen then admits it,
-      // and its publication refuses the stale owner, so the cursor stays at the head.
-      expect('result' in outcome).toBe(true);
-      const result = (outcome as { result: Awaited<ReturnType<typeof performManagedSync>> }).result;
-      expect(result).toMatchObject({ status: 'blocked_by_failures', waived: { imports: 0, deletes: 0 }, managedCursor: { index: 0 }, failureCodes: [{ code: 'owner_unavailable' }] });
+      // The run re-reads the owner epoch under its lock and passes nothing; the head's admission then fences the moved
+      // owner epoch (#6712 PR 4b ruling): the sync refuses source_changed, admits nothing and leaves no failed receipt.
+      expect(outcome).toMatchObject({ error: { code: 'source_changed' } });
+      expect((await importRequests(engine, f.id)).length).toBe(before);
     } finally { await disposePersistenceConsumer(proxy); }
   }
 }), 120_000);

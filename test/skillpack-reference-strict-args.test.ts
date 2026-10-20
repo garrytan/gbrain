@@ -18,8 +18,9 @@ import { join } from 'node:path';
 import { strictArgsRefusal } from '../src/cli/strict-args.ts';
 import { runSkillpack } from '../src/commands/skillpack.ts';
 import * as referenceCore from '../src/core/skillpack/reference.ts';
+import { fileURLToPath } from 'node:url';
 
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 const SKILL = 'ask-user';
 const created: string[] = [];
 afterEach(() => {

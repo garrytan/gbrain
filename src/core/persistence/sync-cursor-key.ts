@@ -5,7 +5,8 @@
  * sync job, `sync --all` and a serve-delegated run of one source each held their own unfinished cursor and none could
  * resume another's (#5632, #6696). It is now `managedCursorKey(incarnation, company)`.
  *
- * `resolveManagedCursor` folds in the cursors written under an older key (`legacyManagedCursorKey`). It runs under the
+ * `resolveManagedCursor` folds in the cursors written under an older key (a digest of the writer, its authority and the
+ * options, before #6712 PR 1). It runs under the
  * drain lease, before the pass reads its cursor, and every write it makes checks the lease's fence:
  * - The incarnation's unfinished cursor under the current key wins; otherwise the newest unfinished one under an older
  *   key is adopted and finished in place, under its own key and frozen manifest. The requests it admitted name that
@@ -28,11 +29,11 @@ import { digest } from './digest.ts';
 import { completeWrite, lockCounters } from './journal.ts';
 import { retireManagedSyncOrphan } from './managed-sync-orphans.ts';
 import { isTerminal, principalKey, requestPrincipal, type WriteRequest } from './model.ts';
-import type { SyncAuthority } from './sync-authority.ts';
 import { clearManagedSyncFailureAfterSuccess } from './sync-failures.ts';
 import { assertDrainLease } from './sync-lease.ts';
 import { faultPoint } from './fault-points.ts';
-import type { SyncCursorOptions } from './sync-prepare.ts';
+import { SYNC_SLICE_OP } from './sync-slices.ts';
+import { passFingerprint } from './sync-pass-row.ts';
 
 type CompanySync = ReturnType<typeof currentCompanyBrainSync>;
 
@@ -47,10 +48,8 @@ export function managedCursorKey(incarnation: string, company: CompanySync): str
   return keyForTests?.(incarnation) ?? digest({ source: incarnation, ...companyPart(company) });
 }
 
-/** The key a cursor was written under before #6712 PR 1. Read-only: it names the options of an older failure row. */
-export function legacyManagedCursorKey(incarnation: string, authority: SyncAuthority, company: CompanySync, syncOptions: SyncCursorOptions): string {
-  return digest({ source: incarnation, principal: authority.writer.principal, authority, ...companyPart(company), options: syncOptions });
-}
+/** #6712 PR 4b: where a pass records its stops (the pass row's key, and the incarnation's cursor key for discovery); a converged or idle pass clears both. */
+export const passFailureKeys = (sourceId: string, incarnation: string) => [passFingerprint(sourceId, incarnation), managedCursorKey(incarnation, undefined)];
 
 export const SUPERSEDED_BY_ADOPTION_MESSAGE = 'Another unfinished sync run of this source was adopted; this queued page of a superseded run was not published, and the adopted run (or the next sync) imports it.';
 
@@ -97,7 +96,7 @@ export async function resolveManagedCursor(engine: BrainEngine, input: { sourceI
       if (company) continue;
       await engine.transaction(async tx => {
         await fence(tx);
-        await tx.executeRaw("DELETE FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 AND COALESCE(completed_keys->0->>'done','false')='true'", [row.key]);
+        await deleteFinishedCursor(tx, row.key);
       });
       await clearManagedSyncFailureAfterSuccess(engine, row.key);
     } else {
@@ -121,6 +120,51 @@ const waitOn = (request: WriteRequest): NonNullable<CursorResolution['waitFor']>
   kind: (request.intent as { kind?: string } | null)?.kind ?? null, slug: request.slug, state: request.state, recovery: !!request.recovery });
 
 /** The first request under a cursor key that is not merely queued: running, recovering, publishing or carrying recovery. */
+/**
+ * #6712 PR 4b (design v3.2 §3.5): the live pass retires the incarnation's chosen cursor too (`resolveManagedCursor` keeps it
+ * for a cursor pass): a finished one is deleted; an unfinished one is superseded like the others. Returns the open request
+ * to wait for, or null once it is gone (or a consumer kept it with nothing open: the next pass retries).
+ */
+export async function retireManagedCursor(engine: BrainEngine, input: { sourceId: string; incarnation: string; key: string; runId: string | null; done: boolean }):
+  Promise<NonNullable<CursorResolution['waitFor']> | null> {
+  const fence = (tx: BrainEngine) => assertDrainLease(tx, input.sourceId);
+  if (input.done) {
+    await engine.transaction(async tx => {
+      await fence(tx);
+      await deleteFinishedCursor(tx, input.key);
+      await deleteSliceRecords(tx, input.sourceId, input.incarnation);
+    });
+    await clearManagedSyncFailureAfterSuccess(engine, input.key);
+    return null;
+  }
+  const open = await supersede(engine, { key: input.key, done: false, company_receipt_id: null, run_id: input.runId }, { sourceId: input.sourceId, incarnation: input.incarnation, fence });
+  if (open === 'kept') {
+    const busy = await busyRequest(engine, input.sourceId, input.key);
+    return busy ? waitOn(busy) : null;
+  }
+  if (open) return waitOn(open);
+  await engine.transaction(async tx => { await fence(tx); await deleteSliceRecords(tx, input.sourceId, input.incarnation); });
+  return null;
+}
+
+/** #6712 PR 4b: an orphaned path-slice record, left with no cursor row beside it, goes on the incarnation's first pass too. */
+export async function retireOrphanSliceRecords(engine: BrainEngine, sourceId: string, incarnation: string): Promise<void> {
+  await engine.transaction(async tx => { await assertDrainLease(tx, sourceId); await deleteSliceRecords(tx, sourceId, incarnation); });
+}
+
+/** A finished cursor row and its frozen manifest, unless another cursor still names that run. */
+async function deleteFinishedCursor(tx: BrainEngine, key: string): Promise<void> {
+  const [row] = await tx.executeRaw<{ run_id: string | null }>(`DELETE FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1
+    AND COALESCE(completed_keys->0->>'done','false')='true' RETURNING completed_keys->0->>'runId' AS run_id`, [key]);
+  if (row?.run_id) await tx.executeRaw(`DELETE FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1
+    AND NOT EXISTS (SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.completed_keys->0->>'runId'=$1)`, [row.run_id]);
+}
+
+/** The incarnation's path-slice records (sync-slices.ts): only a non-company cursor run cuts its target into slices. */
+async function deleteSliceRecords(tx: BrainEngine, sourceId: string, incarnation: string): Promise<void> {
+  const prefix = `${sourceId}:${incarnation}:`;
+  await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND left(fingerprint, length($2))=$2', [SYNC_SLICE_OP, prefix]);
+}
 async function busyRequest(engine: BrainEngine, sourceId: string, key: string): Promise<WriteRequest | null> {
   const open = await engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'cursorKey'=$2
     AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) ORDER BY sequence`, [sourceId, key]);

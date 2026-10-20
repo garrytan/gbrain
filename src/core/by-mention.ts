@@ -125,7 +125,7 @@ export function hashGazetteer(gazetteer: Gazetteer): string {
     for (const e of bucket) entries.push(`${e.source_id}\0${e.slug}\0${e.title}\0${e.tokens.join(' ')}\0${e.matchText ?? ''}${e.caseTokens ? `\0${e.caseTokens.join(' ')}` : ''}`);
   }
   // Matching semantics are part of the resume identity, not just DB contents.
-  return createHash('sha256').update('html-comments-masked-v4\n').update(entries.sort().join('\n')).digest('hex').slice(0, 8);
+  return createHash('sha256').update('katakana-boundaries-v5\n').update(entries.sort().join('\n')).digest('hex').slice(0, 8);
 }
 
 /** One row of the saved entry set the mention pass diffs (mention_gazetteer_entries). */
@@ -542,16 +542,16 @@ export async function buildGazetteer(
     if (tokens.length === 0) continue;
     if (tokens[0]!.length < MIN_NAME_LENGTH && tokens.length === 1) { drop({ ...base, reason: 'below_min_length' }); continue; }
     if (userIgnore.has(tokens.join(' '))) { drop({ ...base, reason: 'ignored' }); continue; }
-    // #4222: a single-generic-token PERSON title ("Will", "Chief") is a
+    // #4222: a single-generic-token title ("Will", "Chief", "Info") is a
     // junk-hub magnet — every prose occurrence of the word would accrete
     // another mention edge onto a near-empty page. Dropped from the gazetteer
     // even though the page exists (unlike the CK12 ignore-list rule above,
     // which trusts user-created pages: these titles are overwhelmingly
     // extractor-minted, and the page itself stays intact — only the
-    // auto-link accretion stops). Multi-token titles ("Will Smith") and
-    // non-person titles are unaffected; aliases of every type are checked
-    // below.
-    if (tokens.length === 1 && row.type === 'person' && isGenericEntityToken(tokens[0]!)) { drop({ ...base, reason: 'generic_token' }); continue; }
+    // auto-link accretion stops). #6958: every page type, not only person
+    // (a company titled "Info" magnetized the same way). Multi-token titles
+    // ("Will Smith") are unaffected; aliases of every type are checked below.
+    if (tokens.length === 1 && isGenericEntityToken(tokens[0]!)) { drop({ ...base, reason: 'generic_token' }); continue; }
     noteFirstWord(src, tokens);
     add({ slug: row.slug, source_id: src, title: row.title, tokens, origin: 'title', matchText: row.title, ...stubFlag(src, row.slug) });
   }
@@ -716,6 +716,30 @@ function hasHangulMatchBoundary(
   return actual === expected && HANGUL_NAME_SUFFIX_RE.test(text.slice(end, end + 12));
 }
 
+/** A name written only in Katakana (ー included) must be a whole Katakana run,
+ * so デン matches 「デン」, デンに, 喫茶デン and デン・カフェ but not インシデント
+ * or デンタル. Katakana (small and supplementary kana included), ー and the
+ * voicing marks continue a run; Hiragana, Han, Latin, punctuation and ・ end it.
+ * This is a script-span rule, not morphology: a short name inside a real
+ * Katakana compound is refused too, and the compound can be its own alias.
+ */
+const KATAKANA_NAME_TOKEN_RE = /^[\p{Script=Katakana}ー]$/u;
+const KATAKANA_RUN_CHARS = '\\p{Script=Katakana}ー\\u3099-\\u309c\\uff70\\uff9e\\uff9f';
+const KATAKANA_RUN_BEFORE_RE = new RegExp(`[${KATAKANA_RUN_CHARS}]$`, 'u');
+const KATAKANA_RUN_AFTER_RE = new RegExp(`^[${KATAKANA_RUN_CHARS}]`, 'u');
+
+function hasKatakanaMatchBoundary(
+  text: string, tokens: ScannedToken[], start: number, entry: GazetteerEntry,
+): boolean {
+  if (!entry.tokens.every(t => KATAKANA_NAME_TOKEN_RE.test(t))) return true;
+  const first = tokens[start]!;
+  const last = tokens[start + entry.tokens.length - 1]!;
+  const end = last.offset + last.length;
+  return text.slice(first.offset, end) === entry.tokens.join('')
+    && !KATAKANA_RUN_BEFORE_RE.test(text.slice(Math.max(0, first.offset - 2), first.offset))
+    && !KATAKANA_RUN_AFTER_RE.test(text.slice(end, end + 2));
+}
+
 /**
  * Scan body text for mentions of gazetteer entities. Pure function — no
  * IO. Returns `Mention[]` ordered by offset, deduped per
@@ -778,6 +802,7 @@ export function findMentionedEntities(
     for (const entry of bucket) {
       if (i + entry.tokens.length > tokens.length) continue;
       if (!hasHangulMatchBoundary(stripped, tokens, i, entry)) continue;
+      if (!hasKatakanaMatchBoundary(stripped, tokens, i, entry)) continue;
       if (!caseMatches(entry, i)) continue;
       if (entry.tokens.length === 1) {
         matched = entry;
@@ -812,7 +837,8 @@ export function findMentionedEntities(
       e.tokens.length === want.tokens.length
         && e.tokens.every((t, k) => t === want.tokens[k])
         && caseMatches(e, i)
-        && hasHangulMatchBoundary(stripped, tokens, i, e);
+        && hasHangulMatchBoundary(stripped, tokens, i, e)
+        && hasKatakanaMatchBoundary(stripped, tokens, i, e);
     if (matched.source_id !== opts.fromSourceId) {
       const want = matched;
       const own = bucket.find(e => e.source_id === opts.fromSourceId && sameName(e, want));

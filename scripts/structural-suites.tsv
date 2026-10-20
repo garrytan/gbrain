@@ -32,11 +32,12 @@ test/autopilot-supervisor-wiring.test.ts	autopilot.ts ↔ ChildWorkerSupervisor 
 test/backup-cli.serial.test.ts	runBackupCli — PGLite lock fallback	3	readFileSync,source-surface-helper
 test/backup-invalidation.serial.test.ts	bootstrap repo — recordRepoInReceipt contract (source-text pin)	2	readFileSync
 test/backup-private-path-text-5312.test.ts	(file-level)	3	readFileSync
+test/behavior-change-notice-6712-block.test.ts	#6712 PR 4b BEHAVIOR_CHANGES block	4	readFileSync
 test/book-mirror.test.ts	gbrain book-mirror — source file invariants	2	readFileSync
 test/bootstrap-codex-door.test.ts	Codex door — rendered AGENTS.md pull protocol (Gate 3)	2	readFileSync
 test/bootstrap-contract.test.ts	bootstrap same-turn write-back contract	6	readFileSync
 test/bootstrap-opencode-door.serial.test.ts	opencode door — rendered AGENTS.md pull protocol	1	readFileSync
-test/bootstrap-shared-skills.test.ts	(file-level)	18	readFileSync
+test/bootstrap-shared-skills.test.ts	(file-level)	19	readFileSync
 test/brain-durability-hook.serial.test.ts	#4682 — push-lock timeout is fail-loud for the helper only	1	readFileSync
 test/brain-durability-hook.serial.test.ts	brain-commit-push.sh (D13 guarantee)	4	readFileSync
 test/brain-durability-hook.serial.test.ts	durability push remote confirmation (#5138)	9	readFileSync
@@ -123,6 +124,7 @@ test/doctor-skills-dir.test.ts	doctor --skills-dir (#4673)	6	readFileSync
 test/doctor-supervisor-singleton-pidfile.test.ts	doctor supervisor_singleton — honors the recorded pid_file (custom --pid-file)	2	doctor-source-helper
 test/doctor-supervisor-singleton-pidfile.test.ts	doctor supervisor_singleton — pid_file fallback (source-grep)	1	doctor-source-helper
 test/doctor-volunteer-channels.test.ts	checkVolunteerChannels	9	doctor-source-helper,readFileSync,source-surface-helper
+test/doctor-wedged-queue.test.ts	issue #1801 fix #3 — computeWedgedQueueCheck	14	doctor-source-helper
 test/doctor-wedged-queue.test.ts	issue #1801 fix #3 — remote queue_health state→status regression	1	doctor-source-helper
 test/doctor.test.ts	BUG 4 — in-progress sync via live lock, not stale freshness	8	doctor-source-helper
 test/doctor.test.ts	doctor command	35	doctor-source-helper
@@ -289,7 +291,7 @@ test/scripts/check-item-allowlist-catches.test.ts	CLI	2	readFileSync
 test/scripts/chunk-visibility-ratchet.test.ts	check-chunk-visibility.ts	6	readFileSync
 test/scripts/ci-bounded-run.test.ts	(file-level)	7	readFileSync
 test/scripts/ci-executed-counts.test.ts	CLI	2	readFileSync
-test/scripts/ci-gates.test.ts	CI execution evidence	9	readFileSync
+test/scripts/ci-gates.test.ts	CI execution evidence	11	readFileSync
 test/scripts/ci-gates.test.ts	test:full exit status	0	readFileSync
 test/scripts/ci-hydrate-admin-dist.test.ts	#6756 ci:local hydrates the admin/dist volume from the worktree	7	readFileSync
 test/scripts/ci-local-rendering.test.ts	ci-local command rendering	1	readFileSync
@@ -302,10 +304,11 @@ test/scripts/ci-runner-routing.test.ts	CI runner routing	7	readFileSync
 test/scripts/classify-tests.test.ts	classify-tests detectors	23	bun-file,doctor-source-helper,exec-scan,readFileSync,source-surface-helper
 test/scripts/classify-tests.test.ts	structural-suites manifest	1	readFileSync
 test/scripts/coverage-diff-gate.test.ts	exemptions	3	readFileSync
-test/scripts/data-safety-native-workflow.test.ts	data-safety native CI coverage	13	readFileSync
+test/scripts/data-safety-native-workflow.test.ts	data-safety native CI coverage	16	readFileSync
 test/scripts/e2e-backend-matrix.test.ts	scripts/e2e-backend-matrix.txt	3	readFileSync
 test/scripts/e2e-live-key-only.test.ts	shared live-key E2E exclusion list	4	readFileSync
 test/scripts/e2e-matrix.test.ts	frozen E2E matrix	9	readFileSync
+test/scripts/e2e-provider-key-notice.test.ts	scripts/e2e-provider-key-notice.sh	3	readFileSync
 test/scripts/e2e-runner.test.ts	second	5	readFileSync
 test/scripts/e2e-runner.test.ts	sequential E2E runner (GITHUB_ACTIONS=${githubActions})	9	readFileSync
 test/scripts/e2e-wiring.test.ts	(file-level)	12	readFileSync
@@ -318,7 +321,7 @@ test/scripts/native-setup-toolchain.test.ts	scripts/native/setup-toolchain.ts do
 test/scripts/nightly-e2e.test.ts	full E2E shard classification (#6040)	2	readFileSync
 test/scripts/nightly-e2e.test.ts	nightly E2E scheduling	4	readFileSync
 test/scripts/nightly-issue.test.ts	.github/nightly-known-red.tsv	2	readFileSync
-test/scripts/nightly-issue.test.ts	master-red: push-to-master runs	23	readFileSync
+test/scripts/nightly-issue.test.ts	master-red: push-to-master runs	28	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch coverage ratchet	1	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch incidents	9	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch routing and guard	9	readFileSync

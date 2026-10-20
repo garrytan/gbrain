@@ -219,8 +219,11 @@ gbrain skillpack remove --harness claude-code --skill query
   install-time hash in the ledger reports **unknown** provenance and is
   never auto-applied — patch by hand, or remove and re-scaffold.
 - **`remove --harness`** deletes ONLY files the bridge wrote (the ledger) —
-  never your own files. Workspace scaffolds have no `uninstall` at all;
-  they stay user-owned outright.
+  never your own files. Shared convention files stay on disk even after the
+  last skill is removed; once no owned skill is left at that destination,
+  the v0.53.0 shared-skills migration no longer counts them as legacy
+  copies. Workspace scaffolds have no `uninstall` at all; they stay
+  user-owned outright.
 - **`--stub`** installs cold-pull pointer SKILL.md files whose body fetches
   the real instructions via the gbrain MCP `get_skill` op. Preflight-gated:
   it refuses unless `mcp.publish_skills` is on and every slug is servable

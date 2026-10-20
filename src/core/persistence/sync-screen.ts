@@ -3,10 +3,11 @@
  * sync screen (`screenSyncImport`) would refuse is held instead of admitted:
  * the caller writes the hold and advances the cursor in one transaction. A
  * pinned Git blob over the sync read bound is held by its size before its
- * content is loaded. `sync_parser_regression` stops the run only when the
- * page's import provenance proves the exact bytes imported validated before
- * and the refusal is not one this release makes on purpose (an intended
- * refusal, such as #7018's alias bound, holds that page alone).
+ * content is loaded. A parser regression is a refusal of bytes the page's
+ * import provenance proves imported validated before that this release does
+ * not make on purpose (an intended refusal, such as #7018's alias bound, holds
+ * that page alone): it is held `parser_regression` by default, and stops the run
+ * with `sync_parser_regression` only under GBRAIN_SYNC_PARSER_REGRESSION=stop.
  * Dry runs screen every pending import read-only with batched Git reads.
  * #6188: the screen runs with `fences: 'coordinated'` (see `screenSyncImport`):
  * a fence Tier 1 rewrites losslessly is admitted (publication commits the
@@ -32,9 +33,10 @@ import { sha256 } from './digest.ts';
 import { readPageBodyPolicy, type PageBodyPolicy } from '../page-body/limits.ts';
 import { readPagePurgeTombstones } from './page-purge.ts';
 import { listTrustAllowRules } from '../trust/allow-rules.ts';
-import { readSyncContent, readSyncFile, syncGitPath, type SyncDiscovery, type SyncEntry } from './sync-discovery.ts';
+import { readSyncContent, readSyncFile, syncGitPath, UNREADABLE_SYNC_FILE, type SyncDiscovery, type SyncEntry } from './sync-discovery.ts';
 import { pinnedWindowBlock, readBlobBytes, readBlobContents, readPinnedBlob, readPinnedBytes, readPinnedContent, readTreeBlobs, SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { screenSyncImport, type SyncImportScreenInput } from './sync-prepare.ts';
+import { committedContentOrMissing, nullBytesRefusal } from './sync-entry-fault.ts';
 import type { SyncProcessingOptions } from './sync-authority.ts';
 import { gitHoldItem, readSyncHoldPolicy, readSyncImportProvenance, type GitHoldCode, type GitHoldItem, type GitHoldRecord, type PreparationStallMeta, type SyncHoldPolicy } from './sync-holds.ts';
 import type { WriteRequest } from './model.ts';
@@ -91,7 +93,12 @@ export function driftBaselineContent(gitRoot: string, entry: Pick<SyncEntry, 'dr
 /** The frozen import content of one entry (`readSyncContent`); a committed entry's pinned blob is read with the entries after it. */
 export function pinnedContent(cursor: SyncDiscovery & { index: number }, entry: SyncEntry): string {
   const content = entry.working ? null : readPinnedContent(cursor.gitRoot, cursor.target, syncGitPath(cursor, entry.path), upcomingGitPaths(cursor));
-  return content ?? readSyncContent(cursor, entry);
+  if (content !== null) return content;
+  try { return readSyncContent(cursor, entry); } catch (error) {
+    // GBRA-133 S-33: a committed blob the repository lost reads from identical working-tree bytes, or is refused git_object_missing.
+    if (entry.working) throw error;
+    return committedContentOrMissing(cursor, entry, pinnedBlob(cursor, entry.path), error);
+  }
 }
 
 /**
@@ -229,6 +236,26 @@ export function oversizeHold(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'wor
     message: `File too large (${size ?? `over ${SYNC_READ_BOUND}`} bytes; the sync read bound is the ${SYNC_READ_BOUND}-byte (24 MiB) page ceiling). Pages up to the ceiling are chunked and searchable; leave this file out of the source (sync.exclude) or keep it outside the brain repo. See docs/guides/memory-boundaries.md#large-pages.` }, null, blob);
 }
 
+/** File-system errors that make one path unreadable while the rest of its source reads (GBRA-130 A-7). */
+const UNREADABLE_ERRNO = new Set(['EACCES', 'EPERM', 'ELOOP', 'EISDIR', 'ENOTDIR']);
+/** GBRA-130 A-7: whether `readSyncFile` refused one path as not a readable regular file inside its root (a per-file error). */
+export function isUnreadableSyncFile(error: unknown): boolean {
+  const errno = (error as NodeJS.ErrnoException | null)?.code;
+  return error instanceof OperationError && error.detail === UNREADABLE_SYNC_FILE || typeof errno === 'string' && UNREADABLE_ERRNO.has(errno);
+}
+/**
+ * GBRA-130 A-7: the hold of a file sync cannot read as a regular file inside its root (a symlink component, a non-regular
+ * file, a permission or loop error); null for any other error. Its content is never read or followed, and the root-level
+ * refusals (the root itself replaced or escaped) are not per-file and stay run-level.
+ */
+export function unreadableFileHold(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld'>, slug: string, pageId: number | null, error: unknown,
+  blob: () => TreeBlob | null | undefined): HeldEntry | null {
+  if (!isUnreadableSyncFile(error)) return null;
+  const why = error instanceof OperationError && error.detail === UNREADABLE_SYNC_FILE ? error.message : `it cannot be read (${(error as NodeJS.ErrnoException).code})`;
+  return heldEntry(entry, slug, pageId, { code: 'file_unreadable',
+    message: `Sync did not read ${entry.path}: ${why} Sync reads only regular files inside the source root and never follows a symlink. Make it a readable regular file there (or exclude it with sync.exclude) and commit, then run gbrain sources retry-held to re-test it.` }, null, blob());
+}
+
 const purgeTombstonesByRun = new WeakMap<SyncScreenRun, Promise<Map<string, string>>>();
 /** #5575: one tombstone read per sync run; a run screens one source. */
 function runPurgeTombstones(engine: BrainEngine, run: SyncScreenRun, sourceId: string): Promise<Map<string, string>> {
@@ -290,8 +317,8 @@ export async function screenFrozenContent(screenInput: SyncImportScreenInput, ru
 
 /**
  * The hold a frozen import earns, or null to admit it. Throws
- * `sync_parser_regression` (policy `stop`) when gbrain would hold bytes the
- * page's provenance says a validating gbrain imported.
+ * `sync_parser_regression` (policy `stop`, opt-in) when gbrain would hold bytes
+ * the page's provenance says a validating gbrain imported.
  */
 export async function screenFrozenImport(engine: BrainEngine, input: FrozenImportScreen, run: SyncScreenRun): Promise<HeldEntry | null> {
   const { entry, slug, pageId, snapshot, content, blob } = input;
@@ -311,8 +338,12 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
     return { ...held, meta: { ...held.meta, legacy_slugs: entry.legacySlugs } };
   }
   if (content === null) return null;
+  // GBRA-133 S-39: text holding NUL cannot be stored or carried in the write intent; only this file is held. A slug conflict
+  // still names the hold (#6749): its message carries the path alone, and the slug-conflicts lane reports NULL_BYTES as still_invalid.
+  const nul = nullBytesRefusal(entry.path, content);
   // #6188: a fence Tier 1 rewrites is admitted (publication writes the normalized file back); with fences.normalize=false it is held.
   const screen = await screenFrozenContent(await frozenImportScreenInput(engine, { ...input, content }, run), run);
+  if (nul && !(screen.status === 'refused' && screen.refusal.code === 'frontmatter_slug_conflict')) return heldEntry(entry, slug, pageId, nul, content, blob);
   if (screen.status === 'importable' && screen.fences?.fixes.length) input.onNormalized?.(screen.fences.fixes);
   if (screen.status !== 'refused') return null;
   const refusal = screen.refusal;
@@ -327,10 +358,10 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
             + `imported these exact bytes. ${intended.fix} The rest of the source keeps syncing.` }, content, blob);
       }
       const why = `gbrain ${VERSION} refuses ${entry.path} (${refusal.reason ?? 'yaml_parse'}${refusal.line !== undefined ? `, line ${refusal.line}` : ''}), but gbrain ${provenance.gbrain_version} imported these exact bytes and validated them.`;
-      if (run.policy.parserRegression === 'hold') return heldEntry(entry, slug, pageId, { code: 'parser_regression', message: `${why} Held under GBRAIN_SYNC_PARSER_REGRESSION=hold.` }, content, blob);
+      if (run.policy.parserRegression === 'hold') return heldEntry(entry, slug, pageId, { code: 'parser_regression', message: `${why} Held; the rest of the source keeps syncing.` }, content, blob);
       throw opError('sync_parser_regression', `Sync stopped: ${why}`,
         `This is a gbrain bug. Report it with the gbrain version (${VERSION}), the file (${entry.path}) and the code (${refusal.code}${refusal.reason ? `/${refusal.reason}` : ''}). `
-          + `Upgrade, or set GBRAIN_SYNC_PARSER_REGRESSION=hold for the process that syncs (it holds such files and lets the rest sync meanwhile), and never pin a release older than 0.60.305.0; then run: ${input.retryCommand}.`,
+          + `Upgrade, or pin the last good version (${provenance.gbrain_version}), then run: ${input.retryCommand}. Sync stopped because GBRAIN_SYNC_PARSER_REGRESSION=stop is set for the process that syncs; without it (the default) such a file is held and the rest syncs.`,
         { fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
           why: 'Collects the gbrain version and brain health to attach to the bug report; the sync checkpoint did not advance past this file.' } });
     }

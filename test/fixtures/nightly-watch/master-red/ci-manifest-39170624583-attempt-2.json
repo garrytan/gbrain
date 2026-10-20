@@ -1,0 +1,177 @@
+{
+  "schema": "gbrain-ci-manifest/v1",
+  "workflow": "Test",
+  "event": "push",
+  "sha": "4fb9c4c78a596340f8415e1dd419106b4ad6452d",
+  "run_id": 39170624583,
+  "run_attempt": 2,
+  "complete": false,
+  "problems": [
+    "receipts-pg-arms-1-bun-1.4.0/pg-arms-bun-1.4.0--s1-a-36-facts-batch-partial-refusal.test--primary comes from attempt 1 of run 39170624583; the run's latest attempt is 2. Re-run all jobs, not only failed ones, so every lane reports from one attempt.",
+    "receipts-pg-arms-1-bun-1.4.0/pg-arms-bun-1.4.0--s1-a1-links-extract.test--primary comes from attempt 1 of run 39170624583; the run's latest attempt is 2. Re-run all jobs, not only failed ones, so every lane reports from one attempt.",
+    "receipts-pg-arms-1-bun-1.4.0/pg-arms-bun-1.4.0--s1-a24-phantom-redirect-cursor.test--primary comes from attempt 1 of run 39170624583; the run's latest attempt is 2. Re-run all jobs, not only failed ones, so every lane reports from one attempt."
+  ],
+  "files": [
+    {
+      "file": "test/belief-ledger-lifecycle.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 16,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/decide/conflict-proposals-managed.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/declared-lineage-visibility.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/doctor-frontmatter-holds.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 7,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/grandfather-managed.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 21,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/lane-apply-pipelining.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/large-pages/purge-replay-segments.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/large-pages/restore-publication-statement-bound.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/large-pages/segmented-prior-view.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/large-pages/segmented-read-refusals.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/large-pages/segmented-switch.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 30,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/large-pages/stuck-recovery-large.slow.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/pathological/a27-credential-reseal.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 18,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/pathological/a50-unmanaged-expired-sources.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 12,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/pathological/d10-derived-atom-file-overwrite.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/persistence-edit-embedding-reuse.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/repair-frontmatter-keys-sweep-6454.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/serve-head-watcher-managed.serial.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/source-row-diagnostics.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "test/sync-inexact-rename-6729.test.ts",
+      "lane": "pg-arms-bun-1.4.0",
+      "arm": "postgres",
+      "executed": 32,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "failures": []
+}

@@ -4,6 +4,9 @@
  * as `no_admission`. L5 moves it out: the checkpoint's own transaction records the tail as owed, the pass returns at the
  * checkpoint commit, and the tail runs after the drain lease is released, bounded, with a degraded notice when it fails or
  * is cut short. These tests pinned the C4 behavior (the `finish` step and window); they now assert the L5 behavior.
+ * #6712 PR 4b: a non-company source runs the live pass, whose stamp records the tail under the pass id (`recordPassTail`);
+ * an owed tail keeps the next tick from being idle, so that sync is a full pass with no candidates that stamps (synced)
+ * and runs the tail, where the cursor engine answered up_to_date. The tail obligations here are recorded the pass's way.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -94,13 +97,18 @@ test('the tail runs after the drain lease is released: a second sync takes the l
     await Promise.race([inTail, sleep(60_000)]);
     expect(slowed).toBe(true);
     // On the base the first run still held the lease here (its link tail ran inside the pass), so this threw SyncLockBusyError.
+    // The first run's tail is still owed, so this tick is a full pass with nothing to import that stamps.
     const second = await performSync(engine, { sourceId: id, noPull: true, noEmbed: true, drain: true });
-    expect(second.status).toBe('up_to_date');
+    expect(second).toMatchObject({ status: 'synced', added: 0, modified: 0, deleted: 0, pass: { kind: 'full', candidates: 0 } });
+    // The second run's tail runs both owed obligations and derives the two pages while the first one's tail waits.
+    expect(second.tail).toMatchObject({ status: 'done', runs: 2 });
+    expect(second.links?.pages).toBe(2);
     release();
     const result = await first;
     expect(result.drain).toMatchObject({ outcome: 'synced', written: 2, remaining: 0 });
     expect(result.status).toBe('first_sync');
     expect(result.tail).toMatchObject({ status: 'done', runs: 1 });
+    // A sync's own imports are re-derived regardless of their watermark (links-maintenance.ts), the second run's pass included.
     expect(result.links?.pages).toBe(2);
     expect(await stale(id)).toBe(0);
     expect(await readSyncTail(engine, id)).toBeNull();
@@ -124,9 +132,10 @@ test('a tail that never ran after its checkpoint committed stays owed and the ne
     const owed = await readSyncTail(engine, id);
     expect(owed?.map(item => ({ changed: item.changed, extract: item.extract }))).toEqual([{ changed: 2, extract: true }]);
     expect(await stale(id)).toBe(2);
+    // The owed tail keeps this tick from being idle: a full pass with nothing to import stamps and runs the tail.
     const second = await performSync(engine, { sourceId: id, noPull: true, noEmbed: true, drain: true });
-    expect(second.status).toBe('up_to_date');
-    expect(second.tail).toMatchObject({ status: 'done', runs: 1, statistics: 'refreshed' });
+    expect(second).toMatchObject({ status: 'synced', added: 0, modified: 0, deleted: 0, pass: { kind: 'full', candidates: 0 } });
+    expect(second.tail).toMatchObject({ status: 'done', runs: 2, statistics: 'refreshed' });
     expect(second.tail?.notice).toBeUndefined();
     expect(await stale(id)).toBe(0);
     expect(await readSyncTail(engine, id)).toBeNull();
@@ -140,10 +149,9 @@ test('a --no-extract run owes statistics only, and a run past its deadline defer
   expect(result.links).toBeUndefined();
   expect(await stale(id)).toBe(2);
   const { runSyncTail } = await import('../src/core/persistence/sync-tail.ts');
-  const { recordSyncTail } = await import('../src/core/persistence/sync-tail-record.ts');
-  const [cursor] = await engine.executeRaw<{ fingerprint: string; run_id: string }>("SELECT fingerprint, completed_keys->0->>'runId' AS run_id FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [id]);
-  await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,processingOptions,noExtract}','false'::jsonb) WHERE op='managed-sync' AND fingerprint=$1", [cursor!.fingerprint]);
-  await recordSyncTail(engine, id, cursor!.fingerprint, cursor!.run_id);
+  const { recordPassTail } = await import('../src/core/persistence/sync-tail-record.ts');
+  // The pass's tail obligation as if the run had extracted: its two imported pages, links owed.
+  await recordPassTail(engine, id, result.pass!.pass_id, { changed: 2, extract: true });
   const deferred = await runSyncTail(engine, id, { deadlineAtMs: Date.now() - 1 });
   expect(deferred).toMatchObject({ status: 'deferred', notice: { code: 'sync_tail_degraded' } });
   expect(await readSyncTail(engine, id)).not.toBeNull();
@@ -166,12 +174,13 @@ test('a tail cut short reports only the imported pages it left underived, never 
   const [{ local_path: root }] = await engine.executeRaw<{ local_path: string }>('SELECT local_path FROM sources WHERE id=$1', [id]);
   for (const name of ['n2', 'n3']) writeFileSync(join(root, 'notes', `${name}.md`), `---\ntitle: ${name}\n---\nSee [[notes/n0]].\n`);
   git(root, 'add', '.'); git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'two more');
-  await performSync(engine, { sourceId: id, noPull: true, noEmbed: true, noExtract: true, drain: true });
+  const twoMore = await performSync(engine, { sourceId: id, noPull: true, noEmbed: true, noExtract: true, drain: true });
+  expect(twoMore).toMatchObject({ added: 2, pass: { kind: 'full' } });
+  const pinnedAt = async () => (await engine.executeRaw<{ since: string }>("SELECT completed_keys->0->'telemetry'->>'started_at' AS since FROM op_checkpoints WHERE op='managed-sync-pass' AND completed_keys->0->>'source_id'=$1", [id]))[0]!.since;
+  const twoMoreSince = await pinnedAt();
   expect(await stale(id)).toBe(4);
   const { runSyncTail } = await import('../src/core/persistence/sync-tail.ts');
-  const { recordSyncTail } = await import('../src/core/persistence/sync-tail-record.ts');
-  const [cursor] = await engine.executeRaw<{ fingerprint: string; run_id: string }>("SELECT fingerprint, completed_keys->0->>'runId' AS run_id FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [id]);
-  await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,processingOptions,noExtract}','false'::jsonb) WHERE op='managed-sync' AND fingerprint=$1", [cursor!.fingerprint]);
+  const { recordPassTail } = await import('../src/core/persistence/sync-tail-record.ts');
   // The first page read of each tail outlasts its budget, so exactly one page is derived before the deadline stops it.
   const slowFirst = (budgetMs: number) => {
     let reads = 0;
@@ -185,7 +194,7 @@ test('a tail cut short reports only the imported pages it left underived, never 
     } }) as unknown as BrainEngine;
   };
   // Two imported pages, one derived: the notice counts the one left, not the two older stale pages behind it.
-  await recordSyncTail(engine, id, cursor!.fingerprint, cursor!.run_id);
+  await recordPassTail(engine, id, twoMore.pass!.pass_id, { changed: 2, extract: true, since: twoMoreSince });
   const cut = await runSyncTail(slowFirst(1_000), id, { budgetMs: 1_000 });
   expect(cut?.links).toMatchObject({ pages: 1 });
   expect(cut).toMatchObject({ status: 'truncated', notice: { code: 'sync_tail_degraded', fix: { argv: ['gbrain', 'extract', '--stale', '--source-id', id] } } });
@@ -193,10 +202,9 @@ test('a tail cut short reports only the imported pages it left underived, never 
   // One imported page, derived before the deadline, with the older backlog still stale: the tail is done.
   writeFileSync(join(root, 'notes', 'n4.md'), '---\ntitle: n4\n---\nSee [[notes/n0]].\n');
   git(root, 'add', '.'); git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'one more');
-  await performSync(engine, { sourceId: id, noPull: true, noEmbed: true, noExtract: true, drain: true });
-  const [next] = await engine.executeRaw<{ fingerprint: string; run_id: string }>("SELECT fingerprint, completed_keys->0->>'runId' AS run_id FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [id]);
-  await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,processingOptions,noExtract}','false'::jsonb) WHERE op='managed-sync' AND fingerprint=$1", [next!.fingerprint]);
-  await recordSyncTail(engine, id, next!.fingerprint, next!.run_id);
+  const oneMore = await performSync(engine, { sourceId: id, noPull: true, noEmbed: true, noExtract: true, drain: true });
+  expect(oneMore).toMatchObject({ added: 1, pass: { kind: 'full' } });
+  await recordPassTail(engine, id, oneMore.pass!.pass_id, { changed: 1, extract: true, since: await pinnedAt() });
   const staleBefore = await stale(id);
   expect(staleBefore).toBeGreaterThan(1);
   const done = await runSyncTail(slowFirst(1_000), id, { budgetMs: 1_000 });

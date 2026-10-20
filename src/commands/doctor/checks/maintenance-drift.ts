@@ -67,7 +67,7 @@ export async function maintenanceWriteDriftCheck(engine: BrainEngine, sourceIds?
     const details = { count, concept_skips: skipCount, sources: rows, window_sequences: WINDOW, repair: 'file-drift', docs, suppressed, ...(policies.length ? { keep_db_policy: policies } : {}) };
     const policyNote = policies.map(policy => 'error' in policy ? ` storage.keep_db of ${policy.source_id} could not be read: ${policy.error}`
       : ` storage.keep_db of ${policy.source_id} (${policy.keep_db.join(', ')}) matches ${policy.matched} of them${policy.unchecked ? ` (${policy.unchecked} more not checked here)` : ''}; `
-        + `the owner host's maintenance worker reconciles them with the database copy, one rate-limited request each (${policy.receipt_cost.lifetime_ids} lifetime id(s), ${policy.receipt_cost.receipt_bytes} receipt bytes).`).join('');
+        + `the owner host's managed sync reconciles those whose file is clean and committed with the database copy, one request each (${policy.receipt_cost.lifetime_ids} lifetime id(s), ${policy.receipt_cost.receipt_bytes} receipt bytes).`).join('');
     if (!count && !skipCount && suppressed.length) {
       return { name: 'maintenance_write_drift', status: 'warn', details,
         message: `${suppressed.length} maintenance write(s) are held back after repeated identical refusals (#6696), so they stop adding receipts: `

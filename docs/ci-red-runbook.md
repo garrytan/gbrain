@@ -48,6 +48,16 @@ response: a repair PR whose body says `Fixes #<issue>`.
   by hand with a comment naming the replacement, or replay E2E files:
   `gh workflow run e2e.yml --ref master -f full_corpus=true`, then
   `gh workflow run nightly-watch.yml -f run_id=<that run id> -f replay_issue=<issue>`.
+- **Reused full-suite runs:** a push run that reused an identical-tree full
+  run (a succeeded `reused-full-suite` job) is judged by the run its
+  `reuse.json` names, at the recorded attempt: its jobs and its complete
+  `ci-manifest` clear or confirm failures as if the push had run them. An
+  unreadable or mismatched record, a different tree, or a missing or
+  incomplete source manifest is incomplete evidence and clears nothing.
+- **Closed by hand:** a closed issue whose JSON block is still red ends that
+  incident. The watch records later runs on it as green (its body says it was
+  closed by hand) and never reopens it or opens a new issue for its failures;
+  only a new red push run opens a new incident.
 - **Serialization:** each watch queues on one group per repository, target
   workflow and track (`schedule` or `push`; a replay writes `push`). Before the
   first write it re-reads the issue and re-plans when the issue moved. When two

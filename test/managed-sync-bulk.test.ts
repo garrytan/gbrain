@@ -95,9 +95,17 @@ test('a bulk drain publishes groups in one transaction while every page keeps it
   expect(cursor!.n).toBe(0);
 }), 300_000);
 
-/** #6712: the entries of a run that were admitted more than once (a duplicate admission). */
-const admittedTwice = (e: BrainEngine, id: string, except = '') => e.executeRaw<{ run: string; idx: string; n: number }>(`SELECT intent->>'runId' AS run,intent->>'index' AS idx,count(*)::int AS n
+/** #6712: the entries of a run (#6712 PR 4b: or a pass, whose intents carry passId and path, no runId or index) that were admitted more than once (a duplicate admission). */
+const admittedTwice = (e: BrainEngine, id: string, except = '') => e.executeRaw<{ run: string; idx: string; n: number }>(`SELECT COALESCE(intent->>'runId',intent->>'passId') AS run,COALESCE(intent->>'index',intent->>'path') AS idx,count(*)::int AS n
   FROM persistence_requests WHERE source_id=$1 AND intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND slug<>$2 GROUP BY 1,2 HAVING count(*)>1`, [id, except]);
+/** #6712 PR 4b: the import requests ever admitted for each path, in admission order; a page read on resume keeps the one request it had. */
+async function requestsByPath(e: BrainEngine, id: string): Promise<Map<string, string[]>> {
+  const rows = await e.executeRaw<{ path: string; request_id: string }>(`SELECT intent->>'path' AS path,request_id::text AS request_id FROM persistence_requests
+    WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence`, [id]);
+  const byPath = new Map<string, string[]>();
+  for (const row of rows) byPath.set(row.path, [...byPath.get(row.path) ?? [], row.request_id]);
+  return byPath;
+}
 /** #6712: every admitted request of the source has settled (the consumer keeps publishing after the run returns). */
 const settledAll = (e: BrainEngine, id: string) => waitFor(async () => (await e.executeRaw("SELECT 1 FROM persistence_requests WHERE source_id=$1 AND state IN ('queued','running','recovering') LIMIT 1", [id])).length === 0,
   { timeoutMs: 60_000, label: 'admitted requests settle' });
@@ -174,12 +182,12 @@ test('#6712: a failed page leaves the groups admitted ahead of it in the cursor 
     const failedAt = rows.findIndex(row => row.slug === 'notes/n2');
     expect(rows[failedAt]!.state).toBe('failed');
     expect(rows.filter((_, i) => i !== failedAt).every(row => row.state === 'committed')).toBe(true);
-    // Every request admitted after the failure is still named by the blocked cursor (its pending entry or window), so a resume reads its receipt instead of freezing it again.
-    const [cursor] = await engine.executeRaw<{ keys: { pending?: { requestId: string }; window?: Array<Array<{ requestId: string }>>; done?: boolean } }>(
-      "SELECT completed_keys->0 AS keys FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [f.id]);
-    expect(cursor!.keys.done).not.toBe(true);
-    const held = new Set([cursor!.keys.pending?.requestId, ...(cursor!.keys.window ?? []).flat().map(member => member.requestId)]);
-    for (const row of rows.slice(failedAt)) expect(held.has(row.request_id)).toBe(true);
+    // Every request admitted after the failure has its receipt, so a resume reads it instead of freezing the page again.
+    // #6712 PR 4b: a pass keeps no cursor row to name them; the source has not advanced, and the resume below must
+    // leave each page with exactly the requests it has now.
+    expect((await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [f.id]))[0]!.last_commit).toBeNull();
+    expect(rows.length - failedAt - 1).toBeGreaterThan(0);
+    const before = await requestsByPath(engine, f.id);
     // The file is fixed; the same plain sync finishes, every page committed exactly once.
     writeFileSync(join(f.root, 'notes/n2.md'), '---\ntitle: Note 2\n---\nA durable observation number 2.\n');
     execFileSync('git', ['-C', f.root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qam', 'fix']);
@@ -187,6 +195,8 @@ test('#6712: a failed page leaves the groups admitted ahead of it in the cursor 
     expect(resumed.drain).toMatchObject({ outcome: 'synced' });
     // --retry-failed rediscovered the manifest under a new run; within each run every entry was admitted at most once.
     expect(await admittedTwice(engine, f.id)).toEqual([]);
+    const after = await requestsByPath(engine, f.id);
+    for (const [path, ids] of before) if (path !== 'notes/n2.md') expect(after.get(path)).toEqual(ids);
     for (let i = 0; i < 40; i++) expect(await engine.getPage(`notes/n${i}`, { sourceId: f.id })).not.toBeNull();
     const conflicts = await engine.executeRaw("SELECT 1 FROM persistence_requests WHERE source_id=$1 AND error_code='revision_conflict'", [f.id]);
     expect(conflicts).toHaveLength(0);
@@ -220,7 +230,10 @@ test('#6712 (#6565): a database refusal stops the run, and the next plain sync r
  * held back in preparation until the drain has saved the failure and is gone (under `sync.holds=fail` it stops blocked;
  * under the default policy it is killed right after the cursor step that holds the failed page); it then commits. The
  * cursor must still name every such request, so the resume reads their receipts: nothing is admitted twice, nothing
- * reads a false revision_conflict, and the checkpoint waits for them. The failed page is a content refusal under
+ * reads a false revision_conflict, and the checkpoint waits for them. #6712 PR 4b: a pass keeps its cursor in memory
+ * and its intents carry no index, so the followers are the requests admitted after the failed page's group (by
+ * sequence), a pass holds the failed page at the end of its round (the drainer is killed as its next round starts),
+ * and "read on resume" is that every page keeps exactly the requests it had when the drainer died. The failed page is a content refusal under
  * `sync.holds=fail`, and a preparation that outlives its budget (`preparation_stalled`, held) under the default policy.
  */
 for (const policy of ['fail', 'hold'] as const) test(`#6712: window followers that commit after the failure CAS and a drainer kill are read on resume, never re-admitted (sync.holds=${policy})`, async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
@@ -233,19 +246,22 @@ for (const policy of ['fail', 'hold'] as const) test(`#6712: window followers th
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   const stalled = new Set<string>();
-  let failedRequest: string | null = null;
+  let failedRequest: string | null = null, rounds = 0;
   installFaultHook(async (point, detail) => {
     // Default policy: the cursor step that holds or defers the failed page is the last thing the drainer does.
     if ((point === 'sync:held_settled' || point === 'sync:retry_deferred') && detail.sourceId === f.id) throw new Error('drainer killed after the failure CAS');
+    // A pass settles the failed page with its round; the next round start is the drainer's next step.
+    if (point === 'sync:round_start' && detail.sourceId === f.id && policy === 'hold' && rounds++ > 0 && failedRequest
+      && (await e.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [failedRequest]))[0]?.state === 'conflict') throw new Error('drainer killed after the failure CAS');
     if (point !== 'consumer:preparing' || detail.sourceId !== f.id || !detail.requestId) return;
-    const [row] = await e.executeRaw<{ slug: string; grp: string | null; idx: number }>("SELECT slug,intent->>'group' AS grp,(intent->>'index')::int AS idx FROM persistence_requests WHERE request_id=$1::uuid", [detail.requestId]);
+    const [row] = await e.executeRaw<{ slug: string; grp: string | null; idx: number }>("SELECT slug,intent->>'group' AS grp,sequence::int AS idx FROM persistence_requests WHERE request_id=$1::uuid", [detail.requestId]);
     if (row?.slug === 'notes/n2') {
       failedRequest ??= detail.requestId;
       // Default policy: the file changes under the admitted request (uncommitted bytes), so its publication refuses it.
       if (policy === 'hold') writeFileSync(join(f.root, 'notes/n2.md'), '---\ntitle: Note 2\n---\nEdited after admission, not committed.\n');
       return;
     }
-    const [failed] = await e.executeRaw<{ grp: string | null; idx: number }>("SELECT intent->>'group' AS grp,(intent->>'index')::int AS idx FROM persistence_requests WHERE source_id=$1 AND slug='notes/n2' ORDER BY sequence LIMIT 1", [f.id]);
+    const [failed] = await e.executeRaw<{ grp: string | null; idx: number }>("SELECT intent->>'group' AS grp,sequence::int AS idx FROM persistence_requests WHERE source_id=$1 AND slug='notes/n2' ORDER BY sequence LIMIT 1", [f.id]);
     // Hold back every request admitted in a group after the failed page's group until the drain is gone.
     if (!row || !failed || row.grp === failed.grp || row.idx <= failed.idx) return;
     stalled.add(detail.requestId);
@@ -257,18 +273,15 @@ for (const policy of ['fail', 'hold'] as const) test(`#6712: window followers th
     else expect(String(killed)).toContain('drainer killed after the failure CAS');
     expect(failedRequest).not.toBeNull();
     expect(stalled.size).toBeGreaterThan(0);
-    // The drain is gone; the cursor saved the failure (or the hold) and still names every request admitted after it.
-    const cursorKeys = async () => (await e.executeRaw<{ keys: { done?: boolean; pending?: { requestId: string }; group?: Array<{ requestId: string }>; window?: Array<Array<{ requestId: string }>> } }>(
-      "SELECT completed_keys->0 AS keys FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [f.id]))[0]!.keys;
-    const before = await cursorKeys();
-    const named = new Set([before.pending?.requestId, ...(before.group ?? []).map(m => m.requestId), ...(before.window ?? []).flat().map(m => m.requestId)]);
-    for (const id of stalled) expect(named.has(id)).toBe(true);
+    // The drain is gone; it saved the failure (or the hold). Every request admitted after it is recorded, so a resume reads it.
+    const before = await requestsByPath(e, f.id);
+    const recorded = new Set([...before.values()].flat());
+    for (const id of stalled) expect(recorded.has(id)).toBe(true);
     // Now the held-back followers commit, after the failure CAS, with nobody observing them.
     release();
     await settledAll(e, f.id);
     for (const id of stalled) expect((await e.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [id]))[0]!.state).toBe('committed');
-    // No premature checkpoint: the source did not advance, the cursor is not done.
-    expect((await cursorKeys()).done).not.toBe(true);
+    // No premature checkpoint: the source did not advance.
     expect((await e.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [f.id]))[0]!.last_commit).toBeNull();
     installFaultHook(undefined);
     if (policy === 'fail') {
@@ -285,6 +298,9 @@ for (const policy of ['fail', 'hold'] as const) test(`#6712: window followers th
     await settledAll(e, f.id);
     expect(await admittedTwice(e, f.id, 'notes/n2')).toEqual([]);
     for (const id of stalled) expect((await e.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [id]))[0]!.state).toBe('committed');
+    // Read on resume, never re-admitted: every page but the failed one keeps exactly the requests it had when the drainer died.
+    const after = await requestsByPath(e, f.id);
+    for (const [path, ids] of before) if (path !== 'notes/n2.md') expect(after.get(path)).toEqual(ids);
     expect(await e.executeRaw("SELECT 1 FROM persistence_requests WHERE source_id=$1 AND error_code='revision_conflict'", [f.id])).toHaveLength(0);
     for (let i = 0; i < 40; i++) if (i !== 2 || policy === 'fail') expect(await e.getPage(`notes/n${i}`, { sourceId: f.id })).not.toBeNull();
   } finally {

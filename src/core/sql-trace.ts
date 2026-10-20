@@ -25,7 +25,8 @@ interface TraceConnection {
 }
 
 let connections = 0;
-let buffered: string[] = [];
+/** Unwritten records by trace file: each pool's records go to the file it was created with. */
+const buffered = new Map<string, string[]>();
 let flushOnExit = false;
 const clock = () => performance.timeOrigin + performance.now();
 const SSL_REQUEST = 80877103;
@@ -37,14 +38,20 @@ function cstring(buf: Buffer, at: number): [string, number] {
 }
 
 function emit(file: string, record: Record<string, unknown>): void {
-  buffered.push(JSON.stringify(record));
-  if (!flushOnExit) { flushOnExit = true; process.on('exit', () => flush(file)); setInterval(() => flush(file), 1000).unref(); }
-  if (buffered.length >= 500) flush(file);
+  let lines = buffered.get(file);
+  if (!lines) buffered.set(file, lines = []);
+  lines.push(JSON.stringify(record));
+  if (!flushOnExit) { flushOnExit = true; process.on('exit', flushAll); setInterval(flushAll, 1000).unref(); }
+  if (lines.length >= 500) flush(file);
+}
+function flushAll(): void {
+  for (const file of [...buffered.keys()]) flush(file);
 }
 function flush(file: string): void {
-  if (!buffered.length) return;
-  const lines = buffered.join('\n') + '\n';
-  buffered = [];
+  const pending = buffered.get(file);
+  if (!pending?.length) return;
+  const lines = pending.join('\n') + '\n';
+  buffered.delete(file);
   try { appendFileSync(file, lines); } catch { /* a trace that cannot be written never fails the traced process */ }
 }
 

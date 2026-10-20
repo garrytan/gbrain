@@ -35,6 +35,7 @@ import { quoteIdentifier } from './search/embedding-column.ts';
 import { embeddingWriteTarget } from './page-state/projections.ts';
 import { budgetRowAppliesFilter } from './page-size-policy.ts';
 import { reservationCostUsd } from './budget/reservation-cost.ts';
+import { loadPricingOverrides } from './budget/budget-tracker.ts';
 import { estimatePageEmbedUsd, listBudgetLimitedPages } from './page-embedding-budget.ts';
 import {
   approvalAmount, approvalBasis, budgetLimitedPhrase, heldApproveAction, heldPreviewCommand, renderedCommand,
@@ -207,7 +208,7 @@ export async function heldApprovalUsd(engine: BrainEngine, args: readonly string
   const unchanged = 'nothing ran: every hold and per-page cap is unchanged';
   if (await embedWouldSpend(engine)) {
     const model = getEmbeddingModel();
-    if (reservationCostUsd(model, 'embed', 1, 0) !== null) return maxUsd;
+    if (reservationCostUsd(model, 'embed', 1, 0, await loadPricingOverrides(engine)) !== null) return maxUsd;
     const { noPricingFix, noPricingGuidance, noPricingMessage } = await import('./budget/no-pricing.ts');
     const guidance = noPricingGuidance(model, 'embed');
     throw opError('no_pricing', `[embed] ${noPricingMessage(guidance, { capUsd: maxUsd })} (${unchanged}.)`, 'Register the model\'s price, then re-run the approval.',

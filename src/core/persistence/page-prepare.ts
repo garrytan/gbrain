@@ -13,6 +13,7 @@ import type { GBrainConfig } from '../config.ts';
 import type { Page, PageVersion } from '../types.ts';
 import { importFromContent, verifyPageReadable, type ParsedPage } from '../import-file.ts';
 import { comparableFrontmatter, frontmatterHoldMessageWithoutKeys, parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, resolveSourceLocalFilePath, type ParsedMarkdown, type ParseOpts } from '../markdown.ts';
+import { alignWithStored } from './align-stored.ts';
 import { assertLargePageReplacement } from './large-page-guard.ts';
 import { applyInference } from '../frontmatter-inference.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -199,14 +200,12 @@ function importedFileType(parsed: ParsedMarkdown, page: Pick<Page, 'type' | 'fro
   // #5521 parity for subtype (#5928): a pack rule is not part of the file's bytes, so a file
   // without an explicit `subtype:` keeps the stored subtype (or none); the import still stamps it.
   delete parsed.inferredSubtype;
-  resolveParsedSubtype(parsed, page);
+  alignWithStored(parsed, page, inferred);
   // #6429: the v0.13.1 grandfather stamped `validate: false` into the database; on an unmanaged brain that path
   // never wrote the file, so the file lacks a key the database carries. The mechanical stamp authors nothing
   // (grandfather.ts): a file without a `validate:` key keeps the stored stamp, and the next coordinated write publishes it.
   if (!Object.hasOwn(parsed.frontmatter, 'validate') && page.frontmatter?.validate === false) parsed.frontmatter.validate = false;
-  // #1035 parity (#5521): a file without an explicit `type:` keeps the stored type on import. An inferred
-  // type is not one the file declared (#6605): inference only applies to a file with no frontmatter.
-  return parsed.typeExplicit && !inferred ? parsed.type : page.type;
+  return parsed.type;
 }
 /** The withdrawal ledger readPageSnapshot overlaid the snapshot's body with, for a segmented body read under it. */
 function snapshotLedger(snapshot: PageSnapshot): BodyLedger {

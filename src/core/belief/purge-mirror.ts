@@ -31,6 +31,7 @@ import { COVERAGE_KEY, factKey, pageKey, slugRef } from './keys.ts';
 import { appendBeliefEvents, type BeliefEventDraft } from './append.ts';
 import { appendDerivedHidden, bumpPurgeEpoch, derivedBeliefTargets, pageLifetimesOf, pagePurgeClaims, redactCarryingFields, redactPurgedKeys, registerLiveCarriers } from './purge.ts';
 import { derivedRowsFrom, hideDerivedRows, type DerivationRef } from '../facts/derivation-inputs.ts';
+import { writeOriginDeletedMarker } from '../persistence/sync-markers.ts';
 
 export const PURGE_MIRROR_FILE = 'purge-events.jsonl';
 
@@ -126,11 +127,11 @@ async function replayOne(tx: BrainEngine, intent: PurgeMirrorIntent, ledger: boo
   let inputs: DerivationRef[] = [];
   let removeRows = async () => {};
   if (intent.scope === 'page' && intent.slug) {
-    const [page] = await tx.executeRaw<{ id: number; slug: string }>(`SELECT p.id, p.slug FROM pages p WHERE p.source_id = $1 AND (p.content_hash = ANY($2::text[])
+    const [page] = await tx.executeRaw<{ id: number; slug: string; source_path: string | null }>(`SELECT p.id, p.slug, p.source_path FROM pages p WHERE p.source_id = $1 AND (p.content_hash = ANY($2::text[])
         ${ledger ? 'OR p.id IN (SELECT l.page_id FROM belief_page_lifetimes l WHERE l.source_id = $1 AND l.page_lifetime = ANY($3::uuid[]))' : 'OR $3::uuid[] IS NULL'})
       ORDER BY (p.slug = $4) DESC, p.id LIMIT 1`, [src, intent.content_hashes ?? [], intent.lifetimes, intent.slug]);
     if (page) {
-      const restored = { id: Number(page.id), slug: page.slug };
+      const restored = { id: Number(page.id), slug: page.slug, source_path: page.source_path };
       if (ledger) lifetimes = [...new Set([...lifetimes, ...await pageLifetimesOf(tx, src, restored.slug, restored.id)])];
       claims = (await pagePurgeClaims(tx, { sourceId: src, slug: restored.slug, pageId: restored.id, lifetimes: ledger ? lifetimes : [] })).claims;
       const owned = await tx.executeRaw<{ t: string; id: number }>(`SELECT 'facts' AS t, id FROM facts WHERE source_id = $1 AND source_markdown_slug = $2
@@ -138,6 +139,7 @@ async function replayOne(tx: BrainEngine, intent: PurgeMirrorIntent, ledger: boo
       inputs = [{ table: 'pages', id: restored.id }, ...owned.map(r => ({ table: r.t, id: Number(r.id) }))];
       removeRows = async () => {
         await tx.executeRaw('DELETE FROM facts WHERE source_id = $1 AND source_markdown_slug = $2', [src, restored.slug]);
+        await writeOriginDeletedMarker(tx, { sourceId: src, page: restored });
         const { deletePageWithSegments } = await import('../persistence/page-purge.ts');
         await deletePageWithSegments(tx, src, restored.slug, restored.id);
       };

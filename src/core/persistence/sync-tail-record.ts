@@ -9,7 +9,7 @@ export const SYNC_TAIL_OP = 'managed-sync-tail';
 /** Obligations kept per source; an older one folds into the stale-page scan every tail runs. */
 const SYNC_TAIL_KEEP = 16;
 
-export interface TailObligation { run_id: string; changed: number; extract: boolean; at: string }
+export interface TailObligation { run_id: string; changed: number; extract: boolean; at: string; /** A pass's pin time (database clock): its imports committed in [since, at]. */ since?: string }
 
 /** Inside the checkpoint's transaction: the run's tail is owed before anyone can read the run as synced. */
 export async function recordSyncTail(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string, cursorKey: string, runId: string): Promise<void> {
@@ -21,6 +21,18 @@ export async function recordSyncTail(tx: Pick<BrainEngine, 'executeRaw'>, source
     ON CONFLICT (op,fingerprint) DO UPDATE SET updated_at=now(), completed_keys=CASE WHEN jsonb_array_length(op_checkpoints.completed_keys)>=${SYNC_TAIL_KEEP}
       THEN (op_checkpoints.completed_keys-0)||EXCLUDED.completed_keys ELSE op_checkpoints.completed_keys||EXCLUDED.completed_keys END`,
   [SYNC_TAIL_OP, sourceId, runId, cursorKey]);
+}
+
+/**
+ * #6712 PR 4b (design v3.2 §3.3): a live pass's stamp records its tail like a cursor's checkpoint, from the counts the pass
+ * carries (there is no cursor row to read them from): `run_id` is the pass id.
+ */
+export async function recordPassTail(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string, passId: string, tail: { changed: number; extract: boolean; since?: string }): Promise<void> {
+  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at)
+    VALUES ($1, $2, jsonb_build_array(jsonb_strip_nulls(jsonb_build_object('run_id',$3::text,'at',now(),'changed',$4::int,'extract',$5::boolean,'since',$6::text))), now())
+    ON CONFLICT (op,fingerprint) DO UPDATE SET updated_at=now(), completed_keys=CASE WHEN jsonb_array_length(op_checkpoints.completed_keys)>=${SYNC_TAIL_KEEP}
+      THEN (op_checkpoints.completed_keys-0)||EXCLUDED.completed_keys ELSE op_checkpoints.completed_keys||EXCLUDED.completed_keys END`,
+  [SYNC_TAIL_OP, sourceId, passId, tail.changed, tail.extract, tail.since ?? null]);
 }
 
 /** The source's owed tail, or null when none is owed. */

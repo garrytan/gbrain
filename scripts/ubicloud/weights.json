@@ -2620,7 +2620,6 @@
   "unit:test/persistence-sync-holds.test.ts": 11450,
   "unit:test/persistence-sync-legacy-files-5751.test.ts": 4571,
   "unit:test/persistence-sync-origin-native.test.ts": 6447,
-  "unit:test/persistence-sync-overtaken-cursor-5522.test.ts": 5081,
   "unit:test/persistence-sync-receipt-diagnostics.test.ts": 289,
   "unit:test/persistence-sync-stdio-owner.test.ts": 46891,
   "unit:test/persistence-take-receipt-authority.test.ts": 2387,

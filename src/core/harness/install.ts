@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { acquireBootstrapLock } from '../bootstrap/lock.ts';
 import { claudeUserMcpConfigPath, codexConfigPath, opencodeGlobalConfigPath, opencodeGlobalSiblingPath, CODEX_TOML_BLOCK_BEGIN } from '../bootstrap/host-specs.ts';
-import { writeCodexHttpServerBlock, removeCodexHttpServerBlock } from '../bootstrap/codex-toml.ts';
+import { writeCodexHttpServerBlock, removeCodexHttpServerBlock, codexToolPolicy, codexToolsOutsideBlock } from '../bootstrap/codex-toml.ts';
 import { writeOpencodeMcpEntry, removeOpencodeMcpEntry, parseOpencodeConfig } from '../bootstrap/opencode-json.ts';
 import { renderAgentLauncher } from '../agent-install/launcher.ts';
 import { isValidName, shellQuote } from '../mcp-registration.ts';
@@ -74,8 +74,22 @@ export function inlineTokenReceipt(c: HarnessCredentials, harness: string, name:
   };
 }
 
-function assertEntryOwned(entry: unknown, prior: Record<string, any>) {
-  if (entry !== undefined && (!prior.client_id || ![prior.entry_hash, prior.pending_entry_hash].includes(hash(entry)))) throw new Error('configuration_conflict: refusing to replace an unowned or edited MCP entry');
+/**
+ * #6799: the hash gbrain owns a native entry by. A Codex entry's `tools` table
+ * holds Codex's own per-tool settings ("always allow"), so it is left out;
+ * every other key, including any unexpected one, stays covered.
+ */
+function ownedEntryHash(entry: unknown, connection: string): string {
+  if (connection !== 'codex-toml' || !entry || typeof entry !== 'object' || codexToolPolicy((entry as Record<string, unknown>).tools) === null) return hash(entry);
+  const { tools: _tools, ...owned } = entry as Record<string, unknown>;
+  return hash(owned);
+}
+
+/** Owned when the receipt recorded either hash: the current one or the whole-entry hash older installs wrote. */
+function assertEntryOwned(entry: unknown, prior: Record<string, any>, connection: string) {
+  if (entry === undefined) return;
+  const recorded = [prior.entry_hash, prior.pending_entry_hash];
+  if (!prior.client_id || ![hash(entry), ownedEntryHash(entry, connection)].some(h => recorded.includes(h))) throw new Error('configuration_conflict: refusing to replace an unowned or edited MCP entry');
 }
 
 /** Install only in the current environment. Foreign entries are never adopted. */
@@ -114,7 +128,11 @@ export async function installHarnessConnection(c: HarnessCredentials, opts: Inst
     const prior = readJson(receiptPath);
     if (prior.client_id && (prior.client_id !== c.client_id || prior.mcp_url !== c.mcp_url)) throw new Error('configuration_conflict: connection name belongs to another client');
     const before = nativeEntry(configPath, adapter.connection, name);
-    assertEntryOwned(before, prior);
+    assertEntryOwned(before, prior, adapter.connection);
+    if (opts.remove && adapter.connection === 'codex-toml' && existsSync(configPath)) {
+      const orphaned = codexToolsOutsideBlock(readFileSync(configPath, 'utf8'), name);
+      if (orphaned.length) throw new Error(`configuration_conflict: Codex tool settings for ${orphaned.join(', ')} ([mcp_servers.${name}.tools.*]) sit outside the gbrain-managed block; removing the server would leave them without one. Delete those tables in ${configPath}, then re-run.`);
+    }
     if (adapter.connection === 'opencode-json') {
       const sibling = opencodeGlobalSiblingPath(configPath);
       if (sibling && nativeEntry(sibling, adapter.connection, name) !== undefined) throw new Error('configuration_conflict: same-name entry in sibling opencode config; preserve it and choose one explicit configuration before installing');
@@ -123,7 +141,7 @@ export async function installHarnessConnection(c: HarnessCredentials, opts: Inst
     const entry = adapter.connection === 'codex-toml' ? { url: c.mcp_url, http_headers: { Authorization: `Bearer ${token}` } }
       : adapter.connection === 'opencode-json' ? { type: 'remote', url: c.mcp_url, headers: { Authorization: `Bearer ${token}` }, enabled: true }
         : { type: 'http', url: c.mcp_url, headers: { Authorization: `Bearer ${token}` } };
-    if (!opts.remove) atomicWriteTextFile(receiptPath, `${JSON.stringify({ ...prior, ...common, status: 'prepared', entry_hash: before === undefined ? null : hash(before), pending_entry_hash: hash(entry), config_path: configPath })}\n`, { forceMode: 0o600 });
+    if (!opts.remove) atomicWriteTextFile(receiptPath, `${JSON.stringify({ ...prior, ...common, status: 'prepared', entry_hash: before === undefined ? null : ownedEntryHash(before, adapter.connection), pending_entry_hash: hash(entry), config_path: configPath })}\n`, { forceMode: 0o600 });
     if (adapter.connection === 'codex-toml') {
       if (opts.remove) removeCodexHttpServerBlock(configPath, name);
       else writeCodexHttpServerBlock(configPath, { name, url: c.mcp_url, bearerToken: token });
@@ -151,7 +169,7 @@ export async function installHarnessConnection(c: HarnessCredentials, opts: Inst
         next_action: pending ? 'Local configuration and unchanged owned skills were removed. Remote membership deactivation remains pending; retry when host authority is available.'
           : 'The client configuration was removed. Revoke the grant on the brain host if access should end.' };
     }
-    const nextReceipt = { ...common, entry_hash: hash(nativeEntry(configPath, adapter.connection, name)), status: 'installed',
+    const nextReceipt = { ...common, entry_hash: ownedEntryHash(nativeEntry(configPath, adapter.connection, name), adapter.connection), status: 'installed',
       ...inlineTokenReceipt(c, adapter.id, name, configPath, adapter.reload, opts.credentialsFile) };
     atomicWriteTextFile(receiptPath, `${JSON.stringify(nextReceipt, null, 2)}\n`, { forceMode: 0o600 });
     const shared_skills = deactivated ?? await installSharedSkillsConnection(c, { ...opts, root: join(dirname(configPath), `.gbrain-${adapter.id}-${name}`) });

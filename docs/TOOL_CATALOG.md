@@ -119,7 +119,7 @@ Every non-localOnly operation on the MCP surface: 151 tools across 25 areas. **S
 |---|---|---|---|---|
 | `add_link` | Create a typed link (edge) from one page to another in the same source. | write |  |  |
 | `find_orphans` | Find disconnected pages. | read |  |  |
-| `get_backlinks` | Links to a page; group:"page" pages by referrer, newest first. | read | yes |  |
+| `get_backlinks` | Links to a page, ≤500/call; group:"page" by referrer, newest first. | read | yes |  |
 | `get_links` | List a page's outgoing links (typed edges to other pages). | read |  |  |
 | `list_link_sources` | Link provenances (e.g. | read | yes |  |
 | `remove_link` | Remove a link between two pages (optionally only one link_type or link_source). | write |  |  |

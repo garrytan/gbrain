@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
+import { assertRecoveryVersion } from './recovery-version.ts';
 
 export type Principal = { kind: 'oauth_client' | 'legacy_token' | 'local_cli' | 'local_stdio' | 'application'; id: string };
 export type RequestState = 'queued' | 'running' | 'recovering' | 'committed' | 'conflict' | 'failed' | 'cancelled';
@@ -58,6 +59,7 @@ export interface BundleRecoveryRecord {
 }
 export type RecoveryRecord = FileRecoveryRecord | BundleRecoveryRecord;
 export function recoveryFiles(record: RecoveryRecord): FileRecoveryRecord[] {
+  assertRecoveryVersion('persistence_requests', record, null);
   if (record.version === 1) return [record];
   if (record.version === 2 && record.target === 'skill_bundle' && Array.isArray(record.files)
     && record.files.length > 0 && record.files.length <= 128 && record.files.every(file => file.version === 1)) return record.files;
@@ -102,6 +104,10 @@ export interface WriteRequest {
   /** #6176 (v217): the owner's claim-phase stamp (claim-phase.ts), read back by `claimStateOf`; absent on rows read before the migration. */
   claim_phase?: unknown;
   preparation_attempts?: number;
+  /** Large-pages hardening (v261): transient interruptions counted against `persistence.max_transient_retries` (transient-retry.ts). */
+  transient_interruptions?: number;
+  /** v261: the earliest time a claim takes this queued row again (a transient interruption's backoff); null means now. */
+  next_attempt_at?: Date | string | null;
   /** #6278: on a row the claim statements return: the stamp the previous claim left (its last recorded step). Never stored. */
   previous_claim_phase?: unknown;
   created_at: Date | string;

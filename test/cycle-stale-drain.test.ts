@@ -59,6 +59,12 @@ beforeEach(async () => {
   );
 });
 
+async function stamped(slug: string): Promise<boolean> {
+  const [row] = await engine.executeRaw<{ stamped: boolean }>(
+    'SELECT links_extracted_at IS NOT NULL AS stamped FROM pages WHERE source_id = $1 AND slug = $2', ['wiki', slug]);
+  return row!.stamped;
+}
+
 afterEach(() => {
   rmSync(brainDir, { recursive: true, force: true });
   rmSync(gbrainHome, { recursive: true, force: true });
@@ -224,6 +230,9 @@ describe('cycle extract phase stale drain (#4062)', () => {
     // silent: a flush that drops rows still has to surface on stderr.
     // Links are replaced per page (the put_page contract), so the dropped write
     // is that page's replacement; both endpoints are live pages.
+    // A lost write also fails the run with a typed error and leaves ONLY the
+    // failed page due: bob's write succeeded and is stamped, alice is not, and
+    // a clean retry converges.
     writeFileSync(join(brainDir, 'alice.md'), '# Alice\nMet [[bob]] today.\n');
     writeFileSync(join(brainDir, 'bob.md'), '# Bob\nQuiet page.\n');
     await engine.executeRaw(
@@ -231,14 +240,19 @@ describe('cycle extract phase stale drain (#4062)', () => {
        VALUES ('alice', 'wiki', 'person', 'Alice', 'Met [[bob]] today.', ''),
               ('bob', 'wiki', 'person', 'Bob', 'Quiet page.', '')`,
     );
-    const addLinks = spyOn(engine, 'replaceDerivedLinks').mockRejectedValueOnce(new Error('pool exhausted'));
+    const original = engine.replaceDerivedLinks.bind(engine);
+    const addLinks = spyOn(engine, 'replaceDerivedLinks').mockImplementation(async (origin, links, opts) => {
+      if (origin.slug === 'alice') throw new Error('pool exhausted');
+      return original(origin, links, opts);
+    });
     const log = spyOn(console, 'log').mockImplementation(() => {});
     const stdout = spyOn(process.stdout, 'write').mockReturnValue(true);
     const err = spyOn(console, 'error').mockImplementation(() => {});
     const stderr = spyOn(process.stderr, 'write').mockReturnValue(true);
     try {
-      await runExtractCore(engine, { mode: 'all', dir: brainDir, slugs: ['alice'], jsonMode: true, sourceId: 'wiki' });
-      expect(addLinks).toHaveBeenCalledTimes(1);
+      await expect(runExtractCore(engine, { mode: 'all', dir: brainDir, slugs: ['alice', 'bob'], jsonMode: true, sourceId: 'wiki' }))
+        .rejects.toMatchObject({ code: 'extract_write_lost' });
+      expect(addLinks.mock.calls.some(c => c[0].slug === 'alice')).toBe(true);
       expect(log).not.toHaveBeenCalled();
       expect(stdout).not.toHaveBeenCalled();
       const diagnostics = [...err.mock.calls, ...stderr.mock.calls].map(c => String(c[0]));
@@ -250,19 +264,30 @@ describe('cycle extract phase stale drain (#4062)', () => {
       err.mockRestore();
       stderr.mockRestore();
     }
+    expect(await stamped('alice')).toBe(false);
+    expect(await stamped('bob')).toBe(true);
+    await runExtractCore(engine, { mode: 'all', dir: brainDir, slugs: ['alice', 'bob'], quiet: true, sourceId: 'wiki' });
+    expect(await stamped('alice')).toBe(true);
   });
 
   test('the cycle-shaped extract keeps TIMELINE batch-loss diagnostics on stderr too (#4890 sibling branch)', async () => {
     // Same two-channel contract as the links flush: under jsonMode a dropped
     // timeline batch must land on stderr as a batch_error event, never on stdout.
+    // The lost batch also fails the run and leaves carol due; a retry writes
+    // the entry once and stamps her.
     writeFileSync(join(brainDir, 'carol.md'), '# Carol\n\n## Timeline\n- **2026-01-02** | Signed the term sheet\n');
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES ('carol', 'wiki', 'person', 'Carol', '', '')`,
+    );
     const addTimeline = spyOn(engine, 'addTimelineEntriesBatch').mockRejectedValueOnce(new Error('pool exhausted'));
     const log = spyOn(console, 'log').mockImplementation(() => {});
     const stdout = spyOn(process.stdout, 'write').mockReturnValue(true);
     const err = spyOn(console, 'error').mockImplementation(() => {});
     const stderr = spyOn(process.stderr, 'write').mockReturnValue(true);
     try {
-      await runExtractCore(engine, { mode: 'all', dir: brainDir, slugs: ['carol'], jsonMode: true, sourceId: 'wiki' });
+      await expect(runExtractCore(engine, { mode: 'all', dir: brainDir, slugs: ['carol'], jsonMode: true, sourceId: 'wiki' }))
+        .rejects.toMatchObject({ code: 'extract_write_lost' });
       expect(addTimeline).toHaveBeenCalledTimes(1);
       expect(log).not.toHaveBeenCalled();
       expect(stdout).not.toHaveBeenCalled();
@@ -275,5 +300,41 @@ describe('cycle extract phase stale drain (#4062)', () => {
       err.mockRestore();
       stderr.mockRestore();
     }
+    expect(await stamped('carol')).toBe(false);
+    await runExtractCore(engine, { mode: 'all', dir: brainDir, slugs: ['carol'], quiet: true, sourceId: 'wiki' });
+    expect(await stamped('carol')).toBe(true);
+    const [row] = await engine.executeRaw<{ n: number | string }>(
+      `SELECT count(*) AS n FROM timeline_entries t JOIN pages p ON p.id = t.page_id WHERE p.source_id = 'wiki' AND p.slug = 'carol'`);
+    expect(Number(row!.n)).toBe(1);
+  });
+
+  test('a lost walk write makes the extract phase warn and the same cycle stale drain retries the unstamped page (#6954, GBRA-130 A-1)', async () => {
+    // The walk loses carol's timeline batch. Pre-fix the walk still stamped her,
+    // so the drain never saw her and the entry was lost with an 'ok' phase.
+    writeFileSync(join(brainDir, 'carol.md'), '# Carol\n\n## Timeline\n- **2026-01-02** | Signed the term sheet\n');
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES ('carol', 'wiki', 'person', 'Carol', '', '- **2026-01-02** | Signed the term sheet')`,
+    );
+    const addTimeline = spyOn(engine, 'addTimelineEntriesBatch').mockRejectedValueOnce(new Error('pool exhausted'));
+    const err = spyOn(console, 'error').mockImplementation(() => {});
+    const stderr = spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
+        const report = await runCycle(engine, { brainDir, sourceId: 'wiki', phases: ['extract'] });
+        const extractPhase = report.phases.find(p => p.phase === 'extract');
+        expect(extractPhase?.status).toBe('warn');
+        expect(extractPhase?.summary).toContain('remain due');
+        expect(extractPhase?.details?.stale_pages_drained).toBeGreaterThan(0);
+      });
+    } finally {
+      addTimeline.mockRestore();
+      err.mockRestore();
+      stderr.mockRestore();
+    }
+    expect(await stamped('carol')).toBe(true);
+    const [row] = await engine.executeRaw<{ n: number | string }>(
+      `SELECT count(*) AS n FROM timeline_entries t JOIN pages p ON p.id = t.page_id WHERE p.source_id = 'wiki' AND p.slug = 'carol'`);
+    expect(Number(row!.n)).toBeGreaterThan(0);
   });
 });

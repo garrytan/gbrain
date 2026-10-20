@@ -54,6 +54,7 @@ import {
   readIpcSecret,
   readIpcSecretForConfig,
   requestSyncAbort,
+  requestSyncNudge,
   requestSyncStart,
   requestSyncStatus,
   resolveSocketPath,
@@ -62,7 +63,9 @@ import {
 } from '../core/context/resolve-ipc.ts';
 import {
   DELEGATED_SYNC_LANES_MAX,
+  SYNC_NUDGE_VERSION,
   type DelegatedSyncOptions,
+  type SyncNudgeResponse,
   type SyncStartRegistration,
   type SyncStatusResponse,
   type WireSyncResult,
@@ -271,6 +274,21 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[]):
     return true;
   }
   const startResp = start as Exclude<SyncStartIpcResult, typeof IPC_UNAVAILABLE | { degraded: string }>;
+  // GBRA-133 PR 2a: a serve already syncing records this request as a wanted marker (never for --dry-run, which stays
+  // read-only); its notifier runs it once the running sync ends, so the request is not dropped.
+  if (!startResp.ok && startResp.error === 'busy' && !options.dryRun) {
+    const nudged = await requestSyncNudge(sock, { secret, version: SYNC_NUDGE_VERSION, sourceId: sourceId ?? 'default', requestedBy: 'delegated_sync',
+      ...(options.full ? { intent: 'full' as const } : options.noPull ? { intent: 'freshness' as const } : {}) });
+    const ack = nudged === IPC_UNAVAILABLE || 'degraded' in (nudged as object) ? null : nudged as SyncNudgeResponse;
+    if (ack?.ok && ack.marker) {
+      const m = ack.marker;
+      serr(`[sync] the serve (PID ${holder.pid}) is already syncing (job ${startResp.jobId ?? '?'}); recorded this request as wanted (${m.intent}`
+        + `${m.wanted_head ? ` ${m.wanted_head.slice(0, 8)}` : ''}, generation ${m.generation}); ${ack.notifier ? 'its notifier runs it when that sync ends' : 'the next resident with a notifier runs it'}.`);
+      if (args.includes('--json')) await (await import('../core/cli-force-exit.ts')).writeStdoutFinal(JSON.stringify({ action: 'nudged', source_id: m.source_id, intent: m.intent, wanted_head: m.wanted_head, marker_generation: m.generation, running_job_id: startResp.jobId ?? null }) + '\n');
+      await setVerdict(0);
+      return true;
+    }
+  }
   if (!startResp.ok) {
     serr(`[sync] ${startRefusalText(startResp)} ${remediation(holder.pid, '')}`);
     await setVerdict(1);
@@ -623,4 +641,40 @@ function pick<T extends object, K extends keyof T>(source: T, keys: readonly K[]
   const out: Partial<Pick<T, K>> = {};
   for (const key of keys) if (source[key] !== undefined) out[key] = source[key];
   return out;
+}
+
+/**
+ * GBRA-133 PR 2a: `gbrain sync trigger` while a live serve holds the PGLite brain. The request is recorded as a wanted
+ * marker through the serve (sync_nudge, acknowledged) and its notifier starts the sync: action nudged, exit 0. A serve
+ * running without a notifier (GBRAIN_NOTIFIER=0) records it too; the outcome then carries resident: null and the
+ * no_resident notice with the fix. Returns false off PGLite or when no serve holds the brain (the engine path records
+ * the marker and queues the job).
+ * The owner-delegated sync paths in cli/main.ts skip `sync trigger`, which they would refuse as an unknown sync option.
+ */
+export async function maybeTriggerThroughServe(config: { engine?: string; database_path?: string; database_url?: string } | null, args: string[]): Promise<boolean> {
+  if (config?.engine !== 'pglite' || !config.database_path || config.database_url || args.includes('--help') || args.includes('-h')) return false;
+  const dataDir = config.database_path;
+  const sourceId = args.find((a, i) => args[i - 1] === '--source');
+  if (!sourceId) return false;
+  const holder = probeLivePgliteHolder(dataDir);
+  if (!holder || !holder.serve) return false;
+  const json = args.includes('--json');
+  const sock = resolveSocketPath(dataDir);
+  const secret = readIpcSecret(dataDir);
+  const refuse = async (why: string) => { serr(`[sync trigger] a live gbrain serve (PID ${holder.pid}) holds this PGLite brain and ${why} ` + remediation(holder.pid, '')); await setVerdict(1); return true; };
+  if (!existsSync(sock) || !secret) return refuse('exposes no sync IPC (older gbrain, serve --http, or GBRAIN_SERVE_SYNC_IPC=0).');
+  const r = await requestSyncNudge(sock, { secret, version: SYNC_NUDGE_VERSION, sourceId, requestedBy: 'sync_trigger' });
+  if (r === IPC_UNAVAILABLE) return refuse('is not answering its IPC socket.');
+  if ('degraded' in (r as object)) return refuse('predates sync_nudge; restart it on this gbrain version.');
+  const resp = r as SyncNudgeResponse;
+  if (!resp.ok || !resp.marker) {
+    if (resp.error === 'unknown_source') { serr(`Source "${sourceId}" not found. List with: gbrain sources list`); await setVerdict(1); return true; }
+    return refuse(`refused the request (${resp.error ?? 'unknown error'}).`);
+  }
+  const { printTriggerOutcome } = await import('./sync/trigger.ts');
+  const m = resp.marker;
+  printTriggerOutcome({ action: 'nudged', source_id: m.source_id, intent: m.intent, wanted_head: m.wanted_head, marker_generation: m.generation,
+    resident: resp.notifier ? { kind: resp.resident ?? 'serve', pid: holder.pid } : null }, json);
+  await setVerdict(0);
+  return true;
 }

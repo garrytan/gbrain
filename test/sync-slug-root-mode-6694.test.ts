@@ -16,6 +16,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { stampByCheckpoint } from './helpers/pass-fold.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -24,6 +25,7 @@ import { readManagedSyncFailures } from '../src/core/persistence/sync-failures.t
 import { classifyManagedSyncOrphans, retireManagedSyncOrphan } from '../src/core/persistence/managed-sync-orphans.ts';
 import { classifySyncFault } from '../src/core/persistence/sync-fault-class.ts';
 import { CODES } from '../src/core/error-registry.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -70,7 +72,8 @@ describe('#6694 managed-sync checkpoint under a pinned slug_root_mode', () => {
   /** Runs until every page committed and stops before the checkpoint publishes. */
   async function beforeCheckpoint(engine: BrainEngine, f: Fixture, pages: number) {
     const abort = new AbortController();
-    const partial = await performManagedSync(engine, { ...f.opts, signal: abort.signal, onProgress: p => { if (p.bankedFiles === pages) abort.abort(); } });
+    // A folded stamp has no window between the last import and the checkpoint (#6926): this run stamps by its request.
+    const partial = await stampByCheckpoint(() => performManagedSync(engine, { ...f.opts, signal: abort.signal, onProgress: p => { if (p.bankedFiles === pages) abort.abort(); } }));
     expect(partial).toMatchObject({ status: 'partial', filesImported: pages });
   }
   /** A checkpoint column only the owner publishes; the test edits it with managed persistence switched off for the statement. */
@@ -145,9 +148,21 @@ describe('#6694 managed-sync checkpoint under a pinned slug_root_mode', () => {
   test('a plain sync recovers a root source whose checkpoint already failed revision_conflict under a source-root pin', async () => each(async engine => {
     const f = await fixture(engine, '', 'source-root');
     await beforeCheckpoint(engine, f, 3);
-    // The receipt older releases left: the checkpoint guard refused with the moved-checkpoint revision_conflict.
-    await unmanaged(engine, () => engine.executeRaw("UPDATE sources SET last_commit='0000000000000000000000000000000000000000' WHERE id=$1", [f.id]));
-    expect(JSON.stringify(await outcome(performManagedSync(engine, f.opts)))).toContain('revision_conflict');
+    // The checkpoint guard refuses with the moved-checkpoint revision_conflict. #6712 PR 4b: each pass reads last_commit at
+    // its pin, so the checkpoint moves (another writer's checkpoint) while this pass's stamp is prepared.
+    let moved = false;
+    installFaultHook(async (point, detail) => {
+      if (point !== 'consumer:prepared' || moved) return;
+      const [row] = await engine.executeRaw<{ kind: string }>("SELECT intent->>'kind' AS kind FROM persistence_requests WHERE request_id=$1::uuid", [detail.requestId]);
+      if (row?.kind !== 'managed_sync_checkpoint') return;
+      moved = true;
+      await engine.transaction(async tx => {
+        await tx.executeRaw("SELECT set_config('gbrain.write_sources',$1,true)", [JSON.stringify([f.id])]);
+        await tx.executeRaw("UPDATE sources SET last_commit='0000000000000000000000000000000000000000' WHERE id=$1", [f.id]);
+      });
+    });
+    try { expect(JSON.stringify(await outcome(performManagedSync(engine, f.opts)))).toContain('revision_conflict'); } finally { installFaultHook(undefined); }
+    expect(moved).toBe(true);
     expect(await checkpoint(engine, f)).toMatchObject({ error_code: 'revision_conflict', error_message: 'The source checkpoint changed during this sync.' });
     await unmanaged(engine, () => engine.executeRaw('UPDATE sources SET last_commit=NULL WHERE id=$1', [f.id]));
     const recovered = await outcome(performManagedSync(engine, f.opts));

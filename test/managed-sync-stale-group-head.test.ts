@@ -1,9 +1,16 @@
 /**
  * #6075: a bulk drain groups a frozen head under its request ID (adding `group`, and `lane` under lanes)
  * while another owner loop that read the head before it was grouped admits it on the single path. The
- * drain admits a group with the cursor save that records it (#5984 Phase 1), so the race is between
- * that admission and the single path's: the drain must not wedge on `idempotency_conflict` when the
- * single path won, and the single-path guard must notice the grouped intent when the drain won.
+ * drain admits a group with the cursor save that records it (#5984 Phase 1), so the race was between
+ * that admission and the single path's.
+ *
+ * #6712 PR 4b: that race cannot arise any more, so this file now pins the exclusion that replaced it. A
+ * non-company sync is a pass: it runs under the source's drain lease (one drainer per source, sync-lease.ts)
+ * and keeps its batch cursor in memory, with no `managed-sync` row for a second owner loop to read the head
+ * from. A company-brain source keeps that row but never forms bulk groups (`opts.bulk && !company` in
+ * sync-run.ts, as on master), so no source reaches a grouped head from two loops. Each test keeps its #6075
+ * name and says, after the arrow, what it asserts now: a second sync that arrives while the drain is about to
+ * admit a group follows or refuses on the lease, admits nothing of its own, and every page is admitted once.
  * Bulk groups are Postgres-only.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
@@ -12,7 +19,6 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import postgres from '#postgres';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -20,11 +26,11 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { performSync } from '../src/commands/sync/perform.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
-import { admitWrite } from '../src/core/persistence/journal.ts';
+import { SyncLockBusyError } from '../src/core/sync-lock.ts';
+import type { SyncResult } from '../src/commands/sync.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-stale-head-'));
 let engine: BrainEngine | undefined;
-let databaseUrl = '';
 let closePostgres: (() => Promise<void>) | undefined;
 const sources: string[] = [];
 
@@ -40,20 +46,22 @@ async function fixture(e: BrainEngine, count: number) {
   await e.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
   return id;
 }
-type StoredCursor = { pending?: { requestId: string; slug: string; pageId: number | null; intent: Record<string, unknown> }; group?: unknown[];
-  incarnation: string; binding: { worktree_id: string; topology_generation: string | number }; authority: { writer: { principal: { kind: string; id: string } } & Record<string, unknown> } };
-async function storedCursor(e: BrainEngine, sourceId: string): Promise<StoredCursor | null> {
-  const [row] = await e.executeRaw<{ c: StoredCursor }>("SELECT completed_keys->0 AS c FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [sourceId]);
-  return row?.c ?? null;
+/** Holds the drain at its first group admission until `release()`; `reached` resolves once it is there. */
+function holdFirstGroupAdmission(sourceId: string) {
+  let reach!: () => void, release!: () => void, seen = false;
+  const reached = new Promise<void>(resolve => { reach = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  installFaultHook(async (point, detail) => {
+    if (point !== 'sync:before_group_admission' || detail.sourceId !== sourceId || seen) return;
+    seen = true; reach(); await gate;
+  });
+  return { reached, release, get seen() { return seen; } };
 }
-/** What an owner loop that read the head before it was grouped submits: the same request ID with the pre-group intent. */
-async function admitAsStaleSinglePass(e: BrainEngine, sourceId: string, c: StoredCursor, intent: Record<string, unknown>) {
-  const head = c.pending!;
-  await admitWrite(e, { requestId: head.requestId, operation: 'submit_job', sourceId, sourceIncarnation: c.incarnation, slug: head.slug, pageId: head.pageId,
-    worktreeId: c.binding.worktree_id, topologyGeneration: c.binding.topology_generation, principal: c.authority.writer.principal as never,
-    authority: c.authority.writer as never, callerIntent: intent, intent });
+async function importRequests(e: BrainEngine, sourceId: string) {
+  return e.executeRaw<{ request_id: string; path: string; grp: string | null; state: string }>(`SELECT request_id,intent->>'path' AS path,intent->>'group' AS grp,state
+    FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence`, [sourceId]);
 }
-const ungrouped = (intent: Record<string, unknown>) => { const { group: _g, lane: _l, ...rest } = intent; return rest; };
+const drainOpts = (sourceId: string, extra: Record<string, unknown> = {}) => ({ sourceId, noPull: true, noEmbed: true, noExtract: true, drain: true, ...extra });
 async function importedTitles(e: BrainEngine, sourceId: string, count: number) {
   const titles: Array<string | undefined> = [];
   for (let i = 0; i < count; i++) titles.push((await e.getPage(`notes/n${i}`, { sourceId }))?.title);
@@ -63,7 +71,7 @@ async function importedTitles(e: BrainEngine, sourceId: string, count: number) {
 beforeAll(async () => {
   if (!process.env.DATABASE_URL) return;
   const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL, 'instance', 10);
-  engine = pg.engine; closePostgres = pg.close; databaseUrl = pg.databaseUrl;
+  engine = pg.engine; closePostgres = pg.close;
 }, 120_000);
 afterAll(async () => {
   installFaultHook(undefined);
@@ -76,102 +84,78 @@ afterAll(async () => {
 });
 
 for (const lanes of [1, 2]) {
-  test(`a group whose head was already admitted on the single path is dropped and the drain finishes (lanes=${lanes})`, async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  test(`a group whose head was already admitted on the single path is dropped and the drain finishes (lanes=${lanes}) → a second sync at the group admission follows the drain lease and admits nothing twice`, async () => withEnv({ GBRAIN_HOME: home }, async () => {
     if (!engine) return;
     const e = engine, sourceId = await fixture(e, 10);
-    let stale = false;
-    // The drain has frozen the head's followers and is about to admit the group; the stored cursor still holds the ungrouped head.
-    installFaultHook(async (point, detail) => {
-      if (point !== 'sync:before_group_admission' || detail.sourceId !== sourceId || stale) return;
-      const c = await storedCursor(e, sourceId);
-      if (!c?.pending || c.group) return;
-      stale = true;
-      expect(c.pending.intent.group).toBeUndefined();
-      await admitAsStaleSinglePass(e, sourceId, c, ungrouped(c.pending.intent));
-    });
+    const held = holdFirstGroupAdmission(sourceId);
+    const lines: string[] = [];
+    const origError = console.error;
+    let drained: Promise<SyncResult> | undefined, followed: Promise<SyncResult> | undefined;
     try {
-      const done = await performSync(e, { sourceId, noPull: true, noEmbed: true, noExtract: true, drain: true, lanes });
-      expect(stale).toBe(true);
-      expect(done).toMatchObject({ status: 'first_sync', added: 10 });
-    } finally { installFaultHook(undefined); }
+      drained = performSync(e, drainOpts(sourceId, { lanes }));
+      await held.reached;
+      const before = (await importRequests(e, sourceId)).length;
+      console.error = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+      // Started outside the drain's async context, so it cannot re-enter the drain's lease.
+      followed = performSync(e, drainOpts(sourceId, { lanes, followDrainLease: true, drainHolder: { kind: 'cli', id: null } }));
+      for (let i = 0; i < 400 && !lines.join('').includes('is being drained by'); i++) await new Promise(resolve => setTimeout(resolve, 25));
+      expect(lines.join('')).toContain('is being drained by');
+      expect((await importRequests(e, sourceId)).length).toBe(before);
+      held.release();
+      expect(await drained).toMatchObject({ status: 'first_sync', added: 10 });
+      expect(['up_to_date', 'synced']).toContain((await followed).status);
+    } finally { console.error = origError; held.release(); installFaultHook(undefined); await drained?.catch(() => undefined); await followed?.catch(() => undefined); }
+    expect(held.seen).toBe(true);
     expect(await importedTitles(e, sourceId, 10)).toEqual(Array.from({ length: 10 }, (_, i) => `Note ${i}`));
-    const rows = await e.executeRaw<{ state: string }>(`SELECT state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import'`, [sourceId]);
+    const rows = await importRequests(e, sourceId);
     expect(rows).toHaveLength(10);
     expect(rows.every(row => row.state === 'committed')).toBe(true);
+    expect(new Set(rows.map(row => row.path)).size).toBe(10);
   }), 120_000);
 }
 
-test('a head admitted under its request ID with a different intent still refuses with idempotency_conflict', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+test('a head admitted under its request ID with a different intent still refuses with idempotency_conflict → a sync job at the group admission refuses on the drain lease with SyncLockBusyError and admits nothing', async () => withEnv({ GBRAIN_HOME: home }, async () => {
   if (!engine) return;
   const e = engine, sourceId = await fixture(e, 6);
-  let stale = false;
-  installFaultHook(async (point, detail) => {
-    if (point !== 'sync:before_group_admission' || detail.sourceId !== sourceId || stale) return;
-    const c = await storedCursor(e, sourceId);
-    if (!c?.pending || c.group) return;
-    stale = true;
-    await admitAsStaleSinglePass(e, sourceId, c, { ...ungrouped(c.pending.intent), content: 'different bytes' });
-  });
+  const held = holdFirstGroupAdmission(sourceId);
+  let drained: Promise<SyncResult> | undefined;
   try {
-    await expect(performSync(e, { sourceId, noPull: true, noEmbed: true, noExtract: true, drain: true })).rejects.toMatchObject({ code: 'idempotency_conflict' });
-    expect(stale).toBe(true);
-  } finally { installFaultHook(undefined); }
+    drained = performSync(e, drainOpts(sourceId));
+    await held.reached;
+    const before = await importRequests(e, sourceId);
+    await expect(performSync(e, { sourceId, noPull: true, noEmbed: true, noExtract: true, drainHolder: { kind: 'job', id: '6075' } })).rejects.toBeInstanceOf(SyncLockBusyError);
+    expect(await importRequests(e, sourceId)).toEqual(before);
+    held.release();
+    expect(await drained).toMatchObject({ status: 'first_sync', added: 6 });
+  } finally { held.release(); installFaultHook(undefined); await drained?.catch(() => undefined); }
+  const rows = await importRequests(e, sourceId);
+  expect(rows).toHaveLength(6);
+  expect(rows.every(row => row.state === 'committed')).toBe(true);
 }), 120_000);
 
-test('a non-bulk pass that read the head before a drain grouped it does not admit the stale intent', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+test('a non-bulk pass that read the head before a drain grouped it does not admit the stale intent → a non-bulk sync at the group admission refuses on the drain lease; the head is admitted once, grouped', async () => withEnv({ GBRAIN_HOME: home }, async () => {
   if (!engine) return;
   const e = engine, sourceId = await fixture(e, 10);
-  // An independent connection holds the admission counters, so the non-bulk pass blocks inside its admission
-  // transaction after reading the ungrouped head, and resumes only once the drain has grouped it.
-  const blocker = postgres(databaseUrl, { max: 1, prepare: false });
-  let stage = 0, single: Promise<unknown> | undefined, release: (() => void) | undefined;
-  const lockHeld = new Promise<void>(resolve => { release = resolve; });
-  let locked: Promise<unknown> | undefined;
-  installFaultHook(async (point, detail) => {
-    if (detail.sourceId !== sourceId) return;
-    const c = await storedCursor(e, sourceId);
-    if (point === 'sync:mid_checkpoint' && stage === 0 && c?.pending && !c.group) {
-      stage = 1;
-      let acquired!: () => void;
-      const ready = new Promise<void>(resolve => { acquired = resolve; });
-      locked = blocker.begin(async sql => {
-        await sql`INSERT INTO persistence_counters(key) VALUES ('brain') ON CONFLICT DO NOTHING`;
-        await sql`SELECT key FROM persistence_counters WHERE key='brain' FOR UPDATE`;
-        acquired();
-        await lockHeld;
-      });
-      await ready;
-      single = performSync(e, { sourceId, noPull: true, noEmbed: true, noExtract: true }).then(value => ({ value }), error => ({ error }));
-      for (let i = 0; i < 200; i++) {
-        const [waiting] = await e.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type='Lock' AND datname=current_database()");
-        if (waiting!.n > 0) break;
-        await new Promise(resolve => setTimeout(resolve, 10));
-      }
-    } else if (point === 'sync:before_group_admission' && stage === 1) {
-      // The drain grouped the head and its admission now races the blocked single pass's.
-      stage = 2;
-      release!();
-      await locked;
-    }
-  });
+  const held = holdFirstGroupAdmission(sourceId);
+  let drained: Promise<SyncResult> | undefined;
   try {
-    const drained = await performSync(e, { sourceId, noPull: true, noEmbed: true, noExtract: true, drain: true }).then(value => ({ value }), error => ({ error }));
-    const singled = await single;
-    expect(stage).toBe(2);
-    expect(singled).not.toHaveProperty('error');
-    expect(drained).not.toHaveProperty('error');
-  } finally { installFaultHook(undefined); release?.(); await locked?.catch(() => undefined); await blocker.end(); }
-  const resumed = await performSync(e, { sourceId, noPull: true, noEmbed: true, noExtract: true, drain: true });
+    drained = performSync(e, drainOpts(sourceId));
+    await held.reached;
+    const before = await importRequests(e, sourceId);
+    await expect(performSync(e, { sourceId, noPull: true, noEmbed: true, noExtract: true, drainHolder: { kind: 'serve', id: null } })).rejects.toBeInstanceOf(SyncLockBusyError);
+    expect(await importRequests(e, sourceId)).toEqual(before);
+    held.release();
+    expect(await drained).not.toHaveProperty('error');
+  } finally { held.release(); installFaultHook(undefined); await drained?.catch(() => undefined); }
+  const resumed = await performSync(e, drainOpts(sourceId));
   expect(['synced', 'first_sync', 'up_to_date']).toContain(resumed.status);
   expect(await importedTitles(e, sourceId, 10)).toEqual(Array.from({ length: 10 }, (_, i) => `Note ${i}`));
-  // Whichever admission won, the head was admitted once, under the intent its cursor held then: grouped, with its
-  // followers in the same group, or ungrouped (the single path won), with no request naming the head as its group.
-  const requests = await e.executeRaw<{ request_id: string; grp: string | null; state: string }>(`SELECT request_id,intent->>'group' AS grp,state
-    FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence`, [sourceId]);
+  // Only the drain admitted: the head once, grouped under its own request ID with its followers in the same group.
+  const requests = await importRequests(e, sourceId);
   expect(requests).toHaveLength(10);
   expect(requests.every(row => row.state === 'committed')).toBe(true);
+  expect(new Set(requests.map(row => row.path)).size).toBe(10);
   const head = requests[0]!;
-  const members = requests.filter(row => row.grp === head.request_id);
-  if (head.grp === null) expect(members).toEqual([]);
-  else { expect(head.grp).toBe(head.request_id); expect(members.length).toBeGreaterThan(1); }
+  expect(head.grp).toBe(head.request_id);
+  expect(requests.filter(row => row.grp === head.request_id).length).toBeGreaterThan(1);
 }), 120_000);

@@ -1684,7 +1684,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "List a page's outgoing links (typed edges to other pages). Use when exploring what a page points at; rows carry status and dates, live relationships by default (status: \"all\" for history, during: \"2022\" for a period). Pass source_id or all_sources to widen. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.",
+    "description": "List a page's outgoing links (typed edges to other pages). Use when exploring what a page points at; rows carry status and dates, live relationships by default (status: \"all\" for history, during: \"2022\" for a period). Pass source_id or all_sources to widen. Returns up to 500 rows per call (limit, max 5000); a cut list's last row carries truncated: true and next_cursor, which you pass as cursor. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.",
     "params": {
       "slug": {
         "type": "string",
@@ -1719,6 +1719,19 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "all_sources": {
         "type": "boolean",
         "description": "Same as source_id __all__."
+      },
+      "limit": {
+        "type": "number",
+        "description": "Rows per call (default 500, max 5000)."
+      },
+      "cursor": {
+        "type": "string",
+        "description": "next_cursor from the previous call (same filters)."
+      },
+      "all": {
+        "type": "boolean",
+        "description": "Local CLI only: every row, paging internally.",
+        "fullSurfaceOnly": true
       }
     },
     "scope": "read",
@@ -1738,7 +1751,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "Links to a page; group:\"page\" pages by referrer, newest first.",
+    "description": "Links to a page, ≤500/call; group:\"page\" by referrer, newest first.",
     "params": {
       "slug": {
         "type": "string",
@@ -1778,11 +1791,16 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
-        "description": "Max 500."
+        "description": "≤5000"
       },
       "cursor": {
         "type": "string",
-        "description": "Paging."
+        "description": "Next."
+      },
+      "all": {
+        "type": "boolean",
+        "description": "Local CLI only: every row, paging internally.",
+        "fullSurfaceOnly": true
       }
     },
     "scope": "read",
@@ -5606,7 +5624,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "BEFORE editing any function, run code_callers with the symbol name to find every caller (the people who'd be affected by your change). Returns direct callers from the tree-sitter call graph. Use during plan-mode to size the change. Defaults to source-scoped; for multi-source brains pass source_id or all_sources=true. Returns: `{symbol, count, callers: [{from_symbol_qualified, to_symbol_qualified, edge_type, resolved}]}`. Example: `{symbol:'parseMarkdown', count:4, callers:[{from_symbol_qualified:'callerInA', to_symbol_qualified:'parseMarkdown', edge_type:'calls', resolved:true}]}`. Temporarily available only to trusted local CLI callers; agent-facing code reads are suspended.",
+    "description": "BEFORE editing any function, run code_callers with the symbol name to find every caller (the people who'd be affected by your change). Returns direct callers from the tree-sitter call graph. Use during plan-mode to size the change. Defaults to source-scoped; for multi-source brains pass source_id or all_sources=true. `resolved:false` marks a call matched by name only: the resolver links calls within one file, so a cross-file call stays unresolved and may name a different symbol with the same name. Returns: `{symbol, count, callers: [{from_symbol_qualified, to_symbol_qualified, edge_type, resolved}]}`. Example: `{symbol:'parseMarkdown', count:4, callers:[{from_symbol_qualified:'callerInA', to_symbol_qualified:'parseMarkdown', edge_type:'calls', resolved:true}]}`. Temporarily available only to trusted local CLI callers; agent-facing code reads are suspended.",
     "params": {
       "symbol": {
         "type": "string",

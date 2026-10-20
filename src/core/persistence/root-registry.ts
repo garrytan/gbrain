@@ -20,7 +20,8 @@ function gitMetadataDirectory(root: string): string | null {
   const match = /^gitdir:\s*(.+)\s*$/m.exec(readFileSync(git, 'utf8'));
   return match ? resolve(root, match[1]) : null;
 }
-function enclosingGitMetadata(root: string): string | null {
+/** The git metadata directory of the checkout enclosing `root` (walks up to a `.git` directory or `gitdir:` file). */
+export function enclosingGitMetadata(root: string): string | null {
   let current = root;
   for (;;) {
     const metadata = gitMetadataDirectory(current);

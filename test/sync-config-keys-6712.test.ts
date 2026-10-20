@@ -74,12 +74,12 @@ test('config set of a retired key warns, names its replacement and writes nothin
 
 test('config get of a retired key prints the value in effect, and a stored value is reported and not applied', async () => withEnv(CLEAR, async () => {
   await engine.setConfig('sync.hold_cap', '200');
-  await engine.setConfig('sync.parser_regression', 'hold');
+  await engine.setConfig('sync.parser_regression', 'stop');
   const got = await config(['get', 'sync.hold_cap']);
   expect(got.out).toBe('500');
   expect(got.err).toContain('built-in default (GBRAIN_SYNC_HOLD_CAP unset)');
   expect(got.err).toContain('The stored sync.hold_cap=200 is not applied.');
-  expect(await readSyncHoldPolicy(engine)).toMatchObject({ cap: 500, parserRegression: 'stop' });
+  expect(await readSyncHoldPolicy(engine)).toMatchObject({ cap: 500, parserRegression: 'hold' });
   await withEnv({ GBRAIN_SYNC_HOLD_CAP: '7' }, async () => {
     const env = await config(['get', 'sync.hold_cap']);
     expect(env.out).toBe('7');

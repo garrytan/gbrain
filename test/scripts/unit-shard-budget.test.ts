@@ -10,13 +10,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { load } from 'js-yaml';
 import {
-  loadWeights,
-  predictedWeight,
   UNIT_JOB_TIMEOUT_MS,
   UNIT_SETUP_ALLOWANCE_MS,
   UNIT_SHARD_BUDGET_MS,
   UNIT_SHARDS,
-  unitShards,
+  unitShardPlan,
 } from '../../scripts/sharding.ts';
 
 const REPO = join(import.meta.dir, '..', '..');
@@ -31,11 +29,10 @@ describe('unit shard budget', () => {
 
   test('every unit shard\'s mined weight fits the job twice over, after setup, with a minute to spare', () => {
     expect(2 * UNIT_SHARD_BUDGET_MS + UNIT_SETUP_ALLOWANCE_MS + 60_000).toBe(UNIT_JOB_TIMEOUT_MS);
-    const weights = loadWeights(join(REPO, 'scripts', 'test-weights.json'));
-    const shards = unitShards(REPO);
-    expect(shards.every(files => files.length > 0)).toBe(true);
-    const over = shards
-      .map((files, i) => ({ shard: `${i + 1}/${UNIT_SHARDS}`, ms: Math.round(predictedWeight(files, weights).totalMs) }))
+    const plan = unitShardPlan(REPO);
+    expect(plan.every(({ files }) => files.length > 0)).toBe(true);
+    const over = plan
+      .map(({ shard, ms }) => ({ shard: `${shard}/${UNIT_SHARDS}`, ms }))
       .filter(s => s.ms > UNIT_SHARD_BUDGET_MS);
     expect(over).toEqual([]);
   });

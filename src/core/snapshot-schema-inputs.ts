@@ -41,6 +41,7 @@ export const SNAPSHOT_SCHEMA_LEAVES: readonly string[] = [
 /** Dynamic imports inside the closure that never run during schema init or migrations. */
 export const SNAPSHOT_DYNAMIC_IMPORTS_NOT_HASHED: Readonly<Record<string, string>> = {
   'operations.ts': 'verbs.ts request-time verb handlers',
+  'ai/gateway.ts': 'search/projection-statistics.ts embed-drain refresh reads the configured embedding model at request time (#7083)',
   'persistence/memory-mutations.ts': 'verbs.ts request-time verb handlers',
   'persistence/verb-errors.ts': 'verbs.ts request-time verb handlers',
   'feedback/record.ts': 'verbs.ts request-time answer recording',

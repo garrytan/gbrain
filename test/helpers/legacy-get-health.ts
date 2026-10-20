@@ -72,15 +72,19 @@ export async function legacyGetHealth(
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as timeline_coverage
     `, [scope]);
 
+  // #6940 intentional contract correction: the legacy parity oracle must also
+  // exclude dead far endpoints; every other legacy field stays unchanged.
   const connected = await engine.executeRaw<{ slug: string; link_count: number }>(`
       SELECT p.slug,
              (SELECT count(*) FROM links l
                WHERE (l.from_page_id = p.id
-                      AND ($1::text[] IS NULL
-                           OR EXISTS (SELECT 1 FROM pages fp WHERE fp.id = l.to_page_id AND fp.source_id = ANY($1))))
+                      AND EXISTS (SELECT 1 FROM pages fp WHERE fp.id = l.to_page_id
+                           AND fp.deleted_at IS NULL
+                           AND ($1::text[] IS NULL OR fp.source_id = ANY($1))))
                   OR (l.to_page_id = p.id
-                      AND ($1::text[] IS NULL
-                           OR EXISTS (SELECT 1 FROM pages fp WHERE fp.id = l.from_page_id AND fp.source_id = ANY($1))))
+                      AND EXISTS (SELECT 1 FROM pages fp WHERE fp.id = l.from_page_id
+                           AND fp.deleted_at IS NULL
+                           AND ($1::text[] IS NULL OR fp.source_id = ANY($1))))
              )::int as link_count
       FROM pages p
       WHERE p.type IN ('entity', 'person', 'company') AND p.deleted_at IS NULL

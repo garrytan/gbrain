@@ -27,9 +27,10 @@ import { buildEntityCard } from '../../src/core/verbs/entity-card.ts';
 import { utcToday } from '../../src/core/link-validity.ts';
 import { __setPackLocatorForTests, _resetPackLocatorForTests, _resetPackCacheForTests } from '../../src/core/schema-pack/index.ts';
 import { bundledPackPath } from '../../src/core/schema-pack/bundled-assets.ts';
+import { fileURLToPath } from 'node:url';
 
 export const EXAMPLE_PACK = 'amends-example';
-const EXAMPLE_PACK_PATH = new URL('../../examples/schema-packs/amends-example/pack.yaml', import.meta.url).pathname;
+const EXAMPLE_PACK_PATH = fileURLToPath(new URL('../../examples/schema-packs/amends-example/pack.yaml', import.meta.url));
 
 /** Resolve the bundled example pack by name for the duration of a test file. */
 export function useExamplePack(): () => void {

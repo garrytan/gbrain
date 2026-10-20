@@ -1724,13 +1724,14 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'orphans.exclude_prefixes',
   'orphans.exclude_slugs',
   'sync.cost_gate_min_usd',
+  'sync.admission', // #6712 PR 4b: normal | imports_only | classify_only, what a managed pass admits (persistence/sync-admission.ts)
   'sync.federated_v2',
   'sync.include_working_tree',
   // #5984: managed Postgres sync publishes pages in bulk groups (on by default; each page keeps its own request).
   'sync.bulk',
   'sync.bulk_size',
   // #6858 ask 6: on-commit sync in the resident serve and its freshness target (src/core/sync-config-keys.ts).
-  'sync.on_commit', 'sync.freshness_target_seconds',
+  'sync.on_commit', 'sync.freshness_target_seconds', 'sync.on_commit.sources', // GBRA-133 PR 2a: notifier exclusions (notifier/resident.ts)
   // #6712 PR 2: rollback keys (src/core/sync-config-keys.ts; windows in wire-skew.ts): readable and honored, not tunables.
   'sync.job_drain', 'sync.waive_batch', 'sync.foreground_priority',
   'sync.lanes', 'persistence.single_write_group', 'persistence.preadmit_cache', // the last two: write-path kill switches (persistence/switches.ts)
@@ -1780,7 +1781,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'persistence.limits.principal_terminal_bytes', 'persistence.limits.brain_terminal_bytes',
   'persistence.limits.brain_recovery_bytes', 'persistence.limits.worktree_recovery_bytes',
   'persistence.receipt_retention_days', 'persistence.unbound_write', 'persistence.max_claim_ms', // #5254: persistence/unbound-source.ts; #6176: persistence/claim-phase.ts
-  'persistence.sync_preparation_ms', 'persistence.maintenance_preparation_ms', 'persistence.preparation_ceiling_ms', 'persistence.max_preparation_attempts', 'persistence.preparation_deadlines', // #6278: persistence/preparation-budget.ts, switches.ts
+  'persistence.sync_preparation_ms', 'persistence.maintenance_preparation_ms', 'persistence.preparation_ceiling_ms', 'persistence.max_preparation_attempts', 'persistence.preparation_deadlines', 'persistence.max_transient_retries', // #6278: persistence/preparation-budget.ts, switches.ts; transient-retry.ts
   'persistence.publication_ceiling_ms', 'persistence.terminal_failures.window_days', 'persistence.terminal_failures.spike_factor', 'persistence.terminal_failures.spike_min', // #6405: persistence/sync-drain.ts (in-pass publication ceiling); #6650: persistence/terminal-failures.ts
   'persistence.capacity.warn_days', 'persistence.capacity.fail_days', 'persistence.capacity.background_pause_pct', // #6696: persistence/capacity-forecast.ts, admission-origin.ts
   'persistence.maintenance.compaction_stale_hours', // #6696 (A11): persistence/compaction-pass.ts, doctor persistence_compaction

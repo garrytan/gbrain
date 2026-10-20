@@ -36,7 +36,9 @@ import { readSyncFile, syncGitPath, type SyncDiscovery, type SyncEntry, type Syn
 import { readTreeBlobs } from './sync-blobs.ts';
 import type { SyncIntent } from './sync-prepare.ts';
 import type { HeldEntry } from './sync-screen.ts';
-import type { GitHoldMeta, GitHoldRecord } from './sync-holds.ts';
+import type { GitHoldMeta, GitHoldRecord, PageWriteFailureMeta } from './sync-holds.ts';
+import { classifyTerminal } from './terminal-classify.ts';
+import { VERSION } from '../../version.ts';
 import { concurrentWriteHold, concurrentWriteProof } from './sync-concurrent-write.ts';
 import { KEEP_DISK_ABANDONED_PREFIX } from './verb-errors.ts';
 
@@ -127,7 +129,7 @@ export async function liveRevision(engine: Pick<BrainEngine, 'executeRaw'>, sour
   return row?.revision ?? null;
 }
 
-function base(entry: HoldEntry, slug: string, pageId: number | null, code: 'concurrent_write' | 'worktree_dirty' | 'file_drift',
+function base(entry: HoldEntry, slug: string, pageId: number | null, code: 'concurrent_write' | 'worktree_dirty' | 'file_drift' | 'page_write_failed',
   message: string, content: string | null, blobOid: string | null | undefined, meta: Partial<GitHoldMeta>): HeldEntry {
   const rename: SyncRename | undefined = entry.renameFrom ?? entry.renameHeld;
   return { path: entry.path, source_path: entry.sourcePath, slug, page_id: pageId, code, message, upstream_version: content === null ? null : sha256(content),
@@ -149,7 +151,7 @@ export function fileDriftHold(entry: HoldEntry, slug: string, pageId: number | n
     : 'there is no import record to tell which side changed';
   return base(entry, slug, pageId, 'file_drift',
     `${entry.path}: ${by} since the file was last imported and ${file}, so sync held the import instead of overwriting the database version; the rest of the source synced.`,
-    intent.content ?? null, intent.blobOid, { sides: observed.sides, ...(observed.revision ? { page_revision: observed.revision } : {}),
+    intent.content ?? null, intent.blobOid, { sides: observed.sides, ...(observed.sides !== 'database' ? { side: observed.sides } : {}), ...(observed.revision ? { page_revision: observed.revision } : {}),
       ...(observed.proof ? { competing_request_id: observed.proof.request_id, competing_operation: observed.proof.operation } : {}),
       ...(observed.sharedOrigin ? { shared_origin: true as const } : {}) });
 }
@@ -236,14 +238,50 @@ export async function pageMovedSinceAdmission(engine: Pick<BrainEngine, 'execute
  * run's receipt branch and the start-of-run conversion of an older release's blocked cursor.
  */
 export async function receiptPageFaultHold(engine: Pick<BrainEngine, 'executeRaw'>, input: { sourceId: string; incarnation: string; entry: HoldEntry;
-  pending: { slug: string; pageId: number | null; intent: SyncIntent }; done: Pick<WriteRequest, 'state' | 'error_code' | 'error_message'> }): Promise<HeldEntry | null> {
+  pending: { slug: string; pageId: number | null; intent: SyncIntent }; done: Pick<WriteRequest, 'request_id' | 'state' | 'error_code' | 'error_message' | 'error_detail'> }): Promise<HeldEntry | null> {
   const { entry, pending, done } = input;
+  const repeated = await repeatedWriteFailure(engine, input.sourceId, input.incarnation, pending.slug, done);
+  if (repeated) return base(entry, pending.slug, pending.pageId, 'page_write_failed',
+    `${entry.path}: its ${entry.action === 'delete' ? 'deletion' : 'import'} failed the same way ${repeated.attempts} times (${repeated.origin ?? repeated.code}${repeated.errno ? `, SQLSTATE ${repeated.errno}` : ''}${repeated.error_class ? `, ${repeated.error_class}` : ''}; request ${done.request_id}), so it is held and the rest of the source synced. `
+      + 'Read the receipt with gbrain write-request, report it or fix the file, then gbrain sources retry-held; an upgrade re-tests it on its own.',
+    typeof pending.intent.content === 'string' ? pending.intent.content : null, typeof pending.intent.blobOid === 'string' ? pending.intent.blobOid : null,
+    { write_failure: { ...repeated, request_id: done.request_id, gbrain_version: VERSION } });
   const page = pending.intent.kind === 'managed_sync_import' && typeof pending.intent.content === 'string';
   const proof = page ? await concurrentWriteProof(engine, { sourceId: input.sourceId, incarnation: input.incarnation, pending, done }) : null;
   if (proof) return concurrentWriteHold(entry, pending.slug, pending.pageId!, pending.intent, proof);
   const moved = await pageMovedSinceAdmission(engine, input.sourceId, pending, done);
   if (moved) return pageChangedHold(entry, pending.slug, pending.pageId, pending.intent, { proof: null, revision: moved.revision, why: `page ${pending.slug} changed in the database` });
   return page && pinnedWorktreeConflict(done) ? worktreeDirtyHold(entry, pending.slug, pending.pageId, pending.intent, done.error_message === CANONICAL_WRITEBACK_CONFLICT ? 'writeback' : 'page') : null;
+}
+
+/**
+ * GBRA-130 A-6: a sync page write that failed the same unclassifiable way this many times (the receipts of this path in this
+ * source incarnation, this one included) is held `page_write_failed` instead of stopping every later sync at the entry. It
+ * matches `STOPS_PER_ENTRY` (sync-run.ts), the re-freezes a run gives a stopped entry.
+ */
+export const PAGE_WRITE_FAILURE_REPEATS = 3;
+/** The terminal categories that place no fault (an owner exception, a refusal the receipt does not explain); writer, binding and schema stops are not among them. */
+const UNPLACED = new Set(['owner_exception', 'diagnosis_required']);
+/**
+ * GBRA-130 A-6: the fault of a failed sync page receipt the terminal classifier cannot place, once the same path failed with
+ * the same (code, origin, error class, SQLSTATE) `PAGE_WRITE_FAILURE_REPEATS` times; null otherwise (one occurrence still
+ * stops the run, so a transient defect never holds a file).
+ */
+async function repeatedWriteFailure(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, incarnation: string, slug: string,
+  done: Pick<WriteRequest, 'request_id' | 'state' | 'error_code' | 'error_message' | 'error_detail'>): Promise<Omit<PageWriteFailureMeta, 'request_id' | 'gbrain_version'> | null> {
+  if (done.state !== 'failed' || !done.error_code) return null;
+  const detail = (done.error_detail ?? null) as Record<string, unknown> | null;
+  const verdict = classifyTerminal({ source_id: sourceId, slug, operation: 'submit_job', state: 'failed', error_code: done.error_code, error_detail: detail,
+    recovery: null, blocked_reason: null, compacted: false, error_message: done.error_message ?? null, intent_kind: 'managed_sync_import' });
+  if (!verdict || !UNPLACED.has(verdict.category)) return null;
+  const field = (key: string) => typeof detail?.[key] === 'string' ? detail[key] as string : null;
+  const fault = { code: done.error_code, origin: field('origin'), error_class: field('error_class'), errno: field('errno') ?? field('sqlstate') };
+  const [row] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM persistence_requests WHERE source_id=$1 AND source_incarnation=$2::uuid AND slug=$3
+    AND state='failed' AND intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND error_code=$4 AND COALESCE(error_detail->>'origin','')=$5
+    AND COALESCE(error_detail->>'error_class','')=$6 AND COALESCE(error_detail->>'errno',error_detail->>'sqlstate','')=$7`,
+  [sourceId, incarnation, slug, fault.code, fault.origin ?? '', fault.error_class ?? '', fault.errno ?? '']);
+  const attempts = Number(row?.n ?? 0);
+  return attempts >= PAGE_WRITE_FAILURE_REPEATS ? { ...fault, attempts } : null;
 }
 
 /**

@@ -376,6 +376,28 @@ function recordedMs(v: string | Date | null): number {
 /** Link reads that may apply a temporal edge policy. `temporal` absent = every edge, unannotated (reference consumers). */
 export interface LinkReadScope extends PageReadScope {
   temporal?: EdgeTemporalOpts;
+  /** Opt-in keyset page (get_links / get_backlinks ops); unset reads every row, as internal callers need. */
+  page?: LinkReadPage;
+}
+
+/**
+ * A keyset page of `getLinks` / `getBacklinks` rows in `links.id` order. Each
+ * row then carries `link_id` (the keyset). Every filter runs in SQL so a LIMIT
+ * counts only rows the caller can be shown.
+ */
+export interface LinkReadPage {
+  /** Only rows with links.id above this. */
+  afterId?: number;
+  /** Only rows with links.id at or below this. */
+  throughId?: number;
+  limit?: number;
+  linkType?: string;
+  /** Only rows whose from page has `type` (stored, `untyped` for none, or a stored alias `aliases[i]` that source `aliasSources[i]` maps to it). */
+  fromType?: { type: string; aliasSources: string[]; aliases: string[] };
+  /** Keep the rows that match the temporal policy, or only the rows it hides. */
+  relationship?: { policy: EdgeTemporalOpts; keep: 'match' | 'hidden' };
+  /** Context longer than this is cut, ending in an ellipsis. */
+  contextChars?: number;
 }
 
 export interface EdgeTemporalOpts {

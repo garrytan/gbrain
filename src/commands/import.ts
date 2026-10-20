@@ -247,6 +247,17 @@ async function keylessImportRefusal(engine: BrainEngine, args: string[], e: unkn
     });
 }
 
+type ImportFileResultCallback = (path: string, filePath: string, result: Pick<ImportResult, 'status' | 'error' | 'refusal' | 'frontmatter_recovery' | 'fences_normalized' | 'fence_issues'>) => Promise<'held' | undefined>;
+
+/** GBRA-130 A-66: a throwing caller callback is that file's outcome, never a rejection of the whole import. */
+async function reportFileResult(onFileResult: ImportFileResultCallback | undefined, ...args: Parameters<ImportFileResultCallback>): Promise<'held' | undefined> {
+  try { return await onFileResult?.(...args); }
+  catch (e) {
+    console.error(`  Warning: could not record the outcome of ${sanitizePathForDisplay(args[0])} (${e instanceof Error ? e.message : String(e)}); it is not held, the import continues.`);
+    return undefined;
+  }
+}
+
 export async function runImport(
   engine: BrainEngine,
   args: string[],
@@ -259,7 +270,7 @@ export async function runImport(
     /** #5988: paths the caller already held this run; they are skipped without importing (not failures). */
     heldPaths?: ReadonlySet<string>;
     /** #5988: each file's outcome (a throw arrives as `{ status: 'error', error }`); `'held'` = the caller held it, not a failure. */
-    onFileResult?: (path: string, filePath: string, result: Pick<ImportResult, 'status' | 'error' | 'refusal' | 'frontmatter_recovery' | 'fences_normalized' | 'fence_issues'>) => Promise<'held' | undefined>;
+    onFileResult?: ImportFileResultCallback;
     /**
      * #753/#774: glob patterns to exclude from the import (same semantics as
      * `isSyncable`'s `exclude` — matched against the dir-relative path).
@@ -736,7 +747,7 @@ export async function runImport(
       if (!settled && _fileMs > 5000) {
         console.error(`[gbrain phase] import.process_file slow ${_fileMs}ms ${relativePath}`);
       }
-      if (await opts.onFileResult?.(importRelPath, filePath, result) === 'held') {
+      if (await reportFileResult(opts.onFileResult, importRelPath, filePath, result) === 'held') {
         skipped++;
         completed.add(relativePath);
       } else if (result.status === 'imported') {
@@ -781,7 +792,7 @@ export async function runImport(
       }
       // #5600: an accepted managed import still publishing is not a failure; the next run resumes its request.
       if (acceptedPendingReceipt(e)) { skipped++; console.error(`  Pending: ${relativePath} was accepted and is still publishing; rerun to confirm it.`); }
-      else if (await opts.onFileResult?.(importRelPath, filePath, { status: 'error', error: e instanceof Error ? e.message : String(e) }) === 'held') { skipped++; completed.add(relativePath); } else {
+      else if (await reportFileResult(opts.onFileResult, importRelPath, filePath, { status: 'error', error: e instanceof Error ? e.message : String(e) }) === 'held') { skipped++; completed.add(relativePath); } else {
         const msg = e instanceof Error ? e.message : String(e);
         const { count, sample } = recordImportFailure(errorCounts, errorSamples, msg);
         if (count <= 5) {

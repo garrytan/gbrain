@@ -33,6 +33,7 @@ import { slog, serr } from '../core/console-prefix.ts';
 import { embedBudgetStopVerdict, noteEmbedBudgetStop } from '../core/embed-budget-stop.ts';
 import { embedCostCap, embedCostStopVerdict, noteEmbedCostStop } from '../core/embed-cost-cap.ts';
 import type { Authorization } from '../core/consent.ts';
+import { loadPricingOverrides } from '../core/budget/budget-tracker.ts';
 import { filterOutEmbedSkipped, isEmbedSkipped } from '../core/embed-skip.ts';
 import { runSlidingPool } from '../core/worker-pool.ts';
 import { isAborted, anySignal, AbortError } from '../core/abort-check.ts';
@@ -732,7 +733,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     let drainError: { err: unknown } | undefined;
     const drain = (async () => {
       try {
-        await withChunkStatisticsRefresh(engine, () => !opts.dryRun && result.embedded > 0 && !isAborted(drainSignal), () => embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress, opts.sourceId, {
+        await withChunkStatisticsRefresh(engine, () => opts.dryRun || isAborted(drainSignal) ? 0 : result.embedded, () => embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress, opts.sourceId, {
           batchSize: opts.batchSize,
           priority: opts.priority,
           catchUp: opts.catchUp,
@@ -916,7 +917,7 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
     return 'argv' in held ? runEmbed(engine, held.argv, selectedConfig, consent) : held;
   }
   const authorization = consent?.authorization ?? null;
-  const costCap = args.includes('--dry-run') || args.includes('--background') ? null : embedCostCap(authorization?.cap_usd, authorization?.cap_source);
+  const costCap = args.includes('--dry-run') || args.includes('--background') || authorization?.cap_usd == null ? null : embedCostCap(authorization.cap_usd, authorization.cap_source, await loadPricingOverrides(engine));
   if (args.includes('--images')) return (await import('../core/embed-stale-images.ts')).runEmbedStaleImagesCli(engine, args, costCap); // lazy: keeps import-file out of embed's graph
   // v0.36+ T7: --background submits via Minion queue, returns job_id to
   // stdout, exits. Same semantics in TTY and cron (D9).

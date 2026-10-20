@@ -915,7 +915,7 @@ ${bootstrapFromEnv
   const movementWatch = startMovementWatch(engine, { log: (line) => console.error(line) });
   // #6858 ask 6: on-commit sync of this host's managed checkouts while `sync.on_commit` is on (serve-head-watcher.ts).
   const { startServeHeadWatcher } = await import('../core/serve-head-watcher.ts');
-  const headWatcher = startServeHeadWatcher(engine, { log: (line) => console.error(line) });
+  const headWatcher = startServeHeadWatcher(engine, { log: (line) => console.error(line), resident: 'serve-http' });
   const deregisterEngineCleanup = registerCleanup('pglite-engine-disconnect', async () => {
     await headWatcher.stop();
     movementWatch.stop();

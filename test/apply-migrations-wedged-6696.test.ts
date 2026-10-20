@@ -14,8 +14,9 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { fileURLToPath } from 'node:url';
 
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 /** The newest registered migration: nothing can run past it, so its wedge is outstanding. */
 const WEDGED = '0.60.31';
 /** Older than migrations that run on a fresh brain (v0.28.0 among them), so its wedge is superseded. */

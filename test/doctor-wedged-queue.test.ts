@@ -126,6 +126,23 @@ describe('issue #1801 fix #3 — computeWedgedQueueCheck', () => {
     expect(check.message).not.toContain('worker alive but not claiming work');
     expect(check.message).not.toContain('No worker subscribed');
     expect(check.details?.worker_registry_unreadable).toBe(true);
+    expect(check.details?.worker_registry_errno).toBe('Error');
+    expect(check.details?.worker_registry_path).toBeNull();
+  });
+
+  it('a remote caller never sees the registry path; the local caller does', async () => {
+    await seed('default', 'cycle', 'waiting');
+    await seed('default', 'cycle', 'completed', { updatedAtSql: "now() - interval '20 min'" });
+    const { WorkerRegistryUnreadableError } = await import('../src/core/minions/worker-registry.ts');
+    const readWorkers = () => { throw new WorkerRegistryUnreadableError('/home/alice-example/.gbrain/workers', 'EACCES', null); };
+    const remote = await computeWedgedQueueCheck(pgLike, { readWorkers, remote: true });
+    expect(remote.status).toBe('fail');
+    expect(JSON.stringify(remote)).not.toContain('/home/alice-example');
+    expect(remote.details).toMatchObject({ worker_registry_unreadable: true, worker_registry_errno: 'EACCES', worker_registry_path_redacted: true });
+    expect(remote.details).not.toHaveProperty('worker_registry_path');
+    const local = await computeWedgedQueueCheck(pgLike, { readWorkers });
+    expect(local.details?.worker_registry_path).toBe('/home/alice-example/.gbrain/workers');
+    expect(local.message).toContain('EACCES at /home/alice-example/.gbrain/workers');
   });
 
   it('mixed stuck + no-worker queues → both messages, details count each subset', async () => {

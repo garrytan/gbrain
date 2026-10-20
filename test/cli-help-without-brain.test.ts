@@ -15,8 +15,9 @@ import { describe, test, expect } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const REPO = new URL('..', import.meta.url).pathname;
+const REPO = fileURLToPath(new URL('..', import.meta.url));
 
 /** Answer `--help` before touching the engine. */
 const HELP_WITHOUT_BRAIN = [

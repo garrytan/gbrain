@@ -273,7 +273,11 @@ export interface ParsedTranscript {
   /**
    * Set by a lane that can prove the read held only records it recognizes and
    * no conversation: the Codex lane sets it when every non-blank line parsed
-   * and was a session header (a session opened and closed with no prompt).
+   * and was a session header (a session opened and closed with no prompt);
+   * the Claude Code lane sets it when it read the whole file, every line
+   * parsed, none carried a conversation message, and at least one was
+   * session scaffolding (permission-mode, a meta user record, a local slash
+   * command).
    * Session-end reads it as an empty session instead of parser drift.
    */
   recognizedOnly?: boolean;
@@ -329,6 +333,11 @@ export function parseTranscript(
   let parsedLines = 0;
   let skippedLines = 0;
   let compactBoundaries = 0;
+  // Records that carry a conversation message. A session holding none (only
+  // bookkeeping: permission-mode, cost-state, queue-operation, local slash
+  // commands, meta user records) is empty, not drifted.
+  let messageRecords = 0;
+  let scaffoldRecords = 0;
   for (const line of lines) {
     const t = line.trim();
     if (!t) continue;
@@ -342,6 +351,8 @@ export function parseTranscript(
       continue;
     }
     parsedLines++;
+    if (carriesConversationMessage(entry)) messageRecords++;
+    else if (isSessionScaffold(entry)) scaffoldRecords++;
     // v0.45.7: count compaction boundaries (system entries — disjoint from
     // attachments and turns) so post-compaction rehydration can detect them.
     // Cathedral 5: also record the boundary's position in turns-index space.
@@ -373,7 +384,36 @@ export function parseTranscript(
     const ok = c.id !== undefined ? toolResults.get(c.id) : undefined;
     return { name: c.name, input: capToolCallInput(c.input), ...(ok !== undefined ? { result: { ok } } : {}) };
   });
-  return { turns, genuineUserTurnIndexes, injectedContextBlocks, bytesRead, parsedLines, skippedLines, compactBoundaries, boundaryTurnIndexes, toolCalls: joinedToolCalls, toolCallTurnIndexes };
+  const recognizedOnly = size <= maxBytes && parsedLines > 0 && skippedLines === 0 && turns.length === 0 && messageRecords === 0 && scaffoldRecords > 0;
+  return { turns, genuineUserTurnIndexes, injectedContextBlocks, bytesRead, parsedLines, skippedLines, compactBoundaries, boundaryTurnIndexes, toolCalls: joinedToolCalls, toolCallTurnIndexes, ...(recognizedOnly ? { recognizedOnly } : {}) };
+}
+
+/**
+ * Records Claude Code writes for a session whether or not anyone spoke in it.
+ * At least one must be present before a no-message read counts as an empty
+ * session: a file of only unknown records stays parser_drift.
+ */
+const SESSION_SCAFFOLD_TYPES = new Set(['permission-mode', 'last-prompt', 'custom-title', 'agent-name', 'queue-operation']);
+function isSessionScaffold(entry: unknown): boolean {
+  if (typeof entry !== 'object' || entry === null) return false;
+  const e = entry as Record<string, unknown>;
+  if (typeof e.type === 'string' && SESSION_SCAFFOLD_TYPES.has(e.type)) return true;
+  if (e.type === 'user' && e.isMeta === true) return true;
+  return e.type === 'system' && e.subtype === 'local_command';
+}
+
+/**
+ * True when a record carries a conversation message the parser should have
+ * turned into a turn. Meta user records (`isMeta: true`, e.g. the harness's
+ * session-name reminder) are bookkeeping, not conversation. A record with a
+ * message that yields no turn is how a format change shows, so it keeps
+ * session-end on the parser_drift path.
+ */
+function carriesConversationMessage(entry: unknown): boolean {
+  if (typeof entry !== 'object' || entry === null) return false;
+  const e = entry as Record<string, unknown>;
+  if (typeof e.message !== 'object' || e.message === null) return false;
+  return !(e.type === 'user' && e.isMeta === true);
 }
 
 /** {type:'system', subtype:'compact_boundary'} — Claude Code's on-disk compaction marker (v0.45.7). */

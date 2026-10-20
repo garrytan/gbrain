@@ -7,6 +7,7 @@ import { renderAgentLauncher } from '../src/core/agent-install/launcher.ts';
 import { extractPgliteDump, readBackupArchive, writeBackupArchive } from '../src/core/backup/archive.ts';
 import { AGENT_ENV_SHELL_PATTERN, shouldDropAgentEnv } from '../src/core/agent-install/environment.ts';
 import { listRecipes } from '../src/core/ai/recipes/index.ts';
+import { fileURLToPath } from 'node:url';
 
 let temporary: string;
 beforeEach(() => { temporary = mkdtempSync(join(tmpdir(), 'gbrain-agent-files-')); });
@@ -60,8 +61,8 @@ test('real launcher pairs private configured keys only with private configured p
   // Private per-install .env remains usable after ambient provider state is
   // scrubbed; a blanket empty-value export would break this supported channel.
   writeFileSync(join(home, '.env'), 'OPENAI_API_KEY=private-openai-fixture\n', { mode: 0o600 });
-  const gatewayModule = new URL('../src/core/ai/build-gateway-config.ts', import.meta.url).pathname;
-  const configModule = new URL('../src/core/config.ts', import.meta.url).pathname;
+  const gatewayModule = fileURLToPath(new URL('../src/core/ai/build-gateway-config.ts', import.meta.url));
+  const configModule = fileURLToPath(new URL('../src/core/config.ts', import.meta.url));
   const probe = join(temporary, 'gateway-probe.ts');
   writeFileSync(probe, `import { buildGatewayConfig } from ${JSON.stringify(gatewayModule)};
 import { loadConfig } from ${JSON.stringify(configModule)};

@@ -38,6 +38,7 @@ import type { Action } from '../agent-output.ts';
 import { inspectLock, LockStolenError, LockUnavailableError, syncLockId, withRefreshingLock } from '../db-lock.ts';
 import { currentRunDeadline, lastForwardProgressAt, noteForwardProgress } from '../forward-progress.ts';
 import { faultPoint } from './fault-points.ts';
+import { MANAGED_SYNC_PASS_OP } from './sync-pass-row.ts';
 import { VERSION } from '../../version.ts';
 
 export const DRAIN_LEASE_TTL_MINUTES = 2;
@@ -64,7 +65,8 @@ export interface DrainHolder { kind: DrainHolderKind | 'unknown'; id: string | n
   version: string | null; progress: DrainHolderProgress | null }
 /** `safe_to_loop` and `retry_after_ms` are the `next` fields of the drain's other owner stops (`owner_wedged_here`). */
 export interface DrainLeaseHeld { code: typeof SYNC_DRAIN_LEASE_HELD; holder: DrainHolder | null; retry_after_ms: number; safe_to_loop: true; lost?: true; fix: Action }
-interface DrainLease { lockId: string; sourceId: string; token: string; signal: AbortSignal }
+/** `tailClear`: a pass under this lease read that no tail is owed, and nothing under it owed one since (`withSyncTail` reads none). */
+interface DrainLease { lockId: string; sourceId: string; token: string; signal: AbortSignal; tailClear?: boolean }
 
 const leases = new AsyncLocalStorage<ReadonlyMap<string, DrainLease>>();
 
@@ -100,15 +102,19 @@ export async function readDrainHolder(engine: BrainEngine, sourceId: string): Pr
     progress: await holderProgress(engine, sourceId, snap.acquired_at).catch(() => null) };
 }
 
-/** The source's managed-sync commits since `since`, and its last commit or cursor save at all. */
+/**
+ * The source's managed-sync commits since `since`, and its last commit, cursor save or (#6712 PR 4b, design v3.2 §3.7)
+ * pass row write at all: a pass writes its row at the pin, per batch and at the stamp.
+ */
 async function holderProgress(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, since: Date | null): Promise<DrainHolderProgress> {
   const [row] = await engine.executeRaw<{ committed: number | string; last_committed_at: Date | string | null; last_saved_at: Date | string | null }>(`
     SELECT (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=b.worktree_id AND r.state='committed'
         AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' AND r.completed_at >= $2::timestamptz) AS committed,
       (SELECT max(r.completed_at) FROM persistence_requests r WHERE r.worktree_id=b.worktree_id AND r.source_incarnation=b.source_incarnation
         AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS last_committed_at,
-      (SELECT max(c.updated_at) FROM op_checkpoints c WHERE c.op='managed-sync' AND c.completed_keys->0->>'sourceId'=$1) AS last_saved_at
-    FROM persistence_source_bindings b WHERE b.source_id=$1`, [sourceId, (since ?? new Date(0)).toISOString()]);
+      GREATEST((SELECT max(c.updated_at) FROM op_checkpoints c WHERE c.op='managed-sync' AND c.completed_keys->0->>'sourceId'=$1),
+        (SELECT c.updated_at FROM op_checkpoints c WHERE c.op=$3 AND c.fingerprint=b.source_id||':'||b.source_incarnation::text)) AS last_saved_at
+    FROM persistence_source_bindings b WHERE b.source_id=$1`, [sourceId, (since ?? new Date(0)).toISOString(), MANAGED_SYNC_PASS_OP]);
   const at = (value: Date | string | null | undefined) => value == null ? null : new Date(value).toISOString();
   const committedAt = at(row?.last_committed_at), savedAt = at(row?.last_saved_at);
   return { committed: Number(row?.committed ?? 0), last_committed_at: committedAt,
@@ -197,10 +203,11 @@ export interface DrainLeaseOptions {
  * `remove_on_fail` drop a dead holder's row instead of queueing it. It is renewed with the lease and deleted on release.
  */
 async function writeHolderRecord(engine: BrainEngine, sourceId: string, lease: DrainLease, holder: DrainHolderRef): Promise<void> {
-  await engine.executeRaw(`DELETE FROM minion_jobs WHERE queue=$1 AND name='sync' AND data->>'sourceId'=$2`, [LEASE_BEACON_QUEUE, sourceId]);
-  await engine.executeRaw(`INSERT INTO minion_jobs(name,queue,status,submission_authority,data,max_attempts,max_stalled,lock_token,lock_until,started_at,remove_on_complete,remove_on_fail)
-    VALUES('sync',$1,'active','{"version":1,"kind":"application"}'::jsonb,$2::text::jsonb,1,0,$3,now()+make_interval(mins => $4),now(),true,true)`,
-    [LEASE_BEACON_QUEUE, JSON.stringify({ sourceId, drain_lease_beacon: { kind: holder.kind, id: holder.id ?? null, version: VERSION } }), lease.token, DRAIN_LEASE_TTL_MINUTES]);
+  // One statement: the insert reads the delete's count, so a former holder's row goes first.
+  await engine.executeRaw(`WITH gone AS (DELETE FROM minion_jobs WHERE queue=$1 AND name='sync' AND data->>'sourceId'=$5 RETURNING 1)
+    INSERT INTO minion_jobs(name,queue,status,submission_authority,data,max_attempts,max_stalled,lock_token,lock_until,started_at,remove_on_complete,remove_on_fail)
+    SELECT 'sync',$1,'active','{"version":1,"kind":"application"}'::jsonb,$2::text::jsonb,1,0,$3,now()+make_interval(mins => $4),now(),true,true FROM (SELECT count(*) FROM gone) g`,
+    [LEASE_BEACON_QUEUE, JSON.stringify({ sourceId, drain_lease_beacon: { kind: holder.kind, id: holder.id ?? null, version: VERSION } }), lease.token, DRAIN_LEASE_TTL_MINUTES, sourceId]);
 }
 
 /**
@@ -215,6 +222,8 @@ export async function withDrainLease(engine: BrainEngine, sourceId: string, opts
   const startedAt = Date.now();
   let seen: string | undefined, reportedAt = 0;
   for (;;) {
+    // The holder row's delete and the lock's release share a round trip: the delete is awaited once the lock is released.
+    let released: Promise<unknown> | undefined;
     try {
       return await withRefreshingLock(engine, lockId, async (signal, handle) => {
         const lease: DrainLease = { lockId, sourceId, token: handle.acquisitionToken, signal };
@@ -231,9 +240,9 @@ export async function withDrainLease(engine: BrainEngine, sourceId: string, opts
           return await leases.run(store, () => work(signal));
         } finally {
           clearInterval(beacon);
-          await engine.executeRaw('DELETE FROM minion_jobs WHERE queue=$1 AND lock_token=$2', [LEASE_BEACON_QUEUE, lease.token]).catch(() => undefined);
+          released = engine.executeRaw('DELETE FROM minion_jobs WHERE queue=$1 AND lock_token=$2', [LEASE_BEACON_QUEUE, lease.token]).catch(() => undefined);
         }
-      }, { ttlMinutes: DRAIN_LEASE_TTL_MINUTES, refreshIntervalMs: DRAIN_LEASE_REFRESH_MS });
+      }, { ttlMinutes: DRAIN_LEASE_TTL_MINUTES, refreshIntervalMs: DRAIN_LEASE_REFRESH_MS }).finally(() => released);
     } catch (error) {
       if (error instanceof LockStolenError && error.lockId === lockId) {
         return leaseHeldResult(sourceId, await readDrainHolder(engine, sourceId).catch(() => null), { lost: true, remote: opts.remote, resumeArgv: opts.resumeArgv });

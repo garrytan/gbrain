@@ -124,7 +124,7 @@ async function survey(engine: BrainEngine, sourceIds: string[]): Promise<{ files
     let staged: Set<string>;
     try {
       paths = trackedChanges(root);
-      staged = new Set(git(root, ['diff', '--cached', '--name-only', '-z', 'HEAD', '--']).split('\0').filter(Boolean));
+      staged = new Set(git(root, ['diff', '--cached', '--name-only', '--relative', '-z', 'HEAD', '--']).split('\0').filter(Boolean));
     } catch (error) {
       listing.push({ item: `${source.id}:.`, class: 'unreadable_checkout', detail: `git cannot read the checkout (${(error as Error).message.split('\n')[0]}); fix the checkout, then preview again: ${preview(source.id)}` });
       continue;
@@ -176,7 +176,7 @@ async function restoreFile(engine: BrainEngine, file: ClonedFile, runId: string)
   const changed = await identityChange(engine, file);
   if (changed) return { applied: false, outcome: 'preview_changed', reason: changed, detail: { path: file.path } };
   if (!await urlCloneReadOnly(engine, file.source_id)) return { applied: false, outcome: 'refused', reason: 'not_url_clone', detail: { path: file.path } };
-  if (git(file.root, ['diff', '--cached', '--name-only', '-z', 'HEAD', '--', file.path])) {
+  if (git(file.root, ['diff', '--cached', '--name-only', '--relative', '-z', 'HEAD', '--', file.path])) {
     return { applied: false, outcome: 'preview_changed', reason: `${file.path} has a staged change since the preview, which gbrain never makes`, detail: { path: file.path } };
   }
   const abs = join(file.root, file.path);

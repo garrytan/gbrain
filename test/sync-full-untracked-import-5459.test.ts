@@ -105,11 +105,13 @@ describe('--full tree walk keeps pages imported from untracked working-tree file
       expect(await live()).toEqual(['notes/base', 'notes/scratch']);
       expect(result.working_tree_kept).toBe(1);
 
-      // 5. The untracked file is gone: nothing backs the page any more, so the walk deletes it, and the counter is absent.
+      // 5. The untracked file is gone: nothing backs the page any more, and the counter is absent. #6712 PR 4b (design v3.2
+      // §2.3 row 6, `delete_drift`): step 3's maintenance write moved the page with no proof, so the deletion is held
+      // file_drift (side deleted, state file_gone) for a person's Decision instead of soft-deleting a page that changed.
       r.remove('scratch');
       result = await full();
-      expect(await live()).toEqual(['notes/base']);
-      expect((await page('notes/scratch'))!.deleted_at).not.toBeNull();
+      expect(await live()).toEqual(['notes/base', 'notes/scratch']);
+      expect((result.held ?? []).map(item => [item.path, item.code, item.side, item.state, item.slug])).toEqual([['notes/scratch.md', 'file_drift', 'deleted', 'file_gone', 'notes/scratch']]);
       expect(result.working_tree_kept).toBeUndefined();
     }
   }), 300_000);

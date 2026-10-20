@@ -24,7 +24,7 @@ import { embedRequestCeilings, rerankRequestMaxInputTokens } from './ai/embed-ba
 import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
 import type { ChunkInput, CRMode } from './types.ts';
 import { readContentChunksEmbeddingDim } from './embedding-dim-check.ts';
-import { falseStampPageWhere } from './embedding-invalidation.ts';
+import { currentSpaceChunkPredicate, falseStampPageWhere } from './embedding-invalidation.ts';
 import { resolveActiveEmbeddingColumnFromEngine, quoteIdentifier } from './search/embedding-column.ts';
 import { eligibleFactEmbedding, staleFactEmbedding } from './facts/embedding-identity.ts';
 import { AUDIT_ROW_SOURCES } from './facts/audit-sources.ts';
@@ -94,9 +94,11 @@ async function eachStalePage(engine: BrainEngine, plan: EmbeddingMigrationPlan, 
   const column = (await readContentChunksEmbeddingDim(engine)).exists
     ? quoteIdentifier((await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name)
     : null;
-  const staleChunk = (c: string) => column === null ? 'true' : `(${c}.${column} IS NULL OR p.embedding_signature IS NULL OR p.embedding_signature <> $1
+  // #5289: without a column rebuild, invalidation keeps a vector already in the target space and the drain never sends it.
+  const kept = (c: string) => plan.dim_change ? 'false' : currentSpaceChunkPredicate(column!, 2, 5, c);
+  const staleChunk = (c: string) => column === null ? 'true' : `((${c}.${column} IS NULL OR p.embedding_signature IS NULL OR p.embedding_signature <> $1
       OR (${c}.embedded_text_hash IS NOT NULL AND ${c}.embedded_text_hash <> md5(${c}.chunk_text))
-      OR (${c}.${column} IS NOT NULL AND ${falseStampPageWhere(column, 1, 2)}))`;
+      OR (${c}.${column} IS NOT NULL AND ${falseStampPageWhere(column, 1, 2)})) AND NOT ${kept(c)})`;
   const livePage = column === null ? 'true' : `p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter,'{}'::jsonb) ? 'embed_skip')`;
   let page: ChunkRow[] = [];
   const flush = () => {
@@ -114,7 +116,7 @@ async function eachStalePage(engine: BrainEngine, plan: EmbeddingMigrationPlan, 
         AND EXISTS (SELECT 1 FROM content_chunks cs WHERE cs.page_id=p.id AND ${staleChunk('cs')})
         AND (cc.page_id > $3 OR (cc.page_id = $3 AND cc.chunk_index > $4))
       ORDER BY cc.page_id, cc.chunk_index LIMIT ${SCAN_PAGE}`,
-    [`${plan.to_model}:${plan.to_dims}`, plan.to_model, after.page, after.chunk]);
+    [`${plan.to_model}:${plan.to_dims}`, plan.to_model, after.page, after.chunk, ...(column === null || plan.dim_change ? [] : [plan.to_dims])]);
     for (const row of rows) {
       if (page.length && page[0].page_id !== row.page_id) flush();
       page.push(row);

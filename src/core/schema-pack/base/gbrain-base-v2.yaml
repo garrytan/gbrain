@@ -10,6 +10,10 @@
 # v1.4.0 adds `question`, the type the pinned-question writer stamps on
 # questions/ pages (#6742), mirroring gbrain-base: a non-extractable
 # annotation outside the canonical content taxonomy.
+# v1.5.0 adds `code` (stamped by the code importer) and `extract_receipt`
+# (stamped by the extract receipt writer under extracts/), mirroring
+# gbrain-base: non-extractable types outside the content taxonomy, so the
+# catch-all retype rule leaves them alone.
 #
 # STANDALONE pack (D11/F1): NO `extends:` field. Declaring inheritance
 # would compose gbrain-base's 24 types on top of the 16 declared here,
@@ -32,7 +36,7 @@
 
 api_version: gbrain-schema-pack-v1
 name: gbrain-base-v2
-version: 1.4.0
+version: 1.5.0
 description: 15-type DRY/MECE canonical taxonomy + `note` catch-all (16 total). Successor to gbrain-base. Issue #1479.
 gbrain_min_version: 0.42.0
 extends: null
@@ -370,6 +374,25 @@ page_types:
   - name: question
     primitive: annotation
     path_prefixes: []
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+  # A code file's page, written by the code importer (import-file.ts).
+  # Set via frontmatter only.
+  - name: code
+    primitive: media
+    path_prefixes: []
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+  # The receipt the extract framework writes after every extractor run
+  # (src/core/extract/receipt-writer.ts), always under extracts/.
+  - name: extract_receipt
+    primitive: annotation
+    path_prefixes:
+      - extracts/
     aliases: []
     extractable: false
     expert_routing: false

@@ -6,15 +6,22 @@
  * host it ran on.
  *
  *   bun scripts/bench/sync-convergence.ts --engine pglite|postgres|pgbouncer
- *     [--preset 61k|600k | --files N] [--rtt 57] [--idle-rounds 20] [--full-rounds 7] [--warmup 1]
+ *     [--preset 61k|600k|6858 | --files N] [--rtt 57] [--idle-rounds 20] [--full-rounds 7] [--warmup 1]
  *     [--drift K] [--batch 5000] [--sample-ms 50] [--cache-dir <dir>] [--work-dir <dir>]
- *     [--pg-port 55442] [--pooler-port 55444] [--database-url <admin url>] [--raw-idle] [--episode] [--seed-only] [--keep] [--out <file.json>]
+ *     [--pg-port 55442] [--pooler-port 55444] [--database-url <admin url>] [--raw-idle] [--episode] [--live] [--seed-only] [--keep] [--out <file.json>]
  *
  * Phases:
  *   1. fixture  N Markdown files under two levels of 100-way fan-out, one
  *               git fast-import commit, worktree materialized with
  *               read-tree -u --reset; cached under --cache-dir by N and the
  *               content version (default ~/.capy/work/6712/bench-fixtures).
+ *               Files are 1-2 KB except under --preset 6858, the #6858 shape
+ *               (308k files, about 7.3 GB with large blobs): every 100th file
+ *               (i % 100 === 99, 3,080 files) is a large Markdown file of
+ *               2,150,000 bytes plus (i * 7919) % 134,375 more (about 2.2 MB),
+ *               about 6.83 GB, and the other 304,920 files are the usual
+ *               1-2 KB notes, about 0.48 GB. The drift file (i = 0) and the
+ *               first live full rounds' edits (i = 7919 k) are small files.
  *   2. seed     a fresh brain (PGLite datastore in --work-dir, or a new
  *               database on the Docker pgvector Postgres) gets the managed
  *               source by direct SQL: source row at the fixture's base commit,
@@ -39,6 +46,13 @@
  *               full round's reads; --episode passes full: true (the forced
  *               reparse episode of sync --full, every live page an obligation).
  *
+ *   --live      (PR 4b) times the live pass instead of the shadow: the warm-up
+ *               is the bootstrap pass (it imports the --drift files), each idle
+ *               tick is a performManagedSync call at an unchanged HEAD, and each
+ *               full round is a performManagedSync call after an untimed
+ *               one-file commit, so it pins a new level, classifies every path,
+ *               imports one file and stamps.
+ *
  * Output: one JSON document on stdout (and --out), a human summary on stderr.
  * Percentiles are nearest-rank (with 7 rounds p95 is the max).
  */
@@ -51,8 +65,8 @@ import postgres from '#postgres';
 import { LatencyProxy } from '../../test/helpers/latency-proxy.ts';
 import { VERSION } from '../../src/version.ts';
 import {
-  PRESETS, PGBOUNCER_CONTAINER, applyDrift, breakdown, ensureFixture, ensurePostgres, git, gitVersion, hostInfo, measureRtt, mib, readVmHwm, removeContainer,
-  resetFixture, seedSource, startPgbouncer, startRssSampler, summarize,
+  PRESETS, PGBOUNCER_CONTAINER, applyDrift, breakdown, ensureFixture, ensurePostgres, fixtureContent, fixturePath, git, gitVersion, hostInfo, measureRtt, mib, readVmHwm, removeContainer,
+  resetFixture, seedSource, startPgbouncer, startRssSampler, summarize, type LargeBlobs,
 } from './sync-convergence-lib.ts';
 
 const REPO = resolve(import.meta.dir, '../..');
@@ -64,7 +78,7 @@ type EngineKind = 'pglite' | 'postgres' | 'pgbouncer';
 type SyncPassModule = Pick<typeof import('../../src/core/persistence/sync-pass.ts'), 'shadowConvergence' | 'idleTickProbe'>;
 
 /** `target`: the HEAD the idle tick assumes converged (PR 4a writes no pass row; see idleTickProbe's assumeConverged), or null to time the raw tick. */
-interface ChildConfig { engine: EngineKind; database_url?: string; database_path?: string; source_id: string; target: string | null; episode: boolean; idle_rounds: number; full_rounds: number; warmup: number; sample_ms: number }
+interface ChildConfig { engine: EngineKind; database_url?: string; database_path?: string; source_id: string; target: string | null; episode: boolean; live?: { repo: string; files: number; large?: LargeBlobs }; idle_rounds: number; full_rounds: number; warmup: number; sample_ms: number }
 
 function flag(name: string, fallback: string): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -101,6 +115,7 @@ async function runChild(config: ChildConfig): Promise<number> {
     const specifier = SYNC_PASS;
     const pass = await import(specifier) as Partial<SyncPassModule>;
     if (typeof pass.shadowConvergence !== 'function' || typeof pass.idleTickProbe !== 'function') return unavailable('sync-pass.ts does not export shadowConvergence and idleTickProbe');
+    if (config.live) return await runLive(engine, config, config.live, { sampler, connectMs, rssAfterConnect, seededPages: seeded?.pages ?? 0, out });
     const input = { sourceId: config.source_id };
     const [hwm] = await engine.executeRaw<{ hwm: number }>('SELECT COALESCE(max(sequence),0)::float8 AS hwm FROM persistence_requests');
     const tick = { ...input, ...(config.target ? { assumeConverged: { target: config.target, requestHwm: Number(hwm?.hwm ?? 0) } } : {}) };
@@ -117,7 +132,7 @@ async function runChild(config: ChildConfig): Promise<number> {
       const r = await pass.idleTickProbe(engine, tick);
       idle.push({ wall: performance.now() - t, idle: r.idle, reasons: r.reasons.map(String), rows: r.rows, timings_ms: r.timings_ms });
     }
-    const idlePeak = sampler.phasePeak();
+    const idlePeak = sampler.phasePeak(), idleLag = sampler.phaseLag();
     const full: Array<{ wall: number; timings_ms: Record<string, number>; counts: unknown }> = [];
     sampler.mark();
     for (let i = 0; i < config.full_rounds; i++) {
@@ -125,10 +140,11 @@ async function runChild(config: ChildConfig): Promise<number> {
       const r = await round();
       full.push({ wall: performance.now() - t, timings_ms: r.timings_ms, counts: r.counts });
     }
-    const fullPeak = sampler.phasePeak();
+    const fullPeak = sampler.phasePeak(), fullLag = sampler.phaseLag();
     const overall = sampler.stop();
     out({ available: true, connect_ms: Math.round(connectMs), seeded_pages: seeded?.pages ?? 0, idle, full,
-      rss: { after_connect: rssAfterConnect, idle_peak_sampled: idlePeak, full_peak_sampled: fullPeak, peak_sampled: overall.peak, samples: overall.samples, vm_hwm: readVmHwm() } });
+      rss: { after_connect: rssAfterConnect, idle_peak_sampled: idlePeak, full_peak_sampled: fullPeak, peak_sampled: overall.peak, samples: overall.samples, vm_hwm: readVmHwm() },
+      loop_lag_ms: { idle_max: idleLag, full_max: fullLag, max: overall.maxLagMs } });
     return 0;
   } catch (error) {
     sampler.stop();
@@ -139,6 +155,55 @@ async function runChild(config: ChildConfig): Promise<number> {
   }
 }
 
+/** --live: the PR 4b pass, timed through performManagedSync. */
+async function runLive(engine: import('../../src/core/engine.ts').BrainEngine, config: ChildConfig, live: NonNullable<ChildConfig['live']>,
+  ctx: { sampler: ReturnType<typeof startRssSampler>; connectMs: number; rssAfterConnect: number; seededPages: number; out: (value: unknown) => void }): Promise<number> {
+  const { performManagedSync } = await import('../../src/core/persistence/sync-run.ts');
+  const { disposePersistenceConsumer } = await import('../../src/core/persistence/service.ts');
+  const opts = { sourceId: config.source_id, noPull: true, noEmbed: true, noExtract: true };
+  const sync = async () => {
+    const t = performance.now();
+    const r = await performManagedSync(engine, opts);
+    return { at: performance.timeOrigin + t, wall: performance.now() - t, status: r.status, reason: r.reason ?? null, pass: r.pass ?? null };
+  };
+  let edits = 0;
+  // The bench's own commit runs Git asynchronously, so its wait is not counted as the pass's event-loop lag.
+  const gitAsync = (args: string[]) => new Promise<void>((done, fail) => {
+    const child = spawn('git', ['-C', live.repo, ...args], { stdio: 'ignore' });
+    child.on('error', fail);
+    child.on('exit', code => (code === 0 ? done() : fail(new Error(`git ${args.join(' ')} exited ${code}`))));
+  });
+  const commitOne = async () => {
+    const path = fixturePath((edits * 7919) % live.files);
+    writeFileSync(join(live.repo, path), fixtureContent((edits * 7919) % live.files, 1000 + edits, live.large));
+    edits++;
+    await gitAsync(['add', '--', path]);
+    await gitAsync(['-c', 'user.name=Bench', '-c', 'user.email=bench@example.invalid', 'commit', '-q', '-m', 'bench edit ' + edits]);
+  };
+  try {
+    const warmup: Array<Awaited<ReturnType<typeof sync>>> = [];
+    for (let i = 0; i < Math.max(1, config.warmup); i++) warmup.push(await sync());
+    ctx.sampler.mark();
+    const idle: Array<Awaited<ReturnType<typeof sync>> & { idle: boolean; reasons: string[]; rows: number; timings_ms: Record<string, number> }> = [];
+    for (let i = 0; i < config.idle_rounds; i++) { const r = await sync(); idle.push({ ...r, idle: r.status === 'up_to_date' && !r.pass, reasons: r.pass ? [r.pass.kind] : [], rows: 0, timings_ms: {} }); }
+    const idlePeak = ctx.sampler.phasePeak(), idleLag = ctx.sampler.phaseLag();
+    ctx.sampler.mark();
+    const full: Array<Awaited<ReturnType<typeof sync>> & { timings_ms: Record<string, number>; counts: unknown }> = [];
+    for (let i = 0; i < config.full_rounds; i++) {
+      await commitOne();
+      const r = await sync();
+      const [row] = await engine.executeRaw<{ timings: Record<string, number> | null }>("SELECT completed_keys->0->'telemetry'->'timings_ms' AS timings FROM op_checkpoints WHERE op='managed-sync-pass' AND completed_keys->0->>'source_id'=$1", [config.source_id]);
+      full.push({ ...r, timings_ms: row?.timings ?? {}, counts: r.pass });
+    }
+    const fullPeak = ctx.sampler.phasePeak(), fullLag = ctx.sampler.phaseLag();
+    const overall = ctx.sampler.stop();
+    ctx.out({ available: true, connect_ms: Math.round(ctx.connectMs), seeded_pages: ctx.seededPages, warmup, idle, full,
+      rss: { after_connect: ctx.rssAfterConnect, idle_peak_sampled: idlePeak, full_peak_sampled: fullPeak, peak_sampled: overall.peak, samples: overall.samples, vm_hwm: readVmHwm() },
+      loop_lag_ms: { idle_max: idleLag, full_max: fullLag, max: overall.maxLagMs } });
+    return 0;
+  } finally { await disposePersistenceConsumer(engine); }
+}
+
 // ─── parent: fixture, seed, drift, measure ───────────────────────────
 
 async function runParent(): Promise<number> {
@@ -146,13 +211,14 @@ async function runParent(): Promise<number> {
   if (!['pglite', 'postgres', 'pgbouncer'].includes(engineKind)) { log('--engine takes pglite, postgres or pgbouncer'); return 2; }
   const preset = flag('preset', '');
   if (preset && !PRESETS[preset]) { log(`--preset takes ${Object.keys(PRESETS).join(' or ')}; got ${preset}`); return 2; }
-  const files = preset ? PRESETS[preset]! : wholeNumber('files', '2000', 1);
+  const files = preset ? PRESETS[preset]!.files : wholeNumber('files', '2000', 1);
+  const large = preset ? PRESETS[preset]!.large : undefined;
   const rtt = Number(flag('rtt', '57'));
   if (!(rtt >= 0)) { log(`--rtt takes milliseconds of at least 0; got ${flag('rtt', '57')}`); return 2; }
   const idleRounds = wholeNumber('idle-rounds', '20', 1), fullRounds = wholeNumber('full-rounds', '7', 1), warmup = wholeNumber('warmup', '1');
   const drift = wholeNumber('drift', '0'), batch = wholeNumber('batch', '5000', 1), sampleMs = wholeNumber('sample-ms', '50', 1);
   const pgPort = wholeNumber('pg-port', '55442', 1), poolerPort = wholeNumber('pooler-port', '55444', 1);
-  const keep = has('keep'), seedOnly = has('seed-only'), rawIdle = has('raw-idle'), episode = has('episode');
+  const keep = has('keep'), seedOnly = has('seed-only'), rawIdle = has('raw-idle'), episode = has('episode'), live = has('live');
   const cacheDir = resolve(flag('cache-dir', join(homedir(), '.capy/work/6712/bench-fixtures')));
   const runId = `${engineKind}-${files}-${Date.now()}`;
   const workDir = resolve(flag('work-dir', join(homedir(), '.capy/work/6712/bench-runs', runId)));
@@ -162,7 +228,7 @@ async function runParent(): Promise<number> {
   const phases: Record<string, unknown> = {};
   const cleanups: Array<() => Promise<void> | void> = [];
   try {
-    const fixture = await ensureFixture(cacheDir, files, log);
+    const fixture = await ensureFixture(cacheDir, files, log, large);
     resetFixture(fixture);
     phases.fixture = { cached: fixture.cached, generate_ms: Math.round(fixture.generate_ms), generation_timings_ms: fixture.timings_ms, base: fixture.base };
     log(`fixture: ${fixture.cached ? 'cached' : 'generated'} ${fixture.repo} (${files} files)`);
@@ -224,7 +290,7 @@ async function runParent(): Promise<number> {
     let measured: Record<string, unknown> | null = null;
     if (!seedOnly) {
       const configPath = join(workDir, 'child.json');
-      writeFileSync(configPath, JSON.stringify({ engine: engineKind, database_url: childUrl, database_path: databasePath, source_id: SOURCE_ID, target: rawIdle ? null : head, episode,
+      writeFileSync(configPath, JSON.stringify({ engine: engineKind, database_url: childUrl, database_path: databasePath, source_id: SOURCE_ID, target: rawIdle ? null : head, episode, ...(live ? { live: { repo: fixture.repo, files, large } } : {}),
         idle_rounds: idleRounds, full_rounds: fullRounds, warmup, sample_ms: sampleMs } satisfies ChildConfig));
       log(`measure: ${warmup} warm-up, ${idleRounds} idle ticks, ${fullRounds} full rounds (${engineKind}${engineKind === 'pglite' ? '' : `, ${rtt} ms RTT`})`);
       const t = performance.now();
@@ -233,7 +299,7 @@ async function runParent(): Promise<number> {
     }
 
     const doc = report({ engineKind, files, rtt, measuredRtt, pooler, drift, driftPaths, head, fixture, phases, measured, idleRounds, fullRounds, warmup, sampleMs,
-      wallMs: performance.now() - wallStart, workDir, rawIdle, episode });
+      wallMs: performance.now() - wallStart, workDir, rawIdle, episode, live });
     const json = JSON.stringify(doc, null, 2);
     process.stdout.write(json + '\n');
     const out = flag('out', '');
@@ -261,7 +327,7 @@ async function runMeasureChild(configPath: string): Promise<Record<string, unkno
 interface ReportInput {
   engineKind: EngineKind; files: number; rtt: number; measuredRtt: number | null; pooler: Record<string, string> | null; drift: number; driftPaths: string[]; head: string;
   fixture: { repo: string; base: string }; phases: Record<string, unknown>; measured: Record<string, unknown> | null;
-  idleRounds: number; fullRounds: number; warmup: number; sampleMs: number; wallMs: number; workDir: string; rawIdle: boolean; episode: boolean;
+  idleRounds: number; fullRounds: number; warmup: number; sampleMs: number; wallMs: number; workDir: string; rawIdle: boolean; episode: boolean; live: boolean;
 }
 
 function report(r: ReportInput): Record<string, unknown> {
@@ -287,7 +353,11 @@ function report(r: ReportInput): Record<string, unknown> {
     git_version: gitVersion(),
     gbrain_version: VERSION,
     gbrain_commit: git(REPO, ['rev-parse', 'HEAD']),
-    settings: { idle_rounds: r.idleRounds, full_rounds: r.fullRounds, warmup: r.warmup, rss_sample_ms: r.sampleMs, percentile: 'nearest-rank', full_round_episode: r.episode },
+    settings: { idle_rounds: r.idleRounds, full_rounds: r.fullRounds, warmup: r.warmup, rss_sample_ms: r.sampleMs, percentile: 'nearest-rank', full_round_episode: r.episode, live_pass: r.live },
+    live_warmup: (r.measured as { warmup?: unknown } | null)?.warmup ?? null,
+    live_runs: r.live ? { idle: idle.map(t => ({ at: (t as { at?: number }).at, wall: t.wall, status: (t as { status?: string }).status })),
+      full: full.map(t => ({ at: (t as { at?: number }).at, wall: t.wall, status: (t as { status?: string }).status })) } : null,
+    live_statuses: r.live ? { idle: (m?.idle ?? []).map(t => (t as { status?: string }).status), full: (m?.full ?? []).map(t => (t as { status?: string }).status) } : null,
     measured: m ? (m.available ? (m.error ? { error: m.error } : true) : { unavailable: m.reason }) : 'skipped (--seed-only)',
     idle_tick_ms: summarize(idle.map(t => t.wall)),
     idle_tick_idle_fraction: idle.length ? idle.filter(t => t.idle).length / idle.length : null,
@@ -299,6 +369,7 @@ function report(r: ReportInput): Record<string, unknown> {
     rss_mib: rss ? { after_connect: mib(rss.after_connect ?? null), idle_peak_sampled: mib(rss.idle_peak_sampled ?? null), full_peak_sampled: mib(rss.full_peak_sampled ?? null),
       peak_sampled: mib(rss.peak_sampled ?? null), vm_hwm: mib(rss.vm_hwm ?? null), samples: rss.samples ?? null,
       process: r.engineKind === 'pglite' ? 'measuring child; includes the in-process PGLite database' : 'measuring child; database server and proxy are other processes' } : null,
+    loop_lag_ms: (m as { loop_lag_ms?: unknown } | null)?.loop_lag_ms ?? null,
     breakdown_ms: { idle: breakdown(idle.map(t => t.timings_ms)), full: breakdown(full.map(t => t.timings_ms)) },
     connect_ms: m?.connect_ms ?? null,
     seeded_pages_seen_by_child: m?.seeded_pages ?? null,
@@ -319,6 +390,7 @@ function printSummary(doc: Record<string, unknown>): void {
     `idle tick:  ${s(doc.idle_tick_ms)}, idle fraction ${doc.idle_tick_idle_fraction ?? 'n/a'}, DB rows max ${doc.idle_tick_db_rows_max ?? 'n/a'}`,
     `full round: ${s(doc.full_round_ms)}`,
     `peak RSS: sampled ${rss?.peak_sampled ?? 'n/a'} MiB, VmHWM ${rss?.vm_hwm ?? 'n/a'} MiB`,
+    `event-loop lag: ${JSON.stringify(doc.loop_lag_ms ?? null)} ms`,
     `phases: ${JSON.stringify(doc.phases)}`,
   ];
   for (const [kind, table] of Object.entries(doc.breakdown_ms as Record<string, Record<string, unknown>>))

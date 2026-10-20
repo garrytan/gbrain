@@ -817,6 +817,7 @@ async function runSingleSourceSync(
     includeHidden: includeHiddenPatterns.length > 0 ? includeHiddenPatterns : undefined,
     signal: composeAbortSignals(singleSourceInterrupt.signal, singleSourceController?.signal),
     drain: true, noBulk, lanes, followDrainLease: true, drainHolder: { kind: 'cli', id: null },
+    ...(yesFlag ? { costApproved: true } : {}),
   };
 
   // v0.42.42.0 (#2139, Step 4b): single-source `gbrain sync` gets the SAME

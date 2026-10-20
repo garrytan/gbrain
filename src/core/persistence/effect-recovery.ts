@@ -24,6 +24,7 @@ import { unreadPageFile } from './page-prepare.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import { advanceEffectCursor } from './effect-journal.ts';
 import { faultPoint } from './fault-points.ts';
+import { assertRecoveryVersion } from './recovery-version.ts';
 
 const effectStatusFix = (effect: Pick<PersistenceEffect, 'source_id'>): Action => readFix(
   `Shows source ${effect.source_id}'s canonical owner with its blocking, retrying and parked effects, read-only.`,
@@ -78,6 +79,7 @@ export async function reserveEffectRecovery(engine: BrainEngine, effect: Persist
     const counters = await lockCounters(tx, ['brain', `worktree:${effect.worktree_id}`]);
     const current = await lockedEffect(tx, effect);
     if (current.recovery) {
+      assertRecoveryVersion('persistence_effects', current.recovery, current.source_id);
       if (digest(current.recovery) !== digest(record)) throw opError('recovery_required', 'The prior mirror publication must be reconciled first.',
         `This effect of source ${effect.source_id} still holds an earlier mirror publication's recovery record, so a new one was not reserved; the worker recovers the earlier one first. Inspect the owner's effects rather than resubmitting anything.`,
         { fix: effectStatusFix(effect) });
@@ -128,6 +130,7 @@ export async function rebaseStaleEffectRecovery(engine: BrainEngine, effectId: s
     const [current] = await tx.executeRaw<PersistenceEffect>('SELECT * FROM persistence_effects WHERE id=$1 FOR UPDATE', [effectId]);
     const record = current?.recovery;
     if (!record) return null;
+    assertRecoveryVersion('persistence_effects', record, current.source_id);
     await tx.lockPageKeys([{ sourceId: current.source_id, slug: record.slug }]);
     const snapshot = await tx.readPageSnapshot(record.slug, { sourceId: current.source_id, includeDeleted: true });
     if (snapshot?.page.id === record.pageId && snapshot.revision === record.revision) return record;
@@ -232,6 +235,7 @@ export async function recoverEffectPublication(engine: BrainEngine, effect: Pers
     `Every publication slot of the writer pool is busy, so mirror recovery for source ${effect.source_id} has not started; the worker tries again once a slot frees. Nothing needs resubmitting.`,
     { fix: effectStatusFix(effect) });
   try {
+    assertRecoveryVersion('persistence_effects', effect.recovery, effect.source_id);
     if (effect.recovery) await upgradeRecoveryStaging(engine, 'persistence_effects', effect.id, effect.worktree_id!, 'forward');
     await stageStreamedMirror(engine, effect, hostId, hooks.content, hooks.between);
     await engine.transaction(async tx => {
@@ -241,6 +245,7 @@ export async function recoverEffectPublication(engine: BrainEngine, effect: Pers
     const current = await lockedEffect(tx, effect);
     const record = current.recovery;
     if (!record) return;
+    assertRecoveryVersion('persistence_effects', record, current.source_id);
     const streamed = record.version === 2;
     if (!recordBelongs(record, current, binding) || (streamed ? record.staging?.publication?.hash !== record.afterHash
       : sha256(Buffer.from(record.after ?? '', 'base64')) !== record.afterHash)) throw opError('recovery_required', 'Mirror recovery no longer belongs to this canonical binding.',

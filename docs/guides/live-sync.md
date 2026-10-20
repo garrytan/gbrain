@@ -23,6 +23,20 @@ command drains the whole backlog:
 gbrain sync --source <id> --no-pull --json
 ```
 
+A managed source that is not a company brain syncs by a **level-triggered
+pass**: under the source's drain lease it pins `HEAD`, compares the whole tree
+with what the database absorbed (the pages and their import records) and
+admits only the paths that are not settled, in batches of at most 10,000 and
+at most four rounds. A pass with nothing unsettled and nothing in flight
+stamps `last_commit`. A killed pass loses nothing: the next plain sync reads the
+level again and admits only what is still unsettled, so a reset, a lost run or
+an out-of-band change converges without a flag. Its progress is the
+`convergence` block of `gbrain sync status --json` (`round`, `candidates`,
+`settled`, `remaining`, `classes`); the cursor fields there are null. A
+company-brain source keeps its cursor and frozen manifest. The pass's status
+reasons, `sync.admission`, the mass-delete valve and episodes are in the
+[sync unblock runbook](sync-unblock-runbook.md#the-pass-outcomes-and-status-reasons).
+
 Managed sync never pulls: the checkout is fast-forwarded by
 `gbrain sources refresh <id>`, never by sync. Sync then catches the index up
 to whatever the checkout holds. The CLI implies `--no-pull` on a managed brain
@@ -88,8 +102,11 @@ The run ends in exactly one outcome:
 
 | Outcome | Exit | Meaning | What to do |
 | --- | --- | --- | --- |
-| `synced` | 0 | The cursor reached its target. | Nothing. |
-| `resumable` | 0 | A deadline, `--timeout` or Ctrl-C stopped it; the cursor and accepted writes are intact. | Rerun `next.command`; safe in a loop. |
+| `synced` | 0 | The pass converged and stamped (a company-brain source: the cursor reached its target). A pass at a selection other than the configured one adds `selection_scoped` and does not advance `last_commit`. | Nothing. |
+| `resumable` | 0 | A deadline, `--timeout` or Ctrl-C stopped it; accepted writes are intact. | Rerun `next.command`; safe in a loop. |
+| `resumable` / `not_converged` | 0 | The pass used its four rounds while another writer kept changing the level; everything it admitted stands. | Rerun `next.command`. After three in a row `next` is a report (`gbrain doctor --json`), not another sync. |
+| `resumable` / `admission_paused` | 0 | `sync.admission` is `imports_only` or `classify_only`. | Ask the user; `gbrain config set sync.admission normal` ends the pause. |
+| `blocked` / `reconcile_host_required` or `grant_scope` | 1 | A remote caller or a partial grant admitted what it could; the rest (holds, markers, keep_db writes, the stamp) needs the owner host. | Tell the user to run `gbrain sync --source <id> --no-pull` on the brain host. |
 | `resumable` / `preparation_abandoned` | 0 | A write this process's own writer holds was still preparing past its allowance (its budget plus 30 s) and cannot be cancelled in-process, so the sync exited to end it; `drain.stall.step` says where. | Rerun `next.command`; safe in a loop. The next pass holds the entry if it stalls again. |
 | `blocked` | 1 | A page failed or the writer needs intervention. | Follow `next.why`, then run `next.command`. See [drain stops](write-refusals.md#managed-sync-drain-stops). |
 | `blocked` / `drain_stalled` | 1 | The head write made no progress (no commit, no step advance) for the whole window. With a live owner on this host the drain waits until the 600 s ceiling (printing `stalled <N>s on <step>` with the owner's pid and kind meanwhile) and stops with `cause: owner_wedged_here`, the owner `{kind, pid, nonce}` and `retry_after_ms` to the ceiling; a lapsed claim stops at once as `owner_missing`. | Before the ceiling: wait `retry_after_ms`, then rerun `next.command` (`safe_to_loop` is true). Past it, or with a wedged owner: restart the named owner process, `gbrain sources retry-held <id>`, then the same sync. `gbrain sources writer status --source <id> --json` ends the claim in a `next_action` that says which. See [drain stops](write-refusals.md#drain-stalled). |
@@ -112,7 +129,8 @@ Timing knobs the drain uses:
 | `persistence.maintenance_preparation_ms` | One maintenance write's preparation (fact-fence adoption, maintenance page writes). | 120000 | As above; a maintenance write gets a terminal `preparation_stalled` receipt (no hold). |
 | `persistence.preparation_ceiling_ms` | Hard ceiling for a preparation that ignores cancellation (any kind), from claim start. | 600000 (60000–3600000, at least the largest budget plus 30 s) | The owner frees the root, sets the request's attempts to the limit (its next claim finishes it `preparation_stalled`), and stops claiming once it holds one such stuck preparation (`restart_required` in its log line). |
 | `persistence.max_preparation_attempts` | Deadline releases (and reclaims after a kill while preparing) one request may spend. | 2 (1–10) | The next claim finishes it `preparation_stalled` without preparing again. |
-| `preparation_deadlines` write switch (`persistence.preparation_deadlines`, `GBRAIN_PREPARATION_DEADLINES`) | Kill switch for the four keys above and the attempt counter. `remember`, `put_page` and `edit_page` keep their own 30 s budget either way. | on | `gbrain config set persistence.preparation_deadlines false` (or `GBRAIN_PREPARATION_DEADLINES=0`) restores the previous behaviour exactly: no deadline on sync or maintenance writes, no counter, no `preparation_stalled` holds. A running `serve` picks the change up within 5 seconds. |
+| `persistence.max_transient_retries` | Transient interruptions one request is retried after: a statement the database ended with `57014`, or a publication cancelled past `persistence.publication_ceiling_ms`. Lock timeouts, serialization failures, deadlocks and lost connections are never counted. | 5 (0–20) | Each interruption schedules the next claim after 1 s, 2 s, 4 s, 8 s, then 15 s (no claim is held while it waits); the next one past the limit finishes the request `write_interrupted` and the sync holds the file. |
+| `preparation_deadlines` write switch (`persistence.preparation_deadlines`, `GBRAIN_PREPARATION_DEADLINES`) | Kill switch for the five keys above and both counters. `remember`, `put_page` and `edit_page` keep their own 30 s budget either way. | on | `gbrain config set persistence.preparation_deadlines false` (or `GBRAIN_PREPARATION_DEADLINES=0`) restores the previous behaviour exactly: no deadline on sync or maintenance writes, no counter, no `preparation_stalled` holds. A running `serve` picks the change up within 5 seconds. |
 | Page write wait | One page's (or group's) publication before the drain re-checks. | 30 s inside a drain (5 s, checkpoint 8 s, for a single pass) | The drain re-enters; this is not a stop. |
 | `sync` job deadline | A managed `sync` Minions job's drain: its `timeout_ms` (autopilot stamps `max(2 × --interval, 300 s)`), or the queue's wall-clock limit for a job without one, capped at an hour, less a 60 s reserve. `sync.job_drain=false` (or job data `drain: false`) keeps the single pass. | per job | Stops as `resumable` / `deadline`; on a worker-backed brain a stop that is safe to repeat queues one follow-up job (`continuation_job_id`). |
 | `GBRAIN_SYNC_BULK_MAX_TXN_MS` (was `sync.bulk_max_txn_ms`, retired in 0.60.266.0) | Target time per bulk group; sizes the next group from the last one's time per page. | 15000 | A smaller next group. |
@@ -138,7 +156,7 @@ Timing knobs the drain uses:
 | `sync.hold_cap` | `GBRAIN_SYNC_HOLD_CAP` | 500 |
 | `sync.hold_escalate_count` | `GBRAIN_SYNC_HOLD_ESCALATE_COUNT` | 50 |
 | `sync.hold_escalate_pct` | `GBRAIN_SYNC_HOLD_ESCALATE_PCT` | 5 |
-| `sync.parser_regression` | `GBRAIN_SYNC_PARSER_REGRESSION` | stop |
+| `sync.parser_regression` | `GBRAIN_SYNC_PARSER_REGRESSION` | hold |
 | `sync.knock_on_refreeze_limit`, `sync.knock_on_run_limit` | none (removed with the knock-on re-freeze in 0.60.255.0) | — |
 
 `gbrain config set` of a retired key warns, names the variable and writes nothing. `gbrain config get <key>` prints
@@ -167,6 +185,8 @@ therefore prefers one full consumer per host:
   `sources`, `cli`) keep their own consumer for the life of their write, because
   the owner's wake is in-process only and a waiter-only `gbrain put` would often
   return `writer_pending`.
+- An idle `gbrain jobs work` on Postgres starts its consumer at boot (#7002), so
+  it takes over queued writes when the host's `serve` stops.
 - This is a preference, not a fenced role. Two processes that start within one
   heartbeat of each other can both start full, and a sync CLI that took its
   consumer before the `serve` started keeps it for that run; doctor reports the
@@ -292,6 +312,11 @@ on repeated failures.
 gbrain sync --watch --repo /data/brain
 ```
 
+### Autopilot and the jobs worker
+
+The autopilot daemon is HEAD-driven and an idle `gbrain jobs work` wakes on a queued sync; see
+[on-commit-sync.md](on-commit-sync.md#autopilot-and-the-jobs-worker).
+
 ### Approach 3: Git Hook / Webhook
 
 Triggers sync on push events for instant sync (<5s).
@@ -403,9 +428,10 @@ would need the moved file as evidence, which is what the sync route provides.
 Concurrent runs are safe. Two syncs on the same commit no-op because content
 hashes match. If both a cron and `--watch` fire simultaneously, no conflict.
 
-Long syncs also survive being killed: progress checkpoints into the database
-as files drain, so a killed or aborted run resumes from where it stopped, and
-the sync bookmark only advances on true completion. A progress-aware stall
+Long syncs also survive being killed: every published page keeps its
+receipt and import record, so the next plain sync admits only what is still
+unsettled (a company-brain cursor resumes where it stopped), and the sync
+bookmark only advances when a pass converges. A progress-aware stall
 watchdog (`GBRAIN_SYNC_STALL_ABORT_SECONDS`, default 900, `0` disables) aborts
 a run that stops making forward progress and releases the per-source lock so
 the next `gbrain sync` picks up from the checkpoint. The checkpoint cadence

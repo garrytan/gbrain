@@ -42,6 +42,7 @@ import { enterClaimStep, type ClaimPhaseClock } from './claim-phase.ts';
 import { PERSISTENCE_REQUEST_SLUG_INTENT_INDEX } from './schema.ts';
 import { readRequestIndexStates, REQUEST_INDEXES_REPAIR_COMMAND, type RequestIndexState } from './checkpoint-validation.ts';
 import { faultPoint } from './fault-points.ts';
+import { writeOriginDeletedMarker } from './sync-markers.ts';
 import { clearRebuildableCache } from './rebuildable-cache.ts';
 import { carryingNeedles, findRequestsForSlugs, JOURNAL_SWEEP_MATCH_CAP, recheckRequestsCarrying, redactRequestIntents, sweepRequestsCarrying, sweepRequestsForGroups,
   type JournalSweep } from './intent-redaction.ts';
@@ -51,6 +52,7 @@ import { contentHash } from '../utils.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { rewrittenContentHash } from '../page-body/segment-rewrite.ts';
 import { stagingNeedsTextSql } from '../page-body/schema.ts';
+import { CLAIM_FORMS_BATCH, claimTextForms } from '../fence-shared.ts';
 import type { PagePurgeContext } from '../facts/purge-verify.ts';
 import { assertHeldPageKeys } from '../page-state/guards.ts';
 import { noteBelief } from '../belief/ledger.ts';
@@ -83,6 +85,13 @@ async function readPurgeClaims(engine: Pick<BrainEngine, 'executeRaw'>, sourceId
   const takeRows = await engine.executeRaw<{ id: number; claim: string }>('SELECT id,claim FROM takes WHERE page_id=$1 ORDER BY id LIMIT 1000', [pageId]);
   const needles = [...new Set([...factRows.map(f => f.fact), ...takeRows.map(t => t.claim)].map(t => t.trim()).filter(t => t.length >= 8))].slice(0, 32);
   return { factRows, takeRows, needles };
+}
+
+/** Every claim of the page (its facts, withdrawn ones included, and its takes), trimmed and deduplicated, unbounded: the segment-text sweep's needles. */
+async function readSegmentClaims(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, pageId: number): Promise<string[]> {
+  const rows = await engine.executeRaw<{ c: string }>('SELECT fact AS c FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 UNION SELECT claim FROM takes WHERE page_id=$3',
+    [sourceId, slug, pageId]);
+  return [...new Set(rows.map(r => r.c.trim()).filter(t => t.length >= 8))];
 }
 
 /** #6884: how many queued purges of the source one preparation's journal sweep covers at most, this one included. */
@@ -274,6 +283,7 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   const hashes = new Set<string>();
   if (!retention) await tombstonePage(tx, sourceId, slug, page.id, snapshot, row.id, actor, { hash: storedHash, generation: Number(stored?.body_generation) }, hashes);
   const { factRows, takeRows, needles } = await readPurgeClaims(tx, sourceId, slug, page.id);
+  const segmentClaims = await readSegmentClaims(tx, sourceId, slug, page.id);
   const factIds = factRows.map(f => Number(f.id)), takeIds = takeRows.map(t => Number(t.id));
   const derivedFrom = await derivedRowsFrom(tx, [{ table: 'pages', id: page.id }, ...factIds.map(id => ({ table: 'facts', id })), ...takeIds.map(id => ({ table: 'takes', id }))]);
   const purgedHere = new Set([...factIds.map(id => `facts:${id}`), ...takeIds.map(id => `takes:${id}`)]);
@@ -333,13 +343,14 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
     derived_hidden: await appendDerivedHidden(tx, { sourceId, request: row.id, publicationId: row.id, op: 'delete_page', targets: heldTargets, truncated: walk === 'truncated' }),
     derived_walk: walk })) : null;
   if (ledger) removed.belief_events = ledger.purged_events + ledger.redacted_fields.length;
-  const { shas, ...segmentRows } = await deletePageWithSegments(tx, sourceId, slug, page.id);
+  await writeOriginDeletedMarker(tx, { sourceId, page: { id: page.id, slug, source_path: page.source_path } });
+  const { shas, ...segmentRows } = await deletePageWithSegments(tx, sourceId, slug, page.id, segmentClaims);
   Object.assign(removed, segmentRows);
   if (!retention) appendPurgeIntent({ request: row.id, request_id: row.request_id, source_id: sourceId, source_incarnation: row.source_incarnation,
     scope: 'page', slug, purge_epoch: epoch, content_hashes: [...hashes], facts: mirrorFacts, takes: mirrorTakes, lifetimes });
   const key = `${sourceId}:${row.request_id}`;
   purgeContext.delete(key);
-  purgeContext.set(key, { needles, factIds, pageId: page.id, paths, segmentShas: shas.slice(0, 4096), ledgerClaims: inventory.claims, ledger });
+  purgeContext.set(key, { needles, factIds, pageId: page.id, paths, segmentShas: shas.slice(0, 4096), segmentClaims, ledgerClaims: inventory.claims, ledger });
   while (purgeContext.size > PURGE_CONTEXT_LIMIT) purgeContext.delete(purgeContext.keys().next().value!);
   return { status: 'purged', slug, source_id: sourceId, residuals: PURGE_RESIDUALS, journal_sweep: journalSweep, ...(retention ? { retention: true } : {}),
     purge: { content_hash8: storedHash?.slice(0, 8) ?? null, tombstoned: hashes.size > 0, content_hashes_tombstoned: hashes.size, removed,
@@ -379,9 +390,10 @@ export async function finishPagePurge(ctx: Pick<OperationContext, 'engine' | 'co
   return { ...result, ...extra };
 }
 
+export const PAGE_PURGE_TOMBSTONES_SQL = 'SELECT content_hash,slug FROM page_purges WHERE source_id=$1 ORDER BY purged_at DESC LIMIT $2';
 /** Prefetch for import screens: every page tombstone of a source, content hash -> slug (bounded). */
 export async function readPagePurgeTombstones(engine: BrainEngine, sourceId: string, limit = 10_000): Promise<Map<string, string>> {
-  const rows = await engine.executeRaw<{ content_hash: string; slug: string }>('SELECT content_hash,slug FROM page_purges WHERE source_id=$1 ORDER BY purged_at DESC LIMIT $2', [sourceId, limit]);
+  const rows = await engine.executeRaw<{ content_hash: string; slug: string }>(PAGE_PURGE_TOMBSTONES_SQL, [sourceId, limit]);
   return new Map(rows.map(r => [r.content_hash, r.slug]));
 }
 
@@ -412,19 +424,37 @@ export async function unpurgePage(ctx: OperationContext, p: Record<string, unkno
 }
 
 /**
- * Delete a purged page with its segment storage (Wave B, spec 11), in the caller's transaction: the segment texts only
- * its manifests referenced go with it, and so do its stagings (one of a create has no page row to cascade from). A text
- * another page still references stays, and so does one an unpublished write of another page staged or deduped onto (a
- * create holds its manifest rows in memory until it publishes): that write's copy, not this page's. The restore-time
- * purge replay deletes a page this way too.
+ * Delete a purged page with its segment storage (Wave B, spec 11), in the caller's transaction: the segment texts its
+ * manifests referenced go with it, and so do its stagings (one of a create has no page row to cascade from). So do the
+ * texts its stagings recorded (page_body_staging_texts) that no manifest row references any more: a sweep that drops
+ * a closed generation's rows keeps a text younger than the GC grace window, so the text a forget rewrite replaced is
+ * no longer in the manifest after a later write's sweep (N14-5), and only the staging that wrote it still names it.
+ * Stagings outlive that window (BODY_STAGING_HARD_MS), so the page's stagings name every such text. A text another
+ * page still references stays, and so does one an unpublished write of another page staged or deduped onto (a create
+ * holds its manifest rows in memory until it publishes): that write's copy, not this page's. The restore-time purge
+ * replay deletes a page this way too.
+ *
+ * A text can outlive the staging that recorded it: another page's write that dedupes onto it refreshes its created_at
+ * (stageSegmentTexts), so it stays younger than the grace window after this page's stagings expired. So, with
+ * `claims` (the page's own claims, withdrawn ones included), every unreferenced text of the source holding one of them,
+ * plain or as a facts-fence cell stores it (escapeFenceCell; the match purgeSegmentStorage uses), goes too.
  */
-export async function deletePageWithSegments(tx: BrainEngine, sourceId: string, slug: string, pageId: number):
+export async function deletePageWithSegments(tx: BrainEngine, sourceId: string, slug: string, pageId: number, claims: readonly string[] = []):
   Promise<{ shas: string[]; page_body_manifest: number; page_body_stagings: number; page_segment_texts: number }> {
-  const shas = (await tx.executeRaw<{ sha: string }>(`SELECT DISTINCT encode(sha256,'hex') AS sha FROM page_body_manifest WHERE page_id=$1`, [pageId])).map(r => r.sha);
+  const shas = (await tx.executeRaw<{ sha: string }>(`SELECT encode(sha256,'hex') AS sha FROM page_body_manifest WHERE page_id=$1
+    UNION SELECT encode(r.sha256,'hex') FROM page_body_stagings s JOIN page_body_staging_texts r ON r.staging_id=s.id
+      WHERE s.source_id=$2 AND (s.slug=$3 OR s.page_id=$1) AND r.source_id=$2`, [pageId, sourceId, slug])).map(r => r.sha);
   const manifest = (await tx.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_body_manifest WHERE page_id=$1', [pageId]))[0]?.n ?? 0;
   const stagings = (await tx.executeRaw('DELETE FROM page_body_stagings WHERE source_id=$1 AND (slug=$2 OR page_id=$3) RETURNING 1', [sourceId, slug, pageId])).length;
   await tx.deletePage(slug, { sourceId });
   const texts = shas.length ? (await tx.executeRaw(`DELETE FROM page_segment_texts t WHERE t.source_id=$1 AND t.sha256=ANY(SELECT decode(h,'hex') FROM unnest($2::text[]) AS h)
     AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=t.source_id AND m.sha256=t.sha256) AND NOT ${stagingNeedsTextSql('t')} RETURNING 1`, [sourceId, shas])).length : 0;
-  return { shas, page_body_manifest: manifest, page_body_stagings: stagings, page_segment_texts: texts };
+  const forms = claimTextForms(claims), carrying: string[] = [];
+  for (let at = 0; at < forms.length; at += CLAIM_FORMS_BATCH) {
+    carrying.push(...(await tx.executeRaw<{ sha: string }>(`DELETE FROM page_segment_texts d WHERE (d.source_id,d.sha256) IN (SELECT t.source_id,t.sha256
+      FROM page_segment_texts t WHERE t.source_id=$1 AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=t.source_id AND m.sha256=t.sha256) OFFSET 0)
+    AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS n WHERE strpos(lower(convert_from(d.body,'UTF8')),n)>0) AND NOT ${stagingNeedsTextSql('d')}
+    RETURNING encode(d.sha256,'hex') AS sha`, [sourceId, forms.slice(at, at + CLAIM_FORMS_BATCH)])).map(r => r.sha));
+  }
+  return { shas: [...shas, ...carrying], page_body_manifest: manifest, page_body_stagings: stagings, page_segment_texts: texts + carrying.length };
 }

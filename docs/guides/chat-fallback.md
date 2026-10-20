@@ -95,6 +95,11 @@ chain on its own.
   the chain.
 - A fallback call is billed by the entry's provider; budget caps price each
   attempt by the model that actually ran.
+- `gbrain think` without `--model` (and the `think` tool) report the model that
+  answered: `modelUsed`, `cost_usd` and the `--save` page's `model:` name it,
+  `requested_model` names the configured model, and `fallback_reason` says why it
+  did not answer (not returned to HTTP MCP callers). The human output reads
+  `Model: <answered> (fallback from <requested>: failed (...))`.
 
 An upgrade that finds a chain already set says so once in the
 `behavior_changes` safety notice; `gbrain doctor --only behavior_changes`

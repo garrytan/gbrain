@@ -7,7 +7,7 @@ import { NO_SOURCES } from '../source-id.ts';
 import { hasScope } from '../scope.ts';
 import { normalizeTokenScopes } from '../legacy-token-scope.ts';
 import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
-import { readLocalWriter, currentVerifiedLocalWriter, verifyLocalWriter, type LocalGrant } from './identity.ts';
+import { readLocalWriter, currentVerifiedLocalWriter, takeRegisteredWriterRow, verifyLocalWriter, type LocalGrant } from './identity.ts';
 import type { Principal, SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
 import { authorizePageVisibility, excludesPrivateWrites } from './page-visibility.ts';
 import { pipelined, transactionMemo } from '../page-state/transactions.ts';
@@ -77,8 +77,13 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
   return a;
 }
 
-/** #5984: one local-writer read per transaction; a FOR SHARE read also answers a plain one. */
-function localWriterRow(engine: SqlEngine, id: string, lock: boolean) {
+/**
+ * #5984: one local-writer read per transaction; a FOR SHARE read also answers a plain one. #6712 PR 4b: the read the
+ * registration check just made answers the authorization that follows it (`withRegisteredLocalWriter`, once).
+ */
+function localWriterRow(engine: SqlEngine, id: string, lock: boolean): Promise<Array<{ lane: string; revoked_at: unknown; grant_ceiling: LocalGrant }>> {
+  const registered = lock ? undefined : takeRegisteredWriterRow(id);
+  if (registered) return Promise.resolve([registered]);
   const key = `local-writer:${id}`;
   return transactionMemo(engine, lock ? [`${key}:share`] : [key, `${key}:share`],
     () => engine.executeRaw<{ lane: string; revoked_at: unknown; grant_ceiling: LocalGrant }>(

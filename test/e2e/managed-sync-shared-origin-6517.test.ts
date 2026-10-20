@@ -7,7 +7,8 @@
  * imports the file into the survivor through both origin guards (discovery
  * census, `assertSyncPageOrigin` at preparation and publication), then edits
  * and deletes the survivor from the checkout. A single tombstone still
- * resurrects when its file returns; two tombstones still refuse; a winner
+ * resurrects when its file returns; two tombstones hold the file
+ * `page_identity_changed` (#6712 PR 4b, GBRA-130 A-17; they used to refuse the source); a winner
  * whose liveness changes between the census and the publication never
  * receives the import. Master: the twin's tombstone kept every run refusing
  * (`assertSyncPageOrigin` counted tombstones), the Eng P1 probe.
@@ -88,7 +89,7 @@ for (const backend of testBackends()) describe(`[${backend}] #6517 managed sync 
     rmSync(home, { recursive: true, force: true });
   }, 60_000);
 
-  test('two live claimants hold their file (the rest syncs); after the loser is soft-deleted the file imports, edits and deletes through both guards; a single tombstone resurrects', async () => {
+  test('two live claimants hold their file (the rest syncs); after the loser is soft-deleted the file imports, edits and deletes through both guards; a single edited tombstone is held', async () => {
     const f = await twins();
     writeFileSync(f.file, note('Alpha, version two.')); commit(f.root, 'version two');
     // #6948: the twin no longer refuses the source; only its file is held origin_conflict (the bodies differ: a person decides).
@@ -117,18 +118,34 @@ for (const backend of testBackends()) describe(`[${backend}] #6517 managed sync 
     expect(deleted.status).toBe('synced'); expect(deleted.managedWrite).toBeUndefined();
     expect((await page(f.id, 'alpha'))!.deleted_at).not.toBeNull();
     expect((await page(f.id, 'alpha'))!.id).toBe(survivor.id);
-    // Two tombstones record the file: its return is ambiguous, as before.
+    // Two tombstones record the file: its return is ambiguous, as before. #6712 PR 4b (GBRA-130 A-17): the file alone is held
+    // page_identity_changed (several_tombstones, both pages named) instead of refusing the source; neither page is revived.
     writeFileSync(f.file, note('Alpha returns.')); commit(f.root, 'alpha returns');
-    const ambiguous = await sync(f.opts).then(() => null, error => error as Error & { code?: string });
-    expect(ambiguous?.code).toBe('page_identity_changed');
+    const ambiguous = await sync(f.opts);
+    expect(ambiguous.status).toBe('synced'); expect(ambiguous.managedWrite).toBeUndefined();
+    expect((ambiguous.held ?? []).map(item => [item.path, item.code])).toEqual([['alpha.md', 'page_identity_changed']]);
+    const identityHolds = (await readGitSourceHolds(engine, { sourceIds: [f.id] }))[0]?.holds ?? [];
+    expect(identityHolds).toHaveLength(1);
+    expect(identityHolds[0]).toMatchObject({ path: 'alpha.md', code: 'page_identity_changed', meta: { reason: 'several_tombstones' } });
+    expect([...(identityHolds[0]!.meta as { identity_slugs: string[] }).identity_slugs].sort()).toEqual(['alpha', 'alpha-twin']);
     expect((await page(f.id, 'alpha'))!.deleted_at).not.toBeNull();
-    // Point the twin tombstone elsewhere: one tombstone left, which the file resurrects (same page id).
+    expect((await page(f.id, 'alpha'))!.compiled_truth).toContain('version three');
+    expect((await page(f.id, 'alpha-twin'))!.deleted_at).not.toBeNull();
+    // Point the twin tombstone elsewhere: one tombstone left. #6712 PR 4b (design v3.2 §2.3 row 9, `deleted_edited`): the file
+    // changed after its page was deleted, so the pass holds it (side deleted, state tombstone_edited) for a person's Decision
+    // instead of reviving the page; repair file-drift --held --prefer file is the way back.
     await coordinated(f.id, 'UPDATE pages SET source_path=NULL WHERE source_id=$1 AND slug=$2', [f.id, 'alpha-twin']);
-    const resurrected = await sync(f.opts);
-    expect(resurrected.managedWrite).toBeUndefined();
+    // The file is already held page_identity_changed, so this run re-screens it (holdRescreenDue) rather than holding it anew:
+    // the result lists no new hold, and the source's one hold becomes the file_drift above in place of the identity hold.
+    const returned = await sync(f.opts);
+    expect(returned.managedWrite).toBeUndefined();
+    expect(returned).toMatchObject({ status: 'up_to_date', filesImported: 0, held_count: 0, holds_outstanding: 1 });
+    const rescreened = (await readGitSourceHolds(engine, { sourceIds: [f.id] }))[0]?.holds ?? [];
+    expect(rescreened.map(item => [item.path, item.code, item.meta.side, item.meta.state, item.slug])).toEqual([['alpha.md', 'file_drift', 'deleted', 'tombstone_edited', 'alpha']]);
     const back = (await page(f.id, 'alpha'))!;
-    expect(back).toMatchObject({ id: survivor.id, deleted_at: null });
-    expect(back.compiled_truth).toContain('Alpha returns');
+    expect(back.id).toBe(survivor.id);
+    expect(back.deleted_at).not.toBeNull();
+    expect(back.compiled_truth).toContain('version three');
     expect(await readManagedSyncFailures(engine, [f.id])).toEqual([]);
   }, 180_000);
 
@@ -153,9 +170,14 @@ for (const backend of testBackends()) describe(`[${backend}] #6517 managed sync 
     expect((await page(f.id, 'alpha'))!.deleted_at).not.toBeNull();
     expect(error ? error.code : result!.status === 'synced' && (result!.held_count ?? 0) === 0 && !result!.managedWrite ? 'clean import' : 'refused').not.toBe('clean import');
     expect(existsSync(f.file)).toBe(true);
-    // Once the twin is the one live claimant, the next run (a new request past the frozen refusal) imports the file into it.
+    // #6712 PR 4b (design v3.2 §2.3 row 19, `drift`): once the twin is the one live claimant, it has no import record and no
+    // proof that the file was ever its own, so the pass holds it file_drift (side unknown) instead of importing over it, and
+    // the next run leaves it held and unchanged.
+    expect(error).toBeNull();
+    expect((result!.held ?? []).map(item => [item.path, item.code, item.side, item.slug])).toEqual([['alpha.md', 'file_drift', 'unknown', 'alpha-twin']]);
     const next = await sync({ ...f.opts, retryFailed: true });
     expect(next.managedWrite).toBeUndefined();
-    expect((await page(f.id, 'alpha-twin'))!.compiled_truth).toContain('version two');
+    expect(next.holds_outstanding).toBe(1);
+    expect((await page(f.id, 'alpha-twin'))!.compiled_truth).toBe('A twin recording alpha.');
   }, 180_000);
 });

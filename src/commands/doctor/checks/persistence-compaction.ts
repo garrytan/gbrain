@@ -14,6 +14,11 @@ const DRIFT_DOCS = 'docs/guides/concurrent-writes.md#counter-drift';
  * (24) and no pass was recorded within that window; ok with no live consumer
  * (nothing is expected to compact) and on a fresh brain.
  */
+/** GBRA-130 A-14: a pass that compacted nothing names what it skipped (a fresh record is not proof bytes came back). */
+const skippedNote = (last: { compacted: number; skipped_by_reason?: Record<string, number> }) => {
+  const skipped = Object.entries(last.skipped_by_reason ?? {}).map(([reason, n]) => `${reason}: ${n}`);
+  return last.compacted === 0 && skipped.length ? `; it skipped ${skipped.join(', ')}` : '';
+};
 export async function checkPersistenceCompaction(engine: BrainEngine): Promise<Check> {
   try {
     const [consumers] = await engine.executeRaw<{ live: string; oldest_hours: number | null }>(`SELECT count(DISTINCT host_id)::text AS live,
@@ -27,7 +32,7 @@ export async function checkPersistenceCompaction(engine: BrainEngine): Promise<C
       last_compaction_age_hours: ageHours === null ? null : Math.floor(ageHours), docs: COMPACTION_DOCS };
     const overdue = details.live_consumers > 0 && Number(consumers?.oldest_hours ?? 0) > staleHours && (ageHours === null || ageHours > staleHours);
     if (!overdue) return { name: 'persistence_compaction', status: 'ok', details,
-      message: last ? `Receipt compaction last ran ${details.last_compaction_age_hours} hour(s) ago (compacted ${last.compacted}, freed ${last.freed_bytes} bytes).`
+      message: last ? `Receipt compaction last ran ${details.last_compaction_age_hours} hour(s) ago (compacted ${last.compacted}, freed ${last.freed_bytes} bytes${skippedNote(last)}).`
         : 'No receipt compaction recorded yet; a resident consumer compacts receipts past the retention window on its idle ticks.' };
     return { name: 'persistence_compaction', status: 'warn', details,
       message: `A resident consumer has run for over ${staleHours} hours but ${last ? `the last receipt compaction was ${details.last_compaction_age_hours} hours ago` : 'no receipt compaction was recorded'}, `

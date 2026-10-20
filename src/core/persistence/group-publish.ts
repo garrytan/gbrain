@@ -60,8 +60,10 @@ import { isWriteTargetContained } from '../path-confine.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { isStreamedContent } from './large-file.ts';
 import { sharedReadFailure } from './bounded-reads.ts';
-import { decoratePublicationOutcome, finishPreparationStalled, finishUnpublishedFailure, pageRecoveryRecord, persistenceFileHash, preparationAbortReason, publicationPostimage, publishMutation,
-  publishPersistenceFile, recoverPublication, type PreparedMutation } from './coordinator.ts';
+import { chargedInterruption, decoratePublicationOutcome, finishPreparationStalled, finishUnpublishedFailure, pageRecoveryRecord, persistenceFileHash, preparationAbortReason,
+  publicationPostimage, publishMutation, publishPersistenceFile, recoverPublication, releaseChargedInterruption, type PreparedMutation } from './coordinator.ts';
+import { withAttempt } from './publication-failure.ts';
+import { transientInterruption, type TransientInterruption } from './transient-retry.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { jsonBytes } from './digest.ts';
 import { EFFECT_BYTES_SQL, retainedReceiptBytes, TRUE_UP_CLAMP_SQL } from './receipt-bytes.ts';
@@ -92,7 +94,7 @@ export function singleWrite(row: Pick<WriteRequest, 'operation' | 'intent'>): bo
 
 /** Whether a prepared member can share a group transaction. */
 export function groupable(row: WriteRequest, prepared: PreparedMutation): boolean {
-  if ((row.target_kind ?? 'page') !== 'page' || prepared.target === 'skill_bundle' || prepared.sourceExclusive || prepared.exclusiveSources?.length) return false;
+  if ((row.target_kind ?? 'page') !== 'page' || prepared.target === 'skill_bundle' || prepared.sourceExclusive || prepared.exclusiveSources?.length || prepared.afterEffects) return false;
   if (syncMember(row)) return !prepared.file && typeof prepared.validate === 'function';
   // A streamed file (large-file.ts) is staged before its publication transaction, which only publishMutation does.
   if (isStreamedContent(prepared.file?.content)) return false;
@@ -165,9 +167,11 @@ const STABLE_IN_PREPARATION = new Set([
  * above and config values (`getConfig`, `getAllConfig`) are answered once for
  * the whole preparation, as if every member were prepared at the same moment;
  * publication re-checks what it relies on under its locks. It lives only for
- * one group's preparation; a failed read is not kept.
+ * one group's preparation; a failed read is not kept. `also` adds plain reads a
+ * caller's preparations repeat (GBRA-108: the legacy sweep's read-only screen).
  */
-export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads): BrainEngine {
+export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads, also: readonly string[] = []): BrainEngine {
+  const stable = also.length ? new Set([...STABLE_IN_PREPARATION, ...also.map(flat)]) : STABLE_IN_PREPARATION;
   const reads = new Map<string, Promise<unknown>>();
   const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
     let value = reads.get(id) as Promise<T> | undefined;
@@ -180,7 +184,7 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
     // A shared read takes no member's signal: a caller's own signal bypasses the memo, and (#6278) a bounded preparation read
     // (`timeoutMs`, whose signal only covers its connection wait) is answered once with the member's bound and signal dropped.
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal; timeoutMs?: number }) =>
-      STABLE_IN_PREPARATION.has(flat(sql)) && (!opts?.signal || opts.timeoutMs !== undefined)
+      stable.has(flat(sql)) && (!opts?.signal || opts.timeoutMs !== undefined)
         ? once(JSON.stringify([flat(sql), params ?? null]), () => target.executeRaw(sql, params)) : target.executeRaw(sql, params, opts);
     // GBRA-75 wave 10: every config key a member reads comes from one config read for the group (the same value per key).
     if (key === 'getConfig') return (name: string) => once('config:*', () => target.getAllConfig()).then(all => Object.hasOwn(all, name) ? all[name]! : null);
@@ -398,13 +402,22 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
     }
     return { done, requeued: [] };
   } catch (error) {
-    if (committed || !recorded.size) { await hooks.rolledBack?.(rows); return { ...none, reason: groupFailure(error), ...(committed ? {} : culpritOf(error)) }; }
+    if (committed || !recorded.size) {
+      await hooks.rolledBack?.(rows);
+      // LPH (b)/(c): classified here, inside the publication the ceiling may have cancelled; a lane release charges it.
+      const interrupted = committed ? null : transientInterruption(error);
+      return { ...none, reason: groupFailure(error), ...(committed ? {} : culpritOf(error)), ...(interrupted ? { interrupted } : {}) };
+    }
     // Restore every file this group may have published and release those claims; a committed member (an uncertain commit) only cleans up.
+    // LPH (b)/(c): a transient interruption is charged to each member first; past the limit its recovery finishes it write_interrupted.
     const requeued: string[] = [];
     for (const { row } of recorded.values()) {
       try {
-        await markRecovering(engine, row, 'publication_not_started');
-        const recovered = await recoverPublication(engine, row.id, hostId, true, undefined, true);
+        const charged = await chargedInterruption(engine, row, error);
+        if (charged) await faultPoint('persistence:recovery_interruption_charged', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation });
+        const failure = charged?.failure ? withAttempt(charged.failure, 'publication') : undefined;
+        await markRecovering(engine, row, failure ? 'publication_failed' : 'publication_not_started', failure);
+        const recovered = await recoverPublication(engine, row.id, hostId, true, failure, true);
         if (recovered.state === 'queued' && !recovered.recovery) requeued.push(row.id);
       } catch { /* the recovery record stays; the worktree waits for the recovery scan */ }
     }
@@ -450,7 +463,9 @@ export async function publishSingleWrite(engine: BrainEngine, row: WriteRequest,
 }
 
 /** A group publication: its committed receipts, or why it did not commit and, for a member's own refusal, which member. */
-export type GroupPublication = { done: WriteRequest[] | null; requeued: string[]; reason?: GroupFailure; culprit?: { index: number; error: unknown } };
+export type GroupPublication = { done: WriteRequest[] | null; requeued: string[]; reason?: GroupFailure; culprit?: { index: number; error: unknown };
+  /** A transient interruption ended the group while every claim was still held (nothing recorded): a lane release charges it. */
+  interrupted?: TransientInterruption };
 /** Why a group transaction did not commit, for the lane fallback and step-down. */
 export type GroupFailure = 'busy' | 'predecessor_requeued' | 'wounded' | 'order_timeout' | 'lock_timeout' | 'statement_timeout' | 'failed';
 function groupFailure(error: unknown): GroupFailure {
@@ -465,7 +480,8 @@ function groupFailure(error: unknown): GroupFailure {
  * that found the worktree busy, releases its claims so it runs first. Lock and statement timeouts cost one lane for the
  * rest of the drain.
  */
-async function laneFallback(engine: BrainEngine, rows: WriteRequest[], reason: GroupFailure | undefined, run: GroupExecution): Promise<false | null> {
+async function laneFallback(engine: BrainEngine, rows: WriteRequest[], reason: GroupFailure | undefined, run: GroupExecution,
+  interrupted?: TransientInterruption): Promise<false | null> {
   if (run.lane) run.lane.fallbacks++;
   // #6402 residual (P4.3): a server fault on the lane group is kept on the rows it releases (`blocked_reason` `lane_<fault>`).
   const laneFault = reason === 'lock_timeout' || reason === 'statement_timeout' ? reason : null;
@@ -476,7 +492,13 @@ async function laneFallback(engine: BrainEngine, rows: WriteRequest[], reason: G
   // A group that found the worktree busy (another holder or no publication capacity) releases its claims and is
   // claimed again as a lane head; publishing its members one at a time would hold the lanes back.
   if (prior !== null && ['committed', 'failed', 'conflict', 'cancelled'].includes(prior) && reason !== 'busy') return null;
-  for (const row of rows) await releaseUnpublishedClaim(engine, row, laneFault ? laneFaultBlockedReason(laneFault) : 'group_member_waiting');
+  const blocked = laneFault ? laneFaultBlockedReason(laneFault) : 'group_member_waiting';
+  for (const row of rows) {
+    // LPH (b)/(c): a transient interruption is charged on release, so a lane group the ceiling cancels every time is bounded too.
+    const charged = interrupted ? await releaseChargedInterruption(engine, row, undefined, 'publication', blocked, interrupted) : null;
+    if (charged) { if (['failed', 'conflict', 'cancelled', 'committed'].includes(charged.state)) run.settled(charged); continue; }
+    await releaseUnpublishedClaim(engine, row, blocked);
+  }
   return false;
 }
 
@@ -760,7 +782,7 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
           if (!publishing.length) return true;
           continue;
         }
-        if (run.lane && await laneFallback(engine, publishRows, result.reason, run) !== null) return progressed;
+        if (run.lane && await laneFallback(engine, publishRows, result.reason, run, result.interrupted) !== null) return progressed;
         break;
       }
     } else if (run.lane && await laneFallback(engine, liveRows, 'failed', run) !== null) return progressed;

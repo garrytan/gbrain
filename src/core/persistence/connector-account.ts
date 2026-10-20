@@ -8,10 +8,15 @@ import type { GoogleService } from '../google/types.ts';
 import type { GmailClient, CalendarClient, PeopleClient } from '../google/google-clients.ts';
 import type { GitHubClient, GitHubSourceConfig } from '../github-source.ts';
 import type { ConnectorAccount } from './connector-state.ts';
+import { CredentialError } from '../creds/errors.ts';
 
 /**
  * Google: the first enabled service whose granted scope can name the account
  * (Gmail profile, Calendar primary calendar, People `me`). Null when none can.
+ * When no service names the account and one refused with a credential error
+ * (API disabled, scope missing, forbidden), that error is rethrown, preferring
+ * api_not_enabled, so the caller reports the real cause instead of an account
+ * change (#7004).
  */
 export async function resolveGoogleAccount(clients: { gmail: GmailClient; calendar: CalendarClient; people: PeopleClient },
   services: readonly GoogleService[], signal?: AbortSignal): Promise<string | null> {
@@ -25,6 +30,7 @@ export async function resolveGoogleAccount(clients: { gmail: GmailClient; calend
       return (me.emailAddresses?.find(address => address.metadata?.primary) ?? me.emailAddresses?.[0])?.value;
     }],
   ];
+  const credentialErrors: CredentialError[] = [];
   for (const [service, attempt] of attempts) {
     if (!services.includes(service)) continue;
     signal?.throwIfAborted();
@@ -33,8 +39,11 @@ export async function resolveGoogleAccount(clients: { gmail: GmailClient; calend
       if (email && email.includes('@')) return email;
     } catch (error) {
       if (signal?.aborted) throw error;
+      if (error instanceof CredentialError) credentialErrors.push(error);
     }
   }
+  const refusal = credentialErrors.find(error => error.code === 'api_not_enabled') ?? credentialErrors[0];
+  if (refusal) throw refusal;
   return null;
 }
 

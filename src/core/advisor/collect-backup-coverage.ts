@@ -13,7 +13,7 @@
  */
 
 import { getBackupStatus } from '../backup/coverage.ts';
-import { backupCheckDisabled, backupNagGate, blockingAssetReasons, loadBackupStatus } from '../backup/status-file.ts';
+import { backupCheckDisabled, backupNagGate, blockingAssetReasons, currentBackupEvidence, loadBackupStatus } from '../backup/status-file.ts';
 import type { AdvisorCollector, AdvisorFinding } from './types.ts';
 
 export const collectBackupCoverage: AdvisorCollector = {
@@ -29,8 +29,10 @@ export const collectBackupCoverage: AdvisorCollector = {
     if (!local) {
       // Remote: cache-only read, aggregate wording, no nag writes (D4 — no
       // git subprocesses on a remote surface, ever).
-      const s = loadBackupStatus();
-      if (!s || s.overall !== 'warn') return [];
+      const raw = loadBackupStatus();
+      if (!raw) return [];
+      const s = currentBackupEvidence(raw, ctx.now.getTime());
+      if (s.overall !== 'warn') return [];
       // #5505: count the reasons that hold the warn, not only no_remote.
       const byReason = new Map<string, number>();
       for (const { reason } of blockingAssetReasons(s, 'aggregate')) byReason.set(reason, (byReason.get(reason) ?? 0) + 1);

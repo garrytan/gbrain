@@ -1,6 +1,7 @@
 import type { BrainEngine, LinkBatchInput } from './engine.ts';
 import { assertPageRevision, PageRevisionConflictError, RevisionBackfillPendingError, type PageSnapshot } from './page-state/types.ts';
 import { pipelined } from './page-state/transactions.ts';
+import { PageSourceMissingError } from './page-state/guards.ts';
 import { beliefCoveredSources, unmanagedBeliefPoint } from './belief/projection-point.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { pageSnapshotKey } from './page-snapshot-batch.ts';
@@ -76,14 +77,33 @@ export function isConcurrentLinkWriteConflict(error: unknown): boolean {
     || (error instanceof PageRevisionConflictError && !(error instanceof RevisionBackfillPendingError));
 }
 
-/** A deferring caller's outcome for one origin: written, left stale by a settings change, or by a concurrent write. */
-export type DeferredDerivedLinkOutcome = { created: number; removed: number } | 'settings_changed' | 'concurrent_write';
+/**
+ * A deferring caller's outcome for one origin: written, left stale by a settings change or a concurrent write, or
+ * (#6808) refused because the origin's source or a link target's source has no sources row (the missing source id).
+ */
+export type DeferredDerivedLinkOutcome = { created: number; removed: number } | 'settings_changed' | 'concurrent_write' | { unknownSource: string };
 
-/** replaceDerivedLinksUnlessSettingsChanged for a run that defers (and counts) pages a concurrent writer moved. */
+/** replaceDerivedLinksUnlessSettingsChanged for a run that defers (and counts) pages a concurrent writer moved or whose source is gone. */
 export async function replaceDerivedLinksDeferringConflicts(engine: Pick<BrainEngine, 'replaceDerivedLinks'>,
   ...args: Parameters<BrainEngine['replaceDerivedLinks']>): Promise<DeferredDerivedLinkOutcome> {
   try { return await replaceDerivedLinksUnlessSettingsChanged(engine, ...args) ?? 'settings_changed'; }
-  catch (error) { if (isConcurrentLinkWriteConflict(error)) return 'concurrent_write'; throw error; }
+  catch (error) {
+    if (error instanceof PageSourceMissingError) return { unknownSource: error.sourceId };
+    if (isConcurrentLinkWriteConflict(error)) return 'concurrent_write';
+    throw error;
+  }
+}
+
+/** #6808: a page a DB link drain deferred because a source it writes through has no sources row. */
+export interface UnknownSourceSkip { slug: string; source_id: string; missing_source: string }
+
+/** The operator line for unknown-source deferrals: unlike the lines above, re-running extraction does not clear them. */
+export function unknownSourceSkipLine(skips: readonly UnknownSourceSkip[]): string {
+  const missing = [...new Set(skips.map(s => s.missing_source))].sort();
+  const sample = skips.slice(0, 5).map(s => `${s.source_id}:${s.slug}`).join(', ');
+  return `Skipped ${skips.length} page(s) because source(s) ${missing.join(', ')} have no sources row (unknown_source; e.g. ${sample}); ` +
+    'their links and watermark were kept and the run is incomplete for them. Re-running extract does not fix this: re-register the source ' +
+    '(`gbrain sources list` shows the registered ones) or remove its pages.';
 }
 
 /** The operator line for pages a settings change left stale mid-run. */
@@ -214,7 +234,7 @@ export async function replaceDerivedLinksBatch(
  * Publish through replaceDerivedLinksBatch; when that transaction fails,
  * replay the origins one by one so every outcome is the unbatched one:
  * `settings_changed` for a settings-changed skip, `concurrent_write` for an
- * origin a concurrent writer moved (#6272), and any other failing origin's
+ * origin a concurrent writer moved (#6272), `{ unknownSource }` for a missing source (#6808), and any other failing origin's
  * error thrown (after `onError`) with the origins before it committed.
  */
 export async function replaceDerivedLinksBatchOrReplay(engine: Pick<BrainEngine, 'replaceDerivedLinks' | 'replaceDerivedLinksBatch'>,

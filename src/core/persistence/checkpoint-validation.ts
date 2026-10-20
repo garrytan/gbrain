@@ -81,6 +81,37 @@ export async function findIncompleteSyncReceipt(tx: Pick<BrainEngine, 'executeRa
   }
 }
 
+/** The pass stamp's validation statement (`findOpenPassWork`): `$1` the worktree, `$2` the stamp's own request id. */
+export const OPEN_PASS_WORK_SQL = `(SELECT r.request_id::text AS request_id FROM persistence_requests r
+    WHERE r.worktree_id=$1::uuid AND r.recovery IS NOT NULL LIMIT 1)
+  UNION ALL (SELECT r.request_id::text FROM persistence_requests r
+    WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running','recovering') AND r.request_id<>$2::uuid
+      AND r.intent->>'kind' IN ('managed_sync_import','managed_sync_delete','managed_sync_checkpoint') LIMIT 1)
+  LIMIT 1`;
+
+/**
+ * #6712 PR 4b (design v3.2 §3.3, clause 2): a live pass's stamp commits only with no recovery row on the worktree and no
+ * other open managed-sync request of it (page kinds and the checkpoint, filtered on the row). The open read is served by
+ * `persistence_requests_pending` (`worktree_id, sequence`, partial on `queued|running|recovering`); the recovery read by
+ * `persistence_requests_recovery`. Returns the blocking request id, or null. A statement timeout is the typed
+ * `checkpoint_validation_timeout`, as clause 1 of the cursor validation.
+ */
+export async function findOpenPassWork(tx: Pick<BrainEngine, 'executeRaw'>, worktreeId: string, selfRequestId: string,
+  /** A writeback's folded stamp: its own recovery record is the file publication's journal, which its commit resolves. */
+  ownRecovery = false): Promise<string | null> {
+  try {
+    const [row] = await tx.executeRaw<{ request_id: string }>(ownRecovery ? OPEN_PASS_WORK_SQL.replace('r.recovery IS NOT NULL LIMIT 1', 'r.recovery IS NOT NULL AND r.request_id<>$2::uuid LIMIT 1') : OPEN_PASS_WORK_SQL,
+      [worktreeId, selfRequestId]);
+    return row?.request_id ?? null;
+  } catch (error) {
+    const failure = error as { code?: string; message?: string };
+    if (failure?.code !== '57014' || !/statement timeout/.test(String(failure.message))) throw error;
+    throw opError(CHECKPOINT_VALIDATION_TIMEOUT, CHECKPOINT_VALIDATION_TIMEOUT_MESSAGE,
+      'Page writes this sync pass already committed stay committed; only its stamp did not. This usually means the request table lacks its lookup indexes: preview that repair and apply it after the user approves, then sync again.',
+      { fix: { argv: ['gbrain', 'repair', 'request-indexes', '--json'], consent: [], actor: 'agent', why: 'Previews the missing request-table indexes without changing anything.', requires_exclusive: false } });
+  }
+}
+
 /**
  * #6735: `findIncompleteSyncReceipt` as a resume asks it, outside the coordinator: a timeout reads as no known blocker,
  * so the revived checkpoint is validated again inside its own publication instead of the manifest being rediscovered.

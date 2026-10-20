@@ -1,12 +1,13 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { writeFileSync, mkdirSync, rmSync, symlinkSync, readdirSync, readFileSync, existsSync } from 'fs';
+import { writeFileSync, mkdirSync, rmSync, symlinkSync, readdirSync, readFileSync, existsSync, mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { importFile, importFromContent } from '../src/core/import-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../src/core/chunkers/recursive.ts';
 import { CODE_FILE_MAX_BYTES, PAGE_MAX_BYTES } from '../src/core/page-size-policy.ts';
 
-const TMP = join(import.meta.dir, '.tmp-import-test');
+const TMP = mkdtempSync(join(tmpdir(), 'gbrain-import-file-test-'));
 
 // Minimal mock engine that tracks calls and supports transaction()
 //

@@ -253,10 +253,11 @@ describe('sync freshness (#6858 ask 6)', () => {
       const json = JSON.parse((await capture(['--json'])).join('\n')) as Record<string, unknown>;
       const core = await readSyncStatus(engine, f.id, {});
       const added = Object.keys(json).filter(k => !(k in core)).sort();
-      expect(added).toEqual(['capacity', 'freshness', ...(json.notices ? ['notices'] : [])].sort());
+      expect(added).toEqual(['capacity', 'freshness', 'notifier', ...(json.notices ? ['notices'] : [])].sort());
       expect(json.freshness).toMatchObject({ source_id: f.id, commit_to_searchable: { samples: 1, p50_seconds: 12, p95_seconds: 12 } });
       const human = await capture([]);
       expect(human.filter(l => l.startsWith('  freshness: '))).toEqual(['  freshness: commit→searchable p50 12s, p95 12s (1 page(s), last 24 h); commit→embedded no samples (0 page(s), 0 pending)']);
+      expect(human.filter(l => l.startsWith(`  notifier for ${f.id}:`))).toHaveLength(1);
     }
   }), 120_000);
 

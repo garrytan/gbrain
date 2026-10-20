@@ -108,6 +108,10 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
           next: { command: `gbrain jobs get ${live.id} --json`, safe_to_loop: true, retry_after_ms: 30_000, why: `Sync job #${live.id} is draining source ${sourceId ?? 'default'}; it resumes the cursor, so nothing else needs to run.` } };
       }
     }
+    // GBRA-133 PR 2a: the wanted markers this run can satisfy, read before it starts; after the run each is cleared
+    // only if nobody re-recorded it meanwhile (generation), and anything still due gets one follow-up job.
+    const { readMarkersForRun, settleRunMarkers, recordBusyMarker } = await import('../../notifier/handoff.ts');
+    const markersRead = await readMarkersForRun(engine, sourceId ?? 'default');
     let result;
     try {
       result = await performSync(engine, {
@@ -135,6 +139,8 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
         const holder = read && read.kind !== 'unknown' ? read : null;
         const runningJob = holder?.kind === 'job' && holder.id && /^\d+$/.test(holder.id) ? Number(holder.id) : null;
         console.error(`[sync] skipped: sync already in progress for ${id} (lock ${err.lockKey} held${holder ? ` by a ${holder.kind} drainer` : ''}).`);
+        // GBRA-133 PR 2a: the newer commit this job was for is recorded as wanted; the holder's run re-checks it.
+        await recordBusyMarker(engine, id, { pull: !noPull });
         // A job result is readable by remote callers (get_job), so it carries the public holder: kind and times only.
         return { skipped: true, reason: 'sync_in_progress', source_id: id, ...(holder ? { holder: publicDrainHolder(holder) } : {}),
           ...(runningJob !== null ? { running_job_id: runningJob, next: { command: `gbrain jobs get ${runningJob} --json`, safe_to_loop: true, retry_after_ms: 30_000,
@@ -212,6 +218,8 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
       throw new UnrecoverableError(`Managed sync of source ${sourceId ?? 'default'} is ${result.status === 'blocked_by_failures' ? 'blocked' : 'stopped'}`
         + ` (${drain?.stop_reason ?? result.status}${drain?.remaining != null ? `, ${drain.remaining} entries left` : ''}). ${next?.why ?? ''}${next?.command ? ` Next: ${next.command}` : ''}`.trim());
     }
-    return { ...result, ...drained, embed_job_id: embedJobId, embed_skip_reason: embedSkipReason, ...(embedNotice ? { notice: embedNotice } : {}) };
+    const followUp = drained.incomplete === true ? null : await settleRunMarkers(engine, sourceId ?? 'default', markersRead, { pulled: !noPull, full: false });
+    return { ...result, ...drained, embed_job_id: embedJobId, embed_skip_reason: embedSkipReason, ...(embedNotice ? { notice: embedNotice } : {}),
+      ...(followUp ? { marker_follow_up: followUp } : {}) };
   };
 }

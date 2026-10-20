@@ -3,7 +3,9 @@
  * sync forever. Discovery now stages it: the furthest first-parent commit whose delta fits, found by a forward gallop that
  * verifies every candidate (a net delta is not monotone along history, so binary search has no valid predicate); a drain
  * then takes stage after stage to HEAD. One commit above the bound is pinned and cut into path slices (#6349 P4.4,
- * `test/sync-full-cursor-slices-6349.test.ts`). The bound is lowered through the test seam. Synthetic content only.
+ * `test/sync-full-cursor-slices-6349.test.ts`). The bound is lowered through the test seam. #6712 PR 4b: only the dry run's
+ * discovery still stages; a source's writes run by the live pass, so the real-brain test checks that a backlog past the
+ * bound converges to HEAD with the page set of an unbounded sync. Synthetic content only.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
@@ -105,48 +107,6 @@ describe('staged managed catch-up on a real brain', () => {
       expect(await lastCommit()).toBe(head);
       expect(await pages()).toEqual(['notes/a', 'notes/b2', 'notes/base', 'notes/e', 'notes/f', 'notes/g']);
       expect((await engine.getPage('notes/a', { sourceId: id }))?.compiled_truth).toContain('Edited twice.');
-    }
-  }), 300_000);
-
-  test('a stage stopped mid-way resumes from its stored cursor; then the next stage reaches HEAD', () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
-    for (const engine of engines) {
-      const { r, opts, pages, lastCommit } = await managedSource(engine);
-      r.write('a'); r.write('b'); const c1 = r.commit('add 2');
-      r.write('c'); r.write('d'); const head = r.commit('add 2 more');
-      _setCursorBoundForTest({ entries: 3, bytes: 1024 ** 2 });
-      const abort = new AbortController();
-      let committed = 0;
-      const first = await drainManagedSync(engine, { ...opts, signal: abort.signal, onProgress: event => { if (event.phase === 'managed_sync.page_committed' && ++committed === 1) abort.abort(); } }, false);
-      expect(first.drain?.outcome).not.toBe('synced');
-      expect(first.toCommit).toBe(c1);
-      const resumed = await drainManagedSync(engine, opts, false);
-      expect(resumed).toMatchObject({ toCommit: c1, staged: { target: c1, head } });
-      expect(await lastCommit()).toBe(c1);
-      const finished = await drainManagedSync(engine, opts, false);
-      expect(finished.staged).toBeUndefined();
-      expect(await lastCommit()).toBe(head);
-      expect(await pages()).toEqual(['notes/a', 'notes/b', 'notes/base', 'notes/c', 'notes/d']);
-    }
-  }), 300_000);
-
-  test('the byte bound stages too, and one commit above the bound is pinned and path-sliced (#6349 P4.4) instead of refused', () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
-    for (const engine of engines) {
-      const { r, opts, lastCommit, pages } = await managedSource(engine);
-      const before = await lastCommit();
-      for (const n of ['p', 'q', 'r', 's']) r.write(n);
-      const big = r.commit('add 4 in one commit');
-      _setCursorBoundForTest({ entries: 3, bytes: 1024 ** 2 });
-      const sliced = await drainManagedSync(engine, opts, false);
-      expect(sliced.staged).toMatchObject({ target: big, head: big, slice: { phase: 'import', after: 'notes/r.md' } });
-      expect(await lastCommit()).toBe(before);
-      expect((await drainManagedSync(engine, opts, false)).staged).toBeUndefined();
-      expect(await lastCommit()).toBe(big);
-      expect(await pages()).toEqual(['notes/base', 'notes/p', 'notes/q', 'notes/r', 'notes/s']);
-      // The byte bound: ample entries, but only one entry's worth of bytes per stage.
-      _setCursorBoundForTest({ entries: 100, bytes: 120 });
-      r.write('x'); const c1 = r.commit('x'); r.write('y'); r.commit('y');
-      const staged = await drainManagedSync(engine, opts, false);
-      expect(staged.staged?.target).toBe(c1);
     }
   }), 300_000);
 });

@@ -28,11 +28,6 @@ export interface SyncResult {
    * not set them (`gbrain embed --stale` / `gbrain extract --stale` settle the pages they skipped).
    */
   inherited_options?: Array<'noEmbed' | 'noExtract' | 'noSchemaPack'>;
-  /** #6712 PR 1: this run finished a cursor another writer, or an older key, started, under that run's frozen options (shown to local callers). */
-  cursorAdopted?: { writer_changed: boolean; legacy_key: boolean; sync_options?: import('../core/persistence/sync-prepare.ts').SyncCursorOptions | null;
-    processing_options?: import('../core/persistence/sync-authority.ts').SyncProcessingOptions | null };
-  /** #6712 PR 1: older-key cursors of the incarnation this run's fan-in folded (`retained`: left while a request under them is open). */
-  cursorFanIn?: { adopted: boolean; superseded: number; retained: number };
   /** #6693: caller remembers refused while their page's file awaited import (or was held), replayed after this sync imported it. */
   replayedRemembers?: import('../core/repair/failed-writes.ts').ImportReplayReport;
   /** #6712 PR 2 (L4): live pages whose canonical file is gone (ghost pages), counted after a managed sync with the read-only repair preview; sync never deletes them. */
@@ -112,7 +107,10 @@ export interface SyncResult {
    * cron operators can disambiguate timeout vs pull-timeout in monitoring; connector item failures / early stop exit 1 (isFailedPartial).
    */
   filesImported?: number;
-  reason?: 'timeout' | 'pull_timeout' | 'pull_failed' | 'stall_timeout' | 'checkpoint_unavailable' | 'writer_pending' | 'writer_yield' | 'connector_item_failures' | 'connector_partial' | 'drain_lease_held';
+  reason?: 'timeout' | 'pull_timeout' | 'pull_failed' | 'stall_timeout' | 'checkpoint_unavailable' | 'writer_pending' | 'writer_yield' | 'connector_item_failures' | 'connector_partial' | 'drain_lease_held' | import('../core/persistence/sync-pass-row.ts').PassResultReason;
+  /** #6712 PR 4b: the live pass behind this result (`PassResultSummary`); `reconcile` is a remote caller's `reconcile_host_required` detail (design §5). */
+  pass?: import('../core/persistence/sync-pass-row.ts').PassResultSummary;
+  reconcile?: import('../core/persistence/sync-pass-apply.ts').RemoteReconcile;
   /**
    * v0.42.x (#1794): cumulative file paths durably banked to the checkpoint
    * across THIS run + prior resumed runs. Surfaced on every partial/blocked
@@ -168,6 +166,8 @@ export {
 } from '../core/sync-cost-gate.ts';
 
 export interface SyncOpts {
+  /** #6712 PR 4b (design §7): the owner approved this sync's paid work (`--yes`); an unknown pass cost no longer defers it. */
+  costApproved?: boolean;
   repoPath?: string;
   dryRun?: boolean;
   full?: boolean;

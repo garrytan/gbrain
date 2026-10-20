@@ -170,6 +170,15 @@ describe('source scope strategy: walk overfetch, walk skip and scope scan', () =
     expect(indexWalkOverfetch(INDEX_WALK_MIN_SCOPE_SHARE / 10)).toBe(50);
   });
 
+  test('#6728 a scope covering every source walks with the base overfetch despite float4 frequency rounding', () => {
+    const float4: PageSourceStats = { sources: ['default', 'second'], freqs: [0.81954885, 0.18045112], n_distinct: 2, null_frac: 0, reltuples: 663 };
+    expect(sourceScopeShare(float4, { sourceIds: ['default', 'second'] })).toBe(1);
+    expect(indexWalkOverfetch(sourceScopeShare(float4, { sourceIds: ['default', 'second'] }))).toBe(2);
+    expect(sourceScopeShare(float4, { sourceIds: ['second'] })).toBeCloseTo(0.18045112, 6);
+    const over: PageSourceStats = { sources: ['a', 'b'], freqs: [0.6, 0.40000004], n_distinct: 2, null_frac: 0, reltuples: 100 };
+    expect(sourceScopeShare(over, { sourceIds: ['a', 'b'] })).toBe(1);
+  });
+
   test('an unscoped or whole-brain scope keeps the walk byte-identical; a partial share only changes its LIMIT factor', () => {
     for (const dialect of ['postgres', 'pglite'] as const) {
       const unscoped = build({ sourceId: 'notes', excludePrivate: true }, dialect);

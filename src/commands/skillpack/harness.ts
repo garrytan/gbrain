@@ -619,7 +619,9 @@ export async function cmdRemove(args: string[]): Promise<void> {
         'Remove files the harness bridge WROTE (the bridge-state ledger) — never\n' +
         'your own files: pre-existing and locally-created files were never\n' +
         'recorded as owned. Without --skill, removes every owned skill for the\n' +
-        '(harness, dest). Shared convention files stay (other skills use them).\n\n' +
+        '(harness, dest). Shared convention files stay (other skills use them);\n' +
+        'once no owned skill is left, the shared-skills migration no longer\n' +
+        'counts them as legacy copies.\n\n' +
         'This is NOT the removed-in-v0.33 workspace uninstall: workspace scaffolds\n' +
         'are user-owned outright (delete their directories yourself).',
     );

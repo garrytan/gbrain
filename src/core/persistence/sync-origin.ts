@@ -43,11 +43,14 @@ export function sameSyncOrigin(stored: string, origin: string, context?: SyncOri
   return recorded === expected || !nested;
 }
 
+/** An empty, `.` or `..` segment of a `/`-separated path (a per-call test: sync validates every origin of a large level, so no split). */
+const UNCONFINED_SEGMENT = /(?:^|\/)\.{0,2}(?:\/|$)/;
+
 export function syncOriginPath(path: string, platform = process.platform): string {
   const normalized = platform === 'win32' ? path.replaceAll('\\', '/') : path;
   if (!normalized || normalized.includes('\0') || normalized.startsWith('/') ||
       platform === 'win32' && normalized.split('/').some(part => /[<>:"|?*]|[. ]$/.test(part) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part)) ||
-      normalized.split('/').some(part => !part || part === '.' || part === '..')) {
+      UNCONFINED_SEGMENT.test(normalized)) {
     throw opError('page_identity_changed', 'The stored sync origin is not a confined relative path.',
       `The stored source path ${JSON.stringify(path)} is empty, absolute, or escapes the checkout, so sync refused to use it. Inspect the source's writer status and report it to the user; the page origin must be repaired, not overwritten.`);
   }
@@ -90,15 +93,17 @@ export function sharedOriginExit(sourceId: string, slugs: readonly string[]): st
   return `Soft-delete the page that should not own the file (gbrain delete <slug> --source-id ${sourceId} --expected-revision <rev>, one of ${slugs.join(', ')}): a page whose file another live page records is hidden without touching the file, which the surviving page keeps.`;
 }
 
+/** `assertSyncPageOrigin`'s read (the POSIX spelling): the source's pages recording one of the candidate origins. */
+export const SYNC_ORIGIN_PAGES_SQL = 'SELECT id,slug,source_path,deleted_at FROM pages WHERE source_id=$1 AND source_path=ANY($2::text[])';
+
 export async function assertSyncPageOrigin(engine: BrainEngine, sourceId: string, sourcePath: string, pageId: number | null, requireOrigin = false,
   context?: SyncOriginScope): Promise<void> {
   const origin = syncOriginPath(sourcePath);
   const legacy = legacySyncOrigin(context, origin);
   const candidates = [origin, ...(legacy ? [legacy] : [])];
-  const pathSql = process.platform === 'win32' ? "lower(replace(source_path,chr(92),'/'))=ANY($2::text[])" : 'source_path=ANY($2::text[])';
   const key = (path: string) => process.platform === 'win32' ? syncOriginPath(path).toLowerCase() : syncOriginPath(path);
-  const rows = await engine.executeRaw<{ id: number; slug: string; source_path: string; deleted_at: Date | string | null }>(
-    `SELECT id,slug,source_path,deleted_at FROM pages WHERE source_id=$1 AND ${pathSql}`, [sourceId, candidates.map(key)]);
+  const rows = await engine.executeRaw<{ id: number; slug: string; source_path: string; deleted_at: Date | string | null }>(process.platform === 'win32'
+    ? "SELECT id,slug,source_path,deleted_at FROM pages WHERE source_id=$1 AND lower(replace(source_path,chr(92),'/'))=ANY($2::text[])" : SYNC_ORIGIN_PAGES_SQL, [sourceId, candidates.map(key)]);
   const pages = rows.filter(page => legacy === null || key(page.source_path) !== key(legacy) || sameSyncOrigin(page.source_path, origin, context, page.slug));
   const { winner, ambiguous } = selectOriginClaimant(pages);
   if (ambiguous || requireOrigin && pageId !== null && !winner ||

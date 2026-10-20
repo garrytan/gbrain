@@ -107,6 +107,21 @@ export function statusForVersion(
 }
 
 /** Consecutive `partial` entries at the end of one version's ledger history: the wedge counter. A `retry` or `complete` entry resets it. */
+/**
+ * #6796: the latest ledger row for the version is `complete` but recorded
+ * `apply_migrations_pending`: the mechanical checkpoint landed and host work
+ * (publication, client activation) is still outstanding.
+ */
+export function hostWorkPendingForVersion(version: string, byVersion: Map<string, CompletedMigrationEntry[]>): boolean {
+  const latest = byVersion.get(version)?.at(-1);
+  return latest?.status === 'complete' && latest.apply_migrations_pending === true;
+}
+
+/** Read-only next step for host work a migration left pending: its per-source inventory. */
+export function hostWorkInspectArgv(version: string): string[] {
+  return ['gbrain', 'apply-migrations', '--migration', version, '--dry-run', '--json'];
+}
+
 export function trailingPartialCount(entries: readonly CompletedMigrationEntry[]): number {
   let consecutive = 0;
   for (let i = entries.length - 1; i >= 0 && entries[i].status === 'partial'; i--) consecutive++;

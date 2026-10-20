@@ -8,8 +8,12 @@
  * Protects:
  * - an alias bomb whose provenance says a validating older gbrain imported those exact bytes, re-screened on a full
  *   listing: held `frontmatter_alias_limit` alone, the other files import, the run is not stopped, nothing is expanded;
- * - an ordinary `invalid_frontmatter` refusal (no marker) under the same provenance still stops the run with
- *   `sync_parser_regression` under the default policy.
+ * - the alias hold takes precedence over the parser-regression policy: held the same way under the default and under
+ *   `GBRAIN_SYNC_PARSER_REGRESSION=stop`;
+ * - regression guard: an ordinary `invalid_frontmatter` refusal (no marker, still refused when screened without a schema
+ *   pack) under a provenance from a different gbrain version still stops the run with `sync_parser_regression` under
+ *   `GBRAIN_SYNC_PARSER_REGRESSION=stop`, and (GBRA-108 default flip) is held `parser_regression` alone with nothing set,
+ *   while the rest syncs.
  *
  * Six-level bomb only (~530k nodes once expanded, refused before anything walks it); never build a nine-level value.
  * PGLite here; Postgres through test/e2e/sync-alias-limit-hold-6712-postgres.test.ts.
@@ -19,11 +23,13 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { screenImportContent } from '../src/core/import-screen.ts';
 import { readGitSourceHolds, SYNC_IMPORT_PROVENANCE_OP } from '../src/core/persistence/sync-holds.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const commit = (root: string, message: string) => { git(root, 'add', '-A'); git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', message); };
@@ -56,7 +62,7 @@ for (const backend of testBackends()) {
   const brain = (run: Parameters<typeof managedBrain>[0]) => managedBrain(run, { ...(databaseUrl ? { databaseUrl } : {}), setup });
 
   describe(`#6712 PR 4b alias-limit refusals of validated bytes (${backend})`, () => {
-    test('a stored alias bomb a validating older gbrain imported is held frontmatter_alias_limit alone on a full re-screen; the rest syncs', () => brain(async ({ engine, root }) => {
+    for (const policy of [undefined, 'stop'] as const) test(`a stored alias bomb a validating older gbrain imported is held frontmatter_alias_limit alone on a full re-screen; the rest syncs${policy ? ` (GBRAIN_SYNC_PARSER_REGRESSION=${policy})` : ''}`, () => brain(async ({ engine, root }) => withEnv({ GBRAIN_SYNC_PARSER_REGRESSION: policy }, async () => {
       expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
       writeFileSync(join(root, 'notes/target.md'), BOMB_6); writeFileSync(join(root, 'notes/new.md'), note('New')); commit(root, 'bomb and new');
       await provenanceClaims(engine, 'notes/target', BOMB_6);
@@ -67,15 +73,29 @@ for (const backend of testBackends()) {
       expect((await engine.getPage('notes/new', { sourceId: 'default' }))?.compiled_truth).toContain('Body of New.');
       expect((await engine.getPage('notes/target', { sourceId: 'default' }))?.compiled_truth).toContain('Body of Target.');
       expect(await largestFrontmatter(engine)).toBeLessThan(10_000);
-    }), 180_000);
+    })), 180_000);
 
-    test('an ordinary invalid_frontmatter refusal of validated bytes (no marker) still stops the run with sync_parser_regression', () => brain(async ({ engine, root }) => {
+    test('regression guard (a different version, no marker, refused without the pack): validated bytes refused invalid_frontmatter still stop the run with sync_parser_regression under GBRAIN_SYNC_PARSER_REGRESSION=stop', () => brain(async ({ engine, root }) => withEnv({ GBRAIN_SYNC_PARSER_REGRESSION: 'stop' }, async () => {
+      const bare = screenImportContent({ content: FOLDED, path: 'notes/target.md' });
+      expect(bare.status === 'refused' ? { code: bare.refusal.code, intended: bare.refusal.intended ?? null } : bare).toEqual({ code: 'invalid_frontmatter', intended: null });
       expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
       writeFileSync(join(root, 'notes/target.md'), FOLDED); commit(root, 'fold target');
       await provenanceClaims(engine, 'notes/target', FOLDED);
       const before = await lastCommit(engine);
       await expect(performManagedSync(engine, { ...OPTS, full: true })).rejects.toMatchObject({ code: 'sync_parser_regression' });
       expect(await lastCommit(engine)).toBe(before);
-    }), 180_000);
+    })), 180_000);
+
+    test('GBRA-108 default flip: with GBRAIN_SYNC_PARSER_REGRESSION unset, the same regression is held parser_regression alone and the rest syncs', () => brain(async ({ engine, root }) => withEnv({ GBRAIN_SYNC_PARSER_REGRESSION: undefined }, async () => {
+      expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+      writeFileSync(join(root, 'notes/target.md'), FOLDED); writeFileSync(join(root, 'notes/new.md'), note('New')); commit(root, 'fold target and new');
+      await provenanceClaims(engine, 'notes/target', FOLDED);
+      const result = await performManagedSync(engine, { ...OPTS, full: true });
+      expect(result.held?.map(hold => ({ path: hold.path, code: hold.code }))).toEqual([{ path: 'notes/target.md', code: 'parser_regression' }]);
+      expect(await holds(engine)).toEqual([{ path: 'notes/target.md', code: 'parser_regression' }]);
+      expect(await lastCommit(engine)).toBe(git(root, 'rev-parse', 'HEAD'));
+      expect((await engine.getPage('notes/new', { sourceId: 'default' }))?.compiled_truth).toContain('Body of New.');
+      expect((await engine.getPage('notes/target', { sourceId: 'default' }))?.compiled_truth).toContain('Body of Target.');
+    })), 180_000);
   });
 }

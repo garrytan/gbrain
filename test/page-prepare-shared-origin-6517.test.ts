@@ -33,6 +33,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations, OperationError, type OperationContext } from '../src/core/operations.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { shadowConvergence } from '../src/core/persistence/sync-pass.ts';
 import { readReconcileState } from '../src/core/persistence/reconcile-state.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -137,7 +138,7 @@ for (const backend of testBackends()) describe(`[${backend}] #6517 delete of a s
     expect((await page(f.id, 'alpha-twin'))!.deleted_at).not.toBeNull();
   }, 120_000);
 
-  test('[R8] deleting the page the file was synced into keeps the file for the twin; sync holds the twin file_drift and repair file-drift --prefer file imports the file', async () => {
+  test('[R8] deleting the page the file was synced into keeps the file for the twin; a full sync leaves the twin legacy_unverified and repair file-drift --prefer file imports the file', async () => {
     const f = await twins('path');
     const result = await (await del(f.id, 'alpha'))();
     expect(result).toMatchObject({ state: 'committed', status: 'soft_deleted', write_through: { written: false, skipped: 'shared_origin' } });
@@ -150,15 +151,16 @@ for (const backend of testBackends()) describe(`[${backend}] #6517 delete of a s
     // The kept file still holds the deleted page's text and is unchanged in git, so an incremental sync has nothing to import.
     expect((await withEnv(env, () => performManagedSync(engine, f.opts))).status).toBe('up_to_date');
     expect((await page(f.id, 'alpha-twin'))!.compiled_truth).toBe('A twin recording alpha.');
-    // #6712 PR 1 (eng-review finding): the twin has no import record and differs from the file, so a tree walk holds it
-    // file_drift instead of overwriting it; the hold's fix leads with the same repair as the receipt.
-    const held = await withEnv(env, () => performManagedSync(engine, { ...f.opts, full: true }));
-    expect(held.managedWrite).toBeUndefined();
-    expect((held.held ?? []).map(item => [item.path, item.code, item.slug])).toEqual([['alpha.md', 'file_drift', 'alpha-twin']]);
-    const fix = held.held![0]!.fix;
-    expect(fix.argv).toEqual(repair);
-    // No fix text the run returns (the hold's fix, its follow-up steps, the run's next steps) tells the survivor to run --full.
-    expect(JSON.stringify(held)).not.toContain('--full');
+    // #6712 PR 4b (design v3.2 §2.3 row 17, §2.7): the twin has no import record, no proof and a file unchanged since the
+    // baseline, so a full pass settles it legacy_unverified, counted and never overwritten; it surfaces as a Decision only if
+    // the file then changes. The receipt's repair above stays the way to import the file into the survivor.
+    const full = await withEnv(env, () => performManagedSync(engine, { ...f.opts, full: true }));
+    expect(full).toMatchObject({ status: 'synced', filesImported: 0, pass: { kind: 'full', outcome: 'synced' } });
+    expect(full.managedWrite).toBeUndefined();
+    expect(full.held ?? []).toEqual([]);
+    expect((await withEnv(env, () => shadowConvergence(engine, { sourceId: f.id })))?.counts).toEqual({ legacy_unverified: 1 });
+    // Nothing the run returns tells the survivor to run --full.
+    expect(JSON.stringify(full)).not.toContain('--full');
     expect((await page(f.id, 'alpha-twin'))!.compiled_truth).toBe('A twin recording alpha.');
     const logger = { info() {}, warn() {}, error() {} };
     await withEnv(env, async () => {

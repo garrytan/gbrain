@@ -5,6 +5,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { importFromContent, type ParsedPage } from '../import-file.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
+import { alignWithStored } from './align-stored.ts';
 import { parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, restoreHiddenFactRows, type ParsedFact } from '../facts-fence.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
@@ -24,6 +25,7 @@ import { stabilizeSafetyAssessments } from './reconcile-safety.ts';
 import { ABSENT_FILE_HASH, assertReconcilePins, readReconcileState, reconcileFileReading, reconcileReadOptions, staleReconcile, validateReconcileArtifact, type ReconcileState } from './reconcile-state.ts';
 import { verifyReconcileBackup } from './reconcile-backup.ts';
 import { assertAutoDecisions } from './reconcile-additive.ts';
+import { admissionAllows, readSyncAdmission } from './sync-admission.ts';
 import { bindOrigin } from './origin-guard.ts';
 
 const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page ${slug} in source ${sourceId} as stored now, with its revision, read-only.`,
@@ -116,11 +118,26 @@ export async function prepareReconcileResult(engine: BrainEngine, state: Reconci
   return { ...merged, result: resolved, ready, project };
 }
 
+/**
+ * #6712 PR 4b (design v3.2 §8 fencing point 2): a keep_db reconcile (`intent.keepDb`, admitted by the sync pass) re-reads
+ * `sync.admission` at preparation and inside the publication transaction; when it is not `normal` the request completes
+ * `cancelled` with `admission_paused` (coordinator.ts) and nothing is written. The path is a candidate again on the next pass.
+ */
+async function assertKeepDbAdmission(engine: Pick<BrainEngine, 'executeRaw'>, row: WriteRequest): Promise<void> {
+  if (!row.intent?.keepDb) return;
+  const admission = await readSyncAdmission(engine);
+  if (admissionAllows(admission, 'destructive')) return;
+  throw opError('admission_paused', `sync.admission is ${admission}, so this keep_db write was cancelled before it published.`,
+    `Nothing was written to ${row.slug} in source ${row.source_id}. keep_db writes resume when sync.admission is normal again (gbrain config set sync.admission normal); the next sync pass admits this page again.`,
+    { fix: readFix('Shows the sync admission switch and what the newest pass paused, read-only.', { argv: ['gbrain', 'sync', 'status', '--source', row.source_id, '--json'] }) });
+}
+
 export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig): Promise<PreparedMutation> {
   if (row.operation !== 'put_page' || row.intent?.kind !== 'canonical_reconcile' || row.authority.remote !== false || row.authority.principal.kind !== 'local_cli') {
     throw trustedCliRequired('Canonical reconciliation requires trusted local administration.');
   }
   await authorizeStoredRequest(engine, row);
+  await assertKeepDbAdmission(engine, row);
   const artifact = validateReconcileArtifact(row.intent.preview);
   const reference = row.intent.backup_reference;
   if (typeof reference !== 'string') throw opError('storage_error', 'Reconciliation has no retained preimages.',
@@ -152,6 +169,7 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
     noop: ready.noop && sha256(content) === state.pins.raw_file_hash && state.origin === 'recorded',
     validate: async tx => {
       await authorizeStoredRequest(tx, row, true);
+      await assertKeepDbAdmission(tx, row);
       assertReconcilePins(artifact.preconditions, (await readReconcileState(tx, row.source_id, row.slug, artifact.preconditions.assessment_at, adopt)).pins);
       verifyReconcileBackup(reference, artifact);
       await ready.validate(tx);
@@ -169,7 +187,7 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
       const scanStateTransferred = final ? await transferLegacyAtomPageState(tx, state.snapshot, final) : false;
       const reading = reconcileFileReading(readFileSync(state.path, 'utf8'), state.importPath, final?.page ?? state.snapshot.page);
       const file = parseMarkdown(reading.content, row.slug);
-      if (reading.inferred && final) file.type = final.page.type;
+      if (final) alignWithStored(file, final.page, reading.inferred);
       if (!sameCanonicalImport(final, prepared.result) || digest(reconcileCanonical(file, file.tags)) !== artifact.result_digest) {
         throw opError('storage_error', 'Reconciliation canonical readback did not match the reviewed result.',
           `After publishing, ${row.slug} in source ${row.source_id} read back differently from the reviewed result, so the database change rolled back and the owner's recovery restores the file. Inspect request ${row.request_id}'s receipt before anything else and do not apply the preview again until it is terminal.`,

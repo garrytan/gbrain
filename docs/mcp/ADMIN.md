@@ -401,6 +401,7 @@ gbrain auth rescope --token agent-example --operations get_page,search,query
 gbrain auth rescope --token agent-example --sources none        # deny-all
 gbrain auth rescope --token agent-example --reset-default sources,takes-holders
 gbrain auth rescope --id TOKEN_ID --sources default --if-version 3 --dry-run --json
+gbrain auth rescope --client CLIENT_ID                       # print the stored grants, no change
 gbrain auth rescope --client CLIENT_ID --sources workspace,default --operations get_page,search
 gbrain auth rescope --client CLIENT_ID --takes-holders world,brain
 gbrain auth rescope --client CLIENT_ID --sources none          # deny-all, secret unchanged

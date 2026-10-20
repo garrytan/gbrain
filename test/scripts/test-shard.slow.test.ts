@@ -180,10 +180,11 @@ describe('test-shard.sh — LPT balance contract', () => {
     const yaml = require('js-yaml');
     const wf = yaml.load(
       fs.readFileSync(resolve(REPO_ROOT, '.github/workflows/test.yml'), 'utf8'),
-    ) as { jobs: { test: { strategy: { matrix: { shard: unknown[] } } } } };
-    const matrix = wf.jobs.test.strategy.matrix.shard;
-    expect(Array.isArray(matrix)).toBe(true);
-    expect(matrix.length).toBe(CI_SHARDS);
+    ) as { jobs: { test: { strategy: { matrix: { shards: number[][] } } } } };
+    // Each job runs a pack of shards (scripts/test-shard-pack.sh); together they are 1..CI_SHARDS.
+    const packs = wf.jobs.test.strategy.matrix.shards;
+    expect(Array.isArray(packs)).toBe(true);
+    expect(packs.flat()).toEqual(Array.from({ length: CI_SHARDS }, (_, i) => i + 1));
   });
 
   it(`${CI_SHARDS}-shard wallclock imbalance ratio ≤ 1.5 (the configuration CI actually runs)`, () => {

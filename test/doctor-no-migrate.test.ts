@@ -20,8 +20,9 @@ import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { fileURLToPath } from 'node:url';
 
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 const SKIP = process.env.GBRAIN_TEST_SKIP_SUBPROCESS === '1';
 
 async function runCli(

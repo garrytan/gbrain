@@ -54,7 +54,7 @@ import type {
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
   FactRow, FactInsertStatus,
-  NewFact, FactListOpts, FactsHealth,
+  NewFact, FactListOpts, RecallFactReadOpts, FactsHealth,
   SourceRow,
 } from './engine.ts';
 import { DREAM_VERDICT_TTL_SECONDS, clampSearchLimit, type TransactionOptions } from './engine.ts';
@@ -2461,7 +2461,7 @@ export class PGLiteEngine implements BrainEngine {
   async listFactsSince(
     source_id: string,
     since: Date,
-    opts?: FactListOpts & { entitySlug?: string; sessionId?: string },
+    opts?: RecallFactReadOpts,
   ): Promise<FactRow[]> {
     return factsImpl.listFactsSince(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, since, opts);
   }
@@ -2469,7 +2469,7 @@ export class PGLiteEngine implements BrainEngine {
   async listFactsKeyset(
     source_id: string,
     after: { createdAt: string; id: number | null } | null,
-    opts?: FactListOpts,
+    opts?: RecallFactReadOpts,
   ): Promise<FactRow[]> {
     return factsImpl.listFactsKeyset(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, after, opts);
   }

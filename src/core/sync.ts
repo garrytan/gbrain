@@ -77,7 +77,8 @@ interface SyncableOptions {
 // Kept as-is for now for `isAllowedByStrategy` fast-path + tests that
 // structurally reference it. Derived from the chunker's language map at
 // module load, not hardcoded.
-const CODE_EXTENSIONS = new Set<string>([
+/** Each entry is a dot and a dot-free suffix, so a path is code exactly when the suffix from its last dot is one (`isCodeFilePath`). */
+export const CODE_EXTENSIONS: ReadonlySet<string> = new Set<string>([
   '.ts', '.tsx', '.mts', '.cts',
   '.js', '.jsx', '.mjs', '.cjs',
   '.py',
@@ -254,10 +255,8 @@ export function buildSyncManifest(gitDiffOutput: string): SyncManifest {
 
 export function isCodeFilePath(path: string): boolean {
   const lower = path.toLowerCase();
-  for (const ext of CODE_EXTENSIONS) {
-    if (lower.endsWith(ext)) return true;
-  }
-  return false;
+  const dot = lower.lastIndexOf('.');
+  return dot >= 0 && CODE_EXTENSIONS.has(lower.slice(dot));
 }
 
 /**

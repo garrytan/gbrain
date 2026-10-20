@@ -1,4 +1,4 @@
-/** Real CLI → resident owner import, SIGKILL, and same-cursor recovery. */
+/** Real CLI → resident owner import, SIGKILL, and recovery by the next live pass (#6712 PR 4b). */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -12,6 +12,7 @@ import { persistenceSocketPathForConfig, requestPersistenceCapabilities,
   type PersistenceIpcCapabilities, type PersistenceIpcOperation } from '../../src/core/persistence/ipc.ts';
 import type { PersistenceAdminOperation } from '../../src/core/persistence/admin-contract.ts';
 import { readPersistenceCliRegistration } from '../../src/core/persistence/local-client.ts';
+import { passRequestId } from '../../src/core/persistence/sync-pass-batch.ts';
 import { keylessBrainEnv } from '../helpers/provider-env.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..', '..');
@@ -24,9 +25,13 @@ let serveStderr = '';
 const serveReaders: Promise<void>[] = [];
 let capabilities: PersistenceIpcCapabilities;
 let initialCommit: string, bulkCommit: string;
-let interruptedRun: string;
+let interruptedPass: string;
 let pendingRequestId: string | undefined;
 let savedRequests: { request_id: string; slug: string; state: string }[] = [];
+// #6712 PR 4b: every managed-sync request of the source is a pass's (its intent carries `passId`); no cursor rows exist.
+const PASS_REQUESTS = "SELECT request_id,slug,state,intent->>'passId' AS pass_id FROM persistence_requests WHERE source_id='workspace' AND intent ? 'passId'";
+const CURSOR_ROWS = "SELECT count(*)::int AS n FROM op_checkpoints WHERE op IN ('managed-sync','managed-sync-manifest','managed-sync-slice')";
+const PASS_ROW = "SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op='managed-sync-pass'";
 const resumeArgs = ['--no-pull', '--yes', '--no-embed', '--no-hard-deadline', '--json'];
 const config = () => ({ engine: 'pglite' as const, database_path: dbDir });
 const socket = () => persistenceSocketPathForConfig(config())!;
@@ -173,7 +178,7 @@ describe('serve-delegated sync (real serve + real sync subprocesses)', () => {
       }, 'committed and running sync page receipts');
     } finally { serveProc!.kill('SIGKILL'); await serveProc!.exited; }
     const result = await client;
-    const paused = JSON.parse(readFileSync(claimBarrier, 'utf8')) as { requestId: string; runId: string };
+    const paused = JSON.parse(readFileSync(claimBarrier, 'utf8')) as { requestId: string; passId: string };
     expect(observed.some(row => row.request_id === paused.requestId && row.state === 'running')).toBe(true);
     expect(result.code).toBe(1);
     expect(result.err).toContain('Delegating to the registered PGLite owner.');
@@ -185,33 +190,36 @@ describe('serve-delegated sync (real serve + real sync subprocesses)', () => {
     const engine = await createEngine(config());
     try {
       await engine.connect(config());
-      const [cursor] = await engine.executeRaw<{ value: { runId: string; index: number; done?: boolean; pending?: { requestId: string } } }>(
-        "SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op='managed-sync'");
-      expect(cursor.value.done).not.toBe(true);
-      interruptedRun = cursor.value.runId;
-      expect(interruptedRun).toBe(paused.runId);
-      savedRequests = await engine.executeRaw("SELECT request_id,slug,state FROM persistence_requests WHERE intent->>'runId'=$1", [interruptedRun]);
+      // The killed pass left its row open; it wrote no cursor.
+      const [pass] = await engine.executeRaw<{ value: { telemetry: { pass_id: string; outcome: string } } }>(PASS_ROW);
+      expect(pass.value.telemetry).toMatchObject({ pass_id: paused.passId, outcome: 'open' });
+      interruptedPass = paused.passId;
+      expect((await engine.executeRaw<{ n: number }>(CURSOR_ROWS))[0]!.n).toBe(0);
+      savedRequests = await engine.executeRaw(`${PASS_REQUESTS} AND intent->>'passId'=$1`, [interruptedPass]);
       expect(savedRequests.length).toBeGreaterThan(0);
       expect(savedRequests.length).toBeLessThan(301);
       for (const receipt of observed) expect(savedRequests.some(row => row.request_id === receipt.request_id)).toBe(true);
-      // The next ID may have been flushed just before its admission. Resume
-      // must use that frozen ID too, whether or not its receipt exists yet.
-      pendingRequestId = cursor.value.pending?.requestId;
-      expect(pendingRequestId).toBe(paused.requestId);
+      // The claimed request the kill interrupted keeps its durable ID: uuidv5(passId, path, level), recovered, never re-admitted.
+      const [claimed] = await engine.executeRaw<{ state: string; path: string; level: string }>(
+        "SELECT state,intent->>'path' AS path,intent->>'level' AS level FROM persistence_requests WHERE request_id=$1::uuid", [paused.requestId]);
+      expect(claimed).toMatchObject({ state: 'running', path: 'topics/note-0003.md' });
+      expect(passRequestId(interruptedPass, claimed!.path, claimed!.level)).toBe(paused.requestId);
+      pendingRequestId = paused.requestId;
       const [source] = await engine.executeRaw<{ last_commit: string }>("SELECT last_commit FROM sources WHERE id='workspace'");
       expect(source.last_commit).toBe(initialCommit);
     } finally { await engine.disconnect(); }
   }, 200_000);
 
-  test('Pin 4 — direct sync resumes the same run and IDs without a manual lock break', async () => {
+  test('Pin 4 — direct sync resumes without a manual lock break, keeps every receipt ID and re-admits nothing committed', async () => {
     let result = await runSyncChild(resumeArgs, 240_000);
+    let addedBefore = 0;
     if (result.code !== 0) {
       expect(result.code).toBe(1);
       if (!pendingRequestId) throw new Error('Pending recovery has no saved request ID.');
       const partial = JSON.parse(result.out);
-      expect(partial).toMatchObject({ schema_version: 1, source_id: 'workspace', sync_status: 'partial',
-        reason: 'writer_pending', run_id: interruptedRun });
+      expect(partial).toMatchObject({ schema_version: 1, source_id: 'workspace', sync_status: 'partial', reason: 'writer_pending' });
       expect(partial.managed_write.write_request.request_id).toBe(pendingRequestId);
+      addedBefore = partial.added;
       const pendingEngine = await createEngine(config());
       let retryAfterMs: number;
       try {
@@ -233,7 +241,13 @@ describe('serve-delegated sync (real serve + real sync subprocesses)', () => {
     }
     assertSuccess(result);
     expect(result.err).not.toContain('Delegating');
-    expect(JSON.parse(result.out)).toMatchObject({ schema_version: 1, source_id: 'workspace', sync_status: 'synced', added: 300, embedded: 0 });
+    // A pass counts what it wrote itself: pages the killed pass committed are matched, not imported again, and the
+    // interrupted request recovers under its own ID (credited only when the resumed pass was still waiting on it).
+    const committedBefore = savedRequests.filter(row => row.state === 'committed').length;
+    const resumed = JSON.parse(result.out);
+    expect(resumed).toMatchObject({ schema_version: 1, source_id: 'workspace', sync_status: 'synced', embedded: 0 });
+    const admittedByResume = 300 - committedBefore - 1;
+    expect([admittedByResume, admittedByResume + 1]).toContain(addedBefore + resumed.added);
     const engine = await createEngine(config());
     try {
       await engine.connect(config());
@@ -241,17 +255,18 @@ describe('serve-delegated sync (real serve + real sync subprocesses)', () => {
       expect(source.last_commit).toBe(bulkCommit);
       const [pages] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pages WHERE source_id='workspace' AND deleted_at IS NULL");
       expect(pages.n).toBe(302);
-      const requests = await engine.executeRaw<{ request_id: string; slug: string; state: string }>(
-        "SELECT request_id,slug,state FROM persistence_requests WHERE intent->>'runId'=$1", [interruptedRun]);
-      expect(requests.length).toBe(301); // 300 pages and the final source checkpoint.
+      const requests = await engine.executeRaw<{ request_id: string; slug: string; state: string; pass_id: string }>(PASS_REQUESTS);
+      expect(requests.length).toBe(301); // 300 pages and the final source checkpoint, across the killed pass and its resume.
       expect(new Set(requests.map(row => row.slug)).size).toBe(301);
       expect(requests.every(row => row.state === 'committed')).toBe(true);
       for (const original of savedRequests) expect(requests.find(row => row.request_id === original.request_id))
-        .toMatchObject({ slug: original.slug, state: 'committed' });
-      if (pendingRequestId) expect(requests.find(row => row.request_id === pendingRequestId)?.state).toBe('committed');
-      const [cursor] = await engine.executeRaw<{ value: { runId: string; done: boolean; index: number } }>(
-        "SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op='managed-sync'");
-      expect(cursor.value).toMatchObject({ runId: interruptedRun, done: true, index: 300 });
+        .toMatchObject({ slug: original.slug, state: 'committed', pass_id: interruptedPass });
+      expect(requests.find(row => row.request_id === pendingRequestId)).toMatchObject({ slug: 'topics/note-0003', state: 'committed', pass_id: interruptedPass });
+      expect(requests.filter(row => row.pass_id !== interruptedPass && row.slug !== '__managed_sync_checkpoint__').length).toBe(admittedByResume);
+      const [pass] = await engine.executeRaw<{ value: { telemetry: { pass_id: string; outcome: string; remaining: number } } }>(PASS_ROW);
+      expect(pass.value.telemetry).toMatchObject({ outcome: 'synced', remaining: 0 });
+      expect(pass.value.telemetry.pass_id).not.toBe(interruptedPass);
+      expect((await engine.executeRaw<{ n: number }>(CURSOR_ROWS))[0]!.n).toBe(0);
     } finally { await engine.disconnect(); }
   }, 270_000);
 });

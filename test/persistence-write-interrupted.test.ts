@@ -2,10 +2,12 @@
  * Flip lane C (4): a write whose statements the database keeps ending is failed after a bound, not prepared forever.
  *
  * 1. Protects: a statement the database ended while it stayed up (57014, a statement timeout or cancel of this write's
- *    own work) is charged to the request's preparation_attempts like a preparation cut off at its deadline; at
- *    persistence.max_preparation_attempts the request ends `failed`/`write_interrupted` (the receipt names the
- *    attempts, the limit and the SQLSTATE) instead of being released as `database_contention` and prepared again. A
- *    single interruption still re-prepares and commits. Contention with other transactions (55P03 lock timeout, 40P01
+ *    own work) is charged to the request's transient budget (transient_interruptions; since large-pages hardening (b)
+ *    it no longer spends preparation_attempts); past persistence.max_transient_retries the request ends
+ *    `failed`/`write_interrupted` (the receipt names the interruptions, the retry limit and the SQLSTATE) instead of
+ *    being released as `database_contention` and prepared again. A single interruption still re-prepares and commits.
+ *    These cases set the retry limit low; test/pathological/lp-b-transient-retry-budget.test.ts pins the default (5)
+ *    and the backoff. Contention with other transactions (55P03 lock timeout, 40P01
  *    deadlock) and a dropped connection or restarting database (CONNECTION_CLOSED, 57P01) are never counted, so a
  *    Postgres restart never fails a write.
  *    Both publication arms: a database-only page (released or failed in place) and a worktree-backed page (the
@@ -109,7 +111,8 @@ test('write_interrupted is a write error code: a failed source lifecycle names i
   expect(thrown).toMatchObject({ code: 'write_interrupted', writeError: 'write_interrupted', writeRequest: { state: 'failed' } });
 });
 
-type Row = { state: string; error_code: string | null; error_message: string | null; error_detail: Record<string, unknown> | null; preparation_attempts: number; has_recovery: boolean };
+type Row = { state: string; error_code: string | null; error_message: string | null; error_detail: Record<string, unknown> | null; preparation_attempts: number;
+  transient_interruptions: number; has_recovery: boolean };
 
 for (const backend of testBackends()) describe(`[${backend}] transient publication failures are bounded`, () => {
   let engine: BrainEngine;
@@ -120,13 +123,13 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
     logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false, sourceId });
   const call = (params: Record<string, unknown>, sourceId = 'default') => withEnv({ GBRAIN_HOME: home },
     () => op('put_page').handler(context(sourceId), { wait_ms: 20_000, ...params })) as Promise<Record<string, any>>;
-  const row = async (requestId: string): Promise<Row> => (await engine.executeRaw<Row>(`SELECT state,error_code,error_message,error_detail,preparation_attempts,
+  const row = async (requestId: string): Promise<Row> => (await engine.executeRaw<Row>(`SELECT state,error_code,error_message,error_detail,preparation_attempts,transient_interruptions,
     recovery IS NOT NULL AS has_recovery FROM persistence_requests WHERE request_id=$1::uuid`, [requestId]))[0]!;
 
   /**
    * Every publication of the request's claims numbered in `failing` (1-based, counted at `consumer:preparing`) throws
    * `error()` at its before_commit seam, inside the publication transaction. Returns the claim count and the request's
-   * preparation_attempts as each claim began (a commit resets the counter, so it is read while the request runs).
+   * transient_interruptions as each claim began (read while the request runs).
    */
   function interrupt(requestId: string, failing: (claim: number) => boolean, error: () => Error) {
     const claims = { n: 0, attempts: [] as number[] };
@@ -134,7 +137,7 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
       if (detail.requestId !== requestId) return;
       if (point === 'consumer:preparing') {
         claims.n++;
-        claims.attempts.push((await row(requestId)).preparation_attempts);
+        claims.attempts.push((await row(requestId)).transient_interruptions);
         return;
       }
       if (point === 'publication:before_commit' && failing(claims.n)) throw error();
@@ -154,11 +157,15 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
   afterEach(async () => {
     installFaultHook(undefined);
     await disposePersistenceConsumer(engine);
-    await engine.executeRaw("DELETE FROM config WHERE key='persistence.max_preparation_attempts'");
+    await engine.executeRaw("DELETE FROM config WHERE key IN ('persistence.max_preparation_attempts','persistence.max_transient_retries')");
     resetWriteSwitches();
   });
 
-  test('a write cancelled at every publication ends write_interrupted after exactly max_preparation_attempts preparations', async () => {
+  /** A low retry limit keeps these cases to a few claims; the default and the backoff are lp-b's. */
+  const retries = async (limit: number) => { await engine.setConfig('persistence.max_transient_retries', String(limit)); resetWriteSwitches(); };
+
+  test('a write cancelled at every publication ends write_interrupted after exactly max_transient_retries retries', async () => {
+    await retries(1);
     const slug = `db/interrupted-${++n}`, requestId = randomUUID();
     const claims = interrupt(requestId, () => true, () => interruption('57014'));
     const outcome = await call({ slug, content: page(`Interrupted ${n}`), request_id: requestId }).catch(error => error as { code?: string });
@@ -166,10 +173,10 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
     expect(claims.n).toBe(2);
     expect((outcome as { code?: string }).code).toBe('write_interrupted');
     const failed = await row(requestId);
-    expect(failed).toMatchObject({ state: 'failed', error_code: 'write_interrupted', preparation_attempts: 2, has_recovery: false });
+    expect(failed).toMatchObject({ state: 'failed', error_code: 'write_interrupted', preparation_attempts: 0, transient_interruptions: 2, has_recovery: false });
     expect(failed.error_message).toContain('2 time(s)');
     expect(failed.error_message).toContain('57014');
-    expect(failed.error_detail).toMatchObject({ origin: 'database_interruption', attempts: 2, limit: 2, sqlstate: '57014' });
+    expect(failed.error_detail).toMatchObject({ origin: 'database_interruption', attempts: 2, limit: 1, sqlstate: '57014' });
     expect(await engine.readPageSnapshot(slug, { sourceId: 'default' })).toBeNull();
     // The receipt names the code and its diagnostic, like every other write error.
     const receipt = await withEnv({ GBRAIN_HOME: home }, () => op('get_write_request').handler(context(), { request_id: requestId })) as Record<string, unknown>;
@@ -209,6 +216,7 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
     await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [id, root]);
     await claimWorktree(engine, id, root);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    await retries(1);
     // Every publication of a request for page `a` of this source has its statement cancelled. The request's page is read
     // as it is claimed (outside any transaction: PGLite has one connection, which the publication holds).
     const pageA = new Set<string>();
@@ -226,9 +234,9 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
     expect(await engine.readPageSnapshot('b', { sourceId: id })).not.toBeNull();
     expect(await engine.readPageSnapshot('a', { sourceId: id })).toBeNull();
     // One request for `a`, never re-frozen in place: its two preparations, then the hold.
-    const requests = async () => engine.executeRaw<{ state: string; error_code: string | null; preparation_attempts: number }>(
-      "SELECT state,error_code,preparation_attempts FROM persistence_requests WHERE source_id=$1 AND slug='a' ORDER BY sequence", [id]);
-    expect(await requests()).toEqual([{ state: 'failed', error_code: 'write_interrupted', preparation_attempts: 2 }]);
+    const requests = async () => engine.executeRaw<{ state: string; error_code: string | null; preparation_attempts: number; transient_interruptions: number }>(
+      "SELECT state,error_code,preparation_attempts,transient_interruptions FROM persistence_requests WHERE source_id=$1 AND slug='a' ORDER BY sequence", [id]);
+    expect(await requests()).toEqual([{ state: 'failed', error_code: 'write_interrupted', preparation_attempts: 0, transient_interruptions: 2 }]);
     const writerStatus = ['gbrain', 'sources', 'writer', 'status', '--source', id, '--json'];
     const held = await readSyncStatus(engine, id);
     expect(held.last_error).toBeNull();
@@ -254,7 +262,7 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
       if (detail.requestId !== requestId) return;
       if (point === 'consumer:preparing') {
         claims.n++;
-        claims.attempts.push((await row(requestId)).preparation_attempts);
+        claims.attempts.push((await row(requestId)).transient_interruptions);
         if (claims.n === 1) throw interruption('57014');
       }
       // The owner dies here: nothing after the seam runs, and the claim it held lapses.
@@ -275,7 +283,7 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
     installFaultHook(async (point, detail) => {
       if (detail.requestId !== requestId || point !== 'consumer:preparing') return;
       claims.n++;
-      claims.attempts.push((await row(requestId)).preparation_attempts);
+      claims.attempts.push((await row(requestId)).transient_interruptions);
       if (claims.n <= 3) throw shared;
     });
     expect(await call({ slug, content: page(`Shared ${n}`), request_id: requestId })).toMatchObject({ state: 'committed' });
@@ -297,22 +305,21 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
     });
     afterAll(async () => { await disposePersistenceConsumer(engine); _resetWriteThroughCacheForTest(); });
 
-    test('the limit follows max_preparation_attempts, and the recovery route restores the canonical file before the failure', async () => {
+    test('the limit follows max_transient_retries, and the recovery route restores the canonical file before the failure', async () => {
       const slug = `wt/interrupted-${++n}`;
       expect(await call({ slug, content: page(`Prior ${n}`), request_id: randomUUID() }, sourceId)).toMatchObject({ state: 'committed', write_through: { written: true } });
       const path = join(brainDir, `${slug}.md`);
       const bytes = readFileSync(path);
       const before = await engine.readPageSnapshot(slug, { sourceId });
-      await engine.setConfig('persistence.max_preparation_attempts', '3');
-      resetWriteSwitches();
+      await retries(2);
       const requestId = randomUUID();
       const claims = interrupt(requestId, () => true, () => interruption('57014'));
       const outcome = await call({ slug, content: page(`Next ${n}`), request_id: requestId, expected_revision: before!.revision }, sourceId).catch(error => error as { code?: string });
       installFaultHook(undefined);
       expect(claims.n).toBe(3);
       expect((outcome as { code?: string }).code).toBe('write_interrupted');
-      expect(await row(requestId)).toMatchObject({ state: 'failed', error_code: 'write_interrupted', preparation_attempts: 3, has_recovery: false,
-        error_detail: expect.objectContaining({ attempts: 3, limit: 3, sqlstate: '57014' }) });
+      expect(await row(requestId)).toMatchObject({ state: 'failed', error_code: 'write_interrupted', preparation_attempts: 0, transient_interruptions: 3, has_recovery: false,
+        error_detail: expect.objectContaining({ attempts: 3, limit: 2, sqlstate: '57014' }) });
       expect(existsSync(path)).toBe(true);
       expect(readFileSync(path).equals(bytes)).toBe(true);
       expect(await engine.readPageSnapshot(slug, { sourceId })).toEqual(before);
@@ -331,7 +338,7 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
         if (detail.requestId !== requestId) return;
         if (point === 'consumer:preparing') {
           claims.n++;
-          claims.attempts.push((await row(requestId)).preparation_attempts);
+          claims.attempts.push((await row(requestId)).transient_interruptions);
         }
         if (point === 'publication:before_commit' && claims.n === 1) throw interruption('57014');
         // The owner dies here: the charge has committed, the request is not marked recovering, and its claim lapses.
@@ -339,7 +346,7 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
       });
       const pending = call({ slug, content: page(`Next ${n}`), request_id: requestId, expected_revision: before!.revision }, sourceId).catch(error => error as { code?: string });
       while (!crashed) await new Promise(resolve => setTimeout(resolve, 20));
-      expect(crashed).toMatchObject({ state: 'running', preparation_attempts: 1, has_recovery: true });
+      expect(crashed).toMatchObject({ state: 'running', preparation_attempts: 0, transient_interruptions: 1, has_recovery: true });
       await engine.executeRaw("UPDATE persistence_requests SET claim_expires_at=now()-interval '1 second' WHERE request_id=$1::uuid AND state='running'", [requestId]);
       expect(await pending).toMatchObject({ state: 'committed' });
       expect(claims.n).toBe(2);
@@ -353,6 +360,7 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
     test('a group\'s shared read the database cancels every time ends bounded: each cancelled read is charged to one member, and every member ends write_interrupted', async () => withEnv({ GBRAIN_HOME: home,
       OPENAI_API_KEY: undefined, VOYAGE_API_KEY: undefined, ANTHROPIC_API_KEY: undefined }, async () => {
       await registerLocalWriter(engine, 'cli');
+      await retries(1);
       const dir = `shared-${++n}`;
       mkdirSync(join(brainDir, dir), { recursive: true });
       const files = ['a', 'b', 'c'].map(name => {
@@ -368,12 +376,12 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
       });
       const settled = await importManagedFiles(engine, files, { sourceId, noEmbed: true });
       installFaultHook(undefined);
-      const rows = await engine.executeRaw<{ slug: string; state: string; error_code: string | null; preparation_attempts: number }>(
-        `SELECT slug,state,error_code,preparation_attempts FROM persistence_requests WHERE source_id=$1 AND slug LIKE $2 ORDER BY slug`, [sourceId, `${dir}/%`]);
+      const rows = await engine.executeRaw<{ slug: string; state: string; error_code: string | null; transient_interruptions: number }>(
+        `SELECT slug,state,error_code,transient_interruptions FROM persistence_requests WHERE source_id=$1 AND slug LIKE $2 ORDER BY slug`, [sourceId, `${dir}/%`]);
       // Each cancelled read is charged to exactly one member (the first that settles with it), so the reads stop once every
-      // member has used its max_preparation_attempts (2): 3 members x 2.
+      // member has used its max_transient_retries (1) and been interrupted once more: 3 members x 2.
       expect(cancelled).toBe(3 * 2);
-      expect(rows).toEqual(['a', 'b', 'c'].map(name => ({ slug: `${dir}/${name}`, state: 'failed', error_code: 'write_interrupted', preparation_attempts: 2 })));
+      expect(rows).toEqual(['a', 'b', 'c'].map(name => ({ slug: `${dir}/${name}`, state: 'failed', error_code: 'write_interrupted', transient_interruptions: 2 })));
       expect(settled.map(result => result.status === 'rejected' ? (result.reason as { code?: string }).code : 'ok')).toEqual(['write_interrupted', 'write_interrupted', 'write_interrupted']);
     }), 120_000);
   });

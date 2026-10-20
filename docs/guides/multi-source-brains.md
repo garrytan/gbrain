@@ -157,6 +157,12 @@ gbrain links people/alice-example --all-sources --json      # every source
 gbrain graph people/alice-example --depth 2 --all-sources
 ```
 
+Each call returns at most 500 rows (`--limit N`, up to 5000), merged across
+sources and identity members in link order before the cut. When more match, the
+last row carries `truncated: true` and `next_cursor`; continue with
+`--cursor <next_cursor>` and the same flags, or pass `--all` to page through
+every row.
+
 `get_links` keeps working as an alias of `links`. Passing `--source` together
 with `--source-id` or `--all-sources` is an error. A source that does not exist
 or is archived answers `unknown_source`; a remote agent naming a source outside

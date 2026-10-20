@@ -1,4 +1,6 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
+import { CODEX_TOML_BLOCK_END } from '../src/core/bootstrap/host-specs.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -67,6 +69,64 @@ for (const harness of ['codex', 'opencode']) test(`${harness} refuses edited and
   rmSync(join(root, `.gbrain-connection-${harness}-gbrain.json`));
   await expect(installHarnessConnection(credentials, { harness, configPath })).rejects.toThrow('unowned');
   expect(readFileSync(configPath, 'utf8')).toBe(original);
+});
+
+describe('#6799 Codex tool approvals ("always allow")', () => {
+  const approval = (tool: string) => `[mcp_servers.gbrain.tools.${tool}]\napproval_mode = "approve"\n`;
+  const entryOf = (configPath: string) => (Bun.TOML.parse(readFileSync(configPath, 'utf8')) as any).mcp_servers.gbrain;
+  const wholeHash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  const receiptPath = (root: string) => join(root, '.gbrain-connection-codex-gbrain.json');
+  const renewed = { ...credentials, access_token: 'renewed-token-not-real' };
+
+  test('an install keyed by the legacy whole-entry hash renews with approvals inside the block and keeps them', async () => {
+    const root = temp(); const configPath = join(root, 'config.toml');
+    await installHarnessConnection(credentials, { harness: 'codex', configPath });
+    expect(JSON.parse(readFileSync(receiptPath(root), 'utf8')).entry_hash).toBe(wholeHash(entryOf(configPath)));
+    writeFileSync(configPath, readFileSync(configPath, 'utf8').replace(CODEX_TOML_BLOCK_END, `${approval('search')}${CODEX_TOML_BLOCK_END}`));
+    expect((await installHarnessConnection(renewed, { harness: 'codex', configPath })).status).toBe('installed');
+    const entry = entryOf(configPath);
+    expect(entry.http_headers.Authorization).toBe('Bearer renewed-token-not-real');
+    expect(entry.tools).toEqual({ search: { approval_mode: 'approve' } });
+    expect((await installHarnessConnection(credentials, { harness: 'codex', configPath })).status).toBe('installed');
+    expect(entryOf(configPath).tools).toEqual({ search: { approval_mode: 'approve' } });
+  });
+
+  test('approvals after the block renew in place; removal refuses rather than orphan them', async () => {
+    const root = temp(); const configPath = join(root, 'config.toml');
+    await installHarnessConnection(credentials, { harness: 'codex', configPath });
+    writeFileSync(configPath, `${readFileSync(configPath, 'utf8')}\n${approval('get_page')}`);
+    expect((await installHarnessConnection(renewed, { harness: 'codex', configPath })).status).toBe('installed');
+    expect(entryOf(configPath).tools).toEqual({ get_page: { approval_mode: 'approve' } });
+    expect(entryOf(configPath).http_headers.Authorization).toBe('Bearer renewed-token-not-real');
+    const before = readFileSync(configPath, 'utf8');
+    await expect(installHarnessConnection(renewed, { harness: 'codex', configPath, remove: true })).rejects.toThrow('outside the gbrain-managed block');
+    expect(readFileSync(configPath, 'utf8')).toBe(before);
+  });
+
+  test('a receipt that recorded the whole entry with its approvals still owns it', async () => {
+    const root = temp(); const configPath = join(root, 'config.toml');
+    await installHarnessConnection(credentials, { harness: 'codex', configPath });
+    writeFileSync(configPath, readFileSync(configPath, 'utf8').replace(CODEX_TOML_BLOCK_END, `${approval('search')}${CODEX_TOML_BLOCK_END}`));
+    const receipt = JSON.parse(readFileSync(receiptPath(root), 'utf8'));
+    writeFileSync(receiptPath(root), JSON.stringify({ ...receipt, entry_hash: wholeHash(entryOf(configPath)) }));
+    expect((await installHarnessConnection(renewed, { harness: 'codex', configPath })).status).toBe('installed');
+  });
+
+  test('approvals never bless other edits: a changed URL, header or execution key still refuses', async () => {
+    for (const edit of [
+      (t: string) => t.replace('https://brain.example.com/mcp', 'https://elsewhere.example.com/mcp'),
+      (t: string) => t.replace('fixture-token-not-real', 'edited-token'),
+      (t: string) => t.replace(CODEX_TOML_BLOCK_END, `${approval('search')}[mcp_servers.gbrain.env]\nEXTRA = "1"\n${CODEX_TOML_BLOCK_END}`),
+      (t: string) => t.replace(CODEX_TOML_BLOCK_END, `[mcp_servers.gbrain.tools.search]\napproval_mode = { nested = "x" }\n${CODEX_TOML_BLOCK_END}`),
+    ]) {
+      const root = temp(); const configPath = join(root, 'config.toml');
+      await installHarnessConnection(credentials, { harness: 'codex', configPath });
+      const edited = edit(readFileSync(configPath, 'utf8'));
+      writeFileSync(configPath, edited);
+      await expect(installHarnessConnection(renewed, { harness: 'codex', configPath })).rejects.toThrow('edited');
+      expect(readFileSync(configPath, 'utf8')).toBe(edited);
+    }
+  });
 });
 
 test('credentials and roots reject intermediate symlinks and credential-bearing issuer URLs', async () => {

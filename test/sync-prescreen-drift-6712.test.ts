@@ -1,31 +1,26 @@
 /**
- * #6712 PR 1 (L1): the content-addressed discovery prescreen, the `file_drift` drift guard and the re-discovery of a
- * lost manifest against HEAD.
+ * #6712 PR 1 (L1) prescreen and drift guard, rewritten for PR 4b: a non-company source runs the live pass, which compares
+ * the whole tree with what the database absorbed, so the cursor's prescreen, manifest and tree walk are gone and these tests
+ * assert the pass's behavior on the same data.
  *
  * Protects:
- * - a page whose import provenance matches the pinned blob, the frozen revision and this parser is prescreened in
- *   discovery and passed by the guarded no-op kernel: no request, no preparation, no new revision;
- * - a fingerprint change, `--full`, a byte change and a revision change each fall through to the ordinary path (the
- *   prescreen fails toward importing);
- * - a database-only edit to a page whose file did not change is held `file_drift` and not imported; under a
- *   `storage.keep_db` prefix it is neither held nor imported (the keep_db worker gets it as a drift candidate);
- * - cold upgrade: a page with missing, partial (pre-PR 0) or obsolete-fingerprint provenance and a database-only edit
- *   that predates discovery is held, in a tree walk and under `--full`, instead of being overwritten by the file; the
- *   equal-content controls (no edit, an unattributed revision whose content equals the file, a changed file on a page
- *   sync wrote last) still skip or import as before;
- * - a cursor whose manifest is gone re-discovers against HEAD and finishes, the pages the lost run imported prescreened.
- * - review follow-ups: `sync.holds=fail` refuses the drift with `file_drift`; a lost manifest walks HEAD's whole tree (a
- *   file the lost run imported and HEAD reverted is restored, a page it added is removed); a fingerprint that changes
- *   after discovery and an oversized working copy each fall through to the ordinary path.
- *
- * Each test fails on the base: there `prescreened` is absent, the tree walk overwrites the database edit, and the
- * missing manifest stops the run with `storage_error`.
+ * - a page whose import provenance matches the level's blob, the page revision and this parser is not a candidate: no
+ *   request, no preparation, no new revision;
+ * - a parser change and a byte change are candidates (reparse and import); a record whose revision no longer names the
+ *   page is db_ahead and the page is kept; --full screens every matched page;
+ * - a database-only edit to a page whose file did not change is db_ahead: neither imported nor held, the body survives
+ *   repeated passes, a second edit and sync.holds=fail; under a storage.keep_db prefix the pass admits its keep_db write
+ *   (the working copy gets the database bytes);
+ * - cold upgrade: a database-only edit with no provenance is held file_drift (sides unknown); with partial or obsolete
+ *   provenance it is db_ahead; equal-content controls get records, a changed file on a page sync wrote last imports;
+ * - an interrupted first pass resumes and does not re-import what it imported; a pass interrupted before HEAD reverted
+ *   everything restores the files and removes the page it added.
  * PGLite always; Postgres too when DATABASE_URL is set.
  */
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
@@ -35,8 +30,10 @@ import { readGitHold, readSyncImportProvenance, SYNC_IMPORT_PARSER_VERSION, SYNC
 import { readDriftSkips } from '../src/core/persistence/drift-conflicts.ts';
 import { SYNC_READ_BOUND } from '../src/core/persistence/sync-blobs.ts';
 import { resolveBulkSettings } from '../src/core/persistence/sync-group.ts';
+import { readShadowLevel } from '../src/core/persistence/sync-pass.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { waitFor } from './helpers/wait-for.ts';
+import { isWriteCapacityWait } from '../src/core/persistence/admission-retry.ts';
 
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const commit = (root: string, message: string) => { git(root, 'add', '-A'); git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', message); };
@@ -80,39 +77,46 @@ async function databaseOnlyEdit(engine: BrainEngine, ctx: OperationContext, slug
     { timeoutMs: 20_000, label: `the database-only put_page of ${slug} commits` });
   return requestId;
 }
+const classOf = async (engine: BrainEngine, path: string) => (await readShadowLevel(engine, { sourceId: 'default' }))!.paths.find(entry => entry.path === path)?.result;
+/** A binary with another parser: the pass row's parser fingerprint and the named pages' records name the older parser. */
+async function olderParser(engine: BrainEngine, slugs: string[]): Promise<void> {
+  for (const slug of slugs) await tamper(engine, slug, [['parser,parser_version', 'an-older-parser']]);
+  await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,obligations,converged,parser_fp}','\"an-older-parser\"'::jsonb) WHERE op='managed-sync-pass'");
+}
 const heldOf = (result: Awaited<ReturnType<typeof performManagedSync>>) => (result.held ?? []).map(hold => ({ path: hold.path, code: hold.code })).sort((a, b) => a.path.localeCompare(b.path));
 
 for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DATABASE_URL] : [undefined]) describe(`#6712 PR 1 prescreen and drift guard (${databaseUrl ? 'postgres' : 'pglite'})`, () => {
-  test('a provenance match is prescreened and passed by the kernel: no request, no preparation, no new revision', () => managedBrain(async ({ engine, root }) => {
+  test('a provenance match is not a pass candidate: no request, no preparation, no new revision', () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     const revisions = new Map(await Promise.all(SLUGS.map(async slug => [slug, await revisionOf(engine, slug)] as const)));
     const requests = await importRequests(engine);
     rewriteHistory(root);
     const walk = await performManagedSync(engine, OPTS);
-    expect(walk).toMatchObject({ status: 'synced', prescreened: SLUGS.length, waived: { imports: SLUGS.length, deletes: 0 }, added: 0, modified: 0 });
+    expect(walk).toMatchObject({ status: 'synced', pass: { kind: 'full', candidates: 0 }, added: 0, modified: 0 });
     expect(await importRequests(engine)).toBe(requests);
     for (const slug of SLUGS) expect(await revisionOf(engine, slug)).toBe(revisions.get(slug)!);
   }, { databaseUrl, setup }), 180_000);
 
-  test('a fingerprint change, a revision change, a byte change and --full each fall through to the ordinary path', () => managedBrain(async ({ engine, root }) => {
+  test('a parser change and a byte change are pass candidates; a record revision that no longer names the page is db_ahead; --full screens every matched page', () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     await tamper(engine, 'notes/a', [['parser,parser_version', 'an-older-parser']]);
     await tamper(engine, 'notes/b', [['revision', '1']]);
     writeFileSync(join(root, 'notes/c.md'), note('notes/c', 'A changed body of notes/c.')); commit(root, 'change c');
     rewriteHistory(root);
     const walk = await performManagedSync(engine, OPTS);
-    // d, e and f are prescreened; a and b are screened (and waived) by the ordinary path; c is imported.
-    expect(walk).toMatchObject({ status: 'synced', prescreened: 3, waived: { imports: 5 } });
+    // a reparses (screened and waived), c imports; b's record no longer names the page's revision, so the database is ahead and kept.
+    expect(walk).toMatchObject({ status: 'synced', pass: { kind: 'full', candidates: 2 }, waived: { imports: 1 }, modified: 1 });
     expect(heldOf(walk)).toEqual([]);
     expect(await bodyOf(engine, 'notes/c')).toContain('A changed body of notes/c.');
+    expect(await bodyOf(engine, 'notes/b')).toContain('The committed body of notes/b.');
+    expect(await classOf(engine, 'notes/b.md')).toMatchObject({ cls: 'db_ahead', settled: true });
     const incarnation = await incarnationOf(engine);
     expect((await readSyncImportProvenance(engine, 'default', incarnation, await pageIdOf(engine, 'notes/a')))?.parser?.parser_version).toBe(SYNC_IMPORT_PARSER_VERSION);
-    expect((await readSyncImportProvenance(engine, 'default', incarnation, await pageIdOf(engine, 'notes/b')))?.revision).toBe(await revisionOf(engine, 'notes/b'));
     const full = await performManagedSync(engine, { ...OPTS, full: true });
-    expect(full).toMatchObject({ prescreened: 0, waived: { imports: SLUGS.length } });
+    expect(full).toMatchObject({ pass: { kind: 'full', candidates: SLUGS.length - 1 }, waived: { imports: SLUGS.length - 1 } });
   }, { databaseUrl, setup }), 180_000);
 
-  test('in a bulk drain a prescreened entry between changed files ends the group and is passed by the kernel', () => managedBrain(async ({ engine, root }) => {
+  test('in a bulk drain a mode-only change between changed files is not a candidate; only the changed files import', () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     const bulk = await resolveBulkSettings(engine, false);
     expect(bulk.enabled).toBe(engine.kind === 'postgres'); // bulk groups are Postgres-only
@@ -121,70 +125,69 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
     for (const slug of ['notes/b', 'notes/d', 'notes/f']) chmodSync(join(root, `${slug}.md`), 0o755);
     commit(root, 'interleave');
     const delta = await performManagedSync(engine, { ...OPTS, bulk });
-    expect(delta).toMatchObject({ status: 'synced', prescreened: 3, modified: 3 });
+    expect(delta).toMatchObject({ status: 'synced', pass: { candidates: 3 }, modified: 3 });
+    for (const slug of ['notes/a', 'notes/c', 'notes/e']) expect(await bodyOf(engine, slug)).toContain(`A changed body of ${slug}.`);
   }, { databaseUrl, setup }), 180_000);
 
-  test('a fingerprint that changes after discovery froze the prescreen falls through to the ordinary path', () => managedBrain(async ({ engine, root }) => {
+  test('a parser change between passes re-imports the pages whose records name the older parser', () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     rewriteHistory(root);
-    // One page per slice: the kernel passes notes/a and the rest of the frozen manifest waits, still marked prescreened.
-    expect(await performManagedSync(engine, OPTS, { maxPages: 1, maxMs: 60_000 })).toMatchObject({ status: 'partial', prescreened: 1 });
-    // As if another binary (another parser) resumed the cursor.
-    for (const slug of SLUGS.slice(1)) await tamper(engine, slug, [['parser,parser_version', 'an-older-parser']]);
-    expect(await performManagedSync(engine, OPTS)).toMatchObject({ status: 'synced', prescreened: 1 });
+    expect(await performManagedSync(engine, OPTS)).toMatchObject({ status: 'synced', pass: { candidates: 0 } });
+    // As if another binary (another parser) wrote these records.
+    await olderParser(engine, SLUGS.slice(1));
+    expect(await performManagedSync(engine, OPTS)).toMatchObject({ pass: { kind: 'full', candidates: SLUGS.length - 1 } });
     const incarnation = await incarnationOf(engine);
     for (const slug of SLUGS.slice(1)) expect((await readSyncImportProvenance(engine, 'default', incarnation, await pageIdOf(engine, slug)))?.parser?.parser_version).toBe(SYNC_IMPORT_PARSER_VERSION);
   }, { databaseUrl, setup }), 180_000);
 
-  test('an oversized working copy of a prescreened file falls through to the ordinary path instead of failing the run', () => managedBrain(async ({ engine, root }) => {
+  test('an oversized working copy of a matched file in committed mode is not read: no candidate, no hold, the page keeps the committed body', () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     rewriteHistory(root);
     writeFileSync(join(root, 'notes/a.md'), Buffer.alloc(SYNC_READ_BOUND + 1, 'a'));
     const walk = await performManagedSync(engine, OPTS);
-    expect(walk).toMatchObject({ status: 'synced', prescreened: SLUGS.length - 1 });
-    expect(heldOf(walk)).toEqual([{ path: 'notes/a.md', code: 'file_too_large' }]);
+    expect(walk).toMatchObject({ status: 'synced', pass: { candidates: 0 } });
+    expect(heldOf(walk)).toEqual([]);
     expect(await bodyOf(engine, 'notes/a')).toContain('The committed body of notes/a.');
   }, { databaseUrl, setup }), 180_000);
 
-  test('a database-only edit to a page whose file did not change is held file_drift and not imported', () => managedBrain(async ({ engine, ctx, root }) => {
+  test('a database-only edit to a page whose file did not change is db_ahead: not imported, not held, the page body survives', () => managedBrain(async ({ engine, ctx, root }) => {
     await engine.setConfig('sync.write_through', 'false');
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
-    const requestId = await databaseOnlyEdit(engine, ctx, 'notes/a', 'The database-only edit of notes/a.');
+    await databaseOnlyEdit(engine, ctx, 'notes/a', 'The database-only edit of notes/a.');
+    const requests = await importRequests(engine);
     rewriteHistory(root);
     const walk = await performManagedSync(engine, OPTS);
-    expect(walk.status).not.toBe('blocked_by_failures');
-    expect(heldOf(walk)).toEqual([{ path: 'notes/a.md', code: 'file_drift' }]);
-    expect(walk.holds_escalated ?? false).toBe(false);
-    const item = walk.held![0]!;
-    expect(item.fix.argv).toEqual(['gbrain', 'repair', 'file-drift', '--source', 'default', '--slug', 'notes/a', '--prefer', 'database']);
-    expect(item.fix.why).toContain(requestId);
+    expect(walk).toMatchObject({ status: 'synced', pass: { candidates: 0 } });
+    expect(heldOf(walk)).toEqual([]);
+    expect(await importRequests(engine)).toBe(requests);
     expect(await bodyOf(engine, 'notes/a')).toContain('The database-only edit of notes/a.');
-    expect(await readGitHold(engine, 'default', await incarnationOf(engine), 'notes/a.md')).toMatchObject({ code: 'file_drift',
-      meta: { sides: 'database', competing_request_id: requestId, competing_operation: 'put_page', page_revision: await revisionOf(engine, 'notes/a') } });
-    // Another tree walk keeps it held; the database version is never overwritten.
+    expect(await classOf(engine, 'notes/a.md')).toMatchObject({ cls: 'db_ahead', action: 'none', settled: true });
+    expect(await readGitHold(engine, 'default', await incarnationOf(engine), 'notes/a.md')).toBeNull();
+    // Another tree walk keeps it; the database version is never overwritten.
     rewriteHistory(root);
     await performManagedSync(engine, OPTS);
     expect(await bodyOf(engine, 'notes/a')).toContain('The database-only edit of notes/a.');
-    // A further database edit moves the page: the hold is re-screened (a delta run, the file unchanged) and held again.
+    // A further database edit and an unrelated committed change: still db_ahead, the newer database body kept.
     await databaseOnlyEdit(engine, ctx, 'notes/a', 'A second database-only edit of notes/a.');
     writeFileSync(join(root, 'notes/f.md'), note('notes/f', 'A changed body of notes/f.')); commit(root, 'change f');
     const delta = await performManagedSync(engine, OPTS);
-    expect(heldOf(delta)).toEqual([{ path: 'notes/a.md', code: 'file_drift' }]);
+    expect(heldOf(delta)).toEqual([]);
     expect(await bodyOf(engine, 'notes/a')).toContain('A second database-only edit of notes/a.');
+    expect(await bodyOf(engine, 'notes/f')).toContain('A changed body of notes/f.');
+    expect(await classOf(engine, 'notes/a.md')).toMatchObject({ cls: 'db_ahead', settled: true });
   }, { databaseUrl, setup }), 180_000);
 
-  test('with sync.holds=fail the same drift stops the run with file_drift instead of importing over the database edit', () => managedBrain(async ({ engine, ctx, root }) => {
+  test('with sync.holds=fail a db_ahead page is nothing to refuse: the run finishes and the database edit survives', () => managedBrain(async ({ engine, ctx, root }) => {
     await engine.setConfig('sync.write_through', 'false');
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     await databaseOnlyEdit(engine, ctx, 'notes/a', 'The database-only edit of notes/a.');
     await engine.setConfig('sync.holds', 'fail');
     rewriteHistory(root);
-    const outcome = await performManagedSync(engine, OPTS).then(result => result, (error: unknown) => error);
-    expect(outcome).toMatchObject({ code: 'file_drift' });
+    expect(await performManagedSync(engine, OPTS)).toMatchObject({ status: 'synced', pass: { candidates: 0 } });
     expect(await bodyOf(engine, 'notes/a')).toContain('The database-only edit of notes/a.');
   }, { databaseUrl, setup }), 180_000);
 
-  test('under a storage.keep_db prefix the drifted page is neither held nor imported; the keep_db worker gets it as a candidate', () => managedBrain(async ({ engine, ctx, root }) => {
+  test('under a storage.keep_db prefix the drifted page is neither held nor imported; the pass admits its keep_db write, the file gets the database bytes', () => managedBrain(async ({ engine, ctx, root }) => {
     await engine.setConfig('sync.write_through', 'false');
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     await databaseOnlyEdit(engine, ctx, 'notes/a', 'The database-only edit of notes/a.');
@@ -193,11 +196,40 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
     const walk = await performManagedSync(engine, OPTS);
     expect(heldOf(walk)).toEqual([]);
     expect(await bodyOf(engine, 'notes/a')).toContain('The database-only edit of notes/a.');
-    expect(Object.keys(await readDriftSkips(engine))).toContain('default:notes/a');
-    expect(walk).toMatchObject({ prescreened: SLUGS.length - 1 });
+    // The keep_db write publishes the database bytes to the working copy: committed L still differs, so the path is
+    // dirty and settled (design v3.2 §4, published).
+    expect(walk).toMatchObject({ pass: { candidates: 0 } });
+    const [row] = await engine.executeRaw<{ admitted: string | null }>("SELECT completed_keys->0->'telemetry'->'counts'->>'keep_db_admitted' AS admitted FROM op_checkpoints WHERE op='managed-sync-pass'");
+    expect(Number(row?.admitted)).toBe(1);
+    expect(await classOf(engine, 'notes/a.md')).toMatchObject({ cls: 'dirty', settled: true });
+    expect(readFileSync(join(root, 'notes/a.md'), 'utf8')).toContain('The database-only edit of notes/a.');
   }, { databaseUrl, setup }), 180_000);
 
-  test('cold upgrade: missing, partial and obsolete provenance with a database-only edit are held, in a tree walk and under --full', () => managedBrain(async ({ engine, ctx, root }) => {
+  test('two-sided keep_db pages whose keep_db write is refused for write capacity wait as keep_db_pending and are never held file_drift; later passes admit them', () => managedBrain(async ({ engine, ctx, root }) => {
+    await engine.setConfig('sync.write_through', 'false');
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    const twoSided = ['notes/a', 'notes/b', 'notes/c', 'notes/d'];
+    for (const slug of twoSided) {
+      await databaseOnlyEdit(engine, ctx, slug, `The database-only edit of ${slug}.`);
+      writeFileSync(join(root, `${slug}.md`), note(slug, `A committed edit of ${slug}.`));
+    }
+    writeFileSync(join(root, 'gbrain.yml'), 'storage:\n  keep_db:\n    - notes/\n'); commit(root, 'keep_db and file edits');
+    // Two outstanding requests per writer: the pass's third keep_db admission is refused queue_capacity while the first two are in flight.
+    await engine.setConfig('persistence.limits.principal_outstanding', '2');
+    const incarnation = await incarnationOf(engine);
+    for (let pass = 0; pass < 8; pass++) {
+      // The drain (sync-drain.ts) waits out an outstanding-cap refusal of a sync's own write; a direct pass call does the same here.
+      const result = await performManagedSync(engine, OPTS).catch(async error => { if (!isWriteCapacityWait(error)) throw error; await new Promise(r => setTimeout(r, 200)); return null; });
+      if (result) expect(heldOf(result)).toEqual([]);
+      for (const slug of twoSided) expect(await readGitHold(engine, 'default', incarnation, `${slug}.md`)).toBeNull();
+    }
+    for (const slug of twoSided) {
+      expect(await bodyOf(engine, slug)).toContain(`The database-only edit of ${slug}.`);
+      expect(readFileSync(join(root, `${slug}.md`), 'utf8')).toContain(`The database-only edit of ${slug}.`);
+    }
+  }, { databaseUrl, setup }), 180_000);
+
+  test('cold upgrade: a database-only edit with no provenance is held, with partial or obsolete provenance it is db_ahead; no edit is overwritten, in a tree walk or under --full', () => managedBrain(async ({ engine, ctx, root }) => {
     await engine.setConfig('sync.write_through', 'false');
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     for (const slug of ['notes/a', 'notes/b', 'notes/c']) await databaseOnlyEdit(engine, ctx, slug, `The database-only edit of ${slug}.`);
@@ -213,34 +245,34 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
     writeFileSync(join(root, 'notes/f.md'), note('notes/f', 'A changed body of notes/f.')); commit(root, 'change f');
     rewriteHistory(root);
     const walk = await performManagedSync(engine, OPTS);
-    expect(heldOf(walk)).toEqual([{ path: 'notes/a.md', code: 'file_drift' }, { path: 'notes/b.md', code: 'file_drift' }, { path: 'notes/c.md', code: 'file_drift' }]);
+    // a has no record at all, so nothing attests either side: held. b and c keep a record of the file they imported
+    // and their pages moved since, so the database is ahead: kept, not held.
+    expect(heldOf(walk)).toEqual([{ path: 'notes/a.md', code: 'file_drift' }]);
     const incarnation = await incarnationOf(engine);
     expect((await readGitHold(engine, 'default', incarnation, 'notes/a.md'))?.meta.sides).toBe('unknown');
-    expect((await readGitHold(engine, 'default', incarnation, 'notes/b.md'))?.meta.sides).toBe('unknown');
-    expect((await readGitHold(engine, 'default', incarnation, 'notes/c.md'))?.meta.sides).toBe('database');
+    for (const path of ['notes/b.md', 'notes/c.md']) expect(await classOf(engine, path)).toMatchObject({ cls: 'db_ahead', settled: true });
     for (const slug of ['notes/a', 'notes/b', 'notes/c']) expect(await bodyOf(engine, slug)).toContain(`The database-only edit of ${slug}.`);
     expect(await bodyOf(engine, 'notes/f')).toContain('A changed body of notes/f.');
     expect(walk).toMatchObject({ waived: { imports: 2 } });
     for (const slug of ['notes/d', 'notes/e']) expect(await readSyncImportProvenance(engine, 'default', incarnation, await pageIdOf(engine, slug))).not.toBeNull();
     const full = await performManagedSync(engine, { ...OPTS, full: true });
-    expect(heldOf(full)).toEqual([{ path: 'notes/a.md', code: 'file_drift' }, { path: 'notes/b.md', code: 'file_drift' }, { path: 'notes/c.md', code: 'file_drift' }]);
+    expect(heldOf(full)).toEqual([]);
+    expect(await readGitHold(engine, 'default', incarnation, 'notes/a.md')).toMatchObject({ code: 'file_drift' });
     for (const slug of ['notes/a', 'notes/b', 'notes/c']) expect(await bodyOf(engine, slug)).toContain(`The database-only edit of ${slug}.`);
   }, { databaseUrl, setup }), 240_000);
 
-  test('a cursor whose manifest is gone re-discovers against HEAD and finishes; what the lost run imported is prescreened', () => managedBrain(async ({ engine }) => {
+  test('an interrupted first pass resumes on the next run; what it imported is no longer a candidate', () => managedBrain(async ({ engine }) => {
     const abort = new AbortController();
     const partial = await performManagedSync(engine, { ...OPTS, signal: abort.signal, onProgress: p => { if (p.bankedFiles === 2) abort.abort(); } });
     expect(partial).toMatchObject({ status: 'partial', filesImported: 2 });
-    await engine.executeRaw("DELETE FROM op_checkpoints WHERE op='managed-sync-manifest'");
-    // The lost run's own admitted request may still be finishing: the swap waits for it (writer_pending), then re-discovers.
+    // The interrupted pass's own admitted request may still be finishing.
     let resumed = await performManagedSync(engine, OPTS);
     for (let i = 0; i < 5 && resumed.status === 'partial'; i++) { await new Promise(resolve => setTimeout(resolve, 500)); resumed = await performManagedSync(engine, OPTS); }
     expect(resumed.status).toBe('first_sync');
-    expect(resumed.prescreened).toBeGreaterThanOrEqual(2);
+    expect(resumed.pass!.candidates).toBeLessThanOrEqual(SLUGS.length - 2);
     for (const slug of SLUGS) expect(await bodyOf(engine, slug)).toContain(`The committed body of ${slug}.`);
   }, { databaseUrl, setup }), 180_000);
-
-  test('a lost manifest re-discovers the whole tree at HEAD: files the lost run imported and HEAD reverted are restored, its added page is removed', () => managedBrain(async ({ engine, root }) => {
+  test('an interrupted pass whose HEAD then reverts everything: the next pass restores what it imported and removes the page it added', () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     const original = SLUGS.map(slug => note(slug, `The committed body of ${slug}.`));
     writeFileSync(join(root, 'notes/0-added.md'), note('notes/0-added', 'A page the lost run added.'));
@@ -250,8 +282,7 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
     const partial = await performManagedSync(engine, { ...OPTS, signal: abort.signal, onProgress: p => { if (p.bankedFiles === 2) abort.abort(); } });
     expect(partial).toMatchObject({ status: 'partial', filesImported: 2 });
     expect(await bodyOf(engine, 'notes/a')).toContain("The lost run's body of notes/a.");
-    await engine.executeRaw("DELETE FROM op_checkpoints WHERE op='managed-sync-manifest'");
-    // HEAD reverts every file the lost run saw, so last_commit..HEAD is empty: only a walk of HEAD's tree finds them.
+    // HEAD reverts every file the interrupted pass saw, so last_commit..HEAD is empty: only the whole-tree comparison finds them.
     SLUGS.forEach((slug, i) => writeFileSync(join(root, `${slug}.md`), original[i]!));
     git(root, 'rm', '-q', 'notes/0-added.md'); commit(root, 'revert');
     let resumed = await performManagedSync(engine, OPTS);

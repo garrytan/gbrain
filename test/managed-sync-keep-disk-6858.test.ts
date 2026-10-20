@@ -6,6 +6,8 @@
  * `blocked_by_failures` and every later plain sync returned the same parked run. The abandoned page is a changed-file
  * page fault now: it is retried after the manifest end in the same pass, imported when the disk bytes are HEAD's
  * (the lossless case), held `worktree_dirty` when they are an uncommitted edit, and the rest of the source drains.
+ * #6712 PR 4b: a non-company source runs the live pass, which pins HEAD, so the lossless case ends at the commit of the
+ * kept bytes rather than the cursor's frozen target.
  * Synthetic content only.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
@@ -127,8 +129,11 @@ test('#6858: a page abandoned by repair stuck-recovery --keep disk with uncommit
 test('#6858: when the kept disk bytes are HEAD (the lossless --keep disk case) the re-freeze imports them in the same pass', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
   for (const engine of engines) {
     const { f, pin } = await abandonedMidRun(engine, root => { commit(root, 'the stamped bytes are committed'); });
+    const head = git(f.root, 'rev-parse', 'HEAD');
+    expect(head).not.toBe(pin);
+    // The pass pins HEAD, the commit of the stamped bytes, where the cursor finished at its frozen target.
     const resumed = await settle(engine, f.opts);
-    expect(resumed).toMatchObject({ status: 'synced', toCommit: pin });
+    expect(resumed).toMatchObject({ status: 'synced', toCommit: head, pass: { kind: 'full', outcome: 'synced', remaining: 0 } });
     expect(resumed.held ?? []).toEqual([]);
     expect(resumed.failedFiles ?? 0).toBe(0);
     expect(await readManagedSyncFailures(engine, [f.id])).toEqual([]);

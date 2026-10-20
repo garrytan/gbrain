@@ -49,7 +49,7 @@ import { RECEIPT_RESERVATION_FLOOR } from '../persistence/receipt-bytes.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { ItemRun, type ItemFailure } from '../item-failure.ts';
 
-export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'accepted-takes', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'google-file-modes', 'stale-atoms', 'atoms-restore', 'extractor-facts', 'conversation-labels', 'captured-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'consolidate-ties', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'fences', 'slug-conflicts', 'timeline-comments', 'managed-sync-orphans', 'content-receipt-root', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'missing-tables', 'url-clone-fences'] as const;
+export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'accepted-takes', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'google-file-modes', 'stale-atoms', 'atoms-restore', 'extractor-facts', 'conversation-labels', 'captured-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'consolidate-ties', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'fences', 'slug-conflicts', 'timeline-comments', 'managed-sync-orphans', 'content-receipt-root', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'legacy-twins', 'missing-tables', 'url-clone-fences', 'segmented-mirror'] as const;
 export type RepairKind = typeof REPAIR_KINDS[number];
 
 export interface RepairScope { brain_id: string; source_ids: string[] }
@@ -105,6 +105,8 @@ export interface RepairPlanOptions { apply: boolean; expect?: string; includeAmb
   prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string;
   /** #6712 PR 2 `file-drift`: only pages whose newest drift conflict is at or after this concrete instant (ISO; `--since`, parsed by `since.ts`). */
   since?: string;
+  /** #6712 PR 4b `file-drift`: the source's held `file_drift` pages, of one side and (for `deleted`) one state. */
+  held?: boolean; side?: string; state?: string;
   /** `stuck-recovery`: the version an apply keeps, and the one request a run selects. */
   keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string;
   /** `receipt-compaction` (#6696 A9): the age (`72h`, `30d`), failures too, and compaction inside the retention window. */
@@ -305,7 +307,7 @@ function writerHeld(error: unknown): error is OperationError {
 export async function runRepair(ctx: OperationContext, handler: RepairHandler, scope: RepairScope,
   opts: { apply: boolean; limit?: number; embeddingModel?: string; sourceFlag?: string; embed?: boolean; applyArgs?: string[];
     explicit?: boolean; expect?: string; includeAmbiguous?: boolean; only?: string[]; skip?: string[]; slugs?: string[]; noLlm?: boolean;
-    prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string;
+    prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string;
     keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean;
     spec?: Pick<RepairKindSpec, 'explicit_only' | 'consent' | 'spends'>; maxLlmUsd?: number; deadline?: number; now?: () => number;
     /** Test seam: who publishes this run's admissions (default: this process's consumer, else a live full one on this host). */
@@ -327,6 +329,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
     ...(opts.deadline !== undefined ? { deadline: opts.deadline } : {}), remote: ctx.remote !== false,
     ...(opts.prefer ? { prefer: opts.prefer } : {}), ...(opts.requests?.length ? { requests: opts.requests } : {}),
     ...(opts.allDrifted ? { allDrifted: true } : {}), ...(opts.driftClass ? { driftClass: opts.driftClass } : {}), ...(opts.since ? { since: opts.since } : {}),
+    ...(opts.held ? { held: true } : {}), ...(opts.side ? { side: opts.side } : {}), ...(opts.state ? { state: opts.state } : {}),
     ...(opts.keep ? { keep: opts.keep } : {}), ...(opts.requestId ? { requestId: opts.requestId } : {}),
     ...(opts.olderThan ? { olderThan: opts.olderThan } : {}), ...(opts.includeFailures ? { includeFailures: true } : {}), ...(opts.force ? { force: true } : {}),
     ...(opts.from ? { from: opts.from } : {}), ...(opts.close ? { close: true } : {}) };
@@ -355,6 +358,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
         ...(opts.slugs ?? []).flatMap(slug => ['--slug', slug]), ...(opts.from ? ['--from', opts.from] : []), ...(opts.close ? ['--close'] : []),
         ...(opts.requests ?? []).flatMap(id => ['--request', id]),
         ...(opts.allDrifted ? ['--all-drifted'] : []), ...(opts.driftClass ? ['--class', opts.driftClass] : []), ...(opts.since ? ['--since', opts.since] : []),
+        ...(opts.held ? ['--held'] : []), ...(opts.side ? ['--side', opts.side] : []), ...(opts.state ? ['--state', opts.state] : []),
         ...(opts.prefer ? ['--prefer', opts.prefer] : [])].map(arg => ` ${shellQuote([arg])}`).join('')}`
       + `${opts.includeAmbiguous ? ' --include-ambiguous' : ''}${llm && opts.noLlm ? ' --no-llm' : ''}${llm && opts.maxLlmUsd !== undefined ? ` --max-usd ${opts.maxLlmUsd}` : ''}`
       + ` --apply${plan.preview_hash ? ` --expect ${plan.preview_hash}` : ''}${spec?.consent === 'destructive' ? ' --yes' : ''}`,

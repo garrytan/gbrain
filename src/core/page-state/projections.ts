@@ -361,10 +361,12 @@ export async function queuePageProjection(engine: Pick<BrainEngine, 'executeRaw'
     ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now()`, [sourceId, slug, reason]);
 }
 
+/** A live, unsegmented page's chunker version (`projectionBelowSafeFence`). */
+export const SAFE_FENCE_SQL = "SELECT chunker_version FROM pages WHERE id=$1 AND deleted_at IS NULL AND body_storage IS DISTINCT FROM 'segmented'";
+
 /** #5050/#5247: whether a live page's installed chunks predate the safe-chunk fence. */
 export async function projectionBelowSafeFence(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ chunker_version: number | null }>(
-    "SELECT chunker_version FROM pages WHERE id=$1 AND deleted_at IS NULL AND body_storage IS DISTINCT FROM 'segmented'", [pageId]) ?? [];
+  const [row] = await engine.executeRaw<{ chunker_version: number | null }>(SAFE_FENCE_SQL, [pageId]) ?? [];
   return row !== undefined && belowSafeChunkFence(row.chunker_version === null ? null : Number(row.chunker_version));
 }
 

@@ -22,6 +22,7 @@ import { pipelined } from '../page-state/transactions.ts';
 import type { SyncIntent } from './sync-prepare.ts';
 import type { SyncAuthority } from './sync-authority.ts';
 import { assertDrainLease } from './sync-lease.ts';
+import { assertPassAdmission } from './sync-pass-batch.ts';
 
 /** What sets a drain's lane ceiling: lanes off, the configured maximum, or the connection pool. */
 export type LanesCap = 'disabled' | 'maximum' | 'pool';
@@ -88,9 +89,12 @@ async function whole(engine: BrainEngine, env: string, key: string, fallback: nu
   return Math.floor(raw);
 }
 
-/** Entries a group may carry: plain page imports and deletes; renames, company plans, streamed pages (Wave B) and the checkpoint stay single. */
+/**
+ * Entries a group may carry: plain page imports and deletes; renames, company plans, streamed pages (Wave B), the checkpoint
+ * and a pass's last import carrying its folded stamp (#6926, folded into 4b: its proof admits its own page alone) stay single.
+ */
 export function groupableIntent(intent: SyncIntent): boolean {
-  return (intent.kind === 'managed_sync_import' || intent.kind === 'managed_sync_delete') && !intent.renameFrom && !intent.companyApproval && !intent.body_ref;
+  return (intent.kind === 'managed_sync_import' || intent.kind === 'managed_sync_delete') && !intent.renameFrom && !intent.companyApproval && !intent.body_ref && !intent.stamp;
 }
 
 /** Apply budgets for a lane group: normally, and while a foreground write on the worktree is queued or just committed. */
@@ -149,7 +153,7 @@ export async function freezeFollowers<P extends WaiverEntry & { rebound?: true }
 }
 
 /** Admits the group's members that have no request yet, in one transaction, while the cursor still holds this group. */
-export async function admitGroup(engine: BrainEngine, members: WaiverEntry[], cursor: { sourceId: string; incarnation: string; binding: { worktree_id: string; topology_generation: string | number }; authority: SyncAuthority },
+export async function admitGroup(engine: BrainEngine, members: WaiverEntry[], cursor: { sourceId: string; incarnation: string; binding: { worktree_id: string; topology_generation: string | number; owner_epoch?: string | number }; authority: SyncAuthority },
   cursorHolds: (tx: BrainEngine) => Promise<boolean>): Promise<WriteRequest[] | null> {
   const head = members[0]!;
   return retryWriteAdmission(head.requestId, remaining => engine.transaction(async tx => {
@@ -159,11 +163,12 @@ export async function admitGroup(engine: BrainEngine, members: WaiverEntry[], cu
         [`${Math.min(1000, remaining)}ms`, `${remaining}ms`]),
       () => admitWriteGroupInTransaction(tx, members.map(member => ({ requestId: member.requestId, operation: 'submit_job',
         sourceId: cursor.sourceId, sourceIncarnation: cursor.incarnation, slug: member.slug, pageId: member.pageId,
-        worktreeId: cursor.binding.worktree_id, topologyGeneration: cursor.binding.topology_generation,
+        worktreeId: cursor.binding.worktree_id, topologyGeneration: cursor.binding.topology_generation, ownerEpoch: cursor.binding.owner_epoch,
         principal: cursor.authority.writer.principal, authority: cursor.authority.writer, callerIntent: member.intent, intent: member.intent }))),
     ]) as [unknown, WriteRequest[]];
     if (!await cursorHolds(tx)) throw new GroupMoved();
     await assertDrainLease(tx, cursor.sourceId);
+    await assertPassAdmission(tx, members.map(member => member.intent));
     return rows;
   }), undefined, error => engine.reconnect({ error })).catch(error => { if (error instanceof GroupMoved) return null; throw error; });
 }

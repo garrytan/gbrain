@@ -70,6 +70,7 @@ import { frontmatterKeysRepair } from './frontmatter-keys.ts';
 import { fileDriftRepair } from './file-drift.ts';
 import { stuckRecoveryRepair } from './stuck-recovery.ts';
 import { ghostPagesRepair, GHOST_CONSENT_TEXT, GHOST_CONSEQUENCES, GHOST_PURGE_FUSE_HOURS } from './ghost-pages.ts';
+import { legacyTwinsRepair, LEGACY_TWINS_CONSENT_TEXT, LEGACY_TWINS_PURGE_FUSE_HOURS } from './legacy-twins.ts';
 import { originTwinsRepair, ORIGIN_TWINS_CONSENT_TEXT, ORIGIN_TWINS_PURGE_FUSE_HOURS } from './origin-twins.ts';
 import { receiptCompactionRepair } from './receipt-compaction.ts';
 import { aliasesRepair } from './aliases.ts';
@@ -77,6 +78,7 @@ import { renameIdentityRepair, RENAME_IDENTITY_CONSENT_TEXT } from './rename-ide
 import { overwrittenEditsRepair } from './overwritten-edits.ts';
 import { missingTablesRepair } from './missing-tables.ts';
 import { urlCloneFencesRepair } from './url-clone-fences.ts';
+import { segmentedMirrorRepair } from './segmented-mirror.ts';
 import { ERROR_CATALOGUE, catalogueError } from '../error-catalogue.ts';
 import type { OperationError } from '../ops/contract.ts';
 
@@ -313,7 +315,7 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     handler: plannerStatsRepair, embeds: 'none', checks: ['planner_stats_stale'], approval: 'unbound',
     summary: 'ANALYZE the hot tables (pages, links, facts, takes, content_chunks, timeline_entries) whose planner statistics are stale (F4b), '
       + 'so search and graph reads stop planning as slow nested loops. PGLite also resets each table\'s pending row count; Postgres runs each '
-      + 'ANALYZE with a 60 s statement and 2 s lock timeout. No journal admission and no user data changes. Brain-wide.',
+      + 'ANALYZE with a 60 s statement timeout and defers a table another session holds (a running vacuum) instead of waiting on it. No journal admission and no user data changes. Brain-wide.',
   },
   'managed-sync-orphans': {
     handler: managedSyncOrphansRepair, embeds: 'none', checks: ['sync_failures'], explicit_only: true, preview_bound: true,
@@ -346,7 +348,10 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'writes each resolved result to a private artifact; --apply --expect <hash> applies exactly that set with request ids derived from the hash, '
       + 'resumable, per page repaired, refused or changed_since_preview. Backups are reconcile\'s own. A selected page whose canonical file is gone from the '
       + 'last commit: --prefer database recreates the file from the page, --prefer file soft-deletes exactly that page (mass-delete valve applies); a file '
-      + 'deleted only in the worktree is listed deletion_uncommitted and routed to committing the deletion or repair ghost-pages. Trusted local CLI only; runs only when named.',
+      + 'deleted only in the worktree is listed deletion_uncommitted and routed to committing the deletion or repair ghost-pages. --held [--side both|unknown|deleted '
+      + '[--state tombstone_edited|purged_differs|file_gone]] selects the source\'s held file_drift pages of one Decision (several sides or states are refused; '
+      + '--side deleted needs --state): a deleted page whose file changed is restored and imported (--prefer file) or keeps its deletion while the file is '
+      + 'removed by a coordinated commit (--prefer database); a purged page\'s file is imported as a new page or removed. Trusted local CLI only; runs only when named.',
   },
   'stuck-recovery': {
     handler: stuckRecoveryRepair, embeds: 'none', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
@@ -407,6 +412,17 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'of a page that still exists is never touched. Each target slug is rechecked under its page lock; coordinated maintenance write on a managed '
       + 'brain, no journal admission. Runs only when named.',
   },
+  'legacy-twins': {
+    handler: legacyTwinsRepair, embeds: 'none', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: LEGACY_TWINS_CONSENT_TEXT,
+    summary: 'Merge page pairs older syncs forked before #6857 (#6885): a legacy page with no recorded origin whose slug the current slug fold spells '
+      + 'differently, and its twin at the folded slug recording the file. Needs --source; refused off the canonical owner host (not_owner_host). The preview '
+      + 'lists each pair (both ids, slugs and revisions, the path, whether the content matches) and, as decisions never merged automatically, pairs whose '
+      + 'content differs, several legacy candidates for one twin, and twins whose file is missing or drifted. --apply --expect <hash> --yes merges exactly '
+      + 'the approved pairs, one coordinated write each: the legacy page records the file and keeps its id, links and history; the twin\'s links, timeline '
+      + 'rows and aliases move to it, its slug becomes an alias, its sync import record follows, and the twin is soft-deleted with its file untouched '
+      + `(purged after ${LEGACY_TWINS_PURGE_FUSE_HOURS} h). Refused when the pairs are over half of the source\'s file-backed pages unless GBRAIN_ALLOW_MASS_RECONCILE=1. Runs only when named.`,
+  },
   'rename-identity': {
     handler: renameIdentityRepair, embeds: 'none', checks: ['rename_identity_downgrades'], explicit_only: true, preview_bound: true, consent: 'destructive',
     consentText: RENAME_IDENTITY_CONSENT_TEXT,
@@ -445,6 +461,22 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'rows gbrain appended; any other difference (a user edit, a staged change, a deleted file) is named and left untouched. --apply --expect <hash> --yes, '
       + 'per previewed file: back it up, keep its appended rows database-only in one transaction, import HEAD\'s bytes as the page, then restore the file '
       + 'from HEAD. Unmanaged brains only (a managed brain uses gbrain sources mirror-readonly). Runs only when named.',
+  },
+  'segmented-mirror': {
+    handler: segmentedMirrorRepair, embeds: 'none', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: {
+      what: 'Rewrite the previewed canonical files of pages stored in segments without their withdrawn or purged rows',
+      why: 'The preview listed each file an older binary left holding a row a withdrawal or purge removed from the database; the apply rewrites each one to the page\'s canonical render through the withdrawal mirror.',
+      risk: 'Each listed file is replaced by the bytes gbrain export writes for its page (other formatting differences in it are normalized the same way). A file that changed since the preview refuses the apply (preview_changed), and one that differs from the database for any other reason is never rewritten. The Git effect commits the change; the old bytes stay in earlier commits.',
+      user_message: 'Rewrite the previewed page files without their withdrawn rows? Each becomes the page\'s canonical render',
+    },
+    summary: 'Re-mirror the canonical files of pages stored in segments whose withdrawal mirror an older binary (before v0.60.299.0) passed by '
+      + '(skipped page_body_segmented), so the file still holds a row forget, forget_fact or purge_fact removed from the database. The preview, '
+      + 'on the source\'s owner host and in bounded memory, lists each file-backed segmented page whose file is an older render: it passes the '
+      + 'mirror\'s own file/database check and still holds a withdrawn or purged row; it prints the path, the file\'s SHA-256 and size and those '
+      + 'of the canonical render (gbrain export\'s bytes). A file that differs from the database for another reason is listed held '
+      + '(file_database_drift) and never rewritten. Preview-bound and destructive: --apply --expect <hash> --yes re-checks each page and commits, per '
+      + 'page, one receipted request whose withdrawal-mirror and Git effects rewrite and commit the file. Runs only when named; never on upgrade.',
   },
 };
 
@@ -529,7 +561,7 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
      */
     async run(kind: RepairKind, scope: RepairScope, run: { limit?: number; sourceFlag?: string; explicit?: boolean; expect?: string; includeAmbiguous?: boolean; only?: string[]; skip?: string[];
       slugs?: string[]; noLlm?: boolean; maxLlmUsd?: number; deadline?: number;
-      prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string;
+      prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string;
       keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean } = {}): Promise<RepairResult> {
       const ctx = { engine, config, logger, dryRun: !opts.apply, remote: false, sourceId: scope.source_ids[0], writeWaitMs } as OperationContext;
       const spec = repairSpec(kind, opts.registry);
@@ -538,7 +570,7 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
           ...(run.olderThan ? ['--older-than', run.olderThan] : []), ...(run.includeFailures ? ['--include-failures'] : []), ...(run.force ? ['--force'] : [])],
         explicit: run.explicit, expect: run.expect, includeAmbiguous: run.includeAmbiguous, only: run.only, skip: run.skip, slugs: run.slugs, noLlm: run.noLlm,
         maxLlmUsd: run.maxLlmUsd, deadline: run.deadline, prefer: run.prefer, requests: run.requests, allDrifted: run.allDrifted, driftClass: run.driftClass, since: run.since,
-        keep: run.keep, requestId: run.requestId, olderThan: run.olderThan, includeFailures: run.includeFailures, force: run.force, from: run.from, close: run.close });
+        held: run.held, side: run.side, state: run.state, keep: run.keep, requestId: run.requestId, olderThan: run.olderThan, includeFailures: run.includeFailures, force: run.force, from: run.from, close: run.close });
     },
   };
 }

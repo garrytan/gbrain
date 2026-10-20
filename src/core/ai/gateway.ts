@@ -57,6 +57,7 @@ import {
   openrouterRequiresExplicitPromptCache,
 } from './recipes/openrouter.ts';
 import { resolveModelDetailed, resolveEffectiveChatModel, resolveEffectiveExpansionModel } from '../model-config.ts';
+import { readLegacyModelPin } from './legacy-model-pin.ts';
 import { snapshotConfigReader } from '../config-snapshot.ts';
 import { clearGatewayModelSources, gatewayModelSource, setGatewayModelSource } from './gateway-model-sources.ts';
 import { parseLlmJson } from '../llm-json.ts';
@@ -100,8 +101,8 @@ function resolveAiTimeoutMs(envVar: string, fallback: number): number {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
-/** chat / expansion / OCR — generous; only catches true hangs (non-streaming generateText). */
-const AI_CHAT_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_CHAT_TIMEOUT_MS', 300_000);
+/** chat / expansion / OCR — generous; only catches true hangs (non-streaming generateText). Also sizes the auto-drain job deadline. */
+export const AI_CHAT_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_CHAT_TIMEOUT_MS', 300_000);
 /** embed sub-batch (per SDK call, NOT per whole import). */
 const AI_EMBED_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_EMBED_TIMEOUT_MS', 60_000);
 /** multimodal per request. */
@@ -572,13 +573,9 @@ async function discoverBeforeOpenAICall(modelStr: string | undefined): Promise<v
 async function resolveGatewayModels(engine: BrainEngine): Promise<AIGatewayConfig> {
   const cfg = requireConfig();
 
-  // The two resolutions below each walk a 5-tier precedence chain that reads
-  // up to 4 config keys, plus alias expansion. Against the engine that is
-  // many sequential round trips before the CLI does any work — seconds of
-  // `gbrain stats`'s wall clock on a hosted brain, for reads the server
-  // answered in microseconds. Take one snapshot of the config table and
-  // resolve every model against it. Same keys, same precedence, one round
-  // trip.
+  // Resolve every model (each walks a 5-tier chain plus alias expansion, and
+  // the legacy DB pins below) against ONE config snapshot: per-key reads add
+  // seconds of sequential round trips on a hosted brain.
   const reader = await snapshotConfigReader(engine);
 
   // Resolve expansion (utility tier) and chat (reasoning tier). Embedding is
@@ -604,6 +601,7 @@ async function resolveGatewayModels(engine: BrainEngine): Promise<AIGatewayConfi
   // present), warns once and falls to the key-aware tier default otherwise —
   // an init-era `chat_model: openai:*` pin survives reconnect when the
   // OpenAI key is live, and stops freezing provider choice when it isn't.
+  // Only with no pin does a DB-plane chat_model/expansion_model (#6795) apply.
   const needsFileCfg = (s: string) => s === 'tier_default' || s === 'fallback';
   let fileCfg: GBrainConfig | null = null;
   if (needsFileCfg(chatDetailed.source) || needsFileCfg(expansionDetailed.source)) {
@@ -616,8 +614,10 @@ async function resolveGatewayModels(engine: BrainEngine): Promise<AIGatewayConfi
   const env = cfg.env ?? process.env;
   const chatEffective = needsFileCfg(chatDetailed.source) ? resolveEffectiveChatModel(fileCfg, env) : null;
   const expansionEffective = needsFileCfg(expansionDetailed.source) ? resolveEffectiveExpansionModel(fileCfg, env) : null;
-  const newChat = chatEffective?.model ?? chatDetailed.model;
-  const newExpansion = expansionEffective?.model ?? expansionDetailed.model;
+  const dbChat = await readLegacyModelPin(reader, 'chat_model', chatEffective, fileCfg, env);
+  const dbExpansion = await readLegacyModelPin(reader, 'expansion_model', expansionEffective, fileCfg, env);
+  const newChat = dbChat ?? chatEffective?.model ?? chatDetailed.model;
+  const newExpansion = dbExpansion ?? expansionEffective?.model ?? expansionDetailed.model;
 
   // Resolved values are bare model ids (e.g. `claude-sonnet-4-6`) — prepend
   // the existing provider prefix from cfg so the gateway keeps routing to
@@ -627,8 +627,8 @@ async function resolveGatewayModels(engine: BrainEngine): Promise<AIGatewayConfi
   const chatFull = newChat.includes(':') ? newChat : prefixWithProviderFrom(cfg.chat_model ?? DEFAULT_CHAT_MODEL, newChat);
 
   _config = { ...cfg, expansion_model: expansionFull, chat_model: chatFull };
-  setGatewayModelSource('expansion', expansionFull, gatewayModelSource('expansion', expansionDetailed, expansionEffective));
-  setGatewayModelSource('chat', chatFull, gatewayModelSource('chat', chatDetailed, chatEffective));
+  setGatewayModelSource('expansion', expansionFull, dbExpansion ? { source: 'config_key', origin: 'expansion_model' } : gatewayModelSource('expansion', expansionDetailed, expansionEffective));
+  setGatewayModelSource('chat', chatFull, dbChat ? { source: 'config_key', origin: 'chat_model' } : gatewayModelSource('chat', chatDetailed, chatEffective));
   _modelCache.clear();
   clearQueryEmbedCache();
   _shrinkState.clear();
@@ -3100,6 +3100,8 @@ export interface ChatResult {
   providerMetadata?: Record<string, any>;
   /** Set when a `chat_fallback_chain` entry answered: the call's own model, which failed or refused (`model` names the one that ran). */
   fallbackFrom?: string;
+  /** With `fallbackFrom`: why that model did not answer ("failed (<first error line>)" / "refused (...)"). */
+  fallbackReason?: string;
 }
 
 export interface ChatOpts {

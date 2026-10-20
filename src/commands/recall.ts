@@ -33,14 +33,15 @@
  */
 
 import type { BrainEngine, FactRow, FactKind } from '../core/engine.ts';
+import { clampSearchLimit } from '../core/engine.ts';
 import { effectiveConfidence } from '../core/facts/decay.ts';
 import { resolveEntitySlug } from '../core/entities/resolve.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult } from '../core/mcp-client.ts';
-import { readCursor, writeCursor } from '../core/recall-cursor-state.ts';
+import { readRecallCursor, writeCursor, writePagedCursor, type RecallCursor } from '../core/recall-cursor-state.ts';
 import { resolveSourceId, resolveSourceIdEngineFree, SourceTargetError } from '../core/source-resolver.ts';
 import { usageError } from '../cli/cli-error.ts';
-import { parseRelativeSince } from '../core/facts/since-parse.ts';
+import { parseSinceParam, SINCE_GRAMMAR } from '../core/facts/since-parse.ts';
 
 // Same kebab-case shape gate the source-resolver applies. v0.32: applied
 // locally on thin-client where the canonical resolver's assertSourceExists
@@ -120,8 +121,33 @@ function parseFlags(args: string[]): ParsedFlags {
   let rawBudget: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === '--since') { out.since = parseSinceParam(args[++i] ?? ''); continue; }
-    if (a === '--session' || a === '--session-id') { out.sessionId = args[++i] ?? null; continue; }
+    if (a === '--since') {
+      const raw = args[i + 1];
+      const valueGiven = raw !== undefined && !raw.startsWith('--');
+      const since = valueGiven ? parseSinceParam(raw) : null;
+      if (!since || !Number.isFinite(since.getTime())) {
+        throw usageError(valueGiven ? `--since is not a date or duration (got "${raw.slice(0, 60)}").` : '--since requires a date or duration.',
+          `Pass ${SINCE_GRAMMAR}.`, {
+            why: `An unreadable time bound must not silently widen recall to every fact. --since takes ${SINCE_GRAMMAR}.`,
+            fix: { argv: ['gbrain', 'recall', '--help'], consent: [], actor: 'agent', why: 'Shows the accepted --since forms.', requires_exclusive: false },
+          });
+      }
+      out.since = since;
+      i++;
+      continue;
+    }
+    if (a === '--session' || a === '--session-id') {
+      const raw = args[i + 1];
+      if (raw === undefined || raw.trim().length === 0 || raw.startsWith('--')) {
+        throw usageError(`${a} requires a session ID.`, `Pass the session ID after the flag, e.g. ${a} <id>.`, {
+          why: 'A missing session bound must not silently widen recall to every session.',
+          fix: { argv: ['gbrain', 'recall', '--help'], consent: [], actor: 'agent', why: 'Shows the recall selectors.', requires_exclusive: false },
+        });
+      }
+      out.sessionId = raw;
+      i++;
+      continue;
+    }
     if (a === '--grep') { out.grep = (args[++i] ?? '').toLowerCase(); continue; }
     if (a === '--today') { out.today = true; continue; }
     if (a === '--supersessions') { out.supersessions = true; continue; }
@@ -188,24 +214,6 @@ function parseFlags(args: string[]): ParsedFlags {
 export function recallNeedsLocalEngine(args: string[]): boolean {
   const flags = parseFlags(args);
   return flags.budgetPolicy === null && flags.question === null && (flags.query !== null || flags.budgetTokens !== null);
-}
-
-function parseSinceParam(raw: string): Date | null {
-  if (!raw) return null;
-  const iso = Date.parse(raw);
-  if (Number.isFinite(iso)) return new Date(iso);
-  const ago = raw.match(/^(\d+)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?)(?:\s+ago)?$/i);
-  if (ago) {
-    const n = parseInt(ago[1], 10);
-    const unit = ago[2].toLowerCase();
-    const ms =
-      unit.startsWith('s') ? n * 1000 :
-      unit.startsWith('m') ? n * 60 * 1000 :
-      unit.startsWith('h') ? n * 60 * 60 * 1000 :
-      n * 24 * 60 * 60 * 1000;
-    return new Date(Date.now() - ms);
-  }
-  return parseRelativeSince(raw);
 }
 
 function validateAndNormalizeFlags(flags: ParsedFlags): void {
@@ -282,6 +290,14 @@ positional is an entity name, then a literal piece of fact text.
   gbrain recall --grep <text>            facts whose text contains <text>
   gbrain recall --since "8 hours ago"    facts from a time window (--today: today, rendered by kind)
   gbrain recall --session <id>           facts from one session
+
+--since-last-run shows facts created since the previous run. When more than
+--limit facts arrived, it shows the oldest --limit of them and the next run
+continues after the last one shown (local brains; a thin client warns instead).
+
+--since takes an ISO 8601 date or datetime, a duration ("8 hours ago", "30m",
+"2d") or a relative phrase ("6 weeks ago", "last month"). An unreadable
+--since or a --session with no ID is refused (invalid_params, exit 2).
 
 Options: --limit N, --include-expired, --json, --as-context, --source <id>,
 --budget-tokens N, --budget-policy facts_first|query_first, --supersessions,
@@ -490,23 +506,19 @@ async function runRecallOnce(
   sourceId: string,
   thinClient: boolean,
   cursorVariant: 'briefing' | 'watch',
-  cursorOverride?: Date | null,
-): Promise<Date> {
+  cursorOverride?: RecallCursor | null,
+): Promise<RecallCursor> {
   // Codex round 1 #2: T_start is captured BEFORE the first read SQL fires.
   // Facts inserted during render/write get included by the next run.
   const tStart = new Date();
 
-  let resolvedSince: Date | null = flags.since;
-  if (flags.sinceLastRun) {
-    if (cursorOverride !== undefined) {
-      resolvedSince = cursorOverride;
-    } else {
-      resolvedSince = readCursor(sourceId, cursorVariant);
-    }
-    if (!resolvedSince) {
-      resolvedSince = new Date(Date.now() - DEFAULT_FALLBACK_HOURS * 60 * 60 * 1000);
-    }
-  }
+  const cursor: RecallCursor | null = flags.sinceLastRun
+    ? (cursorOverride !== undefined ? cursorOverride : readRecallCursor(sourceId, cursorVariant)) ?? wallClockCursor(defaultCursorStart())
+    : null;
+  const resolvedSince: Date | null = cursor ? cursor.since : flags.since;
+  // #6945: only the local cursor read can page (oldest first, by keyset);
+  // thin-client and --supersessions keep the newest-N window.
+  const pageable = cursor !== null && !thinClient && !flags.supersessions;
 
   let rows: FactRow[];
   let pendingCount: number | undefined;
@@ -558,8 +570,10 @@ async function runRecallOnce(
       }
     }
   } else {
-    rows = await fetchRowsLocal(engine, flags, sourceId, resolvedSince);
-    if (rows.length === 0 && cursorVariant === 'briefing' && await keylessQuestionFallback(engine, flags, sourceId)) return tStart;
+    rows = pageable
+      ? await fetchCursorPage(engine, flags, sourceId, cursor!)
+      : await fetchRowsLocal(engine, flags, sourceId, resolvedSince);
+    if (rows.length === 0 && cursorVariant === 'briefing' && await keylessQuestionFallback(engine, flags, sourceId)) return wallClockCursor(tStart);
     if (flags.pending) {
       pendingCount = await engine.countUnconsolidatedFacts(sourceId);
     }
@@ -597,11 +611,74 @@ async function runRecallOnce(
     }
   }
 
-  if (flags.sinceLastRun) {
-    writeCursor(sourceId, tStart, cursorVariant);
-  }
+  return cursor ? advanceCursor(sourceId, cursorVariant, rows, flags.limit, pageable, thinClient, tStart) : wallClockCursor(tStart);
+}
 
-  return tStart;
+function wallClockCursor(since: Date): RecallCursor {
+  return { since, resumeAfter: null };
+}
+
+function defaultCursorStart(): Date {
+  return new Date(Date.now() - DEFAULT_FALLBACK_HOURS * 60 * 60 * 1000);
+}
+
+/**
+ * Move the --since-last-run cursor past what this run showed. A run that
+ * filled its --limit window may have older unseen facts behind it: a pageable
+ * run resumes strictly after the newest fact it delivered (moving to tStart
+ * would skip the rest for good); any other full run warns. A run with room to
+ * spare is caught up and records tStart.
+ */
+function advanceCursor(
+  sourceId: string,
+  variant: 'briefing' | 'watch',
+  rows: FactRow[],
+  limit: number,
+  pageable: boolean,
+  thinClient: boolean,
+  tStart: Date,
+): RecallCursor {
+  const windowFull = rows.length >= clampSearchLimit(limit, 50);
+  if (windowFull && pageable) {
+    const newest = rows[0];
+    const resumeAfter = { createdAt: newest.created_at_iso ?? newest.created_at.toISOString(), id: newest.id };
+    writePagedCursor(sourceId, variant, resumeAfter);
+    return { since: new Date(Date.parse(resumeAfter.createdAt)), resumeAfter };
+  }
+  if (windowFull) {
+    process.stderr.write(
+      `[recall] ${rows.length} facts filled the --limit window; older facts since the last run may not be shown` +
+      `${thinClient ? ' (thin-client recall cannot page the cursor)' : ''}. Re-run with a larger --limit.\n`,
+    );
+  }
+  writeCursor(sourceId, tStart, variant);
+  return wallClockCursor(tStart);
+}
+
+/**
+ * One --since-last-run page from the local engine: the oldest `limit` facts
+ * after the cursor (inclusive of `since` when there is no keyset; id 0 sorts
+ * before every fact), rendered newest-first. Entity with its text fallback,
+ * session, --grep and audit rows narrow in SQL before LIMIT, as in
+ * fetchRowsLocal's cursor arms.
+ */
+async function fetchCursorPage(engine: BrainEngine, flags: ParsedFlags, sourceId: string, cursor: RecallCursor): Promise<FactRow[]> {
+  const after = cursor.resumeAfter ?? { createdAt: cursor.since.toISOString(), id: 0 };
+  const page = (narrow: { entitySlug?: string; grep?: string }) => engine.listFactsKeyset(sourceId, after, {
+    activeOnly: !flags.includeExpired,
+    limit: flags.limit,
+    excludeAuditRows: true,
+    grep: flags.grep ?? undefined,
+    sessionId: flags.sessionId || undefined,
+    ...narrow,
+  });
+  if (!flags.entity) return (await page({})).reverse();
+  const entityRows = await page({ entitySlug: (await resolveEntitySlug(engine, sourceId, flags.entity)) ?? flags.entity });
+  if (!entityTextFallbackApplies(flags, entityRows.length)) return entityRows.reverse();
+  const textRows = await page({ grep: flags.entity.toLowerCase() });
+  if (textRows.length === 0) return entityRows.reverse();
+  noteEntityTextFallback(flags.entity, textRows.length);
+  return textRows.reverse();
 }
 
 async function fetchRowsLocal(
@@ -635,6 +712,7 @@ async function fetchRowsLocal(
           excludeAuditRows: true,
         })
       : await engine.listFactsByEntity(sourceId, slug, {
+          sessionId: flags.sessionId || undefined,
           activeOnly: !flags.includeExpired,
           limit: flags.limit,
           grep: flags.grep ?? undefined,
@@ -765,10 +843,7 @@ async function runWatchLoop(
   }
 
   try {
-    let priorTickStart: Date | null = readCursor(sourceId, 'watch');
-    if (!priorTickStart) {
-      priorTickStart = new Date(Date.now() - DEFAULT_FALLBACK_HOURS * 60 * 60 * 1000);
-    }
+    let priorTickStart: RecallCursor = readRecallCursor(sourceId, 'watch') ?? wallClockCursor(defaultCursorStart());
 
     const effectiveFlags: ParsedFlags = { ...flags, sinceLastRun: true };
 

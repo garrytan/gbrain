@@ -1874,7 +1874,16 @@
             "unconditionalFor": []
           },
           {
-            "condition": "command === 'sync' && !syncOperator",
+            "condition": "command === 'sync' && args[0] === 'trigger' && await (await import('../commands/sync-delegate.ts')).maybeTriggerThroughServe(loadConfig(), args.slice(1))",
+            "connectsEngine": false,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": []
+          },
+          {
+            "condition": "command === 'sync' && !syncOperator && args[0] !== 'trigger'",
             "connectsEngine": false,
             "refusesThinClient": false,
             "routesThinClient": false,

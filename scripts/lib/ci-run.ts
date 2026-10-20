@@ -10,12 +10,16 @@
  * every failing test file and test identity) kept apart from sanitized error
  * excerpts, plus `complete` and `problems`: a jobs page, annotation or
  * manifest that could not be read is incomplete evidence, never zero
- * failures, and incomplete evidence never clears a failure.
+ * failures, and incomplete evidence never clears a failure. A push run whose
+ * `reused-full-suite` job succeeded is judged by the run its reuse.json names
+ * (scripts/ci-reuse.ts): that attempt's jobs and complete ci-manifest stand in
+ * for the push when the trees match; any gap is incomplete evidence.
  *
  * `reproduceCommand` builds the one reproduce line every issue prints from
  * validated fields only (a strict test-path pattern), never from run text.
  */
 import { checkManifest, MANIFEST_ARTIFACT, MANIFEST_FILE, passedFiles, type CiManifest } from '../ci-manifest.ts';
+import { checkRecord, REUSE_ARTIFACT, REUSE_FILE, REUSE_JOB } from '../ci-reuse.ts';
 import { fetchArtifactJson, inert, redactCredentials, type GitHubClient } from './gh-issue.ts';
 
 export interface RunInfo {
@@ -160,6 +164,26 @@ export function failedJobRecord(job: JobInfo, annotations: Annotation[]): Failed
 
 export interface EvidenceOptions { manifest?: (run: RunInfo) => Promise<{ value?: unknown; reason?: string }> }
 
+/** The full-suite run a push run reused (the attempt its reuse.json names, same workflow, identical tree), or why it cannot stand in for the push. */
+async function reusedSource(client: GitHubClient, run: RunInfo, marker: JobInfo[]): Promise<RunInfo | string> {
+  if (marker.length > 1 || marker[0]!.conclusion !== 'success') return `run ${run.id}'s ${REUSE_JOB} job concluded ${marker.map(j => j.conclusion).join(', ')}`;
+  const got = await fetchArtifactJson(client, run.id, REUSE_ARTIFACT, REUSE_FILE);
+  if (got.reason) return got.reason;
+  const rec = checkRecord(got.value, run.name, run.head_sha);
+  if (typeof rec === 'string') return rec;
+  try {
+    const source = await client.request<RunInfo>('GET', `repos/{repo}/actions/runs/${rec.run_id}/attempts/${rec.run_attempt}`);
+    if (source.name !== run.name || source.head_sha !== rec.sha || source.run_attempt !== rec.run_attempt) return `reused run ${rec.run_id} attempt ${rec.run_attempt} is not the ${inert(run.name)} run on ${rec.sha.slice(0, 12)} its ${REUSE_FILE} names`;
+    if (source.conclusion !== 'success') return `reused run ${source.id} attempt ${source.run_attempt} concluded ${source.conclusion}`;
+    const tree = async (sha: string) => (await client.request<{ tree: { sha: string } }>('GET', `repos/{repo}/git/commits/${sha}`)).tree.sha;
+    const [pushTree, sourceTree] = [await tree(run.head_sha), await tree(source.head_sha)];
+    if (pushTree !== sourceTree) return `reused run ${source.id} tested tree ${sourceTree}, but push ${run.head_sha.slice(0, 12)} has tree ${pushTree}`;
+    return source;
+  } catch (e) {
+    return `reused run ${rec.run_id} attempt ${rec.run_attempt} could not be read (${inert(e instanceof Error ? e.message : String(e), 120)})`;
+  }
+}
+
 export async function collectEvidence(client: GitHubClient, run: RunInfo, opts: EvidenceOptions = {}): Promise<RunEvidence> {
   const problems: string[] = [];
   const listed = await pagedJobs(client, run);
@@ -191,9 +215,20 @@ export async function collectEvidence(client: GitHubClient, run: RunInfo, opts: 
   const tests: FailedTest[] = [];
   let passed: string[] = [];
   let manifestState: RunEvidence['manifest'] = 'not-expected';
-  if (MANIFEST_WORKFLOWS.has(workflowFile(run))) {
-    const got = await (opts.manifest ?? (r => fetchArtifactJson(client, r.id, MANIFEST_ARTIFACT, MANIFEST_FILE)))(run);
-    const checked = got.value === undefined ? { problem: got.reason ?? 'the manifest could not be read' } : checkManifest(got.value, { sha: run.head_sha, run_id: run.id, run_attempt: run.run_attempt });
+  const succeeded = jobs.filter(j => j.conclusion === 'success').map(j => inert(j.name));
+  const marker = jobs.filter(j => j.name === REUSE_JOB && j.conclusion !== 'skipped');
+  const source = MANIFEST_WORKFLOWS.has(workflowFile(run)) && marker.length ? await reusedSource(client, run, marker) : run;
+  if (typeof source === 'string') {
+    manifestState = 'unreadable';
+    problems.push(`run ${run.id} reused a full-suite run that cannot stand in for it: ${source}`);
+  } else if (source !== run) {
+    const reused = await pagedJobs(client, source);
+    if (!reused.complete) problems.push(`the jobs list of reused run ${source.id} was truncated`);
+    succeeded.push(...reused.jobs.filter(j => j.conclusion === 'success').map(j => inert(j.name)).filter(n => !succeeded.includes(n)));
+  }
+  if (typeof source !== 'string' && MANIFEST_WORKFLOWS.has(workflowFile(run))) {
+    const got = await (opts.manifest ?? (r => fetchArtifactJson(client, r.id, MANIFEST_ARTIFACT, MANIFEST_FILE)))(source);
+    const checked = got.value === undefined ? { problem: got.reason ?? 'the manifest could not be read' } : checkManifest(got.value, { sha: source.head_sha, run_id: source.id, run_attempt: source.run_attempt });
     if (checked.manifest) {
       manifestState = 'read';
       const m: CiManifest = checked.manifest;
@@ -222,7 +257,7 @@ export async function collectEvidence(client: GitHubClient, run: RunInfo, opts: 
     cancelled,
     annotations: byJob,
     failed,
-    succeeded: jobs.filter(j => j.conclusion === 'success').map(j => inert(j.name)),
+    succeeded,
     tests,
     files,
     passed,

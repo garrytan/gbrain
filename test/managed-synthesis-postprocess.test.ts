@@ -19,6 +19,7 @@ import { requestIndexesCheck } from '../src/commands/doctor/checks/persistence-r
 import { PERSISTENCE_REQUEST_ID_INDEX } from '../src/core/persistence/schema.ts';
 import { buildIndexOnline } from '../src/core/schema-migrations/helpers.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { isTerminal as isTerminalRequest, type RequestState as PersistenceRequestState } from '../src/core/persistence/model.ts';
 import { configureGateway, resetGateway, __setChatTransportForTests, __setEmbedTransportForTests, __setDecideTransportForTests } from '../src/core/ai/gateway.ts';
 import { flushDecideWrites } from '../src/core/ai/decide/store.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -787,3 +788,156 @@ test('#6757: three deferred passes in a row put a line on doctor persistence_req
     expect(await requestIndexesCheck(engine)).toMatchObject({ status: 'ok', message: 'Request-table indexes are valid.' });
   });
 }, 180_000);
+
+// A shared wait may leave admitted writes pending while later admissions hit an outstanding cap (#6916).
+for (const scope of ['principal', 'brain'] as const) {
+  test(`synthesis defers ${scope} outstanding admission and replays the same request IDs`, async () => {
+    const { MaintenanceWriteWait } = await import('../src/core/persistence/maintenance-wait.ts');
+    const { isWriteCapacityWait, outstandingCapacityOf } = await import('../src/core/persistence/admission-retry.ts');
+    await fixture(async f => {
+      const { engine, sourceId, root, calls } = f;
+      const { ordinary, jobsBefore, spent } = await childCommittedOrdinaryCycle(f);
+      const ready = await engine.executeRaw<{ slug: string }>(
+        "SELECT slug FROM pages WHERE source_id=$1 AND slug LIKE 'wiki/personal/reflections/session%' ORDER BY slug", [sourceId]);
+      expect(ready).toHaveLength(4);
+      const children = await engine.executeRaw<{ state: string }>(
+        "SELECT state FROM persistence_requests WHERE source_id=$1 AND operation='put_page' AND slug LIKE 'wiki/personal/reflections/session%'", [sourceId]);
+      expect(children).toHaveLength(4);
+      expect(children.every(r => r.state === 'committed')).toBe(true);
+      const baseline = await engine.executeRaw<{ outstanding_count: number | string }>('SELECT outstanding_count FROM persistence_counters');
+      expect(baseline.every(r => Number(r.outstanding_count) === 0)).toBe(true);
+      await disposePersistenceConsumer(engine);
+      const key = `persistence.limits.${scope}_outstanding`;
+      const previous = await engine.getConfig(key);
+      const events: unknown[] = [];
+      let restoreWait: (() => void) | undefined;
+      let msSpy: { mockRestore(): void } | undefined, observeSpy: { mockRestore(): void } | undefined, admitSpy: { mockRestore(): void } | undefined;
+      const binding = await getWorktreeBinding(engine, sourceId);
+      if (!binding) throw new Error('No worktree binding for publication barrier');
+      const lock = await acquireWorktree(binding, 1000);
+      if (!lock) throw new Error('Publication barrier was not acquired');
+      try {
+      restoreWait = __setMaintenanceWriteWaitForTests(300); // existing #5854 seam, same value
+      const originalMs = MaintenanceWriteWait.prototype.ms;
+      const originalObserve = MaintenanceWriteWait.prototype.observe;
+      const originalAdmit = journal.admitWrite;
+      msSpy = spyOn(MaintenanceWriteWait.prototype, 'ms').mockImplementation(function (this: InstanceType<typeof MaintenanceWriteWait>) {
+        const ms = originalMs.call(this); events.push({ kind: 'wait_ms', ms }); return ms;
+      });
+      observeSpy = spyOn(MaintenanceWriteWait.prototype, 'observe').mockImplementation(function (this: InstanceType<typeof MaintenanceWriteWait>, row) {
+        events.push({ kind: 'observe', request_id: row.request_id, state: row.state });
+        return originalObserve.call(this, row);
+      });
+      admitSpy = spyOn(journal, 'admitWrite').mockImplementation(async (...args) => {
+        const [eng, input] = args;
+        try {
+          const row = await originalAdmit(...args);
+          if (eng === engine && input.sourceId === sourceId) events.push({ kind: 'admitted', request_id: row.request_id, slug: row.slug,
+            state: row.state, counters: await engine.executeRaw('SELECT key,outstanding_count FROM persistence_counters ORDER BY key') });
+          return row;
+        } catch (error) {
+          if (eng === engine && input.sourceId === sourceId) events.push({ kind: 'refusal', request_id: input.requestId, slug: input.slug,
+            error: error instanceof Error ? { name: error.name, message: error.message } : String(error),
+            code: error instanceof OperationError ? error.code : null, detail: error instanceof OperationError ? error.detail : null,
+            classified: isWriteCapacityWait(error), capacity: error instanceof OperationError ? outstandingCapacityOf(error) : null,
+            counters: await engine.executeRaw('SELECT key,outstanding_count FROM persistence_counters ORDER BY key') });
+          throw error;
+        }
+      });
+        await engine.setConfig(key, '2'); // this entirely disposable scratch DB only
+        const report = await runPhaseSynthesize(engine, ordinary);
+        // Only this retryable refusal is a hold: nothing is published or stamped early.
+        expect(report.status).toBe('warn');
+        expect(report.error).toBeUndefined();
+        expect(report.details.pages_written).toBe(0);
+        expect(report.details.publish_pending).toBe(4);
+        expect(events.some(e => (e as { kind: string; ms?: number }).kind === 'wait_ms' && (e as { ms?: number }).ms === 0)).toBe(true);
+        const rows = await engine.executeRaw<{ state: PersistenceRequestState }>(
+          "SELECT state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_maintenance_page'", [sourceId]);
+        expect(rows).toHaveLength(2);
+        const refused = events.filter(e => (e as { kind: string }).kind === 'refusal') as Array<{ code: string; detail: string; classified: boolean; capacity: { outstanding: number; limit: number; scope: string }; request_id: string }>;
+        expect(refused).toHaveLength(2);
+        expect(new Set(refused.map(row => row.request_id)).size).toBe(2);
+        expect(events.filter(e => (e as { kind: string }).kind === 'admitted')).toHaveLength(2);
+        for (const refusal of refused) {
+          expect(refusal).toMatchObject({ code: 'queue_capacity', detail: 'outstanding=2 limit=2', classified: true, capacity: { outstanding: 2, limit: 2, scope } });
+          expect(await engine.executeRaw('SELECT request_id FROM persistence_requests WHERE request_id=$1::uuid', [refusal.request_id])).toEqual([]);
+        }
+        expect(rows.every(r => !isTerminalRequest(r) && ['queued', 'running', 'recovering'].includes(r.state))).toBe(true);
+        expect(await engine.getConfig('dream.synthesize.last_completion_ts')).toBeNull();
+        for (const { slug } of ready) expect((await engine.readPageSnapshot(slug, { sourceId }))!.page.frontmatter.dream_generated).not.toBe(true);
+        expect(calls()).toBe(spent);
+        expect(await engine.executeRaw('SELECT id FROM minion_jobs ORDER BY id')).toEqual(jobsBefore);
+      } finally {
+        try {
+          try { admitSpy?.mockRestore(); } finally { try { observeSpy?.mockRestore(); } finally { try { msSpy?.mockRestore(); } finally { restoreWait?.(); } } }
+        } finally {
+          try { if (previous === null) await engine.unsetConfig(key); else await engine.setConfig(key, previous); }
+          finally { await lock.release(); }
+        }
+        // fixture-level finally disposes the consumer even if validation throws.
+      }
+      // Ordinary recovery only after actual barrier release; pending is not written.
+      await disposePersistenceConsumer(engine);
+      const retained = await engine.executeRaw<{ request_id: string }>(
+        "SELECT request_id::text FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_maintenance_page' ORDER BY sequence", [sourceId]);
+      const recovery = await runPhaseSynthesize(engine, ordinary);
+      expect(recovery.status).toBe('ok');
+      expect(calls()).toBe(spent);
+      expect(await engine.executeRaw('SELECT id FROM minion_jobs ORDER BY id')).toEqual(jobsBefore);
+      for (const { slug } of ready) expect((await engine.readPageSnapshot(slug, { sourceId }))!.page.frontmatter.dream_generated).toBe(true);
+      for (const row of retained) expect(await engine.executeRaw('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [row.request_id])).toEqual([{ state: 'committed' }]);
+      const refusedBeforeRelease = events.filter(e => (e as { kind: string }).kind === 'refusal') as Array<{ request_id: string }>;
+      expect(refusedBeforeRelease).toHaveLength(2);
+      // These IDs had NO row at refusal; ordinary replay must derive the SAME IDs, not allocate replacements.
+      for (const refusal of refusedBeforeRelease) expect(await engine.executeRaw(
+        'SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [refusal.request_id])).toEqual([{ state: 'committed' }]);
+      expect((await engine.executeRaw<{ outstanding_count: number | string }>('SELECT outstanding_count FROM persistence_counters')).every(r => Number(r.outstanding_count) === 0)).toBe(true);
+      expect(await engine.getConfig('dream.synthesize.last_completion_ts')).not.toBeNull();
+      const stable = await engine.executeRaw('SELECT request_id::text,state FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [sourceId]);
+      expect((await runPhaseSynthesize(engine, ordinary)).status).toBe('ok');
+      expect(calls()).toBe(spent);
+      expect(await engine.executeRaw('SELECT id FROM minion_jobs ORDER BY id')).toEqual(jobsBefore);
+      expect(await engine.executeRaw('SELECT request_id::text,state FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [sourceId])).toEqual(stable);
+    }, 4);
+  }, 120_000); // original surrounding fixture cap, no enlargement
+}
+
+// Other refusal classes retain their original error and fail the phase.
+test('synthesis preserves non-outstanding publication refusals', async () => {
+  const { isWriteCapacityWait, outstandingCapacityOf } = await import('../src/core/persistence/admission-retry.ts');
+  const { deferPublishOrThrow } = await import('../src/core/cycle/synthesize-postprocess.ts');
+  const cases: Array<{ id: string; kind: string; code: string | null; message: string; detail: string | null; helper_expected: boolean; receipt_state?: string }> = [
+    {"id": "generic-error", "kind": "Error", "code": null, "message": "Write capacity exhausted: principal outstanding requests.", "detail": "outstanding=2 limit=2", "helper_expected": false},
+    {"id": "plain-object", "kind": "plain-object", "code": "queue_capacity", "message": "Write capacity exhausted: principal outstanding requests.", "detail": "outstanding=2 limit=2", "helper_expected": false},
+    {"id": "generic-queue", "kind": "OperationError", "code": "queue_capacity", "message": "Generic capacity failure.", "detail": null, "helper_expected": false},
+    {"id": "zero-principal-cap", "kind": "OperationError", "code": "queue_capacity", "message": "Write capacity exhausted: principal outstanding requests.", "detail": "outstanding=0 limit=0", "helper_expected": true},
+    {"id": "zero-brain-cap", "kind": "OperationError", "code": "queue_capacity", "message": "Write capacity exhausted: brain outstanding requests.", "detail": "outstanding=0 limit=0", "helper_expected": true},
+    {"id": "unknown-scope-structured", "kind": "OperationError", "code": "queue_capacity", "message": "Write capacity exhausted: unknown resource.", "detail": "outstanding=2 limit=2", "helper_expected": true},
+    {"id": "intent-bytes", "kind": "OperationError", "code": "queue_capacity", "message": "Write capacity exhausted: principal intent bytes.", "detail": null, "helper_expected": false},
+    {"id": "receipt-bytes", "kind": "OperationError", "code": "write_quota_exhausted", "message": "Reserved receipt bytes exhausted.", "detail": "persistence.limits.principal_terminal_bytes", "helper_expected": false},
+    {"id": "lifetime", "kind": "OperationError", "code": "write_quota_exhausted", "message": "Permanent request IDs exhausted.", "detail": "persistence.limits.principal_lifetime_ids", "helper_expected": false},
+    {"id": "permission", "kind": "OperationError", "code": "permission_denied", "message": "Write capacity exhausted: principal outstanding requests.", "detail": "outstanding=2 limit=2", "helper_expected": false},
+    {"id": "storage", "kind": "OperationError", "code": "storage_error", "message": "Storage unavailable.", "detail": "disk_full", "helper_expected": false},
+    {"id": "malformed-9", "kind": "OperationError", "code": "queue_capacity", "message": "Write capacity exhausted: principal outstanding requests.", "detail": "outstanding=-1 limit=2", "helper_expected": false},
+    {"id": "malformed-10", "kind": "OperationError", "code": "queue_capacity", "message": "Write capacity exhausted: principal outstanding requests.", "detail": "outstanding=2 limit=2 trailing", "helper_expected": false},
+    {"id": "malformed-11", "kind": "OperationError", "code": "queue_capacity", "message": "Write capacity exhausted: principal outstanding requests.", "detail": " outstanding=2 limit=2", "helper_expected": false},
+    {"id": "malformed-12", "kind": "OperationError", "code": "queue_capacity", "message": "Write capacity exhausted: principal outstanding requests.", "detail": "outstanding=2", "helper_expected": false},
+    {"id": "malformed-13", "kind": "OperationError", "code": "queue_capacity", "message": "Write capacity exhausted: principal outstanding requests.", "detail": "outstanding=2 limit=NaN", "helper_expected": false},
+    {"id": "realcapacity-with-receipt-committed", "kind": "OperationError", "code": "queue_capacity", "message": "Write capacity exhausted: principal outstanding requests.", "detail": "outstanding=2 limit=2", "helper_expected": true, "receipt_state": "committed"},
+    {"id": "realcapacity-with-receipt-queued", "kind": "OperationError", "code": "queue_capacity", "message": "Write capacity exhausted: principal outstanding requests.", "detail": "outstanding=2 limit=2", "helper_expected": true, "receipt_state": "queued"},
+    {"id": "realcapacity-with-receipt-unknown", "kind": "OperationError", "code": "queue_capacity", "message": "Write capacity exhausted: principal outstanding requests.", "detail": "outstanding=2 limit=2", "helper_expected": true, "receipt_state": "unknown"},
+  ];
+  for (const item of cases) {
+    let error: unknown;
+    if (item.kind === 'plain-object') error = { code: item.code, message: item.message, detail: item.detail };
+    else if (item.kind === 'Error') error = Object.assign(new Error(item.message), { detail: item.detail });
+    else error = Object.assign(new OperationError(item.code as ConstructorParameters<typeof OperationError>[0], item.message, 'Inspect the refused publication.'), { detail: item.detail ?? undefined });
+    if (item.receipt_state) Object.assign(error as object, { writeRequest: { request_id: '00000000-0000-4000-8000-000000000001', state: item.receipt_state } });
+    expect(isWriteCapacityWait(error), item.id).toBe(item.helper_expected);
+    if (item.id === 'unknown-scope-structured') expect(outstandingCapacityOf(error as OperationError).scope).toBeNull();
+    let caught: unknown = Symbol('not-thrown');
+    try { deferPublishOrThrow(error, 'refused-publication'); } catch (failure) { caught = failure; }
+    expect(caught, item.id).toBe(error);
+  }
+});

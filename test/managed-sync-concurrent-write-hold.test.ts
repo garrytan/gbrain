@@ -18,6 +18,7 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { readGitHold } from '../src/core/persistence/sync-holds.ts';
+import { PASS_BATCH_KEY_PREFIX, readPassBatch } from '../src/core/persistence/sync-pass-batch.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
@@ -27,9 +28,15 @@ const SLUG = 'people/alice-example';
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const commit = (root: string, message: string) => { git(root, 'add', '.'); git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', message); };
 const note = (body: string) => `---\ntype: person\ntitle: Alice Example\n---\n\n${body}\n`;
+/** The slug of the import the running pass froze and has not settled yet (its in-memory batch's pending entry). */
 async function storedPending(engine: BrainEngine): Promise<string | null> {
-  const [row] = await engine.executeRaw<{ slug: string | null }>("SELECT completed_keys->0->'pending'->>'slug' AS slug FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'='default'");
-  return row?.slug ?? null;
+  const [row] = await engine.executeRaw<{ pass_id: string | null }>("SELECT completed_keys->0->'telemetry'->>'pass_id' AS pass_id FROM op_checkpoints WHERE op='managed-sync-pass' AND completed_keys->0->>'source_id'='default'");
+  if (!row?.pass_id) return null;
+  for (let batch = 0; batch < 8; batch++) {
+    const slug = readPassBatch<{ pending?: { slug?: string } | null }>(`${PASS_BATCH_KEY_PREFIX}${row.pass_id}:${batch}`)?.pending?.slug;
+    if (slug) return slug;
+  }
+  return null;
 }
 
 /** First sync imports the page; then Git gets a newer version and a database-only write races the next import. */

@@ -13,7 +13,7 @@
  */
 import { afterEach, expect, test } from 'bun:test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync, closeSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync, closeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { commitGitTargets, gitStepTimeoutMs, INDEX_LOCK_GRACE_FOR_TESTS } from '../src/core/persistence/effect-git.ts';
@@ -46,6 +46,7 @@ function repo(): { root: string; home: string; lock: string } {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-reclaim-home-'));
   scratch.push(root, home);
   git(root, 'init', '-q');
+  git(root, 'config', 'maintenance.auto', 'false'); git(root, 'config', 'gc.auto', '0');
   git(root, 'config', 'user.name', 'Example'); git(root, 'config', 'user.email', 'example@example.invalid');
   writeFileSync(join(root, 'a.md'), 'first\n');
   git(root, 'add', '-A'); git(root, 'commit', '-qm', 'seed');
@@ -57,11 +58,16 @@ const until = async (done: () => boolean, ms = 20_000) => {
   for (const deadline = Date.now() + ms; !done() && Date.now() < deadline;) await Bun.sleep(10);
   expect(done()).toBe(true);
 };
-/** Another user's git on this host (a CI agent, a system service) cannot be inspected, so it blocks every proof while it runs. */
+/**
+ * Another user's git on this host (a CI agent, a system service) cannot be inspected, so it blocks every proof while
+ * it runs. This user's own git also denies its open files while it exits; the proof re-checks that one, so it is not
+ * foreign (its status Uid is ours).
+ */
 const foreignGit = () => process.platform === 'linux' && readdirSync('/proc').some(pid => {
   if (!/^\d+$/.test(pid)) return false;
   try { if (!readFileSync(`/proc/${pid}/comm`, 'utf8').startsWith('git')) return false; } catch { return false; }
-  try { readdirSync(`/proc/${pid}/fd`); return false; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EACCES'; }
+  try { readdirSync(`/proc/${pid}/fd`); return false; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EACCES') return false; }
+  try { return Number(/^Uid:\s+(\d+)/m.exec(readFileSync(`/proc/${pid}/status`, 'utf8'))?.[1]) !== process.getuid?.(); } catch { return false; }
 });
 /** Whether a reclaim can be proven here now: the process table is visible and no uninspectable git runs (waited out up to 30 s). */
 async function canProve(): Promise<boolean> {
@@ -347,5 +353,91 @@ test('probe: the writer recovers on its own: a Git effect parked by a held lock 
     expect(readIndexLockReclaims()).toEqual([expect.objectContaining({ lock, size: 0 })]);
     const doctor = await checkParkedEffects(engine);
     expect(doctor).toMatchObject({ status: 'ok', details: { parked_effects: 0, index_lock_reclaims: { last_7_days: 1 } } });
-  }, { setup: ({ root }) => { writeFileSync(join(root, '.gitignore'), '\n'); durableGitRepo(root, ['.gitignore']); } });
+  }, { setup: ({ root }) => {
+    git(root, 'init', '-q'); git(root, 'config', 'maintenance.auto', 'false'); git(root, 'config', 'gc.auto', '0');
+    writeFileSync(join(root, '.gitignore'), '\n'); durableGitRepo(root, ['.gitignore']);
+  } });
 }, 120_000);
+
+/**
+ * Fixture process tables for the proof's /proc reader: pid directories with comm, status and an fd directory.
+ * An fd directory with mode 000 denies its listing the way the kernel does for a process whose open files this
+ * user may not read (another user's, or this user's own git while it exits). Root reads it anyway, and only
+ * Linux has the process table the proof reads.
+ */
+const fixtureProcRunnable = !blind && process.getuid?.() !== 0;
+const procFixtures: string[] = [];
+afterEach(() => {
+  for (const proc of procFixtures.splice(0)) {
+    execFileSync('chmod', ['-R', 'u+rwx', proc]);
+    rmSync(proc, { recursive: true, force: true });
+  }
+});
+function fixtureProc(pids: Record<string, { uid: number; state?: string; fds?: Record<string, string>; denied?: boolean; environDenied?: boolean }>): string {
+  const proc = mkdtempSync(join(tmpdir(), 'gbrain-reclaim-proc-'));
+  procFixtures.push(proc);
+  for (const [pid, p] of Object.entries(pids)) {
+    mkdirSync(join(proc, pid, 'fd'), { recursive: true });
+    writeFileSync(join(proc, pid, 'comm'), 'git\n');
+    writeFileSync(join(proc, pid, 'status'), `Name:\tgit\nState:\t${p.state ?? 'R (running)'}\nUid:\t${p.uid}\t${p.uid}\t${p.uid}\t${p.uid}\n`);
+    writeFileSync(join(proc, pid, 'environ'), 'PATH=/usr/bin\0');
+    symlinkSync(tmpdir(), join(proc, pid, 'cwd'));
+    for (const [fd, target] of Object.entries(p.fds ?? {})) symlinkSync(target, join(proc, pid, 'fd', fd));
+    if (p.denied) chmodSync(join(proc, pid, 'fd'), 0o000);
+    if (p.environDenied) chmodSync(join(proc, pid, 'environ'), 0o000);
+  }
+  return proc;
+}
+/** Change a fixture process after `ms` from another process, while the synchronous proof runs. */
+const later = (ms: number, script: string) => { const child = spawn('sh', ['-c', `sleep ${ms / 1000}; ${script}`], { stdio: 'ignore' }); children.push(child); };
+const staleEmptyLock = () => { const r = repo(); writeFileSync(r.lock, ''); age(r.lock, RECLAIM_MIN_AGE_MS + 1_000); return r; };
+
+test.skipIf(!fixtureProcRunnable)('this user\'s git that denies its open files while it exits is re-checked, and the proof follows once it is gone', () => {
+  const { root, lock } = staleEmptyLock();
+  const proc = fixtureProc({ 4242: { uid: process.getuid!(), denied: true } });
+  later(300, `chmod 755 '${proc}/4242/fd' && rm -rf '${proc}/4242'`);
+  expect(proveIndexLockAbandoned(lock, root, INDEX_LOCK_GRACE_FOR_TESTS, proc)).toMatchObject({ abandoned: true, size: 0 });
+});
+
+test.skipIf(!fixtureProcRunnable)('this user\'s git that is a zombie holds no files, so it does not block the proof', () => {
+  const { root, lock } = staleEmptyLock();
+  const proc = fixtureProc({ 4242: { uid: process.getuid!(), state: 'Z (zombie)', denied: true } });
+  expect(proveIndexLockAbandoned(lock, root, INDEX_LOCK_GRACE_FOR_TESTS, proc)).toMatchObject({ abandoned: true, size: 0 });
+});
+
+test.skipIf(!fixtureProcRunnable)('this user\'s git whose open files become readable after the re-check and hold the lock still fails the proof', () => {
+  const { root, lock } = staleEmptyLock();
+  const proc = fixtureProc({ 4242: { uid: process.getuid!(), fds: { 3: lock }, denied: true } });
+  later(300, `chmod 755 '${proc}/4242/fd'`);
+  expect(proveIndexLockAbandoned(lock, root, INDEX_LOCK_GRACE_FOR_TESTS, proc)).toEqual({ abandoned: false, reason: 'process 4242 (git) has the lock open' });
+});
+
+test.skipIf(!fixtureProcRunnable)('this user\'s git that stays alive and unreadable through the re-check fails the proof', () => {
+  const { root, lock } = staleEmptyLock();
+  const proc = fixtureProc({ 4242: { uid: process.getuid!(), denied: true } });
+  const started = Date.now();
+  expect(proveIndexLockAbandoned(lock, root, INDEX_LOCK_GRACE_FOR_TESTS, proc)).toEqual({ abandoned: false,
+    reason: `git process 4242 (git) is this user's, but it stayed unreadable for ${RECLAIM_MIN_AGE_MS / 1000}s` });
+  expect(Date.now() - started).toBeGreaterThanOrEqual(RECLAIM_MIN_AGE_MS);
+}, 60_000);
+
+test.skipIf(!fixtureProcRunnable)('this user\'s git whose environment is denied while it exits is re-checked, and the proof follows once it is gone', () => {
+  const { root, lock } = staleEmptyLock();
+  const proc = fixtureProc({ 4242: { uid: process.getuid!(), environDenied: true } });
+  later(300, `rm -rf '${proc}/4242'`);
+  expect(proveIndexLockAbandoned(lock, root, INDEX_LOCK_GRACE_FOR_TESTS, proc)).toMatchObject({ abandoned: true, size: 0 });
+});
+
+test.skipIf(!fixtureProcRunnable)('another user\'s git whose environment is denied still fails the proof at once, uninspected', () => {
+  const { root, lock } = staleEmptyLock();
+  const proc = fixtureProc({ 4242: { uid: process.getuid!() + 1, environDenied: true } });
+  expect(proveIndexLockAbandoned(lock, root, INDEX_LOCK_GRACE_FOR_TESTS, proc)).toEqual({ abandoned: false,
+    reason: 'git process 4242 (git) could not be inspected' });
+});
+
+test.skipIf(!fixtureProcRunnable)('another user\'s git still fails the proof at once, unchecked', () => {
+  const { root, lock } = staleEmptyLock();
+  const proc = fixtureProc({ 4242: { uid: process.getuid!() + 1, denied: true } });
+  expect(proveIndexLockAbandoned(lock, root, INDEX_LOCK_GRACE_FOR_TESTS, proc)).toEqual({ abandoned: false,
+    reason: 'git process 4242 (git) belongs to another user, so its open files cannot be checked' });
+});

@@ -254,6 +254,9 @@ gbrain doctor --json
 
 **Expected:** the `fact_take_vectors` check is `ok`. On a keyless brain
 (embeddings disabled) it reports "not applicable" and stays `ok`.
+`details.facts.partially_embedded` counts facts longer than the 8000-character
+embedding input: their vector covers only the start of the fact. They count as
+current, so nothing re-embeds them or spends on them again (#6975).
 
 **If it warns** (code `stale_vectors`): its `details` count, per source, facts
 and takes with no vector for their current text under the brain's embedding

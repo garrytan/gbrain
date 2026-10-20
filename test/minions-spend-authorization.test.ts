@@ -12,8 +12,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from '
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { invokeAI } from '../src/core/ai/invocation-guard.ts';
+import { chatInvocation } from '../src/core/ai/guarded-generation.ts';
 import {
-  jobSpendAuthorization, parseSpendAuthorization, runWithJobSpend, spendBasis, spendSubmitSummary,
+  jobSpendAuthorization, parseSpendAuthorization, runWithJobSpend, spendBasis, spendSubmitSummary, SpendGroupRefusedError,
   type SpendAuthorization,
 } from '../src/core/minions/spend-authorization.ts';
 import type { MinionJob, MinionJobContext } from '../src/core/minions/types.ts';
@@ -216,6 +217,39 @@ test('a user-capped job admits and settles a registered zero-price local model',
       ))).rejects.toThrow(refusal);
     }
     expect(calls).toBe(2);
+  } finally {
+    await engine.setConfig('pricing.overrides', previous ?? '{}');
+  }
+});
+
+// #6990: a registered price with no declared context ceiling (OpenRouter declares none) is not a
+// missing price. The refusal names the missing ceiling, never sends the operator back to pricing set.
+test('a priced model with no context ceiling refuses as no_context_ceiling under a user cap', async () => {
+  const previous = await engine.getConfig('pricing.overrides');
+  const model = 'openrouter:anthropic/claude-haiku-5.5';
+  await engine.setConfig('pricing.overrides', JSON.stringify({ [model]: { input: 0.1, output: 0.5 } }));
+  try {
+    const call = chatInvocation('test-openrouter', model, 1000);
+    expect(call.maxInputTokens).toBeUndefined();
+    const job = await claimed('subagent', {}, record(1, 'user'));
+    let calls = 0;
+    const refusal = await runWithJobSpend(engine, job, ctxFor(job), async () => invokeAI(call,
+      async () => { calls++; return 'unexpected'; }, () => ({ inputTokens: 1, outputTokens: 1 }))).catch(e => e as SpendGroupRefusedError);
+    expect(calls).toBe(0);
+    expect(refusal).toBeInstanceOf(SpendGroupRefusedError);
+    const envelope = (refusal as SpendGroupRefusedError).envelope;
+    expect(envelope.code).toBe('no_context_ceiling');
+    expect(envelope.message).toContain(model);
+    expect(envelope.message).toContain('No provider call was made');
+    expect(envelope.docs).toBe('docs/guides/write-refusals.md#no_context_ceiling');
+    expect(envelope.fix).toMatchObject({ argv: ['gbrain', 'book-mirror', '--slug', 'a-book', '--yes'], consent: ['paid'], next: 'ask_user',
+      verify: { argv: ['gbrain', 'jobs', 'list', '--group', job.spend_authorization!.group_id, '--json'] } });
+    const fix = envelope.fix as { user_message?: string; inputs?: Array<{ name: string }> };
+    expect(fix.user_message).toContain(model);
+    expect(fix.inputs!.map(i => i.name)).toEqual(['context_tokens']);
+    await expect(runWithJobSpend(engine, job, ctxFor(job), async () => invokeAI(chatInvocation('test-unpriced', 'openrouter:example/unpriced-model', 1000),
+      async () => { calls++; return 'unexpected'; }, () => null))).rejects.toThrow('no_pricing');
+    expect(calls).toBe(0);
   } finally {
     await engine.setConfig('pricing.overrides', previous ?? '{}');
   }

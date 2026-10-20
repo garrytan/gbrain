@@ -145,6 +145,8 @@ Poll an agent job submitted via submit_agent. Returns a trimmed status view (id,
 
 List incoming links to a page
 
+Link rows come 500 per call by default (`limit`, up to 5000), in link order. When more match, the last row carries `truncated: true` and `next_cursor`; pass it back as `cursor` with the same parameters for the next rows (a cursor from another listing is refused `link_cursor_invalid`). `get_links` pages the same way. Each row's `context` is cut to 2000 characters, ending in an ellipsis.
+
 Each link row and each `group: "page"` row carries `page_status`, the referring page's frontmatter `status`, when set (a string up to 40 characters; never inferred). The link row's own `status` is the relationship's temporal state and the `status` filter acts on that. Off with `entity.row_page_status false`; a record type's continuation keeps it.
 
 | Parameter | Type | Guidance |

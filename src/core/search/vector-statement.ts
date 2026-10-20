@@ -196,7 +196,11 @@ export interface ScopeChunkCount {
   sample_chunks: number;
 }
 
-/** Share of pages the source scope holds, or undefined without a scope or statistics. */
+/**
+ * Share of pages the source scope holds, or undefined without a scope or statistics. The float4
+ * `most_common_freqs` of a scope covering every source sum to 0.99999997, which widened the walk by
+ * half (#6728), so the sum is rounded to SCOPE_SHARE_PRECISION and capped at 1.
+ */
 export function sourceScopeShare(stats: PageSourceStats | undefined, opts?: SearchOpts): number | undefined {
   const scope = scopeSourceIds(opts);
   if (!scope || !stats) return undefined;
@@ -204,8 +208,11 @@ export function sourceScopeShare(stats: PageSourceStats | undefined, opts?: Sear
   const freqs = (stats.freqs ?? []).map(Number);
   const distinct = Number(stats.n_distinct) < 0 ? -Number(stats.n_distinct) * Number(stats.reltuples) : Number(stats.n_distinct);
   const unlisted = Math.max(0, 1 - Number(stats.null_frac) - freqs.reduce((sum, freq) => sum + freq, 0)) / Math.max(1, distinct - sources.length);
-  return scope.reduce((sum, id) => sum + (sources.includes(id) ? freqs[sources.indexOf(id)]! : unlisted), 0);
+  const share = scope.reduce((sum, id) => sum + (sources.includes(id) ? freqs[sources.indexOf(id)]! : unlisted), 0);
+  return Math.min(1, Math.round(share * SCOPE_SHARE_PRECISION) / SCOPE_SHARE_PRECISION);
 }
+
+const SCOPE_SHARE_PRECISION = 1e6;
 
 function scopeSourceIds(opts?: SearchOpts): string[] | undefined {
   const scope = opts?.sourceIds?.length ? opts.sourceIds : opts?.sourceId ? [opts.sourceId] : undefined;

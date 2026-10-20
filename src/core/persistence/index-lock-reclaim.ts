@@ -17,7 +17,11 @@
  *   `GIT_INDEX_FILE` inside the checkout or its git directory. A git process
  *   whose open files or environment cannot be read fails the proof. Another
  *   user's processes that are not git cannot be read and are not checked: only
- *   git creates this lock, and their git processes still fail the proof.
+ *   git creates this lock, and their git processes still fail the proof. This
+ *   user's own git denies its open files only while it exits (its memory is
+ *   gone, its files not yet closed): it is re-checked until it is gone, a
+ *   zombie or readable, for at most {@link RECLAIM_MIN_AGE_MS} per proof, and
+ *   fails the proof if it is still unreadable then.
  * - The lock is empty and at least {@link RECLAIM_MIN_AGE_MS} old, or older
  *   than the stale threshold.
  *
@@ -85,39 +89,71 @@ export function processTableBlind(): string | null {
   return null;
 }
 
+/** Real uid and state of a process from /proc/<pid>/status, or null when it ended. */
+function owner(proc: string, pid: string): { uid: number; zombie: boolean } | null {
+  let status: string;
+  try { status = readFileSync(`${proc}/${pid}/status`, 'utf8'); } catch { return null; }
+  return { uid: Number(/^Uid:\s+(\d+)/m.exec(status)?.[1] ?? -1), zombie: /^State:\s+[ZX]/m.test(status) };
+}
+
+/** Synchronous pause for the re-check below; the proof itself is synchronous. */
+const pause = (ms: number) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
+
 /** The git environment variables that place a process's repository or index. */
 const GIT_LOCATION_VARIABLES = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE'];
+
+/**
+ * Read a /proc entry of a git process. A denied read belongs to another user's process (`foreign`) or to
+ * this user's own process while it exits; that one is read again until it reads, ends or turns zombie (`gone`:
+ * a zombie holds no files), or `until` passes (`denied`).
+ */
+function readGit<T>(proc: string, pid: string, until: number, read: () => T): T | 'gone' | 'foreign' | 'denied' {
+  for (;;) {
+    try { return read(); } catch (error) { if (gone(error)) return 'gone'; }
+    const who = owner(proc, pid);
+    if (!who || who.zombie) return 'gone';
+    if (who.uid !== (process.getuid?.() ?? -1)) return 'foreign';
+    if (Date.now() >= until) return 'denied';
+    pause(10);
+  }
+}
 
 /**
  * A process that holds the lock or runs git in the checkout, or a git process this process cannot inspect.
  * A process that has the lock open is named first, then a git in the checkout, then a git that cannot be
  * inspected, so a refusal names the actual holder when there is one.
  */
-function liveHolder(lock: { dev: number; ino: number }, roots: string[]): string | null {
+function liveHolder(lock: { dev: number; ino: number }, roots: string[], proc: string): string | null {
   const opaque: string[] = [];
   const inRepository: string[] = [];
-  for (const pid of readdirSync('/proc')) {
+  const until = Date.now() + RECLAIM_MIN_AGE_MS;
+  const unreadable = (pid: string, comm: string) => `git process ${pid} (${comm}) is this user's, but it stayed unreadable for ${RECLAIM_MIN_AGE_MS / 1000}s`;
+  for (const pid of readdirSync(proc)) {
     if (!/^\d+$/.test(pid)) continue;
     let comm: string;
-    try { comm = readFileSync(`/proc/${pid}/comm`, 'utf8').trim(); } catch { continue; }
-    let fds: string[] | null = null;
-    try { fds = readdirSync(`/proc/${pid}/fd`); } catch (error) { if (gone(error)) continue; }
-    for (const fd of fds ?? []) {
-      let opened;
-      try { opened = statSync(`/proc/${pid}/fd/${fd}`); } catch { continue; }
-      if (opened.dev === lock.dev && opened.ino === lock.ino) return `process ${pid} (${comm}) has the lock open`;
-    }
-    if (!comm.startsWith('git')) continue;
-    if (fds === null) { opaque.push(`git process ${pid} (${comm}) belongs to another user, so its open files cannot be checked`); continue; }
-    let cwd: string;
-    let environ: string;
-    try {
-      cwd = readlinkSync(`/proc/${pid}/cwd`).replace(/ \(deleted\)$/, '');
-      environ = readFileSync(`/proc/${pid}/environ`, 'utf8');
-    } catch (error) {
-      if (!gone(error)) opaque.push(`git process ${pid} (${comm}) could not be inspected`);
+    try { comm = readFileSync(`${proc}/${pid}/comm`, 'utf8').trim(); } catch { continue; }
+    const holds = (fds: string[]) => fds.some(fd => {
+      try { const opened = statSync(`${proc}/${pid}/fd/${fd}`); return opened.dev === lock.dev && opened.ino === lock.ino; } catch { return false; }
+    });
+    if (!comm.startsWith('git')) {
+      let fds: string[];
+      try { fds = readdirSync(`${proc}/${pid}/fd`); } catch { continue; }
+      if (holds(fds)) return `process ${pid} (${comm}) has the lock open`;
       continue;
     }
+    const fds = readGit(proc, pid, until, () => readdirSync(`${proc}/${pid}/fd`));
+    if (fds === 'gone') continue;
+    if (fds === 'foreign') { opaque.push(`git process ${pid} (${comm}) belongs to another user, so its open files cannot be checked`); continue; }
+    if (fds === 'denied') { opaque.push(unreadable(pid, comm)); continue; }
+    if (holds(fds)) return `process ${pid} (${comm}) has the lock open`;
+    const place = readGit(proc, pid, until, () => ({
+      cwd: readlinkSync(`${proc}/${pid}/cwd`).replace(/ \(deleted\)$/, ''),
+      environ: readFileSync(`${proc}/${pid}/environ`, 'utf8'),
+    }));
+    if (place === 'gone') continue;
+    if (place === 'foreign') { opaque.push(`git process ${pid} (${comm}) could not be inspected`); continue; }
+    if (place === 'denied') { opaque.push(unreadable(pid, comm)); continue; }
+    const { cwd, environ } = place;
     if (inside(cwd, roots)) { inRepository.push(`git process ${pid} (${comm}) is running in the checkout`); continue; }
     for (const entry of environ.split('\0')) {
       const at = entry.indexOf('=');
@@ -136,8 +172,9 @@ function liveHolder(lock: { dev: number; ino: number }, roots: string[]): string
  * Whether `lock` (the checkout's own index lock) is provably abandoned. `checkout` is the worktree root;
  * the lock's directory is the git directory that owns the index. A lock older than `staleMs` qualifies
  * whatever its size; a younger one only when it is empty and at least {@link RECLAIM_MIN_AGE_MS} old.
+ * `proc` is where the process table is read (`/proc`; a test points it at a fixture tree).
  */
-export function proveIndexLockAbandoned(lock: string, checkout: string, staleMs: number): IndexLockVerdict {
+export function proveIndexLockAbandoned(lock: string, checkout: string, staleMs: number, proc = '/proc'): IndexLockVerdict {
   const blind = processTableBlind();
   if (blind) return doubt(blind);
   let before;
@@ -151,7 +188,7 @@ export function proveIndexLockAbandoned(lock: string, checkout: string, staleMs:
     if (SHARED_FILESYSTEMS.has(Number(statfsSync(dirname(lock)).type) >>> 0)) return doubt('the checkout is on a network or userspace filesystem, where a git on another machine is invisible');
   } catch { return doubt('the filesystem holding the lock could not be identified'); }
   let holder: string | null;
-  try { holder = liveHolder(before, [canonical(checkout), canonical(dirname(lock))]); }
+  try { holder = liveHolder(before, [canonical(checkout), canonical(dirname(lock))], proc); }
   catch { return doubt('the process table under /proc could not be read'); }
   if (holder) return doubt(holder);
   let after;

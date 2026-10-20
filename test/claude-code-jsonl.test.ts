@@ -90,6 +90,53 @@ describe('parseTranscript on the fixture [G3, A6]', () => {
     expect(r.parsedLines).toBe(3);
   });
 
+  test('a session with only scaffolding and slash commands is recognizedOnly, not drift', () => {
+    const dir = tdir();
+    const p = join(dir, 'empty.jsonl');
+    const rows = [
+      { type: 'permission-mode', permissionMode: 'default', sessionId: 's' },
+      { type: 'queue-operation', operation: 'enqueue', sessionId: 's' },
+      { type: 'user', isMeta: true, message: { role: 'user', content: '<system-reminder>session renamed</system-reminder>' } },
+      { type: 'system', subtype: 'local_command', content: '<command-name>/rename</command-name>' },
+      { type: 'cost-state', sessionId: 's' },
+      { type: 'some-future-bookkeeping', sessionId: 's' },
+    ];
+    writeFileSync(p, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    const r = parseTranscript(p);
+    expect(r.turns).toHaveLength(0);
+    expect(r.recognizedOnly).toBe(true);
+  });
+
+  test('a message record that yields no turn keeps the drift path open', () => {
+    const dir = tdir();
+    const p = join(dir, 'renamed.jsonl');
+    const rows = [
+      { type: 'permission-mode', permissionMode: 'default', sessionId: 's' },
+      { type: 'human', message: { role: 'user', content: 'a renamed user record' } },
+    ];
+    writeFileSync(p, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    const r = parseTranscript(p);
+    expect(r.turns).toHaveLength(0);
+    expect(r.recognizedOnly).toBeUndefined();
+  });
+
+  test('a tail read is never recognizedOnly, even when the tail holds only scaffolding', () => {
+    const dir = tdir();
+    const p = join(dir, 'tail.jsonl');
+    const scaffold = JSON.stringify({ type: 'permission-mode', permissionMode: 'default', sessionId: 's' });
+    writeFileSync(p, JSON.stringify({ type: 'user', message: { role: 'user', content: 'x'.repeat(200) } }) + '\n' + (scaffold + '\n').repeat(4));
+    const r = parseTranscript(p, { maxBytes: (scaffold.length + 1) * 4 });
+    expect(r.skippedLines).toBe(0);
+    expect(r.recognizedOnly).toBeUndefined();
+  });
+
+  test('only unknown records (no scaffolding) keeps the drift path open', () => {
+    const dir = tdir();
+    const p = join(dir, 'unknown.jsonl');
+    writeFileSync(p, '{"type":"summary","summary":"only summaries here"}\n'.repeat(3));
+    expect(parseTranscript(p).recognizedOnly).toBeUndefined();
+  });
+
   test('maxBytes tail read keeps the newest turn and drops the partial head line', () => {
     const dir = tdir();
     const p = join(dir, 'big.jsonl');

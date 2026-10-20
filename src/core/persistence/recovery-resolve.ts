@@ -84,6 +84,7 @@ import { FileBytes, hashDescriptor, hashFile, LARGE_FILE_MIN_BYTES, largeFileWor
 import { SEGMENT_MAX_BYTES } from '../page-body/limits.ts';
 import { withFilesystemPublication } from './filesystem-guard.ts';
 import { readHeadBlockers } from './head-blocker.ts';
+import { recoveryVersionKnown, recoveryVersionUnsupported, type RecoveryTable } from './recovery-version.ts';
 import { previewChangedError } from './preview-approval.ts';
 import { faultPoint } from './fault-points.ts';
 import { KEEP_DISK_ABANDONED_PREFIX } from './verb-errors.ts';
@@ -128,7 +129,7 @@ export interface StuckRecovery {
   digest: string;
 }
 /** A blocked terminal request, or an unusable withdrawal-mirror effect or bundle record: listed, never resolved (see the module comment). */
-export interface RefusedRecovery { code: 'recovery_choice_refused' | 'recovery_effect_unsupported' | 'recovery_bundle_unsupported';
+export interface RefusedRecovery { code: 'recovery_choice_refused' | 'recovery_effect_unsupported' | 'recovery_bundle_unsupported' | 'recovery_version_unsupported';
   request_id: string; source_id: string; slug: string; state: string; blocked_reason: string | null; reason: string; effect_id?: string;
   /** The next step when it is not the read-only writer status: an ask_user action naming the exact preview. */
   fix?: Action }
@@ -414,6 +415,7 @@ Promise<{ item: StuckRecovery; sources: Array<{ prior: Bytes; disk: Bytes }> } |
   const slug = typeof record?.slug === 'string' ? record.slug : '';
   const refused: RefusedRecovery = { code: 'recovery_effect_unsupported', request_id: effect.request_id ?? '', effect_id: effect.id, source_id: sourceId, slug,
     state: effect.state, blocked_reason: effect.error_code, reason: effectReason(effect.kind), fix: effectFix(sourceId, effect.request_id) };
+  if (!recoveryVersionKnown('persistence_effects', record)) return newerRefusal('persistence_effects', record, refused);
   if (!record || effect.kind !== 'withdrawal-mirror' || record.kind !== 'withdrawal-mirror' || record.version !== 1 || typeof record.after !== 'string' || typeof record.afterHash !== 'string'
     || typeof record.path !== 'string' || typeof record.root !== 'string' || !binding.local_path) return refused;
   const after = Buffer.from(record.after, 'base64');
@@ -497,6 +499,14 @@ export async function scanStuckRecoveries(engine: BrainEngine, sourceIds: string
         continue;
       }
       if (row.blocked_reason === 'unexpected_staging_bytes') { residual('unexpected_staging_bytes'); continue; }
+      if (!recoveryVersionKnown('persistence_requests', row.recovery)) {
+        const refused = newerRefusal('persistence_requests', row.recovery, { request_id: row.request_id, source_id: row.source_id, slug: row.slug, state: row.state,
+          blocked_reason: row.blocked_reason ?? null });
+        if (opts.requestId) throw refusalError(refused);
+        scan.refused.push(refused);
+        residual('newer_recovery_record');
+        continue;
+      }
       if (row.recovery?.version === 2 && !filesOf(row.recovery)) {
         const refused = bundleRefusal(row);
         if (opts.requestId) throw refusalError(refused);
@@ -544,6 +554,12 @@ function bundleRefusal(row: WriteRequest): RefusedRecovery {
         + 'or decide which version of each skill file to keep and put those bytes in place by hand.' } };
 }
 /** A listed refusal as the error a request-id preview throws. */
+/** A record a newer gbrain wrote (recovery-version.ts): refused with the upgrade fix before any of its fields is read. */
+function newerRefusal(table: RecoveryTable, record: unknown, base: Omit<RefusedRecovery, 'code' | 'reason' | 'fix'>): RefusedRecovery {
+  const error = recoveryVersionUnsupported(table, record, base.source_id);
+  return { request_id: base.request_id, source_id: base.source_id, slug: base.slug, state: base.state, blocked_reason: base.blocked_reason,
+    ...(base.effect_id ? { effect_id: base.effect_id } : {}), code: 'recovery_version_unsupported', reason: error.message, fix: error.fix };
+}
 function refusalError(refused: RefusedRecovery): OperationError {
   const error = catalogueError(refused.code, refused.reason, `Nothing was changed. ${refused.fix?.user_message ?? `Inspect it read-only with gbrain sources writer status --source ${refused.source_id} --json.`}`);
   if (refused.fix) error.fix = refused.fix;

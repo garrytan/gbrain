@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { runEmbedCore } from '../src/commands/embed.ts';
 import { runMigrateEmbeddings } from '../src/commands/migrate-embeddings.ts';
 import { planEmbeddingMigration } from '../src/core/embedding-migration.ts';
+import { planMigrationWorstCase } from '../src/core/embedding-migration-worst-case.ts';
 import { __setEmbedTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { EMBED_PROBE_TEXT } from '../src/core/embed-stale.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -85,6 +86,31 @@ describe('#5226 migrate embeddings dry run', () => {
     expect(plan.dim_change).toBe(true);
     expect(plan.chunks_to_restamp).toBe(0);
     expect(plan.chunks_to_embed).toBe(3);
+  });
+
+  test('PR #6959: restamp-only chunks are left out of the paid estimate and the worst-case authorization', async () => {
+    await seed(engine, 'no-vectors', 1, null);
+    const paidOnly = await planEmbeddingMigration(engine, { to: MODEL, dim: DIMS, fromModel: 'legacy:model', fromDims: DIMS });
+    const paidWorst = await planMigrationWorstCase(engine, paidOnly);
+    await seed(engine, 'current-vectors', 2, { model: MODEL });
+    const mixed = await planEmbeddingMigration(engine, { to: MODEL, dim: DIMS, fromModel: 'legacy:model', fromDims: DIMS });
+    expect(mixed.chunks_to_restamp).toBe(2);
+    expect(mixed.chunks_to_embed).toBe(1);
+    expect(paidOnly.total_chars).toBe('no-vectors body 0'.length);
+    expect(mixed.total_chars).toBe(paidOnly.total_chars);
+    expect(mixed.est_cost_usd).toBe(paidOnly.est_cost_usd);
+    const mixedWorst = await planMigrationWorstCase(engine, mixed);
+    expect(mixedWorst).toEqual(paidWorst);
+  });
+
+  test('PR #6959: a width change still prices current vectors (the column is rebuilt)', async () => {
+    await seed(engine, 'no-vectors', 1, null);
+    const target = { to: 'openai:text-embedding-3-small', dim: 1024, fromModel: MODEL, fromDims: DIMS };
+    const before = await planMigrationWorstCase(engine, await planEmbeddingMigration(engine, target));
+    await seed(engine, 'current-vectors', 2, { model: MODEL });
+    const plan = await planEmbeddingMigration(engine, target);
+    expect(plan.total_chars).toBe(['no-vectors body 0', 'current-vectors body 0', 'current-vectors body 1'].join('').length);
+    expect((await planMigrationWorstCase(engine, plan)).input_tokens).toBeGreaterThan(before.input_tokens);
   });
 
   test('the printed plan names both figures', async () => {

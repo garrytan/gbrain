@@ -101,6 +101,8 @@ export interface ItemResult {
   rc: number;
   ms: number;
   output: string;
+  /** The VM's 1-minute load average per vCPU as the item ended (ci-item.sh's __ubi_load__ line). */
+  load?: number;
 }
 
 /** Split a ci-item.sh log into per-item results using its marker lines. */
@@ -116,6 +118,11 @@ export function parseItemLog(log: string): ItemResult[] {
     if (done) {
       results.push({ rc: Number(done[1]), ms: Number(done[2]), lane: done[3]!, file: done[4]!, output: lines.join("\n") });
       lines = [];
+      continue;
+    }
+    const load = /^__ubi_load__ load1=([\d.]+) vcpus=(\d+)$/.exec(line);
+    if (load && results.length) {
+      results[results.length - 1]!.load = Number(load[1]) / Number(load[2]);
       continue;
     }
     lines.push(line);

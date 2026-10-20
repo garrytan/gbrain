@@ -51,7 +51,7 @@ export const TARGETS = { master: 0.95, pr: 0.9 };
 export const STRESS_JOB = 'stress-changed-tests';
 const AGGREGATORS = new Set(['test-status', 'e2e-status']);
 const WORKFLOWS = [
-  { file: 'test.yml', name: 'Test', shard: /^test \(\d+\)$/, lane: 'unit' },
+  { file: 'test.yml', name: 'Test', shard: /^test \(\d+(?:, \d+)*\)$/, lane: 'unit' },
   { file: 'e2e.yml', name: 'E2E Tests', shard: /^Selected E2E \(diff-relevant\)/, lane: 'e2e' },
 ] as const;
 const WATCHED = ['test.yml', 'e2e.yml', 'heavy-tests.yml', 'scale-tier.yml', 'macos-validation.yml', 'semgrep.yml', 'osv-scanner.yml', 'ci-health.yml'];

@@ -385,6 +385,23 @@ does not expose them to every source. Do not count `pending_host_work` or
 per-source `action_required` as completion even if the migration ledger says
 the mechanical checkpoint completed.
 
+While a source's inventory, ownership (writer), projection or policy stage, or
+a brain-level pending action, is still open, `gbrain apply-migrations --list` shows 0.53.0 as
+`applied_pending_host_work` (not `applied`), `--list --json` adds an
+`applied_pending_host_work` array whose `fix.argv` is the read-only
+inventory, and `gbrain doctor` warns on `minions_migration` with
+`details.code: migration_host_work_pending`:
+
+```bash
+gbrain apply-migrations --migration 0.53.0 --dry-run --json   # each source's next step; changes nothing
+gbrain apply-migrations --yes                                  # after the work: the re-check records it done
+```
+
+The `members` stage alone (no installation enrolled yet, as on every new
+brain) is not host work, and neither is a source that opted out with
+`gbrain sources shared-skills <id> off`; a brain that declines the migration
+(below) never reports it.
+
 The host report's `member_installations` inventories known members per source,
 with `joined`, `refresh_pending`, `delivery_reported`, `source_changed`, or
 `left` and a `next_action`. `delivery_reported` means client-reported artifact

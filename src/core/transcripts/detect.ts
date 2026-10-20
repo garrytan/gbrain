@@ -101,34 +101,41 @@ export function readSample(path: string, bytes = SAMPLE_BYTES): Buffer {
 
 export type DetectResult =
   | { ok: true; adapter: TranscriptAdapter }
-  | { ok: false; reason: 'unreadable' | 'symlink' | 'unknown_format'; tried: TranscriptFormat[] };
+  | { ok: false; reason: 'unreadable' | 'symlink' | 'unknown_format'; tried: TranscriptFormat[]; errno?: string };
+
+function unreadable(e: unknown): DetectResult {
+  const errno = (e as NodeJS.ErrnoException | null)?.code;
+  return { ok: false, reason: 'unreadable', tried: [], ...(typeof errno === 'string' ? { errno } : {}) };
+}
 
 /**
- * Detect the adapter for a path. `explicitFormat` (from the CLI flag) wins
- * without sniffing; unknown formats report every detector tried so the error
- * is actionable.
+ * Detect the adapter for a path. Filesystem admission comes first for every
+ * path: a symlink is refused (never followed) and an unreadable path reports
+ * its errno. `explicitFormat` (from the CLI flag) then wins without
+ * sniffing; unknown formats report every detector tried so the error is
+ * actionable.
  */
 export function detectAdapter(
   path: string,
   opts: { explicitFormat?: TranscriptFormat; adapters?: TranscriptAdapter[] } = {},
 ): DetectResult {
   const adapters = opts.adapters ?? transcriptAdapters();
+  try {
+    const st = lstatSync(path);
+    if (st.isSymbolicLink()) return { ok: false, reason: 'symlink', tried: [] };
+  } catch (e) {
+    return unreadable(e);
+  }
   if (opts.explicitFormat) {
     const adapter = adapters.find((a) => a.format === opts.explicitFormat);
     if (adapter) return { ok: true, adapter };
     return { ok: false, reason: 'unknown_format', tried: adapters.map((a) => a.format) };
   }
-  try {
-    const st = lstatSync(path);
-    if (st.isSymbolicLink()) return { ok: false, reason: 'symlink', tried: [] };
-  } catch {
-    return { ok: false, reason: 'unreadable', tried: [] };
-  }
   let sample: Buffer;
   try {
     sample = readSample(path);
-  } catch {
-    return { ok: false, reason: 'unreadable', tried: [] };
+  } catch (e) {
+    return unreadable(e);
   }
   for (const adapter of adapters) {
     if (adapter.detect(path, sample)) return { ok: true, adapter };

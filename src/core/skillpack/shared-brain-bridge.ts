@@ -5,6 +5,7 @@ import type { BrainEngine } from '../engine.ts';
 import { configDir, type GBrainConfig } from '../config.ts';
 import { checkedRoot, confinedPath, sha256, privateWrite, readFileConfigState } from '../agent-install/state.ts';
 import { findBridgeEntry, loadBridgeState } from './bridge-state.ts';
+import { ownedBridgeSlugs, SHARED_DEP_LEDGER_KEY } from './harness-bridge.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { createSharedSkillsAdapter, type SharedSkillsToolCaller } from '../shared-skills/adapter.ts';
 import { verifyLocalWriter, withVerifiedLocalRegistration, type LocalRegistration } from '../persistence/identity.ts';
@@ -104,7 +105,9 @@ export async function sharedBrainBridgePlan(options: {
     const entry = findBridgeEntry(loadBridgeState({ statePath: options.statePath }), { harness: options.harness, dest: options.dest });
     if (entry) {
       migration.ownership = 'ledger';
-      const files = new Map(Object.values(entry.written).flatMap(record => Object.entries(record.files)));
+      // #6922: remove --harness keeps the shared deps (_shared), so once no owned slug is left they are not a legacy copy to migrate.
+      const owned = ownedBridgeSlugs(entry).length > 0;
+      const files = new Map(Object.entries(entry.written).filter(([slug]) => owned || slug !== SHARED_DEP_LEDGER_KEY).flatMap(([, record]) => Object.entries(record.files)));
       if (files.size > 2048) migration.modified.push('(inventory limit exceeded)');
       else for (const [relative, expected] of files) {
         try {

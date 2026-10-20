@@ -1,8 +1,8 @@
 /**
- * Relative `since` phrases for recall (a dependency-free leaf shared by the
- * recall op and the recall CLI). Both parsers try their existing grammar
- * first (ISO 8601, epoch millis, "8 hours ago", "2d") and fall back to this
- * one, so every input that parsed before keeps its result.
+ * Recall's `since` grammar (a dependency-free leaf). parseSinceParam is the one
+ * parser the recall op and the recall CLI share: it tries ISO 8601, epoch
+ * millis and "8 hours ago" / "2d" first and falls back to the relative
+ * phrases below, so every input that parsed before keeps its result.
  *
  * Accepted (case-insensitive, any spacing):
  *   - "6 weeks ago", "a week ago", "an hour ago", "one month ago"
@@ -51,3 +51,38 @@ export function parseRelativeSince(raw: string, now: number = Date.now()): Date 
   if (!Number.isSafeInteger(count)) return null;
   return step(now, count, unit);
 }
+
+/**
+ * Parse a `since` parameter into a Date. Accepts ISO 8601, plain duration
+ * shorthand ("8 hours ago", "3 days ago", "30m", "1h", "2d", "7d"), Unix
+ * epoch millis, or a relative phrase (parseRelativeSince: "6 weeks ago",
+ * "last month"). Returns null on unparseable input.
+ */
+export function parseSinceParam(raw: unknown): Date | null {
+  if (raw == null) return null;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return new Date(raw);
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!s) return null;
+
+  // Try ISO first.
+  const iso = Date.parse(s);
+  if (Number.isFinite(iso)) return new Date(iso);
+
+  // "N (minutes|hours|days) ago" or compact forms.
+  const ago = s.match(/^(\d+)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?)(?:\s+ago)?$/i);
+  if (ago) {
+    const n = parseInt(ago[1], 10);
+    const unit = ago[2].toLowerCase();
+    const ms =
+      unit.startsWith('s') ? n * 1000 :
+      unit.startsWith('m') ? n * 60 * 1000 :
+      unit.startsWith('h') ? n * 60 * 60 * 1000 :
+      n * 24 * 60 * 60 * 1000;
+    return new Date(Date.now() - ms);
+  }
+  return parseRelativeSince(s);
+}
+
+/** The accepted `since` grammar, for refusals that echo a bad value. */
+export const SINCE_GRAMMAR = 'an ISO 8601 date or datetime ("2026-08-11", "2026-08-11T09:00:00Z"), a duration ("8 hours ago", "30m", "2d"), or a relative phrase ("6 weeks ago", "last month")';

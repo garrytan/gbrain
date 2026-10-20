@@ -8,7 +8,9 @@
  *  - runs the hold's fix chain step by step (`next: run` only; a repair preview, then the apply command it printed,
  *    bound to the preview's hash with `--expect`; then the next step), and the hold clears.
  * A code whose way out is a person's act (commit the dirty edit, exclude the image, pick the drift side) gets that act
- * from the fixture first, as the person would, and the chain then clears it.
+ * from the fixture first, as the person would, and the chain then clears it. #6712 PR 4b: the file_drift fixture moves
+ * the page on both sides (a database-only edit of an unchanged file is db_ahead and kept without a hold), and the
+ * concurrent write races the pass's in-memory batch instead of a cursor row.
  * Fails when: a printed fix cannot clear its hold, a hold that cannot clear asks nobody (or asks in more than one
  * sentence), or a needs_human hold's first step writes.
  * PGLite always; Postgres too when DATABASE_URL is set.
@@ -30,6 +32,7 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { GIT_HOLD_OP, gitHoldFingerprint, readGitSourceHolds, SYNC_IMPORT_PROVENANCE_OP, writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { HOLD_ATTEMPTS_NEEDS_HUMAN, HOLD_ESCALATE_MS } from '../src/core/persistence/sync-fault-class.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import { PASS_BATCH_KEY_PREFIX, readPassBatch } from '../src/core/persistence/sync-pass-batch.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
@@ -278,7 +281,8 @@ test('worktree_dirty: once the editor commits, unblock schedules the file and th
   expect((await agent(engine, s.id, 'notes/b.md')).outcome).toBe('still_held');
   commit(s.root, 'the editor commits');
   const result = await agent(engine, s.id, 'notes/b.md');
-  expect(result.ran).toEqual([`gbrain sync unblock --source ${s.id} --apply --json`, `gbrain sync --source ${s.id} --no-pull --no-embed --no-extract`]);
+  // #6712 PR 4b: the pass that held b converged and closed its opt-out episode, so the printed sync carries no inherited flags.
+  expect(result.ran).toEqual([`gbrain sync unblock --source ${s.id} --apply --json`, `gbrain sync --source ${s.id} --no-pull`]);
   expect(result.outcome).toBe('cleared');
   expect((await engine.getPage('notes/b', { sourceId: s.id }))?.compiled_truth).toContain('A private edit still in progress.');
 }), 180_000);
@@ -352,7 +356,7 @@ test('managed_image_sync_unsupported: never escalates and is nobody\'s next step
   expect(await s.held()).toEqual([]);
 }), 180_000);
 
-test('file_drift: a person picks the side; the database-side preview, its apply and the sync then clear the hold', () => each(async engine => {
+test('file_drift: a person picks the side of a page that moved on both sides; the database-side preview, its apply and the sync then clear the hold', () => each(async engine => {
   const s = await managed(engine, { 'notes/a.md': note('notes/a', 'The committed body.', 'type: concept\n') });
   await engine.setConfig('sync.write_through', 'false');
   await s.sync();
@@ -361,11 +365,12 @@ test('file_drift: a person picks the side; the database-side preview, its apply 
   await submitPageMutation(s.ctx, { operation: 'put_page', params: { slug: 'notes/a', request_id: requestId, expected_revision: current!.revision, content: note('notes/a', 'The database-only edit.', 'type: concept\n') } });
   await waitFor(async () => (await engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [requestId]))[0]?.state === 'committed',
     { timeoutMs: 20_000, label: 'the database-only put_page commits' });
-  // A history rewrite makes the next sync walk the whole tree at HEAD, so it meets the unchanged file and the moved page.
-  const rewritten = git(s.root, 'commit-tree', 'HEAD^{tree}', '-m', 'rewritten');
-  git(s.root, 'reset', '-q', '--soft', rewritten); git(s.root, 'reflog', 'expire', '--expire=now', '--all'); git(s.root, 'gc', '-q', '--prune=now');
+  // The file changes too: both sides moved since the last import, so the pass holds the file instead of choosing.
+  // (A database-only edit of an unchanged file is db_ahead and kept without a hold.)
+  s.write('notes/a.md', note('notes/a', 'The committed edit.', 'type: concept\n')); commit(s.root, 'file edit');
   await s.sync();
   expect(await s.held()).toEqual([{ path: 'notes/a.md', code: 'file_drift' }]);
+  expect((await engine.getPage('notes/a', { sourceId: s.id }))?.compiled_truth).toContain('The database-only edit.');
   const asked = await agent(engine, s.id, 'notes/a.md');
   expect(expectAsked(asked)).toContain('a person chooses which version wins');
   expect(asked.hold.fix.argv).toEqual(['gbrain', 'repair', 'file-drift', '--source', s.id, '--slug', 'notes/a', '--prefer', 'database']);
@@ -390,8 +395,10 @@ test('concurrent_write: the two versions diverged under the sync; the agent rela
   let fired = false;
   installFaultHook(async (point, detail) => {
     if (point !== 'sync:mid_checkpoint' || detail.sourceId !== s.id || fired) return;
-    const [row] = await engine.executeRaw<{ slug: string | null }>("SELECT completed_keys->0->'pending'->>'slug' AS slug FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [s.id]);
-    if (row?.slug !== 'people/alice-example') return;
+    // The pass's in-memory batch holds the page's frozen import, not yet published.
+    const [row] = await engine.executeRaw<{ pass_id: string | null }>("SELECT completed_keys->0->'telemetry'->>'pass_id' AS pass_id FROM op_checkpoints WHERE op='managed-sync-pass' AND completed_keys->0->>'source_id'=$1", [s.id]);
+    const pending = row?.pass_id ? Array.from({ length: 8 }, (_, batch) => readPassBatch<{ pending?: { slug?: string } | null }>(`${PASS_BATCH_KEY_PREFIX}${row.pass_id}:${batch}`)?.pending?.slug).find(Boolean) : undefined;
+    if (pending !== 'people/alice-example') return;
     fired = true;
     const requestId = randomUUID();
     const current = await engine.readPageSnapshot('people/alice-example', { sourceId: s.id });

@@ -218,6 +218,9 @@ test('post-upgrade: a source a file blocked is told the next sync recovers it, w
     + `to do it now run gbrain sync --source ${s.id} --no-pull.`);
   expect(banner).toContain(`gbrain repair frontmatter --source ${s.id}`);
 
-  expect(await s.sync()).toMatchObject({ status: 'first_sync', held_count: 1, converted_from_failed: [failed!.request_id] });
+  // #6712 PR 4b: no cursor converts in place; the next pass holds the file, imports the rest and leaves the old receipt as it was.
+  expect(await s.sync()).toMatchObject({ status: 'first_sync', held_count: 1, held: [{ code: 'invalid_frontmatter' }] });
+  expect(await engine.executeRaw('SELECT state,error_code,error_message FROM persistence_requests WHERE request_id=$1::uuid', [failed!.request_id]))
+    .toEqual([{ state: 'failed', error_code: 'invalid_params', error_message: 'Invalid YAML frontmatter: bad indentation of a mapping entry (3:1)' }]);
   expect((await postUpgradeRecoveryBanner(engine, 'host')).join('\n')).not.toContain('frontmatter_holds:');
 }), 180_000);

@@ -2,18 +2,21 @@
  * #6278 R2: `gbrain repair fences --apply` during a live managed catch-up.
  *
  * Protects: a source whose sync is running is no longer skipped as a whole.
- * While a sync member is being prepared, the candidate it names and a
- * candidate still ahead in the run's frozen manifest are `sync_in_progress`
- * and nothing is written to them; between two entries of the same run a held
- * candidate (the hold's bytes unchanged, so not in the manifest) and an
- * unsynced working-tree candidate are repaired, while the far-ahead one still
- * waits; the sync then finishes with no `source_changed` refusal and imports
- * the entry it had ahead. A plan approved before a sync started is not
+ * #6712 PR 4b: a non-company source syncs by the live pass, which keeps no
+ * frozen manifest, so only its open requests are busy (design v3.2 §3.7).
+ * While a pass member is being prepared, the candidate it names is
+ * `sync_in_progress` and nothing is written to it, while a candidate the pass
+ * has not frozen yet is repairable; between two of the pass's entries the
+ * held candidate (the hold's bytes unchanged), an unsynced working-tree
+ * candidate and the candidate still ahead in the pass are all repaired; the
+ * pass then finishes synced with no failed request and the ahead page
+ * imported with its repaired fence. A plan approved before a sync started is not
  * applied to a candidate that sync froze in between (`sync_in_progress` at
  * apply), and the entry imports once the sync reaches it.
  * Fails when: the blanket skip comes back (nothing repaired during a sync),
- * a manifest-ahead or in-flight candidate is written (the sync would refuse
- * it on its raw hash), or a held path counts as busy.
+ * an in-flight candidate is written (the sync would refuse it on its raw
+ * hash), a held path counts as busy, or the pass refuses a candidate a repair
+ * wrote before the pass froze it.
  * Seams: installFaultHook (`consumer:preparing`, `sync:mid_checkpoint`) pauses
  * the real sync; __setChatTransportForTests answers the model tier.
  * Postgres arm: test/e2e/repair-fences-during-catchup-postgres.test.ts.
@@ -36,6 +39,7 @@ import { resolveRepairScope, type RepairResult } from '../src/core/repair/core.t
 import { repairRunner } from '../src/core/repair/registry.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { waitFor } from './helpers/wait-for.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const backends = testBackends();
@@ -94,7 +98,8 @@ async function managed(engine: BrainEngine, files: Record<string, string>) {
     "SELECT request_id::text AS request_id, error_code, slug FROM persistence_requests WHERE source_id=$1 AND state IN ('failed','conflict')", [id]);
   const cursor = async () => (await engine.executeRaw<{ index: string | null; run_id: string | null }>(`SELECT completed_keys->0->>'index' AS index, completed_keys->0->>'runId' AS run_id
     FROM op_checkpoints WHERE op='managed-sync' AND COALESCE(completed_keys->0->>'done','false')<>'true' AND completed_keys->0->>'sourceId'=$1`, [id]))[0] ?? null;
-  return { id, root, write, read: (path: string) => readFileSync(join(root, path), 'utf8'), sync, holds, run, failed, cursor };
+  const requests = (path: string) => engine.executeRaw<{ state: string }>("SELECT state FROM persistence_requests WHERE source_id=$1 AND intent->>'path'=$2 ORDER BY sequence", [id, path]);
+  return { id, root, write, read: (path: string) => readFileSync(join(root, path), 'utf8'), sync, holds, run, failed, cursor, requests };
 }
 
 /** A gate the fault hook parks the sync at: `reached` resolves when it is hit, `release()` lets the sync go on. */
@@ -116,14 +121,14 @@ async function each(run: (engine: BrainEngine) => Promise<void>) {
   });
 }
 
-test('during a live catch-up: the admitted and the far-ahead candidates wait, the held and the working-tree candidates repair, and the sync finishes clean', () => each(async engine => {
+test('during a live pass: only the admitted candidate waits; the held, the working-tree and the not-yet-frozen candidates repair, and the sync finishes clean', () => each(async engine => {
   const s = await managed(engine, { 'people/held.md': md('Held', noHeader()), 'notes/plain.md': md('Plain', 'Nothing here.\n') });
   expect((await s.sync()).held_count).toBe(1);
-  // Commit 2: the entry the sync admits first (a Tier 1 defect, so it is a census file candidate until it imports) and one far behind it.
+  // Commit 2: the entry the pass admits first (a Tier 1 defect, so it is a census file candidate until it imports) and one behind it.
   s.write('people/aa-admitted.md', md('Admitted', fixable('Synthetic admitted partnership')));
   s.write('people/zz-ahead.md', md('Ahead', fixable('Synthetic ahead partnership')));
   commit(s.root, 'two fences');
-  // Never synced, never committed: a working-tree candidate outside the manifest.
+  // Never synced, never committed: a working-tree candidate the committed-mode pass never imports.
   s.write('people/later.md', md('Later', fixable('Synthetic later partnership')));
   let calls = 0;
   __setChatTransportForTests(async () => { calls++; return answer(CLAIM); });
@@ -136,52 +141,56 @@ test('during a live catch-up: the admitted and the far-ahead candidates wait, th
       if (req?.path !== 'people/aa-admitted.md') return;
       pausedPreparing = true; preparing.reached(); await preparing.released;
     }
-    if (point === 'sync:mid_checkpoint' && pausedPreparing && !pausedBetween && (await s.cursor())?.index === '1') {
+    if (point === 'sync:mid_checkpoint' && pausedPreparing && !pausedBetween && (await s.requests('people/aa-admitted.md')).some(row => row.state === 'committed')) {
       pausedBetween = true; between.reached(); await between.released;
     }
   });
   const sync = s.sync();
   await preparing.hit;
-  // Entry 0 is admitted and preparing; entry 1 is frozen in the manifest and not admitted.
+  // The pass's first entry is admitted and preparing; the one behind it is not frozen yet, and no cursor row exists.
   const [running] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM persistence_requests WHERE source_id=$1 AND state='running'", [s.id]);
   expect(running!.n).toBe(1);
+  expect(await s.cursor()).toBeNull();
   const busyPreview = await s.run({ only: ['people/aa-admitted.md', 'people/zz-ahead.md'] });
-  expect(classes(busyPreview, s.id)).toEqual({ 'people/aa-admitted.md': 'sync_in_progress', 'people/zz-ahead.md': 'sync_in_progress' });
-  expect(busyPreview.affected).toBe(0);
-  const busyApply = await s.run({ apply: true, only: ['people/aa-admitted.md', 'people/zz-ahead.md'] });
-  expect(busyApply).toMatchObject({ applied: 0, remaining: { sync_in_progress: 2 } });
+  expect(classes(busyPreview, s.id)).toEqual({ 'people/aa-admitted.md': 'sync_in_progress', 'people/zz-ahead.md': 'deterministic' });
+  const busyApply = await s.run({ apply: true, only: ['people/aa-admitted.md'] });
+  expect(busyApply).toMatchObject({ applied: 0, remaining: { sync_in_progress: 1 } });
   expect(s.read('people/aa-admitted.md')).toBe(md('Admitted', fixable('Synthetic admitted partnership')));
   expect(s.read('people/zz-ahead.md')).toBe(md('Ahead', fixable('Synthetic ahead partnership')));
   preparing.release();
   await between.hit;
-  // Entry 0 committed, entry 1 still ahead: the held and the working-tree candidates repair now; the far-ahead one waits.
+  // The first entry committed, the second not frozen yet: the held, the working-tree and the ahead candidates all repair now.
   expect(await s.failed()).toEqual([]);
   const preview = await s.run();
-  expect(classes(preview, s.id)).toEqual({ 'people/held.md': 'llm', 'people/later.md': 'deterministic', 'people/zz-ahead.md': 'sync_in_progress' });
+  expect(classes(preview, s.id)).toEqual({ 'people/held.md': 'llm', 'people/later.md': 'deterministic', 'people/zz-ahead.md': 'deterministic' });
   const applied = await s.run({ apply: true });
-  expect(applied).toMatchObject({ repaired: 2, remaining: { sync_in_progress: 1 } });
+  expect(applied).toMatchObject({ repaired: 3, remaining: {} });
   expect(calls).toBe(1);
   expect(s.read('people/held.md')).toContain(FH.split('\n')[0]!);
   expect(s.read('people/later.md')).toContain(FBE);
-  expect(s.read('people/zz-ahead.md')).toBe(md('Ahead', fixable('Synthetic ahead partnership')));
+  expect(s.read('people/zz-ahead.md')).toContain(FBE);
   expect(await s.holds()).toEqual([]);
   between.release();
   const result = await sync;
-  expect(result.status).not.toBe('error');
+  expect(result).toMatchObject({ status: 'synced', pass: { kind: 'full', outcome: 'synced', candidates: 2, remaining: 0 } });
   expect(await s.failed()).toEqual([]);
   expect(await s.cursor()).toBeNull();
-  // The far-ahead entry imported on the bytes the sync froze, and the import normalized its fence.
+  // The ahead entry is imported with its repaired fence, and nothing refused it.
   expect(await engine.readPageSnapshot('people/zz-ahead', { sourceId: s.id })).not.toBeNull();
   expect(s.read('people/zz-ahead.md')).toContain(FBE);
   expect((await s.run()).affected).toBe(0);
 }), 240_000);
 
-test('a plan approved before a sync started is not applied to a candidate that sync froze; the entry imports once the sync reaches it', () => each(async engine => {
+// #6712 PR 4b (design v3.2 §3.7): only an open request is busy. The pass froze people/race.md in its batch but has admitted
+// no request for it, so the approved plan repairs it too (the cursor engine skipped it as sync_in_progress). The pass's
+// frozen import then finds the page the repair created and is passed over; its next round reads the repaired file and the
+// sync finishes clean, with the stale frozen bytes never published.
+test('a plan approved before a pass started repairs a candidate the pass froze but has not admitted; the stale frozen import is passed over and the sync finishes clean', () => each(async engine => {
   const s = await managed(engine, { 'notes/plain.md': md('Plain', 'Nothing here.\n') });
   expect((await s.sync()).held_count ?? 0).toBe(0);
   s.write('people/race.md', md('Race', fixable('Synthetic race partnership')));
   commit(s.root, 'a fence');
-  // Approved in the same plan, never committed: outside the manifest the sync is about to freeze.
+  // Approved in the same plan, never committed: outside the level the committed-mode pass reads.
   s.write('people/other.md', md('Other', fixable('Synthetic other partnership')));
   const approved = await s.run();
   expect(classes(approved, s.id)).toEqual({ 'people/race.md': 'deterministic', 'people/other.md': 'deterministic' });
@@ -193,17 +202,29 @@ test('a plan approved before a sync started is not applied to a candidate that s
   });
   const sync = s.sync();
   await frozen.hit;
-  expect(await s.cursor()).toMatchObject({ index: '0' });
+  expect(await s.requests('people/race.md')).toEqual([]);
+  expect(await s.cursor()).toBeNull();
   const raced = await s.run({ apply: true, expect: hashOf(approved) });
-  expect(raced).toMatchObject({ applied: 1, outcomes: { skipped: 1, repaired: 1 } });
-  expect(raced.outcome_items!.find(item => item.item.endsWith('people/race'))).toMatchObject({ outcome: 'skipped', reason: 'sync_in_progress' });
+  expect(raced).toMatchObject({ applied: 2, outcomes: { repaired: 2 } });
+  expect(raced.outcome_items!.find(item => item.item.endsWith('people/race'))).toMatchObject({ outcome: 'repaired' });
   expect(raced.outcome_items!.find(item => item.item.endsWith('people/other'))).toMatchObject({ outcome: 'repaired' });
-  expect(s.read('people/race.md')).toBe(md('Race', fixable('Synthetic race partnership')));
+  expect(s.read('people/race.md')).toContain(FBE);
   expect(s.read('people/other.md')).toContain(FBE);
+  // The repair's Git commits land before the pass goes on, so its next round reads the repaired file from HEAD. Left to
+  // race the pass, a commit landing after the pass's stamp moves HEAD again, and the final sync stamps it instead of idling.
+  await waitFor(async () => !(await engine.executeRaw("SELECT 1 FROM persistence_effects WHERE source_id=$1 AND kind='git' AND state<>'committed'", [s.id])).length,
+    { timeoutMs: 20_000, label: 'the repair commits land in Git' });
+  expect(git(s.root, 'show', 'HEAD:people/race.md')).toContain(FBE);
   frozen.release();
   const result = await sync;
-  expect(result.status).not.toBe('error');
-  expect(await s.failed()).toEqual([]);
+  expect(result).toMatchObject({ status: 'synced', pass: { outcome: 'synced' } });
+  expect(result.failures ?? []).toEqual([]);
+  // The one refused request is the stale frozen import, refused by the publication guard and passed over: no failure, no hold.
+  expect(await s.failed()).toEqual([{ request_id: expect.any(String), error_code: 'page_identity_changed', slug: 'people/race' }]);
+  expect(await s.holds()).toEqual([]);
   expect(await engine.readPageSnapshot('people/race', { sourceId: s.id })).not.toBeNull();
   expect(s.read('people/race.md')).toContain(FBE);
+  expect((await engine.getPage('people/race', { sourceId: s.id }))?.compiled_truth).toContain(FBE.split('\n')[0]!);
+  expect(await engine.executeRaw("SELECT 1 FROM persistence_requests WHERE source_id=$1 AND intent->>'path'='people/race.md' AND intent->>'kind'='managed_sync_import' AND state='committed'", [s.id])).toEqual([]);
+  expect((await s.sync()).status).toBe('up_to_date');
 }), 240_000);

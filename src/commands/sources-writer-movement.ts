@@ -127,7 +127,7 @@ export function movementReport(before: SourceMovement | undefined, after: Source
     case 'nothing_pending':
       return { source_id: id, state, exit: 0, code: null, why: `${id}: no managed sync is pending${after.holds.count ? ` (${after.holds.count} held file(s) await their repair)` : ''}.`, fix: null, before, after };
     case 'moved':
-      return { source_id: id, state, exit: 0, code: null, why: `${id}: a page committed at ${after.last_commit_at} inside the ${Math.round(windowMs / 1000)}s window; ${after.cursor ? `${after.cursor.remaining} remaining` : 'the cursor is done'}.`, fix: null, before, after };
+      return { source_id: id, state, exit: 0, code: null, why: `${id}: a page committed at ${after.last_commit_at} inside the ${Math.round(windowMs / 1000)}s window; ${after.cursor ? `${after.cursor.remaining} remaining` : after.pass ? `${after.pass.remaining} path(s) unsettled in the pass` : 'the cursor is done'}.`, fix: null, before, after };
     case 'within_allowance':
       return { source_id: id, state, exit: 0, code: null, retry_after_ms: windowMs,
         why: `${id}: no page committed yet, but the head's step or the cursor advanced inside the window (a multi-wave group commits nothing until its last wave).${head} Check again after one more window.`,
@@ -142,12 +142,17 @@ export function movementReport(before: SourceMovement | undefined, after: Source
         fix: renderAction({ argv: route, consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/repair.md#held-files',
           why: kinds.stalled > 0 ? `Read-only: shows the owner the stalled preparations name;${then} once the cause is fixed.` : 'Read-only preview of the repair; it prints the apply command for the user to approve.', verify }, ctx), before, after };
     }
-    case 'parked':
+    case 'parked': {
+      const work = after.cursor ?? after.pass;
       return { source_id: id, state, exit: 1, code: 'managed_sync_not_moving', reason: 'movement_check',
-        why: `${id}: the managed sync cursor is pending at ${after.cursor?.index ?? '?'}/${after.cursor?.total ?? '?'} and nothing live is moving it (no sync run holds the lock; ${after.admitted} admitted request(s), no live consumer on the owner host). After a restart this means the catch-up was not started again.`,
-        fix: renderAction({ argv: (after.cursor?.resume_command ?? `gbrain sync --source ${id} --no-pull`).split(' '), consent: [], actor: 'agent', requires_exclusive: false,
-          why: 'Resumes the managed catch-up where its cursor stopped; the same command is safe to rerun in a loop.', verify }, ctx), before, after };
+        why: `${id}: the managed sync ${after.cursor ? 'cursor' : 'pass'} is pending at ${work?.index ?? '?'}/${work?.total ?? '?'} and nothing live is moving it (no sync run holds the lock; ${after.admitted} admitted request(s), no live consumer on the owner host). After a restart this means the catch-up was not started again.`,
+        fix: renderAction({ argv: ['gbrain', 'sync', ...(work?.resume_args ?? ['--source', id, '--no-pull'])], consent: [], actor: 'agent', requires_exclusive: false,
+          why: `Resumes the managed catch-up ${after.cursor ? 'where its cursor stopped' : 'with a plain sync that reconciles the checkout'}; the same command is safe to rerun in a loop.`, verify }, ctx), before, after };
+    }
     case 'not_moving':
+      if (after.pass?.stuck) return { source_id: id, state, exit: 1, code: 'managed_sync_not_moving', reason: 'movement_check',
+        why: `${id}: every managed sync pass since ${after.pass.stuck_since} stopped ${after.pass.stuck}${after.pass.stop_reason ? ` (${after.pass.stop_reason})` : ''} with ${after.pass.remaining} path(s) unsettled, so the source does not converge even when pages commit.`,
+        fix: renderAction({ ...readFix('Read-only: the convergence of the source, the reason its passes stop and the next step.', { argv: ['gbrain', 'sync', 'status', '--source', id, '--json'] }), verify }, ctx), before, after };
       return { source_id: id, state, exit: 1, code: 'managed_sync_not_moving', reason: 'movement_check',
         why: `${id}: ${after.cursor ? `${after.cursor.remaining} entries pending, ` : ''}no page committed and no step advance inside the ${Math.round(windowMs / 1000)}s window while ${after.live.drain ? after.live.drain_job_id !== null && after.live.drain_pid === null ? `sync job #${after.live.drain_job_id} is draining it` : `a sync (pid ${after.live.drain_pid}) holds the lock` : 'a consumer is live'}; last progress ${after.last_progress_at ?? 'unknown'}.${head}`,
         fix: renderAction({ ...status, verify }, ctx), before, after };

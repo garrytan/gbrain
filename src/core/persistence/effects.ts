@@ -38,8 +38,9 @@ import { atomicStagingPath } from '../atomic-write.ts';
 import { isSourceDbOnlySlug } from './source-storage.ts';
 import { advanceEffectCursor, claimCoalescedGitEffects, claimPersistenceEffect, completeEffect, effectClaimKeeper, failEffect, hasRearmableTargets, mirrorGates, parkEffect, rearmWithheldTargets, renewPersistenceEffectClaim, requeueEffect, retryEffect, singleFileGitEffect, type MirrorGate } from './effect-journal.ts';
 import { guardEffectSource, recoverEffectPublication, reserveEffectRecovery } from './effect-recovery.ts';
-import { commitGitTargets, DURABILITY_NOT_ENABLED, publishGitEffect, pushGitRoot, type GitEffectOwner } from './effect-git.ts';
+import { commitGitTargets, DURABILITY_NOT_ENABLED, gitRootAhead, publishGitEffect, pushGitRoot, type GitEffectOwner } from './effect-git.ts';
 import { retryIndexLockParks } from './effect-retry.ts';
+import { assertSegmentedMirrorGate, resumeGatedMirrors } from './segmented-mirror-gate.ts';
 import { gitDurabilityPolicy } from './git-durability-policy.ts';
 import { EFFECT_FAULT_POINTS, faultPoint } from './fault-points.ts';
 import { dispatchFactsBackstopEffect } from './effect-facts.ts';
@@ -234,7 +235,11 @@ async function mirrorPage(engine: BrainEngine, effect: PersistenceEffect, bindin
       await materializeAndAdvance(engine, effect, snapshot, opts.hostId);
       return;
     }
+    const approved = effect.data.approved_file?.slug === snapshot.page.slug ? effect.data.approved_file : undefined;
+    if (approved && file.expectedBeforeHash !== approved.file_sha256) { await materializeAndAdvance(engine, effect, snapshot, opts.hostId, 'preview_changed'); return; }
+    if (segmented) await assertSegmentedMirrorGate(engine, effect, snapshot.page.slug, opts.hostId);
     content = segmented ? await unreadPageFile(engine, snapshot, keep) : file.content as string;
+    if (approved && fileContentHash(content) !== approved.expected_sha256) { await materializeAndAdvance(engine, effect, snapshot, opts.hostId, 'preview_changed'); return; }
   } catch (error) {
     // A segmented page whose fence a withdrawal cannot read whole (page_body_segmented) retries and parks like any failed
     // target, so writer status and doctor list it; only a file that differs from the database is passed by.
@@ -322,7 +327,13 @@ async function publishGitPage(engine: BrainEngine, effect: PersistenceEffect, bi
   }
   // Only a page walk reads snapshots; a single-file effect completes by its recorded hash.
   const snapshot = await selectedEffectPage(engine, effect);
-  if (!snapshot) { await completeEffect(engine, effect); return; }
+  if (!snapshot) {
+    // #7089: a page an earlier attempt committed but failed to push may since have been skipped (its file removed or
+    // edited), so a walk that ends while the root is ahead of its upstream pushes before it completes.
+    const durable = hardened ?? (await gitDurabilityPolicy(binding, root)).durable;
+    await completeEffect(engine, effect, durable && await gitRootAhead(root, opts.signal) ? await pushGitRoot(root, opts.signal) : {});
+    return;
+  }
   attempt.target = snapshot.page.slug;
   const verdict = await mirrorVerdict(engine, effect, attempt, snapshot.page.slug);
   if (verdict === 'handled') return;
@@ -345,6 +356,11 @@ async function publishGitPage(engine: BrainEngine, effect: PersistenceEffect, bi
     { fix: effectStatusFix(effect) });
   const path = file.path;
   if (!existsSync(path)) { await materializeAndAdvance(engine, effect, snapshot, opts.hostId); return; }
+  // A repair's Git target commits only the render its preview approved (the mirror refused anything else).
+  if (effect.data.approved_file?.slug === snapshot.page.slug && persistenceFileHash(path) !== effect.data.approved_file.expected_sha256) {
+    await skipTarget(engine, effect, snapshot, 'preview_changed');
+    return;
+  }
   if (snapshot.page.deleted_at && existsSync(path)) { await finishPage(engine, effect, snapshot, { reason: 'deleted_page_file_present' }); return; }
   if (!isWriteTargetContained(path, join(root, binding.relative_path))) throw gitTargetEscaped(effect);
   if (isSourceDbOnlySlug(join(root, binding.relative_path), snapshot.page.slug, 'not_db_only')) {
@@ -738,6 +754,7 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
 
 async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: EffectWorkerOptions, touched: Set<string>, derived: DerivedFailures): Promise<number> {
   const limit = Math.max(1, Math.min(opts.limit ?? 2, 20));
+  await resumeGatedMirrors(engine, opts.hostId);
   const recoveries = await selectEffectRecoveries(engine, opts.hostId, limit);
   let attempted = 0;
   for (const recovery of recoveries) {
@@ -802,7 +819,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
   type DurabilityProbe = { durable: boolean } | { error: unknown };
   const probes = new Map<string, Promise<DurabilityProbe>>();
   const deferred: { effects: PersistenceEffect[]; binding: WorktreeBinding; hardened: Promise<DurabilityProbe> }[] = [];
-  const unpushed = new Map<string, { binding: WorktreeBinding; items: { effect: PersistenceEffect; git: string; target?: string }[] }>();
+  const unpushed = new Map<string, { binding: WorktreeBinding; items: { effect: PersistenceEffect; outcome: Record<string, unknown>; target?: string }[] }>();
   const commitGroup = async (effects: PersistenceEffect[], binding: WorktreeBinding & { local_path: string }) => {
     // A group yields to publications still queued for its worktree: a serial
     // producer (the grandfather step) publishes ahead and its Git work arrives
@@ -855,11 +872,15 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
       const outcomes = targets.length ? await commitGitTargets(binding.local_path, targets.map(t => t.path), opts.signal, notes,
         { writerLock: lock, onReclaim: () => { reclaimed = true; } }) : new Map();
       const pending = unpushed.get(binding.local_path) ?? { binding, items: [] };
+      // #7089: an absent target whose removal an earlier attempt committed (its push failed) joins the push like an
+      // unchanged one while the root is ahead of its upstream; on a root that is not ahead it completes without a push.
+      const ahead = [...outcomes.values()].some(outcome => !(outcome instanceof OperationError) && outcome.reason === 'target_absent')
+        && await gitRootAhead(binding.local_path, opts.signal);
       for (const { effect, path, attempt } of targets) {
         const outcome = outcomes.get(path)!;
         if (outcome instanceof OperationError) await recordFailure(engine, effect, outcome, opts.signal, attempt.target);
-        else if (outcome.reason === 'target_absent') await completeEffect(engine, effect, outcome);
-        else pending.items.push({ effect, git: outcome.git, target: attempt.target });
+        else if (outcome.reason === 'target_absent' && !ahead) await completeEffect(engine, effect, outcome);
+        else pending.items.push({ effect, outcome, target: attempt.target });
       }
       if (pending.items.length) unpushed.set(binding.local_path, pending);
     } catch (error) {
@@ -974,10 +995,10 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
       if (!lock) throw writerBusy(items[0]!.effect);
       pushed = await pushGitRoot(root, opts.signal);
     } catch (error) { failure = error; } finally { await lock?.release(); }
-    for (const { effect, git, target } of items) {
+    for (const { effect, outcome, target } of items) {
       try {
         if (!pushed) throw failure;
-        await completeEffect(engine, effect, { git, ...pushed });
+        await completeEffect(engine, effect, { ...outcome, ...pushed });
       } catch (error) { await recordFailure(engine, effect, error, opts.signal, target); }
     }
   }

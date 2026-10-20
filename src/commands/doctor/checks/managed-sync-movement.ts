@@ -12,13 +12,41 @@
  * its own consumer) as the safe action. A source whose backlog read failed
  * (#6781, `movement_state: unknown`) warns with `details.health: unknown`,
  * never `ok`. Reads the database only.
+ * #6712 PR 4b (design v3.2 §3.7): a non-company source's pending pass row
+ * counts like a cursor; a pass that keeps stopping (`blocked`, a
+ * `not_converged` or `settle_mismatch` streak) warns as not moving, with
+ * `gbrain sync status` as the read-only fix (it also reads the checkout's HEAD).
+ * #6712 PR 4b (design v3.1 §9, DX F14): with nothing else to report, it warns when a source's newest pass found no
+ * change (`up_to_date`) but took longer than the §11 target for its kind and size: an idle tick 0.5 s (1 s over
+ * 100,000 pages), a full round 2 s (15 s over 100,000 pages). The message names the pass's `timings_ms`; the fix is the
+ * read-only `gbrain sync status --detail`. Never a fail.
  */
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { readSourceMovement, type SourceMovement } from '../../../core/persistence/sync-movement.ts';
 import { agentFix, checkError } from '../check-fix.ts';
+import { readLivePassRows } from '../../../core/persistence/sync-pass-row.ts';
 
 const DOCS = 'docs/guides/troubleshooting.md#managed-sync-not-moving';
+/** Design §11's no-change pass targets (ms) by pass kind, for a source up to and over `LARGE_SOURCE_PAGES`. */
+const NO_CHANGE_TARGET_MS = { idle: [500, 1000], full: [2000, 15_000] } as const;
+const LARGE_SOURCE_PAGES = 100_000;
+
+interface SlowPass { source_id: string; pass_id: string; kind: string; ended_at: string | null; duration_ms: number; target_ms: number; large: boolean; timings_ms: Record<string, number> }
+
+/** Sources whose newest pass ended `up_to_date` slower than its target; sizes are counted only for passes over the small target. */
+async function slowNoChangePasses(engine: ReturnType<typeof connectedEngine>): Promise<SlowPass[]> {
+  const slow: SlowPass[] = [];
+  for (const [sourceId, row] of await readLivePassRows(engine)) {
+    const t = row.value.telemetry;
+    const targets = NO_CHANGE_TARGET_MS[t.kind === 'idle' ? 'idle' : 'full'];
+    if (t.outcome !== 'up_to_date' || t.duration_ms === null || t.duration_ms <= targets[0]) continue;
+    const [size] = await engine.executeRaw<{ n: number | string }>('SELECT count(*) AS n FROM (SELECT 1 FROM pages WHERE source_id=$1 LIMIT $2) p', [sourceId, LARGE_SOURCE_PAGES + 1]);
+    const large = Number(size?.n ?? 0) > LARGE_SOURCE_PAGES, target = targets[large ? 1 : 0];
+    if (t.duration_ms > target) slow.push({ source_id: sourceId, pass_id: t.pass_id, kind: t.kind, ended_at: t.ended_at, duration_ms: t.duration_ms, target_ms: target, large, timings_ms: t.timings_ms ?? {} });
+  }
+  return slow;
+}
 
 async function runManagedSyncMovementCheck(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
@@ -29,17 +57,26 @@ async function runManagedSyncMovementCheck(ctx: DoctorContext): Promise<Check[]>
     const parked = pending.filter(m => m.movement_state === 'parked');
     const stranded = parked.filter(strandedQueue);
     const unknown = pending.filter(m => m.movement_state === 'unknown');
-    const details = { count: stuck.length, parked: parked.length, stranded: stranded.length, ...(unknown.length ? { unknown: unknown.length, health: 'unknown' } : {}), sources: pending.map(m => ({ source_id: m.source_id, movement_state: m.movement_state, data_moving: m.data_moving,
-      not_moving_since: m.not_moving_since, last_commit_at: m.last_commit_at, last_progress_at: m.last_progress_at, cursor: m.cursor, head: m.head, live: m.live, admitted: m.admitted,
+    const slow = await slowNoChangePasses(connectedEngine(ctx));
+    const details = { ...(slow.length ? { slow_passes: slow } : {}), count: stuck.length, parked: parked.length, stranded: stranded.length, ...(unknown.length ? { unknown: unknown.length, health: 'unknown' } : {}), sources: pending.map(m => ({ source_id: m.source_id, movement_state: m.movement_state, data_moving: m.data_moving,
+      not_moving_since: m.not_moving_since, last_commit_at: m.last_commit_at, last_progress_at: m.last_progress_at, cursor: m.cursor, pass: m.pass, head: m.head, live: m.live, admitted: m.admitted,
       ceiling_ms: m.ceiling_ms, writer_status_command: m.writer_status_command, ...(m.unknown ? { unknown: m.unknown } : {}) })), docs: DOCS };
     if (stranded.length) {
       const first = stranded[0]!;
       checks.push({ name: 'managed_sync_not_moving', status: 'fail', readiness_state: 'degraded', details,
         message: `${stranded.map(m => `${m.source_id} (${m.admitted} admitted request(s), no progress since ${m.last_progress_at ?? m.admitted_since})`).join('; ')}: managed sync is parked with a non-empty `
           + `write queue and no consumer for longer than the ${Math.round(first.ceiling_ms / 1000)}s ceiling, so nothing will drain it. Resuming the sync runs its own consumer beside the queue.`,
-        fix: agentFix(['gbrain', 'sync', ...(first.cursor?.resume_args ?? ['--source', first.source_id, '--no-pull'])],
+        fix: agentFix(['gbrain', 'sync', ...((first.cursor ?? first.pass)?.resume_args ?? ['--source', first.source_id, '--no-pull'])],
           `Resumes ${first.source_id}'s unfinished cursor with its stored options; the run consumes the queued requests itself (one drainer per source) and finishes the frozen manifest.`,
           'managed_sync_not_moving', { docs: DOCS }) });
+    } else if (stuck.some(m => m.pass?.stuck)) {
+      const passes = stuck.filter(m => m.pass?.stuck), first = passes[0]!;
+      checks.push({ name: 'managed_sync_not_moving', status: 'warn', readiness_state: 'degraded', details,
+        message: `${passes.map(m => `${m.source_id} (every pass since ${m.pass!.stuck_since} stopped ${m.pass!.stuck}${m.pass!.stop_reason ? `: ${m.pass!.stop_reason}` : ''}, ${m.pass!.remaining} path(s) unsettled)`).join('; ')}: `
+          + 'managed sync does not converge; the source does not reach its checkout\'s HEAD even when pages commit.'
+          + (stuck.length > passes.length ? ` Also not moving: ${stuck.filter(m => !m.pass?.stuck).map(m => `${m.source_id} (since ${m.not_moving_since})`).join('; ')}.` : ''),
+        fix: agentFix(['gbrain', 'sync', 'status', '--source', first.source_id, '--json'],
+          'Read-only: the convergence of the source, the reason its passes stop (a hold, a blocked step or a not-converged streak) and the next step.', 'managed_sync_not_moving', { docs: DOCS }) });
     } else if (stuck.length) {
       const first = stuck[0]!;
       checks.push({ name: 'managed_sync_not_moving', status: 'warn', readiness_state: 'degraded', details,
@@ -52,9 +89,15 @@ async function runManagedSyncMovementCheck(ctx: DoctorContext): Promise<Check[]>
         message: `${unknown.map(m => m.source_id).join(', ')}: the managed sync backlog could not be read (${unknown[0]!.unknown?.error ?? 'no detail'}), so whether sync data moves is unknown; this is not an all-clear.`,
         fix: agentFix(['gbrain', 'sources', 'writer', 'movement', unknown[0]!.source_id, '--json'],
           'Read-only: reads the backlog again and judges movement over one window; if the read keeps failing, gbrain doctor --json checks the database.', 'managed_sync_not_moving', { docs: DOCS }) });
+    } else if (slow.length) {
+      checks.push({ name: 'managed_sync_not_moving', status: 'warn', details,
+        message: `${slow.map(s => `${s.source_id} (its newest ${s.kind} pass found no change in ${s.duration_ms} ms, over the ${s.target_ms} ms target for a source `
+          + `${s.large ? 'over' : 'up to'} ${LARGE_SOURCE_PAGES.toLocaleString('en-US')} pages; timings_ms ${JSON.stringify(s.timings_ms)})`).join('; ')}: managed sync is current but slow to confirm it.`,
+        fix: agentFix(['gbrain', 'sync', 'status', '--source', slow[0]!.source_id, '--json', '--detail'],
+          'Read-only: the newest pass (`convergence.duration_ms`, `timings_ms`) beside a fresh read of the checkout, to see which step is slow.', 'managed_sync_not_moving', { docs: DOCS }) });
     } else if (pending.length) {
       checks.push({ name: 'managed_sync_not_moving', status: 'ok', severity: 'info', details,
-        message: `Managed sync data is moving${parked.length ? `; ${parked.map(m => `${m.source_id} is parked at ${m.cursor!.index}/${m.cursor!.total} (no sync or consumer live; resume: ${m.cursor!.resume_command})`).join('; ')}` : ''}.` });
+        message: `Managed sync data is moving${parked.length ? `; ${parked.map(m => { const work = (m.cursor ?? m.pass)!; return `${m.source_id} is parked at ${work.index}/${work.total} (no sync or consumer live; resume: ${work.resume_command})`; }).join('; ')}` : ''}.` });
     } else {
       checks.push({ name: 'managed_sync_not_moving', status: 'ok', message: 'No managed sync is pending.', details });
     }

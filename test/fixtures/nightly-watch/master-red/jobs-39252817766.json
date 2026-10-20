@@ -1,0 +1,191 @@
+{
+  "total_count": 31,
+  "jobs": [
+    {
+      "id": 118060566793,
+      "name": "changes",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 118060566995,
+      "name": "typecheck",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 118060567127,
+      "name": "security-regressions (ubuntu-latest, 1.4.3)",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 118060567181,
+      "name": "dependency-audit",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 118060567193,
+      "name": "gitleaks",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 118060567198,
+      "name": "stress-changed-tests / Stress plan",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 118060567294,
+      "name": "verify",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 118060567492,
+      "name": "security-regressions (windows-latest, 1.4.3)",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 118060567494,
+      "name": "security-regressions (macos-26, 1.4.0)",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 118060567512,
+      "name": "security-regressions (windows-latest, 1.4.0)",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 118060567569,
+      "name": "security-regressions (macos-26, 1.4.3)",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 118060567619,
+      "name": "security-regressions (ubuntu-latest, 1.4.0)",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 118060569023,
+      "name": "race-hunt",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 118060834643,
+      "name": "reused-full-suite",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 118060836216,
+      "name": "persistence-validation",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 118060836912,
+      "name": "native-locks",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 118060837291,
+      "name": "slow-entity-resolve-perf",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 118060837455,
+      "name": "shared-skills-compatibility",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 118060837640,
+      "name": "brainbench",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 118060837797,
+      "name": "test",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 118060837836,
+      "name": "admin-browser",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 118060837920,
+      "name": "serial-tests",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 118060838193,
+      "name": "coverage-report",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 118060838277,
+      "name": "slow-brainbench-e2e",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 118060839087,
+      "name": "Native-only result (full CI not run)",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 118061019548,
+      "name": "stress-changed-tests / stress-changed-tests result",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 118061020669,
+      "name": "stress-changed-tests / ${{ (((inputs.mode == 'gate') && 'Stress shard') || 'Race hunt shard') }} ${{ matrix.shard }}",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 118061210537,
+      "name": "executed-receipts",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 118061756711,
+      "name": "cheap-tier (full suite not run)",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 118061756981,
+      "name": "(github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.native_only == true || inputs.race_hunt == true || inputs.stress_files != '' || inputs.stress_base != ''))) && 'full-suite-not-run' || 'test-status'",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 118061757266,
+      "name": "(github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.native_only == true || inputs.race_hunt == true || inputs.stress_files != '' || inputs.stress_base != ''))) && 'full-suite-not-run' || 'full-suite'",
+      "conclusion": "skipped",
+      "steps": []
+    }
+  ]
+}

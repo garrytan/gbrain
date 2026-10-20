@@ -1,0 +1,191 @@
+{
+  "total_count": 31,
+  "jobs": [
+    {
+      "id": 117814962203,
+      "name": "typecheck",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 117814962429,
+      "name": "dependency-audit",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 117814962455,
+      "name": "changes",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 117814962474,
+      "name": "gitleaks",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 117814962485,
+      "name": "security-regressions (ubuntu-latest, 1.4.3)",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 117814962503,
+      "name": "verify",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 117814962506,
+      "name": "security-regressions (ubuntu-latest, 1.4.0)",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 117814962523,
+      "name": "security-regressions (windows-latest, 1.4.0)",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 117814962534,
+      "name": "security-regressions (windows-latest, 1.4.3)",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 117814962555,
+      "name": "security-regressions (macos-26, 1.4.3)",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 117814962567,
+      "name": "security-regressions (macos-26, 1.4.0)",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 117814962586,
+      "name": "stress-changed-tests / Stress plan",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 117814963204,
+      "name": "race-hunt",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 117815057756,
+      "name": "reused-full-suite",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 117815058668,
+      "name": "brainbench",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 117815058671,
+      "name": "test",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 117815058813,
+      "name": "persistence-validation",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 117815058826,
+      "name": "slow-brainbench-e2e",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 117815059023,
+      "name": "shared-skills-compatibility",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 117815059050,
+      "name": "serial-tests",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 117815059093,
+      "name": "slow-entity-resolve-perf",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 117815059248,
+      "name": "native-locks",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 117815059351,
+      "name": "coverage-report",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 117815059393,
+      "name": "Native-only result (full CI not run)",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 117815060055,
+      "name": "admin-browser",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 117815200374,
+      "name": "stress-changed-tests / stress-changed-tests result",
+      "conclusion": "success",
+      "steps": []
+    },
+    {
+      "id": 117815201054,
+      "name": "stress-changed-tests / ${{ (((inputs.mode == 'gate') && 'Stress shard') || 'Race hunt shard') }} ${{ matrix.shard }}",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 117815322108,
+      "name": "executed-receipts",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 117815439464,
+      "name": "cheap-tier (full suite not run)",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 117815439811,
+      "name": "(github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.native_only == true || inputs.race_hunt == true || inputs.stress_files != '' || inputs.stress_base != ''))) && 'full-suite-not-run' || 'test-status'",
+      "conclusion": "skipped",
+      "steps": []
+    },
+    {
+      "id": 117815440109,
+      "name": "(github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.native_only == true || inputs.race_hunt == true || inputs.stress_files != '' || inputs.stress_base != ''))) && 'full-suite-not-run' || 'full-suite'",
+      "conclusion": "skipped",
+      "steps": []
+    }
+  ]
+}

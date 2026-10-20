@@ -28,8 +28,9 @@ import { mkdtempSync, mkdirSync, rmSync, copyFileSync, symlinkSync } from 'node:
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 const nodeRequire = createRequire(import.meta.url);
 const REAL_PGLITE_PKG_DIR = dirname(dirname(nodeRequire.resolve('@electric-sql/pglite'))); // <pkg>/dist/index.js -> <pkg>
 

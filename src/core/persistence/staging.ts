@@ -9,6 +9,7 @@ import type { BrainEngine } from '../engine.ts';
 import { readJournalLimits } from './limits.ts';
 import { beforeStageCopyPath, hashDescriptor, streamingStagePath, validateBeforeStagePath } from './large-file.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
+import { assertRecoveryVersion } from './recovery-version.ts';
 
 export interface RecoveryStagingFile { path: string; hash: string; bytes: number }
 /**
@@ -181,7 +182,7 @@ function upgradeFileStaging(record: StoredFileRecovery, mode: 'restore' | 'forwa
   return changed ? { ...record, staging } : record;
 }
 
-/** Old records remain readable; reserve new names before an old recovery writes. */
+/** Old records remain readable; reserve new names before an old recovery writes. A newer record is refused unchanged (recovery-version.ts). */
 export async function upgradeRecoveryStaging(engine: BrainEngine, table: 'persistence_requests' | 'persistence_effects',
   id: string | number, worktreeId: string, mode: 'restore' | 'forward'): Promise<void> {
   const limits = await readJournalLimits(engine);
@@ -190,9 +191,10 @@ export async function upgradeRecoveryStaging(engine: BrainEngine, table: 'persis
     await declarePersistenceProtocol(tx);
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
     const counters = await lockCounters(tx, ['brain', `worktree:${worktreeId}`]);
-    const [row] = await tx.executeRaw<{ recovery_bytes: number | string; recovery: StoredRecovery | null }>(
-      `SELECT recovery,recovery_bytes FROM ${table} WHERE id=$1 FOR UPDATE`, [id]);
+    const [row] = await tx.executeRaw<{ recovery_bytes: number | string; recovery: StoredRecovery | null; source_id: string }>(
+      `SELECT recovery,recovery_bytes,source_id FROM ${table} WHERE id=$1 FOR UPDATE`, [id]);
     if (!row?.recovery) return;
+    assertRecoveryVersion(table, row.recovery, row.source_id);
     const record = row.recovery;
     const prior = 'files' in record ? record.files : [record];
     const files = prior.map(file => upgradeFileStaging(file, mode));

@@ -33,6 +33,12 @@ const VALUE_FLAGS = new Set(['--source', '--limit', '--lang']);
 /** Positional args, skipping both value-taking flags and their values.
  * The inline `name=value` flag spelling is one token starting with a double
  * dash, so the generic branch skips it without consuming a following token. */
+/**
+ * #5001: the symbol resolver links calls within one file, so every cross-file call stays unresolved and is
+ * matched by short name only (it can name a different symbol with the same name).
+ */
+export const UNRESOLVED_CALL_LABEL = 'unresolved (cross-file, matched by name)';
+
 export function positionalArgs(args: string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < args.length; i++) {

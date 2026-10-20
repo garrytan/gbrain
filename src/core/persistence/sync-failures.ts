@@ -25,6 +25,13 @@ export interface ManagedSyncFailure {
   observation_id: string;
   first_seen: string;
   attempts: number;
+  /**
+   * GBRA-133 S-60: how many runs in a row stopped on this path with this code and message (1 on the first); a different
+   * path, code or message starts over. Absent on failures recorded before it was kept.
+   */
+  repeats?: number;
+  /** GBRA-133 S-60: the invocation that recorded it, so a resumed cursor's same observation still counts a new run. */
+  invocation?: string;
   /** The cursor-selecting options of the failed run; absent on failures recorded before they were kept. */
   syncOptions?: SyncCursorOptions;
   processingOptions?: Partial<SyncProcessingOptions>;
@@ -43,20 +50,26 @@ export interface ManagedSyncRootCause { request_id: string | null; slug: string 
   /** The cursor fence cause when the root is a cursor refusal (`outside_fence`, `run_replaced`, `window_dropped`). */
   cause?: string; unknown?: true }
 
-export async function recordManagedSyncFailure(engine: BrainEngine, value: Omit<ManagedSyncFailure, 'first_seen' | 'attempts'> & { first_seen?: string }): Promise<{ failure: ManagedSyncFailure; ledgerRecorded: boolean }> {
-  const failure = { ...value, gbrain_version: VERSION, first_seen: value.first_seen ?? new Date().toISOString(), attempts: 1 };
+export async function recordManagedSyncFailure(engine: BrainEngine, value: Omit<ManagedSyncFailure, 'first_seen' | 'attempts' | 'repeats'> & { first_seen?: string }): Promise<{ failure: ManagedSyncFailure; ledgerRecorded: boolean }> {
+  const failure = { ...value, gbrain_version: VERSION, first_seen: value.first_seen ?? new Date().toISOString(), attempts: 1, repeats: 1 };
   const recorded = await engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
     const [row] = await tx.executeRaw<{ completed_keys: [ManagedSyncFailure] }>(`
+      WITH pair AS (SELECT completed_keys->0 AS was, $2::text::jsonb->0 AS incoming FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1),
+      same AS (SELECT was, incoming, was->>'path'=incoming->>'path' AND was->>'code'=incoming->>'code' AND was->>'message'=incoming->>'message' AS same,
+        COALESCE((was->>'repeats')::int,1)+1 AS repeats FROM pair)
       INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-sync-failure',$1,$2::text::jsonb)
       ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=CASE
         WHEN op_checkpoints.completed_keys->0->>'observation_id'=EXCLUDED.completed_keys->0->>'observation_id'
-        THEN op_checkpoints.completed_keys
+        THEN CASE WHEN (SELECT same AND incoming->>'invocation' IS NOT NULL AND was->>'invocation' IS DISTINCT FROM incoming->>'invocation' FROM same)
+          THEN jsonb_build_array(op_checkpoints.completed_keys->0 || jsonb_build_object('repeats',(SELECT repeats FROM same),'invocation',EXCLUDED.completed_keys->0->>'invocation'))
+          ELSE op_checkpoints.completed_keys END
         WHEN op_checkpoints.completed_keys->0->>'target' IS DISTINCT FROM EXCLUDED.completed_keys->0->>'target'
         THEN EXCLUDED.completed_keys
         ELSE jsonb_build_array(EXCLUDED.completed_keys->0 || jsonb_build_object(
           'first_seen',op_checkpoints.completed_keys->0->>'first_seen',
-          'attempts',COALESCE((op_checkpoints.completed_keys->0->>'attempts')::int,0)+1)) END,
+          'attempts',COALESCE((op_checkpoints.completed_keys->0->>'attempts')::int,0)+1,
+          'repeats',(SELECT CASE WHEN same THEN repeats ELSE 1 END FROM same))) END,
         updated_at=now()
       RETURNING completed_keys`, [value.cursor_key, JSON.stringify([failure])]);
     return row.completed_keys[0];

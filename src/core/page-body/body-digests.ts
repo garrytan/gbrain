@@ -87,6 +87,8 @@ export function fileBodyDigests(bytes: ByteSource, reading: FileReading, filePat
 /** A fence opener keeps at most this much of its line before it (UTF-16 units): the stored side overlays a segment, so it sees at most that much. */
 const OPENER_CONTEXT = SEGMENT_MAX_BYTES;
 const MARKER_KEEP = Math.max(FACTS_FENCE_BEGIN.length, FACTS_FENCE_END.length) - 1;
+/** Bytes a read inside an open fence block may pass FENCE_MAX_BYTES by: a UTF-8 sequence the decoder holds back (3) and the byte that proves the block longer. */
+export const FENCE_READ_LOOKAHEAD = 4;
 
 /**
  * The digest of each file region after `overlay` (the withdrawal overlay of one complete text, overlayCanonicalBodies),
@@ -94,7 +96,8 @@ const MARKER_KEEP = Math.max(FACTS_FENCE_BEGIN.length, FACTS_FENCE_END.length) -
  * and before any marker the next bytes could complete, so a block is always overlaid whole. The text held is the open
  * block, with at most OPENER_CONTEXT of the line before its opener, or that much of the current line when no block is
  * open, plus the piece just read: never a whole long line. A block longer than FENCE_MAX_BYTES, counted from its begin
- * marker, calls `refuse` with its length so far before anything more is held or overlaid. `between` runs after each
+ * marker, calls `refuse` with its length so far before anything more is held or overlaid; inside an open block no read
+ * passes the bound by more than FENCE_READ_LOOKAHEAD bytes. `between` runs after each
  * piece (an effect's claim renewal).
  */
 export async function overlaidFileBodyDigests(bytes: ByteSource, reading: FileReading, regions: Record<BodyRegion, readonly BodyPiece[]>,
@@ -117,25 +120,32 @@ export async function overlaidFileBodyDigests(bytes: ByteSource, reading: FileRe
       const lastEnd = pending.lastIndexOf(FACTS_FENCE_END, at - FACTS_FENCE_END.length);
       return Math.max(pending.lastIndexOf('\n', at - 1) + 1, at - OPENER_CONTEXT, lastEnd === -1 ? 0 : lastEnd + FACTS_FENCE_END.length);
     };
+    // Bytes of the open fence block held so far (0 when none is open): the next read stops where the block would pass FENCE_MAX_BYTES.
+    let openBytes = 0;
     const drain = async (final: boolean) => {
       const { tail } = partialFenceRuns(pending, false);
-      if (tail < pending.length) {
-        const fence = Buffer.byteLength(pending.slice(tail), 'utf8');
-        if (fence > FENCE_MAX_BYTES) throw refuse(fence);
-      }
+      openBytes = tail < pending.length ? Buffer.byteLength(pending.slice(tail), 'utf8') : 0;
+      if (openBytes > FENCE_MAX_BYTES) throw refuse(openBytes);
       const lastEnd = pending.lastIndexOf(FACTS_FENCE_END);
       const closedAt = Math.max(0, pending.length - MARKER_KEEP, lastEnd === -1 ? 0 : lastEnd + FACTS_FENCE_END.length);
       const cut = final ? pending.length : keepFrom(tail < pending.length ? tail : closedAt);
       if (cut > 0) await emit(pending.slice(0, cut));
       pending = pending.slice(cut);
     };
+    const take = async (part: Uint8Array) => {
+      pending += decoder.decode(count(part, 'fileBytes'), { stream: true });
+      if (pending.length > bodyDigestWork.largestHeld) bodyDigestWork.largestHeld = pending.length;
+      await drain(false);
+      await between?.();
+    };
     for (const piece of regions[region]) {
-      const parts = 'text' in piece ? [Buffer.from(piece.text, 'utf8')] : virtualSlice(bytes, reading, piece.start, piece.end);
-      for (const part of parts) {
-        pending += decoder.decode(count(part, 'fileBytes'), { stream: true });
-        if (pending.length > bodyDigestWork.largestHeld) bodyDigestWork.largestHeld = pending.length;
-        await drain(false);
-        await between?.();
+      if ('text' in piece) { await take(Buffer.from(piece.text, 'utf8')); continue; }
+      // Each read is a segment at most, and within an open block at most what is left of FENCE_MAX_BYTES plus
+      // FENCE_READ_LOOKAHEAD: enough to see its end marker at the bound, or to prove the block longer.
+      for (let at = piece.start; at < piece.end;) {
+        const size = Math.min(SEGMENT_MAX_BYTES, piece.end - at, openBytes ? FENCE_MAX_BYTES - openBytes + FENCE_READ_LOOKAHEAD : Infinity);
+        for (const part of virtualSlice(bytes, reading, at, at + size)) await take(part);
+        at += size;
       }
     }
     pending += decoder.decode();

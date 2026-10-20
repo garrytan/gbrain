@@ -157,3 +157,53 @@ describe('pruning + guards', () => {
     expect(readWorkers(() => 5).length).toBe(0);
   });
 });
+
+describe('unreadable registry is unknown, not empty', () => {
+  // queueWorkerAlive, wedged_queue and remediation all keep a liveness-unknown
+  // path for a throwing read; readWorkers must actually throw to reach it.
+  test('a missing registry dir reads as empty and no-worker', async () => {
+    const { readWorkers, workerRegistryDir } = await reg();
+    const { queueWorkerAlive } = await import('../src/core/minions/no-worker.ts');
+    expect(existsSync(workerRegistryDir())).toBe(false);
+    expect(readWorkers(() => null)).toEqual([]);
+    expect(queueWorkerAlive('default')).toBe(false);
+  });
+
+  test('a registry path that cannot be listed (ENOTDIR) throws; liveness is unknown, so no no_worker advice', async () => {
+    const { readWorkers, workerRegistryDir } = await reg();
+    const { queueWorkerAlive } = await import('../src/core/minions/no-worker.ts');
+    const { deriveWedgeSignal } = await import('../src/core/minions/queue.ts');
+    require('fs').mkdirSync(join(home, '.gbrain'), { recursive: true });
+    writeFileSync(workerRegistryDir(), 'not a directory');
+    expect(() => readWorkers(() => null)).toThrow(/ENOTDIR/);
+    const { WorkerRegistryUnreadableError, workerRegistryReadFailure } = await reg();
+    let caught: unknown;
+    try { readWorkers(() => null); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(WorkerRegistryUnreadableError);
+    expect(workerRegistryReadFailure(caught)).toEqual({ errno: 'ENOTDIR', path: workerRegistryDir() });
+    expect(queueWorkerAlive('default')).toBeUndefined();
+    const signal = deriveWedgeSignal(
+      { queue: 'default', active_healthy: 0, waiting: 3, minutes_since_completion: null },
+      { workerAlive: queueWorkerAlive('default') },
+    );
+    expect(signal.no_worker).toBe(false);
+    expect(signal.wedged).toBe(true);
+  });
+
+  test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'an unsearchable parent (EACCES) throws instead of reading as absent',
+    async () => {
+      const { readWorkers } = await reg();
+      const { queueWorkerAlive } = await import('../src/core/minions/no-worker.ts');
+      const parent = join(home, '.gbrain');
+      require('fs').mkdirSync(join(parent, 'workers'), { recursive: true });
+      require('fs').chmodSync(parent, 0o000);
+      try {
+        expect(() => readWorkers(() => null)).toThrow(/EACCES/);
+        expect(queueWorkerAlive('default')).toBeUndefined();
+      } finally {
+        require('fs').chmodSync(parent, 0o700);
+      }
+    },
+  );
+});

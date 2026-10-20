@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { LanguageModelV2CallOptions } from '@ai-sdk/provider';
 import { withEnv } from './helpers/with-env.ts';
+import { fileURLToPath } from 'node:url';
 
 const stubDir = join(tmpdir(), `claude-cli-recipe-stub-${process.pid}`);
 const stubBin = join(stubDir, 'claude');
@@ -370,7 +371,7 @@ describe('claude-cli LanguageModel — tool use', () => {
     // fresh subprocess replayed from an id-stripped transcript cannot avoid
     // repeats, which is exactly what collided real dream jobs to death.
     const src = readFileSync(
-      new URL('../src/core/ai/providers/claude-cli-language-model.ts', import.meta.url).pathname,
+      fileURLToPath(new URL('../src/core/ai/providers/claude-cli-language-model.ts', import.meta.url)),
       'utf-8',
     );
     expect(src).toContain('{"name": "<tool name>", "input":');

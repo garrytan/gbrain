@@ -56,9 +56,15 @@ export async function runSyncTail(engine: BrainEngine, sourceId: string, opts: {
     await faultPoint('sync:tail_started', { sourceId });
     if (changed > 0) statistics = await refreshProjectionStatistics(engine, changed) ? 'refreshed' : 'failed';
     if (extract && deadlineAt > Date.now()) {
-      slugs = (await engine.executeRaw<{ slug: string }>(`SELECT DISTINCT e->>'slug' AS slug FROM op_checkpoints m, jsonb_array_elements(m.completed_keys) e
-        WHERE m.op='managed-sync-manifest' AND m.fingerprint=ANY($1::text[]) AND e->>'action'='import' AND e->>'slug' IS NOT NULL LIMIT ${SYNC_TAIL_MAX_PAGES + 1}`,
-      [owed.map(item => item.run_id)], { timeoutMs: Math.max(1, deadlineAt - Date.now()) })).map(row => row.slug);
+      // A cursor run's imports are its manifest's; a pass writes none, so its imports are its committed requests since its pin.
+      const passes = owed.filter(item => item.since);
+      slugs = (await engine.executeRaw<{ slug: string }>(`SELECT DISTINCT slug FROM (SELECT e->>'slug' AS slug FROM op_checkpoints m, jsonb_array_elements(m.completed_keys) e
+        WHERE m.op='managed-sync-manifest' AND m.fingerprint=ANY($1::text[]) AND e->>'action'='import' AND e->>'slug' IS NOT NULL
+        UNION SELECT r.slug FROM persistence_requests r, jsonb_to_recordset($2::text::jsonb) AS p(run_id text, since timestamptz, at timestamptz)
+        WHERE r.recovery IS NULL AND NOT r.compacted AND r.state='committed' AND r.completed_at BETWEEN p.since AND p.at AND r.source_id=$3
+          AND r.intent->>'passId'=p.run_id AND r.intent->>'kind'='managed_sync_import') imported LIMIT ${SYNC_TAIL_MAX_PAGES + 1}`,
+      [owed.map(item => item.run_id), JSON.stringify(passes.map(item => ({ run_id: item.run_id, since: item.since, at: item.at }))), sourceId],
+      { timeoutMs: Math.max(1, deadlineAt - Date.now()) })).map(row => row.slug);
       if (deadlineAt > Date.now()) links = await extractManagedStaleLinks(engine, { sourceId, maxPages: SYNC_TAIL_MAX_PAGES, timeBudgetMs: deadlineAt - Date.now(), signal: opts.signal, mentions: false, slugs });
     }
   } catch (error) {

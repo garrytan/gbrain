@@ -27,11 +27,12 @@ import {
 import { CYCLE_DEADLINE_RESERVE_MS } from '../src/core/cycle/base-phase.ts';
 import { defaultTimeoutMsFor } from '../src/core/minions/handler-timeouts.ts';
 import { resolveAutopilotDispatchTimeoutMs } from '../src/commands/autopilot-timeout.ts';
+import { fileURLToPath } from 'node:url';
 
 const proposeTakesSrc = readFileSync(
-  new URL('../src/core/cycle/propose-takes.ts', import.meta.url).pathname, 'utf-8');
+  fileURLToPath(new URL('../src/core/cycle/propose-takes.ts', import.meta.url)), 'utf-8');
 const cycleSrc = readFileSync(
-  new URL('../src/core/cycle.ts', import.meta.url).pathname, 'utf-8');
+  fileURLToPath(new URL('../src/core/cycle.ts', import.meta.url)), 'utf-8');
 
 describe('propose_takes deadline < job timeout (#4168)', () => {
   test('fallback deadline is strictly under the MINIMUM achievable full-cycle job timeout across plausible intervals', () => {

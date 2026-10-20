@@ -9,16 +9,22 @@ export interface RescopeGrantArgs {
   repair: boolean;
   dryRun: boolean;
   json: boolean;
+  /** No grant field and no --profile: print the stored grants and write nothing (#6993). */
+  printOnly: boolean;
 }
 
 export function parseRescopeGrantArgs(args: string[]): RescopeGrantArgs {
-  const result = parseRescopeGrantFlags(args);
-  if (!result.profile && Object.keys(result.patch).length === 0) throw new GrantError('invalid_grant', 'Pass a grant field or --profile to rescope');
-  return result;
+  return markPrintOnly(parseRescopeGrantFlags(args));
+}
+
+function markPrintOnly(result: RescopeGrantArgs): RescopeGrantArgs {
+  if (result.profile || Object.keys(result.patch).length > 0) return result;
+  if (result.repair) throw new GrantError('invalid_grant', 'Pass a grant field or --profile with --repair');
+  return { ...result, printOnly: true };
 }
 
 function parseRescopeGrantFlags(args: string[]): RescopeGrantArgs {
-  const result: RescopeGrantArgs = { patch: {}, repair: false, dryRun: false, json: false };
+  const result: RescopeGrantArgs = { patch: {}, repair: false, dryRun: false, json: false, printOnly: false };
   const csv = (value: string): string[] => value.split(',').map(s => s.trim()).filter(Boolean);
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
@@ -195,6 +201,5 @@ export function parseClientRescopeArgs(clientId: string, args: string[]): Rescop
     if (invalid.length) throw new GrantError('invalid_grant', `Invalid takes holder: ${invalid.join(', ')} (use world, brain, people/<slug>, companies/<slug> or a bare slug)`, ['takes_holders_invalid']);
     result.patch.takesHolders = takesHolders;
   }
-  if (!result.profile && Object.keys(result.patch).length === 0) throw new GrantError('invalid_grant', 'Pass a grant field or --profile to rescope');
-  return result;
+  return markPrintOnly(result);
 }

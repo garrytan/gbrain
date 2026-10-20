@@ -15,6 +15,7 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { submitAutoDrains, AUTO_DRAIN_NEXT_KIND_KEY } from '../src/commands/autopilot-dispatch.ts';
+import { resolveAutopilotAutoDrainBounds } from '../src/commands/autopilot-timeout.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 let engine: BrainEngine;
@@ -68,12 +69,12 @@ async function connectorSource(id: string, type: 'email' | 'meeting' = 'email', 
   }
 }
 
-async function tick(now = DAY1): Promise<string> {
+async function tick(now = DAY1, timeoutMs = 60_000): Promise<string> {
   let stderr = '';
   const write = process.stderr.write.bind(process.stderr);
   process.stderr.write = ((chunk: string | Uint8Array) => { stderr += String(chunk); return true; }) as typeof process.stderr.write;
   try {
-    await withEnv({ GBRAIN_HOME: home }, () => submitAutoDrains(engine, queue, { timeoutMs: 60_000, jsonMode: true, now: () => now }));
+    await withEnv({ GBRAIN_HOME: home }, () => submitAutoDrains(engine, queue, { timeoutMs, jsonMode: true, now: () => now }));
   } finally { process.stderr.write = write; }
   await engine.executeRaw("UPDATE minion_jobs SET created_at=$1::timestamptz WHERE idempotency_key LIKE '%:' || $2",
     [new Date(now).toISOString(), new Date(now).toISOString().slice(0, 10)]);
@@ -171,3 +172,34 @@ test('managed brain: a source whose writer preflight would refuse is skipped wit
   expect(skip).toMatchObject({ source_id: 'git-unowned' });
   expect(skip.reason).toContain('requires the configured canonical owner');
 });
+
+test('automatic drain window and job deadline are bounded together', () => {
+  // The drain hard-stops at the job deadline (#5809); its soft window is only checked between
+  // batches. The deadline must cover the window plus a final chat call (two on a schema retry).
+  expect(resolveAutopilotAutoDrainBounds(600_000, 120, 300_000)).toEqual({ windowSeconds: 120, timeoutMs: 780_000 });
+  expect(resolveAutopilotAutoDrainBounds(600_000, 900, 300_000)).toEqual({ windowSeconds: 900, timeoutMs: 1_560_000 });
+  expect(resolveAutopilotAutoDrainBounds(600_000, Number.MAX_VALUE, 300_000)).toEqual({ windowSeconds: 1140, timeoutMs: 1_800_000 });
+  expect(resolveAutopilotAutoDrainBounds(3_600_000, 900, 300_000)).toEqual({ windowSeconds: 900, timeoutMs: 3_600_000 });
+  expect(resolveAutopilotAutoDrainBounds(600_000, 900, 300_000.5)).toEqual({ windowSeconds: 900, timeoutMs: 1_560_001 });
+  // A chat timeout that leaves no room under the anchor still gets a deadline covering its one-second window.
+  expect(resolveAutopilotAutoDrainBounds(600_000, 900, 869_600)).toEqual({ windowSeconds: 1, timeoutMs: 1_800_200 });
+});
+
+for (const row of [
+  { setting: null, interval: 600_000, window: 120, timeout: 780_000 },
+  { setting: '900', interval: 600_000, window: 900, timeout: 1_560_000 },
+  { setting: '86400', interval: 600_000, window: 1140, timeout: 1_800_000 },
+  { setting: '900', interval: 3_600_000, window: 900, timeout: 3_600_000 },
+]) {
+  test(`queued drain covers window ${row.setting ?? 'default'} at a ${row.interval}ms dispatch deadline`, async () => {
+    if (row.setting !== null) await engine.setConfig('autopilot.auto_drain.window_seconds', row.setting);
+    await gitSource('git-a');
+    await tick(DAY1, row.interval);
+    const jobs = await engine.executeRaw<{ window: number; timeout_ms: number }>(
+      "SELECT (data->>'window')::int AS window, timeout_ms FROM minion_jobs WHERE name='extract-atoms-drain'");
+    expect(jobs).toHaveLength(1);
+    expect(Number(jobs[0].window)).toBe(row.window);
+    expect(Number(jobs[0].timeout_ms)).toBe(row.timeout);
+    expect(Number(jobs[0].timeout_ms)).toBeGreaterThan(row.window * 1000);
+  });
+}

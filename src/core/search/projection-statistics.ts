@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
+import { analyzeDeferred, lockTableForAnalyze } from '../analyze-lock.ts';
 import { beginFullAnalyze, maybeRefreshPlannerStats, plannerAutoAnalyzeEnabled } from '../planner-stats.ts';
 
 export const PROJECTION_STATISTICS_NAME = 'pages_text_projection_current_stats';
@@ -79,36 +80,68 @@ export const CHUNK_STATISTICS_SQL = `ANALYZE content_chunks(${SEARCH_STATISTICS_
  */
 export const SEARCH_PAGE_STATISTICS_SQL = `ANALYZE pages(${SEARCH_STATISTICS_COLUMNS.pages.join(', ')})`;
 
-const CHUNK_STATISTICS_WARNING = `[search] Chunk planner statistics could not be refreshed (a lock or the 30 s bound). Vector search may skip its index until autovacuum analyzes content_chunks; run ${CHUNK_STATISTICS_SQL} as the table owner to fix it now.`;
+const CHUNK_STATISTICS_WARNING = `[search] Chunk planner statistics could not be refreshed (the 30 s bound or a missing privilege). Vector search may skip its index until autovacuum analyzes content_chunks; run ${CHUNK_STATISTICS_SQL} as the table owner to fix it now.`;
+const CHUNK_STATISTICS_DEFERRED = '[search] Chunk planner statistics refresh deferred: another session (a vacuum, an ANALYZE or an index build) holds content_chunks, and this refresh never waits on it (#7083). Autovacuum analyzes the table, and the next import, sync or embed drain refreshes it again.';
 
 /**
- * The chunk ANALYZE inside a caller's bounded Postgres transaction, behind a
- * savepoint: a concurrent index build holding the table's lock (2 s lock
- * timeout) costs this step alone, never the caller's page statistics. A role
- * that does not own the table gets Postgres's skip warning, not an error.
+ * The chunk ANALYZE inside a caller's bounded Postgres transaction, in a nested
+ * transaction (a savepoint the driver rolls back, so a failed statement never
+ * aborts the caller's transaction): a vacuum, ANALYZE or index build holding
+ * the table's lock defers this step alone (`lockTableForAnalyze`, which never
+ * waits, so it never cancels an autovacuum), never the caller's page
+ * statistics. A role that does not own the table gets Postgres's skip warning,
+ * not an error.
  */
 async function analyzeChunkColumns(tx: BrainEngine): Promise<boolean> {
-  await tx.executeRaw('SAVEPOINT chunk_statistics');
   try {
-    await tx.executeRaw(CHUNK_STATISTICS_SQL);
-    await tx.executeRaw('RELEASE SAVEPOINT chunk_statistics');
+    await tx.transaction(async step => {
+      await lockTableForAnalyze(step, 'content_chunks');
+      await step.executeRaw(CHUNK_STATISTICS_SQL);
+    });
     return true;
-  } catch {
-    await tx.executeRaw('ROLLBACK TO SAVEPOINT chunk_statistics');
-    console.warn(CHUNK_STATISTICS_WARNING);
+  } catch (error) {
+    console.warn(analyzeDeferred(error) ? CHUNK_STATISTICS_DEFERRED : CHUNK_STATISTICS_WARNING);
     return false;
   }
 }
 
 /**
- * Postgres only (PGLite's planner-stats deltas own its chunk statistics): one
- * bounded narrow ANALYZE of content_chunks after an embed drain, which moves
- * content_chunks.model on every row it embeds. Import, sync and reindex get
- * the same step inside refreshProjectionStatistics.
+ * #7083: whether a drain that changed `changedRows` chunks can leave the chunk statistics alone: content_chunks was
+ * sampled with rows, its `SEARCH_STATISTICS_COLUMNS` statistics exist, the configured embedding model (the
+ * provenance the drain writes to content_chunks.model) is among the sampled common models, and the drain changed fewer
+ * than 50 + 10% of the sampled rows (autovacuum's analyze threshold, as `statisticsStillCurrent` for pages). Such a
+ * drain barely moves them, and autovacuum's own analyze covers what small drains add up to. A model the sample has
+ * never seen (a partial or source-scoped model switch) refreshes, or vector search would estimate one row for it and
+ * sort every candidate. An unknown model refreshes too. Without this, every import's embed drain on a 10M-chunk
+ * table ran a 2-6 s ANALYZE.
  */
-export async function refreshChunkStatistics(engine: BrainEngine): Promise<boolean> {
+async function chunkStatisticsStillCurrent(engine: BrainEngine, changedRows: number): Promise<boolean> {
+  if (!Number.isFinite(changedRows)) return false;
+  let model: string | null = null;
+  try { model = (await import('../ai/gateway.ts')).getEmbeddingModelProvenance(); } catch { return false; } // engine-dynamic-import-ok
+  if (!model) return false;
+  const [state] = await engine.executeRaw<{ reltuples: number; sampled: boolean }>(
+    `SELECT c.reltuples::float8 AS reltuples,
+            EXISTS (SELECT 1 FROM pg_stats s WHERE s.schemaname = current_schema() AND s.tablename = 'content_chunks' AND s.attname = 'model'
+                      AND $1 = ANY (s.most_common_vals::text::text[])) AS sampled
+       FROM pg_class c WHERE c.oid = 'content_chunks'::regclass`, [model]);
+  const rows = Number(state?.reltuples ?? -1);
+  if (rows <= 0 || !state?.sampled || changedRows >= 50 + 0.1 * rows) return false;
+  return !(await missingSearchStatistics(engine)).some(column => column.startsWith('content_chunks.'));
+}
+
+/**
+ * Postgres only (PGLite's planner-stats deltas own its chunk statistics): one
+ * bounded narrow ANALYZE of content_chunks after an embed drain that changed
+ * `changedRows` chunks (omitted: always), which moves content_chunks.model on
+ * every row it embeds. A drain `chunkStatisticsStillCurrent` vouches for
+ * skips it. Import, sync and reindex get the same step inside
+ * refreshProjectionStatistics.
+ */
+export async function refreshChunkStatistics(engine: BrainEngine, changedRows = Infinity): Promise<boolean> {
   if (engine.kind !== 'postgres') return false;
   try {
+    if (await chunkStatisticsStillCurrent(engine, changedRows)) return true;
     return await engine.transaction(async tx => {
       await tx.executeRaw("SET LOCAL statement_timeout = '30s'");
       await tx.executeRaw("SET LOCAL lock_timeout = '2s'");
@@ -120,10 +153,11 @@ export async function refreshChunkStatistics(engine: BrainEngine): Promise<boole
   }
 }
 
-/** Runs an embed drain, then refreshes the chunk statistics once when `changed()` says it embedded something (a drain moves content_chunks.model on every row it embeds). */
-export async function withChunkStatisticsRefresh<T>(engine: BrainEngine, changed: () => boolean, drain: () => Promise<T>): Promise<T> {
+/** Runs an embed drain, then refreshes the chunk statistics once for the `changed()` chunks it embedded (none: no refresh; a drain moves content_chunks.model on every row it embeds). */
+export async function withChunkStatisticsRefresh<T>(engine: BrainEngine, changed: () => number, drain: () => Promise<T>): Promise<T> {
   const out = await drain();
-  if (changed()) await refreshChunkStatistics(engine);
+  const rows = changed();
+  if (rows > 0) await refreshChunkStatistics(engine, rows);
   return out;
 }
 
@@ -247,6 +281,7 @@ export async function refreshProjectionStatistics(engine: BrainEngine, changedPa
       if (engine.kind === 'postgres') {
         await tx.executeRaw("SET LOCAL statement_timeout = '30s'");
         await tx.executeRaw("SET LOCAL lock_timeout = '2s'");
+        await lockTableForAnalyze(tx, 'pages');
       }
       // PGLite has no autovacuum, so nothing else ever collects planner statistics there. Without them the
       // planner sees empty tables and runs search's graph joins as pages-by-pages nested loops (about 50 s
@@ -260,8 +295,10 @@ export async function refreshProjectionStatistics(engine: BrainEngine, changedPa
       await verifyProjectionStatistics(tx);
     });
     return true;
-  } catch {
-    console.warn('[search] Projection planner statistics could not be refreshed. Run ANALYZE pages(text_projection_revision, knowledge_revision) as the table owner; completed page writes were retained.');
+  } catch (error) {
+    console.warn(analyzeDeferred(error)
+      ? '[search] Projection planner statistics refresh deferred: another session (a vacuum, an ANALYZE or an index build) holds pages, and this refresh never waits on it (#7083). Completed page writes were retained; the next import or sync refreshes them.'
+      : '[search] Projection planner statistics could not be refreshed. Run ANALYZE pages(text_projection_revision, knowledge_revision) as the table owner; completed page writes were retained.');
     return false;
   }
 }

@@ -129,7 +129,7 @@ export async function keywordPlanCheck(engine: BrainEngine, probe: KeywordPlanPr
     }
     const canary = await probe.canary();
     if (!canary) {
-      return { name, status: 'ok', message: `Skipped: the planner has no statistics for content_chunks.search_vector yet (run ANALYZE content_chunks on the brain host, or let the next sync refresh them); the keyword bound is ${knob}.${recorded}`,
+      return { name, status: 'ok', message: `Skipped: the planner has no statistics for content_chunks.search_vector yet (autovacuum's analyze collects them; to do it now, run ANALYZE content_chunks(search_vector) on the brain host while no vacuum is running on the table: an ANALYZE that waits on an autovacuum cancels it); the keyword bound is ${knob}.${recorded}`,
         details: { ...base, outcome: 'skipped', reason: 'no_statistics' } };
     }
     const percent = `${(canary.share * 100).toFixed(1)}%`;

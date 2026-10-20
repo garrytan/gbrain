@@ -171,6 +171,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('sources', 'user_data', 'Sources with incarnations and archive state.'),
     carry('subagent_messages', 'operational', 'Subagent job transcripts.'),
     carry('subagent_tool_executions', 'operational', 'Subagent tool execution log.'),
+    carry('sync_wanted_markers', 'operational', 'Pending sync requests (GBRA-133): a sync trigger, push or nudge not yet drained; dropping them would lose an accepted request. Rows name carried sources and jobs; the target\'s residents drain them.'),
     carry('synthesis_evidence', 'user_data', 'Synthesis citations.'),
     carry('tags', 'user_data', 'Page tags.'),
     carry('take_domain_assignments', 'user_data', 'Take domain assignments.'),
@@ -203,6 +204,8 @@ export const GRADUATION_INVENTORY: Inventory = {
     entry('budget_reservations', 'discard', 'operational', 'Daily-ledger holds (src/core/budget/daily-ledger.ts) that expire within minutes; budget_ledger carries the day\'s totals, so a hold dropped mid-graduation stays counted as reserved until its UTC day ends (only tightening that day\'s cap).'),
     entry('subagent_rate_leases', 'discard', 'operational', 'Job-owned concurrency leases that expire.'),
     entry('persistence_consumers', 'discard', 'operational', 'Per-process consumer heartbeat rows (#6317): each is renewed every 10 s by a live process on the source host and lapses in 90 s; the target\'s consumers write their own rows.'),
+    entry('sync_notifier_leases', 'discard', 'operational', 'Host notifier lease (GBRA-133): renewed every heartbeat by a live resident on the source engine and lapses in two; the target\'s residents claim their own.'),
+    entry('sync_notifier_sources', 'discard', 'operational', 'Per-source notifier runtime state and coverage (GBRA-133), written by the source engine\'s resident; the target\'s resident re-observes HEAD, and a classic source\'s syncer host is recorded again by its next sync on the target (until then it reads not monitored).'),
     entry('oauth_codes', 'discard', 'security', 'One-time authorization codes; an in-flight OAuth handshake restarts.'),
 
     entry('page_links', 'schema_owned', 'operational', 'View over links; each engine\'s schema defines it.', { kind: 'view' }),

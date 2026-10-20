@@ -12,8 +12,6 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import * as syncAuthority from '../src/core/persistence/sync-authority.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { prepareRemoteJob, withSubmissionAuthority } from '../src/core/minions/submission-authority.ts';
-import type { OperationContext } from '../src/core/ops/contract.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
 // #5632: an interrupted managed sync stores its processing options on the
@@ -23,6 +21,10 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 // the explicit-flag list are gone. A resume keeps the cursor's accepted
 // opt-outs (`inherited_options`), and an opt-out the caller sets applies to the
 // requests it freezes from then on; admitted requests keep their frozen options.
+// #6712 PR 4b: a non-company source keeps no cursor; the open episode on its pass
+// row (`obligations.episode.inherited`) carries the opt-outs instead. A remote
+// job's pass is covered by sync-pass-completion-6712.test.ts (it commits its
+// one-sided imports and names the owner host).
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-cursor-options-'));
 const engines: BrainEngine[] = [];
@@ -51,8 +53,8 @@ async function fixture(engine: BrainEngine) {
 const isolated = (fn: (engine: BrainEngine) => Promise<void>) => withEnv({ GBRAIN_HOME: home, OPENAI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined }, async () => {
   for (const engine of engines) await fn(engine);
 });
-const storedOptions = async (engine: BrainEngine, id: string) => (await engine.executeRaw<{ options: unknown }>(
-  "SELECT c.completed_keys->0->'processingOptions' AS options FROM op_checkpoints c WHERE c.op='managed-sync' AND c.completed_keys->0->>'sourceId'=$1", [id]))[0]?.options;
+const episodeOptions = async (engine: BrainEngine, id: string) => (await engine.executeRaw<{ options: unknown }>(
+  "SELECT c.completed_keys->0->'obligations'->'episode'->'inherited' AS options FROM op_checkpoints c WHERE c.op='managed-sync-pass' AND c.completed_keys->0->>'source_id'=$1", [id]))[0]?.options ?? null;
 // What each caller passes: the autopilot job fills noEmbed/noExtract defaults; the plain CLI passes no flag.
 const autopilot = (sourceId: string): SyncOpts => ({ sourceId, noPull: true, noEmbed: true, noExtract: true });
 const plainCli = (sourceId: string): SyncOpts => ({ sourceId, noPull: true });
@@ -69,18 +71,19 @@ test('a caller\'s processing options are the flags it set; no explicit-flag list
 test('a CLI-partial cursor is finished by an autopilot resume; its opt-outs apply to the pages it freezes', async () => isolated(async engine => {
   const id = await fixture(engine);
   expect(await performManagedSync(engine, plainCli(id), { maxPages: 1, maxMs: 1000 })).toMatchObject({ status: 'partial' });
-  expect(await storedOptions(engine, id)).toEqual(none);
+  expect(await episodeOptions(engine, id)).toBeNull();
   const finished = await performManagedSync(engine, autopilot(id));
   expect(finished.status).toBe('first_sync');
   expect(finished.inherited_options).toBeUndefined();
   expect(await engine.getPage('c', { sourceId: id })).not.toBeNull();
   expect(await importOptions(engine, id)).toEqual([none, unattended, unattended]);
-  expect(await storedOptions(engine, id)).toEqual(unattended);
+  expect(await episodeOptions(engine, id)).toBeNull();
 }), 120_000);
 
 test('an autopilot-partial cursor is finished by a plain CLI resume that keeps its opt-outs', async () => isolated(async engine => {
   const id = await fixture(engine);
   expect(await performManagedSync(engine, autopilot(id), { maxPages: 1, maxMs: 1000 })).toMatchObject({ status: 'partial' });
+  expect(await episodeOptions(engine, id)).toEqual({ noEmbed: true, noExtract: true, noSchemaPack: false, from: 'flag' });
   const finished = await performManagedSync(engine, plainCli(id));
   expect(finished.status).toBe('first_sync');
   expect(finished.inherited_options).toEqual(['noEmbed', 'noExtract']);
@@ -95,17 +98,4 @@ test('a resume whose flags differ from the stored options finishes the cursor in
   expect(resumed.status).toBe('first_sync');
   expect(resumed.inherited_options).toEqual(['noEmbed', 'noExtract']);
   expect(await importOptions(engine, id)).toEqual([unattended, { ...unattended, noSchemaPack: true }, { ...unattended, noSchemaPack: true }]);
-}), 120_000);
-
-test('a remote sync job finishes under its own frozen options', async () => isolated(async engine => {
-  const id = await fixture(engine);
-  const clientId = `options-client-${randomUUID()}`;
-  await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_name,client_secret_hash,scope,source_id,allowed_operations)
-    VALUES($1,'example-client','test-only','admin',$2,ARRAY['submit_job'])`, [clientId, id]);
-  const ctx = { engine, remote: true, sourceId: id, auth: { clientId, principal: { kind: 'oauth_client', id: clientId }, scopes: ['admin'], sourceId: id,
-    allowedOperations: ['submit_job'] } } as unknown as OperationContext;
-  const accepted = await prepareRemoteJob(ctx, 'sync', { noPull: true });
-  const result = await withSubmissionAuthority(accepted.authority, () => performManagedSync(engine, { ...accepted.data } as SyncOpts));
-  expect(result.status).toBe('first_sync');
-  await engine.executeRaw('DELETE FROM oauth_clients WHERE client_id=$1', [clientId]);
 }), 120_000);

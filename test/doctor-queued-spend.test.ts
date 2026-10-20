@@ -5,7 +5,7 @@
  * run under the legacy default cap.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -56,6 +56,18 @@ describe('queued spend in doctor', () => {
       expect(check!.message).toContain('un-upgraded worker may be fenced off');
       expect(check!.fix).toMatchObject({ argv: ['gbrain', 'jobs', 'list', '--status', 'waiting', '--json'], consent: [] });
     } finally { await withEnv({ GBRAIN_HOME: home }, () => unregister()); }
+  });
+
+  test('an unreadable worker registry reports live_workers unknown instead of failing the check', async () => {
+    const job = await queue.add('enrich', { sourceId: 'default' }, {}, { spendAuthorization: spend() });
+    await engine.executeRaw(`UPDATE minion_jobs SET updated_at = now() - interval '20 minutes' WHERE id = $1`, [job.id]);
+    const brokenHome = mkdtempSync(join(tmpdir(), 'gbrain-doctor-queued-spend-unreadable-'));
+    try {
+      mkdirSync(join(brokenHome, '.gbrain'), { recursive: true });
+      writeFileSync(join(brokenHome, '.gbrain', 'workers'), 'not a directory');
+      const [check] = await (withEnv({ GBRAIN_HOME: brokenHome }, () => legacyJobAuthorityEntry.run({ engine } as never)) as Promise<Array<Record<string, any>>>);
+      expect(check).toMatchObject({ status: 'ok', details: { queued_spend: { long_waiting_ids: [job.id] }, live_workers: null, worker_registry_unreadable: true, worker_registry_errno: 'ENOTDIR' } });
+    } finally { rmSync(brokenHome, { recursive: true, force: true }); }
   });
 
   test('no banner line without legacy rows', async () => {

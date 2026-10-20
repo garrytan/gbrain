@@ -104,10 +104,16 @@ d('publication deadline on a grouped publish (Postgres)', () => {
           // Restoration ran after the parked body settled: the original bytes were back before any retry.
           expect(rolledBackBytes).toBe(original);
 
-          // Whatever the group left queued, the ordinary route publishes it.
-          for (let i = 0; i < 10; i++) {
+          // The cancelled publication was charged to each member as a transient interruption, which schedules its next claim.
+          expect((await batchRows()).map(row => row.transient_interruptions)).toEqual([1, 1, 1]);
+          // Whatever the group left queued, the ordinary route publishes it once that backoff has passed.
+          for (let i = 0; i < 100; i++) {
             const next = await claimNextWrite(engine, localHostId());
-            if (!next) break;
+            if (!next) {
+              if (!(await batchRows()).some(row => row.state === 'queued')) break;
+              await tick(100);
+              continue;
+            }
             const more = publicationGroupKey(next) ? await claimGroupFollowers(engine, next, publicationGroupKey(next)!, 7) : [];
             await executeClaimedGroup(engine, [next, ...more], { hostId: localHostId(), prepare: async row => preparePersistedMutation(engine, row, config as never), settled: row => settled.push(row) });
           }

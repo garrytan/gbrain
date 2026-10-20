@@ -28,8 +28,9 @@ import { describe, test, expect } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { fileURLToPath } from 'node:url';
 
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 
 /**
  * Make a shim `gbrain` binary that routes to `bun run <repo>/src/cli.ts`.

@@ -73,6 +73,28 @@ export function publicationOf(records: StatementRecord[]): StatementRecord[] {
   throw new Error('no committed transaction inserted the page');
 }
 
+/** The folded stamp's first statement (its lease check) and its last when it publishes (the pass row write). */
+export const FOLD_LEASE_READ = 'SELECT 1 FROM gbrain_cycle_locks WHERE id=$1 AND acquisition_token=$2::uuid AND ttl_expires_at > now() FOR SHARE';
+export const FOLD_PASS_ROW_WRITE = /^INSERT INTO op_checkpoints\(op,fingerprint,completed_keys,updated_at\) VALUES\(\$1,\$2,jsonb_build_array\(\$3::text::jsonb\),now\(\)\)/;
+
+/**
+ * #6712 PR 4b: the publication split into the folded pass stamp (a writeback import's checkpoint published inside the
+ * page's transaction) and the import's own statements around it. The stamp is a nested transaction: its savepoint (the one
+ * its lease check follows) through its release or rollback. postgres.js never releases a nested savepoint, so a Postgres
+ * stamp that publishes ends at its pass row write. A publication without the fold is all import.
+ */
+export function splitFoldBlock(publication: StatementRecord[]): { fold: StatementRecord[]; imported: StatementRecord[] } {
+  const statements = publication.filter(isStatement);
+  const texts = statements.map(record => flat(record.sql));
+  const start = texts.findIndex((text, i) => /^savepoint \S+$/i.test(text) && texts[i + 1] === FOLD_LEASE_READ);
+  if (start < 0) return { fold: [], imported: statements };
+  const name = texts[start]!.split(' ')[1]!;
+  const closed = texts.findIndex((text, i) => i > start && [`release savepoint ${name}`, `rollback to savepoint ${name}`, `rollback to ${name}`].includes(text.toLowerCase()));
+  const end = closed >= 0 ? closed : texts.findIndex((text, i) => i > start && FOLD_PASS_ROW_WRITE.test(text));
+  if (end < 0) throw new Error('the folded stamp opened its savepoint and neither closed it nor wrote the pass row');
+  return { fold: statements.slice(start, end + 1), imported: [...statements.slice(0, start), ...statements.slice(end + 1)] };
+}
+
 /** Statement counts by normalized text. */
 export function byText(records: StatementRecord[]): Map<string, number> {
   const counts = new Map<string, number>();

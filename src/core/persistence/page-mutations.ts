@@ -73,7 +73,7 @@ const BATCH_SHARED_READS = new Set([
   'SELECT brain_id FROM persistence_brain WHERE singleton=1',
   'SELECT value FROM config WHERE key=$1',
   "SELECT config,incarnation FROM sources WHERE id=$1",
-  "SELECT id FROM source_ingestion_receipts WHERE source_id=$1 AND source_incarnation=$2::uuid AND profile='company-brain' LIMIT 1",
+  "SELECT r.id FROM source_ingestion_receipts r JOIN sources s ON s.id=r.source_id AND s.incarnation=r.source_incarnation WHERE r.source_id=$1 AND r.profile='company-brain' LIMIT 1",
   'SELECT s.id,s.local_path,h.local_path AS worktree_path,b.relative_path FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid WHERE NOT s.archived',
 ]);
 /**

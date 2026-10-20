@@ -440,3 +440,33 @@ esac
     });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }, 30000);
+
+it('GitHub refresh mines every shard of a packed unit job (test.yml runs two per runner)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-mine-packed-'));
+  try {
+    const bin = join(dir, 'bin');
+    const artifacts = join(dir, 'artifacts');
+    mkdirSync(bin);
+    mkdirSync(artifacts);
+    writeFileSync(join(bin, 'gh'), '#!/bin/sh\ncase "$*" in\n  "run view 123 --json conclusion,headSha,jobs") cat "$FIXTURE_GH_INFO" ;;\n  "run download 123 --name timings-unit-"*) [ -f "$FIXTURE_GH_ARTIFACTS/$5.log" ] && cp "$FIXTURE_GH_ARTIFACTS/$5.log" "$7/unit.log" ;;\n  *) exit 2 ;;\nesac\n');
+    chmodSync(join(bin, 'gh'), 0o755);
+    const info = join(dir, 'run.json');
+    const out = join(dir, 'weights.json');
+    const line = (job: string, text: string) => `${job}\tcapture\t2026-05-25T11:26:50.000Z ${text}\n`;
+    const complete = (job: string, file: string) => line(job, '##[gbrain-capture-start]') + line(job, `::group::${file}:`) + line(job, '0 fail')
+      + line(job, 'Ran 1 test across 1 file. [1ms]') + line(job, '##[gbrain-capture-complete] exit=0');
+    writeFileSync(join(artifacts, 'timings-unit-1.log'), complete('test (1)', 'test/one.test.ts'));
+    writeFileSync(join(artifacts, 'timings-unit-3.log'), complete('test (3)', 'test/three.test.ts'));
+    writeFileSync(join(artifacts, 'timings-unit-4.log'), complete('test (4)', 'test/four.test.ts'));
+    writeFileSync(info, JSON.stringify({ conclusion: 'success', headSha: 'fixture-commit', jobs: [{ name: 'test (1, 2)', conclusion: 'success' }, { name: 'test (3, 4)', conclusion: 'success' }] }));
+    writeFileSync(out, '{"test/old.test.ts":42}\n');
+    const args = [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), '--run', '123', '--out', out];
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, FIXTURE_GH_INFO: info, FIXTURE_GH_ARTIFACTS: artifacts };
+    expect(spawnSync(process.execPath, args, { env, encoding: 'utf8' }).status).not.toBe(0);
+    expect(readFileSync(out, 'utf8')).toBe('{"test/old.test.ts":42}\n');
+    writeFileSync(join(artifacts, 'timings-unit-2.log'), complete('test (2)', 'test/two.test.ts'));
+    const result = spawnSync(process.execPath, args, { env, encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(Object.keys(JSON.parse(readFileSync(out, 'utf8')))).toEqual(['test/four.test.ts', 'test/one.test.ts', 'test/three.test.ts', 'test/two.test.ts']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

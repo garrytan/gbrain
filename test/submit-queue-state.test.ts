@@ -71,6 +71,21 @@ describe('probeQueueState — dead/degraded lane signals', () => {
     });
   });
 
+  it('unreadable worker registry: worker_alive omitted (unknown) and the warning names the errno, never "no live worker"', async () => {
+    await seedJob({ createdAtSql: "now() - interval '2 hours'" });
+    const home = emptyHome();
+    mkdirSync(`${home}/.gbrain`, { recursive: true });
+    writeFileSync(`${home}/.gbrain/workers`, 'not a directory');
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      const state = await probeQueueState(engine, 'default', ['embed']);
+      expect(state.probe_failed).toBeUndefined();
+      expect('worker_alive' in state).toBe(false);
+      expect(state.warning).toContain("worker liveness unknown for queue 'default'");
+      expect(state.warning).toContain('ENOTDIR');
+      expect(state.warning).not.toContain('no live worker detected');
+    });
+  });
+
   it('a live-lock active job counts as worker evidence (worker_alive true, no worker warning)', async () => {
     await seedJob({ status: 'active', lockUntilSql: "now() + interval '5 minutes'" });
     await withEnv({ GBRAIN_HOME: emptyHome() }, async () => {

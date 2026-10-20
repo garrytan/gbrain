@@ -109,10 +109,21 @@ async function runLegacyJobAuthority(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
   const { status, message, details } = await legacyJobAuthorityCheck(engine);
   const spend = await readQueuedSpend(engine).catch(() => null);
-  const workers = spend?.long_waiting ? (await import('../../../core/minions/worker-registry.ts')).readWorkers().length : 0;
+  // null: the worker registry is unreadable, so the live-worker count is unknown (never zero).
+  let workers: number | null = 0;
+  let registryFailure: { errno: string; path: string | null } | null = null;
+  if (spend?.long_waiting) {
+    const registry = await import('../../../core/minions/worker-registry.ts');
+    try {
+      workers = registry.readWorkers().length;
+    } catch (e) {
+      workers = null;
+      registryFailure = registry.workerRegistryReadFailure(e);
+    }
+  }
   const census = spend && Object.keys(spend.by_basis).length
     ? ` Queued paid jobs by spend basis: ${Object.entries(spend.by_basis).map(([b, n]) => `${b} ${n}`).join(', ')}.` : '';
-  if (status === 'ok' && spend?.long_waiting && workers > 0) {
+  if (status === 'ok' && spend?.long_waiting && workers !== null && workers > 0) {
     checks.push({ name: 'legacy_job_authority', status: 'warn', details: { ...details, queued_spend: spend, live_workers: workers },
       message: `${spend.long_waiting} spend-authorized job(s) (${spend.long_waiting_ids.join(', ')}) have waited over 10 minutes while ${workers} worker(s) run: `
         + `an un-upgraded worker may be fenced off; un-upgraded workers stop claiming at a fenced row. Upgrade gbrain on every worker host and restart the workers (gbrain jobs supervisor stop, then gbrain jobs supervisor start, or your service manager).${census}`,
@@ -120,7 +131,9 @@ async function runLegacyJobAuthority(ctx: DoctorContext): Promise<Check[]> {
         why: 'Shows the waiting rows and their spend records; fenced rows run once every worker runs the upgraded binary.' } });
     return checks;
   }
-  checks.push({ name: 'legacy_job_authority', status, message: `${message}${census}`, details: spend ? { ...details, queued_spend: spend } : details });
+  const unknownWorkers = registryFailure
+    ? { live_workers: null, worker_registry_unreadable: true, worker_registry_errno: registryFailure.errno, worker_registry_path: registryFailure.path } : {};
+  checks.push({ name: 'legacy_job_authority', status, message: `${message}${census}`, details: spend ? { ...details, queued_spend: spend, ...unknownWorkers } : details });
   return checks;
 }
 

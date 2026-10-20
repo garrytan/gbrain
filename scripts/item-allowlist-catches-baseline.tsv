@@ -25,7 +25,6 @@ src/core/persistence/sync-drain.ts	1
 src/core/persistence/topology-filesystem.ts	2
 src/core/persistence/topology-recovery.ts	1
 src/core/persistence/worktree-manifest.ts	1
-src/core/persistence/worktree-refresh.ts	1
 src/core/pglite-lock.ts	1
 src/core/pglite-repair.ts	1
 src/core/repair/core.ts	1

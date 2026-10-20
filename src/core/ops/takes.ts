@@ -332,6 +332,8 @@ const think: Operation = {
       remote: ctx.remote !== false, // fail-closed: anything not strictly false is untrusted (CLAUDE.md invariant)
     }).catch((e: unknown) => { throw thinkModelError(ctx, e); });
     result.answer = result.answer.replace(' or pass `client`', ' on the brain host');
+    // A6: the fallback cause is a provider error line, host posture an HTTP caller is never told.
+    if (ctx.transport === 'http') delete result.fallback_reason;
     if (ctx.transport === 'http' && (result.synthesis_status === 'no_llm' || result.synthesis_status === 'model_unusable')) {
       // A6 HTTP view: a remote caller is never told the host's key names or provider posture. The stub
       // answer and gaps are prose for the operator; synthesis_status and the warning codes stay as data.

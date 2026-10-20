@@ -214,4 +214,49 @@ describe('actual remote source selection', () => {
       expect(invalid.localStoreCreated).toBe(false);
     }
   }, 90_000);
+
+  test('#6938 thin entity + session recall keeps the intersection before the remote LIMIT', async () => {
+    const entity = 'people/thin-session-example';
+    for (const [fact, session, date] of [
+      ['older thin session match', 'wanted-session', '2020-01-01'],
+      ['newer thin unrelated fact', 'other-session', '2024-01-01'],
+    ]) {
+      await remote.insertFact({ fact, source: 'synthetic', entity_slug: entity,
+        source_session: session, valid_from: new Date(date), visibility: 'world' }, { source_id: 'default' });
+    }
+    const dispatch = (args: Record<string, unknown>) => dispatchToolCall(remote, 'recall', args, {
+      remote: true, sourceId: 'default', config: { engine: 'pglite' },
+    });
+    for (const session of ['wanted-session', 'absent-session']) {
+      const result = await thinCall('postgres', [entity, '--session', session, '--limit', '1',
+        '--budget-policy', 'facts_first', '--source', 'default', '--json'], { dispatch });
+      expect({ code: result.exitCode, stderr: result.stderr }).toMatchObject({ code: 0 });
+      expect(JSON.parse(result.stdout).facts.map((f: { fact: string }) => f.fact))
+        .toEqual(session === 'wanted-session' ? ['older thin session match'] : []);
+      expect(result.calls).toHaveLength(1);
+      expect(result.calls[0].arguments).toMatchObject({ entity, session_id: session, limit: 1 });
+      expect(result.localStoreCreated).toBe(false);
+    }
+  }, 60_000);
+
+  test('#6945 thin --since-last-run warns to raise --limit when the window is full, and only then', async () => {
+    const entity = 'people/thin-window-example';
+    for (const fact of ['thin window fact one', 'thin window fact two', 'thin window fact three']) {
+      await remote.insertFact({ fact, source: 'synthetic', entity_slug: entity, visibility: 'world' }, { source_id: 'default' });
+    }
+    const dispatch = (args: Record<string, unknown>) => dispatchToolCall(remote, 'recall', args, {
+      remote: true, sourceId: 'default', config: { engine: 'pglite' },
+    });
+    const full = await thinCall('postgres', [entity, '--since-last-run', '--limit', '2', '--source', 'default', '--json'], { dispatch });
+    expect({ code: full.exitCode, stderr: full.stderr }).toMatchObject({ code: 0 });
+    expect(JSON.parse(full.stdout).facts).toHaveLength(2);
+    expect(full.stderr).toContain('2 facts filled the --limit window; older facts since the last run may not be shown');
+    expect(full.stderr).toContain('(thin-client recall cannot page the cursor). Re-run with a larger --limit.');
+    expect(full.localStoreCreated).toBe(false);
+
+    const roomy = await thinCall('postgres', [entity, '--since-last-run', '--limit', '5', '--source', 'default', '--json'], { dispatch });
+    expect({ code: roomy.exitCode, stderr: roomy.stderr }).toMatchObject({ code: 0 });
+    expect(JSON.parse(roomy.stdout).facts).toHaveLength(3);
+    expect(roomy.stderr).not.toContain('filled the --limit window');
+  }, 60_000);
 });

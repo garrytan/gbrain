@@ -1,4 +1,5 @@
 import { searchAnswerFeedback } from '../feedback/record.ts';
+import { readSourceFreshness } from '../notifier/status.ts';
 import { recordRecallOutcome } from '../funnel.ts';
 import type { RelationalPlanMeta } from '../search/relational-recall.ts';
 import type { Notice } from '../agent-output.ts';
@@ -431,14 +432,18 @@ async function buildRetrievalResponseMeta(
   const aliases = (opts.declarations ?? new DeclarationMemo()).scan(results as DeclarationRow[], queryText);
   // #6721: these reads depend on nothing but the inputs above, so they run at once: on a pooled Postgres
   // the wall time is the slowest read's round trips, not their sum. The answer-feedback write still runs last.
-  const [safeIndexPending, readiness, entityFacts, matchedFacts, heldFiles] = await Promise.all([
+  const [safeIndexPending, readiness, entityFacts, matchedFacts, heldFiles, sourceFreshness] = await Promise.all([
     ctx.remote !== false && hasUnsealedPagesInScope(ctx, scope, excludePrivate, { types: opts.types, excludeSlugPrefixes }),
     probeProjectionReadiness(ctx.engine, { ...scope, excludePrivate, types: opts.types, excludeSlugPrefixes }),
     // Facts saved about the entity the query names come first (newest first, one hop through entities they name).
     opts.entity && ctx.emitResponseMeta ? entitySavedFacts(ctx.engine, opts.entity, { remote: ctx.remote !== false, excludePrivate }) : [],
     matchingSavedFacts(ctx, scope, queryText, aliases),
     stampHeldHits(ctx.engine, results as SearchResult[], scope, ctx).catch(() => []),
+    // GBRA-133 PR 2a.5: per-source freshness from the notifier's cached coverage record (no git call).
+    readSourceFreshness(ctx.engine, scope),
   ]);
+  const heldBySource = new Map(heldFiles.map(h => [h.source_id, h.missing + h.stale]));
+  const freshness = sourceFreshness.map(f => ({ ...f, held_count: heldBySource.get(f.source_id) ?? 0 }));
   // A fact the facts arm already returned as a row is not repeated beside the blocks.
   const factRowIds = new Set((results as SearchResult[]).flatMap(r => r.fact_row ? [r.fact_row.id] : []));
   const savedFacts = [...entityFacts, ...matchedFacts.filter(m => !entityFacts.some(e => e.id === m.id))]
@@ -475,6 +480,7 @@ async function buildRetrievalResponseMeta(
     ...(savedFacts.length ? { saved_facts: savedFacts } : {}),
     ...(aliases.length ? { other_names: aliases } : {}),
     ...(heldFiles.length ? { held_files: heldFiles } : {}),
+    ...(freshness.length ? { freshness } : {}),
     ...(hint || readiness.hint ? { hint: [hint, readiness.hint].filter(Boolean).join(' ') } : {}),
     ...(opts.feedbackOp ? await searchAnswerFeedback(ctx, opts.feedbackOp, results as SearchResult[]) : {}),
   };

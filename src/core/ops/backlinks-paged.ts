@@ -1,7 +1,7 @@
 /**
- * get_backlinks' entity-recall parameters (`type`, `group`, `limit`,
- * `cursor`). With none of them the op is today's bare `Link[]` read
- * (ops/links.ts readLinkEdges). `type` filters by the referring page's type
+ * get_backlinks' entity-recall parameters (`type`, `group`). Without
+ * `group` the op returns `Link[]` rows paged by `limit` / `cursor`
+ * (ops/links.ts readLinkEdges, ops/link-paging.ts). `type` filters by the referring page's type
  * in both modes (a pack-canonical type, or any stored type observed on a
  * referrer; `untyped` for untyped pages). `group: "page"` returns
  * `{rows, total, truncated, cursor, coverage}`: one row per referring page,
@@ -12,8 +12,8 @@
 
 import { opError, type OperationContext } from './contract.ts';
 import type { Link, PageReadPolicy } from '../types.ts';
-import type { Notice } from '../agent-output.ts';
-import { canonicalTypeOf, loadSourcePack } from '../mentions/policy.ts';
+import { canonicalTypeOf, loadSourcePack, typeAliasPairs } from '../mentions/policy.ts';
+import type { LinkReadPage } from '../link-validity.ts';
 import {
   canonicalRecordTypes, decodeCursor, readPageStatusByRef, readReferrerPage, referrerTypes, PAGE_DEFAULT_LIMIT, PAGE_MAX_LIMIT, type ReferenceRow, type ReferrerScope,
 } from '../mentions/referrers.ts';
@@ -26,11 +26,6 @@ export interface BacklinkPage {
   truncated: boolean;
   cursor: string | null;
   coverage: MentionCoverage;
-}
-
-/** True when the call uses any entity-recall parameter. */
-export function wantsPagedBacklinks(p: Record<string, unknown>): boolean {
-  return p.type !== undefined || p.group !== undefined || p.limit !== undefined || p.cursor !== undefined;
 }
 
 function parseLimit(p: Record<string, unknown>, fallback: number | undefined): number | undefined {
@@ -123,43 +118,25 @@ export async function withLinkPageStatus(ctx: OperationContext, policy: () => Pr
 }
 
 /**
- * Array mode with `type` and/or `limit`: today's link rows, filtered by the
- * referring page's type and cut at `limit` (a cut is reported with a
- * `listing_truncated` notice naming the paged call).
+ * Array mode with `type`: the referring-page type filter for the keyset page
+ * SQL (ops/links.ts, #6876), so LIMIT counts only rows of that type. A row is
+ * kept when its referrer's stored type is `type` (`untyped` for none) or a
+ * stored alias its own source's pack maps to `type`.
  */
-export async function filterBacklinkRows(ctx: OperationContext, p: Record<string, unknown>, policy: PageReadPolicy, links: Link[]): Promise<Link[]> {
-  if (p.cursor !== undefined) {
-    throw opError('invalid_params', 'get_backlinks: cursor needs group: "page".', 'Pass group: "page" with the cursor, or omit cursor.');
-  }
-  const limit = parseLimit(p, undefined);
-  let rows = links;
+export async function backlinkTypeFilter(ctx: OperationContext, p: Record<string, unknown>, policy: PageReadPolicy): Promise<LinkReadPage['fromType']> {
   const type = typeof p.type === 'string' && p.type ? p.type : undefined;
-  if (type) {
-    const resolved = await referrerScope(ctx, String(p.slug), policy);
-    if (resolved) await assertKnownType(ctx, resolved.scope, type);
-    const keys = [...new Set(links.map(l => `${l.from_source_id}\0${l.from_slug}`))];
-    const types = new Map((await ctx.engine.executeRaw<{ source_id: string; slug: string; type: string | null }>(
-      `SELECT p.source_id, p.slug, p.type FROM pages p JOIN unnest($1::text[], $2::text[]) AS k(s, g) ON p.source_id = k.s AND p.slug = k.g`,
-      [keys.map(k => k.split('\0')[0]), keys.map(k => k.split('\0')[1])])).map(r => [`${r.source_id}\0${r.slug}`, r.type]));
-    const packs = new Map<string, Awaited<ReturnType<typeof loadSourcePack>>>();
-    const filtered: Link[] = [];
-    for (const l of links) {
-      if (!packs.has(l.from_source_id)) packs.set(l.from_source_id, await loadSourcePack(ctx.engine, l.from_source_id));
-      const stored = types.get(`${l.from_source_id}\0${l.from_slug}`) ?? null;
-      if (stored === type || canonicalTypeOf(stored, packs.get(l.from_source_id) ?? null) === type) filtered.push(l);
-    }
-    rows = filtered;
+  if (!type) return undefined;
+  const resolved = await referrerScope(ctx, String(p.slug), policy);
+  if (resolved) await assertKnownType(ctx, resolved.scope, type);
+  const aliasSources: string[] = [];
+  const aliases: string[] = [];
+  for (const { id } of await ctx.engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')) {
+    const pairs = typeAliasPairs(await loadSourcePack(ctx.engine, id));
+    pairs.stored.forEach((stored, i) => {
+      if (pairs.canonical[i] !== type) return;
+      aliasSources.push(id);
+      aliases.push(stored);
+    });
   }
-  if (limit !== undefined && rows.length > limit) {
-    const notice: Notice = {
-      code: 'listing_truncated', kind: 'info',
-      why: `${rows.length} link rows match; ${limit} were returned. For one row per referring page with a cursor, use group: "page".`,
-      fix: { mcp: { tool: 'get_backlinks', arguments: { slug: p.slug, ...(p.source_id !== undefined ? { source_id: p.source_id } : {}),
-        ...(type ? { type } : {}), group: 'page', limit } }, consent: [], actor: 'agent', requires_exclusive: false,
-        why: 'Pages through every referring page, newest first, without dropping rows.' },
-    };
-    ctx.emitNotice?.(notice);
-    rows = rows.slice(0, limit);
-  }
-  return rows;
+  return { type, aliasSources, aliases };
 }

@@ -16,9 +16,10 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { CLI_COMMANDS } from '../../src/cli/command-table.ts';
 import { ROUTERS } from '../../src/cli/subcommands.ts';
 import { STRICT_SUBCOMMANDS } from '../../src/cli/strict-args.ts';
+import { fileURLToPath } from 'node:url';
 
 export const GATE_PARTS = 4;
-const REPO = new URL('../..', import.meta.url).pathname.replace(/\/$/, '');
+const REPO = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 const PROBE = join(REPO, 'test/helpers/cli-side-effect-probe.ts');
 /** Files any run may touch without acting: the agent-contract event log is written by the error/exit seam. */
 const TREE_ALLOW = [/^\.gbrain\/agent-contract\//];

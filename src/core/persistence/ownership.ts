@@ -71,13 +71,15 @@ export async function graduationVerifyInheritsPersistence(engine: BrainEngine): 
 export async function persistenceEnabledForHealth(engine: BrainEngine): Promise<boolean> {
   return await managedPersistenceEnabled(engine) || await graduationVerifyInheritsPersistence(engine);
 }
-export async function getWorktreeBinding(engine: SqlEngine, sourceId: string, hostId: string | null = localHostId()): Promise<WorktreeBinding | null> {
-  const [row] = await engine.executeRaw<WorktreeBinding>(`SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path,
+/** The source's binding as this host sees it; group-publish.ts's preparation memo answers this exact statement once. */
+export const WORKTREE_BINDING_SQL = `SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path,
     s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state,
     h.local_path,h.coordination_path,h.git_durability,w.manifest->>'prepared_at' AS prepared_at FROM persistence_source_bindings s
     JOIN persistence_worktrees w ON w.id=s.worktree_id
     LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid
-    WHERE s.source_id=$1`, [sourceId, hostId]);
+    WHERE s.source_id=$1`;
+export async function getWorktreeBinding(engine: SqlEngine, sourceId: string, hostId: string | null = localHostId()): Promise<WorktreeBinding | null> {
+  const [row] = await engine.executeRaw<WorktreeBinding>(WORKTREE_BINDING_SQL, [sourceId, hostId]);
   return row ?? null;
 }
 /** `automatic` is only the ordinary first-write claim; the writer admin lock never blocks it. */

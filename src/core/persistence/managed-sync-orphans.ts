@@ -30,6 +30,8 @@
  *   `slug_root_mode_mismatch` while the source still pins the other mode. Which mode the source keeps is a person's
  *   decision, so no sync rediscovers it by itself; retiring the cursor is how they keep the pin: the next sync discovers
  *   the source again under it. Setting the pin back instead lets the next sync retry the checkpoint by itself.
+ *   On the live pass (#6712 PR 4b) the unfinished run is the pass row's `obligations.slug_mode`: the same orphan, keyed by
+ *   the pass row's fingerprint, whose newest stamp was refused that way; retiring it removes that obligation.
  * - `mirror_only` (#6518): a row of the local compatibility ledger
  *   (`~/.gbrain/sync-failures.jsonl`) carrying a `managed_cursor_key` with no
  *   durable `managed-sync-failure` row under that key in any incarnation. The
@@ -48,6 +50,7 @@ import type { SqlEngine } from './model.ts';
 import { clearManagedSyncFailure, loadSyncFailures } from '../sync-failure-ledger.ts';
 import { CHECKPOINT_MOVED_MESSAGE } from './sync-slug-mode.ts';
 import { clearSyncSlice } from './sync-slices.ts';
+import { syncLockId } from '../db-lock.ts';
 import type { SyncCursorOptions } from './sync-prepare.ts';
 
 /** `superseded_by_adoption` (#6712 PR 1): an unfinished cursor of the incarnation that the drain's fan-in did not adopt (sync-cursor-key.ts). */
@@ -112,6 +115,21 @@ const slugModeRefusedSql = `(c.completed_keys->0->'pending'->'intent'->>'kind'='
   AND NOT EXISTS(SELECT 1 FROM persistence_requests o WHERE o.source_id=s.id AND o.intent->>'cursorKey'=c.fingerprint
     AND (o.state IN ('queued','running','recovering') OR o.recovery IS NOT NULL)))`;
 
+/**
+ * #6694 on the live pass: the pass row `p` (of source `s`) carries the slug-root mode its unstamped run admitted under, the
+ * source pins another, the pass's stamp `req` ended refused `slug_root_mode_mismatch`, and nothing that pass admitted is
+ * still open. Shared by the classification and the retirement's re-check.
+ */
+const passSlugModeRefusedSql = (req: string) => `(p.completed_keys->0->'obligations'->>'slug_mode' IS NOT NULL
+  AND s.config->>'slug_root_mode' IS NOT NULL AND s.config->>'slug_root_mode' IS DISTINCT FROM p.completed_keys->0->'obligations'->>'slug_mode'
+  AND EXISTS(SELECT 1 FROM persistence_requests m WHERE m.source_id=s.id AND m.request_id=${req} AND m.intent->>'kind'='managed_sync_checkpoint'
+    AND m.intent->>'passId'=p.completed_keys->0->'telemetry'->>'pass_id' AND m.state IN ('failed','conflict') AND m.recovery IS NULL AND m.error_code='slug_root_mode_mismatch')
+  AND NOT EXISTS(SELECT 1 FROM persistence_requests o WHERE o.source_id=s.id AND o.intent->>'passId'=p.completed_keys->0->'telemetry'->>'pass_id'
+    AND (o.state IN ('queued','running','recovering') OR o.recovery IS NOT NULL)))`;
+/** The newest stamp request of the pass row `p`'s pass. */
+const passStampSql = `(SELECT n.request_id FROM persistence_requests n WHERE n.source_id=s.id AND n.intent->>'kind'='managed_sync_checkpoint'
+  AND n.intent->>'passId'=p.completed_keys->0->'telemetry'->>'pass_id' ORDER BY n.sequence DESC LIMIT 1)`;
+
 /** Read-only. `sourceIds` narrows to those sources; null reads every active source. */
 export async function classifyManagedSyncOrphans(engine: SqlEngine, sourceIds: string[] | null = null): Promise<ManagedSyncOrphanClassification> {
   const cursors = await engine.executeRaw<CursorRow>(`
@@ -155,11 +173,23 @@ export async function classifyManagedSyncOrphans(engine: SqlEngine, sourceIds: s
     FROM op_checkpoints f
     JOIN sources s ON s.id=f.completed_keys->0->>'source_id' AND s.incarnation::text=f.completed_keys->0->>'source_incarnation' AND NOT COALESCE(s.archived,false)
     WHERE f.op='managed-sync-failure' AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
-      AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=f.fingerprint)
+      AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op IN ('managed-sync','managed-sync-pass') AND c.fingerprint=f.fingerprint)
     ORDER BY s.id,f.fingerprint`, [sourceIds]);
   for (const row of failures) {
     orphans.push({ kind: 'failure_row', cursor_key: row.cursor_key, source_id: row.source_id, source_incarnation: row.source_incarnation, run_id: row.run_id,
       principal: null, pending_request_id: row.request_id, pending_state: null, reason: 'no_cursor', updated_at: row.updated_at });
+  }
+  const passes = await engine.executeRaw<{ cursor_key: string; source_id: string; source_incarnation: string; run_id: string; request_id: string; state: string; updated_at: string }>(`
+    SELECT p.fingerprint AS cursor_key,s.id AS source_id,s.incarnation::text AS source_incarnation,p.completed_keys->0->'telemetry'->>'pass_id' AS run_id,
+      ${passStampSql}::text AS request_id,(SELECT m.state FROM persistence_requests m WHERE m.source_id=s.id AND m.request_id=${passStampSql}) AS state,
+      to_char(p.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
+    FROM op_checkpoints p
+    JOIN sources s ON p.fingerprint=s.id||':'||s.incarnation::text AND NOT COALESCE(s.archived,false)
+    WHERE p.op='managed-sync-pass' AND ($1::text[] IS NULL OR s.id=ANY($1::text[])) AND ${passSlugModeRefusedSql(passStampSql)}
+    ORDER BY s.id`, [sourceIds]);
+  for (const row of passes) {
+    orphans.push({ kind: 'unfinished_cursor', cursor_key: row.cursor_key, source_id: row.source_id, source_incarnation: row.source_incarnation, run_id: row.run_id,
+      principal: null, pending_request_id: row.request_id, pending_state: row.state, reason: 'slug_mode_refused', updated_at: row.updated_at });
   }
   // #6518: rows keyed under an incarnation the source no longer has. The join is on the source id alone; the live
   // pending-request guard stays, the live-writer guard does not apply (no current key can select these rows).
@@ -255,6 +285,9 @@ export async function pruneMirrorOnlyManagedFailures(engine: SqlEngine, sourceId
  * request under its key is open or carries recovery. It is bound to the previewed run and checkpoint request, so a run
  * that replaced the cursor under the same key since the preview is kept, and a path slice's record is cleared with it.
  * A `slug_mode_refused` cursor (#6712 PR 3) is retired under the same binding while `slugModeRefusedSql` still holds.
+ * A `slug_mode_refused` pass row (#6694 on the pass) loses its `slug_mode` obligation under the previewed pass and stamp
+ * while `passSlugModeRefusedSql` still holds and no pass holds the source's drain lease (its row locked, so a pass that
+ * takes the lease next reads the retired row).
  */
 export async function retireManagedSyncOrphan(engine: BrainEngine, orphan: Pick<ManagedSyncOrphan, 'kind' | 'cursor_key' | 'run_id' | 'source_id' | 'source_incarnation' | 'reason'>
   & { pending_request_id?: string | null },
@@ -271,7 +304,15 @@ export async function retireManagedSyncOrphan(engine: BrainEngine, orphan: Pick<
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','2000ms',true)");
     await inTx?.(tx);
     let cursor = false;
-    if (orphan.kind === 'unfinished_cursor') {
+    if (orphan.kind === 'unfinished_cursor' && mode === 'slug_mode_refused' && orphan.cursor_key === `${orphan.source_id}:${orphan.source_incarnation}`) {
+      const lease = await tx.executeRaw<{ live: boolean }>('SELECT ttl_expires_at > now() AS live FROM gbrain_cycle_locks WHERE id=$1 FOR UPDATE', [syncLockId(orphan.source_id)]);
+      if (lease[0]?.live) return { cursor: false, failure: false, manifest: false, mirror: false };
+      cursor = (await tx.executeRaw(`UPDATE op_checkpoints p SET completed_keys=jsonb_set(p.completed_keys,'{0,obligations}',(p.completed_keys->0->'obligations')-'slug_mode'),updated_at=now()
+        FROM sources s WHERE p.op='managed-sync-pass' AND p.fingerprint=$1 AND s.id=$2 AND s.incarnation::text=$3 AND NOT COALESCE(s.archived,false)
+          AND p.completed_keys->0->'telemetry'->>'pass_id' IS NOT DISTINCT FROM $4::text AND ${passSlugModeRefusedSql('$5::uuid')}
+          AND ${passStampSql}=$5::uuid RETURNING p.fingerprint`, [orphan.cursor_key, orphan.source_id, orphan.source_incarnation, orphan.run_id, orphan.pending_request_id ?? null])).length > 0;
+      if (!cursor) return { cursor: false, failure: false, manifest: false, mirror: false };
+    } else if (orphan.kind === 'unfinished_cursor') {
       const rows = await tx.executeRaw(`
         DELETE FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=$1
           AND COALESCE(c.completed_keys->0->>'done','false')<>'true'

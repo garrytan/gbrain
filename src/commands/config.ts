@@ -1,6 +1,7 @@
 import type { GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, loadConfigWithEngine } from '../core/config.ts';
+import { isLegacyModelKey, reportLegacyModelWrite, unsetModelFilePin } from './config/model-pin-shadow.ts';
 import {
   getEmbeddingColumnRegistry,
   validateColumnKey,
@@ -378,6 +379,7 @@ const setLineGrammarConfig = async (engine: BrainEngine, key: string, value: str
 
 async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value: string, force = false): Promise<void> {
   if (await setLineGrammarConfig(engine, key, value)) return;
+  if (key === 'sync.admission') return (await import('./config/sync-admission-value.ts')).setSyncAdmissionValue(engine, value);
   if (key.startsWith('decide.')) {
     const { validateDecideConfigValue } = await import('../core/ai/decide/config.ts');
     const err = validateDecideConfigValue(key, value);
@@ -680,8 +682,9 @@ Subcommands:
   get <key> [--raw]            Print one value (--raw: no secret redaction)
   set <key> <value>            Write a value. --force accepts an unknown key;
                                --coverage-override (or --yes) passes the embedding
-                               coverage gate; --yes accepts a disclosure prompt
-  unset <key>                  Remove one key
+                               coverage gate; --yes accepts a disclosure prompt;
+                               chat_model/expansion_model warn when outranked (--json)
+  unset <key>                  Remove one key (a model key with --file: its config.json pin)
   unset --pattern <prefix>     Remove every key under a prefix`;
 
 export function printUsage(): void {
@@ -769,6 +772,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       await unsetEmbeddingDisabled(engine);
       return;
     }
+    if (isLegacyModelKey(key) && args.includes('--file')) return unsetModelFilePin(key);
     if (MEMORY_DUAL_PLANE_KEYS.has(key) || key === BRAIN_AUDIENCE_KEY) {
       // Dual-plane delete, mirroring the dual-plane set: file mirror AND the
       // authoritative DB row both go. "Not found" only when neither had it.
@@ -971,7 +975,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // sitting in the value slot can't slip through as literal config
     // content.
     const tail = args.slice(2);
-    const unknownFlags = tail.filter(a => a.startsWith('-') && !CONFIG_SET_KNOWN_FLAGS.includes(a));
+    const unknownFlags = tail.filter(a => a.startsWith('-') && !CONFIG_SET_KNOWN_FLAGS.includes(a) && !(a === '--json' && isLegacyModelKey(key)));
     if (unknownFlags.length > 0) {
       for (const flag of unknownFlags) {
         console.error(`[config] unknown flag: ${flag}`);
@@ -1438,10 +1442,9 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     }
 
     await setConfigWithDecideHooks(engine, key, value, forceFlag);
-    // v0.36.x #892: redact sensitive values in confirmation output. API
-    // keys / tokens / passwords are commonly set from terminals with
-    // scrollback; echoing the raw value to stderr leaks the secret.
-    console.log(`Set ${key} = ${redactConfigValue(key, value)}`);
+    // #892: keep credentials out of confirmation output and scrollback. #6795: a model pin says whether it took effect.
+    if (isLegacyModelKey(key)) await reportLegacyModelWrite(engine, key, value, tail.includes('--json'));
+    else console.log(`Set ${key} = ${redactConfigValue(key, value)}`);
     if (key === 'facts.default_visibility') await restampVisibilityPosture(value);
 
     // v0.40.3.0 (D3 + Phase 2B): mode-switch UX. Fires only on

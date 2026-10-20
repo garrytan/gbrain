@@ -72,7 +72,7 @@ test('a preparing blocker names its step, wait cause, owner and budget, and turn
     await waitFor(async () => (await engine.executeRaw<{ step: string | null }>("SELECT claim_phase->>'step' AS step FROM persistence_requests WHERE id=$1::uuid", [row.id]))[0]?.step === 'adoption_read_facts',
       { timeoutMs: 15_000, label: 'the renewal records the step' });
     const status = await readWriterDiagnostics(engine);
-    expect(status.preparation_policy).toEqual({ deadlines: true, sync_preparation_ms: 120_000, maintenance_preparation_ms: 90_000, preparation_ceiling_ms: 600_000, max_preparation_attempts: 2 });
+    expect(status.preparation_policy).toEqual({ deadlines: true, sync_preparation_ms: 120_000, maintenance_preparation_ms: 90_000, preparation_ceiling_ms: 600_000, max_preparation_attempts: 2, max_transient_retries: 5 });
     const blocker = status.blockers.find(b => b.request_id === row.request_id)!;
     expect(blocker).toMatchObject({ operation: 'put_page', intent_kind: 'managed_maintenance_page', preparation_attempts: 0, state: 'running' });
     expect(blocker.claim).toMatchObject({ phase: 'preparing', step: 'adoption_read_facts', waiting_on: 'db', owner: { kind: 'sync', pid: 4242, version: '0.60.200.0' }, budget_ms: 90_000, stall: null });

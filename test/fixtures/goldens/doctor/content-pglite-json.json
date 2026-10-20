@@ -511,10 +511,10 @@
                   "days_to_exhaustion": null,
                   "exhaustion_date": null,
                   "limit": 68719476736,
-                  "max_day_7d": 114245,
+                  "max_day_7d": 115490,
                   "net_per_day_7d": 22378,
                   "pct": 0,
-                  "per_day_7d": 114245,
+                  "per_day_7d": 115490,
                   "reclaimable_bytes": 16318,
                   "recommended_limit": 137438953472,
                   "resource": "terminal_bytes",
@@ -522,7 +522,7 @@
                   "spike_day": null,
                   "status": "ok",
                   "under_reserved_receipts": 0,
-                  "used": 114245,
+                  "used": 115490,
                   "window_days": 1
                 },
                 {
@@ -548,10 +548,10 @@
                   "days_to_exhaustion": null,
                   "exhaustion_date": null,
                   "limit": 17179869184,
-                  "max_day_7d": 114245,
+                  "max_day_7d": 115490,
                   "net_per_day_7d": 22378,
                   "pct": 0,
-                  "per_day_7d": 114245,
+                  "per_day_7d": 115490,
                   "reclaimable_bytes": 16318,
                   "recommended_limit": 34359738368,
                   "resource": "terminal_bytes",
@@ -559,7 +559,7 @@
                   "spike_day": null,
                   "status": "ok",
                   "under_reserved_receipts": 0,
-                  "used": 114245,
+                  "used": 115490,
                   "window_days": 1
                 }
               ],
@@ -655,6 +655,20 @@
           "elapsed_ms": "<volatile>",
           "message": "No managed sync run is blocked.",
           "name": "managed_sync_blocked",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "age_seconds": null,
+            "docs": "docs/guides/error-codes.md#sync_admission_restricted",
+            "set_at": null,
+            "stored": null,
+            "value": "normal"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "sync.admission is normal: managed sync admits everything it classifies.",
+          "name": "sync_admission_restricted",
           "status": "ok"
         },
         {
@@ -975,14 +989,14 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "1258 column(s) verified against live schema",
+          "message": "1296 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 149 table(s) the applied migrations create exist.",
+          "message": "All 152 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -1376,6 +1390,7 @@
             "preparation_policy": {
               "maintenance_preparation_ms": "<volatile>",
               "max_preparation_attempts": 2,
+              "max_transient_retries": 5,
               "preparation_ceiling_ms": "<volatile>",
               "sync_preparation_ms": "<volatile>"
             },
@@ -2423,6 +2438,36 @@
           "elapsed_ms": "<volatile>",
           "message": "No commit→searchable samples in the last 24 h (no managed sync imported a new commit).",
           "name": "managed_sync_latency",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "docs": "docs/guides/on-commit-sync.md",
+            "sources": [
+              {
+                "pending_markers": 0,
+                "reason": null,
+                "resident": null,
+                "source_id": "default",
+                "stalled": false,
+                "state": null
+              },
+              {
+                "pending_markers": 0,
+                "reason": null,
+                "resident": null,
+                "source_id": "notes",
+                "stalled": false,
+                "state": null
+              }
+            ],
+            "sync_on_commit": false
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "sync.on_commit is off; residents still run explicit sync requests. notifier for default: none running; idle; notifier for notes: none running; idle.",
+          "name": "commit_notifier",
+          "severity": "info",
           "status": "ok"
         },
         {
@@ -3611,14 +3656,14 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "Active pack gbrain-base-v2@1.4.0+1c5ba903 is current (no successor declared)",
+          "message": "Active pack gbrain-base-v2@1.5.0+4604112a is current (no successor declared)",
           "name": "pack_upgrade_available",
           "status": "ok"
         },
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "3 distinct typed values (pack gbrain-base-v2 declares 21)",
+          "message": "3 distinct typed values (pack gbrain-base-v2 declares 23)",
           "name": "type_proliferation",
           "status": "ok"
         },

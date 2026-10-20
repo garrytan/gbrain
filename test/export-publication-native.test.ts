@@ -8,6 +8,13 @@ import { removeCompiledSmokeDirectory } from '../scripts/native/compiled-smoke-c
 
 await import('./export-publication.test.ts');
 
+/** An awaited child: a `Bun.spawnSync` wait is where oven-sh/bun#34069 poisons Bun 1.4.0 to 1.4.2 (test/helpers/git-publication.ts). */
+async function run(argv: string[], options: { cwd: string; env: Record<string, string> }) {
+  const proc = Bun.spawn(argv, { ...options, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+  const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  return { exitCode, signalCode: proc.signalCode, stdout, stderr };
+}
+
 test('native filesystem case aliases refuse before publication and preserve occupied bytes', async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'export-native-case-')));
   const stage = new ExportStage();
@@ -33,24 +40,24 @@ test('compiled publisher outside the checkout completes, refuses repeats and sur
   }
   mkdirSync(env.GBRAIN_HOME);
   try {
-    const built = Bun.spawnSync([process.execPath, '--no-env-file', 'build', '--compile', '--no-compile-autoload-bunfig',
-      '--outfile', binary, resolve('test/fixtures/export-native-publish.ts')], { cwd: process.cwd(), env, stdout: 'pipe', stderr: 'pipe' });
-    expect({ status: built.exitCode, stderr: built.stderr.toString() }).toEqual({ status: 0, stderr: expect.any(String) });
-    const completed = Bun.spawnSync([binary, out], { cwd: base, env, stdout: 'pipe', stderr: 'pipe' });
-    expect({ status: completed.exitCode, stderr: completed.stderr.toString() }).toEqual({ status: 0, stderr: '' });
-    expect(completed.stdout.toString()).toContain('EXPORT_FIXTURE_COMPLETE');
+    const built = await run([process.execPath, '--no-env-file', 'build', '--compile', '--no-compile-autoload-bunfig',
+      '--outfile', binary, resolve('test/fixtures/export-native-publish.ts')], { cwd: process.cwd(), env });
+    expect({ status: built.exitCode, stderr: built.stderr }).toEqual({ status: 0, stderr: expect.any(String) });
+    const completed = await run([binary, out], { cwd: base, env });
+    expect({ status: completed.exitCode, stderr: completed.stderr }).toEqual({ status: 0, stderr: '' });
+    expect(completed.stdout).toContain('EXPORT_FIXTURE_COMPLETE');
     expect(readFileSync(join(out, EXPORT_MARKER), 'utf8')).toBe('GBRAIN EXPORT INCOMPLETE\nCOMPLETE\n');
     const bytes = readFileSync(join(out, 'first.md'), 'utf8');
-    const repeated = Bun.spawnSync([binary, out], { cwd: base, env, stdout: 'pipe', stderr: 'pipe' });
+    const repeated = await run([binary, out], { cwd: base, env });
     expect(repeated.exitCode).not.toBe(0);
-    expect(repeated.stdout.toString()).not.toContain('EXPORT_FIXTURE_COMPLETE');
+    expect(repeated.stdout).not.toContain('EXPORT_FIXTURE_COMPLETE');
     expect(readFileSync(join(out, 'first.md'), 'utf8')).toBe(bytes);
-    const killed = Bun.spawnSync([binary, partial, 'kill'], { cwd: base, env, stdout: 'pipe', stderr: 'pipe' });
+    const killed = await run([binary, partial, 'kill'], { cwd: base, env });
     expect(killed.exitCode).not.toBe(0);
-    expect(killed.stdout.toString()).toContain('EXPORT_FIXTURE_KILLING');
-    expect(killed.stderr.toString()).toBe('');
+    expect(killed.stdout).toContain('EXPORT_FIXTURE_KILLING');
+    expect(killed.stderr).toBe('');
     if (process.platform !== 'win32') expect(killed.signalCode).toBe('SIGKILL');
-    expect(killed.stdout.toString()).not.toContain('EXPORT_FIXTURE_COMPLETE');
+    expect(killed.stdout).not.toContain('EXPORT_FIXTURE_COMPLETE');
     expect(readFileSync(join(partial, 'first.md'), 'utf8')).toBe('Synthetic first page\n');
     expect(existsSync(join(partial, 'nested/second.md'))).toBe(false);
     expect(readFileSync(join(partial, EXPORT_MARKER), 'utf8')).not.toContain('\nCOMPLETE\n');

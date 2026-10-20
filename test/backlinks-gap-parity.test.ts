@@ -18,8 +18,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { findBacklinkGaps, findBacklinkGapsAsync } from '../src/commands/backlinks.ts';
 import { writeBacklinksParityFixture } from './helpers/backlinks-parity-fixture.ts';
+import { fileURLToPath } from 'node:url';
 
-const GOLDEN = new URL('./fixtures/backlinks-parity/gaps.golden.json', import.meta.url).pathname;
+const GOLDEN = fileURLToPath(new URL('./fixtures/backlinks-parity/gaps.golden.json', import.meta.url));
 const roots: string[] = [];
 afterEach(() => { while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true }); });
 

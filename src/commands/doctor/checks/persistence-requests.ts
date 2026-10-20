@@ -173,7 +173,7 @@ export async function writeStallCheck(engine: BrainEngine): Promise<Check> {
           ? `${claim.why} No request on this root reached a terminal state during the claim window, even though its claim was renewed.` : claim.why }];
     });
     const details = { max_claim_ms: maxClaimMs, config_key: MAX_CLAIM_CONFIG_KEY, count: stalls.length, stalls, docs,
-      preparation_policy: { sync_preparation_ms: policy.syncMs, maintenance_preparation_ms: policy.maintenanceMs, preparation_ceiling_ms: policy.ceilingMs, max_preparation_attempts: policy.maxAttempts } };
+      preparation_policy: { sync_preparation_ms: policy.syncMs, maintenance_preparation_ms: policy.maintenanceMs, preparation_ceiling_ms: policy.ceilingMs, max_preparation_attempts: policy.maxAttempts, max_transient_retries: policy.transientRetries } };
     if (!stalls.length) return { name: 'persistence_write_stall', status: 'ok', details,
       message: `No write request has held its claim longer than ${MAX_CLAIM_CONFIG_KEY} (${maxClaimMs} ms).` };
     const first = stalls[0]!;

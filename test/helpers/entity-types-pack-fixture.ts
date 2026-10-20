@@ -32,6 +32,7 @@ export const PACKS = {
   widgetConcept: 'widget-concept-4772',
   missing: 'missing-4772',
   corrupt: 'corrupt-4772',
+  personAlias: 'person-alias-6953',
 } as const;
 
 function manifest(name: string, pageTypes: Array<{ name: string; primitive: string; aliases?: string[] }>): string {
@@ -72,6 +73,12 @@ export function writeEntityTypePacks(home: string): void {
   write(PACKS.widgetConcept, manifest(PACKS.widgetConcept, [
     { name: 'widget', primitive: 'concept' },
     { name: 'gadget', primitive: 'entity' },
+  ]));
+  write(PACKS.personAlias, manifest(PACKS.personAlias, [
+    { name: 'person', primitive: 'entity' },
+    { name: 'researcher', primitive: 'entity', aliases: ['person'] },
+    { name: 'lab', primitive: 'entity' },
+    { name: 'company', primitive: 'entity' },
   ]));
   write(PACKS.corrupt, 'api_version: gbrain-schema-pack-v1\nname: [not\n  a: valid\npage_types: "nope"\n');
 }

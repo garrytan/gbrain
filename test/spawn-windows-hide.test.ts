@@ -10,7 +10,7 @@
  */
 import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import * as childProcess from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -18,6 +18,9 @@ import * as seam from '../src/core/spawn.ts';
 import { spawnDetachedSupervisor } from '../src/core/minions/detached-stderr.ts';
 import { ChildWorkerSupervisor } from '../src/core/minions/child-worker-supervisor.ts';
 import { resolveWorkspaceRoot } from '../src/core/workspace-push.ts';
+import { probeReleaseTag } from '../src/commands/upgrade.ts';
+import { checkDenyGlobs } from '../src/core/bootstrap/verify.ts';
+import { signalProcessTree, taskkillCommand } from '../src/core/minions/job-isolation.ts';
 
 afterEach(() => { mock.restore(); });
 
@@ -135,4 +138,74 @@ describe('the spawn sites behind the reported windows pass windowsHide: true', (
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("upgrade's release-tag probe (git ls-remote)", () => {
+    const git = spyOn(childProcess, 'spawnSync').mockImplementation((() => ({ status: 2, stdout: '' })) as never);
+    expect(probeReleaseTag('0.0.0.1')).toBe('not_published');
+    expect(git.mock.calls[0]?.[0]).toBe('git');
+    expect(git.mock.calls[0]?.[2]).toMatchObject({ windowsHide: true });
+  });
+
+  test("bootstrap verify's deny-glob check (git ls-files)", () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-verify-git-'));
+    try {
+      const git = spyOn(childProcess, 'execFileSync').mockImplementation((() => '') as never);
+      checkDenyGlobs(dir);
+      expect(git.mock.calls[0]?.[0]).toBe('git');
+      expect(git.mock.calls[0]?.[2]).toMatchObject({ windowsHide: true });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('Windows process-tree termination (signalProcessTree)', () => {
+  const taskkill = taskkillCommand(4242, 'SIGTERM')[0];
+
+  test('SIGTERM asks the tree to close and SIGKILL forces it, by absolute taskkill path, hidden', () => {
+    const kill = spyOn(childProcess, 'spawnSync').mockImplementation((() => ({ status: 0 })) as never);
+    expect(signalProcessTree(4242, 'SIGTERM', 'win32')).toBe('signalled');
+    expect(signalProcessTree(4242, 'SIGKILL', 'win32')).toBe('signalled');
+    expect(taskkill).toMatch(/^[A-Za-z]:\\.+\\System32\\taskkill\.exe$/);
+    expect(kill.mock.calls.map(c => [c[0], c[1]])).toEqual([
+      [taskkill, ['/PID', '4242', '/T']],
+      [taskkill, ['/PID', '4242', '/T', '/F']],
+    ]);
+    expect(kill.mock.calls[0]?.[2]).toMatchObject({ windowsHide: true });
+  });
+
+  test.each([[0, 'signalled'], [128, 'gone'], [1, 'failed'], [null, 'failed']] as const)
+  ('taskkill exit %p is %s', (status, outcome) => {
+    spyOn(childProcess, 'spawnSync').mockImplementation((() => ({ status })) as never);
+    expect(signalProcessTree(4242, 'SIGKILL', 'win32')).toBe(outcome);
+  });
+
+  test('an invalid pid is never signalled', () => {
+    const kill = spyOn(childProcess, 'spawnSync');
+    for (const pid of [0, 1, -5, 1.5]) expect(signalProcessTree(pid, 'SIGKILL', 'win32')).toBe('failed');
+    expect(kill.mock.calls.length).toBe(0);
+  });
+
+  test.skipIf(process.platform !== 'win32')('natively, SIGKILL ends a grandchild and a second call reports the tree gone', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-taskkill-'));
+    const pidFile = join(dir, 'grandchild.pid');
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    try {
+      const script = `const c = require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
+        require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(c.pid)); setInterval(() => {}, 1000);`;
+      const parent = seam.spawn(process.execPath, ['-e', script], { stdio: 'ignore' });
+      let grandchild = 0;
+      for (let waited = 0; !grandchild && waited < 30_000; waited += 100) {
+        await Bun.sleep(100);
+        try { grandchild = Number(readFileSync(pidFile, 'utf8')) || 0; } catch { /* not written yet */ }
+      }
+      expect(grandchild).toBeGreaterThan(0);
+      expect(signalProcessTree(parent.pid!, 'SIGKILL')).toBe('signalled');
+      for (let waited = 0; alive(grandchild) && waited < 10_000; waited += 100) await Bun.sleep(100);
+      expect(alive(grandchild)).toBe(false);
+      expect(signalProcessTree(parent.pid!, 'SIGKILL')).toBe('gone');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

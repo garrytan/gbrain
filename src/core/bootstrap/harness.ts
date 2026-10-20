@@ -75,7 +75,7 @@ import { carryLegacyGrant, mintLegacyToken, readActiveTokenPermissions, revokeLe
 import { generateToken } from '../utils.ts';
 import { readCredentials, writeCredentials, type HarnessCredentials } from '../harness/credentials.ts';
 import { installSharedSkillsConnection, type SharedSkillsConnectionOptions } from '../harness/shared-skills.ts';
-import { localEnrollment, SKILLS_REFRESH_COMMAND } from './harness-skills.ts';
+import { brainSupersededEnrollments, localEnrollment, SKILLS_REFRESH_COMMAND } from './harness-skills.ts';
 import { nativeSharedSkillsDirectory } from '../harness/native-router.ts';
 import { sqlQueryForEngine } from '../sql-query.ts';
 import { BootstrapError, acquireBootstrapLock } from './lock.ts';
@@ -340,6 +340,8 @@ export interface HarnessDeps {
   nativeSkillsDir?: (host: HarnessTarget['host']) => string | undefined;
   revokeById?: (id: string) => Promise<boolean>;
   tokenStates?: TokenStateLookup; // #6743: read-only token-row states for the cleanup lane; tests inject a fake.
+  /** #6798: read-only shared-skills enrollments the brain has superseded; throws when the brain cannot be opened. */
+  supersededEnrollments?: typeof brainSupersededEnrollments;
   /** Resolve the source the hooks + token bind to, through the SAME resolver
    * the serve's resolve-IPC binding uses (resolveSourceWithTier: env →
    * dotfile → local_path → sources.default → sole non-default → seed
@@ -392,6 +394,7 @@ export function resolveHarnessDeps(deps: HarnessDeps): Required<Omit<HarnessDeps
     }),
     revokeById: deps.revokeById ?? defaultRevokeById,
     tokenStates: deps.tokenStates ?? defaultTokenStates,
+    supersededEnrollments: deps.supersededEnrollments ?? brainSupersededEnrollments,
     resolveHookSource: deps.resolveHookSource ?? defaultResolveHookSource,
     pgliteLiveServe: deps.pgliteLiveServe ?? defaultPgliteLiveServe,
     // #4325: config-dir fallback mirrors detectCodex/detectOpencode below —
@@ -2513,9 +2516,14 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
   } else {
     d.log(serveLine);
     d.log(tokenLine);
+    const superseded = receipt.shared_skills?.length ? await d.supersededEnrollments(receipt).catch(() => null) : [];
     for (const entry of receipt.shared_skills ?? []) {
-      const epoch = localEnrollment(entry.root)?.enrollment_epoch;
-      d.log(`  shared skills (${entry.host}): ${entry.status}${entry.reason ? ` — ${entry.reason}` : ''}${epoch === undefined ? '' : `; enrollment epoch ${epoch}`}; receipt evidence only, native activation unverified (stale epoch: ${SKILLS_REFRESH_COMMAND}).`);
+      const local = localEnrollment(entry.root);
+      const stale = superseded?.find(s => s.host === entry.host && s.installation_id === local?.installation_id);
+      const epochHint = superseded === null
+        ? ` (if the brain reports a newer enrollment epoch: ${SKILLS_REFRESH_COMMAND})`
+        : stale ? `; enrollment superseded (server epoch ${stale.server_epoch}${stale.active ? '' : ', inactive'}): ${SKILLS_REFRESH_COMMAND}` : '';
+      d.log(`  shared skills (${entry.host}): ${entry.status}${entry.reason ? ` — ${entry.reason}` : ''}${local ? `; enrollment epoch ${local.enrollment_epoch}` : ''}; receipt evidence only, native activation unverified${epochHint}.`);
       if (entry.retained_files?.length) d.log(`    edited files retained: ${entry.retained_files.join(', ')}`);
     }
     for (const t of liveTargets) {

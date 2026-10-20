@@ -3,10 +3,12 @@
 A managed catch-up on a live checkout (`gbrain sync --source <id> --no-pull`,
 thousands of pages, other agents committing to the brain repo every few
 minutes) finishes unattended. A page that moves under the run is held, not
-fatal; a dropped database connection is retried, not fatal; a relaunch resumes
-the frozen manifest at its stored cursor instead of re-freezing it. What is
-left for an operator is one loop over two commands, and this page is the
-decision table behind them.
+fatal; a dropped database connection is retried, not fatal; a relaunch starts
+a new pass that reads the source's level again and admits only what is still
+unsettled, so nothing already settled is written twice (a company-brain source
+keeps its cursor and resumes its frozen manifest). What is left for an
+operator is one loop over two commands, and this page is the decision table
+behind them.
 
 **Say to your agent:** *"Keep my brain's catch-up moving and tell me only when
 a page needs my decision."*
@@ -17,7 +19,7 @@ a page needs my decision."*
 gbrain doctor --only serve_build_drift --json    # first: on a warning, restart serve and workers and stop here
 gbrain sync status --source <id> --json          # every N minutes (read-only)
 gbrain sync unblock --source <id> --apply --json # when committed_last_10m is 0 and needs_human is false
-gbrain sync <next.argv...>                       # the sync unblock (or status) names: the cursor's own options
+gbrain sync <next.argv...>                       # the sync unblock (or status) names, with an open episode's inherited options
 ```
 
 **Say to your agent:** *"Repair the files sync held and get the catch-up
@@ -28,10 +30,15 @@ moving again; ask me only about the ones gbrain will not decide by itself."*
    command it prints before anything else, and stop until it reads ok
    ([serve build drift](troubleshooting.md#serve-build-drift)).
 1. Read `status`. `state` (`synced` | `resumable` | `blocked`) and `reason`
-   say where the source stands; `cursor` is where the run stands
-   (`index/total`, the `pinned_target` commit, `last_advance_at`);
-   `committed_last_10m` is the signal that data is moving (a live process with
-   a flat cursor is not progress). `holds` and `last_error` each carry the
+   say where the source stands. Where the run stands is `convergence` for a
+   managed source synced by the live pass (its newest pass: `pass_id`,
+   `outcome`, `stop_reason`, `round`, `candidates`, `settled`, `remaining`,
+   `classes`; see [the pass](#the-pass-outcomes-and-status-reasons)); there
+   `run_id`, `cursor`, `rate_pages_per_min` and `eta_seconds` are null because
+   no cursor exists. A company-brain source keeps `cursor` (`index/total`, the
+   `pinned_target` commit, `last_advance_at`). `committed_last_10m` is the
+   signal that data is moving (a live process with a flat pass is not
+   progress). `holds` and `last_error` each carry the
    triple below, plus `category` and `public_category`. `oldest_blocker` and
    `recovery` are bounded live probes that need no cursor; when one times out
    the state is `resumable` / `status_unknown`, never `synced`. A plain status
@@ -54,8 +61,9 @@ moving again; ask me only about the ones gbrain will not decide by itself."*
    refuses every repair-class hold instead, as releases before #6377 did.
 3. Run that sync. It re-screens the scheduled files, imports each one that now
    passes and holds again what still fails; the rest of the source is never
-   blocked. A cursor an older release left blocked on a
-   page fault converts in place (same run, no rediscovery).
+   blocked. An unfinished cursor an older release left is retired by the next
+   pass: the pass waits for the requests it already admitted, keeps its
+   processing options for the episode, and settles the rest from the level.
 4. If `needs_human` is true, stop looping and page a person with the slug and
    `human_reason` from `status` (`next.user_message` is written for relay).
 
@@ -101,6 +109,11 @@ Every hold and error has three fields, from one table
   user raises), and a slug-conflict hold the lane decided a person must settle
   ([`merge_recommended`](write-refusals.md#merge_recommended),
   [`content_repair_needs_human`](write-refusals.md#content_repair_needs_human)).
+  A recorded `storage_error` is `connection` and `retry` the first time; when
+  two runs in a row stop on the same path with the same code and message
+  (`last_error.repeats` 2 or more), it is deterministic, so `last_error` turns
+  `needs_human` (class `page`, or `systemic` for a phase path such as
+  `<discovery>`) and `human_reason` names the file.
 
 ## Decision table
 
@@ -124,11 +137,17 @@ Every hold and error has three fields, from one table
 | `purged_content` | page | none | yes | always: only the owner clears a purge tombstone |
 | `write_gate_rejected` | page | none | yes | always: write_gate.external_mode=reject is the user's setting |
 | `legacy_slug_conflict` | page | none | yes | always: only a person decides which legacy page the file takes over |
+| `settle_mismatch` | page | none | yes | always: the pass cannot tell why the path does not settle |
+| `page_write_failed` | page | upgrade | yes | always: the writer cannot place the failure |
+| `file_unreadable` | page | none | yes | always: only a change to the checkout makes the file readable |
+| `content_null_bytes` | page | none | yes | always: only an edit to the file or its removal clears it |
+| `git_object_missing` | page | none | yes | always: only restoring the Git object clears it |
+| `path_not_utf8` | page | none | yes | always: only renaming the file clears it |
 | `origin_conflict` | page | repair | no | the hold carries a reason (the pages differ, ids conflict or none is the page the path names), or the heal is off |
 | `rename_identity_unreadable` | page | none | yes | always: the file title or id holds characters the database cannot compare |
 | `rename_reconcile_failed` | page | none | yes | always: the old page may be a duplicate |
 | `origin_conflict_decision` | page | none | yes | always: the pages differ, their ids conflict or none is the page the path names |
-| `file_unreadable` | page | none | yes | always: only a change to the checkout makes the file readable |
+| `page_identity_decision` | page | none | yes | always: only a person decides which page the file is |
 | `absent_from_worktree` | page | none | yes | always: only a person decides whether the file comes back or its deletion is committed |
 | `unsupported_path` | page | none | yes | always: only a rename makes the name a page path |
 | `revision_conflict` | page | retry | no | the same path fails again after a rerun |
@@ -280,6 +299,9 @@ the next plain sync.
 
 ## Why the manifest is not re-frozen any more
 
+This section is about company-brain sources and legacy cursors, the only
+runs that still freeze a manifest; a pass keeps no manifest to lose.
+
 The frozen manifest always lived in the cursor (`op_checkpoints`, op
 `managed-sync`). What threw it away was the failure ledger: every run death
 wrote a row, and the retry read the row and rediscovered from index 0
@@ -328,12 +350,88 @@ days, so a soak can show that sync keeps moving on its own.
 Each line has one count per kind and a `total`; `by_day` lists both line
 totals for each day that recorded anything. Fields are only ever added.
 
-## Dry-run convergence classes
+## The pass: outcomes and status reasons
 
-`sync --dry-run --json` adds a read-only `convergence` receipt. Class actions:
-- `none`: settled.
-- `owner`: sync finishes it.
-- `repair`: a person decides.
+A managed source that is not a company brain syncs by a level-triggered pass:
+under the source's drain lease it pins `HEAD`, reads the whole level (the
+tree, the index, the pages and their import records) and admits only the
+paths that are not settled, in at most four rounds. A pass with nothing
+unsettled and nothing in flight stamps `last_commit`. Every plain sync
+compares the whole tree with what the database absorbed, so a reset or a lost
+run converges on the next plain sync with no flag.
+
+| Status `reason` | `state` | What it means | `next` |
+|---|---|---|---|
+| `pass_unfinished` | resumable | The newest pass is open or stopped at a deadline. | The plain sync (`resume_argv`); safe to loop. |
+| `not_converged` | resumable | The pass used its four rounds while another writer kept changing the level. Everything it admitted stands. | The plain sync; after three such passes in a row `next` is `gbrain doctor --json` and a report, because another sync will not change it. |
+| `settle_mismatch` | resumable | A path keeps settling without reading settled. The next pass re-admits it once; after three passes at one level it is a `settle_mismatch` hold that needs a person. | The plain sync, then report the hold. |
+| `deletes_withheld` | blocked | The pass's deletes crossed the mass-delete threshold (#2828). It wrote one withheld record and synced everything else; no per-page hold is written. | Ask the user: restore the checkout if it is wrong, or run `GBRAIN_ALLOW_MASS_RECONCILE=1 gbrain sync --source <id>` on the brain host when the deletion is intended. `gbrain sync --source <id> --dry-run --json` lists the set and its hash. |
+| `admission_paused` | resumable | `sync.admission` is `imports_only` or `classify_only`. | Ask the user to run `gbrain config set sync.admission normal` when the pause is over; it is never lifted automatically. |
+| `selection_scoped` | synced | The pass converged at a selection other than the source's configured one (a CLI `--exclude`, say) and did not advance `last_commit`. | None; the next plain sync runs the configured selection. |
+
+The run's own JSON (`outcome`, `drain.stop_reason`) adds three stops a status
+read never shows as its reason: `grant_scope` (a grant that covers only part of
+the source admitted what it can see), `reconcile_host_required` (a remote
+caller admitted its one-sided work; holds, markers, keep_db writes and the
+stamp need the owner host) and `reconcile_read_incomplete` (a Git listing did
+not finish, so the pass wrote nothing). All three end `blocked` with
+`tell_user_to_run` or `report`; see
+[drain stops](write-refusals.md#managed-sync-drain-stops).
+
+**`sync.admission`** (`normal` | `imports_only` | `classify_only`) is the
+owner's brake on what sync writes, brain-wide. `imports_only` admits no
+deletes and no keep_db writes (they wait as paused deletes and
+`paused_keep_db`); `classify_only` reads and classifies and writes only the
+pass row. It is read at the pin and in every group's admission, and a delete
+or keep_db write already admitted re-reads it when it publishes, so nothing
+destructive lands after the change takes effect (`admission.effective` in
+`sync status`). Doctor `sync_admission_restricted` warns while it is not
+`normal`.
+
+**Episodes.** A `--full`, a pass that admits under `--no-embed`,
+`--no-extract` or `--no-schema-pack`, and a legacy cursor the pass retires
+open an episode on the pass row: the selection and the processing opt-outs it
+ran with. Later plain syncs inherit those opt-outs
+(`convergence.episode.inherited`) until the episode closes, which happens
+when a converged pass covers its paths or runs at the configured selection.
+There is no command to abandon an episode: the plain sync always finishes
+it, and a `--full` continues until every path it covers is settled.
+
+<a id="dry-run-convergence-classes"></a>
+## Convergence classes
+
+`convergence.classes` (in `sync status` and in `gbrain sync --dry-run
+--json`) counts the paths of the newest round by class, each with an
+`action`: who finishes it.
+
+- `none`, nothing to do: `matched` (the page is what the file says),
+  `adopt` (the import record is updated to the file without a page write),
+  `kept` (the commit no longer has a file that is still on disk, so its page
+  stays), `untracked` (a file on disk the commit does not have, with no
+  page), `gone` (no file and no live page), `deleted_same` and `legacy_same` (a deleted page whose file is
+  unchanged), and `db_ahead` (the page changed in the database and the file
+  did not; the sub-labels `pending`, `db_only` and `unproven` are
+  informational, and `gbrain repair file-drift --prefer database` writes one
+  back to its file if the owner wants it).
+- `owner`, sync finishes it by itself: `in_flight` (admitted, not yet
+  published), `import`, `reparse` (an unchanged file whose page is imported
+  again because its parser or schema pack changed, its origin moved, or an
+  open episode covers it), `delete`, `keep_db` and `keep_db_pending` (at most 200
+  DB-wins writes per pass; the rest wait for the next pass),
+  `legacy_unverified` (the legacy sweep checks it), and `paused_keep_db`
+  (which waits for the owner's `sync.admission` change, as paused deletes
+  do).
+- `repair`, a person decides: `held` (by code, with its triple above),
+  `drift`, `delete_drift` and `deleted_edited` (two-sided changes, held
+  `file_drift` with `side` and `state`), `dirty` (an uncommitted edit in
+  committed mode), `spelling` (files whose names differ only by case or
+  separator spelling), and
+  `deletes_withheld`.
+
+Dirtiness is read only for candidates: in committed mode the pass reads a
+file's working copy (`Dp`) only when the path would otherwise be admitted, so
+`dirty` counts only those, and a file whose page already matches its commit
+reads `matched` even when its working copy is edited.
 
 ## See also
 

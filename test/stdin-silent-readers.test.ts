@@ -18,8 +18,9 @@ import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stdinFailureMessage } from '../src/core/stdin-read.ts';
+import { fileURLToPath } from 'node:url';
 
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 let home: string;
 
 beforeAll(() => { home = mkdtempSync(join(tmpdir(), 'gbrain-stdin-silent-')); });

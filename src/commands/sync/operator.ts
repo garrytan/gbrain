@@ -24,8 +24,10 @@ export function printSyncStatusHelp(): void {
   console.log(`Usage: gbrain sync status --source <id> [--detail] [--json]
 
 Where a managed catch-up stands and what to do next, for an operator agent:
-the cursor (index/total, pinned target, last advance), pages committed in the
-last 10 minutes, every held file and the last recorded failure, each with
+the newest sync pass (convergence: outcome, round, candidates, settled,
+remaining, classes) or, for a company-brain source, the cursor (index/total,
+pinned target, last advance), pages committed in the last 10 minutes, every
+held file and the last recorded failure, each with
   class         page | connection | systemic
   safe_actions  retry | retry_when_clean | repair | reconcile | upgrade | none
   needs_human   whether a person has to decide or act (human_reason says why)
@@ -44,6 +46,16 @@ The loop: run this every few minutes; when committed_last_10m is 0 and
 needs_human is false, run \`gbrain sync unblock --source <id> --apply\`, then
 the sync it prints; when needs_human is true, page a person with the slug it
 names; when a *_read field is not_read and you need it, run its fix.
+
+convergence.classes counts the newest round's paths by class, each with an
+action (who finishes it):
+  none    matched, adopt, kept, untracked, gone, deleted_same, legacy_same, db_ahead
+  owner   sync finishes it: in_flight, import, reparse, delete, keep_db,
+          keep_db_pending, legacy_unverified, paused_keep_db
+  repair  a person decides: held, drift, delete_drift, deleted_edited, dirty,
+          spelling, deletes_withheld
+Committed mode reads a file's working-copy dirtiness only for candidates, so
+dirty counts only paths sync would otherwise admit.
 
 Decision table: docs/guides/sync-unblock-runbook.md
 `);
@@ -134,11 +146,14 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
   // #6858 ask 6: commit→searchable / commit→embedded latency over 24 h (null for a source with no managed binding).
   const { readSyncFreshness, formatSyncFreshness } = await import('../../core/persistence/sync-freshness.ts');
   const [freshness = null] = await readSyncFreshness(engine, { sourceIds: [sourceId] }).catch(() => []);
+  const { readNotifierBlock, formatNotifierBlock } = await import('../../core/notifier/status.ts');
+  const notifierBlock = await readNotifierBlock(engine, sourceId).catch(() => null);
+  const notifier = notifierBlock && { ...notifierBlock, fix: notifierBlock.fix ? renderAction(notifierBlock.fix, ctx) : null };
   const read = (r: typeof status.cursors_read) => r.status === 'read' ? r : { ...r, fix: renderAction(r.fix, ctx) };
   const rendered = { ...status, holds: status.holds.map(hold => ({ ...hold, fix: renderAction(hold.fix, ctx) })),
     git_push_holds: status.git_push_holds.map(hold => ({ ...hold, fix: renderAction(hold.fix, ctx) })), next: status.next ? renderAction(status.next, ctx) : null,
     checkpoint_blockers_read: read(status.checkpoint_blockers_read), cursors_read: read(status.cursors_read), terminal_failures_read: read(status.terminal_failures_read),
-    capacity: { status: snapshot.status, pause_pct: snapshot.pause_pct, low: snapshot.low, paused: snapshot.paused }, freshness, ...(notices.length ? { notices } : {}) };
+    capacity: { status: snapshot.status, pause_pct: snapshot.pause_pct, low: snapshot.low, paused: snapshot.paused }, freshness, notifier, ...(notices.length ? { notices } : {}) };
   if (args.includes('--json')) return writeJsonDocument(JSON.stringify(rendered, null, 2));
   const c = status.cursor;
   console.log(syncStatusHeadline(status));
@@ -146,6 +161,7 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
     + `${c.last_advance_at ? `, last advance ${c.last_advance_at}` : ''}` : 'no managed cursor'}`);
   console.log(`  committed in the last 10 minutes: ${status.committed_last_10m}${status.rate_pages_per_min !== null ? `, ${status.rate_pages_per_min} pages/min` : ''}`);
   if (freshness) console.log(`  freshness: ${formatSyncFreshness(freshness)}`);
+  if (notifierBlock) console.log(`  ${formatNotifierBlock(sourceId, notifierBlock)}`);
   console.log(`  holds: ${status.holds.length}${status.holds.length ? ` (${status.holds.filter(h => h.needs_human).length} need a person)` : ''}; last error: ${status.last_error ? `${status.last_error.code} [${status.last_error.class}]` : 'none'}`);
   for (const hold of status.holds) console.log(`    ${hold.path}${hold.slug ? ` (${hold.slug})` : ''}: ${hold.code} [${hold.class}] safe: ${hold.safe_actions.join(',')}${hold.needs_human ? ` NEEDS HUMAN: ${hold.human_reason}` : ''}${hold.attempts > 1 ? ` (held ${hold.attempts} times)` : ''}`);
   if (status.last_error) console.log(`    ${status.last_error.path ?? ''}: ${status.last_error.code} safe: ${status.last_error.safe_actions.join(',')}${status.last_error.needs_human ? ` NEEDS HUMAN: ${status.last_error.human_reason}` : ''}`);
@@ -186,6 +202,13 @@ export function syncStatusHeadline(status: Pick<SyncStatus, 'source_id' | 'state
     case 'needs_human': return `Source ${status.source_id} is blocked: a person has to decide (see NEEDS HUMAN below).`;
     case 'head_blocked': return `Source ${status.source_id} is blocked: its oldest write waits on something only an operator clears.`;
     case 'recovery_blocked': return `Source ${status.source_id} is blocked: a write's recovery record found changed bytes on disk.`;
+    case 'pass_unfinished': return `Source ${status.source_id} is resumable: the newest sync pass did not finish; the next sync continues it.`;
+    case 'not_converged': return `Source ${status.source_id} is resumable: the newest sync pass ran out of rounds before every path settled.`;
+    case 'settle_mismatch': return `Source ${status.source_id} is resumable: a path keeps settling without reading settled; three passes in a row hold it.`;
+    case 'deletes_withheld': return `Source ${status.source_id} is blocked: sync withheld a mass delete; the rest of the source is synced.`;
+    case 'selection_scoped': return `Source ${status.source_id} is synced at a narrower selection; the plain sync runs the configured one.`;
+    case 'admission_paused': return `Source ${status.source_id} is resumable: sync.admission pauses what sync admits.`;
+    case 'writeback_failed': return `Source ${status.source_id} is blocked: the Git effect of a file sync rewrote failed and is parked; the checkout lags the brain.`;
   }
 }
 

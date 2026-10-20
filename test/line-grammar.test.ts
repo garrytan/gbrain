@@ -6,6 +6,7 @@
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { findLinks, normalizeRelationType, parseEffectiveQualifier, parseLineGrammar } from '../src/core/line-grammar.ts';
+import { fileURLToPath } from 'node:url';
 
 const facts = (text: string) => parseLineGrammar(text).facts;
 const relations = (text: string, declared?: string[]) =>
@@ -179,8 +180,8 @@ describe('@effective qualifier', () => {
 
 test('adversarial input stays linear (bounded child process)', () => {
   const script = `
-    const { parseLineGrammar } = await import(${JSON.stringify(new URL('../src/core/line-grammar.ts', import.meta.url).pathname)});
-    const { cpuMs } = await import(${JSON.stringify(new URL('./helpers/cpu-time.ts', import.meta.url).pathname)});
+    const { parseLineGrammar } = await import(${JSON.stringify(fileURLToPath(new URL('../src/core/line-grammar.ts', import.meta.url)))});
+    const { cpuMs } = await import(${JSON.stringify(fileURLToPath(new URL('./helpers/cpu-time.ts', import.meta.url)))});
     const evil = ['- ' + '['.repeat(20000) + 'x', '- works_at ' + '('.repeat(20000), '- [a] ' + '(('.repeat(10000) + ')',
       '- t ' + '[[a]] '.repeat(5000), '- [idea] @effective[' + ','.repeat(20000)].join('\\n');
     console.log(Math.round(cpuMs(() => parseLineGrammar(evil.repeat(5)))));`;
@@ -191,7 +192,7 @@ test('adversarial input stays linear (bounded child process)', () => {
 
 test('long comma, bracket and space runs are parsed in linear time (#6186)', () => {
   const script = `
-    const { parseLineGrammar } = await import(${JSON.stringify(new URL('../src/core/line-grammar.ts', import.meta.url).pathname)});
+    const { parseLineGrammar } = await import(${JSON.stringify(fileURLToPath(new URL('../src/core/line-grammar.ts', import.meta.url)))});
     const lines = (n) => ['- [idea] @effective[' + ','.repeat(n), '- t ' + '[['.repeat(n / 2), '- t ' + '[x]('.repeat(n / 4),
       '- [idea] a' + ' '.repeat(n) + 'b', '- [idea] a [Source:' + ' '.repeat(n) + 'b'].join('\\n');
     // Process CPU, not cpuMs: thread CPU advances in ~4 ms steps here (small side read 4.0 or 8.0 ms, ratio 3.0-7.0 over 10 idle runs;

@@ -464,6 +464,12 @@ export async function listPages(exec: ScopedRead, filters?: PageFilters): Promis
     const slugCondition = slugPrefix
       ? sqlFragment`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
       : sqlFragment``;
+    // Search fallbacks must exclude before LIMIT: post-filtering can lose the
+    // entire evidence floor when newer excluded pages occupy every slot.
+    const excludedSlugs = filters?.excludeSlugPrefixes?.filter(prefix => prefix.length > 0) ?? [];
+    const excludedSlugCondition = excludedSlugs.length
+      ? sqlFragment` AND NOT EXISTS (SELECT 1 FROM unnest(${excludedSlugs}::text[]) AS excluded(prefix) WHERE starts_with(p.slug, excluded.prefix))`
+      : sqlFragment``;
     // #6500 slug keyset (single-source contract, see PageFilters.slugAfter).
     const slugAfterCondition = filters?.slugAfter !== undefined
       ? sqlFragment`AND p.slug > ${filters.slugAfter}`
@@ -502,7 +508,7 @@ export async function listPages(exec: ScopedRead, filters?: PageFilters): Promis
       const { rows } = await exec.run(sqlFragment`
         SELECT ${columns}, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso FROM pages p
         ${tagJoin}
-        WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${slugAfterCondition} ${sourceCondition} ${deletedCondition} ${privateCondition} ${effectiveAfterCondition} ${effectiveBeforeCondition}
+        WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition}${excludedSlugCondition} ${slugAfterCondition} ${sourceCondition} ${deletedCondition} ${privateCondition} ${effectiveAfterCondition} ${effectiveBeforeCondition}
         ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}
       `);
       return rows.map(rowToPage);

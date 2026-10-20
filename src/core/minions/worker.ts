@@ -88,6 +88,7 @@ import { EventEmitter } from 'events';
 import { evaluateQuietHours, type QuietHoursConfig } from './quiet-hours.ts';
 import { endedByShutdown, releaseUndrainedClaims, settleShutdownInterruptedJob } from './worker-shutdown.ts';
 import { isWatchdogSuspect, settleWatchdogAbort } from './watchdog-attribution.ts';
+import { IdleWaiter } from './idle-wait.ts';
 import { readFileSync } from 'fs';
 
 /**
@@ -218,6 +219,8 @@ export class MinionWorker extends EventEmitter {
   private running = false;
   /** Log the pause/resume transition once each, not every poll. */
   private pausedByMarkerAnnounced = false;
+  /** The idle poll wait a sync-queue wake ends early (minions/idle-wait.ts). */
+  readonly idleWaiter = new IdleWaiter();
   private inFlight = new Map<number, InFlightJob>();
   private executions = new Map<string, OwnedExecution>();
   private pendingClaim: { lockToken: string; promise: Promise<MinionJob | null> } | null = null;
@@ -843,6 +846,7 @@ export class MinionWorker extends EventEmitter {
         }
         if (this.inFlight.size < this.opts.concurrency && ![...this.inFlight.values()].some(f => isWatchdogSuspect(f.job))) {
           const lockToken = `${this.workerId}:${randomUUID()}`;
+          this.idleWaiter.claimStarted();
           let job: MinionJob | null;
           try {
             const claim = this.queue.claim(
@@ -913,8 +917,8 @@ export class MinionWorker extends EventEmitter {
               this.launchJob(job, lockToken);
             }
           } else if (this.inFlight.size === 0) {
-            // No jobs and nothing in flight, poll
-            await new Promise(resolve => setTimeout(resolve, this.opts.pollInterval));
+            // No jobs and nothing in flight, poll (a sync-queue wake ends the wait early)
+            await this.idleWaiter.wait(this.opts.pollInterval);
           } else {
             // Jobs are running but no new ones available, brief pause before re-checking
             await new Promise(resolve => setTimeout(resolve, 100));
@@ -1050,12 +1054,14 @@ export class MinionWorker extends EventEmitter {
   requestShutdown(): void {
     if (this.running) console.log('Minion worker shutting down...');
     this.running = false;
+    this.idleWaiter.wake('stop');
     if (!this.shutdownAbort.signal.aborted) this.shutdownAbort.abort(new Error('shutdown'));
   }
 
   /** Stop the worker gracefully. */
   stop(): void {
     this.running = false;
+    this.idleWaiter.wake('stop');
     try { this.eldHistogram?.disable(); } catch { /* fail-open */ }
   }
 

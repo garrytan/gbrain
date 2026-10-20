@@ -13,6 +13,13 @@
  * into place. Failure is non-fatal (stderr warn + return). Read failures
  * (missing / corrupt JSON / future-shifted timestamp) return null; caller
  * falls back to the documented 24h default.
+ *
+ * #6945: the record stays schema_version 1. After a full --limit window it
+ * also carries after_created_at/after_id, the keyset of the newest fact shown,
+ * and last_run_iso holds that fact's created_at. Files without the keyset
+ * (all older ones) read as an inclusive wall-clock cursor; an older gbrain
+ * reading a keyset file uses last_run_iso. Either way the worst case is a
+ * repeat, never a skipped fact.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
@@ -25,6 +32,24 @@ export type CursorVariant = 'briefing' | 'watch';
 interface CursorRecord {
   schema_version: 1;
   last_run_iso: string;
+  /** Written only after a full --limit window: the keyset of the newest delivered row (#6945). */
+  after_created_at?: string;
+  after_id?: number;
+}
+
+/** The `(created_at, id)` of a delivered fact, created_at at column (microsecond) precision. */
+export interface RecallResumePoint {
+  createdAt: string;
+  id: number;
+}
+
+/**
+ * Where `--since-last-run` picks up: `since` (inclusive wall clock) and, when
+ * the last run filled its window, `resumeAfter`, the row to page strictly past.
+ */
+export interface RecallCursor {
+  since: Date;
+  resumeAfter: RecallResumePoint | null;
 }
 
 const CURSOR_DIR_SEGMENT = 'recall-cursors';
@@ -77,6 +102,28 @@ export function readCursor(sourceId: string, variant: CursorVariant = 'briefing'
 }
 
 /**
+ * readCursor plus the stored keyset; null exactly when readCursor is null.
+ * The keyset counts only when it is well formed and names the same
+ * millisecond as the validated last_run_iso (writePagedCursor writes both
+ * from one row). Anything else drops it, leaving the inclusive wall-clock
+ * cursor, which can re-deliver rows but never skip them.
+ */
+export function readRecallCursor(sourceId: string, variant: CursorVariant = 'briefing'): RecallCursor | null {
+  const since = readCursor(sourceId, variant);
+  if (!since) return null;
+  let rec: Partial<CursorRecord>;
+  try {
+    rec = JSON.parse(readFileSync(cursorPath(sourceId, variant), 'utf8')) as Partial<CursorRecord>;
+  } catch {
+    return { since, resumeAfter: null };
+  }
+  const { after_created_at: createdAt, after_id: id } = rec;
+  const trusted = typeof createdAt === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(createdAt)
+    && Date.parse(createdAt) === since.getTime() && Number.isSafeInteger(id) && id! >= 0;
+  return { since, resumeAfter: trusted ? { createdAt, id: id! } : null };
+}
+
+/**
  * Write the cursor for a (source, variant). Atomic via mkdirSync(recursive)
  * + write-to-tmp + rename(2). Tmp filename includes pid + random suffix so
  * concurrent processes don't clobber each other's tmp files (Codex round 1
@@ -86,6 +133,24 @@ export function readCursor(sourceId: string, variant: CursorVariant = 'briefing'
  * best-effort durability hint, not a correctness invariant.
  */
 export function writeCursor(sourceId: string, t: Date, variant: CursorVariant = 'briefing'): void {
+  writeRecord(sourceId, variant, { schema_version: 1, last_run_iso: t.toISOString() });
+}
+
+/**
+ * Record a full --limit window: the next run pages strictly after
+ * `resumeAfter`. last_run_iso is that row's created_at (to the millisecond),
+ * so a reader that ignores the keyset only re-delivers from there.
+ */
+export function writePagedCursor(sourceId: string, variant: CursorVariant, resumeAfter: RecallResumePoint): void {
+  writeRecord(sourceId, variant, {
+    schema_version: 1,
+    last_run_iso: new Date(Date.parse(resumeAfter.createdAt)).toISOString(),
+    after_created_at: resumeAfter.createdAt,
+    after_id: resumeAfter.id,
+  });
+}
+
+function writeRecord(sourceId: string, variant: CursorVariant, rec: CursorRecord): void {
   const path = cursorPath(sourceId, variant);
   const dir = dirname(path);
   try {
@@ -94,7 +159,6 @@ export function writeCursor(sourceId: string, t: Date, variant: CursorVariant = 
     process.stderr.write(`[recall] cursor mkdir failed at ${dir}: ${(e as Error).message}\n`);
     return;
   }
-  const rec: CursorRecord = { schema_version: 1, last_run_iso: t.toISOString() };
   const suffix = `${process.pid}.${randomBytes(6).toString('hex')}`;
   const tmp = `${path}.tmp.${suffix}`;
   try {

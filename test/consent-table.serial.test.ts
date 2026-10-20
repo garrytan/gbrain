@@ -24,8 +24,9 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { BudgetExhausted, BudgetTracker } from '../src/core/budget/budget-tracker.ts';
 import { DEFAULT_PAID_CAP_USD, isConsentRefusal, requireConsent, type ConsentRequest } from '../src/core/consent.ts';
 import { previewCostAndWait } from '../src/core/brainstorm/orchestrator.ts';
+import { fileURLToPath } from 'node:url';
 
-const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 let home: string;
 let brainPath: string;
 let notes: string;

@@ -6,6 +6,7 @@ import {
   extractChangelogBetween,
 } from '../src/commands/check-update.ts';
 import { surfaceSource } from './helpers/source-surface.ts';
+import { fileURLToPath } from 'node:url';
 
 describe('parseSemver', () => {
   test('parses standard version', () => {
@@ -172,7 +173,7 @@ describe('check-update CLI', () => {
 
   test('--help prints usage and exits 0', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'check-update', '--help'], {
-      cwd: new URL('..', import.meta.url).pathname,
+      cwd: fileURLToPath(new URL('..', import.meta.url)),
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -184,7 +185,7 @@ describe('check-update CLI', () => {
 
   test('--json returns valid JSON with required fields', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'check-update', '--json'], {
-      cwd: new URL('..', import.meta.url).pathname,
+      cwd: fileURLToPath(new URL('..', import.meta.url)),
       stdout: 'pipe',
       stderr: 'pipe',
     });

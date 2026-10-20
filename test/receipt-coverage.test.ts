@@ -28,9 +28,10 @@ type Coverage =
   | { sites: number; tables: GuardedTable[]; other: string };
 
 const RECEIPT_COVERAGE: Record<string, Coverage> = {
-  'src/core/persistence/coordinator.ts': { sites: 1, receipted: 'the publication of an admitted request: every maintenance intent (conversation facts, fence reconcile, deleted-page expiry, takes reextract, take reprojection) applies here' },
+  'src/core/persistence/coordinator.ts': { sites: 2, receipted: 'the publication of an admitted request: every maintenance intent (conversation facts, fence reconcile, deleted-page expiry, takes reextract, take reprojection) applies here; a writeback import\'s folded pass stamp (afterEffects, #6712 PR 4b) runs inside that same receipted publication' },
   'src/core/persistence/group-publish.ts': { sites: 1, receipted: 'the grouped publication of admitted requests; each member is the attributed actor' },
   'src/core/persistence/memory-mutations.ts': { sites: 1, receipted: 'forget/withdraw: admitWriteInTransaction admits the request in the same transaction' },
+  'src/core/repair/segmented-mirror.ts': { sites: 1, receipted: 'repair segmented-mirror: admitWriteInTransaction admits each page\'s repair request and completeWrite records its terminal receipt in the same transaction' },
   'src/core/facts/purge.ts': { sites: 1, receipted: 'purge_fact: admitWriteInTransaction admits the request and completeWrite records its terminal receipt in the same transaction' },
   'src/core/shared-skills/publication.ts': { sites: 1, receipted: 'shared-skill revision pruning inside an admitted skill publication' },
   'src/core/persistence/source-lifecycle.ts': { sites: 1, receipted: 'source add/claim/remove under a persistence_topology_changes receipt' },
@@ -54,6 +55,7 @@ const RECEIPT_COVERAGE: Record<string, Coverage> = {
   'src/core/persistence/connector-path.ts': { sites: 1, tables: ['sources'], other: 'clears an unbound connector source local_path (source registration, not knowledge)' },
   'src/core/persistence/connector-sync.ts': { sites: 1, tables: ['sources'], other: 'the connector lease freshness stamp on its own source row' },
   'src/core/persistence/sync-run.ts': { sites: 1, tables: ['sources'], other: 'the managed sync freshness heartbeat on its own source row' },
+  'src/core/persistence/sync-pass-run.ts': { sites: 2, tables: ['sources'], other: 'the pass\'s up-to-date and no-checkpoint freshness stamps (#6712 PR 4b) on its own source row, with the pass row' },
   'src/core/page-body/ingest.ts': { sites: 1, tables: [], other: 'segmentWriteScope: staged segment texts and manifest rows of an unpublished generation, and segment GC sweeps (page_segment_texts and page_body_manifest are guarded but hold no live body until the publication flips the generation)' },
 };
 

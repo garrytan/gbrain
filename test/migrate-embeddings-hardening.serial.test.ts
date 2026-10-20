@@ -1097,3 +1097,22 @@ describe('empty-brain migration (plan pin 15)', () => {
     }
   }, 120000);
 });
+
+describe('concurrent-writer census', () => {
+  test('an unreadable worker registry does not also drop the embed-job count', async () => {
+    const registry = join(tmpHome, '.gbrain', 'workers');
+    rmSync(registry, { recursive: true, force: true });
+    writeFileSync(registry, 'not a directory');
+    await engine.executeRaw(
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, created_at, updated_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'embed-backfill', 'default', 'waiting', now(), now())`,
+    );
+    try {
+      const ctx = await planMigrationFlow(engine, { to: 'openai:text-embedding-3-small', dim: TO_DIMS });
+      expect(ctx.concurrentWriters).toEqual({ workers: null, embedJobs: 1 });
+    } finally {
+      await engine.executeRaw(`DELETE FROM minion_jobs WHERE name = 'embed-backfill'`);
+      rmSync(registry, { force: true });
+    }
+  }, 120000);
+});

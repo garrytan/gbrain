@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 242920,
-    "stdoutSha256": "746130fbb9b8f33b5e8f81d8b9377ae133c1f3866c76c891b155f9d50971cb3e",
+    "stdoutBytes": 243872,
+    "stdoutSha256": "6ee4209e4e99064f148052de48a83f11e600ff47fc3bb720a6a9394bb59e2737",
     "toolNames": [
       "remember",
       "entity",
@@ -2045,15 +2045,18 @@
         "scope": "write"
       },
       {
-        "description": "List a page's outgoing links (typed edges to other pages). Use when exploring what a page points at; rows carry status and dates, live relationships by default (status: \"all\" for history, during: \"2022\" for a period). Pass source_id or all_sources to widen. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.",
+        "description": "List a page's outgoing links (typed edges to other pages). Use when exploring what a page points at; rows carry status and dates, live relationships by default (status: \"all\" for history, during: \"2022\" for a period). Pass source_id or all_sources to widen. Returns up to 500 rows per call (limit, max 5000); a cut list's last row carries truncated: true and next_cursor, which you pass as cursor. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "get_links",
         "parameters": {
+          "all": "boolean?",
           "all_sources": "boolean?",
           "as_of": "string?",
+          "cursor": "string?",
           "during": "string?",
+          "limit": "number?",
           "link_type": "string?",
           "slug": "string",
           "source_id": "string?",
@@ -2062,6 +2065,10 @@
         "required_scopes": [],
         "schema": {
           "properties": {
+            "all": {
+              "description": "Local CLI only: every row, paging internally.",
+              "type": "boolean"
+            },
             "all_sources": {
               "description": "Same as source_id __all__.",
               "type": "boolean"
@@ -2070,9 +2077,17 @@
               "description": "YYYY-MM-DD.",
               "type": "string"
             },
+            "cursor": {
+              "description": "next_cursor from the previous call (same filters).",
+              "type": "string"
+            },
             "during": {
               "description": "Period: 2022, 2022-03 or 2021..2023.",
               "type": "string"
+            },
+            "limit": {
+              "description": "Rows per call (default 500, max 5000).",
+              "type": "number"
             },
             "link_type": {
               "description": "Only this type.",
@@ -2104,12 +2119,13 @@
         "scope": "read"
       },
       {
-        "description": "Links to a page; group:\"page\" pages by referrer, newest first.",
+        "description": "Links to a page, ≤500/call; group:\"page\" by referrer, newest first.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "get_backlinks",
         "parameters": {
+          "all": "boolean?",
           "all_sources": "boolean?",
           "as_of": "string?",
           "cursor": "string?",
@@ -2123,6 +2139,10 @@
         "required_scopes": [],
         "schema": {
           "properties": {
+            "all": {
+              "description": "Local CLI only: every row, paging internally.",
+              "type": "boolean"
+            },
             "all_sources": {
               "description": "Same as source_id __all__.",
               "type": "boolean"
@@ -2132,7 +2152,7 @@
               "type": "string"
             },
             "cursor": {
-              "description": "Paging.",
+              "description": "Next.",
               "type": "string"
             },
             "group": {
@@ -2143,7 +2163,7 @@
               "type": "string"
             },
             "limit": {
-              "description": "Max 500.",
+              "description": "≤5000",
               "type": "number"
             },
             "slug": {
@@ -6572,7 +6592,7 @@
         "scope": "read"
       },
       {
-        "description": "BEFORE editing any function, run code_callers with the symbol name to find every caller (the people who'd be affected by your change). Returns direct callers from the tree-sitter call graph. Use during plan-mode to size the change. Defaults to source-scoped; for multi-source brains pass source_id or all_sources=true. Returns: `{symbol, count, callers: [{from_symbol_qualified, to_symbol_qualified, edge_type, resolved}]}`. Example: `{symbol:'parseMarkdown', count:4, callers:[{from_symbol_qualified:'callerInA', to_symbol_qualified:'parseMarkdown', edge_type:'calls', resolved:true}]}`. Temporarily available only to trusted local CLI callers; agent-facing code reads are suspended.",
+        "description": "BEFORE editing any function, run code_callers with the symbol name to find every caller (the people who'd be affected by your change). Returns direct callers from the tree-sitter call graph. Use during plan-mode to size the change. Defaults to source-scoped; for multi-source brains pass source_id or all_sources=true. `resolved:false` marks a call matched by name only: the resolver links calls within one file, so a cross-file call stays unresolved and may name a different symbol with the same name. Returns: `{symbol, count, callers: [{from_symbol_qualified, to_symbol_qualified, edge_type, resolved}]}`. Example: `{symbol:'parseMarkdown', count:4, callers:[{from_symbol_qualified:'callerInA', to_symbol_qualified:'parseMarkdown', edge_type:'calls', resolved:true}]}`. Temporarily available only to trusted local CLI callers; agent-facing code reads are suspended.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,

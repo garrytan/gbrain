@@ -15,6 +15,9 @@ import { join } from 'node:path';
 import { readCredentials } from '../harness/credentials.ts';
 import { redactToken } from '../mcp-registration.ts';
 import type { BrainEngine } from '../engine.ts';
+import { createEngine } from '../engine-factory.ts';
+import { loadConfig, toEngineConfig } from '../config.ts';
+import { probeLivePgliteHolder } from './uninstall.ts';
 import { readHarnessReceiptState, writeHarnessReceipt, type HarnessReceipt } from './format.ts';
 import { resolveHarnessDeps, type HarnessDeps } from './harness.ts';
 
@@ -98,4 +101,19 @@ export async function supersededEnrollments(engine: Pick<BrainEngine, 'executeRa
     }
   }
   return out;
+}
+
+/** #6798: supersededEnrollments against the configured brain; throws when it cannot be opened (a live PGLite serve holds it). */
+export async function brainSupersededEnrollments(receipt: HarnessReceipt): ReturnType<typeof supersededEnrollments> {
+  const cfg = loadConfig();
+  if (!cfg) throw new Error('no brain configured');
+  if (cfg.database_path && probeLivePgliteHolder(cfg.database_path) !== null) throw new Error('a live gbrain serve holds this PGLite brain');
+  const engineConfig = toEngineConfig(cfg);
+  const engine = await createEngine(engineConfig);
+  await engine.connect(engineConfig);
+  try {
+    return await supersededEnrollments(engine, receipt);
+  } finally {
+    await engine.disconnect();
+  }
 }

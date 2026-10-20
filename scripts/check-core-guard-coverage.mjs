@@ -16,14 +16,16 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Fixture root for scripts/guard-self-test.sh: argv[2] or GBRAIN_GUARD_ROOT.
-const ROOT = process.argv[2] ?? process.env.GBRAIN_GUARD_ROOT ?? new URL('..', import.meta.url).pathname;
+const ROOT = process.argv[2] ?? process.env.GBRAIN_GUARD_ROOT ?? fileURLToPath(new URL('..', import.meta.url));
 
 /** Reviewed: preparers that publish without the core guard, and why that is safe. */
 const EXEMPT = {
   'src/core/persistence/sync-prepare.ts': 'owner git edits (managed sync) pass by design; doctor core_memory reports any overage',
   'src/core/persistence/group-publish.ts': 'bulk managed sync of owner git edits; groupable() excludes core-locked members',
+  'src/core/persistence/sync-pass-fold.ts': 'adds the pass checkpoint rows to the managed sync import sync-prepare.ts prepared (owner git edits); writes no page text of its own (test/sync-pass-fold-6712.test.ts, core guard)',
   'src/core/persistence/reconcile-prepare.ts': 'reconciles the owner checkout into the database (owner edit)',
   'src/core/persistence/file-repair.ts': 'publishes bytes the owner approved with gbrain repair frontmatter --apply',
   'src/core/persistence/grandfather.ts': 'adopts pages that already exist at activation; no content change',
@@ -36,6 +38,7 @@ const EXEMPT = {
   'src/core/persistence/consumer.ts': 'dispatches to preparers; no page content of its own',
   'src/core/persistence/coordinator.ts': 'takes the ordered source lock from exclusiveSources; prepares nothing itself',
   'src/core/persistence/effect-journal.ts': 'post-publication effects; no page text',
+  'src/core/repair/file-drift.ts': 'removes a held file whose page is deleted: no live page records the path (re-read under the publication guard), the page row is untouched, and core counts only live pages; --prefer file publishes through file-repair.ts',
   'src/core/repair/captured-facts.ts': 'owner-run repair that expires fact rows (shrinks only)',
   'src/core/repair/extractor-facts.ts': 'owner-run repair restoring expired fact rows',
   'src/core/repair/conversation-labels.ts': 'owner-run repair expiring fact rows and writing an outcome row (shrinks only; page text unchanged)',

@@ -368,9 +368,10 @@ describe('passing', () => {
 });`;
     const oomOnce = `import { describe, it, expect } from 'bun:test';
 import { existsSync, writeFileSync } from 'fs';
+import { fileURLToPath } from 'node:url';
 describe('oom-once', () => {
   it('fails with the WASM OOM signature on first run, passes on retry', () => {
-    const sentinel = new URL('./oom-sentinel.txt', import.meta.url).pathname;
+    const sentinel = fileURLToPath(new URL('./oom-sentinel.txt', import.meta.url));
     if (!existsSync(sentinel)) {
       writeFileSync(sentinel, 'ran-once');
       console.error('Original error: Out of memory');

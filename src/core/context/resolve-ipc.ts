@@ -37,6 +37,10 @@
  *     response, and an old serve answers `unknown_kind:sync_start` so the
  *     client degrades to the documented stop-the-serve refusal.
  *
+ *   sync_nudge (secret-gated, protocol:2, versioned) — GBRA-133 PR 2a: record a
+ *     wanted marker (sync trigger, a busy delegated sync) and nudge the serve's
+ *     commit notifier; acknowledged with the marker. Wire shapes in sync-ipc.ts.
+ *
  *   sweep_start / sweep_status (secret-gated, protocol:2) — #677:
  *     serve-delegated maintenance sweep, the same start+poll shape as the
  *     sync kinds (no abort — a sweep is a bounded run). Wire shapes in
@@ -67,6 +71,8 @@ import type { TurnContextResult } from './turn-context.ts';
 import type {
   SyncAbortRequest,
   SyncAbortResponse,
+  SyncNudgeRequest,
+  SyncNudgeResponse,
   SyncStartRequest,
   SyncStartResponse,
   SyncStatusRequest,
@@ -241,6 +247,7 @@ export type IpcRequest =
   | SyncStartRequest
   | SyncStatusRequest
   | SyncAbortRequest
+  | SyncNudgeRequest
   | SweepStartRequest
   | SweepStatusRequest;
 
@@ -279,6 +286,7 @@ export type ContextPackHandler = (req: ContextPackRequest, progress?: { assemble
 export type SyncStartIpcHandler = (req: SyncStartRequest) => SyncStartResponse | Promise<SyncStartResponse>;
 export type SyncStatusIpcHandler = (req: SyncStatusRequest) => SyncStatusResponse | Promise<SyncStatusResponse>;
 export type SyncAbortIpcHandler = (req: SyncAbortRequest) => SyncAbortResponse | Promise<SyncAbortResponse>;
+export type SyncNudgeIpcHandler = (req: SyncNudgeRequest) => SyncNudgeResponse | Promise<SyncNudgeResponse>;
 export type SweepStartIpcHandler = (req: SweepStartRequest) => SweepStartResponse | Promise<SweepStartResponse>;
 export type SweepStatusIpcHandler = (req: SweepStatusRequest) => SweepStatusResponse | Promise<SweepStatusResponse>;
 
@@ -290,6 +298,7 @@ export interface IpcHandlers {
   sync_start?: SyncStartIpcHandler;
   sync_status?: SyncStatusIpcHandler;
   sync_abort?: SyncAbortIpcHandler;
+  sync_nudge?: SyncNudgeIpcHandler;
   sweep_start?: SweepStartIpcHandler;
   sweep_status?: SweepStatusIpcHandler;
 }
@@ -635,6 +644,8 @@ export type SyncAbortClientRequest = Omit<SyncAbortRequest, 'kind' | 'protocol'>
 export type SyncStartIpcResult = SyncStartResponse | TurnContextStaleServe | typeof IPC_UNAVAILABLE;
 export type SyncStatusIpcResult = SyncStatusResponse | TurnContextStaleServe | typeof IPC_UNAVAILABLE;
 export type SyncAbortIpcResult = SyncAbortResponse | TurnContextStaleServe | typeof IPC_UNAVAILABLE;
+export type SyncNudgeClientRequest = Omit<SyncNudgeRequest, 'kind' | 'protocol'>;
+export type SyncNudgeIpcResult = SyncNudgeResponse | TurnContextStaleServe | typeof IPC_UNAVAILABLE;
 
 /**
  * Delegated-sync clients: same fail-soft ladder as requestTurnContext —
@@ -669,6 +680,16 @@ export async function requestSyncAbort(
 ): Promise<SyncAbortIpcResult> {
   const line = JSON.stringify({ kind: 'sync_abort', protocol: 2, ...req } satisfies SyncAbortRequest);
   return syncRoundTrip<SyncAbortResponse>(socketPath, line, opts.timeoutMs ?? SYNC_ABORT_CLIENT_TIMEOUT_MS);
+}
+
+/** GBRA-133 PR 2a: record a wanted marker through the serve (same fail-soft ladder; an older serve reads stale_serve). */
+export async function requestSyncNudge(
+  socketPath: string,
+  req: SyncNudgeClientRequest,
+  opts: { timeoutMs?: number } = {},
+): Promise<SyncNudgeIpcResult> {
+  const line = JSON.stringify({ kind: 'sync_nudge', protocol: 2, ...req } satisfies SyncNudgeRequest);
+  return syncRoundTrip<SyncNudgeResponse>(socketPath, line, opts.timeoutMs ?? SYNC_START_CLIENT_TIMEOUT_MS);
 }
 
 // ── Delegated-sweep clients (#677) — same fail-soft ladder as sync ─────────
@@ -887,6 +908,10 @@ export async function startResolveIpcServer(
           } else if (kind === 'sync_abort') {
             resp = JSON.stringify(
               await handleSyncKind(parsed as SyncAbortRequest, handlers.sync_abort, opts),
+            );
+          } else if (kind === 'sync_nudge') {
+            resp = JSON.stringify(
+              await handleSyncKind(parsed as SyncNudgeRequest, handlers.sync_nudge, opts),
             );
           } else if (kind === 'sweep_start') {
             resp = JSON.stringify(

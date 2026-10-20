@@ -6,8 +6,8 @@
  *
  * Serial lane: mutates gateway module state and provider/home env vars.
  */
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -19,6 +19,7 @@ import {
 } from '../../src/core/ai/gateway.ts';
 import { getGatewayModelSource } from '../../src/core/ai/gateway-model-sources.ts';
 import { _resetDeprecationWarningsForTest } from '../../src/core/model-config.ts';
+import { runConfig } from '../../src/commands/config.ts';
 import { withEnv } from '../helpers/with-env.ts';
 
 class StubEngine {
@@ -26,7 +27,7 @@ class StubEngine {
   private cfg = new Map<string, string>();
   set(key: string, value: string) { this.cfg.set(key, value); }
   async getConfig(key: string) { return this.cfg.get(key) ?? null; }
-  async setConfig() {}
+  async setConfig(key: string, value: string) { this.cfg.set(key, value); }
 }
 
 let tmpHome: string;
@@ -61,6 +62,134 @@ afterEach(() => {
   resetGateway();
   rmSync(tmpHome, { recursive: true, force: true });
 });
+
+/** Run `gbrain config` against the stub; returns stdout and stderr lines. */
+async function config(args: string[], extra: Record<string, string | undefined> = {}): Promise<{ out: string[]; err: string[] }> {
+  const out: string[] = [];
+  const err: string[] = [];
+  const log = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { out.push(a.join(' ')); });
+  const error = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { err.push(a.join(' ')); });
+  try {
+    await withEnv(env(extra), () => runConfig(stub as never, args));
+  } finally {
+    log.mockRestore();
+    error.mockRestore();
+  }
+  return { out, err };
+}
+
+function pinFile(key: string, value: string): string {
+  mkdirSync(join(tmpHome, '.gbrain'), { recursive: true });
+  const path = join(tmpHome, '.gbrain', 'config.json');
+  writeFileSync(path, JSON.stringify({ engine: 'pglite', [key]: value }));
+  return path;
+}
+
+for (const [key, touchpoint, model] of [
+  ['chat_model', 'chat', 'anthropic:claude-opus-4-7'],
+  ['expansion_model', 'expansion', 'anthropic:claude-sonnet-4-6'],
+] as const) {
+  const selected = () => touchpoint === 'chat' ? getChatModel() : getExpansionModel();
+  const pinEnv = touchpoint === 'chat' ? 'GBRAIN_CHAT_MODEL' : 'GBRAIN_EXPANSION_MODEL';
+  const OTHER = 'anthropic:claude-haiku-4-5-20251001';
+
+  describe(`#6795: DB-plane ${key}`, () => {
+    test('config set reaches the gateway and is attributed to the key', async () => {
+      const { out, err } = await config(['set', key, model]);
+      expect(out).toEqual([`Set ${key} = ${model}`]);
+      expect(err.join('\n')).not.toContain('WARN');
+      await reconfigure();
+      expect(selected()).toBe(model);
+      expect(getGatewayModelSource(touchpoint, selected())).toEqual({ source: 'config_key', origin: key });
+      stub.set(key, OTHER);
+      await reconfigure();
+      expect(selected()).toBe(OTHER);
+      stub.set(key, '');
+      await reconfigure();
+      expect(getGatewayModelSource(touchpoint, selected())).toEqual({ source: 'tier_default', origin: 'built-in default' });
+    });
+
+    test('a file pin, its env var, GBRAIN_MODEL and models.* keys all outrank it', async () => {
+      stub.set(key, model);
+      pinFile(key, OTHER);
+      await reconfigure();
+      expect(selected()).toBe(OTHER);
+      expect(getGatewayModelSource(touchpoint, selected())).toEqual({ source: 'file_config', origin: `${key} (config.json)` });
+      await reconfigure({ [pinEnv]: 'anthropic:claude-sonnet-4-6' });
+      expect(getGatewayModelSource(touchpoint, selected())).toEqual({ source: 'env', origin: pinEnv });
+      rmSync(join(tmpHome, '.gbrain', 'config.json'));
+      await reconfigure({ GBRAIN_MODEL: OTHER });
+      expect(selected()).toBe(OTHER);
+      stub.set(`models.${touchpoint}`, 'anthropic:claude-sonnet-4-6');
+      await reconfigure();
+      expect(selected()).toBe('anthropic:claude-sonnet-4-6');
+      expect(getGatewayModelSource(touchpoint, selected())).toEqual({ source: 'config_key', origin: `models.${touchpoint}` });
+    });
+
+    test('a DB value whose provider has no key falls back to the default', async () => {
+      stub.set(key, 'openai:gpt-5.2');
+      await reconfigure();
+      expect(selected()).not.toBe('openai:gpt-5.2');
+      expect(getGatewayModelSource(touchpoint, selected())).toEqual({ source: 'tier_default', origin: 'built-in default' });
+    });
+
+    test('config set --json reports effective:true when nothing outranks the write', async () => {
+      const { out } = await config(['set', key, model, '--json']);
+      expect(JSON.parse(out.join(''))).toEqual({ key, value: model, written: true, effective: true });
+    });
+
+    test('a shadowing config.json pin: warning names the file, never its value; the fix clears only the pin', async () => {
+      const path = pinFile(key, OTHER);
+      const before = readFileSync(path, 'utf8');
+      const text = await config(['set', key, model]);
+      expect(await stub.getConfig(key)).toBe(model);
+      expect(readFileSync(path, 'utf8')).toBe(before);
+      expect(text.err.join('\n')).toContain(`[config] WARN: ${key} was stored in the database, but the ${key} pin in ${path} outranks it`);
+      expect(text.err.join('\n')).toContain(`gbrain config unset ${key} --file`);
+      expect(text.err.join('\n')).not.toContain(OTHER);
+      const { out } = await config(['set', key, model, '--json']);
+      const doc = JSON.parse(out.join(''));
+      expect(doc).toMatchObject({ key, written: true, effective: false, shadowed_by: { kind: 'file', name: path } });
+      expect(doc.notices[0]).toMatchObject({ code: 'config_write_shadowed', kind: 'degraded',
+        fix: { argv: ['gbrain', 'config', 'unset', key, '--file'], next: 'ask_user', verify: { argv: ['gbrain', 'config', 'get', key] } } });
+      expect(JSON.stringify(doc)).not.toContain(OTHER);
+      const unset = await config(['unset', key, '--file']);
+      expect(unset.out).toEqual([`Unset ${key} (file plane: ${path})`]);
+      expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ engine: 'pglite' });
+      expect(await stub.getConfig(key)).toBe(model);
+      await reconfigure();
+      expect(selected()).toBe(model);
+    });
+
+    test('a shadowing env var is named by variable; the user unsets it', async () => {
+      const { out } = await config(['set', key, model, '--json'], { [pinEnv]: OTHER });
+      const doc = JSON.parse(out.join(''));
+      expect(doc).toMatchObject({ effective: false, shadowed_by: { kind: 'env', name: pinEnv } });
+      expect(doc.notices[0].fix).toMatchObject({ argv: ['unset', pinEnv], actor: 'user', next: 'tell_user_to_run' });
+      expect(JSON.stringify(doc)).not.toContain(OTHER);
+      const generic = JSON.parse((await config(['set', key, model, '--json'], { GBRAIN_MODEL: OTHER })).out.join(''));
+      expect(generic.shadowed_by).toEqual({ kind: 'env', name: 'GBRAIN_MODEL' });
+    });
+
+    test('a shadowing models.* key is named; the fix unsets that key after asking', async () => {
+      for (const name of [`models.${touchpoint}`, `models.tier.${touchpoint === 'chat' ? 'reasoning' : 'utility'}`, 'models.default']) {
+        stub = new StubEngine();
+        stub.set(name, OTHER);
+        const doc = JSON.parse((await config(['set', key, model, '--json'])).out.join(''));
+        expect(doc).toMatchObject({ effective: false, shadowed_by: { kind: 'config_key', name } });
+        expect(doc.notices[0].fix).toMatchObject({ argv: ['gbrain', 'config', 'unset', name], next: 'ask_user' });
+      }
+    });
+
+    test('--json is refused for every other key, before any write', async () => {
+      const exit = spyOn(process, 'exit').mockImplementation(((code: number) => { throw new Error(`exit ${code}`); }) as never);
+      try {
+        await expect(config(['set', 'search.mode', 'balanced', '--json'])).rejects.toThrow('exit 1');
+      } finally { exit.mockRestore(); }
+      expect(await stub.getConfig('search.mode')).toBeNull();
+    });
+  });
+}
 
 describe('gateway model provenance', () => {
   test('tier config and models.default are attributed to their keys', async () => {

@@ -10,6 +10,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, statSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as codexToml from '../src/core/bootstrap/codex-toml.ts';
 import {
   detectForeignCodexServer,
   removeCodexHttpServerBlock,
@@ -19,6 +20,8 @@ import {
 } from '../src/core/bootstrap/codex-toml.ts';
 import { CODEX_TOML_BLOCK_BEGIN, CODEX_TOML_BLOCK_END } from '../src/core/bootstrap/host-specs.ts';
 
+// Read through the namespace so a tree without it reports the missing behaviour, not an import error.
+const codexToolsOutsideBlock = (text: string, name: string): string[] => (codexToml as Record<string, any>).codexToolsOutsideBlock(text, name);
 const BLOCK = { name: 'gbrain', url: 'http://127.0.0.1:3131/mcp', bearerToken: 'gbrain_deadbeef' };
 
 function tmpConfig(): string {
@@ -170,6 +173,38 @@ describe('writeCodexHttpServerBlock', () => {
     expect(text).toContain('http_headers = { Authorization = "Bearer gbrain_deadbeef" }');
     expect(text).not.toContain('bearer_token');
     expect(text).not.toContain('gbrain_old');
+  });
+});
+
+describe('Codex tool settings (#6799)', () => {
+  const approval = '[mcp_servers.gbrain.tools.search]\napproval_mode = "approve"\n';
+  const parsedEntry = (path: string) => (Bun.TOML.parse(readFileSync(path, 'utf8')) as any).mcp_servers.gbrain;
+
+  test('settings inside the block are carried through a rewrite', () => {
+    const path = tmpConfig();
+    writeCodexHttpServerBlock(path, BLOCK);
+    writeFileSync(path, readFileSync(path, 'utf8').replace(CODEX_TOML_BLOCK_END, `${approval}${CODEX_TOML_BLOCK_END}`));
+    writeCodexHttpServerBlock(path, { ...BLOCK, bearerToken: 'gbrain_rotated' });
+    const text = readFileSync(path, 'utf8');
+    expect(text.indexOf('[mcp_servers.gbrain.tools.search]')).toBeLessThan(text.indexOf(CODEX_TOML_BLOCK_END));
+    expect(parsedEntry(path)).toEqual({ url: BLOCK.url, http_headers: { Authorization: 'Bearer gbrain_rotated' }, tools: { search: { approval_mode: 'approve' } } });
+  });
+
+  test('a settings-only table outside the block is not a foreign server; one with server keys still is', () => {
+    const path = tmpConfig();
+    writeCodexHttpServerBlock(path, BLOCK);
+    writeFileSync(path, `${readFileSync(path, 'utf8')}\n${approval}`);
+    expect(detectForeignCodexServer(readFileSync(path, 'utf8'), 'gbrain')).toBe(false);
+    expect(codexToolsOutsideBlock(readFileSync(path, 'utf8'), 'gbrain')).toEqual(['search']);
+    writeCodexHttpServerBlock(path, { ...BLOCK, bearerToken: 'gbrain_rotated' });
+    expect(parsedEntry(path).tools).toEqual({ search: { approval_mode: 'approve' } });
+    expect(readFileSync(path, 'utf8').split('[mcp_servers.gbrain.tools.search]').length - 1).toBe(1);
+
+    const foreign = tmpConfig();
+    const text = `[mcp_servers.gbrain]\ncommand = "npx"\n${approval}`;
+    writeFileSync(foreign, text);
+    expect(detectForeignCodexServer(text, 'gbrain')).toBe(true);
+    expect(() => writeCodexHttpServerBlock(foreign, BLOCK)).toThrow(/already defined/);
   });
 });
 

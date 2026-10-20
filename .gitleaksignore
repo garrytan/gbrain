@@ -42,3 +42,6 @@ cb6a60abd59d51271acfa49346275107b97ed64f:test/e2e/migrate-embeddings-lease-heart
 # Wave B PR 2 lane H: a synthetic NOTREAL private-key fixture in test/large-pages/credential-reseal-segments.test.ts (commit a314083)
 # read as private-key; the tree now builds its fence at runtime. This history-only fingerprint is not a secret.
 a3140831d22a944947ef9cbd72ff7129a3541951:test/large-pages/credential-reseal-segments.test.ts:private-key:31
+# Large-pages hardening (h): the synthetic marker constant 'quillfeather7731' in test/pathological/lp-h-purge-orphan-segment-text.test.ts
+# (commit 3bf9794) was named TOKEN and reads as generic-api-key; the tree now names it MARKER. History-only fingerprint, not a secret.
+3bf97940832d3c7d9dbc4815cedb30dcc83cb550:test/pathological/lp-h-purge-orphan-segment-text.test.ts:generic-api-key:37

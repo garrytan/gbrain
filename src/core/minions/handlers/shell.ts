@@ -34,7 +34,7 @@ import { deriveEnvKey, resolveInheritValue } from './shell-inherit.ts';
 import { validateShellJobParams } from './shell-validate.ts';
 import { redactSecretsInText } from './shell-redact.ts';
 import { loadConfig } from '../../config.ts';
-import { killProcessGroup, processGroupAlive } from '../job-isolation.ts';
+import { killProcessGroup, processGroupAlive, signalProcessTree } from '../job-isolation.ts';
 
 /** Environment variables passed through to shell children by default. Callers
  *  that need additional keys (e.g. a specific API token for a cron) must name
@@ -271,7 +271,8 @@ export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResul
 
   // #5062: on POSIX the job runs in its own process group, so termination
   // reaches every descendant (a shell's children and grandchildren), not
-  // only the direct child. Windows keeps the direct-child kill path.
+  // only the direct child. Windows signals the tree under the direct child
+  // with taskkill (signalProcessTree), and liveness is the direct child's.
   const ownGroup = process.platform !== 'win32';
   let proc: ChildProcess;
   try {
@@ -309,6 +310,7 @@ export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResul
       killProcessGroup(pgid, signal);
       return;
     }
+    if (process.platform === 'win32' && (signalProcessTree(pid, signal) !== 'failed' || signal === 'SIGTERM')) return;
     try { proc.kill(signal); } catch { /* proc already exited */ }
   };
   const stdoutTail = new TailBuffer(STDOUT_TAIL_MAX_BYTES);

@@ -31,11 +31,11 @@
  *   - Pre-v0.19 fence with no receipt → use the row-extracted slug set.
  */
 
-import { readFileSync } from 'fs';
+import { lstatSync, readdirSync, readFileSync } from 'fs';
 import { findResolverFile } from '../resolver-filenames.ts';
 import { extractManagedSlugs, parseReceipt } from './installer.ts';
 import { autoDetectSkillsDir } from '../repo-root.ts';
-import { resolve as resolvePath } from 'path';
+import { join, resolve as resolvePath } from 'path';
 import { currentRecommendedSet, type RecommendedSkill } from '../advisor/recommended-set.ts';
 import { renderRecommendedSkills } from '../advisor/render.ts';
 
@@ -45,13 +45,40 @@ import { renderRecommendedSkills } from '../advisor/render.ts';
  * exists (fresh workspace).
  */
 export function detectInstalledSlugs(targetSkillsDir: string, targetWorkspace: string): Set<string> {
+  const installed = scaffoldedSlugs(targetSkillsDir);
   const resolver =
     findResolverFile(targetSkillsDir) ?? findResolverFile(targetWorkspace);
-  if (!resolver) return new Set();
+  if (!resolver) return installed;
   const content = readFileSync(resolver, 'utf-8');
   const receipt = parseReceipt(content);
-  if (receipt) return new Set(receipt.cumulativeSlugs);
-  return new Set(extractManagedSlugs(content));
+  for (const slug of receipt ? receipt.cumulativeSlugs : extractManagedSlugs(content)) installed.add(slug);
+  return installed;
+}
+
+/**
+ * #6985: `skillpack scaffold` writes no receipt, so a skill also counts as
+ * installed when `<skillsDir>/<slug>/SKILL.md` is a regular file in a real
+ * directory. lstat only: a symlinked slug dir or SKILL.md never counts.
+ */
+function scaffoldedSlugs(skillsDir: string): Set<string> {
+  const slugs = new Set<string>();
+  let entries: string[];
+  try {
+    entries = readdirSync(skillsDir);
+  } catch {
+    return slugs;
+  }
+  for (const slug of entries) {
+    try {
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- slug is a readdirSync entry of skillsDir (one name, no separators or ..), and both lstat calls refuse symlinks
+      if (lstatSync(join(skillsDir, slug)).isDirectory() && lstatSync(join(skillsDir, slug, 'SKILL.md')).isFile()) {
+        slugs.add(slug);
+      }
+    } catch {
+      /* no SKILL.md */
+    }
+  }
+  return slugs;
 }
 
 /**

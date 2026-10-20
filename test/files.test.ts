@@ -7,7 +7,7 @@ import { collectFiles, formatFileSizeKb, getMimeType, noStorageBackendMessage } 
 import { operationsByName } from '../src/core/operations.ts';
 import * as db from '../src/core/db.ts';
 
-const TMP = join(import.meta.dir, '.tmp-files-test');
+const TMP = mkdtempSync(join(tmpdir(), 'gbrain-files-test-'));
 
 // fileHash is not exported from files.ts (it takes a path there, not a
 // buffer), so it stays reimplemented below. getMimeType is imported.

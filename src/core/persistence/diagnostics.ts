@@ -180,7 +180,8 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
   // #6278: the budgets, ceiling, attempt limit and switch in effect, next to every running blocker's step age.
   const snapshot = await readWriteSwitchSnapshot(engine).catch(() => null);
   const preparation_policy = snapshot ? { deadlines: snapshot.switches.preparation_deadlines, sync_preparation_ms: snapshot.preparation.syncMs,
-    maintenance_preparation_ms: snapshot.preparation.maintenanceMs, preparation_ceiling_ms: snapshot.preparation.ceilingMs, max_preparation_attempts: snapshot.preparation.maxAttempts } : null;
+    maintenance_preparation_ms: snapshot.preparation.maintenanceMs, preparation_ceiling_ms: snapshot.preparation.ceilingMs, max_preparation_attempts: snapshot.preparation.maxAttempts,
+    max_transient_retries: snapshot.preparation.transientRetries } : null;
   const { persistenceConsumerStatus } = await import('./service.ts');
   // #6317 (C1): the heartbeat rows of this host, read once, so each running claim can name its owner's liveness and pool.
   const { existingLocalHostId } = await import('./identity.ts');
