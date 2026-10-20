@@ -49,6 +49,7 @@ import {
   assertFenceRewritable,
 } from './fence-shared.ts';
 import { findLineOutsideFencedCode, locateOutsideCode, protectedRegions, unclosedCodeFenceStart } from './fence-scan.ts';
+import { FactsFenceCache } from './facts-fence-cache.ts';
 
 // HTML-comment fence markers — verbatim per spec. Same shape as the takes
 // fence markers so anyone who's seen one immediately recognizes the other.
@@ -230,7 +231,13 @@ function parseForgottenFromContext(context: string | undefined): boolean {
  * (extract-facts cycle phase, doctor) surface warnings as
  * `FACTS_TABLE_MALFORMED` sync-failures entries.
  */
+const factsFenceCache = new FactsFenceCache();
+
 export function parseFactsFence(body: string): FactsFenceParseResult {
+  return factsFenceCache.parse(body, parseFactsFenceUncached);
+}
+
+function parseFactsFenceUncached(body: string): FactsFenceParseResult {
   const { beginIdx, endIdx } = locateOutsideCode(body, FACTS_FENCE_BEGIN, FACTS_FENCE_END);
   const warnings: string[] = [];
 
