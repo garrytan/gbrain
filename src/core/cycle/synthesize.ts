@@ -2285,7 +2285,7 @@ export function dreamInlineQueueAgeMs(queueName: string, nowMs = Date.now()): nu
 
 /**
  * F6: price a chat call. Thin rounding wrapper over the ONE pricing routine
- * (chat-usage.ts estimateChatCostUsd — canonical table, cache_read falls
+ * (chat-usage.ts estimateChatCostUsd — shipped tables, cache_read falls
  * back to the input rate). Returns null when the model has no canonical
  * pricing — never a fake 0 (house rule).
  */

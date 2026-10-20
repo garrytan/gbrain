@@ -166,6 +166,15 @@ describe('#5506: chat call meter prices what it counts', () => {
     expect(records.map(r => r.cost_usd)).toEqual([meter.cost_usd!, null]);
   });
 
+  test('a claude-cli record carries the Anthropic rate the budget tracker prices it at', () => {
+    const records: ChatUsageRecord[] = [];
+    setChatUsageSink((r) => { records.push(r); });
+    const cacheUsage = { ...usage, cache_read_tokens: 400 };
+    for (const model of ['claude-cli:claude-haiku-4-5', 'claude-cli:claude-haiku-4-5-20251001']) recordChatUsage({ model, usage: cacheUsage });
+    const anthropic = estimateChatCostUsd(PRICED, { ...cacheUsage, input_tokens: 600 })!;
+    expect(records.map(r => r.cost_usd)).toEqual([anthropic, anthropic]);
+  });
+
   test('the meter prices with the budget tracker resolver: overrides, the claude-cli sibling rate and free local models', () => {
     setChatUsageSink(null);
     const meter: ChatCallMeter = { calls: 0, cost_usd: 0, unpriced_calls: 0, pricing_overrides: { [UNPRICED]: { input: 2, output: 4 } } };

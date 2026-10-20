@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reservationCostUsd, usageCostUsd } from '../src/core/budget/reservation-cost.ts';
 import { BudgetExhausted, BudgetTracker } from '../src/core/budget/budget-tracker.ts';
-import { estimateChatCostUsd } from '../src/core/ai/chat-usage.ts';
+import { estimateChatCostUsd, recordChatUsage, withChatCallMeter, type ChatCallMeter } from '../src/core/ai/chat-usage.ts';
 
 // Behaviour only through the pre-existing cost APIs, so this file runs (and
 // fails for the wrong dollar amounts, never an import) against master.
@@ -99,5 +99,17 @@ describe('durable chat ledger: estimateChatCostUsd', () => {
   test('cache writes count toward the prompt size too', () => {
     const usd = estimateChatCostUsd(HAIKU, { input_tokens: 1, output_tokens: 0, cache_write_tokens: T });
     expect(usd).toBeCloseTo((1 * 0.50 + T * 0.625) / 1e6, 12);
+  });
+});
+
+describe('phase cost meter: claude-cli Haiku 5.5 bills the tier like the anthropic id', () => {
+  test('a 100,001-token prompt (90,000 from cache) meters at the tier rates on both routes', () => {
+    const usage = { input_tokens: T + 1, output_tokens: 1_000, cache_read_tokens: 90_000 };
+    const tier = (10_001 * 0.50 + 90_000 * 0.05 + 1_000 * 2.50) / 1e6;
+    for (const model of [HAIKU, 'claude-cli:claude-haiku-5-5']) {
+      const meter: ChatCallMeter = { calls: 0, cost_usd: 0, unpriced_calls: 0 };
+      withChatCallMeter(meter, () => recordChatUsage({ model, usage }));
+      expect(meter.cost_usd).toBeCloseTo(tier, 12);
+    }
   });
 });
