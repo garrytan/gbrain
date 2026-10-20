@@ -15,7 +15,7 @@ import { isChronicleEligible, isChronicleShaped } from './eligibility.ts';
 import { chronicleBackstopReceipt, type ChronicleBackstopReceipt, type ChronicleReasonCode, type ChronicleReasonContext } from './reasons.ts';
 
 /** Publications that import page content and therefore carry a decision (C1). */
-const DECIDING_OPERATIONS = new Set(['put_page', 'capture', 'edit_page', 'restore_page', 'revert_version']);
+const DECIDING_OPERATIONS = new Set(['put_page', 'capture', 'edit_page', 'append_page', 'restore_page', 'revert_version']);
 const DECIDING_INTENTS = new Set(['managed_sync_import', 'connector_v2_import']);
 /** Skip reasons after which an earlier extracted generation of the page is retired (E8). */
 export const RETIRE_REASONS = ['not_chronicle_shaped', 'dream_generated', 'too_short'] as const;

@@ -158,10 +158,10 @@ const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
 const sameBytes = (a: Uint8Array, b: Uint8Array) => Buffer.from(a).equals(Buffer.from(b));
 
 /** An occurrence is its bytes, entry state and the trust its stored regions were computed under: a trust flip rechunks the region. */
-const occurrenceKey = (sha256: Uint8Array, entryState: unknown, trust: 'trusted' | 'void') => `${hex(sha256)}|${stableJson(entryState)}|${trust}`;
+export const occurrenceKey = (sha256: Uint8Array, entryState: unknown, trust: 'trusted' | 'void') => `${hex(sha256)}|${stableJson(entryState)}|${trust}`;
 
 /** Every coordinate of a live row equals the row the new segment would get, so the row stays. */
-function rowUnchanged(live: ManifestRow, next: ManifestRowInput): boolean {
+export function rowUnchanged(live: ManifestRow, next: ManifestRowInput): boolean {
   return live.seq === next.seq && live.region === next.region && Number(live.byteStart) === next.byteStart
     && live.byteLen === next.byteLen && Number(live.lineStart) === next.lineStart && live.cutKind === next.cutKind
     && sameBytes(live.hashState, next.hashState) && stableJson(live.protectedRegions) === stableJson(next.protectedRegions)

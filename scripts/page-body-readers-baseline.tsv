@@ -412,8 +412,8 @@ src/core/persistence/page-input.ts	normalizeSubagentPageInput	call:serializeMark
 src/core/persistence/page-input.ts	normalizeSubagentPageInput	field	SEGW	
 src/core/persistence/page-prepare.ts	canonical	field	SEGW	lane 1d file; segmented page: getter throws page_body_segmented
 src/core/persistence/page-prepare.ts	fileMatchesSnapshot	field	SEGW	lane 1d file; segmented page: getter throws page_body_segmented
-src/core/persistence/page-prepare.ts	preparePageMutation	call:serializePageToMarkdown	SEGW	lane 1d file
-src/core/persistence/page-prepare.ts	preparePageMutation	field	SEGW	lane 1d file: preserveProtectedTakes reads the snapshot body; segmented page: getter throws page_body_segmented
+src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	call:serializePageToMarkdown	SEGW	lane 1d file
+src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	field	SEGW	lane 1d file: preserveProtectedTakes reads the snapshot body; segmented page: getter throws page_body_segmented
 src/core/persistence/page-prepare.ts	segmentedFileMatches	field	NONE	the body fields hold region digests (body-digests.ts) for the canonical comparison; no page body is read
 src/core/persistence/page-prepare.ts	unreadPageFile	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body; the body streams from the segments through segmentedExportMarkdown
 src/core/persistence/page-purge.ts	purgePageInTransaction	field	STREAM	
@@ -582,3 +582,16 @@ src/core/belief/page-at-time.ts	livePage	field	STREAM	known_as_of read: a segmen
 src/core/ops/known-as-of.ts	intervalView	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/ops/known-as-of.ts	getVersionsKnownAsOf	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/belief/preimages.ts	preimageGaps	sql	META	size only (octet_length) to exempt large pages; segmented pages and versions are excluded by body_storage
+src/core/ops/get-page-body.ts	editTarget	field	INLINE	inline branch only (a segmented page maps through the window's segment units); regions read whole within the segmented threshold
+src/core/page-body/tail-digest.ts	inlineRegions	sql	INLINE	callers branch on storage: inline pages only, within the segmented threshold
+src/core/page-body/tail-digest.ts	inlineRegions	field	INLINE	callers branch on storage: inline pages only, within the segmented threshold
+src/core/page-body/tail-digest.ts	inlineTailDigest	field	INLINE	get_page body:'none' of an inline page; a segmented page uses page-window/segmented.ts tailDigest
+src/core/persistence/page-append.ts	regionTail	field	INLINE	inline branch; a segmented page reads its tail segments (segmentedRegionTail)
+src/core/persistence/page-append.ts	splicedPageFile	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body; the body streams from the segments
+src/core/persistence/page-append.ts	prepareAppendMutation	field	SEGW	inline append, or a segmented page the splice declined within PAGE_MAX_BYTES (materializedSnapshot); over it the append refuses page_body_segmented
+src/core/persistence/page-append.ts	prepareAppendMutation	call:serializePageToMarkdown	SEGW	inline append, or a segmented page the splice declined within PAGE_MAX_BYTES (materializedSnapshot); over it the append refuses page_body_segmented
+src/core/persistence/page-append.ts	prepareAppendMutation	sql	META	body_bytes, else octet_length of an inline page's regions, after the write
+src/core/persistence/page-edit.ts	applyPageEdits	call:serializePageToMarkdown	SEGW	within's stored-offset mapping on the materialized snapshot, as pageSegments; a segmented page takes prepareSegmentedEditMutation first
+src/core/persistence/page-edit.ts	applyPageEdits	field	SEGW	within's stored-offset mapping on the materialized snapshot, as pageSegments; a segmented page takes prepareSegmentedEditMutation first
+src/core/persistence/page-edit.ts	prepareSegmentedEditMutation	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body; the body streams from the segments
+src/core/persistence/page-edit.ts	assertSegmentedFencesCompile	field	NONE	the fields hold only the stored fence text laid out at its lines (scanCanonicalFences input); no page body is read

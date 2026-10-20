@@ -281,6 +281,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/loop-fact-retirement.ts` (1): request preparer.
 - `src/core/persistence/memory-mutations.ts` (1): `forget` inside its request's coordinated write.
 - `src/core/persistence/memory-prepare.ts` (3): `remember` request preparer.
+- `src/core/persistence/page-append.ts` (1): segmented `append_page` / `edit_page` request preparer; the splice versions the page inside its request's publication.
 - `src/core/persistence/page-prepare.ts` (12): page request preparer (including the restore of a segmented page over 24 MiB, which flips `deleted_at` without re-serializing, and the tag flip of a segmented page, which versions it and changes its tag rows and `content_hash` without re-serializing).
 - `src/core/persistence/prepared-maintenance.ts` (3): managed maintenance request preparer.
 - `src/core/persistence/semantic-pages.ts` (1): `add_timeline_entry` request preparer.

@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 151 tools across 25 areas. **Starter** marks membership in the ~40-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 157 tools across 25 areas. **Starter** marks membership in the ~40-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -168,13 +168,18 @@ Every non-localOnly operation on the MCP surface: 151 tools across 25 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
+| `abort_page_upload` | Discard an uncommitted upload session: its staged parts are deleted and its quota is freed. | write |  |  |
+| `append_page` | Add text to the end of a page, in time proportional to the text: use it for logs and conversations instead of re-putting a large page. | write |  |  |
+| `begin_page_upload` | Start writing a page too large for one request: then upload_page_part from part 0 and commit_page_upload. | write |  |  |
 | `cancel_write_request` | Cancel your accepted write before it publishes; returns the receipt. | write | yes |  |
 | `capture` | Quick note ("just remember this"): slugged under inbox/ by date + content hash, so recapturing is idempotent. | write | yes |  |
+| `commit_page_upload` | Write an upload's page once every part is sent; returns put_page's receipt. | write |  |  |
 | `delete_page` | Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). | write |  |  |
 | `edit_page` | Change part of a page: prefer this over put_page for small changes. | write | yes |  |
 | `fetch` | Fetch the full text of one search result by its opaque, source-qualified `id` (OpenAI deep-research contract: the search/fetch pair). | read |  |  |
 | `get_chunks` | Return a page's indexed content chunks (the units search ranks), in chunk_index order, 50 at a time by default. | read |  |  |
 | `get_page` | Read a page by slug. | read | yes |  |
+| `get_page_upload` | An upload's state and next_part, to resume after a lost reply. | write |  |  |
 | `get_raw_data` | Retrieve raw data for a page. | read |  |  |
 | `get_versions` | Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest 20 versions by default. | read |  |  |
 | `get_write_request` | Your write's receipt by request_id (after write_pending or a lost reply). | write | yes |  |
@@ -182,13 +187,14 @@ Every non-localOnly operation on the MCP surface: 151 tools across 25 areas. **S
 | `list_pages` | List pages with filters. | read | yes |  |
 | `list_write_conflicts` | Pages whose writes keep ending in a source_changed conflict, grouped by slug. | read |  |  |
 | `list_write_requests` | Your write receipts in one source, newest first (for a lost request_id). | write | yes |  |
-| `put_page` | Complete content REPLACES the whole page: read get_page include_content:true; send its revision as expected_revision. | write | yes |  |
+| `put_page` | Complete content REPLACES the whole page: read get_page include_content:true; its revision is expected_revision. | write | yes |  |
 | `put_pages` | Write up to 50 complete Markdown pages (8 MB total) in one call; use instead of put_page for more than 3 pages. | write |  |  |
 | `put_raw_data` | Store a raw provider payload (API response JSON) alongside a page, keyed by source. | write |  |  |
 | `resolve_slugs` | Fuzzy-match a partial slug or title to page slugs. | read | yes |  |
 | `restore_page` | Restore a soft-deleted page (clear deleted_at) and re-create its markdown file on disk (the counterpart to delete_page removing it; the result write_through field reports the outcome). | write |  |  |
 | `revert_version` | Restore a page to an earlier version from its history (a new revision; history is kept). | write |  |  |
 | `unpurge_page` | Owner-only (`gbrain pages unpurge <slug>`). | admin |  |  |
+| `upload_page_part` | Send the next part of an upload: part equals next_part, the whole call within part_max_frame_bytes, cut between code points. | write |  |  |
 
 ## questions
 

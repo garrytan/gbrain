@@ -96,6 +96,19 @@ type StreamedImportOptions = {
   activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> };
   firstCommitAt?: Date;
   /**
+   * A page write of the file's content (`gbrain put|capture --file` on the trusted local CLI), not a file import: the
+   * file records no origin (no source_path or file source_uri), no other file's slug claim applies, the staging is a
+   * `put`, and `head` replaces the file's first `skip` bytes after its BOM (capture's merged frontmatter). The
+   * caller passes `<slug>.md` as the relative path.
+   */
+  content?: { head?: { skip: number; bytes: Uint8Array }; provenance?: { source_kind: string | null; source_uri: string | null; ingested_via: string | null };
+    /**
+     * A remote writer's page (commit_page_upload, upload-streamed.ts): `gate` names the tier the write gate assesses
+     * from the page's frontmatter (put_page's, not the source owner's), gate-owned markers are stripped as put_page
+     * strips them, and `stamp` writes the server's trust marker into the frontmatter.
+     */
+    writer?: { gate(frontmatter: Record<string, unknown>): Promise<StreamedGateInput>; stamp(frontmatter: Record<string, unknown>): void } };
+  /**
    * A managed import's preparation (import-prepare.ts): the file must hash to
    * `sha256` (the admitted bytes), the page base is the caller's snapshot, and
    * instead of publishing, the prepared write goes to `prepare`, whose apply
@@ -108,6 +121,9 @@ type StreamedImportOptions = {
     moved?: boolean;
     prepare(prepared: StreamedPreparedImport): Promise<ImportResult> };
 };
+
+/** The write gate's input for a streamed page: the tier it assesses and the write's origin. */
+export type StreamedGateInput = Awaited<ReturnType<typeof ownerSourceGateInput>>;
 
 /** A coordinated streamed import ready to publish: no parsed body strings exist, only the page's frontmatter. */
 export type StreamedPreparedImport = Omit<PreparedContentImport, 'parsedPage'> & { frontmatter: Record<string, unknown> };
@@ -303,8 +319,8 @@ export async function importStreamedMarkdownFile(engine: BrainEngine, filePath: 
     const size = opened.size;
     const bomBytes = Buffer.alloc(3);
     await file.read(bomBytes, 0, 3, 0);
-    const bom = bomBytes[0] === 0xef && bomBytes[1] === 0xbb && bomBytes[2] === 0xbf ? 3 : 0;
-    const prefix = opts.inferFrontmatter !== false ? await inferredPrefix(file, bom, size, relativePath) : new Uint8Array(0);
+    const bom = (bomBytes[0] === 0xef && bomBytes[1] === 0xbb && bomBytes[2] === 0xbf ? 3 : 0) + (opts.content?.head?.skip ?? 0);
+    const prefix = opts.content?.head ? opts.content.head.bytes : opts.inferFrontmatter !== false ? await inferredPrefix(file, bom, size, relativePath) : new Uint8Array(0);
     if (!prefix) return hold(expectedSlug, size, 'frontmatter inference reads the first 20 lines, and they are not within the file head');
     const hash = opts.coordinated ? createHash('sha256').update(bomBytes.subarray(0, bom)) : null;
     const blocks = new BlockDigests();
@@ -349,8 +365,10 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
   const read = (start: number, end: number) => readChecked(file, bom, prefix, size, digests, drift, start, end);
   parsed.title = sanitizeText(parsed.title);
   delete parsed.frontmatter[QUARANTINE_OVERRIDE_KEY];
-  const writeGate = await ownerSourceGateInput(engine, sourceId, parsed.frontmatter);
-  stripGateOwnedMarkers(parsed, { preserveGateMarkers: true, writeGate });
+  const writer = opts.content?.writer;
+  const writeGate = writer ? await writer.gate(parsed.frontmatter) : await ownerSourceGateInput(engine, sourceId, parsed.frontmatter);
+  stripGateOwnedMarkers(parsed, { preserveGateMarkers: !writer, writeGate });
+  writer?.stamp(parsed.frontmatter);
   const sanity = await loadImportSanityConfig(engine);
   if (writeGateApplies(writeGate.tier, sanity.writeGate ?? DEFAULT_WRITE_GATE_CONFIG)) return hold(slug, size, `the write gate scans the whole body of a ${writeGate.tier} page`);
   const bodyBytes = scan.truthBytes + (scan.timelineBytes ? 1 + scan.timelineBytes : 0);
@@ -363,7 +381,7 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
   if (existing?.deleted_at) return hold(slug, size, 'restoring a deleted page rewrites its body through the inline writer');
   if (existing) stabilizeSafetyAssessments(parsed.frontmatter, existing.frontmatter);
   const sourceRoot = resolve(input.filePath, ...relativePath.split(/[\\/]/).map(() => '..'));
-  const collisionOwner = collidingSlugOwner(existing, slug, sourceRoot, relativePath);
+  const collisionOwner = opts.content ? null : collidingSlugOwner(existing, slug, sourceRoot, relativePath);
   if (collisionOwner) {
     process.stderr.write(`[import] slug collision: ${relativePath} and ${collisionOwner} both map to ${slug} in source ${sourceId}; keeping ${collisionOwner}. Rename one file to import both.\n`);
     return { slug, status: 'skipped', chunks: 0, skip_reason: 'slug_collision' };
@@ -385,7 +403,7 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
   if (opts.coordinated) owner = opts.coordinated.owner;
   else {
     const { principal } = await maintenanceAttribution(engine);
-    owner = { kind: 'import', principalKind: principal.kind, principalId: principal.id, baseRevision: existing?.knowledge_revision ?? null };
+    owner = { kind: opts.content ? 'put' : 'import', principalKind: principal.kind, principalId: principal.id, baseRevision: existing?.knowledge_revision ?? null };
   }
   const live = existing ? await segmentedLivePage(engine, Number(existing.id)) : null;
   let fenced = false;
@@ -418,18 +436,19 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
     return opts.coordinated ? opts.coordinated.prepare({ slug, observedRevision: opts.coordinated.snapshot?.revision ?? null, noop: true, result: skipped, frontmatter: parsed.frontmatter,
       validate: async () => {}, apply: async () => {} }) : skipped;
   }
-  const identity = opts.coordinated?.moved ? { kind: 'none' as const }
+  const identity = opts.coordinated?.moved || opts.content ? { kind: 'none' as const }
     : await decideImportIdentity(engine, { sourceId, slug, hash, frontmatterId: null, sourcePath: relativePath, sourceRoot, body: { title: parsed.title, compiled_truth: '', timeline: '' } });
   if (identity.kind === 'shared_hash') process.stderr.write(`[import] WARNING: ${relativePath} shares content_hash with ${identity.dupSlug} in source ${sourceId}. Indexing both.\n`);
   const nowDate = new Date();
   const { loadBrainTimeZone } = await import('../import-file.ts');
-  const filename = basename(relativePath, '.md');
+  const filename = opts.content ? slug.split('/').pop() ?? slug : basename(relativePath, '.md');
   const { date: effectiveDate, source: effectiveDateSource } = computeEffectiveDate({ slug, frontmatter: parsed.frontmatter, filename, timeZone: await loadBrainTimeZone(engine),
     updatedAt: existing?.updated_at ?? nowDate,
     createdAt: fallbackCreatedAt({ existing, fileTimes: { birthtime: input.stat.birthtime, mtime: input.stat.mtime, firstCommit: opts.firstCommitAt }, now: nowDate }) });
   const meta = { type: parsed.type, title: parsed.title, frontmatter: parsed.frontmatter as JsonObject, page_kind: 'markdown' as const,
-    effective_date: effectiveDate, effective_date_source: effectiveDateSource, import_filename: filename, source_path: relativePath,
-    source_kind: null, source_uri: fileOriginUri(existing?.source_uri, sourceRoot, relativePath), ingested_via: null };
+    effective_date: effectiveDate, effective_date_source: effectiveDateSource, import_filename: filename,
+    ...(opts.content ? { source_path: null, source_kind: null, source_uri: null, ingested_via: null, ...opts.content.provenance }
+      : { source_path: relativePath, source_kind: null, source_uri: fileOriginUri(existing?.source_uri, sourceRoot, relativePath), ingested_via: null }) };
   const refs = prepared.body.body_flags.has_protected ? [] : [...codeRefs.refs.values()];
   const apply = async (tx: BrainEngine, preimage?: PageSnapshot | null) => {
     if (existing) await tx.createVersion(slug, preimage ? { sourceId, preimage } : { sourceId });

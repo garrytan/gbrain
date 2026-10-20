@@ -25,7 +25,7 @@ function locateBlock(source: string): { rowLines: number; first: number; count: 
     const trimmed = line.trimStart();
     if (trimmed.startsWith(MARKER)) { inBlock = true; first = rowLines; continue; }
     if (trimmed.startsWith('//')) inBlock = false;
-    const rows = line.match(/\{ since: '\d/g)?.length ?? 0;
+    const rows = line.match(/\{ since: '/g)?.length ?? 0;
     rowLines += rows;
     if (inBlock) count += rows;
   }
@@ -50,7 +50,7 @@ describe('#6712 PR 4b BEHAVIOR_CHANGES block', () => {
   });
 
   test("the block sits after master's rows: only later releases follow it, and no earlier row is newer", () => {
-    expect(BEHAVIOR_CHANGES.slice(first + count).filter(row => compareReleases(row.since, block[0]!.since) <= 0).map(row => row.since)).toEqual([]);
+    expect(BEHAVIOR_CHANGES.slice(first + count).filter(row => row.since !== 'TBD' && compareReleases(row.since, block[0]!.since) <= 0).map(row => row.since)).toEqual([]);
     expect(BEHAVIOR_CHANGES.slice(0, first).filter(row => compareReleases(row.since, block[0]!.since) > 0).map(row => row.since)).toEqual([]);
   });
 

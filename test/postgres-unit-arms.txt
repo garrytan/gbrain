@@ -37,6 +37,7 @@ test/chronicle-backfill-max-usd.test.ts
 test/claim-fifo-foreground-waiting.test.ts
 test/claim-lease-holder-only-6712.test.ts
 test/claude-cli-output-cap.test.ts
+test/cli-page-writes.test.ts
 test/colon-slug-windows-5032.test.ts
 test/company-brain-policy.test.ts
 test/company-brain-runtime.test.ts
@@ -87,11 +88,14 @@ test/import-revision-concurrency.test.ts
 test/keyword-statement-timeout-knob-6495.test.ts
 test/keyword-timeout-negative-cache-6495.test.ts
 test/lane-apply-pipelining.test.ts
+test/large-pages/append-concurrency.test.ts
+test/large-pages/append-cost.test.ts
 test/large-pages/chunk-retirement-plan.test.ts
 test/large-pages/chunk-visibility.test.ts
 test/large-pages/contextual-reembed-segmented.test.ts
 test/large-pages/credential-reseal-segments.test.ts
 test/large-pages/doctor-skipped-segmented.test.ts
+test/large-pages/edit-segmented.test.ts
 test/large-pages/forget-reason-segmented.test.ts
 test/large-pages/forget-scope.test.ts
 test/large-pages/gbra117-segmented-classes-window.test.ts
@@ -180,6 +184,9 @@ test/large-pages/segmented-withdrawn-fence-delete.test.ts
 test/large-pages/streamed-import-drift.test.ts
 test/large-pages/streamed-sync-origin-b14.test.ts
 test/large-pages/stuck-recovery-large.slow.test.ts
+test/large-pages/upload-binding.test.ts
+test/large-pages/upload-over-ceiling.test.ts
+test/large-pages/upload-review.test.ts
 test/large-pages/v252-master-reader-compat.test.ts
 test/link-cross-source.test.ts
 test/link-preparation-shared-index.test.ts

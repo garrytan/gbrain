@@ -29,8 +29,10 @@ const load_links = () => import('./ops/links.ts') as Promise<Record<string, unkn
 const load_loops = () => import('./ops/loops.ts') as Promise<Record<string, unknown>>;
 const load_notices = () => import('./ops/notices.ts') as Promise<Record<string, unknown>>;
 const load_orphans = () => import('./ops/orphans.ts') as Promise<Record<string, unknown>>;
+const load_page_append = () => import('./ops/page-append.ts') as Promise<Record<string, unknown>>;
 const load_page_batch = () => import('./ops/page-batch.ts') as Promise<Record<string, unknown>>;
 const load_page_edit = () => import('./ops/page-edit.ts') as Promise<Record<string, unknown>>;
+const load_page_upload = () => import('./ops/page-upload.ts') as Promise<Record<string, unknown>>;
 const load_pages = () => import('./ops/pages.ts') as Promise<Record<string, unknown>>;
 const load_persistence = () => import('./ops/persistence.ts') as Promise<Record<string, unknown>>;
 const load_purge = () => import('./ops/purge.ts') as Promise<Record<string, unknown>>;
@@ -66,7 +68,13 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "capture": [load_pages, "pagesOperations"],
   "fetch": [load_pages, "pagesOperations"],
   "edit_page": [load_page_edit, "pageEditOperations"],
+  "append_page": [load_page_append, "pageAppendOperations"],
   "put_pages": [load_page_batch, "pageBatchOperations"],
+  "begin_page_upload": [load_page_upload, "pageUploadOperations"],
+  "upload_page_part": [load_page_upload, "pageUploadOperations"],
+  "get_page_upload": [load_page_upload, "pageUploadOperations"],
+  "commit_page_upload": [load_page_upload, "pageUploadOperations"],
+  "abort_page_upload": [load_page_upload, "pageUploadOperations"],
   "get_write_request": [load_persistence, "persistenceOperations"],
   "list_write_requests": [load_persistence, "persistenceOperations"],
   "list_write_conflicts": [load_persistence, "persistenceOperations"],

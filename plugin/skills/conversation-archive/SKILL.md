@@ -117,8 +117,10 @@ and feed the recency ranking; the frontmatter `date:` drives the page's
 to the 24 MiB page ceiling: it is chunked and keyword-searchable at any size
 under it, and a page over 1 MiB embeds after the write. Don't write `-p2`,
 `-p3` part pages to get under a size limit. Only a conversation over 24 MiB
-needs more than one page. If an MCP transport refuses a large page, import the
-file on the brain host instead (Step 4). Limits and costs:
+needs more than one page. A page bigger than one MCP request goes through an
+upload session (`begin_page_upload`, parts, `commit_page_upload`; `gbrain put
+<slug> --file` and `gbrain capture --file` do this on a remote brain), or import
+the file on the brain host (Step 4). Limits and costs:
 `docs/guides/memory-boundaries.md#large-pages`.
 
 **Slug collisions are real — disambiguate deterministically.** Untitled threads
@@ -309,6 +311,26 @@ transcripts from the dream-cycle corpus directories (local-only). That is a
 read of the raw corpus, not the durable archive — this skill is what makes
 session history permanent, searchable, and fact-extracted.
 
+## Appending to a Live Conversation
+
+A conversation that keeps growing (an agent session, a running chat log) gets
+its new messages with `append_page` (CLI: `gbrain append <slug> --file new.md`,
+or the text on stdin). It adds text to the end of the page in time
+proportional to the text added and is idempotent by `request_id`, so a retry
+with the same id never adds a message twice. **Never re-put a large page to
+add a message**: `put_page` rewrites, re-chunks and re-indexes the whole page
+every time.
+
+- Keep one `request_id` per batch of messages, and retry with the same one.
+- Two writers that don't track revisions pass `expected_tail_sha256`
+  (`get_page` with `body: 'none'` returns `tail_sha256`). A `tail_changed`
+  refusal carries the current tail sha in its fix: re-read, then append again.
+- To fix a line you saw in a window read, call `edit_page` with `within` set to
+  the window's `edit_target` range. That tells repeated lines ("ok", "thanks")
+  apart without matching the rest of the page.
+- An append bigger than one request goes through an upload session with mode
+  `append`; `gbrain append` does this by itself.
+
 ## Retrieval & Tracing
 
 - **Find a conversation:**
@@ -374,6 +396,8 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
   searchable, leakable page (redaction is the one sanctioned edit)
 - ❌ Overwriting a colliding slug (same-day "New chat") — suffix a short thread
   hash; `put_page` has no CAS, so a blind write silently loses the first thread
+- ❌ Re-putting a whole conversation page to add a message — append it with
+  `append_page` (`gbrain append`)
 - ❌ Inventing a message line format the parser can't read — validate with
   `gbrain conversation-parser scan` before bulk-converting
 - ❌ Hand-patching pages the parser rejects — fix the converter and
@@ -436,6 +460,8 @@ This skill guarantees:
   secret is removed immediately with `gbrain delete <slug> --purge`.
 - Colliding slugs (untitled/same-day threads) are disambiguated with a short
   stable thread hash and check-before-write, never overwritten.
+- New messages on an existing conversation page are appended with
+  `append_page`, never by re-putting the page.
 - Every import run validates a sample via `gbrain conversation-parser scan`
   before bulk conversion, and reports parser results in the import receipt.
 - Fact extraction goes through the native `gbrain extract-conversation-facts`

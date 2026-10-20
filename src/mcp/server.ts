@@ -478,7 +478,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       // #1061: mark the transport so whoami can report {transport: 'stdio'}
       // instead of throwing unknown_transport. Trust posture unchanged —
       // stdio stays remote/untrusted.
-      transport: 'stdio',
+      transport: 'stdio', inboundFrameBytes: MCP_STDIO_MAX_MESSAGE_BYTES,
       takesHoldersAllowList: ['world'],
       ...(sessionId ? { sessionId } : {}),
       sourceId: sourceScope.sourceId,

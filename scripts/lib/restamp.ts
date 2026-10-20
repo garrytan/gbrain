@@ -165,10 +165,24 @@ export const STAMPS: Stamp[] = [
 /** Files restamp keeps in step beyond STAMPS (named so the coverage test can match the CLAUDE.md table). */
 export const OTHER_STAMPED_FILES = ['CHANGELOG.md', 'TODOS.md', 'templates/bootstrap/template-repo/'];
 
+/** The BEHAVIOR_CHANGES registry whose since: 'TBD' rows restamp gives the new version. */
+export const BEHAVIOR_NOTICE_FILE = 'src/core/behavior-change-notice.ts';
+
+/** Rewrite every `since: 'TBD'` row to `since: '<version>'`. */
+export function stampTbdSince(text: string, version: string): string {
+  return text.replace(/since:(\s*)'TBD'/g, (_match, space: string) => `since:${space}'${version}'`);
+}
+
 /** Rewrite `vOLD` to `vNEW` in branch-added TODOS.md lines (1-based line numbers). */
 export function restampTodoLines(text: string, addedLines: Set<number>, oldVersion: string, newVersion: string): string {
   if (oldVersion === newVersion) return text;
   return text.split('\n').map((l, i) => (addedLines.has(i + 1) ? l.split(`v${oldVersion}`).join(`v${newVersion}`) : l)).join('\n');
+}
+
+/** Rewrite `since: 'OLD'` to `since: 'NEW'` on branch-added lines (1-based): a stamped branch's own BEHAVIOR_CHANGES rows follow a restamp. */
+export function restampSinceLines(text: string, addedLines: Set<number>, oldVersion: string, newVersion: string): string {
+  if (oldVersion === newVersion) return text;
+  return text.split('\n').map((l, i) => (addedLines.has(i + 1) ? l.split(`since: '${oldVersion}'`).join(`since: '${newVersion}'`) : l)).join('\n');
 }
 
 // ---------------------------------------------------------------- migrations

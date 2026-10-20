@@ -45,6 +45,25 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "append": {
+        "hasSwitchCase": false,
+        "phase": "pre-connect-own-engine",
+        "preConnectRules": [
+          {
+            "condition": "command === 'append'",
+            "connectsEngine": true,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": [
+              "append"
+            ]
+          }
+        ],
+        "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
       "apply-migrations": {
         "hasSwitchCase": false,
         "phase": "pre-connect",

@@ -49,6 +49,7 @@ function comparable(r: Record<string, any>): Record<string, any> {
   delete out.revision;
   delete out.body_storage;
   delete out.chunks;
+  if (out.edit_target) delete out.edit_target.revision;
   if (out.size) for (const k of ['body_bytes', 'body_lines', 'tail_sha256', 'tail_region']) delete out.size[k];
   if (out.next_cursor) {
     const c = decodeCursor(out.next_cursor)!;

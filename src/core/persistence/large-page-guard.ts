@@ -25,10 +25,13 @@ const sizeFix = (slug: string, sourceId: string) => ({ argv: ['gbrain', 'get', '
  * the inline read size must be replaced against the revision the caller read
  * (force does not stand in for it), and content under half its body is
  * refused unless allow_shrink is true. The content's own bytes (frontmatter
- * included) are measured here; preparation re-checks the parsed body.
+ * included), or a committed upload's (`body_ref.bytes`), are measured here;
+ * preparation re-checks the parsed body.
  */
 export async function assertLargePageAdmission(engine: Pick<BrainEngine, 'executeRaw'>, slug: string, sourceId: string, intent: Record<string, unknown>): Promise<void> {
-  if (typeof intent.content !== 'string') return;
+  const ref = intent.body_ref as { bytes?: unknown } | undefined;
+  const next = typeof intent.content === 'string' ? Buffer.byteLength(intent.content, 'utf8') : Number.isSafeInteger(ref?.bytes) ? Number(ref!.bytes) : null;
+  if (next === null) return;
   const [row] = await engine.executeRaw<{ bytes: unknown }>(
     `SELECT CASE WHEN body_storage = 'segmented' THEN body_bytes ELSE octet_length(compiled_truth) + COALESCE(octet_length(timeline), 0) END AS bytes
       FROM pages WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL`, [slug, sourceId]);
@@ -41,7 +44,7 @@ export async function assertLargePageAdmission(engine: Pick<BrainEngine, 'execut
     e.contractVersion = 1;
     throw e;
   }
-  if (intent.allow_shrink !== true) assertNotShrunk(slug, sourceId, stored, Buffer.byteLength(intent.content, 'utf8'));
+  if (intent.allow_shrink !== true) assertNotShrunk(slug, sourceId, stored, next);
 }
 
 function assertNotShrunk(slug: string, sourceId: string, stored: number, next: number): void {

@@ -37,7 +37,7 @@ import { decideUnboundWrite, isUnboundSourcePage } from './unbound-source.ts';
 import { assertRestoreOrigin } from './detached-pages.ts';
 import { colonSlugWindowsRefusal, isWindowsColonTarget } from './native-file-target.ts';
 import { publishesDatabaseOnly } from './page-prepare.ts';
-import { materializedSnapshot } from './segmented-apply.ts';
+import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { liveSearchable } from './searchable.ts';
 import { cachedPreadmitBrain, dropPreadmitCache, preadmitReads, preadmitRecheckFailed } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
@@ -214,7 +214,9 @@ const OWNER_FILE_INTENTS: ReadonlySet<string> = new Set(['managed_file_import', 
 export interface PageBatchMember { id: string; index: number; size: number; requestId: string; repeats?: number[] }
 
 export async function submitPageMutation(ctx: OperationContext,
-  input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true; timelineSection?: TimelineSection; databaseOnly?: 'overwrite_restore' }): Promise<Record<string, unknown>> {
+  input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true; timelineSection?: TimelineSection; databaseOnly?: 'overwrite_restore';
+    /** commit_page_upload: `params.body_ref` names the caller's sealed upload session (persistence/page-upload.ts). */
+    stagedBody?: true }): Promise<Record<string, unknown>> {
   assertPersistenceAccepting(ctx.engine);
   // #6007: wait_ms is a reply deadline from arrival, never part of the write's identity.
   const arrived = performance.now();
@@ -252,7 +254,7 @@ export async function submitPageMutation(ctx: OperationContext,
 export async function preparePageAdmission(ctx: OperationContext,
   input: { operation: string; params: Record<string, unknown>; managedFileImport?: true; batch?: PageBatchMember; timelineSection?: TimelineSection;
     /** #6712 `repair overwritten-edits`: publish to the database only, so the restore never rewrites the committed file. */
-    databaseOnly?: 'overwrite_restore' }
+    databaseOnly?: 'overwrite_restore'; stagedBody?: true }
 ): Promise<{ prior: WriteRequest; admission?: undefined; typeWarning?: undefined; slugAdvisory?: undefined } | { prior?: undefined; admission: WriteAdmission; typeWarning: PageTypeWarning | null; slugAdvisory: string | null }> {
   if (input.operation === 'put_page' && ['kind', 'preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
     if (ctx.remote !== false || input.managedFileImport !== true || !OWNER_FILE_INTENTS.has(String(input.params.kind)) ||
@@ -260,6 +262,13 @@ export async function preparePageAdmission(ctx: OperationContext,
       throw new OperationError('invalid_params', 'Reserved persistence fields cannot be submitted through put_page. Use trusted local reconciliation administration.',
         'Drop kind, preview and backup_reference from put_page; reconciling a canonical file runs through gbrain sources reconcile on the brain host.');
     }
+  }
+  const bodyRefKind = (input.params.body_ref as { kind?: unknown } | null | undefined)?.kind;
+  const staged = input.stagedBody === true && ['put_page', 'append_page'].includes(input.operation) && bodyRefKind === 'staging';
+  const imported = input.managedFileImport === true && input.operation === 'put_page' && bodyRefKind === 'input_file';
+  if (Object.hasOwn(input.params, 'body_ref') && ((!staged && !imported) || Object.hasOwn(input.params, 'content') || Object.hasOwn(input.params, 'text'))) {
+    throw new OperationError('invalid_params', 'body_ref is reserved for commit_page_upload.',
+      'Drop body_ref and send the page as content; a page larger than one request goes through begin_page_upload, upload_page_part and commit_page_upload.');
   }
   // #6188: a fence repair's receipt is recorded only by the trusted local fence repair, never by a caller.
   if (Object.hasOwn(input.params, 'fence_repair') && (input.operation !== 'put_page' || ctx.remote !== false || !parseFenceRepairReceipt(input.params.fence_repair))) {
@@ -365,10 +374,17 @@ export async function preparePageAdmission(ctx: OperationContext,
     ? suffixedSlugAdmission(ctx, slug, !!snapshot && !snapshot.page.deleted_at) : null;
   // #5616: typed edit refusals before admission; publication repeats them on the locked snapshot.
   if (input.operation === 'edit_page') {
-    const { applyPageEdits, assertEditRevision, parsePageEdits } = await import('./page-edit.ts');
+    const { applyPageEdits, assertEditRevision, assertSegmentedEditFences, parseEditWithin, parsePageEdits } = await import('./page-edit.ts');
     if (!snapshot || snapshot.page.deleted_at) throw new OperationError('page_not_found', `Page not found: ${slug}`, 'edit_page changes an existing page; create it with put_page.');
     assertEditRevision(snapshot.revision, p.expected_revision);
-    applyPageEdits((await materializedSnapshot(ctx.engine, snapshot))!.page, snapshot.tags, ctx.remote !== false, parsePageEdits(p.edits));
+    const within = parseEditWithin(p.within);
+    // A segmented page is matched by its preparation, which streams the segments (spec 6.3): never read whole here.
+    if (!isSegmentedPage(snapshot.page)) applyPageEdits(snapshot.page, snapshot.tags, ctx.remote !== false, parsePageEdits(p.edits), within);
+    else { parsePageEdits(p.edits); await assertSegmentedEditFences(ctx.engine, snapshot.page, within, ctx.remote !== false); }
+  }
+  // Wave B: an append names an existing page; its preconditions are checked when it is prepared, on the page it extends.
+  if (input.operation === 'append_page' && (!snapshot || snapshot.page.deleted_at)) {
+    throw new OperationError('page_not_found', `Page not found: ${slug}`, 'append_page adds to an existing page; create it with put_page.');
   }
   let binding = boundAtStart;
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);

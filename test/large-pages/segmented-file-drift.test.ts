@@ -17,6 +17,8 @@
  * 3. Existing coverage: page-purge-segments.test.ts purges on a source with
  *    no worktree, so no file is compared; no test restores such a page.
  * 4. No production seam: bodyDigestWork is the module's own work counter.
+ * The huge page is seeded through the owner's own steps (helpers/owner-import.ts), sealed before the test goes on: the
+ * subject is the drift check, and on a loaded host the projection of a 24.5 MiB page can outlast importManagedFile's wait.
  * Runs on PGLite, and on Postgres when DATABASE_URL is set.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
@@ -42,6 +44,7 @@ import { withEnv } from '../helpers/with-env.ts';
 import { withCoordinatedWrite } from '../../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from '../helpers/write-attribution.ts';
 import { conversationPage } from '../helpers/conversation-page.ts';
+import { ownerImportFile } from '../helpers/owner-import.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-segmented-file-drift-'));
 const engines: BrainEngine[] = [];
@@ -85,7 +88,8 @@ async function managedSource(engine: BrainEngine): Promise<Fixture> {
 async function importHuge(engine: BrainEngine, f: Fixture, slug: string): Promise<string> {
   const file = join(f.root, `${slug}.md`);
   writeFileSync(file, huge);
-  expect(await importManagedFile(engine, file, `${slug}.md`, { sourceId: f.sourceId, noEmbed: true })).toMatchObject({ status: 'imported' });
+  await disposePersistenceConsumer(engine);
+  await ownerImportFile(engine, f.sourceId, file, `${slug}.md`);
   const [row] = await engine.executeRaw<{ body_storage: string; body_bytes: string }>('SELECT body_storage, body_bytes::text AS body_bytes FROM pages WHERE source_id=$1 AND slug=$2', [f.sourceId, slug]);
   expect(row?.body_storage).toBe('segmented');
   expect(Number(row?.body_bytes)).toBeGreaterThan(PAGE_MAX_BYTES);

@@ -1216,8 +1216,8 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     if (key.startsWith('provider_chat_options.')) await import('../core/config-db-merge.ts').then(m => m.assertProviderChatOptionsSetValue(key, value)).catch((error: Error) => { console.error(`[config] ${error.message}`); process.exit(1); });
     // #5470: every admission parses the journal caps; a malformed value
     // would refuse all managed writes, so reject it here.
-    const { JOURNAL_CONFIG_KEYS, parseJournalConfigValue } = await import('../core/persistence/limits.ts');
-    if (JOURNAL_CONFIG_KEYS.includes(key)) {
+    const { JOURNAL_CONFIG_KEYS, UPLOAD_CONFIG_KEYS, parseJournalConfigValue } = await import('../core/persistence/limits.ts');
+    if (JOURNAL_CONFIG_KEYS.includes(key) || UPLOAD_CONFIG_KEYS.includes(key)) {
       try { parseJournalConfigValue(key, value); }
       catch (error) { console.error(`[config] ${(error as Error).message}`); process.exit(1); }
     }

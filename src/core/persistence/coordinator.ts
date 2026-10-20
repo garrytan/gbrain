@@ -367,7 +367,7 @@ export function decoratePublicationOutcome(row: WriteRequest, prepared: Prepared
   outcome.persistence = { mode: fileCount ? 'filesystem' : 'database', ...(fileCount ? { file_written: !prepared.noop } : {}), ...(skill ? { git_state: 'not_requested' } : {}) };
   outcome.write_through = fileCount ? { written: !prepared.noop } : { written: false, skipped: prepared.databaseOnlyReason ?? row.authority.databaseOnlyReason ?? 'no_repo_configured' };
   if (prepared.databaseOnlyReason === 'mirror_read_only') outcome.storage = 'database_only';
-  if ((row.operation === 'put_page' || row.operation === 'edit_page') && row.authority.remote && row.authority.databaseOnlyReason === 'no_repo_configured') outcome.write_through = withNoRepoWriteThroughWarning(outcome.write_through as { written: boolean; skipped?: string }, row.source_id, row.operation);
+  if ((row.operation === 'put_page' || row.operation === 'edit_page' || row.operation === 'append_page') && row.authority.remote && row.authority.databaseOnlyReason === 'no_repo_configured') outcome.write_through = withNoRepoWriteThroughWarning(outcome.write_through as { written: boolean; skipped?: string }, row.source_id, row.operation);
   if ((outcome.write_through as { skipped?: string }).skipped === 'unbound_source') {
     outcome.write_through = { ...outcome.write_through as object, warning: unboundWriteWarning(row.operation, row.source_id, row.authority.databaseOnlyReason === 'unbound_source') };
   }

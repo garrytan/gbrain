@@ -330,13 +330,13 @@ const put_page: Operation = {
   name: 'put_page',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Complete content REPLACES the whole page: read get_page include_content:true; send its revision as expected_revision. Keep a request_id UUID; retry with identical arguments. Remote callers: existing-page [[links]] become mentions; typed links are skipped (stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). Edits: edit_page; >3 pages: put_pages.',
+  description: 'Complete content REPLACES the whole page: read get_page include_content:true; its revision is expected_revision. Keep a request_id UUID; retry with identical arguments. Remote callers: existing-page [[links]] become mentions; typed links are skipped (stdio `gbrain serve` sweeps later, `gbrain serve --http` does not self-sweep). Edits: edit_page; appends: append_page; >3 pages: put_pages.',
   params: {
     ...AGENT_CONTENT_PARAMS,
     slug: { type: 'string', description: 'Page slug.', required: true },
     content: { type: 'string', required: true, description: 'Complete markdown (get_page include_content:true).' },
-    allow_empty: { type: 'boolean', required: false, description: 'Allow emptying the page.' },
-    allow_shrink: { type: 'boolean', required: false, description: 'Allow content under half a >256 KB page.', fullSurfaceOnly: true },
+    allow_empty: { type: 'boolean', required: false, description: 'Allow an empty page.' },
+    allow_shrink: { type: 'boolean', required: false, description: 'Allow content under half a >256 KB page. To add text use append_page, not a re-put; a page over one request goes by begin_page_upload.', fullSurfaceOnly: true },
     drop_timeline: { type: 'boolean', required: false, description: 'No Timeline in content: delete its entries.' },
     wait_ms: WRITE_WAIT_PARAM,
     // v0.39.3.0 provenance write-through (WARN-8 + A1 + CV6). Optional fields
@@ -345,9 +345,9 @@ const put_page: Operation = {
     // server stamps below; the params are accepted on the wire only so the
     // op schema stays uniform across transports. Audit-trail spoofing is
     // closed structurally — clients cannot poison source_kind labels.
-    source_kind: { type: 'string', description: 'Server-stamped remotely.', required: false },
-    source_uri: { type: 'string', description: 'Server-stamped remotely.', required: false },
-    ingested_via: { type: 'string', description: 'Server-stamped remotely.', required: false },
+    source_kind: { type: 'string', description: 'Server-set remotely.', required: false },
+    source_uri: { type: 'string', description: 'Server-set remotely.', required: false },
+    ingested_via: { type: 'string', description: 'Server-set remotely.', required: false },
   },
   mutating: true,
   scope: 'write',

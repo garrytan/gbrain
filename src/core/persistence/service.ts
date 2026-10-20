@@ -103,6 +103,7 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   if (row.operation === 'relink_facts') return (await import('../facts/relink-publish.ts')).prepareRelinkMutation(e, row, cfg);
   if (['takes_add','takes_update','takes_supersede','takes_resolve','takes_remove'].includes(row.operation)) return (await import('./takes-prepare.ts')).prepareTakesMutation(e,row,cfg);
   if (['add_tag','remove_tag','add_timeline_entry'].includes(row.operation)) return prepareSemanticPageMutation(e, row, cfg);
+  if (row.operation === 'append_page') return (await import('./page-upload.ts')).withStagedBodyIf(e, row, async () => (await import('./page-append.ts')).prepareAppendMutation(e, row, cfg, signal, clock));
   if (['put_page','capture','delete_page','restore_page','revert_version','edit_page'].includes(row.operation)) return preparePageMutation(e, row, cfg, undefined, signal,
     { coordinated: await writeSwitchOn(e, 'single_write_group').catch(() => true), clock });
   throw new OperationError('unsupported_mutation_protocol', 'No compatible mutation preparer is registered for this operation.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);

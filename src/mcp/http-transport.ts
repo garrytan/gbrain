@@ -539,7 +539,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           admissionOrigin: 'interactive', config: operationConfig,
           // WP1/D7: network transport — the dispatch-layer localOnly
           // backstop keys off this marker.
-          transport: 'http',
+          transport: 'http', inboundFrameBytes: bodyCap,
           takesHoldersAllowList: auth.takesHoldersAllowList,
           sourceId: auth.sourceId,
           ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),

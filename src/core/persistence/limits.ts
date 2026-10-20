@@ -1,6 +1,6 @@
-import { opError } from '../ops/contract.ts';
+import { opError, type OperationError } from '../ops/contract.ts';
 import { PAGE_BODY_CONFIG_KEYS, pageRecoveryBytes, segmentedPageCeiling } from '../page-body/limits.ts';
-import { DEFAULT_JOURNAL_LIMITS, type JournalLimits, type SqlEngine } from './model.ts';
+import { DEFAULT_JOURNAL_LIMITS, principalKey, type JournalLimits, type Principal, type SqlEngine } from './model.ts';
 import { COMPACTED_HEADROOM_BYTES, RECEIPT_RESERVATION_FLOOR } from './receipt-bytes.ts';
 
 /** Fallback compacted receipt size when no receipt is sampled; a compacted put_page measures about 3.9 KB. */
@@ -89,4 +89,77 @@ export async function oneYearCapacity(engine:SqlEngine,scope:string,setting:'Lif
   const measured=(value:number|null|undefined,fallback:number)=>Number.isFinite(Number(value)) && Number(value)>0 ? Number(value) : fallback;
   return setting==='LifetimeIds' ? recommendedLimit('lifetime_ids',used,limit,{perDay},retention)
     : recommendedLimit('terminal_bytes',used,limit,{perDay:perDay*measured(sample.gross,RECEIPT_RESERVATION_FLOOR),netPerDay:perDay*measured(sample.net,RETAINED_RECEIPT_BYTES)},retention);
+}
+
+/**
+ * Upload sessions (Wave B, spec 6.2): staged bytes and open sessions per principal and per brain, counted in
+ * persistence_counters under their own keys (`principal:<kind>:<id>:staged` and `brain:staged` in intent_bytes,
+ * `principal:<kind>:<id>:uploads` in outstanding_count), and the idle and hard lifetime of a session. Begin reserves a
+ * session's declared bytes; commit (in its publication), abort or expiry releases them. Database config
+ * (`persistence.limits.<snake_key>`) overrides each default.
+ */
+export interface UploadLimits {
+  principalStagedBytes: number; brainStagedBytes: number; principalUploads: number;
+  uploadIdleSeconds: number; uploadMaxSeconds: number;
+}
+export const DEFAULT_UPLOAD_LIMITS: Readonly<UploadLimits> = Object.freeze({
+  principalStagedBytes: 512 * 1024 ** 2, brainStagedBytes: 2 * 1024 ** 3, principalUploads: 4,
+  uploadIdleSeconds: 60 * 60, uploadMaxSeconds: 24 * 60 * 60,
+});
+const uploadLimitKey = (key: keyof UploadLimits) => `persistence.limits.${key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)}`;
+export const UPLOAD_CONFIG_KEYS: readonly string[] = (Object.keys(DEFAULT_UPLOAD_LIMITS) as Array<keyof UploadLimits>).map(uploadLimitKey);
+
+export async function readUploadLimits(engine: SqlEngine): Promise<UploadLimits> {
+  const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key,value FROM config WHERE key=ANY($1::text[])', [[...UPLOAD_CONFIG_KEYS]]);
+  const configured = new Map(rows.map(row => [row.key, row.value]));
+  const limits = { ...DEFAULT_UPLOAD_LIMITS };
+  for (const key of Object.keys(limits) as Array<keyof UploadLimits>) {
+    const value = configured.get(uploadLimitKey(key));
+    if (value !== undefined) limits[key] = parseJournalConfigValue(uploadLimitKey(key), value);
+  }
+  return limits;
+}
+
+export const BRAIN_STAGED_KEY = 'brain:staged';
+export function stagedCounterKeys(principal: Principal): { staged: string; uploads: string } {
+  return { staged: `${principalKey(principal)}:staged`, uploads: `${principalKey(principal)}:uploads` };
+}
+/** The upload-session counter keys, which carry no journal capacity (diagnostics.ts skips them). */
+export function isStagedCounterKey(key: string): boolean {
+  return key === BRAIN_STAGED_KEY || (key.startsWith('principal:') && (key.endsWith(':staged') || key.endsWith(':uploads')));
+}
+
+/**
+ * The CTE that deletes the parts and releases the reservations of the upload stagings a preceding CTE named `gone`
+ * (columns id, kind, principal_kind, principal_id, reserved_bytes) moved out of a live state, in the same statement so
+ * capacity is never free while its bytes remain; it locks the counter rows in key order as admission does. Constant
+ * SQL; the caller ends the statement.
+ */
+export const RELEASE_STAGED_CTE = `released_parts AS (DELETE FROM page_body_staging_parts p USING gone g WHERE p.staging_id = g.id AND g.kind = 'upload' RETURNING 1),
+  released_keys AS (
+    SELECT key, SUM(bytes)::bigint AS bytes, SUM(n)::bigint AS n FROM (
+      SELECT 'principal:'||principal_kind||':'||principal_id||':staged' AS key, reserved_bytes AS bytes, 0 AS n FROM gone WHERE kind='upload'
+      UNION ALL SELECT '${BRAIN_STAGED_KEY}', reserved_bytes, 0 FROM gone WHERE kind='upload'
+      UNION ALL SELECT 'principal:'||principal_kind||':'||principal_id||':uploads', 0, 1 FROM gone WHERE kind='upload') r GROUP BY key),
+  released_locked AS (SELECT c.key FROM persistence_counters c WHERE c.key IN (SELECT key FROM released_keys) ORDER BY c.key COLLATE "C" FOR UPDATE),
+  released AS (UPDATE persistence_counters c SET intent_bytes=c.intent_bytes-LEAST(d.bytes,c.intent_bytes),
+      outstanding_count=c.outstanding_count-LEAST(d.n,c.outstanding_count)
+    FROM released_keys d JOIN released_locked l ON l.key=d.key WHERE c.key=d.key RETURNING c.key)`;
+
+/**
+ * `write_quota_exhausted` for an upload-session cap: staged bytes or open sessions. `used` is null for the brain-wide
+ * cap, whose usage counts other principals' uploads and is never reported. Committing, aborting or letting a
+ * session expire frees it; the host can raise the cap (reversible).
+ */
+export function stagedQuotaExhausted(resource: string, setting: keyof UploadLimits, used: number | null, limit: number, need: number,
+  reason: 'staged_bytes' | 'open_uploads'): OperationError {
+  const key = uploadLimitKey(setting);
+  const value = Math.max(limit * 2, (used ?? 0) + need);
+  const usage = used === null ? `limit ${limit}` : `${used} used of ${limit}`;
+  return opError('write_quota_exhausted', `Upload capacity exhausted: ${resource} (${usage}, this upload needs ${need}).`,
+    `Commit or abort your open uploads (abort_page_upload), or let them expire, then begin again with the same request_id. `
+    + `The brain host can raise the cap: gbrain config set ${key} ${value} (undo with gbrain config unset ${key}).`,
+    { reason, detail: key.slice('persistence.limits.'.length), docs: 'docs/guides/write-refusals.md#write_quota_exhausted',
+      fix: { argv: ['gbrain', 'config', 'set', key, String(value)], consent: [], actor: 'host_admin', requires_exclusive: false,
+        why: 'Open upload sessions hold their declared bytes until they commit, abort or expire; a larger cap admits more at once and is reversible.' } });
 }

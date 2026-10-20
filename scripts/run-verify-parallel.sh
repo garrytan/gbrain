@@ -212,6 +212,11 @@ CHECKS=(
   # --hard or a bare/force push for a shared brain checkout (~0.5s).
   "check:shared-tree-git"
   "check:schema-migration-order"
+  # A since: 'TBD' BEHAVIOR_CHANGES row never ships: refused on a stamped tree
+  # (VERSION has a CHANGELOG header and differs from origin/master's) and on master.
+  "check:behavior-since"
+  # CHANGELOG.md keeps every release heading origin/master has (a cut file is refused).
+  "check:changelog-headings"
   "check:structural-manifest"
   # Every generated artifact's freshness in one place (GBRA-47 B8); its Fix
   # line is `bun run regen:all`, the same code path that regenerates them.

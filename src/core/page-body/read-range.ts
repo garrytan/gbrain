@@ -366,6 +366,18 @@ export function projectedUnits(body: SegmentedBody, layout: ProjectedLayout): Un
   return out;
 }
 
+/**
+ * Whether text the read projection hides or rewrites starts before `end` (read-view bytes, or stored bytes): a row whose
+ * projection is not its stored bytes or that holds facts, the low-tier block, or (stored) a timeline the view omits.
+ * Stored offsets past such text would measure it for a remote caller (get_page edit_target, edit_page `within`).
+ */
+export async function hiddenBefore(engine: BrainEngine, body: SegmentedBody, end: number, space: 'projected' | 'stored'): Promise<boolean> {
+  const layout = await projectedLayout(engine, body);
+  if (space === 'stored' && layout.timelineByte < 0 && body.bodyBytes > body.truthBytes && end > body.truthBytes) return true;
+  return projectedUnits(body, layout).some(u => (space === 'projected' ? u.start : u.kind === 'row' ? body.rows[u.index]!.byteStart : u.storedStart) < end
+    && (u.kind === 'text' ? u.text !== TIMELINE_SEPARATOR : layout.rowBytes[u.index] !== body.rows[u.index]!.byteLen || body.rows[u.index]!.hasFacts));
+}
+
 const unitBytes = (u: Unit, layout: ProjectedLayout) => u.kind === 'row' ? layout.rowBytes[u.index]! : Buffer.byteLength(u.text, 'utf8');
 
 /** One segment of the trusted body: its row, its stored bytes and entry state, and its text after the withdrawal overlay in pieces. */

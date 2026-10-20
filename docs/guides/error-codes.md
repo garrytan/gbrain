@@ -2763,6 +2763,22 @@ More: [docs/guides/windowed-reads.md#page_too_large_for_inline](../../docs/guide
 |---|---|---|---|---|---|---|
 | A file whose exact bytes imported before is now refused by gbrain's frontmatter reader. | The same bytes imported under an earlier gbrain version, so only gbrain changed; such a file is held and the rest of the sync continues (`GBRAIN_SYNC_PARSER_REGRESSION=stop` for the process that syncs stops the run instead). | Report it as a gbrain bug with the gbrain version, the file and the code; upgrade or pin the last good version, then sync again. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### part_splits_code_point
+
+<a id="part_splits_code_point"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An upload part starts or ends inside a code point (half of a surrogate pair), so it was not stored. | Each part is stored as raw UTF-8 bytes; half of a surrogate pair has no UTF-8 encoding, so a part cut there would corrupt the character. | Move the cut before the high surrogate so the pair travels in one part, then send the part again. | agent | `repeat the read that failed` | 1 | no |
+
+### part_too_large
+
+<a id="part_too_large"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An upload part's encoded frame is over the connection's part limit (part_max_frame_bytes), so it was not stored. | part_max_frame_bytes is the connection's inbound request cap (at most 4 MiB) minus a 4 KiB envelope; JSON escaping makes quotes, backslashes and control characters count more than once. | Cut the part so the whole call stays within part_max_frame_bytes, then send it again with the same part number. | agent | `repeat the read that failed` | 1 | no |
+
 ### pasted_wrong_url
 
 <a id="pasted_wrong_url"></a>
@@ -3951,6 +3967,14 @@ Reasons: `content_directory`.
 |---|---|---|---|---|---|---|
 | Sync stopped because gbrain would hold a file whose exact bytes imported before; this is a gbrain bug. | The upgrade invariant says a newer reader never refuses bytes an older one imported; with `GBRAIN_SYNC_PARSER_REGRESSION=stop` set for the process that syncs (the default holds the file), the run stops without advancing rather than hide a regression. | Report it with the gbrain version, the file and the code; upgrade or pin the last good version, then run gbrain sync --source <id> --no-pull. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### tail_changed
+
+<a id="tail_changed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The end of the page no longer has the sha256 the append expected, so nothing was appended. | append_page's expected_tail_sha256 binds an append to the tail its caller read; another write changed it, and appending anyway could interleave text with a tail the caller never saw. | Read the page again (get_page body: 'none' returns tail_sha256), check whether the text is still missing, and append against the current tail with a new request_id. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+
 ### tail_exposure_approval
 
 <a id="tail_exposure_approval"></a>
@@ -4203,6 +4227,42 @@ Reasons: `not_utf8`, `control_character`.
 
 More: [docs/guides/write-refusals.md#unsupported_path](../../docs/guides/write-refusals.md#unsupported_path)
 
+### upload_expired
+
+<a id="upload_expired"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The upload session passed its idle or hard deadline before it was committed, so its parts were discarded and nothing was written. | Open sessions hold staged bytes against per-connection and per-brain quotas; persistence.limits.upload_idle_seconds (1 h) and upload_max_seconds (24 h) bound how long they may. | Begin the upload again with a new request_id and send every part from part 0. | agent | `repeat the read that failed` | 1 | no |
+
+### upload_not_found
+
+<a id="upload_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No open upload session matches this upload_id for this connection. | A session answers only its creating connection, in its source, while the page it began against is unchanged; every other case gets this same answer so an upload_id reveals nothing. | Begin a new upload with begin_page_upload and a new request_id. | agent | `repeat the read that failed` | 1 | no |
+
+### upload_protected_content
+
+<a id="upload_protected_content"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote replace upload over 24 MiB was refused because the page holds content it cannot carry over: a takes fence or facts rows remote reads hide, or timeline rows. | put_page keeps a hidden takes fence and hidden facts rows and checks omitted timeline rows by comparing whole bodies; an upload over the single-string ceiling is never held whole, so it refuses instead of dropping them. | Replace the page with content of at most 24 MiB through put_page, write it locally on the brain host, or (timeline only) commit with drop_timeline: true when deleting every entry is intended. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `takes`, `facts`, `timeline`.
+
+### upload_too_many_parts
+
+<a id="upload_too_many_parts"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An upload part was refused because the session reached its part limit (64 plus one per 64 KiB of total_bytes) without completing the content. | Each part is a stored row; the limit keeps a session of tiny parts from growing without bound, and a client cutting parts near part_max_frame_bytes never reaches it. | Send the rest of the content in that part (within part_max_frame_bytes), or abort and begin again cutting parts near part_max_frame_bytes. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#upload_too_many_parts](../../docs/guides/write-refusals.md#upload_too_many_parts)
+
 ### upstream
 
 <a id="upstream"></a>
@@ -4375,9 +4435,9 @@ More: [docs/guides/write-refusals.md#write_outcome_unknown](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A cumulative write cap (permanent request ids or reserved receipt bytes, for the principal or the brain) is full, so the write was not admitted and nothing changed. | Request ids are permanent replay protection and a receipt keeps its bytes until it compacts, so waiting does not free the cap; the brain host raises it with gbrain config set (reversible). | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. Run: gbrain doctor --only persistence_capacity --json | agent | `gbrain doctor --only persistence_capacity --json` | 12 | no |
+| A write cap (permanent request ids, reserved receipt bytes, staged upload bytes or open upload sessions, for the principal or the brain) is full, so the write was not admitted and nothing changed. | Request ids are permanent replay protection and a receipt keeps its bytes until it compacts, so waiting does not free the cap; the brain host raises it with gbrain config set (reversible). | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. Run: gbrain doctor --only persistence_capacity --json | agent | `gbrain doctor --only persistence_capacity --json` | 12 | no |
 
-Reasons: `lifetime_ids`, `terminal_bytes`.
+Reasons: `lifetime_ids`, `terminal_bytes`, `staged_bytes`, `open_uploads`.
 
 More: [docs/guides/write-refusals.md#write_quota_exhausted](../../docs/guides/write-refusals.md#write_quota_exhausted)
 

@@ -87,7 +87,7 @@ function syncMember(row: WriteRequest): boolean {
 }
 
 /** Single page writes that may publish as a group of one (Phase 4.1); owner-internal kinds keep the single path. */
-const SINGLE_GROUP_OPERATIONS = new Set(['put_page', 'capture', 'edit_page', 'delete_page', 'restore_page', 'revert_version']);
+const SINGLE_GROUP_OPERATIONS = new Set(['put_page', 'capture', 'edit_page', 'append_page', 'delete_page', 'restore_page', 'revert_version']);
 export function singleWrite(row: Pick<WriteRequest, 'operation' | 'intent'>): boolean {
   return SINGLE_GROUP_OPERATIONS.has(row.operation) && !row.intent?.kind && publicationGroupKey(row) === null;
 }

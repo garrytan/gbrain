@@ -30,7 +30,7 @@
  *   - --json: structured response for agents.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { readStdinPayload } from '../core/stdin-read.ts';
 import { resolve } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
@@ -59,6 +59,7 @@ import { currentCliWriteWait } from '../core/persistence/write-wait.ts';
 import { maybeDelegateLocalOperation } from '../core/persistence/local-client.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
+import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
 
 export { detectBinaryNullByte, normalizeForHash, mergeCaptureFrontmatter } from '../core/capture-content.ts';
 
@@ -324,6 +325,18 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
     inputLabel = 'stdin';
   } else if (parsed.filePath) {
     inputLabel = parsed.filePath;
+    // Wave B: a trusted local file over the page ceiling streams (src/cli/commands/append.ts streamLocalCapture).
+    if (!isThinClient(cfg) && (statSync(parsed.filePath, { throwIfNoEntry: false })?.size ?? 0) > PAGE_MAX_BYTES) {
+      try {
+        const streamed = await (await import('../cli/commands/append.ts')).streamLocalCapture(parsed.filePath, parsed, async () => engine ??= await options.getEngine!());
+        if (streamed) return printReceipt({ ...streamed, written: false, source_kind: 'capture-cli', captured_at: new Date().toISOString() }, parsed.quiet ?? false, parsed.json ?? false);
+      } catch (error) {
+        if (await reportPersistenceCliError(error, parsed.json ?? false)) return;
+        console.error(`gbrain capture: ${error instanceof Error ? error.message : String(error)}`);
+        const { setCliExitVerdict } = await import('../core/cli-force-exit.ts');
+        return setCliExitVerdict(1);
+      }
+    }
     try {
       // No encoding => returns Buffer; binary guard sees raw bytes.
       rawBuffer = readFileSync(parsed.filePath);
@@ -401,7 +414,11 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
     requestId = precondition.request_id ?? randomUUID();
     const params = captureParams(parsed, rawBody, { ...precondition, request_id: requestId }, isThinClient(cfg));
     let result: Record<string, unknown>;
-    if (isThinClient(cfg)) {
+    // Wave B: a file larger than one request goes through an upload session (src/cli/commands/append.ts).
+    const upload = parsed.filePath ? await import('../cli/commands/append.ts') : null;
+    if (upload?.captureNeedsUpload(params, isThinClient(cfg))) {
+      result = await upload.uploadCapture(rawBody, parsed, requestId, async () => engine ??= await options.getEngine!());
+    } else if (isThinClient(cfg)) {
       const raw = await callRemoteTool(cfg!, 'capture', params, { timeoutMs: getCliOptions().timeoutMs ?? 30_000, writeWaitMs: currentCliWriteWait().waitMs });
       result = unpackToolResult<Record<string, unknown>>(raw);
     } else {

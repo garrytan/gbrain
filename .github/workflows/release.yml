@@ -88,9 +88,13 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             scripts
+            src/core/behavior-change-notice.ts
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.4.3
+      # A since: 'TBD' BEHAVIOR_CHANGES row never ships (scripts/check-behavior-since.ts).
+      - name: Refuse a since 'TBD' BEHAVIOR_CHANGES row
+        run: bun scripts/check-behavior-since.ts --stamped
       - id: gate
         name: Wait for Test and E2E Tests on the release commit
         env:

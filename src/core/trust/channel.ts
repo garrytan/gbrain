@@ -31,7 +31,7 @@ import {
 
 /** Journaled verbs an agent (remote or local) calls directly; their rows are agent_written unless lowered. */
 export const AGENT_WRITE_OPERATIONS: readonly string[] = [
-  'put_page', 'put_pages', 'capture', 'edit_page', 'delete_page', 'restore_page', 'revert_version', 'remember',
+  'put_page', 'put_pages', 'capture', 'edit_page', 'append_page', 'delete_page', 'restore_page', 'revert_version', 'remember',
   'add_tag', 'remove_tag', 'add_timeline_entry', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve',
   'takes_remove', 'loops_close', 'relink_facts', 'decide_proposal',
 ];

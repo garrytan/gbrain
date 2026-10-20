@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { DEFAULT_MAX_REQUEST_BODY_SIZE } from '@modelcontextprotocol/sdk/server/requestBody.js';
 import { ListToolsRequestSchema, CallToolRequestSchema, type CallToolRequest } from '@modelcontextprotocol/sdk/types.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { opAllowedForBoundClient } from '../core/operations.ts';
@@ -402,6 +403,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
       // WP1/D7: network transport — the dispatch-layer localOnly
       // backstop keys off this marker.
       transport: 'http',
+      inboundFrameBytes: DEFAULT_MAX_REQUEST_BODY_SIZE,
       ...(sessionId ? { sessionId } : {}),
       takesHoldersAllowList: tokenAllowList,
       sourceId: tokenSourceId,

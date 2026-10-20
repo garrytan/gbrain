@@ -48,6 +48,7 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   QUARANTINE_FILTER_FRAGMENT: 'src/core/quarantine.ts: constant quarantine visibility predicate over the pages alias p',
   PAGE_SORT_SQL: 'src/core/types.ts: ORDER BY text keyed by the PageFilters sort union (whitelisted enum)',
   TEMPORAL_LINK_SELECT_SQL: 'src/core/link-validity.ts: constant select list over the lr_t relationship-state join',
+  RELEASE_STAGED_CTE: 'src/core/persistence/limits.ts: constant CTE releasing upload reservations of a preceding gone CTE (no input)',
 };
 
 const VETTED_BUILDERS: Record<string, string> = {

@@ -205,7 +205,10 @@ and the commit it would make, and changes nothing.
    required row of the CLAUDE.md "Version locations" table: VERSION,
    `package.json`, the three plugin manifests, the BOOTSTRAP runbook stamp,
    the CHANGELOG entry (re-stamped on top of master's entries with today's
-   date), and branch-added TODOS lines naming the old version.
+   date), branch-added TODOS lines naming the old version, and every
+   `since: 'TBD'` row in `src/core/behavior-change-notice.ts` (development
+   branches write their BEHAVIOR_CHANGES rows as TBD; the stamp gives them the
+   new version, and a restamp moves the branch's own rows from the old version).
 5. Renumbers the branch's own schema migrations (files `origin/master` does
    not have) consecutively from master's latest + 1, in their original order.
    It changes only the filename, the `export const v<NNN>` name and the
@@ -223,7 +226,9 @@ and the commit it would make, and changes nothing.
    line (an edited line is not listed again), or pass `--accept-references`
    with `--continue` when a line means the published migration.
 8. Runs the drift checks (version stamps and CHANGELOG agree, bootstrap
-   stamp, plugin tree, template repo, migration registry and order), commits
+   stamp, plugin tree, template repo, migration registry and order, no
+   `since: 'TBD'` row left: `bun scripts/check-behavior-since.ts --stamped`, and every
+   master release heading still in CHANGELOG.md: `bun scripts/check-changelog-headings.ts`), commits
    once as `v<new> chore(release): restamp onto master v<master>`, and prints
    the old-to-new migration mapping with the collision-recovery steps, the
    golden-regeneration reason for the PR body, the PR title and

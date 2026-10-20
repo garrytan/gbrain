@@ -46,6 +46,7 @@ import { isUnboundSourcePage } from './unbound-source.ts';
 import { isOriginTwinPage } from './origin-twins.ts';
 import { sealImportedPage, sealPageTextProjection } from '../page-state/projections.ts';
 import { materializedSnapshot, sealSegmentedPage } from './segmented-apply.ts';
+import { isStagingBodyRef, prepareStagedUpload } from './page-upload.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
 import { segmentedRevertRefusal } from '../page-state/versions.ts';
@@ -75,7 +76,7 @@ import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { DERIVE_PHASE_DB_ONLY_DEFAULTS } from '../storage-config.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { readSlugRootMode } from '../sync-anchor.ts';
-import { applyPageEdits, editDiff, parsePageEdits } from './page-edit.ts';
+import { applyPageEdits, editDiff, parseEditWithin, parsePageEdits, prepareSegmentedEditMutation } from './page-edit.ts';
 import { carryCoreMarking, prepareCoreGuard } from './core-guard.ts';
 import { fenceWhere } from '../fence-repair/refusal.ts';
 import { pageFencesNormalized } from '../fence-repair/report.ts';
@@ -94,7 +95,7 @@ import { bindOrigin } from './origin-guard.ts';
 
 const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner with its pending, failed and recovering requests, read-only.`,
   { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
-const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page ${slug} in source ${sourceId} as it is now, with its revision.`,
+export const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page ${slug} in source ${sourceId} as it is now, with its revision.`,
   { argv: ['gbrain', 'get', '--source', sourceId, '--', slug], mcp: { tool: 'get_page', arguments: { slug, source_id: sourceId } } });
 
 /**
@@ -102,7 +103,7 @@ const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page 
  * suggestion stands alone: the cause and next step, then the request to
  * inspect before anything is resubmitted.
  */
-function pageRefusal(code: RegistryCode, message: string, row: WriteRequest, cause: string, fix?: Action): OperationError {
+export function pageRefusal(code: RegistryCode, message: string, row: WriteRequest, cause: string, fix?: Action): OperationError {
   return opError(code, message,
     `${cause} Request ${row.request_id} in source ${row.source_id} was refused; inspect it before resubmitting, and use a new request_id for any corrected write.`,
     { fix: fix ?? (row.principal_kind === 'local_cli'
@@ -208,7 +209,7 @@ function importedFileType(parsed: ParsedMarkdown, page: Pick<Page, 'type' | 'fro
   return parsed.type;
 }
 /** The withdrawal ledger readPageSnapshot overlaid the snapshot's body with, for a segmented body read under it. */
-function snapshotLedger(snapshot: PageSnapshot): BodyLedger {
+export function snapshotLedger(snapshot: PageSnapshot): BodyLedger {
   return { withdrawals: snapshot.withdrawals, ...(snapshot.globalPurges ? { globalPurges: snapshot.globalPurges } : {}) };
 }
 /**
@@ -407,7 +408,7 @@ async function heldFileRefusal(engine: BrainEngine, row: Pick<WriteRequest, 'sou
 export function databaseOnlyPublication(row: Pick<WriteRequest, 'worktree_id'>, file: PreparedMutation['file']): Pick<PreparedMutation, 'databaseOnlyReason'> {
   return row.worktree_id && !file ? { databaseOnlyReason: 'db_only' } : {};
 }
-async function pageDatabaseOnlyPublication(engine: SqlEngine, row: WriteRequest, file: PreparedMutation['file']): Promise<Pick<PreparedMutation, 'databaseOnlyReason'>> {
+export async function pageDatabaseOnlyPublication(engine: SqlEngine, row: WriteRequest, file: PreparedMutation['file']): Promise<Pick<PreparedMutation, 'databaseOnlyReason'>> {
   const reason = databaseOnlyPublication(row, file);
   if (reason.databaseOnlyReason && (await sourceMirrorReadOnly(engine, row.source_id) || await isMirrorOnlyPage(engine, row.source_id, row.slug))) {
     return { databaseOnlyReason: 'mirror_read_only' };
@@ -651,6 +652,17 @@ async function segmentedContentHash(engine: BrainEngine, snapshot: PageSnapshot,
 export async function preparePageMutation(unbounded: BrainEngine, row: WriteRequest, _config: GBrainConfig,
   preparedIntent?: { content: string; expectedRevision: string; tags?: string[] }, signal?: AbortSignal,
   options: { allowMissingFile?: boolean; coordinated?: boolean; clock?: ClaimPhaseClock } = {}): Promise<PreparedMutation> {
+  // Wave B (spec 6.2): a committed upload session prepares the put_page its staged parts hold.
+  if (row.operation === 'put_page' && isStagingBodyRef(row.intent?.body_ref)) {
+    signal?.throwIfAborted();
+    return prepareStagedUpload(unbounded, row, staged => preparePageMutation(unbounded, staged, _config, preparedIntent, signal, options));
+  }
+  return prepareInlineOrSegmentedMutation(unbounded, row, _config, preparedIntent, signal, options);
+}
+
+async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: WriteRequest, _config: Parameters<typeof preparePageMutation>[2],
+  preparedIntent: Parameters<typeof preparePageMutation>[3], signal: AbortSignal | undefined,
+  options: NonNullable<Parameters<typeof preparePageMutation>[5]>): Promise<PreparedMutation> {
   signal?.throwIfAborted();
   const clock = options.clock;
   const engine = boundedReads(unbounded, clock);
@@ -666,6 +678,10 @@ export async function preparePageMutation(unbounded: BrainEngine, row: WriteRequ
     () => engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true }),
     () => loadActivePackForEngine(engine, { remote: row.authority.remote, sourceId: row.source_id }).catch(() => null),
   ]) as [unknown, PageSnapshot | null, Awaited<ReturnType<typeof loadActivePackForEngine>> | null];
+  // Wave B (spec 6.3): edit_page on a segmented page splices the touched segments; a declined edit takes the string path.
+  const segmented = row.operation === 'edit_page' && stored && !stored.page.deleted_at && isSegmentedPage(stored.page) && stored.page.id === row.page_id
+    ? await prepareSegmentedEditMutation(engine, row, stored) : null;
+  if (segmented) return segmented;
   // Wave B: a segmented page within the single-string ceiling is compared and merged as strings.
   const snapshot = await materializedSnapshot(unbounded, stored);
   signal?.throwIfAborted();
@@ -954,5 +970,5 @@ function editLockedPage(row: WriteRequest, snapshot: PageSnapshot | null) {
   if (!snapshot || snapshot.page.deleted_at) throw pageRefusal('page_not_found', 'Page not found.', row,
     `Page ${row.slug} does not exist in source ${row.source_id} or is deleted, so the edit changed nothing. If it is soft-deleted, restore it with restore_page; otherwise write it whole with put_page.`,
     pageFix(row.source_id, row.slug));
-  return applyPageEdits(snapshot.page, snapshot.tags, row.authority.remote, parsePageEdits(row.intent?.edits));
+  return applyPageEdits(snapshot.page, snapshot.tags, row.authority.remote, parsePageEdits(row.intent?.edits), parseEditWithin(row.intent?.within));
 }

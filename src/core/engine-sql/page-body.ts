@@ -35,6 +35,7 @@ import type { LegacyUnscopedRead } from './brands.ts';
 import { joinFragments, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { compileRowNormalizer } from './normalize.ts';
 import { stagingNeedsTextSql } from '../page-body/schema.ts';
+import { RELEASE_STAGED_CTE } from '../persistence/limits.ts';
 
 export const LIVE_STAGING_STATES = ['open', 'sealed', 'prepared'];
 const TERMINAL_STAGING_STATES = ['committed', 'aborted', 'expired'];
@@ -387,7 +388,8 @@ export async function setBodyStagingState(exec: SqlExecutor, id: string, state: 
  * rest. Rows of retired occurrences are deleted by the flip or, deferred, by
  * the projection job; until then no reader sees them. With
  * `expireStagings`, stagings past a deadline (and not request-held) become
- * `expired`, every non-live staging loses its parts, and terminal stagings
+ * `expired` (an upload session's reserved bytes released in the same
+ * statement, limits.ts RELEASE_STAGED_CTE), every non-live staging loses its parts, and terminal stagings
  * (committed, aborted, expired) are deleted once BODY_STAGING_HARD_MS has
  * passed since their last change: until then a replayed begin or commit finds
  * its row and an expired upload answers `upload_expired`. Staged rows of
@@ -405,11 +407,14 @@ export async function sweepSegments(exec: SqlExecutor, opts: SegmentSweepOptions
       opts.pageId !== undefined ? sqlFragment`s.page_id = ${opts.pageId}::int` : sqlFragment`TRUE`,
       opts.sourceId !== undefined ? sqlFragment`s.source_id = ${opts.sourceId}` : sqlFragment`TRUE`,
     ], ' AND ');
-    const { affectedRows } = await exec.run(sqlFragment`UPDATE page_body_stagings s SET state = 'expired', updated_at = ${now}
-      WHERE s.state = ANY(${LIVE_STAGING_STATES}::text[]) AND (s.idle_expires_at <= ${now} OR s.hard_expires_at <= ${now}) AND ${stagingScope}
+    const { rows: expired } = await exec.run<{ n: number }>(sqlFragment`WITH gone AS (UPDATE page_body_stagings s SET state = 'expired', updated_at = ${now}
+      WHERE s.state = ANY(${LIVE_STAGING_STATES}::text[]) AND ${stagingScope}
+        AND (s.hard_expires_at <= ${now} OR s.idle_expires_at <= ${now} AND (s.kind <> 'upload' OR s.state = 'open'))
         AND NOT EXISTS (SELECT 1 FROM persistence_requests r WHERE r.state = ANY(${NON_TERMINAL_REQUEST_STATES}::text[])
-                         AND r.intent->'body_ref'->>'staging_id' = s.id::text)`);
-    stagingsExpired = affectedRows;
+                         AND r.intent->'body_ref'->>'staging_id' = s.id::text)
+      RETURNING s.id, s.kind, s.principal_kind, s.principal_id, s.reserved_bytes), ${trustedSql(RELEASE_STAGED_CTE)}
+      SELECT count(*)::int AS n FROM gone`);
+    stagingsExpired = Number(expired[0]?.n ?? 0);
     await exec.run(sqlFragment`DELETE FROM page_body_staging_parts p USING page_body_stagings s
       WHERE p.staging_id = s.id AND ${stagingScope} AND s.id::text NOT IN ${liveStagingIds}`);
     await exec.run(sqlFragment`DELETE FROM page_body_stagings s

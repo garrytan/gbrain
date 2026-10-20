@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
-import { journalLimitKey, readJournalLimits } from './limits.ts';
+import { isStagedCounterKey, journalLimitKey, readJournalLimits } from './limits.ts';
 import type { JournalLimits } from './model.ts';
 import { publicationConcurrency } from './pool-capacity.ts';
 import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
@@ -119,7 +119,7 @@ function claimPool(engine: BrainEngine, claim: ClaimState, row: ListedConsumer |
 interface Counter { key: string; outstanding_count: string | number; intent_bytes: string | number;
   lifetime_ids: string | number; terminal_bytes: string | number; recovery_bytes: string | number; }
 export function capacityDiagnostics(counters: Counter[], limits: JournalLimits) {
-  return counters.flatMap(counter => {
+  return counters.filter(counter => !isStagedCounterKey(counter.key)).flatMap(counter => {
     const scope = counter.key === 'brain' ? 'brain' : counter.key.startsWith('worktree:') ? 'worktree' : 'principal';
     const resources: Array<readonly [keyof Counter, keyof JournalLimits]> = scope === 'worktree'
       ? [['recovery_bytes', 'worktreeRecoveryBytes']]

@@ -31,7 +31,7 @@ import { OWNER_TIER_FLOOR, compareTrust, effectiveWriteTrust, minTrust, storedTr
 const FENCE_EDIT_OPERATIONS = ['remember', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve', 'takes_remove',
   'decide_proposal', 'loops_close', 'relink_facts', 'add_timeline_entry'];
 /** Page writes whose caller supplies the page content: they stamp the marker and can lower the page (CEO-12). */
-const CONTENT_OPERATIONS = ['put_page', 'capture', 'edit_page', 'revert_version', 'restore_page'];
+const CONTENT_OPERATIONS = ['put_page', 'capture', 'edit_page', 'append_page', 'revert_version', 'restore_page'];
 
 export function isFenceEditWrite(row: Pick<WriteRequest, 'operation' | 'intent'>): boolean {
   return FENCE_EDIT_OPERATIONS.includes(row.operation) || row.intent?.kind === 'managed_facts_entity';

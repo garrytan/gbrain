@@ -462,6 +462,12 @@ export interface OperationContext {
    */
   transport?: 'stdio' | 'http';
   /**
+   * Largest request frame this connection reads, in bytes, set by the transport that built the context (legacy HTTP:
+   * GBRAIN_HTTP_MAX_BODY_BYTES; OAuth /mcp: the SDK's 4 MiB; stdio: its message buffer). Sizes upload parts
+   * (persistence/page-upload.ts partMaxFrameBytes); never a trust input.
+   */
+  inboundFrameBytes?: number;
+  /**
    * WP2/D3: response-meta side channel. Handlers that compute out-of-band
    * result metadata (retrieval degradation, strict-mode warnings) publish it
    * here under a namespaced top-level key; the MCP dispatch layer merges the

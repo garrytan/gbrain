@@ -8,6 +8,8 @@ export const SEMANTIC_PAGE_OPERATIONS: ReadonlySet<string> = new Set([
  * recomputable as the mid-preparation `revision_conflict`; a stale supplied revision is neither.
  */
 export function mayReprepare(row: WriteRequest, error: { code?: string }): boolean {
+  // An append moved under by another write prepares again against the new tail; its own preconditions decide there.
+  if (row.operation === 'append_page') return error.code === 'revision_conflict';
   return (error.code === 'revision_conflict' || error.code === 'revision_required') && row.intent?.expected_revision === undefined
     && (SEMANTIC_PAGE_OPERATIONS.has(row.operation) || row.intent?.force === true);
 }

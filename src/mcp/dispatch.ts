@@ -178,6 +178,8 @@ export interface DispatchOpts {
    * 'http', and an unset marker is treated as non-local, fail-closed.
    */
   transport?: OperationContext['transport'];
+  /** The transport's inbound frame cap (OperationContext.inboundFrameBytes). */
+  inboundFrameBytes?: number;
   /**
    * v0.28: per-token allow-list for the takes.holder field. Threaded by
    * the HTTP/stdio transport from `access_tokens.permissions.takes_holders`.
@@ -834,6 +836,7 @@ export function buildOperationContext(
     dryRun: !!params.dry_run,
     remote: opts.remote ?? true,
     transport: opts.transport,
+    ...(opts.inboundFrameBytes !== undefined ? { inboundFrameBytes: opts.inboundFrameBytes } : {}),
     takesHoldersAllowList: opts.takesHoldersAllowList,
     // v0.34 D4: sourceId is REQUIRED at the type level. Auto-fill 'default'
     // for single-source brains and any caller who didn't resolve a sourceId.

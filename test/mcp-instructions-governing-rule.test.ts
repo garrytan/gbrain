@@ -24,7 +24,7 @@ const KEEP = 'drafts, proposals and agent-written notes do not override records'
 const OLD = 'For what is true now, prefer the newest governing source';
 const HARNESS_READ_LIMIT = 2_048;
 /** [start, end) of the governing sentence per surface, default rendering. */
-const RECORDED_OFFSETS: Record<string, [number, number] | null> = { verbs: null, starter: [1_553, 1_829], full: [1_704, 1_980] };
+const RECORDED_OFFSETS: Record<string, [number, number] | null> = { verbs: null, starter: [1_553, 1_829], full: [1_705, 1_981] };
 
 const render = (surface: typeof SURFACES[number], opts: Parameters<typeof buildMcpInstructions>[0] = {}) => {
   const listed = new Set(filterOpsForSurface(operations, surface).map(o => o.name));
