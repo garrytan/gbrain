@@ -2203,7 +2203,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability",
+            "message": "Subagent tier resolves to default (anthropic:claude-sonnet-5-5) — full tool-loop capability",
             "name": "subagent_capability",
             "status": "ok"
           },
@@ -6554,7 +6554,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability",
+            "message": "Subagent tier resolves to default (anthropic:claude-sonnet-5-5) — full tool-loop capability",
             "name": "subagent_capability",
             "status": "ok"
           },

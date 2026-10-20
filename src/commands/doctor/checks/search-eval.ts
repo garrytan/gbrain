@@ -10,6 +10,7 @@ import type { Check } from '../../doctor.ts';
 // isn't imported from extract-conversation-facts.ts directly (#4135).
 import { ALLOWED_TYPES, conversationFactsEligibleSql, pageTypesForAllowed, isConversationFactsEligiblePage, requireParseableConversationFlag } from '../../../core/facts/conversation-types.ts';
 import { checkError } from '../check-fix.ts';
+import { TIER_DEFAULTS } from '../../../core/model-config.ts';
 
 /**
  * v0.32.3 [CDX-20]: surface mode + per-key override drift.
@@ -355,7 +356,7 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
       status: 'ok',
       message: resolvedModel && resolvedSource
         ? `Subagent model resolves via ${resolvedSource} to "${resolvedModel}" with full tool-loop capability`
-        : `Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability`,
+        : `Subagent tier resolves to default (${TIER_DEFAULTS.subagent}) — full tool-loop capability`,
     };
   } catch (e) {
     return checkError('subagent_capability', 'check subagent capability', e);

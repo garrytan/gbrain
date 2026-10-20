@@ -1274,6 +1274,8 @@ describe('E2E synthesize — oneshot mode (#4216, DEFAULT)', () => {
       await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
       await rig.engine.setConfig('dream.synthesize.mode', 'agentic');
       await rig.engine.setConfig('agent.use_gateway_loop', 'true');
+      // Agentic mode projects max_turns x the child output cap, above the default $5 cap.
+      await rig.engine.setConfig('dream.synthesize.budget_usd', 'unlimited');
       const content = 'User: agentic-dial conversation\n'.repeat(120);
       const filePath = join(rig.corpusDir, '2026-08-16-agentic-dial.txt');
       writeFileSync(filePath, content);

@@ -15,9 +15,10 @@ beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); a
 afterAll(async () => { await engine.disconnect(); resetGateway(); });
 
 describe('temporal edges upgrade notice', () => {
-  test('a certified default model announces apply mode and how to undo; an explicit propose says so; printed once', async () => {
+  test('a certified model announces apply mode and how to undo; an explicit propose says so; printed once', async () => {
     await withEnv({ ANTHROPIC_API_KEY: 'sk-ant-test-placeholder' }, async () => {
       resetGateway();
+      await engine.setConfig('models.dream.edge_contradictions', 'anthropic:claude-sonnet-5-5');
       const apply = (await temporalEdgesUpgradeNotice(engine))!.join('\n');
       expect(apply).toContain('certified for apply mode');
       expect(apply).toContain('gbrain edge-proposals undo');

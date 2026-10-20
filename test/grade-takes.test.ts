@@ -302,8 +302,8 @@ describe('runPhaseGradeTakes — phase integration', () => {
 
   test('cache hit: (take, prompt, judge, evidence_sig) match → skip', async () => {
     const takes = [buildTake({ id: 1, sinceDate: '2023-01-01' })];
-    const sig = evidenceSignature('mock evidence body', 'claude-sonnet-4-6');
-    const cached = new Set([`1|${GRADE_TAKES_PROMPT_VERSION}|claude-sonnet-4-6|${sig}`]);
+    const sig = evidenceSignature('mock evidence body', 'claude-sonnet-5-5');
+    const cached = new Set([`1|${GRADE_TAKES_PROMPT_VERSION}|claude-sonnet-5-5|${sig}`]);
     const { engine } = buildMockEngine({ takes, cachedGrades: cached });
     let judgeCalls = 0;
     const judge: JudgeFn = async () => {

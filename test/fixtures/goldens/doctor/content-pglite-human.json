@@ -158,7 +158,7 @@
       "  [OK] effective_date_health: Sample of last 1000 pages clean (no fallback-with-parseable-fm-date, no future-dated, no pre-1990)",
       "  [OK] salience_health: Skipped (no pages have emotional_weight > 0; either fresh install or recompute hasn't run yet)",
       "  [OK] queue_health: PGLite: no jobs waiting for a worker.",
-      "  [OK] subagent_capability: Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability",
+      "  [OK] subagent_capability: Subagent tier resolves to default (anthropic:claude-sonnet-5-5) — full tool-loop capability",
       "  [OK] facts_health: facts_health(default): 0 active, 0 today, 0 this week, 0 consolidated, top entities —",
       "  [OK] global_maintenance_timeouts: Brain-wide maintenance jobs are finishing within their deadline.",
       "  [OK] global_maintenance_stalled: Brain-wide maintenance has not run yet.",

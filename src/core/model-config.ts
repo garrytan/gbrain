@@ -62,9 +62,9 @@ export interface ResolveModelOpts {
  *  cause `resolveRecipe()` to throw "unknown provider" and the queue rejects
  *  the submit. */
 export const DEFAULT_ALIASES: Record<string, string> = {
-  opus:   'anthropic:claude-opus-4-7',
-  sonnet: 'anthropic:claude-sonnet-4-6',
-  haiku:  'anthropic:claude-haiku-4-5-20251001',
+  opus:   'anthropic:claude-opus-5-5',
+  sonnet: 'anthropic:claude-sonnet-5-5',
+  haiku:  'anthropic:claude-haiku-5-5',
   // `gemini` repointed (#2507): `gemini-3-pro` only ever existed as a preview
   // id (`gemini-3-pro-preview`) and was shut down — it was never chat-listed
   // in the google recipe nor priced. 2.5-flash is the recipe's chat models[0];
@@ -83,16 +83,16 @@ export const DEFAULT_ALIASES: Record<string, string> = {
  * Default model for each tier. Used as the hardcoded fallback when no
  * `models.tier.<tier>` config + no `models.default` is set. Subagent gets
  * Sonnet (Anthropic Messages API tool-loop shape required); reasoning gets
- * Sonnet (default workhorse); deep gets Opus 4.7 (expensive reasoning);
+ * Sonnet (default workhorse); deep gets Opus (expensive reasoning);
  * utility gets Haiku (fast classification).
  *
  * Users override via `gbrain config set models.tier.<tier> <model>`.
  */
 export const TIER_DEFAULTS: Record<ModelTier, string> = {
-  utility:   'anthropic:claude-haiku-4-5-20251001',
-  reasoning: 'anthropic:claude-sonnet-4-6',
-  deep:      'anthropic:claude-opus-4-7',
-  subagent:  'anthropic:claude-sonnet-4-6',
+  utility:   'anthropic:claude-haiku-5-5',
+  reasoning: 'anthropic:claude-sonnet-5-5',
+  deep:      'anthropic:claude-opus-5-5',
+  subagent:  'anthropic:claude-sonnet-5-5',
 };
 
 /**
