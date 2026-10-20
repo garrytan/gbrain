@@ -34,6 +34,7 @@ let chatDelayMs = 0;
 let chatOutputTokens = 50;
 let chatCalls = 0;
 let chatCallsBySource: string[] = [];
+let beforeChatReply: ((signal?: AbortSignal) => Promise<void>) | undefined;
 
 const CONVO_BODY = [
   '**Alice Example** (2024-03-15 9:00 AM): I just signed the offer letter for Acme Corp.',
@@ -71,6 +72,7 @@ beforeAll(async () => {
   __setChatTransportForTests(async (opts): Promise<ChatResult> => {
     chatCalls++;
     chatCallsBySource.push(String(opts.messages[0]?.content ?? '').slice(0, 40));
+    await beforeChatReply?.(opts.abortSignal);
     if (chatDelayMs > 0) await new Promise((r) => setTimeout(r, chatDelayMs));
     if (opts.abortSignal?.aborted) {
       const err = new Error('The operation was aborted.');
@@ -125,6 +127,7 @@ beforeEach(async () => {
   chatOutputTokens = 50;
   chatCalls = 0;
   chatCallsBySource = [];
+  beforeChatReply = undefined;
   await engine.executeRaw(`DELETE FROM facts`);
   await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op = 'extract-conversation-facts'`);
   await engine.executeRaw(`DELETE FROM extract_rollup_7d`);
@@ -139,6 +142,54 @@ beforeEach(async () => {
 });
 
 describe('runPhaseConversationFactsBackfill per-source caps (#3627)', () => {
+  test('walltime retains committed page counts and the next run skips them (#7068)', async () => {
+    const sourceId = 'src-partial';
+    await seedSource(sourceId);
+    await engine.putPage('conversations/z-interrupted', {
+      type: 'conversation', title: 'Interrupted chat', compiled_truth: CONVO_BODY,
+      timeline: '', frontmatter: {},
+    }, { sourceId });
+    await seedSource('src-z-healthy');
+    await engine.setConfig('cycle.conversation_facts_backfill.max_walltime_min', '0.05');
+    beforeChatReply = async (signal) => {
+      if (chatCalls !== 2) return;
+      await new Promise<void>((resolve) => {
+        if (signal?.aborted) return resolve();
+        signal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+    };
+    const r = await runPhaseConversationFactsBackfill(engine);
+    const perSource = r.details.per_source as Record<string, { pages_processed: number; facts_inserted: number; walltime_exhausted?: boolean }>;
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND source='cli:extract-conversation-facts'`, [sourceId]);
+    expect(Number(rows[0].n)).toBe(1);
+    expect(r.status).toBe('warn');
+    expect(perSource[sourceId].walltime_exhausted).toBe(true);
+    expect(perSource[sourceId].pages_processed).toBe(1);
+    expect(perSource[sourceId].facts_inserted).toBe(Number(rows[0].n));
+    expect(perSource['src-z-healthy'].pages_processed).toBe(1);
+    expect(r.details.facts_inserted).toBe(2);
+    expect(r.summary).toStartWith('2 facts inserted');
+    beforeChatReply = undefined;
+    const next = await runPhaseConversationFactsBackfill(engine);
+    expect(next.details.pages_skipped_completed).toBe(2);
+    expect(next.details.pages_processed).toBe(1);
+  }, 120000);
+
+  test('caller cancellation still propagates after earlier committed work (#7068)', async () => {
+    await seedSource('src-cancel');
+    await engine.putPage('conversations/z-interrupted', {
+      type: 'conversation', title: 'Interrupted chat', compiled_truth: CONVO_BODY,
+      timeline: '', frontmatter: {},
+    }, { sourceId: 'src-cancel' });
+    const controller = new AbortController();
+    beforeChatReply = async () => { if (chatCalls === 2) controller.abort(); };
+    await expect(runPhaseConversationFactsBackfill(engine, { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND source='cli:extract-conversation-facts'`, ['src-cancel']);
+    expect(Number(rows[0].n)).toBe(1);
+  }, 120000);
+
   test('happy path: two sources both extract under generous caps', async () => {
     await seedSource('src-a');
     await seedSource('src-b');
