@@ -37,6 +37,7 @@ import {
 } from './brain-repo-durability.ts';
 import { bindOrigin } from './persistence/origin-guard.ts';
 import { urlCloneReadOnly } from './url-clone.ts';
+import { sourceMirrorReadOnly } from './persistence/mirror-read-only.ts';
 
 /** Minimal logger surface — structurally compatible with operations.ts `Logger`. */
 export interface WriteThroughLogger {
@@ -97,7 +98,7 @@ export interface WriteThroughResult {
    *   - over_push_scan_cap: the rendered file is over the pre-push secret-scan
    *     cap (PUSH_SCAN_MAX_FILE_BYTES), so committing it would block every push.
    */
-  skipped?: 'disabled_by_config' | 'url_clone' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision' | 'file_changed' | 'over_push_scan_cap';
+  skipped?: 'disabled_by_config' | 'url_clone' | 'mirror_read_only' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision' | 'file_changed' | 'over_push_scan_cap';
   /** Caller-visible advisory when a permitted DB-only outcome is still risky. */
   warning?: string;
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
@@ -240,7 +241,7 @@ export type PageWriteTarget =
        */
       sourcePathToBind: string;
     }
-  | { ok: false; skipped: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'path_escapes_source_root' };
+  | { ok: false; skipped: 'mirror_read_only' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'path_escapes_source_root' };
 
 /**
  * Scanner-convention `pages.source_path` for a file under `scanRoot` (the
@@ -328,6 +329,10 @@ export async function resolvePageWriteTarget(
   sourceId: string,
   opts: { includeDeleted?: boolean } = {},
 ): Promise<PageWriteTarget> {
+  // Shared by whole-page, fence and timeline writers: a configured mirror is
+  // not a disk sink, even when global write-through is enabled. Do not cache
+  // this decision: mirror-writable/readonly must affect the next write.
+  if (await sourceMirrorReadOnly(engine, sourceId)) return { ok: false, skipped: 'mirror_read_only' };
   let filePath: string;
   let writeRoot: string;
   let scanRoot: string;
@@ -593,6 +598,11 @@ export async function deletePageThrough(
     }
     if (await urlCloneReadOnly(engine, sourceId)) {
       return { removed: false, skipped: 'url_clone' };
+    }
+    // A pre-resolved target is only a path, not permission to unlink: the
+    // source mode may have changed since the caller resolved the live page.
+    if (await sourceMirrorReadOnly(engine, sourceId)) {
+      return { removed: false, skipped: 'mirror_read_only' };
     }
     const target = opts.target ?? await resolvePageWriteTarget(engine, slug, sourceId);
     if (!target.ok) return { removed: false, skipped: target.skipped };
