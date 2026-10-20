@@ -282,6 +282,8 @@ export interface LoopsExtractPayload {
   slug: string;
   sourceId: string;
   threadId?: string;
+  /** Explicit connector origin on Apple jobs; Google payloads are unchanged. */
+  sourceKind?: 'apple';
 }
 
 export interface LoopsExtractResult {
@@ -323,6 +325,17 @@ export async function runLoopsExtract(
   const page = await engine.getPage(payload.slug, { sourceId: payload.sourceId });
   if (!page) return { ...empty, reason: 'page_missing' };
   const fm = (page.frontmatter ?? {}) as Record<string, unknown>;
+  // Registered source kind is authoritative. Mutable page markers cannot waive Apple consent.
+  const [registered] = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1', [payload.sourceId]);
+  const { parseSourceConfig } = await import('../sources-load.ts');
+  const apple = payload.sourceKind === 'apple' || parseSourceConfig(registered?.config).kind === 'apple' || typeof fm.apple_thread_id === 'string';
+  let appleOwners: string[] | undefined;
+  if (apple) {
+    const { appleExtractionPolicy } = await import('../apple/loops.ts');
+    const policy = await appleExtractionPolicy(engine, payload.sourceId);
+    if (policy.refusal) return { ...empty, reason: policy.refusal };
+    appleOwners = policy.owners;
+  }
   const threadId =
     payload.threadId ?? (typeof fm.thread_id === 'string' ? fm.thread_id : payload.slug);
 
@@ -391,11 +404,32 @@ export async function runLoopsExtract(
   let content = (page.compiled_truth ?? '').slice(-12_000);
   for (const p of INJECTION_PATTERNS) content = content.replace(p.rx, p.replacement);
 
+  if (apple) {
+    const { appleExtractionPolicy } = await import('../apple/loops.ts');
+    const policy = await appleExtractionPolicy(engine, payload.sourceId);
+    if (policy.refusal) return { ...empty, reason: policy.refusal };
+    if (!(await isLoopsExtractionEnabled(engine))) return { ...empty, reason: 'extraction_disabled' };
+    appleOwners = policy.owners;
+    const { pageLoopMessages, toLoopThread } = await import('../apple/loop-evidence.ts');
+    const evidence = pageLoopMessages(fm);
+    const thread = evidence && toLoopThread(threadId, evidence, 'apple');
+    if (!thread) return { ...empty, reason: 'apple_evidence_incomplete' };
+    const eligible = loopExtractionEligibility(thread, new Set(appleOwners), NO_EXCLUSION);
+    if (!eligible.eligible) return { ...empty, reason: `apple_ineligible_${eligible.reason}` };
+  }
   let text: string;
   try {
-    const call = (maxTokens: number) =>
-      chat({
-        system: JUDGE_SYSTEM,
+    let appleRefusal: string | undefined;
+    const call = async (maxTokens: number) => {
+      if (apple) {
+        const { appleExtractionPolicy } = await import('../apple/loops.ts');
+        const policy = await appleExtractionPolicy(engine, payload.sourceId);
+        appleRefusal = policy.refusal ?? (!(await isLoopsExtractionEnabled(engine)) ? 'extraction_disabled' : undefined);
+        if (appleRefusal) return null;
+        appleOwners = policy.owners;
+      }
+      return chat({
+        system: appleOwners ? `${JUDGE_SYSTEM}\nTrusted Apple account owner addresses (all aliases identify "me"): ${JSON.stringify(appleOwners)}.\nMailbox arrows and thread prose do not define owner identity.` : JUDGE_SYSTEM,
         messages: [
           {
             role: 'user',
@@ -404,8 +438,11 @@ export async function runLoopsExtract(
         ],
         maxTokens,
       });
+    };
     let res = await call(LOOPS_EXTRACT_MAX_TOKENS);
+    if (!res) return { ...empty, reason: appleRefusal };
     if (res.stopReason === 'length') res = await call(LOOPS_EXTRACT_RETRY_MAX_TOKENS);
+    if (!res) return { ...empty, reason: appleRefusal };
     if (res.stopReason === 'refusal' || res.stopReason === 'content_filter') {
       return { ...empty, reason: 'refused' };
     }

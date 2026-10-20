@@ -67,6 +67,8 @@ src/commands/sources.ts	runAudit	field	SEGW
 src/commands/sync/finalize.ts	backstopAffectedPageFacts	field	STREAM	
 src/core/ai/decide/review-lane.ts	pagePairAnchor	field	LEAD	bounded prefix row
 src/core/ai/decide/review-lane.ts	pagePairAnchor	sql	LEAD	boundedBodyPrefixSql (truth_lead for segmented), sliced to PAGE_TEXT_LIMIT
+src/core/apple/sweep.ts	loadMailPrior	field	INLINE	assertInlineBody refuses a segmented page; carries older mail messages forward from the stored inline thread page
+src/core/apple/sweep.ts	loadMailPrior	sql	INLINE	assertInlineBody refuses a segmented page; selects body_storage with the body
 src/core/attendance-repair.ts	prepareOrigin	field	META	
 src/core/attendance-repair.ts	readOrigin	sql	META	
 src/core/belief/backfill.ts	preparePage	field	STREAM	the backfill parses inline version and page bodies; a segmented page or version is skipped (summary reasons large_page_versions_pruned, segmented_version_body)

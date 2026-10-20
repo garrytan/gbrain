@@ -57,6 +57,7 @@ import {
 import { gbrainPath } from './config.ts';
 import { isValidSourceId } from './source-id.ts';
 import { googleTuningConfig } from './google/source-config.ts';
+import { appleAddConfig, type AppleAddOptions } from './apple/source-add-config.ts';
 import { isSyncStrategy, type SyncStrategy } from './sync.ts';
 import { DEFAULT_CALENDAR_ID } from './google/types.ts';
 import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
@@ -214,6 +215,12 @@ export interface AddSourceOpts {
     tokenCommand?: string;
     tokenEnv?: string;
   };
+  /**
+   * #6855: register an apple-kind source (macOS Calendar/Contacts/Mail sync).
+   * Local-only like google; no credential exists, `account` is a free label.
+   * See src/core/apple/apple-source.ts.
+   */
+  apple?: AppleAddOptions;
 }
 
 export interface RemoveSourceOpts {
@@ -403,6 +410,32 @@ export async function assertNoOverlappingPath(
 }
 
 /**
+ * #6855 Path E: `--kind apple`. Local-only (no git repo, no clone, no
+ * credential): the managed dir is created private (0700) and the materializer
+ * populates it on first sync. Kept out of addSource so that function does not
+ * grow (function-size ratchet).
+ */
+async function addAppleSource(engine: BrainEngine, opts: AddSourceOpts, apple: AppleAddOptions): Promise<SourceRow> {
+  // Same #3696 phantom-path class as the github/google dirs.
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- apple.dir only flows here from the trusted local CLI (sources_add hard-rejects opts.apple unless ctx.remote === false); absolutizing the operator's own directory is the #3696 fix
+  const dir = resolvePath(msysToNativePath(apple.dir));
+  const [taken] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [opts.id]);
+  if (taken) {
+    throw new SourceOpError('source_id_taken', `Source id "${opts.id}" is already registered${taken.local_path ? ` with local_path ${taken.local_path}` : ''}. ` +
+      `To replace it, run 'gbrain sources remove ${opts.id} --confirm-destructive' first, then re-add — WARNING: remove permanently deletes every page imported for this source.`);
+  }
+  mkdirPrivate(dir);
+  const config = appleAddConfig({ ...apple, dir }, defaultCloneDir(`${opts.id}-apple`), opts.federated ?? true);
+  await engine.executeRaw(
+    `INSERT INTO sources (id, name, local_path, config) VALUES ($1, $2, $3, $4::text::jsonb)`,
+    [opts.id, opts.name ?? opts.id, dir, JSON.stringify(config)],
+  );
+  const row = await fetchSourceRow(engine, opts.id);
+  if (!row) throw new SourceOpError('insert_failed', `INSERT succeeded but source "${opts.id}" could not be read back.`);
+  return row;
+}
+
+/**
  * #2707: `--path` registration used to accept any existing directory with
  * zero git validation, deferring the failure to the first `gbrain sync`
  * ("Not inside a git repository: ..."). By the time that surfaces the
@@ -421,6 +454,7 @@ export async function addSource(
   if(await managedPersistenceEnabled(engine))return (await import('./persistence/managed-sources.ts')).addManagedSource(engine,opts);
   await assertUnmanagedCanonicalWriter(engine, 'sources add');
   validateSourceId(opts.id);
+  if (opts.apple) return addAppleSource(engine, opts, opts.apple);
 
   // gbrain#2955: normalize a Git Bash / MSYS drive path (`/c/Users/x`,
   // `/cygdrive/c/x`) to native Windows form BEFORE the overlap check and the
@@ -477,8 +511,7 @@ export async function addSource(
     existing[0]!.local_path === null &&
     !!opts.localPath &&
     !opts.remoteUrl &&
-    !opts.github &&
-    !opts.google;
+    !opts.github && !opts.google;
   if (existing.length > 0 && !attachPath) {
     const pathNote = existing[0]!.local_path
       ? ` with local_path ${existing[0]!.local_path}`
@@ -955,7 +988,7 @@ export async function removeSource(
   // gbrain (gh_managed marker) and get the same cleanup as --url clones.
   const ghManaged = ghCfg.kind === 'github' && ghCfg.gh_managed === true;
   // v0.47: google-kind mirrors mark g_managed the same way.
-  const gManaged = ghCfg.kind === 'google' && ghCfg.g_managed === true;
+  const gManaged = ghCfg.kind === 'google' && ghCfg.g_managed === true || ghCfg.kind === 'apple' && ghCfg.a_managed === true;
   const cloneRoot = gbrainPath('clones');
   let cloneRemoved = false;
   if (

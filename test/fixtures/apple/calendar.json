@@ -1,0 +1,62 @@
+{
+  "items": [
+    {
+      "id": "evt-001",
+      "calendarId": "cal-work",
+      "calendarTitle": "Work",
+      "title": "Roadmap sync with Acme Example",
+      "start": "2026-10-20T09:00:00-07:00",
+      "end": "2026-10-20T10:00:00-07:00",
+      "allDay": false,
+      "location": "Room 1",
+      "notes": "Agenda:\n- review plan\n```\nnot a real fence close\n```\n---\n# Fake heading\n",
+      "organizer": "Alice Example",
+      "attendees": [
+        {
+          "name": "Alice Example",
+          "email": "alice-example@example.com"
+        },
+        {
+          "email": "bob-example@example.com"
+        }
+      ],
+      "status": "confirmed",
+      "recurring": false,
+      "lastModified": "2026-10-01T00:00:00Z"
+    },
+    {
+      "id": "evt-002#1792000000",
+      "calendarId": "cal-work",
+      "calendarTitle": "Work",
+      "title": "Weekly standup",
+      "start": "2026-10-21T08:30:00-07:00",
+      "end": "2026-10-21T08:45:00-07:00",
+      "allDay": false,
+      "attendees": [],
+      "recurring": true
+    },
+    {
+      "id": "evt-003",
+      "calendarId": "cal-home",
+      "calendarTitle": "Home",
+      "title": "Offsite day",
+      "start": "2026-10-25",
+      "end": "2026-10-26",
+      "allDay": true,
+      "attendees": [],
+      "recurring": false
+    },
+    {
+      "id": "evt-004",
+      "calendarId": "cal-work",
+      "calendarTitle": "Work",
+      "title": "Cancelled review",
+      "start": "2026-10-22T10:00:00-07:00",
+      "end": "2026-10-22T11:00:00-07:00",
+      "allDay": false,
+      "attendees": [],
+      "status": "cancelled",
+      "recurring": false
+    }
+  ]
+}

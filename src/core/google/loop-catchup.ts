@@ -51,7 +51,7 @@ type Log = (msg: string) => void;
 // ── Grace holds (#5868) ──────────────────────────────────────────────────────
 
 /** Records or clears one thread's grace hold from its fresh detection verdict. */
-export function recordGraceVerdict(state: GoogleSourceState, thread: GmailThreadData, verdict: ThreadLoopVerdict,
+export function recordGraceVerdict(state: Pick<GoogleSourceState, 'loop_grace_holds'>, thread: GmailThreadData, verdict: ThreadLoopVerdict,
   slug: string | null, myAddresses: Set<string>, log: Log, exclusion: LoopsExclusionPolicy = NO_EXCLUSION): void {
   const holds = state.loop_grace_holds ??= {};
   if (verdict.held && loopExtractionEligibility(thread, myAddresses, exclusion).eligible) {
@@ -164,7 +164,7 @@ export type GraceRefetch = (threadId: string) => Promise<'ok' | 'gone' | 'failed
  * failed re-fetch keeps the hold due for the next sweep.
  */
 export async function settleDueGraceHolds(ctx: {
-  engine: BrainEngine; sourceId: string; state: GoogleSourceState; log: Log; signal?: AbortSignal;
+  engine: BrainEngine; sourceId: string; state: Pick<GoogleSourceState, 'loop_grace_holds'>; log: Log; signal?: AbortSignal;
   processed: Set<string>; refetch: GraceRefetch; now?: number; exclusion?: LoopsExclusionPolicy;
 }): Promise<{ opened: number; refetched: number; deferred: number } | 'aborted'> {
   const holds = ctx.state.loop_grace_holds ?? {};

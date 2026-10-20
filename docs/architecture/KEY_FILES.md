@@ -23,8 +23,8 @@ link it here rather than raising the cap.
 
 | Subsystem | Entry range / scope |
 |---|---|
-| [Page identity and writer administration](key-files/page-identity-and-administration.md) | Opaque result IDs, current grants, state-bound ownership changes |
-| [Canonical reconciliation](key-files/canonical-reconciliation.md) | Exact-page repair, retained originals, derived atom state, sync discovery and the origin rule (`sync-origin.ts`, `file-claims.ts`) |
+| [Page identity and writer administration](key-files/page-identity-and-administration.md) | Result IDs, grants, state-bound ownership changes |
+| [Canonical reconciliation](key-files/canonical-reconciliation.md) | Exact-page repair, retained originals, derived atom state, sync discovery, the origin rule |
 | [Company-brain ingestion](key-files/company-brain.md) | Inspection, admission, receipts, derived relationships and schema; [operator guide](../guides/company-brain-ingestion.md) |
 | [Agent operator contract](key-files/agent-contract.md) | `agent-output.ts`, error registry + docs, notice ledger, `isCallable`, `--json` guard, contract scanner |
 | [Commands (1/6)](key-files/commands-1.md) | `src/commands/agent-logs.ts` through `src/commands/db-repair.ts` |
@@ -77,7 +77,7 @@ link it here rather than raising the cap.
 | [Security](key-files/security.md) | `src/core/destructive-guard.ts` through `src/core/write-gate-scan.ts`; [purge](key-files/memory-purge.md) |
 | [Shared brain skills](key-files/shared-skills.md) | Canonical catalog, enrollment, migration, publication and harness integration |
 | [Skills](key-files/skills.md) | `src/core/audit-skill-brain-first.ts` through `src/core/skills-integrity.ts` |
-| [Tooling And Tests](key-files/tooling-and-tests.md) | `.github/workflows/test.yml` through `test/remote-privacy-sweep.test.ts` |
+| [Tooling And Tests](key-files/tooling-and-tests.md) | `.github/workflows/test.yml` to `test/remote-privacy-sweep.test.ts` |
 | [CI Health And Test Guards](key-files/ci-health-and-test-guards.md) | `nightly-watch.yml` through `check-image-decoders-embedded.sh`, contributor audit, fix-wave gate |
 | [BrainBench (sibling repo)](key-files/brainbench.md) | Cross-file contract |
 | [Hindsight calibration](key-files/hindsight.md) | Cross-file contract |
@@ -86,6 +86,7 @@ link it here rather than raising the cap.
 | [Agent Bootstrap (continued)](key-files/agent-bootstrap-continued.md) | Remaining entries |
 | [Google connector + open-loop engine](key-files/google-and-loops.md) | Cross-file contract |
 | [Google And Loops (continued)](key-files/google-and-loops-continued.md) | Remaining entries |
+| [Apple connector](key-files/apple-source.md) | Apple CLI |
 | [Open loops](key-files/open-loops-engine.md) | detect, extract, store |
 | [Always-loaded core memory](key-files/core-memory.md) | Core tier, write-path guard and lock order, delivery lanes, pressure notice |
 | [Workspace push and backup coverage](key-files/workspace-push-and-backup.md) | Workspace push, hook push backstops, backup verdicts |

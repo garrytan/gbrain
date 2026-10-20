@@ -5,7 +5,8 @@ import { OperationError } from '../ops/contract.ts';
 import { msysToNativePath } from '../path-confine.ts';
 import { defaultCloneDir, type AddSourceOpts, type SourceRow } from '../sources-ops.ts';
 import { googleTuningConfig } from '../google/source-config.ts';
-import { runManagedSourceLifecycle, type SourceLifecycleInput } from './source-lifecycle.ts';
+import { DEFAULT_CALENDAR_ID } from '../google/types.ts';
+import { appleAddConfig } from '../apple/source-add-config.ts';import { runManagedSourceLifecycle, type SourceLifecycleInput } from './source-lifecycle.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { WRITE_ERROR_CODES, type WriteErrorCode } from './types.ts';
 
@@ -21,9 +22,9 @@ export function assertTopologyCommitted(result:Record<string,unknown>):void{
 export function managedSourceAddInput(opts:AddSourceOpts):SourceLifecycleInput{
   if(!isValidSourceId(opts.id))throw new OperationError('invalid_params','A valid explicit source ID is required.',
     'Pass a source id of 1-32 lowercase letters, digits and inner hyphens (for example "notes" or "acme-wiki").');
-  if(opts.remoteUrl&&opts.localPath||opts.github&&opts.google||(opts.github||opts.google)&&(opts.remoteUrl||opts.localPath))
-    throw new OperationError('invalid_params','Choose exactly one source location: path, remote URL, GitHub, or Google.',
-      `Add source ${opts.id} with exactly one of a local path, a Git remote URL, a GitHub connector or a Google connector.`);
+  if(opts.remoteUrl&&opts.localPath||[opts.github,opts.google,opts.apple].filter(Boolean).length>1||(opts.github||opts.google||opts.apple)&&(opts.remoteUrl||opts.localPath))
+    throw new OperationError('invalid_params','Choose exactly one source location: path, remote URL, GitHub, Google, or Apple.',
+      `Add source ${opts.id} with exactly one of a local path, a Git remote URL, a GitHub connector, a Google connector or an Apple connector.`);
   if(opts.cloneDir&&!opts.remoteUrl)throw new OperationError('invalid_params','cloneDir requires a remote URL.',
     `Drop the clone directory for source ${opts.id}, or pass it together with the Git remote URL it should clone.`);
   if(opts.force!==undefined&&typeof opts.force!=='boolean'||opts.federated!=null&&typeof opts.federated!=='boolean')
@@ -45,8 +46,10 @@ export function managedSourceAddInput(opts:AddSourceOpts):SourceLifecycleInput{
       ...(google.access&&google.access!=='vault'?{g_access:google.access}:{}),...(google.tokenCommand?{g_token_command:google.tokenCommand}:{}),
       ...(google.tokenEnv?{g_token_env:google.tokenEnv}:{}),g_managed:path===defaultCloneDir(`${opts.id}-google`),federated:opts.federated??true};
   }
+  if(opts.apple){const apple=opts.apple;path=resolve(msysToNativePath(apple.dir));
+    config=appleAddConfig({...apple,dir:path},defaultCloneDir(`${opts.id}-apple`),opts.federated??true);}
   return {operation:'add',sourceId:opts.id,path,name:opts.name,config,remoteUrl:opts.remoteUrl,
-    createDirectory:!!(opts.github||opts.google),requireGitContent:!!(path&&!opts.remoteUrl&&!opts.github&&!opts.google&&!opts.force),requestId:opts.requestId,expectedIncarnation:opts.expectedIncarnation};
+    createDirectory:!!(opts.github||opts.google||opts.apple),requireGitContent:!!(path&&!opts.remoteUrl&&!opts.github&&!opts.google&&!opts.apple&&!opts.force),requestId:opts.requestId,expectedIncarnation:opts.expectedIncarnation};
 }
 export async function addManagedSource(engine:BrainEngine,opts:AddSourceOpts):Promise<SourceRow>{
   const result=await runManagedSourceLifecycle(engine,managedSourceAddInput(opts));

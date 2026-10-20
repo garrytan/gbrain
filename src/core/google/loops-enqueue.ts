@@ -45,22 +45,22 @@ export async function resolveSweepExclusion(deps: Pick<GoogleSyncDeps, 'engine' 
  * both persistence modes (#5867: `--no-extract` gates only the inline
  * link/timeline extract). Every skip logs its reason.
  */
-export async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<LoopsEnqueueReport> {
+export async function enqueueLoopsExtraction(deps: Pick<GoogleSyncDeps, 'engine' | 'sourceId' | 'exclusion' | 'extractCandidates' | 'log'>, label = 'google'): Promise<LoopsEnqueueReport> {
   const report: LoopsEnqueueReport = { enqueued: 0, deferred: 0, skipped_reason: null };
   // #5445: an unresolved exclusion never reaches the queue; the report names
   // the real reason rather than the empty candidate list it produced.
   if (deps.exclusion.unresolved.length > 0) {
-    deps.log('[google] loops_extract: exclusion labels unresolved — nothing enqueued this sweep (excluded_label_unresolved)');
+    deps.log(`[${label}] loops_extract: exclusion labels unresolved — nothing enqueued this sweep (excluded_label_unresolved)`);
     return { ...report, skipped_reason: 'excluded_label_unresolved' };
   }
   if (deps.extractCandidates.length === 0) {
-    deps.log('[google] loops_extract: no eligible thread in this sweep; nothing to enqueue');
+    deps.log(`[${label}] loops_extract: no eligible thread in this sweep; nothing to enqueue`);
     return { ...report, skipped_reason: 'no_candidates' };
   }
   try {
     const { isLoopsExtractionEnabled, LOOPS_EXTRACT_JOB, LOOPS_EXTRACT_ENQUEUE_CEILING } = await import('./loops-extract.ts');
     if (!(await isLoopsExtractionEnabled(deps.engine))) {
-      deps.log(`[google] loops_extract: extraction disabled (loops.extraction_enabled) — skipped enqueue of ${deps.extractCandidates.length} eligible thread(s)`);
+      deps.log(`[${label}] loops_extract: extraction disabled (loops.extraction_enabled) — skipped enqueue of ${deps.extractCandidates.length} eligible thread(s)`);
       return { ...report, skipped_reason: 'extraction_disabled' };
     }
     // No chat provider (keyless install, outage) → enqueue NOTHING. A job the
@@ -71,7 +71,7 @@ export async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<Loop
     const { isAvailable } = await import('../ai/gateway.ts');
     if (!isAvailable('chat')) {
       deps.log(
-        `[google] loops_extract: chat provider unavailable (no configured chat model / API key) — ` +
+        `[${label}] loops_extract: chat provider unavailable (no configured chat model / API key) — ` +
           `skipped enqueue of ${deps.extractCandidates.length} eligible thread(s); they are queued on ` +
           `their next touch (or \`gbrain sync --source ${deps.sourceId} --full\`) once a provider is configured`,
       );
@@ -80,7 +80,7 @@ export async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<Loop
     // P4.6b: the day's spend authorization; a day already at its cap queues nothing.
     const spend = await loopsSpendGate(deps.engine);
     if (!spend.ok) {
-      deps.log(`[google] loops_extract: ${spend.message} — skipped enqueue of ${deps.extractCandidates.length} eligible thread(s) (${spend.reason})`);
+      deps.log(`[${label}] loops_extract: ${spend.message} — skipped enqueue of ${deps.extractCandidates.length} eligible thread(s) (${spend.reason})`);
       return { ...report, skipped_reason: spend.reason };
     }
     const { MinionQueue } = await import('../minions/queue.ts');
@@ -122,7 +122,7 @@ export async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<Loop
     const dropped = ordered.length - picked.length;
     if (dropped > 0) {
       deps.log(
-        `[google] loops_extract enqueue budget (ceiling ${LOOPS_EXTRACT_ENQUEUE_CEILING}, ` +
+        `[${label}] loops_extract enqueue budget (ceiling ${LOOPS_EXTRACT_ENQUEUE_CEILING}, ` +
           `${waitingDepth} already pending): enqueuing ${picked.length}, ` +
           `deferring ${dropped} oldest eligible thread(s) — a deferred thread is next ` +
           `enqueued when it changes, so a persistent backlog needs worker attention`,
@@ -142,10 +142,10 @@ export async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<Loop
         { spendAuthorization: spend.record },
       );
     }
-    deps.log(`[google] loops_extract: enqueued ${picked.length} eligible thread(s)`);
+    deps.log(`[${label}] loops_extract: enqueued ${picked.length} eligible thread(s)`);
     return { enqueued: picked.length, deferred: dropped, skipped_reason: null };
   } catch (e) {
-    deps.log(`[google] loops_extract enqueue failed: ${e instanceof Error ? e.message : String(e)}`);
+    deps.log(`[${label}] loops_extract enqueue failed: ${e instanceof Error ? e.message : String(e)}`);
     return { ...report, skipped_reason: 'enqueue_failed' };
   }
 }

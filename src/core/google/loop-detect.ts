@@ -326,6 +326,7 @@ export async function applyThreadLoopVerdict(
   pageSlug: string | null,
   now: Date = new Date(),
   exclusion: LoopsExclusionPolicy = NO_EXCLUSION,
+  beforeApply?: (verdict: ThreadLoopVerdict) => Promise<void>,
 ): Promise<ThreadLoopVerdict> {
   const suppressions = await suppressionsFor(engine, sourceId);
   const policy: LoopDetectPolicy = { ownerWroteTo: await ownerWroteToFor(engine, sourceId, myAddresses) };
@@ -335,6 +336,10 @@ export async function applyThreadLoopVerdict(
   // CC-only nudge, muted sender) is neither opened nor closed.
   const verdict = withLabelExclusion(detectThreadLoop(thread, myAddresses, now, suppressions, policy), exclusion,
     thread.messages.flatMap((m) => m.labelIds));
+
+  // Connector identity reconciliation must precede reply closures, and uses the same
+  // suppression-filtered verdict as the writes below. Omitted by Google callers.
+  if (beforeApply) await beforeApply(verdict);
 
   const desired = new Set(verdict.open.map((s) => s.loopType));
   const toClose = verdict.close.filter((t) => !desired.has(t));

@@ -1,5 +1,6 @@
 # shrink-only baseline for scripts/check-agent-contract.ts rule legacy-advice-key: path<TAB>count
 src/cli/cli-error.ts	1
+src/commands/apple-output.ts	1
 src/commands/autopilot/jobs.ts	2
 src/commands/claw-test.ts	11
 src/commands/code-callees.ts	1

@@ -530,6 +530,10 @@
         "name": "google_calendar_readable"
       },
       {
+        "category": "ops",
+        "name": "apple_permissions"
+      },
+      {
         "category": "brain",
         "name": "atom_retirements_restorable"
       },

@@ -84,7 +84,7 @@ export function projectTier(signals: ReadonlyArray<string | null | undefined>): 
 
 /** Page-level signal on alias `pg` (with sources alias `src`): connector/webhook/clipper -> external, agent channels -> agent. */
 const PAGE_SIGNAL = (pg: string, src: string) => `CASE
-  WHEN ${src}.config->>'kind' IN ('google','github') OR ${pg}.source_kind = 'webhook' OR COALESCE(${pg}.frontmatter, '{}'::jsonb) ? 'source_url' THEN 'external_untrusted'
+  WHEN ${src}.config->>'kind' IN ('google','github','apple') OR ${pg}.source_kind = 'webhook' OR COALESCE(${pg}.frontmatter, '{}'::jsonb) ? 'source_url' THEN 'external_untrusted'
   WHEN ${pg}.source_kind LIKE 'mcp:%' OR ${pg}.ingested_via LIKE 'mcp:%' OR ${pg}.source_kind = 'capture-cli'
     OR ${pg}.frontmatter->>'capturedVia' IS NOT NULL OR COALESCE(${pg}.frontmatter, '{}'::jsonb) ? 'transcript_import' THEN 'agent_written'
   END`;

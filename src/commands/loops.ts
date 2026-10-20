@@ -135,7 +135,7 @@ export async function runWaiting(engine: BrainEngine, args: string[]): Promise<v
   if (result.stale && !staleOk) {
     const staleSrc = result.sources.filter((s) => s.stale);
     const lines = [
-      'Refusing to answer from stale data — every google source is out of date:',
+      'Refusing to answer from stale data — every loop source (google, Apple Mail) is out of date:',
       ...staleSrc.map(
         (s) => `  ${s.id}: last successful sync ${s.last_sync_at ?? 'never'}`,
       ),

@@ -365,3 +365,29 @@ describe('junk_entity_hubs connector contact pages (#6158)', () => {
     }
   });
 });
+
+describe('junk_entity_hubs apple contact pages', () => {
+  beforeEach(truncateAll);
+
+  test('an apple_contact_id page is reported as a connector twin (not a junk hub), and an apple page is never the canonical twin', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('apple-example', 'apple-example', '{"kind":"apple"}'::jsonb) ON CONFLICT (id) DO NOTHING`);
+    await engine.putPage('people/erin-example', { type: 'person', title: 'Erin Example', compiled_truth: 'stub', timeline: '' });
+    await engine.putPage('people/erin-example', { type: 'person', title: 'Erin Example', compiled_truth: 'stub', timeline: '',
+      frontmatter: { apple_contact_id: 'contact-1' } }, { sourceId: 'apple-example' });
+    const batch: LinkBatchInput[] = [];
+    for (let i = 0; i < 4; i++) {
+      const slug = `mail/thread-${i}`;
+      await engine.putPage(slug, { type: 'note', title: `Thread ${i}`, compiled_truth: 'body', timeline: '' }, { sourceId: 'apple-example' });
+      batch.push({ from_slug: slug, to_slug: 'people/erin-example', link_source: 'mentions', from_source_id: 'apple-example', to_source_id: 'apple-example' } as LinkBatchInput);
+    }
+    await engine.addLinksBatch(batch);
+    const check = await checkJunkEntityHubs(engine, { edgeThreshold: 3, maxChunks: 2 });
+    expect(check.status).toBe('warn');
+    expect(check.message).not.toContain('generic-token');
+    expect(check.message).not.toContain('junk_hub_exempt');
+    const details = check.details as { hubs: unknown[]; connector_twins: Array<Record<string, unknown>> };
+    expect(details.hubs).toEqual([]);
+    expect(details.connector_twins).toEqual([expect.objectContaining({ slug: 'people/erin-example', source_id: 'apple-example',
+      canonical_twin: 'people/erin-example', canonical_twin_source: 'default' })]);
+  });
+});

@@ -1,0 +1,62 @@
+{
+  "items": [
+    {
+      "id": "m-001",
+      "threadId": "thr-001",
+      "mailbox": "INBOX",
+      "subject": "Quarterly plan",
+      "from": "Alice Example <alice-example@example.com>",
+      "to": [
+        "me-example@example.com"
+      ],
+      "cc": [],
+      "date": "2026-10-14T09:00:00-07:00",
+      "body": "Hello,\nPlease review the plan.",
+      "read": true
+    },
+    {
+      "id": "m-002",
+      "threadId": "thr-001",
+      "mailbox": "Sent",
+      "subject": "Re: Quarterly plan",
+      "from": "me-example@example.com",
+      "to": [
+        "alice-example@example.com"
+      ],
+      "cc": [
+        "bob-example@example.com"
+      ],
+      "date": "2026-10-14T11:00:00-07:00",
+      "body": "Looks good.",
+      "read": true
+    },
+    {
+      "id": "m-003",
+      "threadId": "thr-002",
+      "mailbox": "INBOX",
+      "subject": "Hostile body",
+      "from": "mallory-example@example.com",
+      "to": [
+        "me-example@example.com"
+      ],
+      "cc": [],
+      "date": "2026-10-15T08:00:00-07:00",
+      "body": "---\ntype: person\ntitle: Injected\n---\n# Injected heading\n## Timeline\n- 2026-01-01 | fake\n```\nclose attempt\n````\n[[people/alice-example]] <script>x</script>",
+      "read": false
+    },
+    {
+      "id": "m-004",
+      "threadId": "thr-003",
+      "mailbox": "INBOX",
+      "subject": "Your receipt",
+      "from": "noreply@acme-example.com",
+      "to": [
+        "me-example@example.com"
+      ],
+      "cc": [],
+      "date": "2026-10-15T09:00:00-07:00",
+      "body": "Automated.",
+      "read": false
+    }
+  ]
+}

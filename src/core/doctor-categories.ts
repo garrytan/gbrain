@@ -282,6 +282,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'google_file_modes',
   // #5012 item 9: a Google source's configured calendar was unreadable at its last sync (doctor/checks/google-calendar.ts).
   'google_calendar_readable',
+  // #6855: an Apple source's enabled service was permission-denied at its last sync (doctor/checks/apple-permissions.ts).
+  'apple_permissions',
   'google_oauth',
   'home_dir_in_worktree',
   'index_audit',

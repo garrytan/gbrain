@@ -1,4 +1,4 @@
-/** Google / GitHub connector sources: sync by materializing the connector. */
+/** Google / GitHub / Apple connector sources: sync by materializing the connector. */
 import { assertSyncDispatchActive } from '../../core/persistence/sync-authority.ts';
 import { currentSourceFilesystemSignal } from '../../core/minions/source-filesystem.ts';
 import { currentJobSignal } from '../../core/minions/submission-authority.ts';
@@ -19,7 +19,7 @@ export async function runConnectorSync(engine: BrainEngine, opts: SyncOpts, mana
     return null;
   }
   const config = typeof source.config === 'string' ? JSON.parse(source.config) : source.config ?? {};
-  if (config.kind !== 'google' && config.kind !== 'github') {
+  if (config.kind !== 'google' && config.kind !== 'github' && config.kind !== 'apple') {
     if (opts.githubItem) throw new Error(`github_item refresh requires a github-kind source, but "${sourceId}" is not github-kind.`);
     return null;
   }
@@ -34,6 +34,9 @@ export async function runConnectorSync(engine: BrainEngine, opts: SyncOpts, mana
   if (config.kind === 'github') {
     const { parseGitHubSourceConfig, runGitHubSync } = await import('../../core/github-source.ts');
     result = await runGitHubSync(engine, sourceId, parseGitHubSourceConfig(config, fallbackDir), options);
+  } else if (config.kind === 'apple') {
+    const { parseAppleSourceConfig, runAppleSync } = await import('../../core/apple/apple-source.ts');
+    result = await runAppleSync(engine, sourceId, parseAppleSourceConfig(config, fallbackDir), options);
   } else {
     const { parseGoogleSourceConfig, runGoogleSync } = await import('../../core/google/google-source.ts');
     result = await runGoogleSync(engine, sourceId, parseGoogleSourceConfig(config, fallbackDir), options);

@@ -30,6 +30,9 @@ export function connectorAccountChanged(sourceId: string, kind: ConnectorKind, c
     restore = `restore ${where} so it yields a token for ${show(recorded)}, then retry: gbrain sync --source ${sourceId}`;
     replace = `add a new source for the new account (gbrain google setup --account ${typeof resolved === 'object' && resolved?.kind === 'google' ? resolved.email : '<email>'}), `
       + `then archive this one: gbrain sources archive ${sourceId}`;
+  } else if (kind === 'apple') {
+    restore = `re-point the source at the recorded Apple account label ${show(recorded)} (the a_account setting), then retry: gbrain sync --source ${sourceId}`;
+    replace = `add a new source for the new label (gbrain apple setup --account <label>), then archive this one: gbrain sources archive ${sourceId}`;
   } else {
     const github = config as GitHubSourceConfig;
     const installation = typeof resolved === 'object' && resolved?.kind === 'github' && resolved.installationId !== null ? resolved.installationId : '<installation-id>';

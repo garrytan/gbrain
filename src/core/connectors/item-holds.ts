@@ -45,6 +45,15 @@ export const HOLD_DAILY_MS = 24 * 3_600_000;
 export const HOLD_TRANSIENT_WINDOW_MS = 7 * 24 * 3_600_000;
 export const HOLD_CAP = 100;
 
+/**
+ * Names the circuit-breaker group of a key (optional; the default is one group for every key, which Google and GitHub
+ * keep). `heldAtStart` is true when the key was already held when the run began, i.e. this run only RE-attempts it.
+ * Returning `null` exempts the key from the breaker's attempted/failure counts: a held item that fails again is not
+ * evidence of a source outage, so it still counts its reconsideration and backoff (unless a judged group tripped the
+ * breaker this run, which suppresses it like any other failure). A connector opts in; nothing else changes.
+ */
+export type HoldGroupOf = (key: string, heldAtStart: boolean) => string | null;
+
 export type HoldErrorScope = 'source' | 'item' | 'rate_limit';
 export type HoldClass = 'content' | 'transient';
 
@@ -121,6 +130,8 @@ export function classifyConnectorError(error: unknown): ClassifiedConnectorError
   const named = (error as { name?: string } | null)?.name;
   if (named === 'LockStolenError') return { code: 'lock_stolen', scope: 'source', class: 'transient', message };
   if (named === 'ConnectorWaitBudgetStop') return { code: 'write_pending', scope: 'source', class: 'transient', message };
+  // A connector proved ONE item unreadable (e.g. a single Mail message whose body the app cannot produce).
+  if (named === 'ConnectorItemUnreadable') return { code: 'item_unreadable', scope: 'item', class: 'transient', message };
   if (isCredentialError(error)) {
     if (error.code === 'rate_limited') return { code: 'rate_limited', scope: 'rate_limit', class: 'transient', message };
     if (error.code !== 'upstream') return { code: error.code, scope: 'source', class: 'transient', message };
@@ -148,6 +159,11 @@ export function classifyConnectorError(error: unknown): ClassifiedConnectorError
   if (/unreachable|ECONNRESET|ECONNREFUSED|ETIMEDOUT|fetch failed|socket/i.test(message)) return { code: 'network', scope: 'item', class: 'transient', message };
   if (/malformed/i.test(message)) return { code: 'malformed', scope: 'item', class: 'content', message };
   return { code: 'unknown', scope: 'item', class: 'transient', message };
+}
+
+/** Raised by a connector for one item it proved unreadable; classified as an item-scoped, transient (retryable) failure. */
+export class ConnectorItemUnreadableError extends Error {
+  override name = 'ConnectorItemUnreadable';
 }
 
 export const emptyItemHolds = (): ItemHoldsState => ({ version: 1, items: {} });
@@ -209,7 +225,7 @@ export class ItemHoldsRun {
   private readonly succeeded = new Set<string>();
   private readonly retryKeys: ReadonlySet<string>;
 
-  constructor(stored: unknown, private readonly opts: { now?: () => number; full?: boolean; retryKeys?: Iterable<string> } = {}) {
+  constructor(stored: unknown, private readonly opts: { now?: () => number; full?: boolean; retryKeys?: Iterable<string>; groupOf?: HoldGroupOf } = {}) {
     this.state = normalizeHolds(stored);
     // `sync --full` resets the holds by re-attempting every held item once: a success clears it; a
     // failure keeps it held (the cursor may already be past it, so demoting or forgetting the record
@@ -285,18 +301,35 @@ export class ItemHoldsRun {
     const nowMs = this.now();
     const nowIso = new Date(nowMs).toISOString();
     for (const key of this.succeeded) delete state.items[key];
-    const attempted = this.attempted.size;
+    // The circuit breaker judges each group of keys against its own attempted items. The default is one group, so a
+    // connector whose keys are one kind of item is unchanged; a connector mixing kinds (Apple Mail messages and
+    // threads) names the groups so that one kind's successes cannot dilute another kind's outage.
+    const groupFn = this.opts.groupOf ?? ((): string => '');
+    const groupOf = (key: string): string | null => groupFn(key, this.state.items[key]?.state === 'held');
+    const groups = new Map<string, { attempted: number; transient: number; byCode: Map<string, number> }>();
+    const group = (name: string) => { let entry = groups.get(name); if (!entry) groups.set(name, entry = { attempted: 0, transient: 0, byCode: new Map() }); return entry; };
+    for (const key of this.attempted) { const name = groupOf(key); if (name !== null) group(name).attempted++; }
     const failures = [...this.failures.entries()];
-    const transient = failures.filter(([, failure]) => failure.classified.class === 'transient').length;
-    const byCode = new Map<string, number>();
-    for (const [, failure] of failures) byCode.set(failure.classified.code, (byCode.get(failure.classified.code) ?? 0) + 1);
-    const sameCode = Math.max(0, ...byCode.values());
-    const outage = attempted >= HOLD_BREAKER_MIN_ITEMS && (transient * 2 >= attempted || sameCode >= HOLD_BREAKER_MIN_ITEMS && sameCode * 2 >= attempted);
-    if (outage) return { state, outage, newlyHeld: [], exhausted: false };
+    for (const [key, failure] of failures) {
+      const name = groupOf(key);
+      if (name === null) continue;
+      const entry = group(name);
+      if (failure.classified.class === 'transient') entry.transient++;
+      entry.byCode.set(failure.classified.code, (entry.byCode.get(failure.classified.code) ?? 0) + 1);
+    }
+    const outageGroups = new Set<string>();
+    for (const [name, g] of groups) {
+      const sameCode = Math.max(0, ...g.byCode.values());
+      if (g.attempted >= HOLD_BREAKER_MIN_ITEMS && (g.transient * 2 >= g.attempted || sameCode >= HOLD_BREAKER_MIN_ITEMS && sameCode * 2 >= g.attempted)) outageGroups.add(name);
+    }
+    const outage = outageGroups.size > 0;
+    // A group in outage counts no item failure; the other groups count theirs. An exempt (held re-attempt) failure counts
+    // unless some judged group is in outage this run.
+    const counted = failures.filter(([key]) => { const name = groupOf(key); return name === null ? !outage : !outageGroups.has(name); });
     const newlyHeld: string[] = [];
     let heldCount = Object.values(state.items).filter(record => record.state === 'held').length;
     let exhausted = false;
-    for (const [key, failure] of failures) {
+    for (const [key, failure] of counted) {
       const previous = state.items[key];
       const sameVersion = !previous || previous.upstream_version === null || failure.version === null || previous.upstream_version === failure.version;
       const meta: ItemHoldMeta = { ...unknownMeta(), ...(previous?.meta ?? {}), ...Object.fromEntries(Object.entries(failure.meta).filter(([, v]) => v !== undefined && v !== null)) };

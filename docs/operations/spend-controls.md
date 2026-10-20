@@ -303,7 +303,7 @@ stop counts as an expected limit rather than a halt in `extract_health`, and
 `gbrain pricing set` (see [registering a model price](#registering-a-model-price)).
 
 Connector pages are extracted by default. Gmail threads (`email`) and
-Calendar events (`meeting`) from a Google or GitHub connector source go
+Calendar events (`meeting`) from a Google, GitHub or Apple connector source go
 through atom discovery, the backlog count, the routine cycle,
 `gbrain dream --drain` and the auto-drain like any other page, under the caps
 above. To keep them out:

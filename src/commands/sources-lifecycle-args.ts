@@ -12,6 +12,7 @@ import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.t
 import { CALENDAR_FUTURE_DAYS_MAX, CALENDAR_HORIZON_DAYS } from '../core/google/calendar-window.ts';
 import { parseExcludeLabelTokens } from '../core/google/loops-exclusion.ts';
 import { parseContactsDir } from '../core/google/source-config.ts';
+import { APPLE_CONFIRM_MAIL_FLAG, APPLE_EXTRACT_CONSENT_FLAG, APPLE_ONLY_FLAGS, APPLE_SHARED_FLAGS, AppleAddFlagError, appleAddPlatformWarning, buildAppleAddOptions } from './sources-apple-flags.ts';
 
 export const SOURCE_LIFECYCLE_COMMANDS = ['add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'] as const;
 export function isSourceLifecycleCommand(value: string): boolean {
@@ -38,10 +39,11 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
   const flags = new Set<string>();
   const positionals: string[] = [];
   const booleans = new Set(['json', 'dry-run', 'yes', 'confirm-destructive', 'keep-storage', 'force',
-    'federated', 'no-federated', 'no-federate', 'refederate', 'no-harden']);
+    'federated', 'no-federated', 'no-federate', 'refederate', 'no-harden', APPLE_CONFIRM_MAIL_FLAG, APPLE_EXTRACT_CONSENT_FLAG]);
   const valued = new Set(['request-id', 'expected-incarnation', 'brain', 'path', 'url', 'name', 'clone-dir',
     'pat-file', 'kind', 'account', 'access', 'token-command', 'token-env', 'services', 'history-days',
-    'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id', 'scope', 'repos', 'dir', 'app-id', 'app-pem', 'app-install']);
+    'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id', 'scope', 'repos', 'dir', 'app-id', 'app-pem', 'app-install',
+    ...APPLE_ONLY_FLAGS]);
   for (let i = 0; i < rest.length; i++) {
     const token = rest[i];
     if (!token.startsWith('-')) { positionals.push(token); continue; }
@@ -74,7 +76,7 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     source_id: id, request_id: requestId, ...(incarnation ? { expected_incarnation: incarnation } : {}),
     ...(dryRun ? { dry_run: true } : {}) };
   const common = new Set(['request-id', 'expected-incarnation', 'brain', 'json', 'dry-run']);
-  const allowed = verb === 'add' ? new Set([...common, ...valued, 'federated', 'no-federated', 'force', 'no-harden'])
+  const allowed = verb === 'add' ? new Set([...common, ...valued, 'federated', 'no-federated', 'force', 'no-harden', APPLE_CONFIRM_MAIL_FLAG, APPLE_EXTRACT_CONSENT_FLAG])
     : new Set([...common, ...(verb === 'set-path' ? ['path', 'force'] : []),
       ...(['remove', 'purge'].includes(verb) ? ['yes', 'confirm-destructive', 'keep-storage'] : []),
       ...(verb === 'restore' ? ['no-federate', 'refederate'] : [])]);
@@ -102,17 +104,24 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
 
   if (flags.has('federated') && flags.has('no-federated')) throw invalid('Choose one federation setting.', 'Pass either --federated or --no-federated, not both.');
   const kind = values.get('kind');
-  if (kind !== undefined && !['google', 'github'].includes(kind)) throw invalid('Source kind must be github or google.',
-    'Pass --kind github or --kind google; a directory or Git remote source uses --path or --url instead of --kind.');
+  if (kind !== undefined && !['google', 'github', 'apple'].includes(kind)) throw invalid('Source kind must be github, google or apple.',
+    'Pass --kind github, --kind google or --kind apple; a directory or Git remote source uses --path or --url instead of --kind.');
   if ([values.has('path'), values.has('url'), kind !== undefined].filter(Boolean).length > 1) throw invalid('--path, --url and --kind are mutually exclusive.',
-    'Give exactly one of --path (a local directory), --url (an https Git remote) or --kind (github or google).');
+    'Give exactly one of --path (a local directory), --url (an https Git remote) or --kind (github, google or apple).');
   const googleOnly = ['account', 'access', 'token-command', 'services', 'history-days', 'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id'];
   const githubOnly = ['scope', 'repos', 'app-id', 'app-pem', 'app-install'];
-  const kindOptions = [...googleOnly, ...githubOnly, 'dir', 'token-env'];
-  for (const key of kindOptions) if (values.has(key) && !kind) throw invalid(`--${key} requires --kind github or google.`,
-    `Add ${googleOnly.includes(key) ? '--kind google' : githubOnly.includes(key) ? '--kind github' : '--kind github or --kind google'} for --${key}, or remove --${key}.`);
+  const appleOnly: readonly string[] = APPLE_ONLY_FLAGS;
+  const appleShared: readonly string[] = APPLE_SHARED_FLAGS;
+  const kindOptions = [...googleOnly, ...githubOnly, ...appleOnly, 'dir', 'token-env'];
+  for (const key of kindOptions) if (values.has(key) && !kind) throw invalid(`--${key} requires --kind github, google or apple.`,
+    `Add ${appleOnly.includes(key) ? '--kind apple' : googleOnly.includes(key) ? '--kind google' : githubOnly.includes(key) ? '--kind github' : '--kind github, --kind google or --kind apple'} for --${key}, or remove --${key}.`);
+  if (flags.has(APPLE_EXTRACT_CONSENT_FLAG) && kind !== 'apple') throw invalid('--consent-loops-extraction requires --kind apple.', '--consent-loops-extraction consents to sending Apple Mail text to the chat provider: use --kind apple, or remove it.');
+  if (flags.has(APPLE_CONFIRM_MAIL_FLAG) && kind !== 'apple') throw invalid('--confirm-mail requires --kind apple.', '--confirm-mail confirms reading Apple Mail: use --kind apple, or remove --confirm-mail.');
+  for (const key of appleOnly) {
+    if (values.has(key) && kind !== 'apple') throw invalid(`--${key} requires --kind apple.`, `--${key} configures an Apple source: use --kind apple, or remove --${key} from this ${kind} source.`);
+  }
   for (const key of googleOnly) {
-    if (values.has(key) && kind !== 'google') throw invalid(`--${key} requires --kind google.`, `--${key} configures a Google source: use --kind google, or remove --${key} from this ${kind} source.`);
+    if (values.has(key) && kind !== 'google' && !(kind === 'apple' && appleShared.includes(key))) throw invalid(`--${key} requires --kind google.`, `--${key} configures a Google source: use --kind google, or remove --${key} from this ${kind} source.`);
   }
   for (const key of githubOnly) {
     if (values.has(key) && kind !== 'github') throw invalid(`--${key} requires --kind github.`, `--${key} configures a GitHub source: use --kind github, or remove --${key} from this ${kind} source.`);
@@ -167,6 +176,25 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
       ...(futureDays !== undefined ? { futureDays } : {}), ...(loopsExcludeLabels.length > 0 ? { loopsExcludeLabels } : {}),
       dir: absolute(values.get('dir') ?? defaultCloneDir(`${id}-google`)), access: access as 'vault' | 'command' | 'env',
       tokenCommand: values.get('token-command'), tokenEnv: values.get('token-env') };
+  }
+  if (kind === 'apple') {
+    const notApple = ['access', 'token-command', 'token-env', 'loops-exclude-labels', 'calendar-id', 'scope', 'repos', 'app-id', 'app-pem', 'app-install'].find(key => values.has(key));
+    if (notApple) throw invalid(`--${notApple} does not apply to --kind apple.`, `An Apple source has no credential and no ${notApple} setting; remove --${notApple}. Calendar selection is --calendar-ids.`);
+    try {
+      opts.apple = buildAppleAddOptions({ services: values.get('services'), account: values.get('account'), historyDays: values.get('history-days'),
+        futureDays: values.get('future-days'), calendarIds: values.get('calendar-ids'), contactsDir: values.get('contacts-dir'),
+        mailMailboxes: values.get('mail-mailboxes'), mailDays: values.get('mail-days'), mailOwnerAddresses: values.get('mail-owner-addresses'),
+        loopsExtractConsent: flags.has(APPLE_EXTRACT_CONSENT_FLAG), confirmMail: flags.has(APPLE_CONFIRM_MAIL_FLAG), dir: absolute(values.get('dir') ?? defaultCloneDir(`${id}-apple`)) });
+    } catch (error) {
+      // The flag error's detail (what the refusal means and, for Mail, what gets read) rides in the message; the suggestion
+      // stays a literal next step per branch so the usage-refusal contract can check it.
+      if (error instanceof AppleAddFlagError) throw invalid(`${error.message} ${error.suggestion}`, error.code === 'mail_confirmation_required'
+        ? 'If the user agrees to Mail, re-run the same gbrain sources add command with --confirm-mail and mail in --services; otherwise use --services calendar,contacts. gbrain sources add --help lists the Apple flags.'
+        : 'Correct the flag named in the message and re-run the same gbrain sources add command; gbrain sources add --help lists the Apple flags and their allowed values.');
+      throw error;
+    }
+    const warning = appleAddPlatformWarning();
+    if (warning) process.stderr.write(`${warning}\n`);
   }
   return { operation: 'source_add', params: { options: opts, request_id: requestId, ...(dryRun ? { dry_run: true } : {}) },
     brain: values.get('brain'), legacyOnly: values.has('pat-file'), json: flags.has('json') };

@@ -175,6 +175,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // + waiting (usage blocks in loops.ts). All engine-free or help-before-engine; the generic stub
   // would hide the [SHOW USER] setup contract agents depend on.
   { name: 'google', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/google.ts') },
+  // selfHelp: apple (#6855) prints its own help (APPLE_HELP in apple.ts); engine-free dispatch, own engine only for registration/status.
+  { name: 'apple', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/apple.ts') },
   { name: 'creds', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/creds.ts') },
   { name: 'remote', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/remote.ts') },
   // selfHelp: `gbrain connect --help` prints its own usage (flags + examples) from runConnect; route

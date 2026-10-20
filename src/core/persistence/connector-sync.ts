@@ -191,7 +191,7 @@ function connectorBindingRoot(sourceId: string, source: ConnectorSource, binding
   assertPhysicalRoot(localPath, { worktreeId: binding.worktree_id, coordinationPath });
   try {
     const root = realpathSync(join(localPath, binding.relative_path));
-    const configured = source.config[source.config.kind === 'google' ? 'g_dir' : 'gh_dir'];
+    const configured = source.config[source.config.kind === 'google' ? 'g_dir' : source.config.kind === 'apple' ? 'a_dir' : 'gh_dir'];
     const directory = typeof configured === 'string' && configured.length > 0 ? configured : sourcePath;
     if (!containsPath(localPath, root) || !statSync(root).isDirectory() || realpathSync(sourcePath) !== root || realpathSync(directory) !== root) {
       throw new Error('root mismatch');
@@ -199,7 +199,7 @@ function connectorBindingRoot(sourceId: string, source: ConnectorSource, binding
     return root;
   } catch {
     throw opError('source_changed', 'The connector directory no longer matches its canonical source root.',
-      `The directory configured for ${sourceId} (g_dir, gh_dir or the source path) no longer resolves to the owner's recorded canonical root. Restore that directory, then run gbrain sync --source ${sourceId}; nothing was written.`,
+      `The directory configured for ${sourceId} (g_dir, gh_dir, a_dir or the source path) no longer resolves to the owner's recorded canonical root. Restore that directory, then run gbrain sync --source ${sourceId}; nothing was written.`,
       { fix: ownerStatusFix(sourceId, 'Shows the canonical root the owner recorded, to compare with the configured connector directory.') });
   }
 }
@@ -1181,8 +1181,8 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
   const tags = [...new Set([...(snapshot?.tags ?? []), ...ready.parsedPage.tags])].sort();
   const page: Page = { ...(snapshot?.page ?? { id: 0, slug: row.slug, source_id: row.source_id, created_at: new Date(row.created_at), updated_at: new Date(row.created_at) }), ...ready.parsedPage };
   const target = await connectorFileTarget(engine, row, snapshot, serializePageToMarkdown(page, tags), p.sourcePath, p.canonicalRoot);
-  // Google pages hold private mail: derived here from the stored connector, never submitted, so request ids are unchanged.
-  const file = target && p.connector === 'google' ? { ...target, publishMode: 0o600 } : target;
+  // Google and Apple pages hold private mail: derived here from the stored connector, never submitted, so request ids are unchanged.
+  const file = target && (p.connector === 'google' || p.connector === 'apple') ? { ...target, publishMode: 0o600 } : target;
   if (file && (file.path !== p.filePath || file.expectedBeforeHash !== p.fileBeforeHash)) throw connectorPublicationRefusal('source_changed', 'The connector canonical file changed during preparation.', row,
     `The canonical file of ${row.slug} in ${row.source_id} changed on disk while this connector write was being prepared.`);
   return { observedRevision: ready.observedRevision, sourceExclusive: true,

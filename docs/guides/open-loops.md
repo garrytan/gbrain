@@ -368,7 +368,10 @@ When the scope holds **no google source at all**, the result carries
 `no_google_sources: true` and the digest says so explicitly instead of "You
 are clean" — a brain whose email arrives through a gateway or agent-authored
 collector has nothing for the loop engine to read, which is not the same as
-an empty inbox. Any Google access path works to fix it: `gbrain google setup`
+an empty inbox. An Apple source in scope keeps `no_google_sources` false even
+when its Mail cannot be read: it is listed under `apple_loops_unavailable`
+with `mail_disabled` or `identity_missing` and the digest names that reason
+(see [Apple open loops](apple-connect.md#open-loops-unanswered-mail)). Any Google access path works to fix it: `gbrain google setup`
 (BYO OAuth) or `--access command|env` on `sources add` (an existing Google
 CLI or token-minting gateway; see
 [google-connect.md](google-connect.md#other-ways-to-reach-google-no-gbrain-oauth)).

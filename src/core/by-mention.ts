@@ -96,7 +96,7 @@ export interface GazetteerEntry {
    */
   shared?: true;
   /**
-   * #6158: the page is a connector's own contact rendering (`google_contact_id`
+   * #6158: the page is a connector's own contact rendering (`google_contact_id` or `apple_contact_id`
    * frontmatter), a near-empty stub of a person who may have a canonical page
    * elsewhere. Under the cross-source opt-in a mention in the stub's source
    * binds to that canonical twin instead (see findMentionedEntities).
@@ -496,7 +496,7 @@ export async function buildGazetteer(
   const allTypes = [...new Set([...typesBySource.values()].flatMap(set => [...set]))];
   const linkable = (sourceId: string | null, type: string | null) => !!type && (typesBySource.get(sourceId ?? 'default')?.has(type) ?? false);
   const rows = (await engine.executeRaw<{ slug: string; source_id: string | null; title: string | null; type: string | null; connector_stub: boolean }>(
-    `SELECT slug, source_id, title, type, (frontmatter ->> 'google_contact_id') IS NOT NULL AS connector_stub
+    `SELECT slug, source_id, title, type, ((frontmatter ->> 'google_contact_id') IS NOT NULL OR (frontmatter ->> 'apple_contact_id') IS NOT NULL) AS connector_stub
      FROM pages
      WHERE type = ANY($1::text[])
        AND deleted_at IS NULL`,

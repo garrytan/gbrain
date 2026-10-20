@@ -301,6 +301,14 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async (engine, scope) => (await import('./checks/google-calendar.ts')).googleCalendarReadableCheck(engine, scope.sourceIds),
   },
   {
+    id: 'apple_permissions', resolution: 'operator', registration: 'wave',
+    hostOnly: 'Connector state and macOS privacy permissions live on the brain host.',
+    count: d => Number(d.count ?? 0),
+    impact: 'An Apple source has an enabled service macOS denied access to, so it imports nothing from it',
+    instruction: 'Run `gbrain apple status` for the exact System Settings pane, grant access to the app that runs gbrain, then `gbrain apple setup` (docs/guides/apple-connect.md#permissions).',
+    run: async (engine, scope) => (await import('./checks/apple-permissions.ts')).appleServicePermissionsCheck(engine, scope.sourceIds),
+  },
+  {
     id: 'atom_provenance_drift', resolution: 'repair', registration: 'doctor.ts',
     hostOnly: 'Retiring stale atoms is a host-side, explicit-only repair.',
     count: d => Number(d.drifted ?? 0),

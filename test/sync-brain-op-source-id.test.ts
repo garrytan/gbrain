@@ -89,4 +89,17 @@ describe('sync_brain op threads ctx.sourceId (#2830)', () => {
       .toEqual({ imported: true, error: null });
     expect(result).toBeDefined();
   }, 60_000);
+
+  test('untrusted stdio cannot start Apple readers on an unmanaged brain', async () => {
+    const sourceId = 'apple-remote-guard';
+    await engine.executeRaw(`INSERT INTO sources (id,name,local_path,config) VALUES ($1,$1,NULL,$2::text::jsonb)`,
+      [sourceId, JSON.stringify({ kind: 'apple', a_account: 'alice-example', a_services: 'contacts' })]);
+    const op = operationsByName['sync_brain']!;
+    const remoteCtx = {
+      engine, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: true,
+      remote: true, sourceId,
+    } as unknown as OperationContext;
+    await expect(op.handler(remoteCtx, { source_id: sourceId })).rejects.toThrow(/Apple readers are available only to a trusted local CLI call/);
+    await engine.executeRaw('DELETE FROM sources WHERE id=$1', [sourceId]);
+  });
 });

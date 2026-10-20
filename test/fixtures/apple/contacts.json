@@ -1,0 +1,55 @@
+{
+  "items": [
+    {
+      "id": "con-001",
+      "givenName": "Alice",
+      "familyName": "Example",
+      "organization": "Acme Example",
+      "jobTitle": "Engineer",
+      "emails": [
+        "alice-example@example.com"
+      ],
+      "phones": [
+        "+1 (555) 010-0100",
+        "555 0101"
+      ],
+      "groups": [
+        "Friends"
+      ]
+    },
+    {
+      "id": "con-002",
+      "givenName": "Bob",
+      "familyName": "Example",
+      "emails": [
+        "bob-example@example.com"
+      ],
+      "phones": [],
+      "groups": []
+    },
+    {
+      "id": "con-003",
+      "emails": [
+        "nameless-example@example.com"
+      ],
+      "phones": [],
+      "groups": []
+    },
+    {
+      "id": "con-004",
+      "emails": [],
+      "phones": [],
+      "groups": []
+    },
+    {
+      "id": "con-005",
+      "givenName": "Alice",
+      "familyName": "Example",
+      "emails": [
+        "alice2-example@example.com"
+      ],
+      "phones": [],
+      "groups": []
+    }
+  ]
+}

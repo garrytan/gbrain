@@ -17,7 +17,7 @@ import { LockStolenError } from '../db-lock.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { ManagedConnectorSync } from '../persistence/connector-sync.ts';
 import { clearHoldRetryKeys, readHoldRetryKeys, writeHeldRetryPointer } from './item-holds-store.ts';
-import { holdsExhaustedError, ItemHoldsRun, type ClassifiedConnectorError, type ItemHoldMeta, type ItemHoldsFinish, type ItemHoldsState } from './item-holds.ts';
+import { holdsExhaustedError, ItemHoldsRun, type ClassifiedConnectorError, type HoldGroupOf, type ItemHoldMeta, type ItemHoldsFinish, type ItemHoldsState } from './item-holds.ts';
 
 /** Errors a managed connector must not absorb (the run aborts). Refusals raised before submission are counted instead. */
 export function abortsManagedRun(error: unknown): boolean {
@@ -37,12 +37,12 @@ export class ConnectorHoldSession {
 
   private constructor(private readonly engine: BrainEngine, private readonly sourceId: string, private readonly incarnation: string | null,
     private readonly managed: ManagedConnectorSync | null, private readonly empty: Record<string, unknown>, stored: unknown,
-    private readonly retryKeys: ReadonlySet<string>, opts: { full?: boolean; now?: () => number }) {
+    private readonly retryKeys: ReadonlySet<string>, opts: { full?: boolean; now?: () => number; groupOf?: HoldGroupOf }) {
     this.holds = new ItemHoldsRun(stored, { ...opts, retryKeys });
   }
 
   static async open(engine: BrainEngine, sourceId: string, managed: ManagedConnectorSync | null, empty: Record<string, unknown>,
-    stored: unknown, opts: { full?: boolean; now?: () => number } = {}): Promise<ConnectorHoldSession> {
+    stored: unknown, opts: { full?: boolean; now?: () => number; groupOf?: HoldGroupOf } = {}): Promise<ConnectorHoldSession> {
     const [row] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]).catch(() => []);
     const incarnation = row?.incarnation ?? null;
     const keys = incarnation ? await readHoldRetryKeys(engine, sourceId, incarnation).catch(() => []) : [];

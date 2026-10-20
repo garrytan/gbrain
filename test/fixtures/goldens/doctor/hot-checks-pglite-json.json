@@ -1795,6 +1795,18 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/apple-connect.md#permissions",
+              "services": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No Apple source recorded a denied permission at its last sync.",
+            "name": "apple_permissions",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "details": {
               "by_source": [],
@@ -6129,6 +6141,18 @@
             "elapsed_ms": "<volatile>",
             "message": "No Google source recorded an unreadable calendar at its last sync.",
             "name": "google_calendar_readable",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/apple-connect.md#permissions",
+              "services": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No Apple source recorded a denied permission at its last sync.",
+            "name": "apple_permissions",
             "status": "ok"
           },
           {

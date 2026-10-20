@@ -21,7 +21,8 @@ export const CONNECTOR_STATE_OP = 'managed-connector-state';
 
 export type ConnectorAccount =
   | { kind: 'google'; email: string }
-  | { kind: 'github'; installationId: number | null; login: string | null };
+  | { kind: 'github'; installationId: number | null; login: string | null }
+  | { kind: 'apple'; account: string };
 
 export interface ConnectorPendingEntry {
   /** The page slug, or `__managed_connector_checkpoint__` for a checkpoint save. */
@@ -158,6 +159,8 @@ export async function recordConnectorSyncAttempt(engine: Pick<BrainEngine, 'exec
  * v181 (fix wave 4): records an attempt for every connector source the
  * pre-upgrade freshness loop dispatched (active, non-null local_path and not
  * `syncEnabled=false`), so the new gate idles no source autopilot synced.
+ * Google and GitHub only on purpose: no Apple source existed before v181, so there is nothing to seed, and
+ * editing this body would change the pinned migration hash.
  */
 export async function seedConnectorDispatchAttempts(engine: Pick<BrainEngine, 'executeRaw'>): Promise<number> {
   const rows = await engine.executeRaw<{ id: string; config: unknown }>(
@@ -176,7 +179,7 @@ export async function seedConnectorDispatchAttempts(engine: Pick<BrainEngine, 'e
   return seeded;
 }
 
-/** Connector source ids (google, github) with a recorded sync attempt: the autopilot dispatch gate. */
+/** Connector source ids (google, github, apple) with a recorded sync attempt: the autopilot dispatch gate. */
 export async function attemptedConnectorSourceIds(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Set<string>> {
   // Every source: only connector syncs stamp the field, and a string-wrapped config would miss a kind filter here.
   const sources = await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id,incarnation::text AS incarnation FROM sources');
@@ -192,12 +195,14 @@ export async function attemptedConnectorSourceIds(engine: Pick<BrainEngine, 'exe
 export function sameConnectorAccount(a: ConnectorAccount, b: ConnectorAccount): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === 'google') return a.email === (b as typeof a).email;
+  if (a.kind === 'apple') return a.account === (b as typeof a).account;
   const other = b as typeof a;
   return (a.installationId ?? null) === (other.installationId ?? null) && (a.login ?? null)?.toLowerCase() === (other.login ?? null)?.toLowerCase();
 }
 
 export function describeConnectorAccount(account: ConnectorAccount): string {
   if (account.kind === 'google') return account.email;
+  if (account.kind === 'apple') return `Apple account ${account.account}`;
   return [account.installationId !== null ? `installation ${account.installationId}` : null, account.login ? `login ${account.login}` : null]
     .filter(Boolean).join(', ') || 'no installation or login';
 }

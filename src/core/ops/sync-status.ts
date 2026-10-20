@@ -93,6 +93,15 @@ const sync_brain: Operation = {
         sourceId = derived.source_id;
       }
     }
+    if (ctx.remote !== false && sourceId) {
+      const [target] = await ctx.engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1 AND archived=false', [sourceId]);
+      const config = typeof target?.config === 'string' ? JSON.parse(target.config) : target?.config;
+      if (config && typeof config === 'object' && (config as Record<string, unknown>).kind === 'apple') {
+        throw opError('permission_denied', 'Apple readers are available only to a trusted local CLI call.',
+          `Apple system data cannot be read by untrusted stdio clients. Run gbrain sync --source ${sourceId} locally on the Mac.`,
+          { fix: { argv: ['gbrain', 'sync', '--source', sourceId], consent: [], actor: 'host_admin', why: 'Runs the Apple reader only in the trusted local CLI process.', requires_exclusive: false } });
+      }
+    }
     const sourceOpts = sourceId ? { sourceId } : {};
     return performSync(ctx.engine, {
       repoPath: repo,

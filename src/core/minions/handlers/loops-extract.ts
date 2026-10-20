@@ -17,7 +17,7 @@ export function makeLoopsExtractHandler(engine: BrainEngine): MinionHandler {
     if (!slug || !sourceId) throw new Error('loops_extract job requires data.slug and data.sourceId');
     const threadId = typeof job.data.threadId === 'string' ? job.data.threadId : undefined;
     const { runLoopsExtract } = await import('../../google/loops-extract.ts');
-    const result = await runLoopsExtract(engine, { slug, sourceId, ...(threadId ? { threadId } : {}) });
+    const result = await runLoopsExtract(engine, { slug, sourceId, ...(threadId ? { threadId } : {}), ...(job.data.sourceKind === 'apple' ? { sourceKind: 'apple' as const } : {}) });
     // #5867 (E9): the revision-bound outcome is the catch-up's evidence, not job completion.
     // A failed record never fails the job (that would repeat a paid extraction); the catch-up then re-checks the thread.
     try {

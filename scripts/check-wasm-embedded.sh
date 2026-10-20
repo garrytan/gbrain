@@ -28,6 +28,8 @@ OUT_BIN="$BUILD_DIR/chunker-smoketest"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 mkdir -p "$BUILD_DIR/scripts"
 cp -R "$REPO_ROOT/src" "$BUILD_DIR/src"
+# The Apple helper scripts are embedded as text (src/core/apple/readers/embedded-scripts.ts).
+cp -R "$REPO_ROOT/scripts/apple" "$BUILD_DIR/scripts/apple"
 cp -R "$REPO_ROOT/vendor" "$BUILD_DIR/vendor"
 cp "$REPO_ROOT/package.json" "$BUILD_DIR/package.json"
 cp "$REPO_ROOT/scripts/chunker-smoketest.ts" "$BUILD_DIR/scripts/chunker-smoketest.ts"

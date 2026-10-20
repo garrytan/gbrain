@@ -36,6 +36,8 @@ GBRAIN_HOME_DIR="$BUILD_DIR/home"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 mkdir -p "$BUILD_DIR/scripts" "$GBRAIN_HOME_DIR"
 cp -R "$REPO_ROOT/src" "$BUILD_DIR/src"
+# The Apple helper scripts are embedded as text (src/core/apple/readers/embedded-scripts.ts).
+cp -R "$REPO_ROOT/scripts/apple" "$BUILD_DIR/scripts/apple"
 cp -R "$REPO_ROOT/vendor" "$BUILD_DIR/vendor"
 cp -R "$REPO_ROOT/native" "$BUILD_DIR/native"
 # Shared operation/queue boundaries can reach embedded bootstrap assets even

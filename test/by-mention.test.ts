@@ -929,3 +929,16 @@ describe('buildGazetteer — engine integration', () => {
     expect(g.has('nguy')).toBe(false);
   });
 });
+
+describe('apple_contact_id is a connector contact stub too', () => {
+  test('a page carrying apple_contact_id builds a connector_stub entry; a hand-written page does not', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('apple-a', 'apple-a', '{"kind":"apple"}'::jsonb) ON CONFLICT (id) DO NOTHING`);
+    await engine.putPage('people/erin-example', { type: 'person', title: 'Erin Example', compiled_truth: 'Profile.', timeline: '', frontmatter: {} });
+    await engine.putPage('people/erin-example', { type: 'person', title: 'Erin Example', compiled_truth: 'Contact: erin@example.com.', timeline: '',
+      frontmatter: { apple_contact_id: 'contact-1' } }, { sourceId: 'apple-a' });
+    const g = await buildGazetteer(engine);
+    const bucket = g.get('erin')!.filter((e) => e.origin === 'title');
+    expect(bucket.find((e) => e.source_id === 'apple-a')?.connector_stub).toBe(true);
+    expect(bucket.find((e) => e.source_id === 'default')?.connector_stub).toBeUndefined();
+  });
+});

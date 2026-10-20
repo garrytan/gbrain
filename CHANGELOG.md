@@ -10,6 +10,29 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.318.0] - 2026-10-20
+
+**A Mac's Calendar, Contacts and Mail can now sync into a brain as a native `apple` source, the way the Google connector does for Google accounts (#6855).** `gbrain apple setup` registers the source, asks macOS for the permission each selected service needs and runs a first sync; later syncs, `--all`, autopilot, held items and `retry-held` treat it like any other source. It is read-only toward Apple, holds no credentials, and needs macOS 14 or newer with the Xcode Command Line Tools. Mail is never on by default and needs an explicit confirmation. Mail accounts hosted by Google (Gmail and Google Workspace) are never read through Apple Mail: they stay with the Google connector, and an enabled account that cannot be classified stops the whole Mail sweep instead of guessing. Pages already imported stay when routing changes.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A Mac user wants Calendar, Contacts or Mail in the brain | hand-exported folders, the inbox folder or a Shortcuts webhook; no continuous sync or health check | `gbrain apple setup`, then `gbrain apple status`; `--services` and `gbrain sources set-services` turn each service on or off without touching the others |
+| A Gmail or Google Workspace account shown in Apple Mail | no Apple path existed | read only through the Google connector; the Apple Mail sweep skips it, records the routing in its cursor, and reports `waiting` as incomplete when nothing else was read |
+| An Apple source with Mail off | `waiting` told the user to connect Google | reports `mail_disabled` for that source |
+| A Mail thread that Mail.app cannot read in time | not applicable | read in budgeted batches; a message that fails three runs is held and recovered by id, and a walk proves a thread only when its window reaches it |
+| macOS denies a permission at the last sync | not applicable | `gbrain doctor` warns with `apple_permissions` and the System Settings pane to open |
+
+The new `apple` source also feeds the open-loop engine for Mail (owner identity and consent are explicit, and a held calendar or contact never marks mail coverage partial), appears in the canonical-writer census, and keeps its code out of the migration import closure. Docs: `docs/guides/apple-connect.md`, `docs/architecture/key-files/apple-source.md`.
+
+### For contributors
+
+- New code lives under `src/core/apple/`, `src/commands/apple*.ts`, `src/cli/commands/apple.ts` and the helpers in `scripts/apple/`. The two Apple files that write pages or freshness stamps are listed in `docs/architecture/canonical-writers.tsv`.
+- The PGLite snapshot cache key in `.github/workflows/{test,e2e,stress}.yml` now hashes `src/core/apple/source-config.ts` and `src/core/apple/types.ts`, which the snapshot imports.
+- The doctor goldens carry `apple_permissions` between `google_calendar_readable` and `atom_retirements_restorable`. The PGLite hot-check and content goldens gain that one entry and nothing else: their persisted-byte counters (`terminal_bytes`) are unchanged from master. The Postgres hot-check golden still needs a Postgres run to confirm; the targeted doctor golden files passed on Linux, not the full suite.
+- Real-Mac permission and account-enumeration behavior was qualified on an earlier candidate of this change, apart from the synthetic tests in this PR. It has not been repeated on this candidate.
+
 ## [0.60.317.0] - 2026-10-19
 
 **Two CI flakes are closed at their source, and a stuck native safety suite now leaves a log instead of a silent timeout.** `test-reads-source-smell` failed with `ENOENT` when `import-file.test.ts` removed its scratch directory from `test/` mid-walk; scratch now lives in the system temp directory and a lint rule keeps it there. The native data-safety suites no longer wait inside `Bun.spawnSync`, where Bun 1.4.0 to 1.4.2 can poison a process (oven-sh/bun#34069).
