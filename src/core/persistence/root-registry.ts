@@ -97,6 +97,16 @@ function resolveFilesystemPath(path: string, realpath: (path: string) => string)
     }
   }
 }
+/** Collapse filesystem aliases, retaining the bound row's stronger ownership metadata. */
+export function canonicalManagedRoots(records: ManagedRootRecord[]): ManagedRootRecord[] {
+  const byRoot = new Map<string, ManagedRootRecord>();
+  for (const record of records) {
+    const local_path = canonicalFilesystemPath(record.local_path);
+    const prior = byRoot.get(local_path);
+    if (!prior || (!prior.worktree_id && record.worktree_id)) byRoot.set(local_path, { ...record, local_path });
+  }
+  return [...byRoot.values()].sort((a, b) => a.local_path.localeCompare(b.local_path));
+}
 /**
  * One private immutable path identity per brain/root; topology metadata can be
  * refreshed but stale roots stay fenced until an explicit verified drain clears
@@ -110,7 +120,7 @@ export function recordManagedRoots(brainId: string, records: ManagedRootRecord[]
   if (!records.length) return;
   const directory = registryDirectory(); mkdirSync(directory, { recursive: true, mode: 0o700 }); ensureMode(directory, 0o700);
   let changed = false;
-  for (const record of records) {
+  for (const record of canonicalManagedRoots(records)) {
     const root = canonicalFilesystemPath(record.local_path);
     const key = createHash('sha256').update(root).digest('hex');
     const file = join(directory, `${brainId}.${key}.json`);

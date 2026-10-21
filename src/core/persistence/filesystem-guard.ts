@@ -4,7 +4,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
 import type { SqlEngine } from './model.ts';
 import { readManagedMode, readPersistenceBrain } from './managed-mode.ts';
-import { canonicalFilesystemPath, managedRootMarkerFor, recordManagedRoots, registeredManagedRootRecords, type ManagedRootRecord } from './root-registry.ts';
+import { canonicalFilesystemPath, canonicalManagedRoots, managedRootMarkerFor, recordManagedRoots, registeredManagedRootRecords, type ManagedRootRecord } from './root-registry.ts';
 
 interface FileCapability { roots: string[]; active: boolean; }
 const active = new AsyncLocalStorage<FileCapability>();
@@ -25,13 +25,14 @@ function encloses(root: string, path: string): boolean {
 export async function refreshManagedFilesystemRoots(engine: SqlEngine, databasePath = datastorePaths.get(engine), signal?: AbortSignal): Promise<void> {
   // Mode and epoch come from one snapshot, so roots are never recorded under the epoch of a concurrent deactivation.
   const brain = await readPersistenceBrain(engine, { signal });
-  const roots = brain.enabled ? await engine.executeRaw<ManagedRootRecord>(`SELECT DISTINCT ON (local_path) * FROM (
+  const discovered = brain.enabled ? await engine.executeRaw<ManagedRootRecord>(`SELECT DISTINCT ON (local_path) * FROM (
       SELECT h.local_path,s.source_id,s.source_incarnation,s.worktree_id,s.topology_generation
       FROM persistence_host_bindings h JOIN persistence_source_bindings s ON s.worktree_id=h.worktree_id WHERE h.host_id=$1::uuid
       UNION SELECT local_path,id,incarnation,NULL,NULL FROM sources WHERE local_path IS NOT NULL
       ) roots ORDER BY local_path,worktree_id NULLS LAST,source_id,source_incarnation,topology_generation`, [localHostId()], { signal }) : [];
   signal?.throwIfAborted();
-  if (brain.enabled && databasePath) roots.push({ local_path: databasePath });
+  if (brain.enabled && databasePath) discovered.push({ local_path: databasePath });
+  const roots = canonicalManagedRoots(discovered);
   if (brain.enabled) recordManagedRoots(brain.brain_id, roots, brain.mode_epoch == null ? undefined : Number(brain.mode_epoch));
   managedRoots.set(brain.brain_id, new Map(roots.map(row => [resolve(row.local_path), row.source_id])));
 }
