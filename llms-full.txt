@@ -5642,6 +5642,60 @@ on, so it is a deliberate change with its own load test, never a drive-by.
 The non-owner `NOBYPASSRLS` isolation test is
 `test/e2e/engine-sql-rls-scope.test.ts`.
 
+### Read replica (`replica_database_url`)
+
+A team that shares one Postgres brain across regions pays the round trip to
+the primary on every statement, and a single `recall` or `query` makes many
+of them. A read replica near each reader (Supabase read replicas, RDS or
+Cloud SQL replicas, any streaming hot standby of the primary) serves the
+reads; writes still go to the primary.
+
+**Say to your agent:** *"Serve my brain's reads from the read replica in my region."*
+**Say to your agent:** *"Check that gbrain's read replica is working."*
+
+```bash
+gbrain config set replica_database_url 'postgresql://<user>:<password>@<replica-host>:5432/postgres'
+# or, per process (wins over the config file):
+export GBRAIN_REPLICA_DATABASE_URL='postgresql://...'
+gbrain doctor        # replica_connection: reachable, a standby, last replay age
+gbrain config set replica_database_url ''    # remove it
+```
+
+The key is optional. Unset, gbrain opens no replica pool and every query
+runs on `database_url` exactly as before. A file-plane replica belongs to
+the file's `database_url`: when `GBRAIN_DATABASE_URL` or `DATABASE_URL` picks
+the primary, only `GBRAIN_REPLICA_DATABASE_URL` sets a replica. PGLite ignores
+the key with a warning.
+
+**What reads the replica.** Operations whose contract is `scope: 'read'` and
+not `mutating` (the same test the warm CLI socket uses: `search`, `query`,
+`get_page`, `recall`, `entity`, `context_pack`, ...) run in a replica scope,
+from the CLI, MCP and the warm CLI socket. Inside that scope the engine's
+read seams use the replica: every `ScopedRead` (`withScopedReadTransaction`,
+JIT-off reads) and every `LegacyUnscopedRead` executor. Everything else stays
+on the primary: every write op and every read a write op makes, `executeRaw`,
+config reads, migrations and schema checks, locks, reserved connections, and
+anything inside `engine.transaction()`, including reads, so a transaction
+never spans two servers. A read op's own side writes (search telemetry, the
+query cache) also go to the primary.
+
+**Failure.** When the replica drops the connection or is unreachable, the read
+is retried on the primary and the replica sits out 30 s (one stderr warning
+per process). A hot-standby recovery conflict retries on the primary without
+the pause. A query error is the query's, and is thrown as usual.
+
+**Replica lag (not solved).** A replica applies the primary's WAL a moment
+later, usually well under a second, longer under load. A fact saved with
+`remember`, or a page written by `put_page` or `sync`, may not appear in a
+`recall`, `search` or `query` until the replica catches up. Within one
+process (an MCP `gbrain serve`), reads stay on the primary for 5 s after any
+write op that process ran. Across processes there is no such guard: a write
+from one CLI call followed at once by a read served by the warm CLI socket or
+another serve can miss it. An agent that must read its own write at once
+should make both calls through the same `gbrain serve`. Background work in the same
+process that writes outside an operation (sync, autopilot, jobs) does not
+start the 5 s window.
+
 ## Local Postgres
 
 Self-hosted Postgres + pgvector gives you the PostgresEngine without a Supabase
