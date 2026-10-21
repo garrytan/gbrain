@@ -15,6 +15,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { assertSafeE2eDatabaseUrl } from './helpers/db-guard.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
 const DIMS = 1536;
 let embedded: string[] = [];
@@ -35,9 +36,8 @@ const paragraph = (word: string) => Array.from({ length: 400 }, (_, i) => `${wor
 const page = (title: string, words: string[], extra = '') =>
   `---\ntype: note\ntitle: ${title}\n---\n\n${words.map(w => `## Section ${w}\n\n${paragraph(w)}`).join('\n\n')}\n${extra}`;
 
-for (const kind of ['pglite', 'postgres'] as const) {
-  const suite = kind === 'postgres' && !process.env.DATABASE_URL ? describe.skip : describe;
-  suite(`${kind}: an inline edit keeps unchanged chunk rows`, () => {
+for (const kind of testBackends()) {
+  describe(`${kind}: an inline edit keeps unchanged chunk rows`, () => {
     let engine: BrainEngine;
     const sourceId = `inline-keep-${kind}-${process.pid}`;
 
@@ -136,14 +136,19 @@ for (const kind of ['pglite', 'postgres'] as const) {
       expect(embeddedRows.every(row => row.embedding !== null)).toBe(true);
     }, 120_000);
 
-    test('an unchanged re-import with a protected fence keeps nothing', async () => {
+    test('a fenced no-embed edit keeps proven unchanged rows and leaves changed rows stale', async () => {
       const fence = '\n<!--- gbrain:takes:begin -->\nPRIVATE_CANARY\n<!--- gbrain:takes:end -->\n';
       await write('notes/protected', page('Protected', ['mike', 'november', 'oscar'], fence));
       const before = await rows('notes/protected');
       await write('notes/protected', page('Protected', ['mike', 'november', 'papa'], fence), true);
       const after = await rows('notes/protected');
-      expect(after.some(row => before.some(old => old.id === row.id))).toBe(false);
-      expect(after.every(row => row.embedding === null)).toBe(true);
+      const kept = after.filter(row => before.some(old => old.id === row.id));
+      expect(kept.length).toBeGreaterThan(0);
+      for (const row of kept) expect(row).toEqual(before.find(old => old.id === row.id)!);
+      const stale = after.filter(row => row.embedding === null);
+      expect(stale.length).toBeGreaterThan(0);
+      expect(stale.every(row => String(row.chunk_text).includes('papa'))).toBe(true);
+      expect(after.some(row => String(row.chunk_text).includes('PRIVATE_CANARY'))).toBe(false);
     }, 120_000);
   });
 }

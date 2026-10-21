@@ -660,8 +660,8 @@ export async function importFromContent(
   // recorded embedding input (#5553: column, model, dimensions, wrapper tier
   // and exact input) equals the one this import would embed, or, for a vector
   // recorded before provenance existed, when the input is the raw chunk text
-  // under the same model. The old index must be sealed and neither body may
-  // hold protected fences, so no reused vector can carry a private sibling.
+  // under the same model. The old index must be sealed; if either body holds
+  // protected fences, recorded input is required to exclude private siblings.
   // A prepared (persistence) import defers embedding to its effect worker, so
   // it reuses inside its publication transaction, under the page guard, from
   // the chunks it is about to replace; only the chunks left without a vector
@@ -672,8 +672,11 @@ export async function importFromContent(
   const largePage = isLargePageBytes(bodyBytes) || segmented !== null;
   const postCommitEmbedding = largePage ? undefined : opts.onPostCommitEmbedding;
   const reusable = !!existing && !existing.deleted_at && !opts.forceRechunk && !postCommitEmbedding && chunks.length > 0 && bodyStorageOf(existing) !== 'segmented'
-    && !(opts.prepare && modeRequiresSynopsis(effectiveCRMode)) && !hasProtectedBody(`${existing.compiled_truth}\n${existing.timeline ?? ''}`) && !hasProtectedBody(`${parsed.compiled_truth}\n${parsed.timeline ?? ''}`);
-  const reuseCtx = { slug, sourceId: sourceId ?? 'default', title: parsed.title, corpusGeneration, tier: effectiveCRMode === 'title' ? 'title' as const : 'none' as const };
+    && !(opts.prepare && modeRequiresSynopsis(effectiveCRMode));
+  // Evaluate only for reusable inline bodies: segmented body getters throw.
+  const requireRecordedInput = reusable && (hasProtectedBody(`${existing!.compiled_truth}\n${existing!.timeline ?? ''}`)
+    || hasProtectedBody(`${parsed.compiled_truth}\n${parsed.timeline ?? ''}`));
+  const reuseCtx = { slug, sourceId: sourceId ?? 'default', title: parsed.title, corpusGeneration, tier: effectiveCRMode === 'title' ? 'title' as const : 'none' as const, requireRecordedInput };
   const reuseStoredVectors = (exec: BrainEngine, into: ChunkInput[], keepUnembedded = false) => reuseStoredChunkVectors(exec, into, { ...reuseCtx, prepared: !!opts.prepare, keepUnembedded });
   const reused = reusable && !noEmbed && !opts.prepare ? await reuseStoredVectors(engine, chunks) : new Map<number, number | null>();
 

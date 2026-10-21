@@ -2,7 +2,7 @@
  * A13: a markdown edit re-embeds only the chunks whose embedding input
  * changed. Unchanged chunks keep their stored vectors when the chunk text,
  * chunk source, contextual wrapper and embedding signature all match and
- * neither the old nor the new body holds protected (facts/takes) fences.
+ * protected (facts/takes) bodies require recorded embedding-input provenance.
  *
  * PGLite in-memory; the embedding transport is stubbed ($0).
  */
@@ -95,15 +95,43 @@ describe('markdown import reuses unchanged chunk vectors (A13)', () => {
     expect(embedded.length).toBe((await vectors(slug)).size);
   });
 
-  test('a page with protected fences never reuses vectors', async () => {
+  test('a page with protected fences reuses only unchanged proven vectors', async () => {
     const slug = 'notes/reuse-protected';
     const fence = '\n<!--- gbrain:takes:begin -->\nPRIVATE_CANARY\n<!--- gbrain:takes:end -->\n';
     await importFromContent(engine, slug, page('Protected', ['alpha', 'bravo', 'charlie'], fence));
+    const before = await vectors(slug);
+    expect(embedded.some(text => text.includes('PRIVATE_CANARY'))).toBe(false);
     embedded = [];
     await importFromContent(engine, slug, page('Protected', ['alpha', 'bravo', 'delta'], fence));
     const count = (await vectors(slug)).size;
-    expect(embedded.length).toBe(count);
+    expect(embedded.length).toBeGreaterThan(0);
+    expect(embedded.length).toBeLessThan(count);
+    expect(embedded.some(text => text.includes('PRIVATE_CANARY'))).toBe(false);
+    for (const [text, vector] of await vectors(slug)) {
+      if (before.has(text)) expect(vector).toBe(before.get(text)!);
+    }
   });
+
+  for (const fenced of [false, true]) {
+    test(`legacy unproven vectors are ${fenced ? 'refused on fenced' : 'reused on plain'} pages`, async () => {
+      const slug = `notes/legacy-${fenced}`;
+      await engine.setConfig('search.contextual_retrieval', 'none');
+      try {
+        const fence = fenced ? '\n<!--- gbrain:takes:begin -->\nPRIVATE_CANARY\n<!--- gbrain:takes:end -->\n' : '';
+        await importFromContent(engine, slug, page('Legacy', ['alpha', 'bravo', 'charlie'], fence));
+        await engine.executeRaw(`UPDATE content_chunks SET embedding_input_hash = NULL WHERE page_id = (SELECT id FROM pages WHERE slug=$1)`, [slug]);
+        await engine.executeRaw(`UPDATE pages SET contextual_retrieval_mode = NULL WHERE slug=$1`, [slug]);
+        embedded = [];
+        await importFromContent(engine, slug, page('Legacy', ['alpha', 'bravo', 'delta'], fence));
+        const count = (await vectors(slug)).size;
+        if (fenced) expect(embedded.length).toBe(count);
+        else expect(embedded.length).toBeLessThan(count);
+        expect(embedded.some(text => text.includes('PRIVATE_CANARY'))).toBe(false);
+      } finally {
+        await engine.executeRaw(`DELETE FROM config WHERE key = 'search.contextual_retrieval'`);
+      }
+    });
+  }
 
   test('--force-rechunk re-embeds every chunk', async () => {
     const slug = 'notes/reuse-force';

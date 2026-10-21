@@ -25,7 +25,7 @@ import { parseEmbedding } from './utils.ts';
 export async function reuseStoredChunkVectors(
   exec: BrainEngine,
   into: ChunkInput[],
-  { slug, sourceId, title, corpusGeneration, tier, prepared, keepUnembedded = false }: { slug: string; sourceId: string; title: string; corpusGeneration: string | null; tier: 'title' | 'none'; prepared: boolean; keepUnembedded?: boolean },
+  { slug, sourceId, title, corpusGeneration, tier, prepared, keepUnembedded = false, requireRecordedInput = false }: { slug: string; sourceId: string; title: string; corpusGeneration: string | null; tier: 'title' | 'none'; prepared: boolean; keepUnembedded?: boolean; requireRecordedInput?: boolean },
 ): Promise<Map<number, number | null>> {
   const reused = new Map<number, number | null>();
   const target = await embeddingWriteTarget(exec);
@@ -46,7 +46,10 @@ export async function reuseStoredChunkVectors(
   // Reuse is keyed on chunk source + text, so a stored chunk's current-input
   // hash is the hash its matching new chunk would record.
   const all = await exec.getChunks(slug, { sourceId, includeEmbedding: true, requireSafeChunks: true });
-  const stored = all.filter(chunk => canReuseMarkdownVector(recorded.get(chunk.chunk_index), rows[0]!.contextual_retrieval_mode, tier, provenance, chunk));
+  // Protected bodies cannot use the legacy raw-text fallback: only recorded
+  // provenance proves that the vector never embedded a private sibling.
+  const stored = all.filter(chunk => (!requireRecordedInput || recorded.get(chunk.chunk_index) != null)
+    && canReuseMarkdownVector(recorded.get(chunk.chunk_index), rows[0]!.contextual_retrieval_mode, tier, provenance, chunk));
   const identity = (chunk: ChunkInput | Chunk) => JSON.stringify([chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
     chunk.language ?? null, chunk.symbol_name ?? null, chunk.symbol_type ?? null, chunk.start_line ?? null, chunk.end_line ?? null,
     chunk.parent_symbol_path ?? null, chunk.doc_comment ?? null, chunk.symbol_name_qualified ?? null, chunk.modality ?? 'text']);
