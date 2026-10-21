@@ -105,7 +105,7 @@ export async function sealImageProjections(engine: BrainEngine, opts: { limit?: 
         WHERE p.deleted_at IS NULL AND p.knowledge_revision=v.revision AND ${sealableImageSql('p')}`, [JSON.stringify(group.map(({ source_id, slug, revision }) => ({ source_id, slug, revision })))]);
       if (!pages.length) return [];
       const chunks = await tx.executeRaw<{ id: number; page_id: number; chunk_text: string; chunk_source: string;
-        embedding_input_hash: string | null; current: boolean }>(`SELECT id,page_id,chunk_text,chunk_source,embedding_input_hash,
+        embedding_input_hash: string | null; dimensions: number | null; current: boolean }>(`SELECT id,page_id,chunk_text,chunk_source,embedding_input_hash,vector_dims(c.${col}::vector) AS dimensions,
           ${movableChunkSql(col)} AND model IS NOT DISTINCT FROM $2 AS current
         FROM content_chunks c WHERE c.page_id=ANY($1::int[]) AND c.${col} IS NOT NULL AND ${chunkGenerationProbe('c')}`, [pages.map(page => Number(page.id)), target.provenanceModel]);
       const byId = new Map(pages.map(page => [Number(page.id), page]));
@@ -114,7 +114,7 @@ export async function sealImageProjections(engine: BrainEngine, opts: { limit?: 
         if (!chunk.current) return true;
         if (chunk.embedding_input_hash === null) return page.mode != null;
         const provenance = embeddingInputContext(target, page.title, page.corpus_generation, [chunk]);
-        return !acceptedEmbeddingInputHashes(provenance, page.mode, chunk).includes(chunk.embedding_input_hash);
+        return !acceptedEmbeddingInputHashes(provenance, page.mode, chunk, chunk.dimensions).includes(chunk.embedding_input_hash);
       }).map(chunk => Number(chunk.id));
       if (stale.length) {
         await tx.executeRaw(`UPDATE content_chunks SET ${col}=NULL,embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,

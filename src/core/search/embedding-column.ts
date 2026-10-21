@@ -626,6 +626,8 @@ export function normalizeEngineColumn(
 export function resolveWriteColumnFromConfigRows(rows: {
   searchEmbeddingColumn?: string | null;
   embeddingColumnsJson?: string | null;
+  /** Real builtin width when the caller needs provenance, not only a vector cast. */
+  embeddingDimensions?: number;
 }): ResolvedColumn {
   const name =
     typeof rows.searchEmbeddingColumn === 'string' && rows.searchEmbeddingColumn.length > 0
@@ -648,7 +650,9 @@ export function resolveWriteColumnFromConfigRows(rows: {
     name === 'embedding_image' ||
     (name === DEFAULT_COLUMN_NAME && !(registry && Object.hasOwn(registry, DEFAULT_COLUMN_NAME)))
   ) {
-    return normalizeEngineColumn(undefined);
+    const column = normalizeEngineColumn(undefined);
+    return Number.isInteger(rows.embeddingDimensions) && rows.embeddingDimensions! > 0
+      ? { ...column, dimensions: rows.embeddingDimensions! } : column;
   }
 
   const cfg: GBrainConfig = { engine: 'pglite' } as GBrainConfig;
