@@ -27,7 +27,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import { managedSyncResumeArgs } from '../sync-reconcile.ts';
 import { readManagedSyncFailures, type ManagedSyncFailure } from './sync-failures.ts';
-import { outOfAttemptsHold, fenceAutoRepairFor, gitHoldFix, holdEscalation, noteHoldEdit, readGitSourceHolds, recordHoldAttempt, requestGitHoldRetry, type GitHoldRecord } from './sync-holds.ts';
+import { outOfAttemptsHold, fenceAutoRepairFor, fileDriftSide, gitHoldFix, holdEscalation, noteHoldEdit, readGitSourceHolds, recordHoldAttempt, requestGitHoldRetry, type GitHoldRecord } from './sync-holds.ts';
 import type { FenceAutoRepair } from '../fence-repair/hold-fix.ts';
 import { classifySyncFault, HOLD_ATTEMPTS_NEEDS_HUMAN, type SyncFaultVerdict } from './sync-fault-class.ts';
 import { CONTENT_REPAIR_KINDS, contentHoldDisposition, runContentLane, type ContentHoldDisposition } from '../repair/content-lane.ts';
@@ -239,6 +239,7 @@ export function holdVerdict(record: GitHoldRecord, auto: FenceAutoRepair | undef
   const content = record.meta.content_repair ? { content_repair: { ...record.meta.content_repair, path: record.path, slug: record.slug } } : {};
   if (record.code === 'origin_conflict' && record.meta.reason) return classifySyncFault({ code: record.code, detail: 'origin_conflict_decision', ...escalation });
   if (record.code === 'page_identity_changed') return classifySyncFault({ code: record.code, detail: 'page_identity_decision', ...escalation });
+  if (record.code === 'file_drift' && fileDriftSide(record.meta) === 'unknown') return classifySyncFault({ code: record.code, detail: 'file_drift_unknown', ...escalation });
   const disposition = contentHoldDisposition(record, auto);
   if (disposition.action !== 'listed' || disposition.state === 'owner') return classifySyncFault({ code: record.code, ...escalation, ...content });
   const verdict = classifySyncFault({ code: record.code, ...escalation, detail: disposition.reason, ...content });
@@ -248,6 +249,9 @@ export function holdVerdict(record: GitHoldRecord, auto: FenceAutoRepair | undef
     : `gbrain will not repair ${record.path} by itself (${disposition.reason}); the hold's fix names the exact edit or decision.`;
   return { ...verdict, safe_actions: ['none'], needs_human: true, human_reason: reason };
 }
+
+/** #7199: whether a hold waits on a person; a sync run counts its own holds this way (sync-holds.ts buildHoldReport). */
+export const holdNeedsHuman = (record: GitHoldRecord, auto: FenceAutoRepair | undefined): boolean => holdVerdict(record, auto).needs_human;
 
 function holdStatus(record: GitHoldRecord, auto?: FenceAutoRepair): SyncStatusHold {
   const attempts = record.meta.attempts ?? 1;

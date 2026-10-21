@@ -44,8 +44,11 @@ export interface SyncPathState {
   levelSha256: string | null;
   /** `published`: the disk bytes hash to the attested publication's `expected_hash`, or the disk is absent after a deleting publication. */
   published: boolean;
-  /** An active hold at `p`: whether it is at level `L` in its own domain, re-screen due, or in the retry set. */
-  hold: { atLevel: boolean; rescreenDue: boolean; retried: boolean } | null;
+  /**
+   * An active hold at `p`: whether it is at level `L` in its own domain, re-screen due, or in the retry set. #7199 `unscreened`:
+   * a side-`unknown` drift hold an older gbrain wrote before comparing the page with the file's earlier committed versions.
+   */
+  hold: { atLevel: boolean; rescreenDue: boolean; retried: boolean; unscreened?: boolean } | null;
   /**
    * A deletion marker at the origin: `deleted` (with the blob ids it held) or `legacy` (the baseline blob of a page deleted
    * before PR 4; `deletion` is the committed deleting request that proves it, and a legacy marker without one settles nothing).
@@ -178,7 +181,8 @@ function afterHold(s: SyncPathState): Matched {
     }
   }
   if ((!fileSame && proof && live) || !live) return { cls: 'import', settled: false, action: 'import' };
-  if (live && s.record?.revision == null && s.level !== null && s.level === s.baseline) return { cls: 'legacy_unverified', settled: true, action: 'none' };
+  // #7199: an older side-`unknown` hold's pass moved the baseline to its own level, so its one re-screen runs as drift.
+  if (live && s.record?.revision == null && s.level !== null && s.level === s.baseline && !s.hold?.unscreened) return { cls: 'legacy_unverified', settled: true, action: 'none' };
   if (live && s.keepDb && s.mode === 'committed' && s.dirty === 'clean') return { cls: 'keep_db', settled: false, action: 'keep_db' };
   return { cls: 'drift', settled: false, action: 'hold', side: s.record?.revision != null ? 'both' : 'unknown' };
 }

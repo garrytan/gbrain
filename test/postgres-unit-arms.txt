@@ -403,6 +403,7 @@ test/sync-absent-from-worktree-s27.test.ts
 test/sync-admission-6712.test.ts
 test/sync-capacity-preflight.test.ts
 test/sync-checkpoint-moved-6834.test.ts
+test/sync-classic-drift-7199.test.ts
 test/sync-discovery-legacy-origin-7130.test.ts
 test/sync-drain-claims.test.ts
 test/sync-drain-effect-recovery-blocked.test.ts

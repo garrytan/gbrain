@@ -81,13 +81,21 @@ export function pinnedBlob(cursor: PinnedCursor, path: string): TreeBlob | null 
 }
 
 /**
- * A `both` entry's recorded disk blob (`driftBaseline`), or null. When the page still holds what it imports (sync-run.ts
- * `sameContentAtOrigin`, `pageOnly`), the database changed only what an import keeps (tags, links), so the newer file
- * overwrites nothing the database alone holds and the entry imports.
+ * A `both` entry's recorded disk blob, or (#7199) an `unknown` entry's blob at the source's last commit (`driftBaseline`),
+ * or null. When the page still holds what it imports (sync-run.ts `sameContentAtOrigin`, `pageOnly`), the database changed
+ * only what an import keeps (tags, links), so the newer file overwrites nothing the database alone holds and the entry imports.
  */
 export function driftBaselineContent(gitRoot: string, entry: Pick<SyncEntry, 'drift' | 'driftBaseline'>): string | null {
-  if (entry.drift !== 'both' || !entry.driftBaseline) return null;
+  if ((entry.drift !== 'both' && entry.drift !== 'unknown') || !entry.driftBaseline) return null;
   try { return readBlobContents(gitRoot, [{ oid: entry.driftBaseline, size: SYNC_READ_BOUND }]).get(entry.driftBaseline) ?? null; } catch { return null; }
+}
+
+/** #7199: whether the page still holds what the entry's baseline or one of its earlier committed versions (`driftHistory`) imports, tried in order. */
+export async function pageHoldsDriftBaseline(gitRoot: string, entry: Pick<SyncEntry, 'drift' | 'driftBaseline' | 'driftHistory'>, same: (content: string | null) => Promise<boolean>): Promise<boolean> {
+  if (await same(driftBaselineContent(gitRoot, entry))) return true;
+  if (entry.drift !== 'unknown') return false;
+  for (const oid of entry.driftHistory ?? []) if (await same(driftBaselineContent(gitRoot, { drift: 'unknown', driftBaseline: oid }))) return true;
+  return false;
 }
 
 /** The frozen import content of one entry (`readSyncContent`); a committed entry's pinned blob is read with the entries after it. */

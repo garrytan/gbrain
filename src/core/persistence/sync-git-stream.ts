@@ -210,6 +210,35 @@ export async function readRenameHints(gitRoot: string, from: string, to: string)
 }
 
 /**
+ * #7199: the blob ids `path` had at `commit` and its first `depth - 1` first-parent ancestors, newest first, one
+ * per commit that has the path (one `cat-file --batch` of `<commit>~k:<path>` specs; bodies are read past, never kept).
+ * Empty for a path a spec line cannot carry.
+ */
+export async function pathBlobHistory(gitRoot: string, commit: string, path: string, depth: number): Promise<string[]> {
+  if (!OID.test(commit) || /[\n\r]/.test(path) || depth < 1) return [];
+  const oids: string[] = [];
+  let header: Buffer[] = [], skip = 0, answered = 0;
+  const result = await gitStream(gitRoot, ['cat-file', '--batch'], { timeoutMs: READ_TIMEOUT_MS,
+    stdin: lines(Array.from({ length: depth }, (_, k) => `${commit}~${k}:${path}`), '\n'), onChunk: chunk => {
+      let at = 0;
+      while (at < chunk.length) {
+        if (skip) { const take = Math.min(skip, chunk.length - at); skip -= take; at += take; continue; }
+        const newline = chunk.indexOf(10, at);
+        if (newline < 0) { header.push(chunk.subarray(at)); break; }
+        const line = Buffer.concat([...header, chunk.subarray(at, newline)]).toString('utf8');
+        header = []; at = newline + 1; answered += 1;
+        if (line.endsWith(' missing') || line.endsWith(' ambiguous')) continue;
+        const [oid = '', type = '', size = ''] = line.split(' ');
+        if (!OID.test(oid) || !/^\d+$/.test(size)) throw malformed('cat-file', line);
+        if (type === 'blob') oids.push(oid);
+        skip = Number(size) + 1;
+      }
+    } });
+  if (!result.ok || skip || header.length || answered !== depth) throw new SyncTreeReadIncomplete('cat-file', result.ok ? `${answered} of ${depth} specs answered` : outcome(result));
+  return oids;
+}
+
+/**
  * Blob contents by OID through one `cat-file --batch`. A blob over `maxBytes`,
  * a non-blob, a missing object, or one that would pass `maxTotalBytes` is left
  * out of the map (its bytes are still consumed); a Git failure or a short read

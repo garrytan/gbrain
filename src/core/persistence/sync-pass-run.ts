@@ -35,7 +35,7 @@ import { passFoldBase, passIdleProbe, readShadowLevel, workingIdleChange, type P
 import { ownWritebackCommit, type PassFold } from './sync-pass-fold.ts';
 import { openPassRequests, settleCarried } from './sync-pass-carried.ts';
 import { loopYield } from './sync-yield.ts';
-import { recallWorkingStatCache, rememberWorkingStatCache, SyncTreeReadIncomplete } from './sync-git-stream.ts';
+import { pathBlobHistory, recallWorkingStatCache, rememberWorkingStatCache, SyncTreeReadIncomplete } from './sync-git-stream.ts';
 import { syncPassKind } from './sync-classify.ts';
 import { PASS_BATCH_KEY_PREFIX, readConvergedWatermark, SyncAdmissionPaused, type PassEntry } from './sync-pass-batch.ts';
 import { assertDrainLease, currentDrainLease } from './sync-lease.ts';
@@ -69,6 +69,8 @@ export const PASS_MAX_ROUNDS = 4;
 export const PASS_BATCH_MAX = 10_000;
 /** Waits for in-flight work a pass makes before it stops `writer_pending`, each bounded by the wait budget. */
 const IN_FLIGHT_WAITS = 4;
+/** #7199: how far back (first-parent commits) an older side-`unknown` hold's re-screen looks, and how many earlier versions it compares. */
+const DRIFT_HISTORY_DEPTH = 50, DRIFT_HISTORY_VERSIONS = 3;
 
 export interface SyncPassInput {
   opts: SyncOpts; slice?: { maxPages: number; maxMs: number }; context: ManagedSyncContext; authority: SyncAuthority;
@@ -177,12 +179,22 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
   // #6887: a both-moved import imports when the page still holds what its recorded disk blob imports (sync-screen.ts driftBaselineContent).
   const bothDrift = imports.filter(entry => entry.result.cls === 'drift' && entry.result.side === 'both' && entry.pageId !== null);
   const baselineRecords = await readSyncImportProvenances(engine, level.sourceId, level.incarnation, bothDrift.map(entry => entry.pageId!));
-  const driftBaseline = (entry: ShadowPath) => entry.result.side === 'both' && entry.pageId !== null ? baselineRecords.get(entry.pageId)?.disk_blob_oid ?? undefined : undefined;
+  // #7199: an `unknown` import (no record says which side moved) imports when the page still holds what the file imported at
+  // the source's last commit: the classic sync that last wrote it read that blob.
+  const driftBaseline = (entry: ShadowPath) => entry.pageId === null ? undefined : entry.result.side === 'both' ? baselineRecords.get(entry.pageId)?.disk_blob_oid ?? undefined
+    : entry.result.side === 'unknown' ? entry.state.baseline ?? undefined : undefined;
+  // #7199: a side-`unknown` hold an older gbrain wrote after the pass that held it moved the source's last commit past the one
+  // the classic sync read; its re-screen also compares the page with the file's last few committed versions before the held one.
+  const history = new Map<string, string[]>();
+  for (const entry of imports) if (entry.result.side === 'unknown' && entry.pageId !== null && entry.state.hold?.unscreened) {
+    const earlier = await pathBlobHistory(level.gitRoot, level.baselineCommit ?? level.head, entry.path, DRIFT_HISTORY_DEPTH).catch(() => []);
+    history.set(entry.path, [...new Set(earlier)].filter(oid => oid !== entry.state.level && oid !== entry.state.baseline).slice(0, DRIFT_HISTORY_VERSIONS));
+  }
   const entries: PassEntry[] = [], collisions: SyncSlugCollision[] = [], skipped: ShadowPath[] = [], identity: Array<{ entry: ShadowPath; origin: ShadowPath | null; slug: string; ids: { page: string; file: string } }> = [];
   const claims = new Map<string, ShadowPath[]>();
   for (const entry of imports) {
     const paths = entryPaths(level, entry.path);
-    const base = { ...paths, action: 'import' as const, working: working(entry), level: entry.state.level, ...(entry.result.cls === 'drift' && entry.result.side && entry.result.side !== 'deleted' ? { drift: entry.result.side, ...(driftBaseline(entry) ? { driftBaseline: driftBaseline(entry) } : {}) } : {}) };
+    const base = { ...paths, action: 'import' as const, working: working(entry), level: entry.state.level, ...(entry.result.cls === 'drift' && entry.result.side && entry.result.side !== 'deleted' ? { drift: entry.result.side, ...(driftBaseline(entry) ? { driftBaseline: driftBaseline(entry) } : {}), ...(history.get(entry.path)?.length ? { driftHistory: history.get(entry.path) } : {}) } : {}) };
     if (entry.state.page) { entries.push({ ...base, slug: entry.slug!, pageId: entry.pageId, revision: entry.revision }); continue; }
     const slug = slugOf.get(entry.path);
     if (!slug) { skipped.push(entry); continue; }

@@ -145,13 +145,16 @@ function base(entry: HoldEntry, slug: string, pageId: number | null, code: 'conc
  * page revision changes.
  */
 export function fileDriftHold(entry: HoldEntry, slug: string, pageId: number | null, intent: Pick<SyncIntent, 'content' | 'blobOid'>,
-  observed: { sides: 'database' | 'both' | 'unknown'; revision: string | null; proof: PageChangeProof | null; sharedOrigin: boolean }): HeldEntry {
+  observed: { sides: 'database' | 'both' | 'unknown'; revision: string | null; proof: PageChangeProof | null; sharedOrigin: boolean; baseline?: string | null }): HeldEntry {
   const by = observed.proof ? `${observed.proof.operation} request ${observed.proof.request_id} wrote page ${slug} straight to the database` : `page ${slug} changed in the database`;
-  const file = observed.sides === 'database' ? 'its file did not change in Git' : observed.sides === 'both' ? 'its file changed too'
-    : 'there is no import record to tell which side changed';
-  return base(entry, slug, pageId, 'file_drift',
-    `${entry.path}: ${by} since the file was last imported and ${file}, so sync held the import instead of overwriting the database version; the rest of the source synced.`,
+  const file = observed.sides === 'database' ? 'its file did not change in Git' : 'its file changed too';
+  // #7199: with no import record, neither side is known to have moved; the hold names what was compared.
+  const message = observed.sides === 'unknown'
+    ? `${entry.path}: sync has no import record for page ${slug}, so it cannot tell whether the page or the file changed; the file differs from the page, and the page ${observed.baseline ? 'differs from the file at the last synced commit' : 'has no file at the last synced commit to compare with'}, so sync held the import instead of overwriting the database version; the rest of the source synced.`
+    : `${entry.path}: ${by} since the file was last imported and ${file}, so sync held the import instead of overwriting the database version; the rest of the source synced.`;
+  return base(entry, slug, pageId, 'file_drift', message,
     intent.content ?? null, intent.blobOid, { sides: observed.sides, ...(observed.sides !== 'database' ? { side: observed.sides } : {}), ...(observed.revision ? { page_revision: observed.revision } : {}),
+      ...(observed.sides === 'unknown' ? { baseline_screened: observed.baseline ?? 'none' } : {}),
       ...(observed.proof ? { competing_request_id: observed.proof.request_id, competing_operation: observed.proof.operation } : {}),
       ...(observed.sharedOrigin ? { shared_origin: true as const } : {}) });
 }
