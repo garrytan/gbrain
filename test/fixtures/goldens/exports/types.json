@@ -591,7 +591,8 @@
           "engine?: \"postgres\" | \"pglite\" | undefined",
           "keyword_statement_timeout_ms?: number | undefined",
           "pglite_shared_buffers?: string | undefined",
-          "pool_max?: number | undefined"
+          "pool_max?: number | undefined",
+          "replica_database_url?: string | undefined"
         ],
         "name": "EngineConfig"
       },
@@ -1211,6 +1212,7 @@
           "private keywordStatementTimeoutSetting",
           "private keywordTimeouts",
           "private onPoisoned",
+          "private onReadConnection",
           "private poisonedDiscards",
           "private poolHealth",
           "private poolIncidents",
@@ -1218,7 +1220,9 @@
           "private rlsScopeBindingEnabled",
           "private runUnsafe",
           "private runVectorAttempt",
+          "private scopedReadOn",
           "private transactionOn",
+          "private unscopedReadSql",
           "private vectorIterativeScan",
           "private vectorIterativeScanSupported",
           "private vectorScope",
@@ -2790,6 +2794,7 @@
           "provider_chat_options?: Record<string, Record<string, unknown>> | undefined",
           "push?: { allow_unverified_remote?: boolean; } | undefined",
           "remote_mcp?: { issuer_url: string; mcp_url: string; oauth_client_id: string; oauth_client_secret?: string; } | undefined",
+          "replica_database_url?: string | undefined",
           "retrieval_reflex?: boolean | undefined",
           "retrieval_reflex_lexical_arms?: boolean | undefined",
           "retrieval_reflex_max_pointers?: number | undefined",
@@ -8881,7 +8886,8 @@
           "engine?: \"postgres\" | \"pglite\" | undefined",
           "keyword_statement_timeout_ms?: number | undefined",
           "pglite_shared_buffers?: string | undefined",
-          "pool_max?: number | undefined"
+          "pool_max?: number | undefined",
+          "replica_database_url?: string | undefined"
         ],
         "name": "EngineConfig"
       },
