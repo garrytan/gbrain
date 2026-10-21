@@ -45,6 +45,8 @@ PAGES
   delete <slug>                      Delete a page
   list [--type T] [--tag T] [--limit N]
                                      List pages
+  find <glob|prefix|name> [--type T] [--source S] [--limit N]
+                                     Find pages by slug, path or title
 
 SEARCH
   search <query>                     Keyword search (tsvector)
@@ -190,6 +192,8 @@ JOBS (Minions)
 
 ADMIN
   stats                              Brain statistics
+  stats --by source,type [--since 30d] [--collapse-aliases]
+                                     Live page counts per source and type
   health                             Brain health dashboard
   history <slug> [--json]            Page version history
   revert <slug> <version-id>         Revert to version

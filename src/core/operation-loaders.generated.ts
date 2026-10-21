@@ -21,6 +21,7 @@ const load_extraction = () => import('./ops/extraction.ts') as Promise<Record<st
 const load_facts = () => import('./ops/facts.ts') as Promise<Record<string, unknown>>;
 const load_feedback = () => import('./ops/feedback.ts') as Promise<Record<string, unknown>>;
 const load_files = () => import('./ops/files.ts') as Promise<Record<string, unknown>>;
+const load_find_pages = () => import('./ops/find-pages.ts') as Promise<Record<string, unknown>>;
 const load_image = () => import('./ops/image.ts') as Promise<Record<string, unknown>>;
 const load_ingest_log = () => import('./ops/ingest-log.ts') as Promise<Record<string, unknown>>;
 const load_insights = () => import('./ops/insights.ts') as Promise<Record<string, unknown>>;
@@ -67,6 +68,7 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "purge_deleted_pages": [load_pages, "pagesOperations"],
   "capture": [load_pages, "pagesOperations"],
   "fetch": [load_pages, "pagesOperations"],
+  "find_pages": [load_find_pages, "findPagesOperations"],
   "edit_page": [load_page_edit, "pageEditOperations"],
   "append_page": [load_page_append, "pageAppendOperations"],
   "put_pages": [load_page_batch, "pageBatchOperations"],

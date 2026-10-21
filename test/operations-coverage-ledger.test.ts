@@ -38,6 +38,7 @@ const LEDGER: Record<string, string> = {
   put_pages: 'test/put-pages-batch.test.ts',
   delete_page: 'test/pages-source-scoping-4329.test.ts',
   list_pages: 'test/list-pages-truncation.test.ts',
+  find_pages: 'test/page-lookup-7191.test.ts',
   restore_page: 'test/pages-source-scoping-4329.test.ts',
   purge_deleted_pages: 'test/operations-trust-boundary.test.ts',
   purge_fact: 'test/purge-fact.test.ts',

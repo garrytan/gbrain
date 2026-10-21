@@ -57,13 +57,31 @@ Bun blocks gbrain's postinstall on `bun install -g` (`Blocked 1 postinstall`); a
 
 ## Memory operating protocol
 
-**Retrieval: gbrain first.** For anything in the brain, run `gbrain search` (names,
-codes, phrases) or `gbrain query` (questions), then `gbrain get <slug>` on a hit.
-Don't grep, cat or SQL the brain checkout first. Filters agents miss:
-`--types '["meeting"]'`, `--match keyword` (every matching page), `--since`/`--until`
-on `query`, `--source <id>`, `--limit`, `--json`; `gbrain backlinks <slug>` and
-`gbrain timeline <slug>` for links and dated events. Copyable examples:
-[brain-first](skills/conventions/brain-first.md#retrieval-gbrain-first).
+**Which gbrain call for which lookup.** Details and caveats: [brain-first](skills/conventions/brain-first.md#which-gbrain-call-for-which-lookup).
+
+<!-- BEGIN GENERATED lookup-table (copied from skills/conventions/brain-first.md by bun run regen:all) -->
+Ask gbrain before you `grep`, `cat`, `ls` or run SQL on the brain checkout: it
+reads the index across every source, ranks, filters and names the slug to read
+next. With the gbrain MCP server connected, call the tool of the same name
+instead of the CLI (one connection, no per-call startup).
+
+| Lookup | CLI | MCP tool |
+|---|---|---|
+| Find a page by name or path | `gbrain find <name\|prefix\|glob> [--type T] [--source S]` | `find_pages` |
+| Count pages by kind or source | `gbrain stats --by source,type [--since 30d] [--collapse-aliases]` | `get_stats` |
+| Answer a question, search a topic | `gbrain query "<question>" [--types '["meeting"]'] [--since 30d]` | `query` |
+| Pages with these words | `gbrain search "<words>" [--match keyword] [--source S]` | `search` |
+| Read a known page | `gbrain get <slug>` | `get_page` |
+| Read only the part a search hit points at | `gbrain get <slug> --around-chunk-id <chunk_id>` or `--lines '{"from":1,"count":200}'` | `get_page` |
+| What the brain knows about a person or company | `gbrain entity <slug>`, then `gbrain recall "<topic>" --json` | `entity`, `recall` |
+| Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
+| Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
+| Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
+
+Parse `--json` output instead of matching the text; notices go to stderr. Take
+`chunk_id` from a fresh `search --json` hit (an old one fails `revision_changed`),
+and read a degraded notice before concluding the brain has nothing.
+<!-- END GENERATED lookup-table -->
 
 Recall relevant saved context before answering. Save explicit requests to remember with provenance; confirm corrections against the stored record. Automatic capture requires opt-in. Withdrawal (`forget`) removes a fact from active memory; history, source material, and private backups may remain. Never promise physical erasure. Verify changes with actual GBrain calls and distinguish a local test from a new-conversation test in the harness.
 

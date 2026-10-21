@@ -24,6 +24,7 @@ import { isSegmentedPage, pageBodyBytes } from '../page-body/page-shape.ts';
 import { openSegmentedBody } from '../page-body/read-range.ts';
 import { segmentedReadDocument } from '../page-window/segmented.ts';
 import { getVersionsKnownAsOf, KNOWN_AS_OF_PARAM, VERSIONS_DIFF_PARAM } from './known-as-of.ts';
+import { STATS_BY_PARAMS, statsBy, wantsStatsBy } from './stats-by.ts';
 
 // --- Admin ---
 
@@ -44,9 +45,11 @@ const get_stats: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Brain statistics (page count, chunk count, etc.) — remote callers see counters confined to their source grant.',
-  params: {},
-  handler: async (ctx) => {
+  description: 'Brain statistics (page count, chunk count, etc.) — remote callers see counters confined to their source grant. ' +
+    'Pass by (source, type or source,type), since or collapse_aliases for live page counts per group instead, with distinct-slug totals so cross-source twins are not double counted.',
+  params: STATS_BY_PARAMS,
+  handler: async (ctx, p) => {
+    if (wantsStatsBy(p)) return statsBy(ctx, p, diagnosticScope(ctx));
     return ctx.engine.getStats(diagnosticScope(ctx));
   },
   scope: 'admin',

@@ -134,6 +134,7 @@ const SWEEP: Record<string, Row> = {
   entity: { args: { name: 'people/alice-example' } },
   synthesize: { skip: 'LLM-backed; keyless test env returns no composition. Wrapper coverage is the registration test below.' },
   list_pages: { args: { limit: 100 } },
+  find_pages: { args: { pattern: '*', limit: 100 } },
   search: { args: { query: 'PLANTMARK note body', limit: 20 } },
   query: { args: { query: 'PLANTMARK note body', limit: 20 } },
   assemble_evidence: { args: { hits: [{ source_id: SRC, slug: 'notes/n1', chunk_id: 0 }], return_unit: 'page' } },

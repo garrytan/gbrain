@@ -126,6 +126,7 @@ import { pageBatchOperations } from './ops/page-batch.ts';
 import { pageUploadOperations } from './ops/page-upload.ts';
 import { feedbackOperations } from './ops/feedback.ts';
 import { trustOperations } from './ops/trust.ts';
+import { findPagesOperations } from './ops/find-pages.ts';
 
 // parseTtlParam moved to ops/facts.ts with the facts cluster; the `remember`
 // verb (verbs.ts) loads it from THIS module at runtime — re-exported so every
@@ -143,7 +144,7 @@ export const operations: Operation[] = [
   ...verbOperations,
   // Page CRUD (get_page, put_page, delete_page, list_pages + the v0.26.5
   // destructive-guard ops restore_page, purge_deleted_pages) — ops/pages.ts
-  ...pagesOperations, ...pageEditOperations, ...pageAppendOperations, ...pageBatchOperations, ...pageUploadOperations,
+  ...pagesOperations, ...findPagesOperations, ...pageEditOperations, ...pageAppendOperations, ...pageBatchOperations, ...pageUploadOperations,
   ...persistenceOperations,
   // Search (search, query) — ops/search.ts
   ...searchOperations,

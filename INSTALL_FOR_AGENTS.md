@@ -341,10 +341,32 @@ Only after enabling the selected embedding provider, run `gbrain embed --stale`.
 Use `gbrain query` for expanded retrieval only when its provider use is intended;
 `--no-expand` opts out of expansion independently of the mode.
 
-Once imported, retrieve through gbrain rather than the files: search, then
-`gbrain get <slug>`. Filters (`--types`, `--match keyword`, `query --since/--until`,
-`--source`, `--json`) are in
-[Retrieval: gbrain first](skills/conventions/brain-first.md#retrieval-gbrain-first).
+Once imported, retrieve through gbrain rather than the files
+([brain-first](skills/conventions/brain-first.md#which-gbrain-call-for-which-lookup)):
+
+<!-- BEGIN GENERATED lookup-table (copied from skills/conventions/brain-first.md by bun run regen:all) -->
+Ask gbrain before you `grep`, `cat`, `ls` or run SQL on the brain checkout: it
+reads the index across every source, ranks, filters and names the slug to read
+next. With the gbrain MCP server connected, call the tool of the same name
+instead of the CLI (one connection, no per-call startup).
+
+| Lookup | CLI | MCP tool |
+|---|---|---|
+| Find a page by name or path | `gbrain find <name\|prefix\|glob> [--type T] [--source S]` | `find_pages` |
+| Count pages by kind or source | `gbrain stats --by source,type [--since 30d] [--collapse-aliases]` | `get_stats` |
+| Answer a question, search a topic | `gbrain query "<question>" [--types '["meeting"]'] [--since 30d]` | `query` |
+| Pages with these words | `gbrain search "<words>" [--match keyword] [--source S]` | `search` |
+| Read a known page | `gbrain get <slug>` | `get_page` |
+| Read only the part a search hit points at | `gbrain get <slug> --around-chunk-id <chunk_id>` or `--lines '{"from":1,"count":200}'` | `get_page` |
+| What the brain knows about a person or company | `gbrain entity <slug>`, then `gbrain recall "<topic>" --json` | `entity`, `recall` |
+| Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
+| Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
+| Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
+
+Parse `--json` output instead of matching the text; notices go to stderr. Take
+`chunk_id` from a fresh `search --json` hit (an old one fails `revision_changed`),
+and read a degraded notice before concluding the brain has nothing.
+<!-- END GENERATED lookup-table -->
 
 ## Step 4.5: Wire the Knowledge Graph
 

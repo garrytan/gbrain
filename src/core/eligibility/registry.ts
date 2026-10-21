@@ -30,7 +30,7 @@ export const OP_READ_TRUST: Readonly<Record<string, ReadTrustHandling>> = {
   get_chunks: 'filtered', get_timeline: 'filtered', takes_list: 'filtered', takes_search: 'filtered',
   assemble_evidence: 'filtered',
   entity: 'labeled', synthesize: 'labeled', think: 'labeled',
-  search_by_image: 'labeled', list_pages: 'labeled', volunteer_context: 'filtered',
+  search_by_image: 'labeled', list_pages: 'labeled', find_pages: 'labeled', volunteer_context: 'filtered',
   get_versions: 'labeled', get_raw_data: 'labeled', resolve_slugs: 'labeled',
   get_recent_salience: 'labeled', find_anomalies: 'labeled', get_recent_transcripts: 'labeled',
   find_orphans: 'labeled', traverse_graph: 'labeled', get_links: 'labeled', get_backlinks: 'labeled',

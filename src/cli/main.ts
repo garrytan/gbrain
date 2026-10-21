@@ -60,6 +60,7 @@ import { redactRetrievalOutput } from '../core/search/output-redaction.ts';
 import type { CliOptions } from '../core/cli-options.ts';
 import { RemoteMcpError, extractResponseMeta } from '../core/remote-mcp-error.ts';
 import { assertSingleSourceScopeFlag, checkHostHonoredParams, hintAmbientNarrowing, type AmbientSourceBinding } from './source-scope.ts';
+import { formatFindPages, formatStatsBy } from './format-page-lookup.ts';
 import { maybePromptForUpgrade } from '../core/thin-client-upgrade-prompt.ts';
 import { CLI_FLAG_REGISTRY } from '../core/cli-flag-registry.generated.ts';
 import { cliHelpRequested } from './subcommands.ts';
@@ -1683,8 +1684,10 @@ export function formatResult(
       const tags = result as string[];
       return tags.length > 0 ? tags.join(', ') + '\n' : 'No tags.\n';
     }
+    case 'find_pages': return formatFindPages(result);
     case 'get_stats': {
       const s = result as any;
+      if (Array.isArray(s?.groups)) return formatStatsBy(s);
       const lines = [
         `Pages:     ${s.page_count}`,
         `Chunks:    ${s.chunk_count}`,

@@ -8,7 +8,7 @@ addition/exclusion).
 
 ## MCP surface note (read once)
 
-The plugin's MCP server runs `gbrain serve --surface full` — 179
+The plugin's MCP server runs `gbrain serve --surface full` — 180
 operations, the same surface every stdio registration gbrain writes pins.
 Every gbrain operation the bundled skills name is on it. A harness that caps
 its tool count can narrow this machine's plugin surface with
