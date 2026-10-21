@@ -94,8 +94,10 @@ export function transcriptDate(baseName: string, content: string): string | null
 }
 
 function frontmatterDate(fm: Record<string, unknown>): string | null {
-  const raw = fm.date instanceof Date ? fm.date.toISOString() : typeof fm.date === 'string' ? fm.date : '';
-  return DATE_RE.exec(raw)?.[1] ?? null;
+  const raw = fm.date instanceof Date && !Number.isNaN(fm.date.getTime()) ? fm.date.toISOString() : typeof fm.date === 'string' ? fm.date : '';
+  const day = DATE_RE.exec(raw)?.[1];
+  // An impossible calendar day (2026-02-30) counts as no date.
+  return day && new Date(`${day}T00:00:00Z`).toISOString().startsWith(day) ? day : null;
 }
 
 /**

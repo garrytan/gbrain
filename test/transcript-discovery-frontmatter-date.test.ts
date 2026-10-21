@@ -30,6 +30,8 @@ describe('transcript date from frontmatter', () => {
     expect(transcriptDate('Weekly sync', `---\ntitle: x\n---\ndate: 2026-08-13\n${body}`)).toBeNull();
     expect(transcriptDate('Weekly sync', body)).toBeNull();
     expect(transcriptDate('Weekly sync', `---\ndate: [unclosed\n---\n${body}`)).toBeNull();
+    expect(transcriptDate('Weekly sync', `---\ndate: '2026-02-30'\n---\n${body}`)).toBeNull();
+    expect(transcriptDate('Weekly sync', `---\ndate: 2026-99-99\n---\n${body}`)).toBeNull();
   });
 
   test('discovery and --input carry the frontmatter date and filter on it', () => {
