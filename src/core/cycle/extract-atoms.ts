@@ -4,7 +4,8 @@
 //   1. Discover transcripts via discoverTranscripts() AND brain pages
 //      via a single raw SQL query (NOT EXISTS subquery filters out
 //      pages already extracted by content hash — see "Idempotency" below).
-//   2. Dedup by content_hash; transcripts win on collision.
+//   2. Drop physical-file twins owned by live source pages, then dedup
+//      by content_hash; remaining transcripts win on hash collision.
 //   3. Per work-item, ask the configured extract_atoms model (key-aware
 //      utility-tier default, see resolveExtractAtomsModel below) for 1-3 atoms.
 //   4. Write each atom via importFromContent(slug, markdown, {sourceId})
@@ -68,7 +69,10 @@ import { chat as gatewayChat, withBudgetTracker, isAvailable } from '../ai/gatew
 import { createGlobalLlmHaltTracker, haltedClassOf, providerContentBlockReason, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { importFromContent } from '../import-file.ts';
 import { derivedWriteThrough, reportFileHolds } from './derived-write-through.ts';
-import { serializeMarkdown } from '../markdown.ts';
+import { scannerSlugRootMode } from '../write-through.ts';
+import { realpath } from 'node:fs/promises';
+import { isAbsolute, relative, sep } from 'node:path';
+import { resolveSourceLocalFilePath, serializeMarkdown, sourceGitScope } from '../markdown.ts';
 import { DEFAULT_EXTRACT_MAX_INPUT_CHARS, extractAtomsInput, inputTruncatedLine, recordPartialDisposition, releasePartialDispositions, resolveExtractAtomsInputCap, stampTranscriptTombstone, type ExtractAtomsInput, type ExtractAtomsItem } from './extract-atoms-input.ts';
 import { commitExtractionPlan, readPageWatermark } from '../extraction-watermark.ts';
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
@@ -150,6 +154,15 @@ const minCompiledTruthChars = (param: string) =>
 // doctor check can't drift.
 const RAW_SOURCE_HOLDER_EXCLUSION_SQL =
   `AND NOT (p.type = 'source' AND COALESCE(p.frontmatter ? 'raw', false))`;
+
+// The page's own content makes it an extraction input, whether or not it was
+// extracted yet: discovery, the backlog count and transcript twin ownership share it.
+const extractablePageSql = (minCharsParam: string, connectorExclusion: string) => `p.content_hash IS NOT NULL
+  AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
+  AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
+  ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
+  AND ${minCompiledTruthChars(minCharsParam)}
+  ${connectorExclusion}`;
 
 // #6503: a partial row (the page was cut at the input cap) is skipped like a
 // tombstone until releasePartialDispositions clears it under a raised cap.
@@ -414,14 +427,9 @@ export async function discoverExtractablePages(
     WHERE p.source_id = $1
       AND p.type = ANY($2::text[])
       AND p.deleted_at IS NULL
-      AND p.content_hash IS NOT NULL
-      AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
-      AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
-      ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
-      AND ${minCompiledTruthChars('$3')}
+      AND ${extractablePageSql('$3', connectorExclusion)}
       ${MANAGED_ATOM_DISCOVERY_SQL}
       ${PAGE_SCAN_STATE_EXCLUSION_SQL}
-      ${connectorExclusion}
       ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
       AND NOT EXISTS (
         SELECT 1
@@ -498,14 +506,9 @@ export async function countExtractAtomsBacklog(
          WHERE p.source_id = $1
            AND p.type = ANY($2::text[])
            AND p.deleted_at IS NULL
-           AND p.content_hash IS NOT NULL
-           AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
-           AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
-           ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
-           AND ${minCompiledTruthChars('$3')}
+           AND ${extractablePageSql('$3', connectorExclusion)}
            ${MANAGED_ATOM_DISCOVERY_SQL}
            ${PAGE_SCAN_STATE_EXCLUSION_SQL}
-           ${connectorExclusion}
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = $1
@@ -516,14 +519,9 @@ export async function countExtractAtomsBacklog(
       : `SELECT COUNT(*) AS cnt FROM pages p
          WHERE p.type = ANY($1::text[])
            AND p.deleted_at IS NULL
-           AND p.content_hash IS NOT NULL
-           AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
-           AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
-           ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
-           AND ${minCompiledTruthChars('$2')}
+           AND ${extractablePageSql('$2', connectorExclusion)}
            ${MANAGED_ATOM_DISCOVERY_SQL}
            ${PAGE_SCAN_STATE_EXCLUSION_SQL}
-           ${connectorExclusion}
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = p.source_id
@@ -541,6 +539,58 @@ export async function countExtractAtomsBacklog(
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] backlog count failed: ${msg}`);
     return null;
+  }
+}
+
+/**
+ * Synced pages own transcripts that resolve to the same file in the source
+ * checkout, but only pages that page discovery would extract own them, so
+ * neither door loses a note. Ownership ignores batch limits and extraction state.
+ */
+async function filterTranscriptPageTwins(
+  engine: BrainEngine,
+  sourceId: string,
+  transcripts: NonNullable<ExtractAtomsOpts['_transcripts']>,
+) {
+  if (transcripts.length === 0) return transcripts;
+  try {
+    const sources = await engine.executeRaw<{ local_path: string | null }>(
+      'SELECT local_path FROM sources WHERE id = $1', [sourceId],
+    );
+    const localPath = sources[0]?.local_path;
+    if (!localPath) return transcripts;
+    const root = await realpath(localPath);
+    const transcriptFiles = new Map<typeof transcripts[number], string>();
+    for (const transcript of transcripts) {
+      try {
+        const path = await realpath(transcript.filePath);
+        const withinRoot = relative(root, path);
+        if (withinRoot !== '..' && !withinRoot.startsWith(`..${sep}`)
+          && !isAbsolute(withinRoot)) transcriptFiles.set(transcript, path);
+      } catch { /* keep transcripts whose physical path is unavailable */ }
+    }
+    if (transcriptFiles.size === 0) return transcripts;
+    const pages = await engine.executeRaw<{ source_path: string | null; slug: string }>(
+      `SELECT p.source_path, p.slug FROM pages p
+       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.type = ANY($2::text[])
+         AND ${extractablePageSql('$3', await connectorAtomExclusionSql(engine))}`,
+      [sourceId, await resolveExtractableTypes(), MIN_PAGE_CHARS_FOR_EXTRACTION],
+    );
+    const slugRootMode = await scannerSlugRootMode(engine, sourceId, localPath);
+    const gitScope = sourceGitScope(localPath);
+    const pageFiles = new Set<string>();
+    for (const page of pages) {
+      try {
+        const path = resolveSourceLocalFilePath(localPath, page.source_path, page.slug, slugRootMode, gitScope);
+        if (path) pageFiles.add(await realpath(path));
+      } catch { /* unresolved page cannot establish a twin */ }
+    }
+    return transcripts.filter(transcript => {
+      const path = transcriptFiles.get(transcript);
+      return path === undefined || !pageFiles.has(path);
+    });
+  } catch {
+    return transcripts; // fail-soft: extraction still proceeds
   }
 }
 
@@ -740,6 +790,10 @@ export async function runPhaseExtractAtoms(
     }
   }
 
+  const transcriptsBeforeTwins = transcripts.length;
+  transcripts = await filterTranscriptPageTwins(engine, sourceId, transcripts);
+  const transcriptPageTwinsSkipped = transcriptsBeforeTwins - transcripts.length;
+
   // #6503: the input cap is read before discovery so the partial dispositions
   // a raised cap supersedes are released and their items offered in this run.
   const maxInputChars = await resolveExtractAtomsInputCap(engine);
@@ -877,6 +931,7 @@ export async function runPhaseExtractAtoms(
         pages_processed: 0,
         pages_total: 0,
         duplicates_skipped: 0,
+        transcript_page_twins_skipped: transcriptPageTwinsSkipped,
         failures: [],
         estimated_spend_usd: 0,
         budget_usd: DEFAULT_BUDGET_USD,
@@ -1439,6 +1494,7 @@ export async function runPhaseExtractAtoms(
       pages_total: pages.length,
       pages_skipped_budget: pagesSkipped,
       duplicates_skipped: duplicatesSkipped,
+      transcript_page_twins_skipped: transcriptPageTwinsSkipped,
       write_pending: writesPending,
       held_failed: heldFailed,
       input_truncated: inputTruncated,
