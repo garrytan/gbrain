@@ -10,6 +10,10 @@ import { opError, type OperationError } from '../ops/contract.ts';
 
 export const SYNTHESIZE_CONCEPTS_BUDGET_KEY = 'cycle.synthesize_concepts.budget_usd';
 export const SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD = 1.5;
+/** Fewest member atoms a concept group needs before synthesize_concepts writes its page. */
+export const SYNTHESIZE_CONCEPTS_MIN_MEMBERS_KEY = 'cycle.synthesize_concepts.min_members';
+export const SYNTHESIZE_CONCEPTS_DEFAULT_MIN_MEMBERS = 2;
+export const SYNTHESIZE_CONCEPTS_MAX_MIN_MEMBERS = 10_000;
 
 export const PROPOSE_TAKES_CALL_TIMEOUT_KEY = 'dream.propose_takes.call_timeout_ms';
 export const PROPOSE_TAKES_CALL_TIMEOUT_MIN_MS = 1_000;
@@ -68,6 +72,14 @@ const SPECS: Record<string, PhaseConfigSpec> = {
     expected: 'a finite number of US dollars above 0',
     defaultText: String(SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD),
     parse: finitePositive,
+  },
+  [SYNTHESIZE_CONCEPTS_MIN_MEMBERS_KEY]: {
+    expected: `a whole number of atoms from ${SYNTHESIZE_CONCEPTS_DEFAULT_MIN_MEMBERS} to ${SYNTHESIZE_CONCEPTS_MAX_MIN_MEMBERS}`,
+    defaultText: String(SYNTHESIZE_CONCEPTS_DEFAULT_MIN_MEMBERS),
+    parse(raw) {
+      const n = wholeInRange(raw, SYNTHESIZE_CONCEPTS_MAX_MIN_MEMBERS);
+      return n !== null && n >= SYNTHESIZE_CONCEPTS_DEFAULT_MIN_MEMBERS ? n : null;
+    },
   },
   [PROPOSE_TAKES_CALL_TIMEOUT_KEY]: {
     expected: `a whole number of milliseconds from ${PROPOSE_TAKES_CALL_TIMEOUT_MIN_MS} to ${PROPOSE_TAKES_CALL_TIMEOUT_MAX_MS}`,

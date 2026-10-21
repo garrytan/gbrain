@@ -13,7 +13,7 @@
 //   2. Group by `concepts:` frontmatter field on each atom (when the
 //      Haiku 3-check from extract_atoms decides "this atom is about
 //      concept X", it stamps the field).
-//   3. For each group with count ≥2: assign tier (T1/T2/T3/T4 by count).
+//   3. For each group with count ≥ cycle.synthesize_concepts.min_members (default 2): assign tier (T1/T2/T3/T4 by count).
 //   4. Sort by tier, evidence count, and slug so the bounded LLM budget goes
 //      to the strongest groups deterministically.
 //   5. For T1/T2 groups: Sonnet call to produce a 1-paragraph narrative.
@@ -47,7 +47,13 @@ import { addSpellingRedirects, canonicalConceptStem, loadConceptRedirects, loadL
 import {
   addManagedProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishClassicConcept, publishManagedConcept, stripFenceSections,
 } from './concept-publication.ts';
-import { readPhaseConfigNumber, SYNTHESIZE_CONCEPTS_BUDGET_KEY, SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD } from './phase-config-values.ts';
+import {
+  readPhaseConfigNumber,
+  SYNTHESIZE_CONCEPTS_BUDGET_KEY,
+  SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD,
+  SYNTHESIZE_CONCEPTS_DEFAULT_MIN_MEMBERS,
+  SYNTHESIZE_CONCEPTS_MIN_MEMBERS_KEY,
+} from './phase-config-values.ts';
 import { ConceptRetryBound, MAX_CONCEPT_ATTEMPTS } from './concept-retry-bound.ts';
 import { ConceptDriftSkips } from '../persistence/drift-conflicts.ts';
 
@@ -74,9 +80,9 @@ function narrativePricing(model: string, overrides: PricingOverrides | undefined
   return FALLBACK_PRICING;
 }
 
-/** #4907: the run's named-key budget warnings (invalid stored budget, groups refused at the cap), each echoed once to stderr. */
-function budgetWarnings(configWarning: string | undefined, capped: number, budgetUsd: number): string[] {
-  const warnings = configWarning ? [configWarning] : [];
+/** #4907: the run's named-key warnings (invalid stored knobs, groups refused at the budget cap), each echoed once to stderr. */
+function budgetWarnings(configWarnings: Array<string | undefined>, capped: number, budgetUsd: number): string[] {
+  const warnings = configWarnings.filter((w): w is string => w !== undefined);
   if (capped > 0) {
     warnings.push(`${capped} LLM-eligible concept(s) got no model narrative because the $${budgetUsd.toFixed(2)} phase budget was reached; they retry next run. ` +
       `Raise the cap: gbrain config set ${SYNTHESIZE_CONCEPTS_BUDGET_KEY} <usd>. Verify: gbrain config get ${SYNTHESIZE_CONCEPTS_BUDGET_KEY}`);
@@ -87,7 +93,6 @@ function budgetWarnings(configWarning: string | undefined, capped: number, budge
 
 const TIER_T1_MIN = 10;
 const TIER_T2_MIN = 5;
-const TIER_T3_MIN = 2;
 /**
  * Output cap for the per-concept narrative. 500 sizes the *answer* (a
  * 1-paragraph summary) and is ample for a non-reasoning model. It is NOT ample
@@ -232,11 +237,13 @@ export async function runPhaseSynthesizeConcepts(
     }
   }
 
-  // 3. Filter to count ≥2, assign tier
+  // 3. Filter to count ≥ cycle.synthesize_concepts.min_members (default 2), assign tier
+  const minMembersConfig = await readPhaseConfigNumber(engine, SYNTHESIZE_CONCEPTS_MIN_MEMBERS_KEY);
+  const minMembers = minMembersConfig.value ?? SYNTHESIZE_CONCEPTS_DEFAULT_MIN_MEMBERS;
   const atomGroups: AtomGroup[] = [];
   for (const [conceptSlug, data] of groups) {
     const count = data.titles.length;
-    if (count < TIER_T3_MIN) continue;
+    if (count < minMembers) continue;
     const tier: AtomGroup['tier'] =
       count >= TIER_T1_MIN ? 'T1' : count >= TIER_T2_MIN ? 'T2' : 'T3';
     atomGroups.push({
@@ -254,8 +261,8 @@ export async function runPhaseSynthesizeConcepts(
       phase: 'synthesize_concepts',
       status: 'skipped',
       duration_ms: 0,
-      summary: `synthesize_concepts: no concept groups with ≥${TIER_T3_MIN} atoms`,
-      details: { reason: 'no_groups_above_threshold', atoms_seen: atoms.length },
+      summary: `synthesize_concepts: no concept groups with ≥${minMembers} atoms`,
+      details: { reason: 'no_groups_above_threshold', atoms_seen: atoms.length, min_members: minMembers, warnings: budgetWarnings([minMembersConfig.warning], 0, 0) },
     };
   }
 
@@ -581,7 +588,7 @@ export async function runPhaseSynthesizeConcepts(
   // fires when concepts were actually written; rollup always fires so doctor
   // sees the phase ran.
   const driftActions = await driftSkips.finish();
-  const warnings = budgetWarnings(budget.warning, budgetCapped, budgetCap);
+  const warnings = budgetWarnings([minMembersConfig.warning, budget.warning], budgetCapped, budgetCap);
   if (!opts.dryRun) await retries.save(engine);
   // Managed brains skip the receipt page (a legacy putPage), like extract_atoms;
   // the rollup row below still records the run for doctor.
@@ -641,6 +648,7 @@ export async function runPhaseSynthesizeConcepts(
       synthesis_mode_counts: synthesisModeCounts,
       groups_found: atomGroups.length,
       atoms_seen: atoms.length,
+      min_members: minMembers,
       failures,
       link_warnings: linkWarnings,
       warnings,

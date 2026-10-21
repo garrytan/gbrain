@@ -1447,8 +1447,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.dream.synthesize',
   'models.dream.extract_atoms',
   'cycle.extract_atoms.budget_usd',
-  // #4907: synthesize_concepts phase budget (finite USD > 0, default 1.5); cycle/phase-config-values.ts.
-  'cycle.synthesize_concepts.budget_usd',
+  // #4907: synthesize_concepts phase budget (finite USD > 0, default 1.5) and member floor per concept page (2 to 10000, default 2); cycle/phase-config-values.ts.
+  'cycle.synthesize_concepts.budget_usd', 'cycle.synthesize_concepts.min_members',
   'cycle.extract_atoms.max_source_chars',
   'cycle.extract_atoms.page_discovery_budget',
   // #4540: per-item extractor caps (defaults 50000 chars / 4096 tokens) plus
