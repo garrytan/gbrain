@@ -157,6 +157,28 @@ interface AtomGroup {
   tier: 'T1' | 'T2' | 'T3' | 'T4';
 }
 
+type ConceptMembers = { slugs: string[]; titles: string[]; bodies: string[]; visibilities: Visibility[] };
+
+/** Keeps the groups with at least `minMembers` atoms and assigns each its tier by member count. */
+function tieredGroups(groups: Map<string, ConceptMembers>, minMembers: number): AtomGroup[] {
+  const atomGroups: AtomGroup[] = [];
+  for (const [conceptSlug, data] of groups) {
+    const count = data.titles.length;
+    if (count < minMembers) continue;
+    const tier: AtomGroup['tier'] =
+      count >= TIER_T1_MIN ? 'T1' : count >= TIER_T2_MIN ? 'T2' : 'T3';
+    atomGroups.push({
+      conceptSlug,
+      atomSlugs: data.slugs,
+      atomTitles: data.titles,
+      atomBodies: data.bodies,
+      visibility: strictestVisibility(data.visibilities),
+      tier,
+    });
+  }
+  return atomGroups;
+}
+
 type ConceptSynthesisMode =
   | 'llm'
   | 'deterministic_tier'
@@ -224,7 +246,7 @@ export async function runPhaseSynthesizeConcepts(
 
   // 2. Group atoms by concept stem (#6161 human redirects, then #5965 spelling folds; see resolveAtomConceptStems); one atom counts once per concept.
   const { atomStems, foldedSpellings } = await resolveAtomConceptStems(engine, opts.sourceId ?? 'default', atoms);
-  const groups = new Map<string, { slugs: string[]; titles: string[]; bodies: string[]; visibilities: Visibility[] }>();
+  const groups = new Map<string, ConceptMembers>();
   for (const [i, atom] of atoms.entries()) {
     for (const conceptSlug of atomStems[i]!) {
       const existing = groups.get(conceptSlug) ?? { slugs: [], titles: [], bodies: [], visibilities: [] };
@@ -240,21 +262,7 @@ export async function runPhaseSynthesizeConcepts(
   // 3. Filter to count ≥ cycle.synthesize_concepts.min_members (default 2), assign tier
   const minMembersConfig = await readPhaseConfigNumber(engine, SYNTHESIZE_CONCEPTS_MIN_MEMBERS_KEY);
   const minMembers = minMembersConfig.value ?? SYNTHESIZE_CONCEPTS_DEFAULT_MIN_MEMBERS;
-  const atomGroups: AtomGroup[] = [];
-  for (const [conceptSlug, data] of groups) {
-    const count = data.titles.length;
-    if (count < minMembers) continue;
-    const tier: AtomGroup['tier'] =
-      count >= TIER_T1_MIN ? 'T1' : count >= TIER_T2_MIN ? 'T2' : 'T3';
-    atomGroups.push({
-      conceptSlug,
-      atomSlugs: data.slugs,
-      atomTitles: data.titles,
-      atomBodies: data.bodies,
-      visibility: strictestVisibility(data.visibilities),
-      tier,
-    });
-  }
+  const atomGroups = tieredGroups(groups, minMembers);
 
   if (atomGroups.length === 0) {
     return {
