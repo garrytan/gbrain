@@ -33,9 +33,18 @@ export async function atomSourceDate(engine: Pick<BrainEngine, 'getConfig'>, pag
  */
 export async function transcriptSourceDate(engine: Pick<BrainEngine, 'getConfig'>, content: string, pathDate: string): Promise<string | null> {
   const { date } = computeEffectiveDate({
-    slug: '', frontmatter: parseMarkdownHead(content).frontmatter, filename: pathDate,
+    slug: '', frontmatter: frontmatterOrNone(content), filename: pathDate,
     createdAt: new Date(NaN), updatedAt: new Date(NaN),
     timeZone: (await engine.getConfig('brain.timezone').catch(() => null)) ?? undefined, // fail-soft: a config read never rejects the phase
   });
   return date ? date.toISOString() : null;
+}
+
+/** A plain-text transcript may open with a header the frontmatter parser refuses (`--- BEGIN TRANSCRIPT`); that is no frontmatter, not an error. */
+function frontmatterOrNone(content: string): Record<string, unknown> {
+  try {
+    return parseMarkdownHead(content).frontmatter;
+  } catch {
+    return {};
+  }
 }

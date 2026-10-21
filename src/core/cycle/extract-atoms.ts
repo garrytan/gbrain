@@ -1089,9 +1089,7 @@ export async function runPhaseExtractAtoms(
     try {
       const origin: AtomOrigin | null = managed ? { ...await readAtomOrigin(engine, managed, item), ...(truncated ? { partialInputChars: maxInputChars } : {}) } : null;
       const sourcePage = item.kind === 'page' ? await engine.getPage(item.slug, { sourceId }) : null;
-      const contentDate = item.kind === 'page' // #6720: captured with the input, before inference
-        ? await atomSourceDate(engine, sourcePage)
-        : await transcriptSourceDate(engine, item.content, sourceDate(item.filePath, ''));
+      const contentDate = await (item.kind === 'page' ? atomSourceDate(engine, sourcePage) : transcriptSourceDate(engine, item.content, sourceDate(item.filePath, ''))); // #6720: captured with the input, before inference
       const visibility = origin?.visibility ?? effectiveVisibility(item.kind === 'transcript' ? { kind: 'transcript' } // #5525
         : { kind: 'page', page: sourcePage });
       throwIfAborted(opts.signal, 'extract_atoms');

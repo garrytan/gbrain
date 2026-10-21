@@ -78,6 +78,7 @@ describe('#6720 atom content dates', () => {
     { id: 'folder', path: '/fake/2026-07-09/call.txt', fm: '', date: '2026-07-09T00:00:00.000Z' },
     { id: 'frontmatter', path: '/fake/2026-07-09-call.md', fm: '---\ndate: 2026-05-04\n---\n', date: '2026-05-04T00:00:00.000Z' },
     { id: 'undated', path: '/fake/call.txt', fm: '', date: undefined },
+    { id: 'plain-text header', path: '/fake/2026-07-09-call.txt', fm: '--- BEGIN TRANSCRIPT\n', date: '2026-07-09T00:00:00.000Z' },
   ]) {
     test(`a transcript-derived atom carries the transcript's ${fx.id} date, not the run date`, async () => {
       const sourceId = `atom-date-transcript-${fx.id}`;
