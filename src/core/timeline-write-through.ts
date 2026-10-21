@@ -108,6 +108,7 @@ export interface TimelineWriteThroughOutcome {
   skipped?:
     | 'disabled_by_config'
     | 'url_clone'
+    | 'mirror_read_only'
     | 'no_repo_configured'
     | 'repo_not_found'
     | 'source_repo_belongs_to_other_source'

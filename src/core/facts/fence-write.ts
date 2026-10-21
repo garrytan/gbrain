@@ -46,7 +46,7 @@ import { loadActivePackBestEffort } from '../schema-pack/best-effort.ts';
 import { withPageLock } from '../page-lock.ts';
 import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
 import { gbrainPath } from '../config.ts';
-import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
+import { isWriteThroughDisabled, resolvePageWriteTarget, type PageWriteTarget } from '../write-through.ts';
 import { isDurabilityHardened, commitWriteThroughFile } from '../brain-repo-durability.ts';
 import { upsertFactRow, parseFactsFence, formatFenceDate } from '../facts-fence.ts';
 import { unparsedFenceRefusal } from '../fence-repair/refusal.ts';
@@ -118,8 +118,8 @@ export interface FenceWriteResult {
   ids: number[];
   /** True when the path fell through to DB-only: local_path unset, `sync.write_through` off, or a gbrain-owned clone (`databaseOnlyReason`). */
   legacyFallback?: true;
-  /** #6946: why a `legacyFallback` is expected — `url_clone`: the source is a clone gbrain owns and pulls (url-clone.ts), so its checkout is never written. */
-  databaseOnlyReason?: 'url_clone' | 'file_database_drift';
+  /** Why a DB-only fallback is expected: an owned clone, a configured read-only mirror, or file/database drift. */
+  databaseOnlyReason?: 'url_clone' | 'mirror_read_only' | 'file_database_drift';
   /** A held file mirror's typed diagnostic and repair instructions; facts take the DB-only fallback. */
   warning?: string;
   /** True when fence parse-validate failed; rows were NOT inserted, .tmp quarantined. */
@@ -298,6 +298,15 @@ export function stubEntityPage(
   return `---\ntype: ${yamlScalar(type)}\ntitle: ${yamlScalar(title)}\nslug: ${yamlScalar(slug)}\n---\n\n# ${title}\n`;
 }
 
+/** Deliberate mirror skips and unusable trees both retain facts through the caller's DB-only path. */
+function fenceTargetFallback(skipped: Extract<PageWriteTarget, { ok: false }>['skipped']): FenceWriteResult {
+  if (skipped === 'mirror_read_only') {
+    return { inserted: 0, ids: [], legacyFallback: true, databaseOnlyReason: 'mirror_read_only' };
+  }
+  // Deleted directories or hostile source_path rows are not intentional policy skips.
+  return { inserted: 0, ids: [], targetUnresolvable: true };
+}
+
 /**
  * Run a markdown-first fence write for one entity. Acquires the page
  * lock, reads or stub-creates the file, appends each input fact to
@@ -367,12 +376,7 @@ export async function writeFactsToFence(
   // recorded `source_path`, so the fence lands in the file of record instead
   // of minting a slug-derived twin beside a human-named vault file.
   const resolved = await resolvePageWriteTarget(engine, target.slug, target.sourceId);
-  if (!resolved.ok) {
-    // Target tree unusable (deleted dir, hostile source_path row, …) — the
-    // caller routes the facts to the legacy DB-only path so they are
-    // recorded, not dropped.
-    return { inserted: 0, ids: [], targetUnresolvable: true };
-  }
+  if (!resolved.ok) return fenceTargetFallback(resolved.skipped);
   const { filePath, writeRoot } = resolved;
   if (!hasSourceFilesystemLock(writeRoot)) {
     return withSourceFilesystemLock(engine, writeRoot, () => writeFactsToFence(engine, target, facts, derivation));
