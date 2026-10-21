@@ -58,9 +58,22 @@ export function embeddingInputHash(ctx: EmbeddingInputContext, tier: EmbeddingTi
  * Hashes a vector on a page in `mode` may carry and still be current. A
  * synopsis page also accepts title-tier vectors: plain re-embeds wrap a
  * synopsis page's chunks with the title prefix, and those inputs do not
- * depend on the rest of the body.
+ * depend on the rest of the body. #7182: builtin vectors stamped before the
+ * write descriptor carried the real width used a 1536 placeholder. Accept
+ * that digest only with physical vector-width proof; never for other columns
+ * or a real dimension change. All other input fields still have to match.
  */
-export function acceptedEmbeddingInputHashes(ctx: EmbeddingInputContext, mode: string | null | undefined, chunk: HashedChunk): string[] {
+export function acceptedEmbeddingInputHashes(ctx: EmbeddingInputContext, mode: string | null | undefined, chunk: HashedChunk,
+  vectorDimensions?: number | null): string[] {
+  // The placeholder digest can also equal the *current* digest after a real
+  // change to 1536. Physical width must agree even on that exact-hash path.
+  if (vectorDimensions != null && vectorDimensions !== ctx.dimensions) return [];
   const plain = embeddingInputHash(ctx, plainEmbeddingTier(mode), chunk);
-  return mode === 'per_chunk_synopsis' ? [embeddingInputHash(ctx, 'per_chunk_synopsis', chunk), plain] : [plain];
+  const hashes = mode === 'per_chunk_synopsis' ? [embeddingInputHash(ctx, 'per_chunk_synopsis', chunk), plain] : [plain];
+  if (ctx.column === 'embedding' && ctx.dimensions !== 1536 && vectorDimensions === ctx.dimensions) {
+    const legacy = { ...ctx, dimensions: 1536 };
+    hashes.push(embeddingInputHash(legacy, plainEmbeddingTier(mode), chunk));
+    if (mode === 'per_chunk_synopsis') hashes.push(embeddingInputHash(legacy, 'per_chunk_synopsis', chunk));
+  }
+  return hashes;
 }

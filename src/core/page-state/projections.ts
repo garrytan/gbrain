@@ -12,7 +12,7 @@ import { sanitizeRemoteBody } from '../remote-body.ts';
 import { digest } from '../persistence/digest.ts';
 import { quoteIdentifier, resolveWriteColumnFromConfigRows, vectorCastSuffix } from '../search/embedding-column.ts';
 import { getFtsLanguage, pageSearchVectorSql } from '../fts-language.ts';
-import { getEmbeddingModel } from '../ai/gateway.ts';
+import { getEmbeddingDimensions, getEmbeddingModel } from '../ai/gateway.ts';
 import { jsonRowBatches } from '../batch-rows.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
 import { belowSafeChunkFence, chunkGenerationFilter, movableChunkSql } from '../search/safe-chunks.ts';
@@ -102,9 +102,14 @@ export async function embeddingWriteTarget(engine: Pick<BrainEngine, 'executeRaw
     "SELECT key,value FROM config WHERE key IN ('search_embedding_column','embedding_columns','embedding_model','embedding_dimensions','contextual_retrieval.mode') ORDER BY key") ?? [];
   let model = config.find(row => row.key === 'embedding_model')?.value ?? null;
   try { model = getEmbeddingModel(); } catch { /* Unconfigured gateway: retain the brain's recorded model. */ }
+  let dimensions = Number(config.find(row => row.key === 'embedding_dimensions')?.value);
+  if (!Number.isInteger(dimensions) || dimensions <= 0) {
+    try { dimensions = getEmbeddingDimensions(); } catch { /* Unconfigured legacy brain: retain the cast descriptor. */ }
+  }
   const column = resolveWriteColumnFromConfigRows({
     searchEmbeddingColumn: config.find(row => row.key === 'search_embedding_column')?.value ?? null,
     embeddingColumnsJson: config.find(row => row.key === 'embedding_columns')?.value ?? null,
+    embeddingDimensions: dimensions,
   });
   return { config, model, column, provenanceModel: column.name === 'embedding' ? model : column.embeddingModel };
 }
@@ -206,12 +211,13 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
       const mode = current!.page.contextual_retrieval_mode;
       const provenance = embeddingInputContext(context, current!.page.title, context.corpusGeneration, chunks);
       const col = quoteIdentifier(context.column.name);
-      const recorded = new Map((await tx.executeRaw<{ id: number; embedding_input_hash: string | null; movable: boolean }>(
-        `SELECT id,embedding_input_hash,${movableChunkSql(col)} AND model IS NOT DISTINCT FROM $2 AS movable FROM content_chunks WHERE page_id=$1`,
+      const recorded = new Map((await tx.executeRaw<{ id: number; embedding_input_hash: string | null; dimensions: number | null; movable: boolean }>(
+        `SELECT id,embedding_input_hash,vector_dims(${col}::vector) AS dimensions,
+          ${movableChunkSql(col)} AND model IS NOT DISTINCT FROM $2 AS movable FROM content_chunks WHERE page_id=$1`,
         [snapshot.page.id, context.provenanceModel])).map(row => [Number(row.id), row]));
       const currentInput = (chunk: Chunk) => {
         const hash = recorded.get(Number(chunk.id))?.embedding_input_hash ?? null;
-        return hash === null ? mode == null : acceptedEmbeddingInputHashes(provenance, mode, chunk).includes(hash);
+        return hash === null ? mode == null : acceptedEmbeddingInputHashes(provenance, mode, chunk, recorded.get(Number(chunk.id))?.dimensions).includes(hash);
       };
       // A4: a chunk unchanged at its index stays; one the new projection holds at
       // another index stays too when its vector is current, and upsertChunks moves
