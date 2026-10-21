@@ -93,6 +93,20 @@ for (const backend of testBackends()) {
       expect(await listed()).toMatchObject({ mirror_read_only: false, federated: true });
     }), 60_000);
 
+    test('sources mirror-readonly / mirror-writable --dry-run preview and change nothing (#7086)', () => withEnv({ GBRAIN_HOME: home }, async () => {
+      const id = `mirror-dry-${randomUUID().slice(0, 8)}`;
+      await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [id]);
+      const readOnly = async () => (await engine.executeRaw<{ v: string | null }>("SELECT config->>'mirror_read_only' AS v FROM sources WHERE id=$1", [id]))[0]!.v;
+      const preview = await cli(['mirror-readonly', id, '--dry-run']);
+      expect(preview).toContain(`Would make source "${id}" a read-only mirror.`);
+      expect(preview).toContain('(dry-run; no side effects)');
+      expect(await readOnly()).toBeNull();
+      await cli(['mirror-readonly', id]);
+      expect(await cli(['mirror-readonly', id, '--dry-run'])).toContain(`Source "${id}" is already a read-only mirror; nothing would change.`);
+      expect(await cli(['mirror-writable', id, '--dry-run'])).toContain(`Would make source "${id}" writable again.`);
+      expect(await readOnly()).toBe('true');
+    }), 60_000);
+
     /** First sync, a database-only tag, then an upstream edit: the canonical form now differs from the file's bytes (an overlay). */
     async function overlaySync(m: { id: string; root: string }) {
       expect(await performManagedSync(engine, { sourceId: m.id, noPull: true })).toMatchObject({ status: 'first_sync', filesImported: 1 });

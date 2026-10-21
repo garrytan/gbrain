@@ -1991,8 +1991,8 @@ Subcommands:
                                     brain needed. See docs/guides/github-source.md.
   federate <id>                     Make source appear in cross-source default search.
   unfederate <id>                   Isolate source from default search.
-  mirror-readonly <id>              Read-only mirror (#5409): managed writes never touch its checkout.
-  mirror-writable <id>              Undo mirror-readonly.
+  mirror-readonly <id> [--dry-run]  Read-only mirror (#5409): managed writes never touch its checkout.
+  mirror-writable <id> [--dry-run]  Undo mirror-readonly. --dry-run previews either one.
   set-strategy <id> <markdown|code|auto>  Persist the sync strategy every sync of the source uses (PR #5955).
   set-pull-strategy <id> <rebase|merge>   How pulls reconcile local commits with origin (#5429); default rebase.
   refresh <id> [--dry-run] [--wait-drain <s>] [--fetch-timeout-ms <ms>] [--resume|--abandon] [--json]
