@@ -5,8 +5,10 @@
  * dream_synthesis_completions archive. Peeled from synthesize.ts with #5145,
  * which moved the completion check ahead of the paid triage pass.
  */
+import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import { parseDataFrontmatter, scanDataFrontmatter } from '../data-frontmatter.ts';
 import type { MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import type { DiscoveredTranscript } from './transcript-discovery.ts';
@@ -34,6 +36,12 @@ import type { DiscoveredTranscript } from './transcript-discovery.ts';
  * basename, like the keys). Pages are deleted with their source row, so a
  * completion of a removed and re-added source, or of another source, never
  * suppresses synthesis.
+ *
+ * Synth-v2 completions are keyed on the transcript body (`synthesisHash`).
+ * A completion recorded before that, legacy keys included, carries the
+ * full-file hash and still counts while the file is unchanged; a real run
+ * then records the same completion under the body hash, so a later
+ * frontmatter-only edit does not re-arm it either.
  */
 export async function partitionCompletedSynthesis(
   engine: BrainEngine,
@@ -51,20 +59,142 @@ export async function partitionCompletedSynthesis(
   const retainedOutputs = incarnation !== null ? await loadRetainedOutputSources(engine, sourceId) : null;
   const completed = new Set<string>();
   const retainedSkips = new Map<string, string>();
+  const bodyKeys: string[] = [];
   for (const t of transcripts) {
-    const hash16 = t.contentHash.slice(0, 16);
-    const current = findSynthV2Completion(successfulV2Keys, t.filePath, hash16, synthesisIdentity);
+    const isV2Base = (id: string) => (base: string, hash16: string) => base === synthV2KeyPrefix(id, t.filePath, hash16);
+    const current = findTranscriptCompletion(successfulV2Keys, t, synthesisIdentity);
     if (current) completed.add(t.filePath);
+    if (current) bodyKeys.push(...bodyHashAliases(successfulV2Keys, t, current.hash, isV2Base(synthesisIdentity)));
     if (retainedOutputs && (current || !retainedOutputs.has(basename(t.filePath)))) continue;
-    const legacy = findLegacyCompletion(successfulLegacyKeys, t.filePath, hash16);
-    const premanaged = retainedOutputs ? findSynthV2Completion(successfulV2Keys, t.filePath, hash16, sourceId) : null;
-    const reason = legacy ? `already_synthesized_legacy_${legacy === 'chunked' ? 'chunked' : 'single_chunk'}`
-      : premanaged ? `already_synthesized_v2_${premanaged === 'chunked' ? 'chunked' : 'single_chunk'}` : null;
+    const legacy = findCompletion(t, hash16 => findLegacyCompletion(successfulLegacyKeys, t.filePath, hash16));
+    if (legacy) bodyKeys.push(...bodyHashAliases(successfulLegacyKeys, t, legacy.hash, (base, hash16) => isLegacyKeyBase(base, t.filePath, hash16)));
+    const premanaged = retainedOutputs ? findTranscriptCompletion(successfulV2Keys, t, sourceId) : null;
+    if (premanaged) bodyKeys.push(...bodyHashAliases(successfulV2Keys, t, premanaged.hash, isV2Base(sourceId)));
+    const reason = legacy ? `already_synthesized_legacy_${legacy.shape === 'chunked' ? 'chunked' : 'single_chunk'}`
+      : premanaged ? `already_synthesized_v2_${premanaged.shape === 'chunked' ? 'chunked' : 'single_chunk'}` : null;
     if (!reason) continue;
     completed.add(t.filePath);
     retainedSkips.set(t.filePath, reason);
   }
+  if (!dryRun) await recordBodyHashCompletions(engine, sourceId, bodyKeys);
   return { completed, retainedSkips, successfulV2Keys, synthesisIdentity };
+}
+
+type Transcript = Pick<DiscoveredTranscript, 'filePath' | 'content' | 'contentHash'>;
+
+/**
+ * The transcript after a leading frontmatter mapping, or null without one: no
+ * fence, an unclosed fence, or a fenced block that is not a mapping (prose
+ * between two horizontal rules stays part of the transcript).
+ */
+function frontmatterBody(content: string): string | null {
+  try {
+    const { fenced } = scanDataFrontmatter(content);
+    if (fenced?.content == null) return null;
+    parseDataFrontmatter(content); // throws unless the block is a YAML or JSON mapping
+    return fenced.content.replace(/^\s+/, '');
+  } catch {
+    return null;
+  }
+}
+
+const sha256 = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
+
+/**
+ * The hash a transcript's synthesis is keyed and slugged on: sha256 of the
+ * body after its frontmatter, so an edit that only touches frontmatter (a
+ * `type:` stamp, a drift repair) does not re-arm synthesis. A transcript
+ * without frontmatter keeps its full-file `contentHash`.
+ */
+function synthesisHash(t: Pick<DiscoveredTranscript, 'content' | 'contentHash'>): string {
+  const body = frontmatterBody(t.content);
+  return body === null ? t.contentHash : sha256(body);
+}
+
+/**
+ * What the fan-out submits a transcript under: `hash` keys and slugs its
+ * children and seeds the chunker, `text` is cut into chunks, and `head` (the
+ * frontmatter) goes in front of the first chunk. Cutting the body alone keeps
+ * chunk bounds fixed while the body is, so a partial chunk set resumed after
+ * a frontmatter edit covers the whole body.
+ *
+ * A chunk set started under the full-file hash before body keying, with a
+ * chunk already completed, resumes under that hash and the whole file so its
+ * finished chunks are not paid again; once complete it migrates like any
+ * other completion.
+ */
+export function synthesisInput(successfulV2Keys: string[], t: Transcript, sourceId: string): { hash: string; head: string; text: string } {
+  const body = frontmatterBody(t.content);
+  const startedOnFile = synthV2KeyPrefix(sourceId, t.filePath, t.contentHash.slice(0, 16)) + ':c';
+  if (body === null || successfulV2Keys.some(key => key.startsWith(startedOnFile))) {
+    return { hash: t.contentHash, head: '', text: t.content };
+  }
+  return { hash: sha256(body), head: t.content.slice(0, t.content.length - body.length), text: body };
+}
+
+type Completion = { hash: string; shape: 'single' | 'chunked' };
+
+/**
+ * The hash a transcript completed under (its pages carry that hash's first 6
+ * hex) and the completion's shape. Full-file hash first: completions recorded
+ * before body keying carry it.
+ */
+function findCompletion(t: Transcript, find: (hash16: string) => Completion['shape'] | null): Completion | null {
+  for (const hash of new Set([t.contentHash, synthesisHash(t)])) {
+    const shape = find(hash.slice(0, 16));
+    if (shape) return { hash, shape };
+  }
+  return null;
+}
+
+/** A transcript's synth-v2 completion under `sourceId`. */
+export function findTranscriptCompletion(successfulKeys: string[], t: Transcript, sourceId: string): Completion | null {
+  return findCompletion(t, hash16 => findSynthV2Completion(successfulKeys, t.filePath, hash16, sourceId));
+}
+
+/**
+ * The keys of a completion recorded under the full-file hash, re-keyed on the
+ * body hash, minus those already recorded. `isBase` says whether a key with
+ * its chunk suffix removed belongs to this transcript's completion at a hash.
+ */
+function bodyHashAliases(
+  successfulKeys: string[],
+  t: Transcript,
+  completedHash: string,
+  isBase: (base: string, hash16: string) => boolean,
+): string[] {
+  const from16 = completedHash.slice(0, 16);
+  const to16 = synthesisHash(t).slice(0, 16);
+  if (from16 === to16) return [];
+  const known = new Set(successfulKeys);
+  return successfulKeys.flatMap(key => {
+    const base = key.replace(/:c\d+of\d+$/, '');
+    const alias = base.slice(0, -16) + to16 + key.slice(base.length);
+    return isBase(base, from16) && !known.has(alias) ? [alias] : [];
+  });
+}
+
+/** Whether `base` is a legacy `dream:synth:<path>:<hash16>` key of this transcript, matched by basename like findLegacyCompletion. */
+function isLegacyKeyBase(base: string, filePath: string, hash16: string): boolean {
+  return base.endsWith(`:${hash16}`) && basename(base.slice('dream:synth:'.length, -hash16.length - 1)) === basename(filePath);
+}
+
+/**
+ * Best-effort: a failed write only means a later frontmatter-only edit
+ * re-synthesizes the transcript once, as before body keying.
+ */
+async function recordBodyHashCompletions(engine: BrainEngine, sourceId: string, keys: string[]): Promise<void> {
+  if (keys.length === 0) return;
+  try {
+    await engine.executeRaw(
+      `INSERT INTO dream_synthesis_completions (source_id, idempotency_key)
+       SELECT $1, key FROM unnest($2::text[]) AS key
+       ON CONFLICT DO NOTHING`,
+      [sourceId, keys],
+    );
+  } catch (e) {
+    process.stderr.write(`[dream] warning: could not record body-hash synthesis completions: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
 }
 
 /**
@@ -155,9 +285,7 @@ export function findSynthV2Completion(
   hash16: string,
   sourceId: string,
 ): 'single' | 'chunked' | null {
-  const prefix =
-    `dream:synth-v2:${encodeURIComponent(sourceId)}` +
-    `:filename:${encodeURIComponent(basename(filePath))}:${hash16}`;
+  const prefix = synthV2KeyPrefix(sourceId, filePath, hash16);
   const chunkSets = new Map<number, Set<number>>();
   for (const key of successfulKeys) {
     if (key === prefix) return 'single';
@@ -175,6 +303,10 @@ export function findSynthV2Completion(
     if (seen.size === n) return 'chunked';
   }
   return null;
+}
+
+function synthV2KeyPrefix(sourceId: string, filePath: string, hash16: string): string {
+  return `dream:synth-v2:${encodeURIComponent(sourceId)}:filename:${encodeURIComponent(basename(filePath))}:${hash16}`;
 }
 
 /**
