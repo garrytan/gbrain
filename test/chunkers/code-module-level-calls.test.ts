@@ -169,7 +169,7 @@ describe('#5001 the five languages whose inventory grows re-chunk on their own, 
   test('CHUNKER_VERSION is unchanged; typescript, tsx, javascript, python and ruby carry revision 1', () => {
     expect(CHUNKER_VERSION).toBe(8);
     for (const language of ['typescript', 'tsx', 'javascript', 'python', 'ruby'] as const) expect(GRAMMAR_REVISIONS[language]).toBe(1);
-    expect(grammarOnlyDrift('8;lua=1', chunkerStamp())).toEqual(new Set(['typescript', 'tsx', 'javascript', 'python', 'ruby']));
+    expect(grammarOnlyDrift('8;lua=1;elixir=1', chunkerStamp())).toEqual(new Set(['typescript', 'tsx', 'javascript', 'python', 'ruby']));
   });
 });
 

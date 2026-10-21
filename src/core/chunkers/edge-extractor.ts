@@ -34,6 +34,7 @@
  */
 
 import type { SupportedCodeLanguage } from './code.ts';
+import { isElixirDefinitionCall } from './elixir.ts';
 
 export interface ExtractedEdge {
   /**
@@ -118,6 +119,7 @@ const CALL_CONFIG: Partial<Record<SupportedCodeLanguage, CallConfig>> = {
   tsx:        { callNodeTypes: new Set(['call_expression']), calleeFieldName: 'function' },
   javascript: { callNodeTypes: new Set(['call_expression']), calleeFieldName: 'function' },
   python:     { callNodeTypes: new Set(['call']),            calleeFieldName: 'function' },
+  elixir:     { callNodeTypes: new Set(['call']),            calleeFieldName: 'target' },
   ruby:       { callNodeTypes: new Set(['call', 'method_call']), calleeFieldName: 'method' },
   go:         { callNodeTypes: new Set(['call_expression']), calleeFieldName: 'function' },
   rust:       { callNodeTypes: new Set(['call_expression', 'method_call_expression']), calleeFieldName: 'function' },
@@ -167,8 +169,12 @@ function extractCalleeName(node: any, cfg: CallConfig): string | null {
       // For scoped names like `std::io::println`, keep the final
       // segment only — the edge-identity match is by short name.
       const lastSeg = text.split(/[:.]+/).pop() ?? text;
+      // Only Elixir uses `target`; predicates and bang functions keep their suffix.
+      if (cfg.calleeFieldName === 'target') return /^[\p{L}_][\p{L}\p{N}_]*[!?]?$/u.test(lastSeg) ? lastSeg : null;
       return sanitizeIdent(lastSeg);
     }
+    // Elixir's remote call target is a dot, with the function in its right field.
+    if (cur.type === 'dot') { cur = cur.childForFieldName('right'); continue; }
     // member_expression / field_expression: callee is last member.
     if (cur.type === 'member_expression' || cur.type === 'field_expression') {
       const prop = cur.childForFieldName('property') ?? cur.childForFieldName('field');
@@ -198,6 +204,7 @@ function extractCalleeName(node: any, cfg: CallConfig): string | null {
 }
 
 const MEMBER_CALLEE_TYPES = new Set([
+  'dot',
   'member_expression',
   'attribute',
   'field_expression',
@@ -577,7 +584,7 @@ export function extractCallEdges(tree: any, language: SupportedCodeLanguage): Ex
   while (stack.length > 0) {
     const node = stack.pop();
     if (!node) continue;
-    if (cfg.callNodeTypes.has(node.type)) {
+    if (cfg.callNodeTypes.has(node.type) && !(language === 'elixir' && isElixirDefinitionCall(node))) {
       const callee = extractCalleeName(node, cfg);
       if (callee) {
         // v0.34 W1: try receiver-type resolution. On success, emit the
