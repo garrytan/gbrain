@@ -167,6 +167,7 @@ export function cancelSettleMs(): number {
 }
 import type { SqlExecutor } from './engine-sql/executor.ts';
 import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
+import { routeRead, routedReadExecutor } from './postgres-engine/replica-route.ts';
 import { writerStamp } from './persistence/writer-versions.ts';
 import { wellFormedJson } from './text-safe.ts';
 
@@ -354,11 +355,16 @@ export class PostgresEngine implements BrainEngine {
     callback: (tx: ReturnType<typeof postgres>) => Promise<T>,
     opts?: { alwaysTransaction?: boolean; jitOff?: boolean; settings?: SearchSettings | (() => SearchSettings) },
   ): Promise<T> {
+    return this.onReadConnection(conn => this.scopedReadOn(conn, sourceIds, sourceId, callback, opts));
+  }
+
+  private async scopedReadOn<T>(conn: ReturnType<typeof postgres>, sourceIds: string[] | undefined, sourceId: string | undefined,
+    callback: (tx: ReturnType<typeof postgres>) => Promise<T>, opts?: { alwaysTransaction?: boolean; jitOff?: boolean; settings?: SearchSettings | (() => SearchSettings) }): Promise<T> {
     // Flag off + no pre-existing transaction need: call through on the
     // shared pool exactly as master does. No tx round-trip, no pool slot
     // held for the duration of the read.
     if (!this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) {
-      return await callback(this.sql);
+      return await callback(conn);
     }
     // Precedence matches sourceScopeOpts: federated array > scalar > '*'
     // (unscoped — relies on the recommended `ALTER ROLE ... SET
@@ -369,7 +375,7 @@ export class PostgresEngine implements BrainEngine {
     } else if (sourceId) {
       scopesValue = sourceId;
     }
-    return this.transaction(async engine => {
+    return this.transactionOn(conn, async engine => {
       const tx = (engine as PostgresEngine).sql;
       // One settings statement for the scope binding, JIT off and the
       // caller's settings (a thunk is read here, after BEGIN, so a deadline
@@ -388,7 +394,17 @@ export class PostgresEngine implements BrainEngine {
 
   /** An unscoped read in its own transaction with JIT off (search-settings.ts); a savepoint inside a caller's transaction. */
   private jitOffRead<T>(callback: (tx: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
-    return this.transaction(engine => withSearchJitOff((engine as PostgresEngine).sql, this._pageTransaction, () => callback((engine as PostgresEngine).sql)));
+    return this.onReadConnection(conn => this.transactionOn(conn, engine => withSearchJitOff((engine as PostgresEngine).sql, this._pageTransaction, () => callback((engine as PostgresEngine).sql))));
+  }
+
+  /** A read seam's connection: the replica inside a read op's scope (postgres-engine/replica-route.ts), else the primary. */
+  private onReadConnection<T>(read: (conn: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
+    return routeRead(() => this.sql, this.connectionManager, this._pageTransaction, read);
+  }
+
+  /** The executor behind every `unscopedExecutor` read; the plain primary executor unless a replica is configured. */
+  private get unscopedReadSql(): SqlExecutor {
+    return this.connectionManager?.replicaUrl() ? routedReadExecutor(conn => this.engineSqlOn(conn), () => this.sql, this.connectionManager, this._pageTransaction) : this.engineSql;
   }
 
   // Lifecycle
@@ -444,6 +460,7 @@ export class PostgresEngine implements BrainEngine {
       this.connectionManager = new ConnectionManager({
         url,
         parent: config.parentConnectionManager,
+        replicaUrl: config.replica_database_url,
         readPoolOwnedExternally: true, // we own _sql; manager just routes
         onpoisoned: this.onPoisoned,
         health: this.poolHealth,
@@ -463,6 +480,7 @@ export class PostgresEngine implements BrainEngine {
         this.connectionManager = new ConnectionManager({
           url,
           parent: config.parentConnectionManager,
+          replicaUrl: config.replica_database_url,
           readPoolOwnedExternally: true, // db.ts owns the pool
           onpoisoned: this.onPoisoned,
           health: this.poolHealth,
@@ -849,7 +867,7 @@ export class PostgresEngine implements BrainEngine {
     paths: string[],
     opts: { sourceId: string },
   ): Promise<Map<string, string>> {
-    return pagesImpl.resolveSlugsByPaths(unscopedExecutor(this.engineSql, 'pages: unscoped on master (EO4 inventory)'), paths, opts);
+    return pagesImpl.resolveSlugsByPaths(unscopedExecutor(this.unscopedReadSql,'pages: unscoped on master (EO4 inventory)'), paths, opts);
   }
 
   async softDeletePage(slug: string, opts?: { sourceId?: string }): Promise<{ slug: string } | null> {
@@ -944,12 +962,12 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async listAllPageRefs(): Promise<Array<{ slug: string; source_id: string; updated_at: Date }>> {
-    return pagesImpl.listAllPageRefs(unscopedExecutor(this.engineSql, 'pages: unscoped on master (EO4 inventory)'));
+    return pagesImpl.listAllPageRefs(unscopedExecutor(this.unscopedReadSql,'pages: unscoped on master (EO4 inventory)'));
   }
 
   // Sources SQL lives once in ./engine-sql/sources.ts (refactor wave 1, W1-extended).
   async listAllSources(opts?: { includeArchived?: boolean; localPathOnly?: boolean }): Promise<SourceRow[]> {
-    return sourcesImpl.listAllSources(unscopedExecutor(this.engineSql, 'sources: unscoped on master (EO4 inventory)'), opts);
+    return sourcesImpl.listAllSources(unscopedExecutor(this.unscopedReadSql,'sources: unscoped on master (EO4 inventory)'), opts);
   }
 
   async updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean> {
@@ -977,7 +995,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async resolveSlugs(partial: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<string[]> {
-    return pagesImpl.resolveSlugs(unscopedExecutor(this.engineSql, 'pages: unscoped on master (EO4 inventory)'), partial, opts);
+    return pagesImpl.resolveSlugs(unscopedExecutor(this.unscopedReadSql,'pages: unscoped on master (EO4 inventory)'), partial, opts);
   }
 
   // Search
@@ -1470,7 +1488,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getEmbeddingsByChunkIds(ids: number[], column: string = 'embedding'): Promise<Map<number, Float32Array>> {
-    return chunksImpl.getEmbeddingsByChunkIds(unscopedExecutor(this.engineSql, 'chunks: unscoped on master (EO4 inventory)'), ids, column);
+    return chunksImpl.getEmbeddingsByChunkIds(unscopedExecutor(this.unscopedReadSql,'chunks: unscoped on master (EO4 inventory)'), ids, column);
   }
 
   // v0.41.18.0: lazy-cached resolveBulkRetryOpts result. Constructor-time
@@ -1605,7 +1623,7 @@ export class PostgresEngine implements BrainEngine {
 
   async sumStaleChunkChars(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): Promise<number> {
     const column = (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name;
-    return chunksImpl.sumStaleChunkChars(unscopedExecutor(this.engineSql, 'chunks: unscoped on master (EO4 inventory)'), column, opts);
+    return chunksImpl.sumStaleChunkChars(unscopedExecutor(this.unscopedReadSql,'chunks: unscoped on master (EO4 inventory)'), column, opts);
   }
 
   async setPageEmbeddingSignature(slug: string, opts: { sourceId?: string; signature: string }): Promise<void> {
@@ -1754,7 +1772,7 @@ export class PostgresEngine implements BrainEngine {
     minSimilarity: number = 0.55,
     sourceId?: string,
   ): Promise<{ slug: string; similarity: number } | null> {
-    return pagesImpl.findByTitleFuzzy(unscopedExecutor(this.engineSql, 'pages: unscoped on master (EO4 inventory)'), name, dirPrefix, minSimilarity, sourceId);
+    return pagesImpl.findByTitleFuzzy(unscopedExecutor(this.unscopedReadSql,'pages: unscoped on master (EO4 inventory)'), name, dirPrefix, minSimilarity, sourceId);
   }
 
   async traverseGraph(
@@ -1762,7 +1780,7 @@ export class PostgresEngine implements BrainEngine {
     depth: number = 5,
     opts?: import('./engine.ts').TraverseGraphOpts,
   ): Promise<GraphNode[]> {
-    return linksImpl.traverseGraph(unscopedExecutor(this.engineSql, 'links: unscoped on master (EO4 inventory)'), slug, depth, opts);
+    return linksImpl.traverseGraph(unscopedExecutor(this.unscopedReadSql,'links: unscoped on master (EO4 inventory)'), slug, depth, opts);
   }
 
   async traversePaths(
@@ -1776,7 +1794,7 @@ export class PostgresEngine implements BrainEngine {
     slug: string,
     opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean },
   ): Promise<{ paths: GraphPath[]; truncated: boolean }> {
-    return linksImpl.traversePathsDetailed(unscopedExecutor(this.engineSql, 'links: unscoped on master (EO4 inventory)'), slug, opts);
+    return linksImpl.traversePathsDetailed(unscopedExecutor(this.unscopedReadSql,'links: unscoped on master (EO4 inventory)'), slug, opts);
   }
 
   async relationalFanout(
@@ -1809,7 +1827,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getPageTimestamps(slugs: string[]): Promise<Map<string, Date>> {
-    return pagesImpl.getPageTimestamps(unscopedExecutor(this.engineSql, 'pages: unscoped on master (EO4 inventory)'), slugs);
+    return pagesImpl.getPageTimestamps(unscopedExecutor(this.unscopedReadSql,'pages: unscoped on master (EO4 inventory)'), slugs);
   }
 
   async getEffectiveDates(refs: Array<{slug: string; source_id: string}>, opts?: PageReadScope): Promise<Map<string, Date>> {
@@ -1826,7 +1844,7 @@ export class PostgresEngine implements BrainEngine {
     excludePrivate?: boolean;
     mode?: 'inbound' | 'islanded';
   }): Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean; source_id?: string }>> {
-    return linksImpl.findOrphanPages(unscopedExecutor(this.engineSql, 'links: unscoped on master (EO4 inventory)'), opts);
+    return linksImpl.findOrphanPages(unscopedExecutor(this.unscopedReadSql,'links: unscoped on master (EO4 inventory)'), opts);
   }
 
   // Tags
@@ -1839,7 +1857,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; liveOnly?: boolean }): Promise<string[]> {
-    return tagsImpl.getTags(unscopedExecutor(this.engineSql, 'tags: unscoped on master (EO4 inventory)'), slug, opts);
+    return tagsImpl.getTags(unscopedExecutor(this.unscopedReadSql,'tags: unscoped on master (EO4 inventory)'), slug, opts);
   }
 
   // Timeline
@@ -1857,23 +1875,23 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]> {
-    return timelineImpl.getTimeline(unscopedExecutor(this.engineSql, 'timeline: unscoped on master (EO4 inventory)'), slug, opts);
+    return timelineImpl.getTimeline(unscopedExecutor(this.unscopedReadSql,'timeline: unscoped on master (EO4 inventory)'), slug, opts);
   }
 
   async getTimelineForDate(date: string, opts?: ChronicleTimelineOpts): Promise<ChronicleTimelineRow[]> {
-    return timelineImpl.getTimelineForDate(unscopedExecutor(this.engineSql, 'timeline: unscoped on master (EO4 inventory)'), date, opts);
+    return timelineImpl.getTimelineForDate(unscopedExecutor(this.unscopedReadSql,'timeline: unscoped on master (EO4 inventory)'), date, opts);
   }
 
   async getSince(date: string, opts?: ChronicleTimelineOpts): Promise<ChronicleTimelineRow[]> {
-    return timelineImpl.getSince(unscopedExecutor(this.engineSql, 'timeline: unscoped on master (EO4 inventory)'), date, opts);
+    return timelineImpl.getSince(unscopedExecutor(this.unscopedReadSql,'timeline: unscoped on master (EO4 inventory)'), date, opts);
   }
 
   async getOnThisDay(opts?: PageReadScope & { date?: string; limit?: number }): Promise<ChronicleTimelineRow[]> {
-    return timelineImpl.getOnThisDay(unscopedExecutor(this.engineSql, 'timeline: unscoped on master (EO4 inventory)'), opts);
+    return timelineImpl.getOnThisDay(unscopedExecutor(this.unscopedReadSql,'timeline: unscoped on master (EO4 inventory)'), opts);
   }
 
   async getLastSeen(entitySlug: string, opts?: PageReadScope & { asof?: string }): Promise<LastSeenResult> {
-    return timelineImpl.getLastSeen(unscopedExecutor(this.engineSql, 'timeline: unscoped on master (EO4 inventory)'), entitySlug, opts);
+    return timelineImpl.getLastSeen(unscopedExecutor(this.unscopedReadSql,'timeline: unscoped on master (EO4 inventory)'), entitySlug, opts);
   }
 
   async upsertEventProjection(opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string }): Promise<{ projected: boolean }> {
@@ -2103,11 +2121,11 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getFile(sourceId: string, storagePath: string): Promise<FileRow | null> {
-    return filesImpl.getFile(unscopedExecutor(this.engineSql, 'files: unscoped on master (EO4 inventory)'), sourceId, storagePath);
+    return filesImpl.getFile(unscopedExecutor(this.unscopedReadSql,'files: unscoped on master (EO4 inventory)'), sourceId, storagePath);
   }
 
   async listFilesForPage(pageId: number): Promise<FileRow[]> {
-    return filesImpl.listFilesForPage(unscopedExecutor(this.engineSql, 'files: unscoped on master (EO4 inventory)'), pageId);
+    return filesImpl.listFilesForPage(unscopedExecutor(this.unscopedReadSql,'files: unscoped on master (EO4 inventory)'), pageId);
   }
 
   // Dream-cycle triage verdict cache (v0.23 boolean era; widened by #4152 triage-v1).
@@ -2266,7 +2284,7 @@ export class PostgresEngine implements BrainEngine {
     entitySlug: string,
     opts?: FactListOpts,
   ): Promise<FactRow[]> {
-    return factsImpl.listFactsByEntity(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, entitySlug, opts);
+    return factsImpl.listFactsByEntity(unscopedExecutor(this.unscopedReadSql,'facts: unscoped on master (EO4 inventory)'), source_id, entitySlug, opts);
   }
 
   async listFactsSince(
@@ -2274,7 +2292,7 @@ export class PostgresEngine implements BrainEngine {
     since: Date,
     opts?: RecallFactReadOpts,
   ): Promise<FactRow[]> {
-    return factsImpl.listFactsSince(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, since, opts);
+    return factsImpl.listFactsSince(unscopedExecutor(this.unscopedReadSql,'facts: unscoped on master (EO4 inventory)'), source_id, since, opts);
   }
 
   async listFactsKeyset(
@@ -2282,7 +2300,7 @@ export class PostgresEngine implements BrainEngine {
     after: { createdAt: string; id: number | null } | null,
     opts?: RecallFactReadOpts,
   ): Promise<FactRow[]> {
-    return factsImpl.listFactsKeyset(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, after, opts);
+    return factsImpl.listFactsKeyset(unscopedExecutor(this.unscopedReadSql,'facts: unscoped on master (EO4 inventory)'), source_id, after, opts);
   }
 
   async listFactsBySession(
@@ -2290,18 +2308,18 @@ export class PostgresEngine implements BrainEngine {
     sessionId: string,
     opts?: FactListOpts,
   ): Promise<FactRow[]> {
-    return factsImpl.listFactsBySession(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, sessionId, opts);
+    return factsImpl.listFactsBySession(unscopedExecutor(this.unscopedReadSql,'facts: unscoped on master (EO4 inventory)'), source_id, sessionId, opts);
   }
 
   async listSupersessions(
     source_id: string,
     opts?: { since?: Date; limit?: number; visibility?: ('private' | 'world')[]; eligibility?: import('./engine.ts').FactListOpts['eligibility']; excludePrivate?: boolean },
   ): Promise<FactRow[]> {
-    return factsImpl.listSupersessions(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, opts);
+    return factsImpl.listSupersessions(unscopedExecutor(this.unscopedReadSql,'facts: unscoped on master (EO4 inventory)'), source_id, opts);
   }
 
   async countUnconsolidatedFacts(source_id: string): Promise<number> {
-    return factsImpl.countUnconsolidatedFacts(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id);
+    return factsImpl.countUnconsolidatedFacts(unscopedExecutor(this.unscopedReadSql,'facts: unscoped on master (EO4 inventory)'), source_id);
   }
 
   async findCandidateDuplicates(
@@ -2310,7 +2328,7 @@ export class PostgresEngine implements BrainEngine {
     factText: string,
     opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; arm?: 'keyword'; attributedTo?: import('./engine.ts').FactAttribution | null },
   ): Promise<FactRow[]> {
-    return factsImpl.findCandidateDuplicates(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, entitySlug, factText, opts);
+    return factsImpl.findCandidateDuplicates(unscopedExecutor(this.unscopedReadSql,'facts: unscoped on master (EO4 inventory)'), source_id, entitySlug, factText, opts);
   }
 
   async consolidateFact(id: number, takeId: number): Promise<void> {
@@ -2318,22 +2336,22 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async findTrajectory(opts: import('./engine.ts').TrajectoryOpts): Promise<import('./engine.ts').TrajectoryPoint[]> {
-    return factsImpl.findTrajectory(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), opts);
+    return factsImpl.findTrajectory(unscopedExecutor(this.unscopedReadSql,'facts: unscoped on master (EO4 inventory)'), opts);
   }
 
   async getFactsHealth(source_id: string): Promise<FactsHealth> {
-    return factsImpl.getFactsHealth(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id);
+    return factsImpl.getFactsHealth(unscopedExecutor(this.unscopedReadSql,'facts: unscoped on master (EO4 inventory)'), source_id);
   }
 
   // Segmented page storage (Wave B): SQL in ./engine-sql/page-body.ts.
   async allocateBodyOccurrenceIds(count: number): Promise<number[]> { return pageBodyImpl.allocateBodyOccurrenceIds(this.engineSql, count); }
   async stageSegmentTexts(sourceId: string, texts: readonly SegmentTextInput[], opts?: { stagingId?: string }): Promise<{ inserted: number }> { return pageBodyImpl.stageSegmentTexts(this.engineSql, sourceId, texts, opts); }
   async readSegmentTexts(sourceId: string, sha256s: readonly Uint8Array[]): Promise<Map<string, Uint8Array>> {
-    return pageBodyImpl.readSegmentTexts(unscopedExecutor(this.engineSql, 'page-body: page-id keyed internal read'), sourceId, sha256s);
+    return pageBodyImpl.readSegmentTexts(unscopedExecutor(this.unscopedReadSql,'page-body: page-id keyed internal read'), sourceId, sha256s);
   }
   async stageManifestRows(rows: readonly ManifestRowInput[]): Promise<void> { return pageBodyImpl.stageManifestRows(this.engineSql, rows); }
   async readManifest(pageId: number, opts?: { generation?: number; stagingId?: string; region?: BodyRegion; lastN?: number }): Promise<ManifestRow[]> {
-    return pageBodyImpl.readManifest(unscopedExecutor(this.engineSql, 'page-body: page-id keyed internal read'), pageId, opts);
+    return pageBodyImpl.readManifest(unscopedExecutor(this.unscopedReadSql,'page-body: page-id keyed internal read'), pageId, opts);
   }
   async stageSegmentChunks(pageId: number, generation: number, chunks: readonly SegmentChunkInput[], opts?: { embeddingColumn?: ResolvedColumn }): Promise<number[]> {
     return pageBodyImpl.stageSegmentChunks(this.engineSql, pageId, generation, chunks, opts);
@@ -2359,7 +2377,7 @@ export class PostgresEngine implements BrainEngine {
     pageIds: number[],
     opts: { takesHoldersAllowList?: string[] } = {},
   ): Promise<Map<number, Take[]>> {
-    return takesImpl.listActiveTakesForPages(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), pageIds, opts);
+    return takesImpl.listActiveTakesForPages(unscopedExecutor(this.unscopedReadSql,'takes: unscoped on master (EO4 inventory)'), pageIds, opts);
   }
 
   async writeContradictionsRun(row: {
@@ -2395,7 +2413,7 @@ export class PostgresEngine implements BrainEngine {
     source_tier_breakdown: Record<string, unknown>;
     report_json: Record<string, unknown>;
   }>> {
-    return takesImpl.loadContradictionsTrend(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), days);
+    return takesImpl.loadContradictionsTrend(unscopedExecutor(this.unscopedReadSql,'takes: unscoped on master (EO4 inventory)'), days);
   }
 
   async getContradictionCacheEntry(key: {
@@ -2405,7 +2423,7 @@ export class PostgresEngine implements BrainEngine {
     prompt_version: string;
     truncation_policy: string;
   }): Promise<Record<string, unknown> | null> {
-    return takesImpl.getContradictionCacheEntry(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), key);
+    return takesImpl.getContradictionCacheEntry(unscopedExecutor(this.unscopedReadSql,'takes: unscoped on master (EO4 inventory)'), key);
   }
 
   async putContradictionCacheEntry(opts: {
@@ -2425,30 +2443,30 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async listTakes(opts: TakesListOpts = {}): Promise<Take[]> {
-    return takesImpl.listTakes(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), opts);
+    return takesImpl.listTakes(unscopedExecutor(this.unscopedReadSql,'takes: unscoped on master (EO4 inventory)'), opts);
   }
 
   async searchTakes(query: string, opts: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: import('./eligibility/policy.ts').ReadEligibility } = {}): Promise<TakeHit[]> {
-    return takesImpl.searchTakes(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), query, opts);
+    return takesImpl.searchTakes(unscopedExecutor(this.unscopedReadSql,'takes: unscoped on master (EO4 inventory)'), query, opts);
   }
 
   async searchTakesVector(
     embedding: Float32Array,
     opts: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: import('./eligibility/policy.ts').ReadEligibility } = {},
   ): Promise<TakeHit[]> {
-    return takesImpl.searchTakesVector(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), embedding, opts);
+    return takesImpl.searchTakesVector(unscopedExecutor(this.unscopedReadSql,'takes: unscoped on master (EO4 inventory)'), embedding, opts);
   }
 
   async getTakeEmbeddings(ids: number[]): Promise<Map<number, Float32Array>> {
-    return takesImpl.getTakeEmbeddings(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), ids);
+    return takesImpl.getTakeEmbeddings(unscopedExecutor(this.unscopedReadSql,'takes: unscoped on master (EO4 inventory)'), ids);
   }
 
   async countStaleTakes(opts?: StaleTakeOpts): Promise<number> {
-    return takesImpl.countStaleTakes(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), opts);
+    return takesImpl.countStaleTakes(unscopedExecutor(this.unscopedReadSql,'takes: unscoped on master (EO4 inventory)'), opts);
   }
 
   async listStaleTakes(opts?: StaleTakeOpts): Promise<StaleTakeRow[]> {
-    return takesImpl.listStaleTakes(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), opts);
+    return takesImpl.listStaleTakes(unscopedExecutor(this.unscopedReadSql,'takes: unscoped on master (EO4 inventory)'), opts);
   }
 
   async updateTakeEmbeddings(rowsIn: TakeEmbeddingInput[], opts?: BatchOpts): Promise<number> { return takesImpl.updateTakeEmbeddings(() => this.engineSql, (site, signal, fn, size) => this.batchRetry(site, signal, fn, size), rowsIn, opts); }
@@ -2474,11 +2492,11 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getScorecard(opts: TakesScorecardOpts, allowList: string[] | undefined): Promise<TakesScorecard> {
-    return takesImpl.getScorecard(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), opts, allowList);
+    return takesImpl.getScorecard(unscopedExecutor(this.unscopedReadSql,'takes: unscoped on master (EO4 inventory)'), opts, allowList);
   }
 
   async getCalibrationCurve(opts: CalibrationCurveOpts, allowList: string[] | undefined): Promise<CalibrationBucket[]> {
-    return takesImpl.getCalibrationCurve(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), opts, allowList);
+    return takesImpl.getCalibrationCurve(unscopedExecutor(this.unscopedReadSql,'takes: unscoped on master (EO4 inventory)'), opts, allowList);
   }
 
   async addSynthesisEvidence(rowsIn: SynthesisEvidenceInput[]): Promise<number> {
@@ -2491,7 +2509,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getVersions<B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>): Promise<PageVersionRows<B>> {
-    return pagesImpl.getVersions(unscopedExecutor(this.engineSql, 'pages: unscoped on master (EO4 inventory)'), slug, opts);
+    return pagesImpl.getVersions(unscopedExecutor(this.unscopedReadSql,'pages: unscoped on master (EO4 inventory)'), slug, opts);
   }
 
   async revertToVersion(
@@ -2635,7 +2653,7 @@ export class PostgresEngine implements BrainEngine {
     sourceOrSources: string | readonly string[],
     opts?: { excludePrivate?: boolean },
   ): Promise<{ canonical_slug: string; source_id: string } | null> {
-    return pagesImpl.resolveSlugWithAliasDetailed(unscopedExecutor(this.engineSql, 'pages: unscoped on master (EO4 inventory)'), slug, sourceOrSources, opts);
+    return pagesImpl.resolveSlugWithAliasDetailed(unscopedExecutor(this.unscopedReadSql,'pages: unscoped on master (EO4 inventory)'), slug, sourceOrSources, opts);
   }
 
   async resolveAliases(
@@ -2751,7 +2769,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getChunksWithEmbeddings(slug: string, opts?: { sourceId?: string; includeUnsealed?: boolean }): Promise<Chunk[]> {
-    return chunksImpl.getChunksWithEmbeddings(unscopedExecutor(this.engineSql, 'chunks: unscoped on master (EO4 inventory)'), slug, opts);
+    return chunksImpl.getChunksWithEmbeddings(unscopedExecutor(this.unscopedReadSql,'chunks: unscoped on master (EO4 inventory)'), slug, opts);
   }
 
   /**
@@ -3002,21 +3020,21 @@ export class PostgresEngine implements BrainEngine {
     qualifiedName: string,
     opts?: { sourceId?: string; allSources?: boolean; limit?: number; chunkId?: number },
   ): Promise<import('./types.ts').CodeEdgeResult[]> {
-    return codeEdgesImpl.getCallersOf(unscopedExecutor(this.engineSql, 'code-edges: unscoped on master (EO4 inventory)'), qualifiedName, opts);
+    return codeEdgesImpl.getCallersOf(unscopedExecutor(this.unscopedReadSql,'code-edges: unscoped on master (EO4 inventory)'), qualifiedName, opts);
   }
 
   async getCalleesOf(
     qualifiedName: string,
     opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean; chunkId?: number },
   ): Promise<import('./types.ts').CodeEdgeResult[]> {
-    return codeEdgesImpl.getCalleesOf(unscopedExecutor(this.engineSql, 'code-edges: unscoped on master (EO4 inventory)'), qualifiedName, opts);
+    return codeEdgesImpl.getCalleesOf(unscopedExecutor(this.unscopedReadSql,'code-edges: unscoped on master (EO4 inventory)'), qualifiedName, opts);
   }
 
   async getEdgesByChunk(
     chunkId: number,
     opts?: { direction?: 'in' | 'out' | 'both'; edgeType?: string; limit?: number },
   ): Promise<import('./types.ts').CodeEdgeResult[]> {
-    return codeEdgesImpl.getEdgesByChunk(unscopedExecutor(this.engineSql, 'code-edges: unscoped on master (EO4 inventory)'), chunkId, opts);
+    return codeEdgesImpl.getEdgesByChunk(unscopedExecutor(this.unscopedReadSql,'code-edges: unscoped on master (EO4 inventory)'), chunkId, opts);
   }
 
   // Eval capture (v0.25.0). See BrainEngine interface docs.
@@ -3096,7 +3114,7 @@ export class PostgresEngine implements BrainEngine {
 
   /** Narrow deps for the peeled salience module. */
   async batchLoadEmotionalInputs(slugs?: string[]): Promise<EmotionalWeightInputRow[]> {
-    return salienceImpl.batchLoadEmotionalInputs(unscopedExecutor(this.engineSql, 'salience: unscoped on master (EO4 inventory)'), slugs);
+    return salienceImpl.batchLoadEmotionalInputs(unscopedExecutor(this.unscopedReadSql,'salience: unscoped on master (EO4 inventory)'), slugs);
   }
 
   async setEmotionalWeightBatch(rows: EmotionalWeightWriteRow[]): Promise<number> {
@@ -3104,14 +3122,14 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getRecentSalience(opts: SalienceOpts): Promise<SalienceResult[]> {
-    return salienceImpl.getRecentSalience(unscopedExecutor(this.engineSql, 'salience: unscoped on master (EO4 inventory)'), opts);
+    return salienceImpl.getRecentSalience(unscopedExecutor(this.unscopedReadSql,'salience: unscoped on master (EO4 inventory)'), opts);
   }
 
   async listEnrichCandidates(opts: EnrichCandidatesOpts): Promise<EnrichCandidate[]> {
-    return salienceImpl.listEnrichCandidates(unscopedExecutor(this.engineSql, 'salience: unscoped on master (EO4 inventory)'), opts);
+    return salienceImpl.listEnrichCandidates(unscopedExecutor(this.unscopedReadSql,'salience: unscoped on master (EO4 inventory)'), opts);
   }
 
   async findAnomalies(opts: AnomaliesOpts): Promise<AnomalyResult[]> {
-    return salienceImpl.findAnomalies(unscopedExecutor(this.engineSql, 'salience: unscoped on master (EO4 inventory)'), opts);
+    return salienceImpl.findAnomalies(unscopedExecutor(this.unscopedReadSql,'salience: unscoped on master (EO4 inventory)'), opts);
   }
 }

@@ -337,6 +337,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'writer_version',
   'segmented_storage',
   'pgbouncer_prepare',
+  // The configured read replica answers, and how far it lags (doctor/checks/replica-connection.ts).
+  'replica_connection',
   'pglite_data_dir',
   // #6573: a local IPC socket path over the platform's AF_UNIX budget (doctor/checks/local-ipc.ts).
   'ipc_socket_path',

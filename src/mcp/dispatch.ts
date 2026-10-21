@@ -50,6 +50,7 @@ import { invalidateHotMemoryForEngine } from '../core/facts/meta-hook.ts';
 import { admittedPendingReceipt, type WriteReceipt } from '../core/persistence/types.ts';
 import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, withVerifiedLocalRegistration } from '../core/persistence/identity.ts';
 import { frameOverCap, resultTooLargeError } from '../core/egress-budget.ts';
+import { withOperationReadRouting } from '../core/replica-reads.ts';
 
 // WP3: normalization + validation moved to validate-params.ts (direct unit
 // surface). Re-exported here so existing imports/tests keep working.
@@ -1078,9 +1079,9 @@ async function dispatchResolvedCall(
           `${name} on this stdio connection needs the agent-facing stdio writer registration, which only the user can create in a terminal on the brain host.`,
           { fix: hostFix(ctx, ['gbrain', 'auth', 'local-writer', 'register', 'stdio', '--dry-run', '--json'],
             'Previews the agent-facing stdio registration; the user reruns it without --dry-run (with --replace and the complete grant when a registration exists).') });
-        return op.handler(ctx, safeParams);
+        return withOperationReadRouting(op, () => op.handler(ctx, safeParams));
       })
-      : await op.handler(ctx, safeParams);
+      : await withOperationReadRouting(op, () => op.handler(ctx, safeParams));
     // Hot memory built before a write (forget, remember, …) is never served after it, on every transport;
     // #6696 (A4): the write's receipt carries the capacity notices (60 s snapshot, at most hourly per scope).
     if (op.mutating) { invalidateHotMemoryForEngine(engine); notices.push(...await writeReceiptCapacityNotices(engine, ctx)); }

@@ -780,6 +780,7 @@ export class PGLiteEngine implements BrainEngine {
 
   // Lifecycle
   async connect(config: EngineConfig): Promise<void> {
+    if (config.replica_database_url) warnOncePerProcess('pglite_replica_ignored', '[gbrain] replica_database_url is ignored: a PGLite brain is one local file and has no read replica. Remove it with: gbrain config set replica_database_url ""');
     return this._connectWithRootRegistration(config, true);
   }
 

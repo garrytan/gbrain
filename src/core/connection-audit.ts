@@ -21,7 +21,7 @@ import { redactPgUrl } from './url-redact.ts';
 
 export interface ConnectionEvent {
   ts?: string;                   // ISO 8601, defaults to NOW
-  pool: 'read' | 'ddl' | 'bulk' | 'single';
+  pool: 'read' | 'ddl' | 'bulk' | 'single' | 'replica';
   op: 'acquire' | 'release' | 'error' | 'init';
   duration_ms?: number;
   stmt_timeout_ms?: number;

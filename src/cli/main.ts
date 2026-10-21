@@ -11,6 +11,7 @@ installSigchldHandler();
 
 import { readFileSync, existsSync, unlinkSync } from 'fs';
 import { readStdinBounded as readStdinPayload } from '../core/interaction.ts';
+import { withOperationReadRouting } from '../core/replica-reads.ts';
 import { spawn } from '../core/spawn.ts';
 import {
   readUpdateCache,
@@ -666,7 +667,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     let ctx: Awaited<ReturnType<typeof makeContext>>;
     try {
       ctx = await withTimeout(
-        timeCliPhase('context', () => (configSnapshot ? configSnapshot.run(() => makeContext(engine, params, op)) : makeContext(engine, params, op))),
+        timeCliPhase('context', () => withOperationReadRouting(op, () => (configSnapshot ? configSnapshot.run(() => makeContext(engine, params, op)) : makeContext(engine, params, op)))),
         wallclockMs,
         `gbrain ${command}: context`,
       );
@@ -682,7 +683,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     if (op.scope === 'read') {
       try {
         rawResult = await withTimeout(
-          configSnapshot!.run(() => op.handler(ctx, params)).catch(async (e: unknown) => { // large pages: a segmented page streams to stdout
+          withOperationReadRouting(op, () => configSnapshot!.run(() => op.handler(ctx, params))).catch(async (e: unknown) => { // large pages: a segmented page streams to stdout
             if (op.name === 'get_page' && await streamSegmentedGet(engine, params, e, writeStdoutFinal)) return SEGMENTED_STREAMED;
             throw e;
           }),
@@ -697,7 +698,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
         throw e;
       }
     } else {
-      rawResult = await op.handler(ctx, params);
+      rawResult = await withOperationReadRouting(op, () => op.handler(ctx, params));
       if (op.mutating) await captureCapacityNotices(engine); // #6696 (A4)
     }
     if (rawResult === SEGMENTED_STREAMED) return;

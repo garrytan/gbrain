@@ -81,6 +81,8 @@ export interface GBrainConfig {
   /** A4 user preapprovals (file plane only; set by the trusted local CLI; read by core/consent.ts). */
   consent?: { preapprove?: { paid?: { max_usd_per_run?: number }; persistent_install?: boolean } };
   database_url?: string;
+  /** Postgres read replica for non-mutating read ops (docs/ENGINES.md "Read replica"); GBRAIN_REPLICA_DATABASE_URL overrides. */
+  replica_database_url?: string;
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
@@ -744,6 +746,8 @@ export function loadConfig(): GBrainConfig | null {
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(dbUrl ? { database_path: undefined } : {}),
+    // A file replica belongs to the file's database_url; an env-chosen primary takes only an env replica.
+    ...(process.env.GBRAIN_REPLICA_DATABASE_URL || dbUrl ? { replica_database_url: process.env.GBRAIN_REPLICA_DATABASE_URL || undefined } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
     ...(process.env.ANTHROPIC_API_KEY ? { anthropic_api_key: process.env.ANTHROPIC_API_KEY } : {}),
     ...(process.env.OPENROUTER_API_KEY ? { openrouter_api_key: process.env.OPENROUTER_API_KEY } : {}),
@@ -1248,6 +1252,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // File-plane (GBrainConfig static fields)
   'engine',
   'database_url',
+  'replica_database_url',
   'database_path',
   'openai_api_key',
   'anthropic_api_key',
@@ -1939,6 +1944,7 @@ export function toEngineConfig(config: GBrainConfig): EngineConfig {
   return {
     engine: config.engine,
     database_url: config.database_url,
+    ...(config.replica_database_url ? { replica_database_url: config.replica_database_url } : {}),
     database_path: config.database_path,
     keyword_statement_timeout_ms: config.search?.keyword_statement_timeout_ms,
   };

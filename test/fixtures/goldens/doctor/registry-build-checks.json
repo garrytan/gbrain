@@ -943,6 +943,10 @@
       },
       {
         "category": "ops",
+        "name": "replica_connection"
+      },
+      {
+        "category": "ops",
         "name": "search_mode"
       },
       {

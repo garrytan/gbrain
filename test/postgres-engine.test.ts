@@ -69,13 +69,15 @@ describe('postgres-engine / search path timeout isolation', () => {
     // Keep the inspected body bounded; behavioral scope/savepoint coverage
     // lives in postgres-engine-rls-scope.test.ts.
     const helper = stripComments(SRC).split('private async withScopedReadTransaction<T>')[1]!.split('async connect(')[0]!;
-    expect(helper).toMatch(/this\.transaction\(async engine =>/);
+    // The read seam picks its connection (primary, or the read replica inside a read op), then opens the transaction on it.
+    expect(helper).toMatch(/return this\.onReadConnection\(conn => this\.scopedReadOn\(conn, sourceIds, sourceId, callback, opts\)\);/);
+    expect(helper).toMatch(/this\.transactionOn\(conn, async engine =>/);
     expect(helper).toMatch(/const tx = \(engine as PostgresEngine\)\.sql;/);
     // One settings statement (scope, JIT off, the caller's settings) runs before the callback; nested reads restore.
     expect(helper).toMatch(/withSearchSettings\(tx, this\._pageTransaction, settings, \(\) => callback\(tx\), VECTOR_SETTING_DEFAULTS\)/);
     // Flag off without a transaction requirement preserves pool passthrough.
     expect(helper).toMatch(
-      /if\s*\(!this\.rlsScopeBindingEnabled\s*&&\s*!opts\?\.alwaysTransaction\)\s*\{\s*return\s+await\s+callback\(this\.sql\);/,
+      /if\s*\(!this\.rlsScopeBindingEnabled\s*&&\s*!opts\?\.alwaysTransaction\)\s*\{\s*return\s+await\s+callback\(conn\);/,
     );
   });
 

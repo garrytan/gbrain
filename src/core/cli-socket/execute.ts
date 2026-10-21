@@ -18,6 +18,7 @@ import { OperationError, opOwnsSource, type Operation, type OperationContext } f
 import { currentCliWriteWait } from '../persistence/write-wait.ts';
 import { localFederatedSourceIds, resolveSourceWithTier, SourceTargetError } from '../source-resolver.ts';
 import { OperationTimeoutError, withTimeout } from '../timeout.ts';
+import { withOperationReadRouting } from '../replica-reads.ts';
 import { bigintToStringReplacer } from '../utils.ts';
 import { OutputCapture, withOutputCapture } from './output-capture.ts';
 import { DEFAULT_READ_WALLCLOCK_MS, MAX_ROUND_TRIP_MS, serializeOperationError, type CliSocketRequest, type ResultFrame } from './protocol.ts';
@@ -101,9 +102,9 @@ async function runOp(engine: BrainEngine, request: Extract<CliSocketRequest, { k
   };
   let stage = `gbrain ${request.command}: context`;
   try {
-    const ctx = await withTimeout(track(work, (async () => cliRequestContext(engine, params, op, request, await mergedRequestConfig(engine), sinks))()), wallclockMs, stage);
+    const ctx = await withTimeout(track(work, withOperationReadRouting(op, async () => cliRequestContext(engine, params, op, request, await mergedRequestConfig(engine), sinks))), wallclockMs, stage);
     stage = `gbrain ${request.command}`;
-    const raw = await withTimeout(track(work, op.handler(ctx, params)), wallclockMs, stage);
+    const raw = await withTimeout(track(work, withOperationReadRouting(op, () => op.handler(ctx, params))), wallclockMs, stage);
     // src/cli/main.ts runSharedOperation: captureRetrievalNotices after the handler, before the JSON round trip.
     const retrieval = op.name === 'search' || op.name === 'query'
       ? recallInteropNotices(op.name, raw, { retrieval: meta ?? {} }, params, { config: ctx.config, transport: 'cli' })

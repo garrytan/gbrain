@@ -42,6 +42,7 @@ import { readRecallCursor, writeCursor, writePagedCursor, type RecallCursor } fr
 import { resolveSourceId, resolveSourceIdEngineFree, SourceTargetError } from '../core/source-resolver.ts';
 import { usageError } from '../cli/cli-error.ts';
 import { parseSinceParam, SINCE_GRAMMAR } from '../core/facts/since-parse.ts';
+import { withOperationReadRouting } from '../core/replica-reads.ts';
 
 // Same kebab-case shape gate the source-resolver applies. v0.32: applied
 // locally on thin-client where the canonical resolver's assertSourceExists
@@ -493,7 +494,7 @@ async function recallVerbResult(engine: BrainEngine, flags: ParsedFlags, sourceI
   };
   return (oneShot && isThinClient(ctx.config)
     ? unpackToolResult(await callRemoteTool(ctx.config, 'recall', params, { timeoutMs: 30_000 }))
-    : await op.handler(ctx, params)) as RecallVerbResult;
+    : await withOperationReadRouting(op, () => op.handler(ctx, params))) as RecallVerbResult;
 }
 
 export async function renderRecallVerbResult(flags: ParsedFlags, result: RecallVerbResult): Promise<void> {

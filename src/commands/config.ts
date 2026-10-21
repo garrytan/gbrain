@@ -311,6 +311,7 @@ export async function handleDbPlaneRoutedKeys(key: string, value: string): Promi
     console.error('[config] No --force escape: an engine flip without a data migration splits the brain across two stores.');
     process.exit(1);
   }
+  if (key === 'replica_database_url') return (await import('./config-replica.ts')).setReplicaDatabaseUrl(value);
   if (key !== 'database_url' && key !== 'database_path') return false;
   if (key === 'database_url' && !/^postgres(ql)?:\/\//.test(value)) {
     console.error('[config] database_url must be a postgres:// or postgresql:// connection string.');
@@ -365,7 +366,7 @@ export async function tryRunConfigEngineFree(args: string[]): Promise<boolean> {
   const key = args[1];
   const value = args.slice(2).find((a) => !a.startsWith('-'));
   if (!key || value === undefined) return false; // let the engine path print usage
-  if (key !== 'database_url' && key !== 'database_path' && key !== 'engine') return false;
+  if (key !== 'database_url' && key !== 'database_path' && key !== 'engine' && key !== 'replica_database_url') return false;
   return handleDbPlaneRoutedKeys(key, value);
 }
 

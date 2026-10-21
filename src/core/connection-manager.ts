@@ -76,6 +76,8 @@ export interface ConnectionManagerOpts {
   onpoisoned?: (pool: 'read' | 'direct', status: string) => void;
   /** #6383: the driver's stuck-connection and build-failure reports, per pool (`onpoisoned` stays separate for its callers). */
   health?: (pool: 'read' | 'direct') => Omit<PoolHealthHooks, 'onpoisoned'>;
+  /** A read replica of the primary; non-mutating read ops read from it (src/core/replica-reads.ts). */
+  replicaUrl?: string | null;
 }
 
 /** Default direct-pool size (P1 raised from 2 to 3). Override via env. */
@@ -278,6 +280,9 @@ export class ConnectionManager {
   /** #1915: single-flight guard for the session-pooler retry. */
   private _sessionInit: Promise<Sql> | null = null;
   private _sessionFallbackLogged = false;
+  private _replicaUrl: string | null;
+  private _replicaPool: Sql | null = null;
+  private _replicaDownUntil = 0;
 
   constructor(opts: ConnectionManagerOpts) {
     this.opts = opts;
@@ -291,7 +296,9 @@ export class ConnectionManager {
       this._directUrlAutoDerived = opts.parent.isDirectUrlAutoDerived();
       this._readPool = opts.parent.peekReadPool();
       this._readPoolOwnedExternally = true; // never end the parent's pool
+      this._replicaUrl = null;
     } else {
+      this._replicaUrl = opts.replicaUrl || null;
       this._killSwitch = readKillSwitchEnv();
       this._isSupabase = isSupabasePoolerUrl(opts.url);
       // Direct URL: explicit override > env > derive > null. Pooler-shaped
@@ -376,6 +383,46 @@ export class ConnectionManager {
       throw new Error('connection-manager: read pool not initialized; call getReadPool() first or set externally');
     }
     return this._readPool;
+  }
+
+  /**
+   * The replica pool, built on first use, or null when no replica is
+   * configured or it failed recently. A child manager answers from its parent,
+   * so worker engines and transaction clones share one replica pool.
+   */
+  replica(now: number = Date.now()): Sql | null {
+    if (this.opts.parent) return this.opts.parent.replica(now);
+    if (!this._replicaUrl || now < this._replicaDownUntil) return null;
+    this._replicaPool ??= this.buildReplicaPool(this._replicaUrl);
+    return this._replicaPool;
+  }
+
+  /** Sends reads back to the primary for `cooldownMs` after the replica failed one. */
+  markReplicaDown(cooldownMs: number, now: number = Date.now()): void {
+    if (this.opts.parent) return this.opts.parent.markReplicaDown(cooldownMs, now);
+    this._replicaDownUntil = now + cooldownMs;
+  }
+
+  private buildReplicaPool(url: string): Sql {
+    const opts: Record<string, unknown> = {
+      max: resolvePoolSize(this.opts.readPoolSize),
+      idle_timeout: 20,
+      connect_timeout: resolveUrlConnectTimeout(url),
+      max_lifetime: resolveMaxLifetimeSeconds(),
+      types: { bigint: postgres.BigInt },
+      onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
+      shared_types: resolveSharedTypes(url),
+      array_types: resolveArrayTypes(url),
+      ...readPoolPipelineOptions(url),
+      ...transactionPipelineOptions(url),
+    };
+    const timeouts = resolveSessionTimeouts();
+    Object.assign(opts, poolHealthOptions({ ...this.opts.health?.('read'), onpoisoned: (status: string) => this.opts.onpoisoned?.('read', status) }, timeouts.statement_timeout));
+    opts.connection = { ...timeouts, application_name: gbrainApplicationName() };
+    const prepare = resolvePrepare(url);
+    if (typeof prepare === 'boolean') opts.prepare = prepare;
+    logConnectionEvent({ pool: 'replica', op: 'init', host: this.hostOnly(url) });
+    return postgres(url, traceSqlOptions(opts, 'replica'));
   }
 
   /**
@@ -588,6 +635,10 @@ export class ConnectionManager {
       ends.push(endPoolBounded(this._readPool));
       this._readPool = null;
     }
+    if (this._replicaPool) {
+      ends.push(endPoolBounded(this._replicaPool));
+      this._replicaPool = null;
+    }
     await Promise.all(ends);
   }
 
@@ -599,6 +650,7 @@ export class ConnectionManager {
     direct_host?: string;
     kill_switch_active: boolean;
     direct_pool_size: number;
+    replica_host?: string;
   } {
     let mode: 'split' | 'single (kill-switch)' | 'single (non-supabase)' | 'single (no-direct-url)';
     if (this.isDualPoolActive()) mode = 'split';
@@ -610,7 +662,13 @@ export class ConnectionManager {
       direct_host: this._directUrl ? this.hostOnly(this._directUrl) : undefined,
       kill_switch_active: this._killSwitch,
       direct_pool_size: resolveDirectPoolSize(this.opts.directPoolSize),
+      ...(this.replicaUrl() ? { replica_host: this.hostOnly(this.replicaUrl()!) } : {}),
     };
+  }
+
+  /** The configured replica URL (a child manager reports its parent's). */
+  replicaUrl(): string | null {
+    return this.opts.parent ? this.opts.parent.replicaUrl() : this._replicaUrl;
   }
 
   private hostOnly(url: string): string {

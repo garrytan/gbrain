@@ -2323,6 +2323,8 @@ export interface HybridSearchMeta {
 // Config
 export interface EngineConfig {
   database_url?: string;
+  /** Postgres: a read replica of `database_url` that serves non-mutating read ops (src/core/replica-reads.ts). */
+  replica_database_url?: string;
   database_path?: string;
   engine?: 'postgres' | 'pglite';
   /** #6495 file-plane `search.keyword_statement_timeout_ms`, read by the Postgres engine at connect (postgres-engine/keyword-statement-timeout.ts). */

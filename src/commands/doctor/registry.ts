@@ -40,6 +40,7 @@ import {
   connectionEntry,
   connectionGateEntry,
 } from './checks/db-connection.ts';
+import { replicaConnectionEntry } from './checks/replica-connection.ts';
 import { ipcSocketPathEntry } from './checks/local-ipc.ts';
 import {
   pgvectorEntry,
@@ -277,6 +278,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   // #7160: title-prefixed person pages next to the unprefixed page (read-only, preview-first).
   personTitleDuplicatesEntry,
   fenceIntegrityEntry,
+  replicaConnectionEntry,
   searchModeEntry,
 ];
 

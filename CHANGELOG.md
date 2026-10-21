@@ -10,6 +10,42 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.353.0] - 2026-10-21
+
+**A Postgres brain can now serve its reads from a read replica near you.** A team that shares one brain across continents waits on the round trip to the primary for every statement, and one `recall` or `query` makes many of them. Point `replica_database_url` at a read replica in your region (Supabase read replicas, or any streaming standby) and `search`, `query`, `get`, `recall` and the other read-only operations read from it, while every write still goes to the primary. Leave it unset and nothing changes.
+
+### What you'd see
+
+| Situation | Before | Now |
+|---|---|---|
+| A read-only op (`search`, `query`, `get_page`, `recall`, `entity`, `context_pack`, ...) with `replica_database_url` set | every statement went to `database_url` | its page, chunk, fact, link, timeline and source reads go to the replica; config reads and its side writes stay on the primary |
+| Writes, migrations, locks and anything in a transaction | primary | primary, unchanged, including the reads a write op makes |
+| The replica is unreachable | n/a | the read retries on the primary, which serves reads for 30 s; one warning per process |
+| `gbrain doctor` | no replica check | `replica_connection`: reachable, a standby, last replay age |
+| `replica_database_url` on a PGLite brain | n/a | ignored with a warning |
+
+A replica lags the primary, usually by well under a second. A fact you just saved with `remember` may not show up in `recall` until the replica catches up. One `gbrain serve` keeps its reads on the primary for 5 s after each of its own writes; a write made by another process has no such guard. Details: [docs/ENGINES.md, "Read replica"](docs/ENGINES.md#read-replica-replica_database_url).
+
+## To take advantage of v0.60.353.0
+
+Nothing runs on upgrade, and there is no migration. To turn it on:
+
+```bash
+gbrain config set replica_database_url 'postgresql://<user>:<password>@<replica-host>:5432/postgres'
+# or for one process: export GBRAIN_REPLICA_DATABASE_URL='postgresql://...'
+gbrain doctor --only replica_connection
+```
+
+Restart any running `gbrain serve` so it opens the replica pool.
+
+### For contributors
+
+- `src/core/replica-reads.ts`: `withOperationReadRouting(op, run)` wraps op handlers in the CLI, MCP dispatch, the warm CLI socket and the recall verb; eligibility is the cli-socket's `scope === 'read' && !mutating`.
+- `src/core/postgres-engine/replica-route.ts`: `routeRead` / `routedReadExecutor` pick the connection for the `ScopedRead` seam (`withScopedReadTransaction`, `jitOffRead`) and every `LegacyUnscopedRead` executor; transaction clones always use their transaction.
+- `ConnectionManager` gains a lazy, parent-shared replica pool (`replica()`, `markReplicaDown()`, `replicaUrl()`, `describeMode().replica_host`).
+- Goldens regenerated on purpose: `test/fixtures/goldens/doctor/registry-build-checks.json` (new `replica_connection` check) and `test/fixtures/goldens/rls-scope-inventory.json` (three new private engine members, all unscoped helpers).
+- Module-size ceilings raised for the engine, config, types and CLI façades by the lines this adds (`scripts/module-size-limits.tsv`).
+
 ## [0.60.352.0] - 2026-10-21
 
 **Reading the timeline of a very large page uses less memory.** When gbrain rebuilds a page's timeline links, it keeps track of the timeline lines it has already seen, so it never writes one twice. On a page with tens of thousands of dated lines, that tracking took about 80 bytes per line, roughly a third of an 8 MiB page's own size. It now takes about 25 bytes per line, and the results are exactly the same.
