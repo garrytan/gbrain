@@ -94,13 +94,17 @@ export type PriceLookupResult =
 /**
  * Provider aliases resolved on a lookup miss (#4032). Azure deployments of
  * OpenAI embedding models bill at the same per-token rates as OpenAI-hosted,
- * so `azure-openai:<model>` falls back to the `openai:<model>` row. An alias
- * (not duplicated rows) so new openai entries never drift from their Azure
- * twins. A model with no twin in the alias target stays `unknown` — fail
- * closed rather than fabricate a rate.
+ * so `azure-openai:<model>` falls back to the `openai:<model>` row.
+ * OpenRouter publishes Voyage under the vendor slug `voyageai`
+ * (`openrouter:voyageai/voyage-4`). The #2504 nested retry then looks up
+ * `voyageai:<model>`, which misses the `voyage:<model>` rows. The alias
+ * (not duplicated rows) keeps those rates on one row. A model with no twin
+ * in the alias target stays `unknown` — fail closed rather than fabricate
+ * a rate.
  */
 const EMBEDDING_PROVIDER_ALIASES: Record<string, string> = {
   'azure-openai': 'openai',
+  'voyageai': 'voyage',
 };
 
 /**

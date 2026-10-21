@@ -136,6 +136,34 @@ describe('lookupEmbeddingPrice — nested gateway ids (#2504)', () => {
     if (r.kind === 'known') expect(r.key).toBe('openai:text-embedding-3-small');
   });
 
+  // OpenRouter's vendor slug is `voyageai`, not gbrain's `voyage` provider
+  // id. Without the alias, `openrouter:voyageai/voyage-4` stays unknown and
+  // a cost cap hard-fails the embed call (reserve_no_pricing) even though
+  // `voyage:voyage-4` is priced at the same $0.06/MTok OpenRouter publishes.
+  test.each([
+    ['openrouter:voyageai/voyage-4', 0.06, 'voyage:voyage-4'],
+    ['openrouter:voyageai/voyage-4-large', 0.12, 'voyage:voyage-4-large'],
+    ['openrouter:voyageai/voyage-4-lite', 0.02, 'voyage:voyage-4-lite'],
+    ['openrouter:voyageai/voyage-code-4', 0.12, 'voyage:voyage-code-4'],
+    ['voyageai:voyage-4', 0.06, 'voyage:voyage-4'],
+  ])('%s resolves the voyageai slug via the voyage row', (model, expected, key) => {
+    const r = lookupEmbeddingPrice(model as string);
+    expect(r.kind).toBe('known');
+    if (r.kind === 'known') {
+      expect(r.pricePerMTok).toBe(expected as number);
+      expect(r.key).toBe(key as string);
+    }
+  });
+
+  test('voyageai model with no voyage twin stays unknown', () => {
+    const r = lookupEmbeddingPrice('voyageai:not-a-hosted-model');
+    expect(r.kind).toBe('unknown');
+    if (r.kind === 'unknown') {
+      expect(r.provider).toBe('voyageai');
+      expect(r.model).toBe('not-a-hosted-model');
+    }
+  });
+
   test('bare slash form assumes openai wrapper then unnests', () => {
     const r = lookupEmbeddingPrice('openai/text-embedding-3-small');
     expect(r.kind).toBe('known');
