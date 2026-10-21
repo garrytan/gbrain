@@ -20,6 +20,7 @@
 
 import { chunkText as recursiveChunk } from './recursive.ts';
 import { buildQualifiedName } from './qualified-names.ts';
+import { elixirDefinitionChunks } from './elixir.ts';
 import { MERGE_PROTECTED_SYMBOL_TYPES, declaresFunctionValue } from './def-types.ts';
 import { isModuleChunk, mergedRunSymbol, moduleChunkQualifiedName, moduleStatementSymbol } from './code-module-chunks.ts';
 import { estimateTokens, estimateEmbedTokens, estimateEmbedTokensCeiling, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
@@ -151,7 +152,8 @@ export const CHUNKER_VERSION = 8;
  * parse after the first on uninitialized state; Lua defs now become chunks.
  * typescript/tsx/javascript/python/ruby 1 (#5001): top-level call statements become `__module__` chunks (code-module-chunks.ts).
  */
-export const GRAMMAR_REVISIONS: Partial<Record<SupportedCodeLanguage, number>> = { lua: 1, typescript: 1, tsx: 1, javascript: 1, python: 1, ruby: 1 };
+// elixir 1 (#7080): macro definitions, nested function chunks and call edges.
+export const GRAMMAR_REVISIONS: Partial<Record<SupportedCodeLanguage, number>> = { lua: 1, typescript: 1, tsx: 1, javascript: 1, python: 1, ruby: 1, elixir: 1 };
 /** The `sources.chunker_version` gate value: a change forces the next sync to walk every file (hash compare, no re-import of unchanged hashes). */
 export const chunkerStamp = (): string => [String(CHUNKER_VERSION), ...Object.entries(GRAMMAR_REVISIONS).map(([lang, rev]) => `${lang}=${rev}`)].join(';');
 
@@ -813,6 +815,13 @@ async function chunkParsedLanguage(
     const nestedConfig = NESTED_EMIT_CONFIG[language];
 
     for (const node of semanticNodes) {
+      if (language === 'elixir') {
+        const definitions = elixirDefinitionChunks(node, source);
+        if (definitions.length) {
+          for (const definition of definitions) chunks.push(buildChunk({ ...definition, filePath, language, index: chunks.length }));
+          continue;
+        }
+      }
       const endNode = chunkEndNode(node, language);
       const nodeText = source.slice(node.startIndex, endNode.endIndex).trim();
       if (!nodeText) continue;

@@ -13,6 +13,7 @@
  * are unchanged. The chunk-inventory change is gated per language through `GRAMMAR_REVISIONS` (code.ts).
  */
 import type { CodeChunk, SupportedCodeLanguage } from './code.ts';
+import { elixirDefinition } from './elixir.ts';
 
 export const MODULE_SYMBOL_NAME = '__module__';
 export const MODULE_SYMBOL_TYPE = 'module';
@@ -33,6 +34,7 @@ const MODULE_STATEMENTS: Partial<Record<SupportedCodeLanguage, ModuleStatementCo
   python: { statementTypes: new Set(['expression_statement']), callTypes: new Set(['call']) },
   // tree-sitter-ruby has no statement wrapper: a top-level call IS the node (`require 'x'`, `RSpec.describe Thing do … end`).
   ruby: { statementTypes: new Set(['call', 'method_call']), callTypes: new Set(['call', 'method_call']) },
+  elixir: { statementTypes: new Set(['call']), callTypes: new Set(['call']) },
 };
 
 const MODULE_SYMBOL = { symbolName: MODULE_SYMBOL_NAME, symbolType: MODULE_SYMBOL_TYPE } as const;
@@ -45,6 +47,7 @@ const isModuleSymbol = (symbol: { symbolName: string | null; symbolType: string 
  * definition node and for statements with no call (`x = 1`, a docstring), which stay unchunked as before.
  */
 export function moduleStatementSymbol(node: any, language: SupportedCodeLanguage): typeof MODULE_SYMBOL | null {
+  if (language === 'elixir' && elixirDefinition(node)) return null;
   const config = MODULE_STATEMENTS[language];
   if (!config || !config.statementTypes.has(node.type)) return null;
   const stack: any[] = [node];
