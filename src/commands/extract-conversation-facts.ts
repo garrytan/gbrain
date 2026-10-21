@@ -285,6 +285,12 @@ export interface ExtractConversationFactsCoreOpts {
    * dedup → provenance all execute THIS production pipeline with zero LLM calls.
    */
   extractor?: (input: ExtractInput) => Promise<ExtractedFact[]>;
+  /**
+   * Observe settled partial counters before a run-ending error is rethrown.
+   * Called after managed error cleanup publishes completed pages, not while
+   * their facts are merely staged. Does not turn cancellation into success.
+   */
+  onInterrupted?: (result: Readonly<ExtractConversationFactsResult>) => void;
 }
 
 export { extractExitCode, extractRunStatus };
@@ -1534,6 +1540,7 @@ export async function runExtractConversationFactsCore(
       // surface. NOT a thrown failure.
       return result;
     }
+    opts.onInterrupted?.({ ...result, failed_pages: [...result.failed_pages] });
     throw err;
   }
 

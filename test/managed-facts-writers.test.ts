@@ -532,6 +532,45 @@ test('managed writeSingleFact reports the entity it persisted for an unresolved 
   });
 }, 120_000);
 
+test('managed interruption reports only settled progress after flushing completed pages (#7068)', async () => {
+  await managed(async ({ put }) => {
+    await put('conversations/a-complete', CONVERSATION);
+    await put('conversations/b-empty', '---\ntitle: Single turn\ntype: conversation\n---\n**Alice Example** (2024-03-15 9:00 AM): Hello.');
+    await put('conversations/c-interrupted', CONVERSATION);
+  }, async ({ engine, sourceId }) => {
+    const controller = new AbortController();
+    const aborted = Object.assign(new Error('caller cancelled'), { name: 'AbortError' });
+    let calls = 0;
+    let partial: Readonly<Awaited<ReturnType<typeof runExtractConversationFactsCore>>> | undefined;
+    await expect(runExtractConversationFactsCore(engine, {
+      sourceId, types: ['conversation'], sleepMs: 0,
+      extractor: async () => {
+        if (++calls === 2) { controller.abort(aborted); throw aborted; }
+        return extractor();
+      },
+      onInterrupted: result => { partial = result; },
+    }, controller.signal)).rejects.toBe(aborted);
+    expect(calls).toBe(2);
+    expect(partial?.pages_processed).toBe(1);
+    expect(partial?.pages_marked_non_extractable).toBe(1);
+    expect(partial?.facts_inserted).toBe(1);
+    expect((await facts(engine, sourceId, 'conversations/a-complete')).map(f => f.fact)).toEqual([
+      'Alice Example joined Acme Corp as a staff engineer.', 'EXTRACTION_COMPLETE']);
+    expect(await facts(engine, sourceId, 'conversations/c-interrupted')).toEqual([]);
+    const receipts = await engine.executeRaw<{ state: string; pages: unknown[] }>(
+      `SELECT state,intent->'pages' AS pages FROM persistence_requests
+       WHERE source_id=$1 AND intent->>'kind'='managed_maintenance_conversation_facts'`, [sourceId]);
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].state).toBe('committed');
+    expect(receipts[0].pages).toHaveLength(2);
+    const next = await runExtractConversationFactsCore(engine, { sourceId, types: ['conversation'], extractor, sleepMs: 0 });
+    expect(next.pages_skipped_completed).toBe(1);
+    expect(next.pages_skipped_non_extractable).toBe(1);
+    expect(next.pages_processed).toBe(1);
+    expect(next.facts_inserted).toBe(1);
+  });
+}, 120_000);
+
 test('managed extract-conversation-facts CLI extracts instead of refusing', async () => {
   await managed(async ({ put }) => { await put('conversations/synthetic-chat', CONVERSATION); }, async ({ engine, sourceId }) => {
     chatReply = JSON.stringify({ facts: [{ fact: 'Alice Example joined Acme Corp.', kind: 'event', entity: null, confidence: 1, notability: 'high' }] });
