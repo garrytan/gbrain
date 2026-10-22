@@ -114,7 +114,7 @@ function cacheSet(key: string, entry: CacheEntry): void {
 export async function getBrainHotMemoryMeta(
   name: string,
   ctx: OperationContext,
-  opts: { topK?: number; ttlMs?: number } = {},
+  opts: { topK?: number; ttlMs?: number; sessionOnly?: boolean } = {},
 ): Promise<Record<string, unknown> | undefined> {
   // Don't inject on tool calls that themselves manipulate hot memory —
   // the agent doesn't need the brain's hot memory wrapped around its own
@@ -169,9 +169,9 @@ export async function getBrainHotMemoryMeta(
   } catch {
     return undefined;
   }
-  // The effective eligibility is part of the key: two connections with
-  // different floors never share an entry.
-  const cacheKey = `${engineCacheField(ctx.engine)}::${encodeCacheField(sourceId)}::${tier}::${encodeCacheField(sessionId ?? '_')}::${allowListHash}::${encodeCacheField(eligibilityCacheField(policy))}`;
+  // Eligibility and fallback policy are part of the key: a Claude Code
+  // hook cannot reuse MCP's recent-source fallback for an empty session.
+  const cacheKey = `${engineCacheField(ctx.engine)}::${encodeCacheField(sourceId)}::${tier}::${encodeCacheField(sessionId ?? '_')}::${allowListHash}::${encodeCacheField(eligibilityCacheField(policy))}::${opts.sessionOnly === true ? 'session' : 'recent'}`;
 
   // Cache hit?
   const cached = _cache.get(cacheKey);
@@ -202,8 +202,9 @@ export async function getBrainHotMemoryMeta(
       activeOnly: true, limit: topK * 3, visibility, excludePrivate, fingerprint: true, eligibility,
     });
   }
-  // If no session-scoped rows, fall back to recent across the source.
-  if (fetched.length === 0) {
+  // Ordinary MCP callers keep the recent-source fallback. Hook callers may
+  // require session rows only (including no fallback without a session id).
+  if (fetched.length === 0 && opts.sessionOnly !== true) {
     fetched = await ctx.engine.listFactsSince(sourceId, new Date(Date.now() - 24 * 60 * 60 * 1000), {
       activeOnly: true, limit: topK * 3, visibility, excludePrivate, fingerprint: true, eligibility,
     });

@@ -55,7 +55,7 @@ export interface SessionStartPackResult {
  */
 export async function requestSessionStartPack(
   cfg: IpcPathConfig | null,
-  opts: { sourceId?: string; sessionId: string; trigger: string; deadlineAt: number; awaitServe: boolean },
+  opts: { sourceId?: string; sessionId: string; trigger: string; deadlineAt: number; awaitServe: boolean; sessionOnlyHotMemory?: boolean },
 ): Promise<SessionStartPackResult> {
   for (;;) {
     const socket = await hookResolveSocketForConfig(cfg, opts.sourceId);
@@ -69,6 +69,7 @@ export async function requestSessionStartPack(
         ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
         ...(opts.sourceId ? { sourceId: opts.sourceId } : {}),
         trigger: opts.trigger,
+        sessionOnlyHotMemory: opts.sessionOnlyHotMemory,
       }, { timeoutMs: Math.min(CONTEXT_PACK_CLIENT_TIMEOUT_MS, remaining) })
       : IPC_UNAVAILABLE;
     if (res !== IPC_UNAVAILABLE) return { pack: 'degraded' in res ? null : res as ContextPackResponse, serveNotReady: false };

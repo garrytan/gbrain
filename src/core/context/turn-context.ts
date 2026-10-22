@@ -228,6 +228,8 @@ export interface AssembleTurnContextOpts {
   priorContextText?: string;
   /** Opaque session identity — keys the hot-memory cache (CX2-11). */
   sessionId?: string;
+  /** Hook lane: omit unrelated recent facts when this session has none. */
+  sessionOnlyHotMemory?: boolean;
   maxBytes?: number;
   /** v0.46.15: lexical-arms kill switch — see ResolvePointersOpts.lexicalArms. */
   lexicalArms?: boolean;
@@ -403,7 +405,7 @@ export async function assembleTurnContext(
         takesHoldersAllowList: ['world'],
         ...(policy.floor ? { auth: { minTrust: policy.floor } as OperationContext['auth'] } : {}),
       };
-      const meta = await getBrainHotMemoryMeta('turn_context', metaCtx);
+      const meta = await getBrainHotMemoryMeta('turn_context', metaCtx, { sessionOnly: opts.sessionOnlyHotMemory });
       const hot = meta?.brain_hot_memory as { facts?: TurnContextFact[]; suppressed?: SuppressionSummary } | undefined;
       withheldFacts += hot?.suppressed?.withheld ?? 0;
       const all = Array.isArray(hot?.facts) ? [...hot.facts] : [];
@@ -582,7 +584,7 @@ async function fetchHotFacts(
       // #5575 CEO-18: the calling connection's floor keys and filters hot memory too.
       ...(floor ? { auth: { minTrust: floor } as OperationContext['auth'] } : {}),
     };
-    const meta = await getBrainHotMemoryMeta('turn_context', metaCtx);
+    const meta = await getBrainHotMemoryMeta('turn_context', metaCtx, { sessionOnly: opts.sessionOnlyHotMemory });
     const hot = meta?.brain_hot_memory as { facts?: TurnContextFact[]; suppressed?: SuppressionSummary } | undefined;
     const facts = Array.isArray(hot?.facts) ? hot.facts.filter(f => !floor || admitsTrust(f.trust_tier ?? 'unknown', floor)) : [];
     return { facts, withheld: hot?.suppressed?.withheld ?? 0 };

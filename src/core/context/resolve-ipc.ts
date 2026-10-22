@@ -165,6 +165,8 @@ export interface TurnContextRequest {
   window: WindowTurn[];
   priorContextText?: string;
   sessionId?: string;
+  /** Omit source-wide recent hot facts when the session has none. */
+  sessionOnlyHotMemory?: boolean;
   /** Optional source claim — the server REJECTS any value other than its bound source [CX2-10]. */
   sourceId?: string;
   maxBytes?: number;
@@ -198,6 +200,8 @@ export interface ContextPackRequest {
   protocol: 2;
   secret: string;
   sessionId?: string;
+  /** Omit source-wide recent hot facts when the session has none. */
+  sessionOnlyHotMemory?: boolean;
   sourceId?: string;
   /** Explicit standing entities (names/slugs); merged with the session row's banked set. */
   entities?: string[];

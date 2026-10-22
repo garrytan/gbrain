@@ -45,7 +45,9 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  await engine.insertFact({ fact: FACT, entity_slug: null, source: 'user told me, test', visibility: 'world', embedding: null } as never, { source_id: 'default' });
+  for (const source of ['startup', 'resume']) {
+    await engine.insertFact({ fact: FACT, entity_slug: null, source: 'user told me, test', source_session: `sess-${source}`, visibility: 'world', embedding: null } as never, { source_id: 'default' });
+  }
 }, 120_000);
 
 afterAll(async () => {
@@ -121,12 +123,13 @@ function startServeLater(cfg: IpcPathConfig, delayMs: number, sourceId?: string)
   }, delayMs));
 }
 
-async function sessionStart(source: string): Promise<{ out: string; ms: number }> {
+async function sessionStart(source: string, harness: 'claude-code' | 'codex' = 'claude-code'): Promise<{ out: string; ms: number }> {
   let out = '';
   const t0 = Date.now();
   const code = await runHook(['session-start'], {
     stdin: JSON.stringify({ session_id: `sess-${source}`, source, cwd: ws, hook_event_name: 'SessionStart' }),
     cwd: ws,
+    harness,
     write: (s) => { out += s; },
     spawnPush: () => {},
     spawnBackupCheck: () => {},
@@ -140,6 +143,19 @@ async function lastSessionStartHeartbeat() {
 }
 
 describe('SessionStart waits for the serve a setup-wired Claude Code is starting', () => {
+  test('fresh Claude Code session omits unrelated hot facts; other harnesses keep their fallback', async () => {
+    const cfg = pgliteConfig();
+    writeConfig(cfg);
+    const secret = ensureIpcSecretForConfig(cfg)!;
+    const server = await startResolveIpcServer(resolveSocketPathForConfig(cfg)!, {
+      resolve: async () => null, context_pack: makeContextPackIpcHandler(engine, 'default'),
+    }, { secret, boundSourceId: 'default' });
+    expect(server).not.toBeNull();
+    if (server) servers.push(server);
+    expect((await sessionStart('new')).out).not.toContain(FACT);
+    expect((await sessionStart('new', 'codex')).out).toContain(FACT);
+  }, 20_000);
+
   test('fresh session, serve not answering yet: the remembered fact is in the SessionStart output', async () => {
     const cfg = pgliteConfig();
     writeConfig(cfg);

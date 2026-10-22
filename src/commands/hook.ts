@@ -558,6 +558,7 @@ async function hookSessionStart(io: HookIo): Promise<number> {
         const sourceId = await contextSource(io, cfg, j?.session_id, ws);
         const res = await requestSessionStartPack(cfg, {
           sourceId,
+          sessionOnlyHotMemory: (io.harness ?? 'claude-code') === 'claude-code',
           sessionId: sanitizeSessionId(j?.session_id),
           trigger: typeof j?.source === 'string' ? `session-start:${j.source as string}` : 'session-start',
           deadlineAt: t0 + deadlineMs,
@@ -1189,6 +1190,7 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
 
     const res = await requestTurnContext(socketPath, {
       secret,
+      sessionOnlyHotMemory: (io.harness ?? 'claude-code') === 'claude-code',
       window: turns,
       ...(priorContextText ? { priorContextText } : {}),
       ...(sessionId ? { sessionId } : {}),
