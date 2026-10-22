@@ -14,7 +14,7 @@ import { RerankError, type RerankInput, type RerankMeta, type RerankResult } fro
 import { invokeAI, isAIInvocationPolicyError, responseInvocationUsage } from '../invocation-guard.ts';
 import { recordOnTracker } from '../budget-record.ts';
 import { estimateContextTokens, parseRetryAfterMs, planBatches, RateLimitedError, runBatches } from './pack.ts';
-import { buildTypeSafeRequest, parseTypeSafeResponse, toWireQuestion } from './providers/typesafe.ts';
+import { buildTypeSafeRequest, parseTypeSafeResponse, toWireQuestion, typeSafeHttpFailureTokens } from './providers/typesafe.ts';
 import { DecideError, type DecideQuestion } from './types.ts';
 
 export const RELEVANCE_LEVELS = [
@@ -85,12 +85,9 @@ export async function rerankViaDecide(input: RerankInput, deps: RerankViaDecideD
         () => deps.transport(deps.url, { method: 'POST', headers: deps.headers, body: bodies[i]!, signal: ctrl.signal }),
         responseInvocationUsage,
       );
-      if (response.status === 429) {
-        inputTokens += batch.estimatedInputTokens;
-        throw new RateLimitedError(parseRetryAfterMs(response.headers.get('retry-after'), now()));
-      }
       if (!response.ok) {
-        inputTokens += batch.estimatedInputTokens;
+        inputTokens += typeSafeHttpFailureTokens(response.status, batch.estimatedInputTokens);
+        if (response.status === 429) throw new RateLimitedError(parseRetryAfterMs(response.headers.get('retry-after'), now()));
         const status = response.status;
         // Provider errors can echo candidate evidence. Preserve status only.
         const reason = status === 401 || status === 403 ? 'auth' : status >= 500 ? 'network' : 'unknown';

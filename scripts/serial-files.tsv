@@ -114,6 +114,7 @@ test/decide/grounding-slot.serial.test.ts	global-state	global-state: process-wid
 test/decide/judge-agreement-cli.serial.test.ts	R1	R1: mutates process.env (TYPESAFE_API_KEY, JEV_TYPESAFE_API_KEY)
 test/decide/newer-ref-hint-6497.serial.test.ts	global-state	global-state: patches process stdout/stderr/console
 test/decide/qualify-items-out-6569.serial.test.ts	global-state	global-state: process-wide test seams __setDecideTransportForTests, __resetDecideStoreForTests; configureGateway changes the process-wide AI gateway; spyOn console.log, console.error
+test/decide/refused-spend-7272.serial.test.ts	global-state	global-state: __setDecideTransportForTests and configureGateway change process-wide transport/config; __resetDecideStoreForTests resets buffered spend and receipt state; spyOn console.log/error
 test/decide/quickstart-doc.serial.test.ts	R2	R2: mock.module(../../src/core/interaction.ts) replaces modules for every file in the process
 test/decide/retrieval-search.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/decide/retrieval-think.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)

@@ -28,7 +28,7 @@ import { estimateContextTokens, orderQuestions, parseRetryAfterMs, planBatches, 
 import {
   buildLlmPrompt, llmCapability, llmChatModel, llmModelIdentity, LLM_ANSWER_SCHEMA, LLM_SYSTEM_PROMPT, parseLlmReply,
 } from './providers/llm-structured.ts';
-import { buildTypeSafeRequest, classifyTypeSafeHttpError, parseTypeSafeResponse, toWireQuestion } from './providers/typesafe.ts';
+import { buildTypeSafeRequest, classifyTypeSafeHttpError, parseTypeSafeResponse, toWireQuestion, typeSafeHttpFailureTokens } from './providers/typesafe.ts';
 import { SLOT_SPECS } from './slots.ts';
 import { dailySpend, recordSpend } from './store.ts';
 import {
@@ -205,12 +205,14 @@ async function runTypesafe(req: DecideRequest, ctx: DecideContext, cfg: DecideCo
           () => transport(url, { method: 'POST', headers, body: bodies[i]!, signal }),
           responseInvocationUsage,
         );
-        if (response.status === 429) {
-          spendRow(batch.estimatedInputTokens, 'failed');
+        if (!response.ok) {
+          const tokens = typeSafeHttpFailureTokens(response.status, batch.estimatedInputTokens);
+          inputTokens += tokens;
+          spendRow(tokens, 'failed');
           charged = true;
-          throw new RateLimitedError(parseRetryAfterMs(response.headers.get('retry-after'), a.now()));
+          if (response.status === 429) throw new RateLimitedError(parseRetryAfterMs(response.headers.get('retry-after'), a.now()));
+          throw await classifyTypeSafeHttpError(response);
         }
-        if (!response.ok) throw await classifyTypeSafeHttpError(response);
         let json: unknown;
         try { json = await response.json(); } catch { throw new DecideError('malformed_response', 'decide: response is not JSON'); }
         const parsed = parseTypeSafeResponse(json, questions);
