@@ -151,6 +151,22 @@ describe('parseTranscript on the fixture [G3, A6]', () => {
     }
   });
 
+  test('deliberately skipped turn rows (sidechain, compact summary, meta) do not count as conversation', () => {
+    const dir = tdir();
+    const p = join(dir, 'skipped-rows.jsonl');
+    const rows = [
+      { type: 'permission-mode', permissionMode: 'default', sessionId: 's' },
+      { type: 'user', isSidechain: true, message: null, sessionId: 's' },
+      { type: 'assistant', isSidechain: true, message: { role: 'assistant', content: 'sub reply' }, sessionId: 's' },
+      { type: 'user', isCompactSummary: true, sessionId: 's' },
+      { type: 'assistant', isMeta: true, message: null, sessionId: 's' },
+    ];
+    writeFileSync(p, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    const r = parseTranscript(p);
+    expect(r.turns).toHaveLength(0);
+    expect(r.recognizedOnly).toBe(true);
+  });
+
   test('only unknown records (no scaffolding) keeps the drift path open', () => {
     const dir = tdir();
     const p = join(dir, 'unknown.jsonl');

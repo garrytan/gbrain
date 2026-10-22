@@ -404,18 +404,17 @@ function isSessionScaffold(entry: unknown): boolean {
 
 /**
  * True when a record is (or claims to be) conversation the parser should have
- * turned into a turn. Meta user records (`isMeta: true`, e.g. the harness's
- * session-name reminder) are bookkeeping, not conversation. A `user` or
- * `assistant` record counts whatever its `message` looks like: a null, missing
- * or reshaped payload is how a host-format change shows, so it keeps
- * session-end on the parser_drift path. Any other record counts when it
+ * turned into a turn. Rows the parser skips on purpose (sidechain, meta and
+ * compact-summary rows, see isSkippedTurnEntry) are not conversation. Any
+ * other `user` or `assistant` record counts whatever its `message` looks like:
+ * a null, missing or reshaped payload is how a host-format change shows, so it
+ * keeps session-end on the parser_drift path. Any other record counts when it
  * carries a message object.
  */
 function carriesConversationMessage(entry: unknown): boolean {
   if (typeof entry !== 'object' || entry === null) return false;
   const e = entry as Record<string, unknown>;
-  if (e.type === 'user') return e.isMeta !== true;
-  if (e.type === 'assistant') return true;
+  if (e.type === 'user' || e.type === 'assistant') return !isSkippedTurnEntry(e);
   return typeof e.message === 'object' && e.message !== null;
 }
 
