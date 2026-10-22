@@ -242,6 +242,10 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     const { readTerminalFailures } = await import('./terminal-failures.ts');
     return { ...await readTerminalFailures(engine, writerFailuresQuery(sourceId, params)) };
   }
+  if (operation === 'writer_recovery_head') {
+    keys(params, ['source_id']);
+    return { ...await (await import('./recovery-head.ts')).readRecoveryHead(engine, source(params.source_id)) };
+  }
   if (operation === 'writer_status') {
     keys(params, ['source_id', 'probe']);
     bool(params, 'probe');

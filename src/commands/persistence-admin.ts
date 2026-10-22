@@ -18,6 +18,7 @@ export const WRITER_HELP = `Usage:
   gbrain sources writer status [<source>] [--probe] [--json]
   gbrain sources writer failures <source> [--state all] [--group-by category] [--since 7d] [--limit 20] [--before <cursor>]
     [--category <c>] [--code <c>] [--origin <o>|none] [--json]
+  gbrain sources writer recovery-head <source> [--json]
   gbrain sources writer movement [<source>] [--wait <dur>] [--warn-only] [--json]
   gbrain sources writer retry-effects <source> --request-id <uuid> [--admin-intent writer_retry_effects --expected-state <admin_state>] [--dry-run] [--json]
   gbrain sources writer retry-effects <source> --parked-pushes [--dry-run] [--json]
@@ -38,6 +39,9 @@ already_written, duplicate or unknown), an inspect command and its fix. --group-
 groups them on code, origin and category, each group with its exact drill-down filter.
 A full page prints truncated with the next command (--before <cursor>). Unresolved rows by
 default; --state all adds resolved and historical ones. Human table by default, JSON with --json.
+recovery-head is a source-scoped JSON-only inspection of the oldest retained connector recovery
+record on this source's bound worktree. It returns only a validated, caller-owned metadata projection;
+it never reads receipt payloads, performs cleanup, or applies recovery.
 Inspect status first. movement proves that managed sync data moves over a window
 (committed pages and the head's step, never a lease or a lock): run it after
 restarting serve and the workers; see movement --help for its states and exits.
@@ -189,6 +193,7 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     const verb = positional.shift();
     if (verb === 'status') operation = 'writer_status';
     else if (verb === 'failures') operation = 'writer_failures';
+    else if (verb === 'recovery-head') operation = 'writer_recovery_head';
     else if (verb === 'retry-effects') operation = 'writer_retry_effects';
     else if (verb === 'git-durability') operation = 'writer_git_durability';
     else if (verb === 'claim') operation = 'writer_claim';
@@ -201,7 +206,7 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
       if (phase !== 'prepare' && phase !== 'accept' && phase !== 'cancel') throw invalid(group, 'Transfer requires prepare or accept (or cancel, which ends a prepared transfer).',
         'Run gbrain sources writer transfer prepare on the current owner host first, then gbrain sources writer transfer accept on the successor with the epoch and manifest prepare printed; gbrain sources writer transfer cancel <source> --expected-epoch <n> on the owner host ends a transfer nobody will accept.');
       operation = phase === 'prepare' ? 'writer_transfer_prepare' : phase === 'accept' ? 'writer_transfer_accept' : 'writer_transfer_cancel';
-    } else throw invalid(group, 'Writer administration requires status, failures, movement, retry-effects, git-durability, claim, activate, deactivate, transfer, lock, or unlock.',
+    } else throw invalid(group, 'Writer administration requires status, failures, recovery-head, movement, retry-effects, git-durability, claim, activate, deactivate, transfer, lock, or unlock.',
       `Name the action after gbrain sources writer${verb ? ` instead of ${verb}` : ''}; start with gbrain sources writer status --json, which changes nothing.`);
     const source = positional.shift();
     if (source !== undefined) {
@@ -251,7 +256,7 @@ export async function runPersistenceAdminCli(group: Group, args: string[], conne
       result = await runPersistenceAdministration(connected ?? owned!, parsed.operation, parsed.params, config,
         brainId === 'host' ? 'owner' : 'mounted_database');
     }
-    if (['writer_status', 'writer_lock', 'writer_unlock'].includes(parsed.operation)) result = { selected_brain: brainId, ...(result as Record<string, unknown>) };
+    if (['writer_status', 'writer_lock', 'writer_unlock', 'writer_recovery_head'].includes(parsed.operation)) result = { selected_brain: brainId, ...(result as Record<string, unknown>) };
     // #6650: the failures drill-down prints a table for a person and JSON only with --json (fixes rendered for the CLI either way).
     if (parsed.operation === 'writer_failures') {
       const { renderWriterFailures } = await import('./sources-writer-failures.ts');
