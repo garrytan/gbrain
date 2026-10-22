@@ -13,7 +13,9 @@ import { pageReadFilter } from '../core/search/read-policy-sql.ts';
  * Usage:
  *   gbrain orphans                  # list islanded pages grouped by domain
  *   gbrain orphans --mode inbound   # legacy: pages with no inbound links
- *   gbrain orphans --json           # JSON output for agent consumption
+ *   gbrain orphans --json           # JSON: totals first, then the first 100 orphans
+ *   gbrain orphans --cursor <c>     # the next page (next_cursor / next_command)
+ *   gbrain orphans --all            # every orphan (no page limit)
  *   gbrain orphans --count          # just the number
  *   gbrain orphans --include-pseudo # include auto-generated/pseudo pages
  */
@@ -30,6 +32,8 @@ import {
 } from '../core/orphan-policy.ts';
 import { quarantineFilterFragment } from '../core/quarantine.ts';
 import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts';
+import { pageSortedRows, topCounts, type ListingPage } from '../core/bounded-listing.ts';
+import { nextListingCommand, parseListingFlags } from '../core/bounded-listing-cli.ts';
 
 // --- Types ---
 
@@ -221,7 +225,7 @@ export const getOrphansData = findOrphans;
 
 // --- Output formatters ---
 
-export function formatOrphansText(result: OrphanResult): string {
+export function formatOrphansText(result: OrphanResult, page?: { complete: boolean; next_command: string[] | null }): string {
   const lines: string[] = [];
 
   const { orphans, total_orphans, total_linkable, total_pages, excluded, connector_renders_excluded } = result;
@@ -254,7 +258,40 @@ export function formatOrphansText(result: OrphanResult): string {
     lines.push('');
   }
 
+  if (page && !page.complete && page.next_command) {
+    lines.push(`Showing ${orphans.length} of ${total_orphans} orphans. Next page: ${page.next_command.join(' ')} (--all lists every orphan).`);
+  }
+
   return lines.join('\n').trimEnd();
+}
+
+/**
+ * #7246: summary-first JSON. A listing whose one page holds every orphan prints
+ * the findOrphans result unchanged (totals first). A paged listing (a first page
+ * that left orphans out, or any page reached by --cursor) prints the totals and
+ * counts per domain, then the page with returned/limit/complete/next_cursor/next_command.
+ */
+export function orphansJson(result: OrphanResult, page: ListingPage<OrphanPage>, nextCommand: string[] | null, paged: boolean) {
+  const totals = {
+    total_orphans: result.total_orphans,
+    total_linkable: result.total_linkable,
+    total_pages: result.total_pages,
+    excluded: result.excluded,
+    ...(result.connector_renders_excluded !== undefined ? { connector_renders_excluded: result.connector_renders_excluded } : {}),
+  };
+  if (!paged) return { ...totals, orphans: result.orphans };
+  const byDomain = topCounts(result.orphans, row => row.domain);
+  return {
+    ...totals,
+    by_domain: byDomain.counts,
+    ...(byDomain.other ? { by_domain_other: byDomain.other } : {}),
+    returned: page.returned,
+    limit: page.limit,
+    complete: page.complete,
+    next_cursor: page.next_cursor,
+    next_command: nextCommand,
+    orphans: page.rows,
+  };
 }
 
 // --- CLI entry point ---
@@ -299,14 +336,20 @@ Options:
   --mode <m>        Orphan definition: islanded (default) | inbound
                     (legacy: pages with no inbound links, even if they link out)
   --source <id>     Scope the scan to one brain source (default: brain-wide)
+  --limit <n>       Orphans per page (default 100)
+  --cursor <c>      The next page: next_cursor from the previous page
+  --all             Every orphan, no page limit
   --help, -h        Show this help
 
 Output (default): grouped by domain, sorted alphabetically within each group
 Summary line: N orphans out of M linkable pages (K total; K-M excluded)
+Pages: the totals always count every orphan; one page of rows follows, and
+--json carries complete, next_cursor and next_command for the next page.
 `);
     return;
   }
 
+  const { request, rest } = parseListingFlags(args, 'gbrain orphans');
   const result = await findOrphans(engine, { includePseudo, sourceId, mode });
 
   if (count) {
@@ -314,10 +357,14 @@ Summary line: N orphans out of M linkable pages (K total; K-M excluded)
     return;
   }
 
+  const kind = `orphans:${mode ?? 'islanded'}:${sourceId ?? '*'}:${includePseudo ? 'all' : 'policy'}`;
+  const page = pageSortedRows(result.orphans, row => [row.domain, row.source_id ?? '', row.slug], request, kind);
+  const nextCommand = nextListingCommand(['gbrain', 'orphans', ...rest], page);
+
   if (json) {
-    console.log(JSON.stringify(result, null, 2));
+    console.log(JSON.stringify(orphansJson(result, page, nextCommand, request.cursor !== undefined || !page.complete), null, 2));
     return;
   }
 
-  console.log(formatOrphansText(result));
+  console.log(formatOrphansText({ ...result, orphans: page.rows }, { complete: page.complete, next_command: nextCommand }));
 }

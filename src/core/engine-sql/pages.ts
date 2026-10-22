@@ -392,10 +392,12 @@ export async function updatePageContextualRetrievalState(
   sourceId: string,
   mode: string,
   corpusGeneration: string | null,
+  memo: <T>(key: string, read: () => Promise<T>) => Promise<T> = (_key, read) => read(),
 ): Promise<void> {
     if (mode === 'none') {
-      const { rows: config } = await exec.run<{ key: string; value: string }>(sqlFragment`
-        SELECT key,value FROM config WHERE key IN ('search_embedding_column','embedding_columns')`);
+      // GBRA-156: the same read, under the same memo key, as the chunk write of this page transaction (chunks.ts).
+      const config = await memo('config:embedding-write', async () => (await exec.run<{ key: string; value: string }>(
+        sqlFragment`SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns', 'embedding_model')`)).rows);
       const column = resolveWriteColumnFromConfigRows({
         searchEmbeddingColumn: config.find(row => row.key === 'search_embedding_column')?.value ?? null,
         embeddingColumnsJson: config.find(row => row.key === 'embedding_columns')?.value ?? null,

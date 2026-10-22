@@ -279,7 +279,7 @@ function lfsPointer(blob: Buffer): { oid: string; size: number } | null {
 
 const attributeSet = (value: string | undefined): boolean => value !== undefined && value !== 'unspecified' && value !== 'unset';
 
-interface ReadFile { path: string; sha256: string; localOid: string; foldedOid: string; size: number; executable: boolean | null }
+interface ReadFile { path: string; sha256: string; localOid: string; foldedOid: string; size: number; executable: boolean | null; statKey: string | null }
 
 /**
  * `Dp` for each Git-root-relative path, first match wins: `untracked` (in
@@ -307,6 +307,14 @@ interface ReadFile { path: string; sha256: string; localOid: string; foldedOid: 
  * through the same `clean_eol`/`clean_lfs` domains. So a staged edit, a staged
  * new file, `git rm --cached`, a staged deletion and a staged file removed from
  * disk probe exactly as the same disk does with a pristine index.
+ *
+ * Committed mode reuses a `clean` probe (#7338) where the path's lstat key and
+ * its tree entry are the ones the probe was vouched under, and the index entry
+ * is the tree's: a clean verdict depends on the raw bytes alone, so it needs no
+ * read, hash or attribute lookup. A probe is vouched only when the stat taken
+ * before the read is unchanged after the batch's hash and its `mtime` and
+ * `ctime` are older than 2 s before the call began (the working stat cache's
+ * racy window), so an edit made during or after the read always rehashes.
  */
 export async function probeDirtiness(root: string, gitRoot: string, paths: string[], tree: Map<string, GitTreeEntry>,
   index: Map<string, GitIndexEntry>, opts: { batch?: number; working?: boolean; step?: LoopYield } = {}): Promise<Map<string, DirtinessProbe>> {
@@ -318,6 +326,9 @@ export async function probeDirtiness(root: string, gitRoot: string, paths: strin
   let realGitRoot: string | null = null;
   try { realRoot = realpathSync.native(root); realGitRoot = realpathSync.native(gitRoot); } catch {}
   const step = opts.step ?? loopYield();
+  const cleanKey = !opts.working && realRoot !== null && realGitRoot !== null ? `${realRoot}\0${realGitRoot}` : null;
+  const vouched = cleanKey === null ? null : new Map(cleanProbes.get(cleanKey));
+  const racyFrom = BigInt(Date.now()) * 1_000_000n - WORKING_RACY_WINDOW_NS;
   for (let start = 0; start < paths.length; start += batch) {
     const decided = new Map<string, Dp | null>();
     const read: ReadFile[] = [];
@@ -331,6 +342,11 @@ export async function probeDirtiness(root: string, gitRoot: string, paths: strin
       let bytes: Buffer | null = null;
       let unreadable = realRoot === null || realGitRoot === null;
       const sourcePath = unreadable ? '' : relative(realRoot!, join(realGitRoot!, path)).split(sep).join('/');
+      const statKey = vouched && dp === null && !unreadable ? statAt(realGitRoot!, path) : null;
+      const prior = statKey && statKey !== ABSENT ? vouched!.get(path) : undefined;
+      const signature = `${statKey}|${committed?.oid}|${committed?.mode}|`;
+      if (prior?.startsWith(signature)) { results.set(path, { dp: 'clean', rawOid: committed!.oid, rawSha256: prior.slice(signature.length) }); continue; }
+      vouched?.delete(path);
       if (!unreadable) { try { bytes = readSyncFile(root, sourcePath); } catch { unreadable = true; } }
       if ((dp === null || opts.working) && !unreadable && bytes === null) dp = 'deleted';
       const hashable = bytes !== null && !path.includes('\n') && !path.startsWith('"');
@@ -341,7 +357,7 @@ export async function probeDirtiness(root: string, gitRoot: string, paths: strin
       let executable: boolean | null = null;
       try { executable = (lstatSync(join(realRoot!, ...sourcePath.split('/'))).mode & 0o111) !== 0; } catch {}
       const localOid = gitBlobOid(bytes, format);
-      read.push({ path, sha256: sha256(bytes), localOid, size: bytes.length, executable,
+      read.push({ path, sha256: sha256(bytes), localOid, size: bytes.length, executable, statKey: statKey === ABSENT ? null : statKey,
         foldedOid: bytes.includes('\r\n') ? gitBlobOid(foldCrlf(bytes), format) : localOid });
     }
     const undecided = read.filter(file => decided.get(file.path) === null).map(file => file.path);
@@ -357,7 +373,12 @@ export async function probeDirtiness(root: string, gitRoot: string, paths: strin
       const attr = attrs?.get(file.path);
       if (rawOid === null || attr === undefined || file.executable === null) { settle('unknown'); continue; }
       const executableMatches = file.executable === (committed.mode === '100755');
-      if (rawOid === committed.oid) { settle(executableMatches ? 'clean' : 'unknown'); continue; }
+      if (rawOid === committed.oid) {
+        settle(executableMatches ? 'clean' : 'unknown');
+        if (executableMatches && file.statKey && vouched!.size < WORKING_STAT_CACHE_MAX_ENTRIES && statAt(realGitRoot!, file.path) === file.statKey
+          && file.statKey.split(':').slice(5).every(ns => BigInt(ns) < racyFrom)) vouched!.set(file.path, `${file.statKey}|${committed.oid}|${committed.mode}|${file.sha256}`);
+        continue;
+      }
       if (attributeSet(attr['working-tree-encoding']) || (attributeSet(attr.filter) && attr.filter !== 'lfs')) { settle('unknown'); continue; }
       if (attr.filter === 'lfs') { lfs.push({ file, treeOid: committed.oid, executableMatches }); continue; }
       const folds = file.foldedOid === committed.oid;
@@ -375,8 +396,16 @@ export async function probeDirtiness(root: string, gitRoot: string, paths: strin
       results.set(file.path, { dp, rawOid: file.localOid, rawSha256: file.sha256 });
     }
   }
+  if (cleanKey !== null) {
+    cleanProbes.delete(cleanKey);
+    cleanProbes.set(cleanKey, vouched!);
+    while (cleanProbes.size > WORKING_STAT_CACHES_REMEMBERED) cleanProbes.delete(cleanProbes.keys().next().value!);
+  }
   return results;
 }
+
+/** Committed-mode `clean` probes this process vouched, by root and Git root: path -> `<stat key>|<tree oid>|<tree mode>|<sha256>`. */
+const cleanProbes = new Map<string, Map<string, string>>();
 
 /** Raw blob ids (no filters) of present files, in order, or null when Git did not answer every path. */
 async function hashRaw(gitRoot: string, paths: string[]): Promise<string[] | null> {

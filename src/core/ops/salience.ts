@@ -10,12 +10,16 @@
 
 import type { Operation } from './contract.ts';
 import { readPolicyOpts } from './context.ts';
+import { capRowList } from '../bounded-listing.ts';
 import {
   GET_RECENT_SALIENCE_DESCRIPTION,
   FIND_ANOMALIES_DESCRIPTION,
 } from '../operations-descriptions.ts';
 
 // --- v0.29: Salience + Anomaly Detection ---
+
+/** #7246: slugs listed per anomalous cohort (count always covers the whole cohort; page_slugs_complete: false marks a capped row). */
+export const ANOMALY_SLUG_DEFAULT_LIMIT = 20;
 
 const get_recent_salience: Operation = {
   name: 'get_recent_salience',
@@ -93,7 +97,8 @@ const find_anomalies: Operation = {
       ...await readPolicyOpts(ctx),
     });
 
-    return anomalies;
+    // #7246: a fixed per-cohort sample keeps the response bounded (count covers the whole cohort); the local CLI's --all lists every slug.
+    return anomalies.map(row => capRowList(row, 'page_slugs', ANOMALY_SLUG_DEFAULT_LIMIT));
   },
   // hidden: 'anomalies' is in CLI_ONLY (src/cli.ts) — runAnomalies owns the
   // CLI surface; the non-hidden hint was dead (CLI_ONLY wins at dispatch).

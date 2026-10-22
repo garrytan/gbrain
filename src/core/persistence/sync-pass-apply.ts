@@ -161,7 +161,9 @@ export async function applyPassRound(engine: BrainEngine, level: ShadowLevel, in
   }
   await writePassHolds(engine, level, input, state);
   await adoptRecords(engine, level, state);
-  await sweepLegacy(engine, level, input, state);
+  // #7338: a round with imports or deletes sweeps after its batches drain (the pass calls sweepLegacy), so the bounded
+  // sweep never delays the round's changes becoming visible.
+  if (!roundHasWork(level)) await sweepLegacy(engine, level, input, state);
   await admitKeepDb(engine, level, input, state);
   // Only a matched page the concept side skipped for drift has a skip to release: a 600k level keeps no set of every slug.
   const skipped = await driftSkippedSlugs(engine, level.sourceId);
@@ -428,7 +430,7 @@ async function adoptRecords(engine: BrainEngine, level: ShadowLevel, state: Pass
  * it were never imported. The incarnation's first full sweep goes once to the end and records `first_full_at`; later
  * sweeps wrap around to the start.
  */
-async function sweepLegacy(engine: BrainEngine, level: ShadowLevel, input: PassApplyInput, state: PassApplyState): Promise<void> {
+export async function sweepLegacy(engine: BrainEngine, level: ShadowLevel, input: PassApplyInput, state: PassApplyState): Promise<void> {
   const legacy = (await filterYielding(level.paths, entry => entry.result.cls === 'legacy_unverified' && entry.pageId !== null && entry.revision !== null && entry.state.level !== null && entry.slug))
     .sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   const sweep = input.obligations.legacy_sweep;
@@ -449,6 +451,12 @@ async function sweepLegacy(engine: BrainEngine, level: ShadowLevel, input: PassA
   }
   // A full round whose sweep reached the end (or found no legacy page left) has swept them all.
   if (firstFull && start + batch.length >= legacy.length) state.sweptAll = true;
+  if (state.sweptAll && !input.obligations.legacy_sweep?.first_full_at) input.obligations.legacy_sweep = { ...input.obligations.legacy_sweep, first_full_at: new Date().toISOString() };
+}
+
+/** Whether the round has a path the pass will import or delete (sync-pass-run.ts `triageRound`). */
+function roundHasWork(level: ShadowLevel): boolean {
+  return level.paths.some(({ result: r }) => !r.settled && !r.inFlight && (r.action === 'delete' || r.action === 'import' || r.action === 'reparse' || r.cls === 'drift' || r.cls === 'dirty'));
 }
 
 /** One sweep slice: screen it, then record its equal pages (fenced on the revision the level read). */

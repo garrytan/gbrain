@@ -12,18 +12,22 @@
  *   gbrain anomalies                          # since=today, lookback=30d, sigma=3
  *   gbrain anomalies --since 2026-04-28
  *   gbrain anomalies --sigma 2 --lookback-days 60
- *   gbrain anomalies --json
+ *   gbrain anomalies --json                   # up to 20 slugs per cohort
+ *   gbrain anomalies --json --all             # every slug (local brain)
  */
 
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
+import { capRowList } from '../core/bounded-listing.ts';
+import { ANOMALY_SLUG_DEFAULT_LIMIT } from '../core/ops/salience.ts';
 
 interface RunOpts {
   since?: string;
   lookbackDays?: number;
   sigma?: number;
   json?: boolean;
+  all?: boolean;
 }
 
 function parseArgs(args: string[]): RunOpts | { help: true } {
@@ -32,6 +36,7 @@ function parseArgs(args: string[]): RunOpts | { help: true } {
     const a = args[i];
     if (a === '--help' || a === '-h') return { help: true };
     if (a === '--json') { opts.json = true; continue; }
+    if (a === '--all') { opts.all = true; continue; }
     if (a === '--since') {
       const v = args[++i];
       if (v && /^\d{4}-\d{2}-\d{2}$/.test(v)) opts.since = v;
@@ -59,7 +64,9 @@ Options:
   --since YYYY-MM-DD   Target day (default: today UTC)
   --lookback-days N    Baseline window (default 30)
   --sigma N            Threshold multiplier (default 3.0)
-  --json               JSON output for agents
+  --json               JSON output for agents (up to ${ANOMALY_SLUG_DEFAULT_LIMIT} slugs per cohort;
+                       page_slugs_complete is false when slugs were left out)
+  --all                Every slug of each cohort (local brain; a remote brain always caps)
   --help, -h           Show this help
 `;
 
@@ -87,7 +94,7 @@ export async function runAnomalies(engine: BrainEngine, args: string[]): Promise
     });
   }
   if (parsed.json) {
-    console.log(JSON.stringify(rows, null, 2));
+    console.log(JSON.stringify(rows.map(row => capRowList(row, 'page_slugs', parsed.all ? null : ANOMALY_SLUG_DEFAULT_LIMIT)), null, 2));
     return;
   }
   if (rows.length === 0) {

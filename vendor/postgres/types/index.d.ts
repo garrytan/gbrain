@@ -776,6 +776,12 @@ declare namespace postgres {
 
     begin<T>(cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
     begin<T>(options: string, cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
+    /**
+     * GBrain (#6930): with transaction_pipeline in force, the first statement `first` accepts (its text, `$n` for
+     * parameters) is sent behind BEGIN before BEGIN's answer. If BEGIN fails it runs in autocommit, so `first` must
+     * accept only a read or a transaction-local set_config, never a write.
+     */
+    begin<T>(options: { mode?: string; first?: (statement: string) => boolean }, cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
 
     reserve(options?: { signal?: AbortSignal }): Promise<ReservedSql<TTypes>>
   }

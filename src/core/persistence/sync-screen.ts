@@ -83,10 +83,12 @@ export function pinnedBlob(cursor: PinnedCursor, path: string): TreeBlob | null 
 /**
  * A `both` entry's recorded disk blob (`driftBaseline`), or null. When the page still holds what it imports (sync-run.ts
  * `sameContentAtOrigin`, `pageOnly`), the database changed only what an import keeps (tags, links), so the newer file
- * overwrites nothing the database alone holds and the entry imports.
+ * overwrites nothing the database alone holds and the entry imports. #7338: an `unknown` entry (a page with no import
+ * record, imported by an older gbrain) carries its file at the incarnation's baseline commit: a page that still holds that
+ * file changed only in Git, so the edit imports instead of being held `file_drift`.
  */
 export function driftBaselineContent(gitRoot: string, entry: Pick<SyncEntry, 'drift' | 'driftBaseline'>): string | null {
-  if (entry.drift !== 'both' || !entry.driftBaseline) return null;
+  if ((entry.drift !== 'both' && entry.drift !== 'unknown') || !entry.driftBaseline) return null;
   try { return readBlobContents(gitRoot, [{ oid: entry.driftBaseline, size: SYNC_READ_BOUND }]).get(entry.driftBaseline) ?? null; } catch { return null; }
 }
 

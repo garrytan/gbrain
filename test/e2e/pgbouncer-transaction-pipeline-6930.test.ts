@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import postgres from '#postgres';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
+import { declarePersistenceProtocol, isPersistenceDeclaration } from '../../src/core/persistence/protocol.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { readSqlTrace, type StatementRecord } from '../helpers/statement-counter.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -161,3 +162,191 @@ describe.skipIf(!(pooled && pooledAdmin))('#6930 transaction pipelining through 
     expect(sentBeforeAnswer(records, /AS switched_off$/)).toEqual([false, false, false]);
   }, 60_000);
 });
+
+describe.skipIf(!(pooled && pooledAdmin))('GBRA-156: a transaction\'s first statement goes out with BEGIN when the caller opts in', () => {
+  const table = `txn_first_${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+  const declaration = "SELECT set_config('gbrain.persistence_protocol','2',true),(SELECT brain_id::text FROM persistence_brain WHERE singleton=1 FOR SHARE) AS brain";
+  beforeAll(async () => {
+    if (!(pooled && pooledAdmin)) return;
+    const admin = postgres(pooledUrl('?prepare=false'), { max: 1, prepare: false, onnotice: () => {} });
+    try {
+      await admin.unsafe('CREATE TABLE IF NOT EXISTS persistence_brain (singleton int PRIMARY KEY, brain_id uuid NOT NULL)');
+      await admin.unsafe("INSERT INTO persistence_brain VALUES (1, gen_random_uuid()) ON CONFLICT DO NOTHING");
+      await admin.unsafe(`CREATE TABLE ${table} (n int)`);
+    } finally { await admin.end(); }
+  }, 60_000);
+  const rows = async (engine: PostgresEngine) => Number((await engine.sql.unsafe(`SELECT count(*)::int AS c FROM ${table}`))[0]!.c);
+
+  test('the declaration is sent before BEGIN\'s answer, the next statement only after it, and both run in the transaction', async () => {
+    let seen: Array<{ protocol: string | null; xid: string; pid: number }> = [];
+    const records = await traced('first-declared', 1, async engine => {
+      seen = await engine.transaction(async tx => {
+        await declarePersistenceProtocol(tx);
+        return tx.executeRaw<{ protocol: string | null; xid: string; pid: number }>(
+          "SELECT current_setting('gbrain.persistence_protocol', true) AS protocol, txid_current()::text AS xid, pg_backend_pid() AS pid /* after declaration */");
+      }, { pipelineFirst: isPersistenceDeclaration });
+    });
+    const begin = records.find(r => /^begin\s*$/i.test(r.sql))!;
+    const declared = records.find(r => r.sql === declaration)!;
+    const after = records.find(r => /after declaration \*\/$/.test(r.sql))!;
+    expect(declared.t < end(begin)).toBe(true);
+    expect(after.t >= end(begin)).toBe(true);
+    expect(seen.map(r => r.protocol)).toEqual(['2']);
+  }, 60_000);
+
+  test('a first statement the test refuses (a write) waits for BEGIN\'s answer', async () => {
+    const records = await traced('first-refused', 1, async engine => {
+      await engine.transaction(async tx => {
+        await tx.executeRaw(`INSERT INTO ${table} VALUES (0) /* refused first */`);
+        await tx.executeRaw(`DELETE FROM ${table} WHERE n=0`);
+      }, { pipelineFirst: isPersistenceDeclaration });
+    });
+    const begin = records.find(r => /^begin\s*$/i.test(r.sql))!;
+    const insert = records.find(r => /refused first \*\/$/.test(r.sql))!;
+    expect(insert.t >= end(begin)).toBe(true);
+  }, 60_000);
+
+  test('a BEGIN that fails runs at most the accepted declaration, in autocommit: no write runs, and the transaction rejects with BEGIN\'s error', async () => {
+    let declaredFirst: string | undefined;
+    let writeFirst: string | undefined;
+    let ranDeclaration = false;
+    let count = -1;
+    let after: unknown;
+    await traced('first-begin-fails', 1, async engine => {
+      // `isolation level bogus` survives begin()'s mode filter and makes the server refuse BEGIN (42601) on a live connection.
+      declaredFirst = await engine.sql.begin({ mode: 'isolation level bogus', first: isPersistenceDeclaration }, async tx => {
+        await tx.unsafe(declaration);
+        ranDeclaration = true;
+        await tx.unsafe(`INSERT INTO ${table} VALUES (1)`);
+      }).then(() => 'none', (e: { code?: string }) => e.code);
+      writeFirst = await engine.sql.begin({ mode: 'isolation level bogus', first: isPersistenceDeclaration }, async tx => {
+        await tx.unsafe(`INSERT INTO ${table} VALUES (2)`);
+      }).then(() => 'none', (e: { code?: string }) => e.code);
+      count = await rows(engine);
+      after = (await engine.sql.unsafe('SELECT 42 AS after_failed_begin'))[0]!.after_failed_begin;
+    });
+    expect(declaredFirst).toBe('42601');
+    expect(ranDeclaration).toBe(true);
+    expect(writeFirst).toBe('42601');
+    expect(count).toBe(0);
+    expect(after).toBe(42);
+  }, 60_000);
+
+  test('accepted text whose argument is a fragment (SQL, not a value) waits for BEGIN\'s answer', async () => {
+    const records = await traced('first-fragment', 1, async engine => {
+      await engine.sql.begin({ first: isPersistenceDeclaration }, async tx => {
+        await tx`SELECT set_config('lock_timeout',${tx.unsafe("(SELECT '1s' FROM pg_sleep(0))")},true)`;
+        await tx.unsafe('SELECT 1 AS after_fragment');
+      });
+    });
+    const begin = records.find(r => /^begin\s*$/i.test(r.sql))!;
+    const fragment = records.find(r => /pg_sleep\(0\)/.test(r.sql))!;
+    expect(isPersistenceDeclaration("SELECT set_config('lock_timeout',$1,true)")).toBe(true);
+    expect(fragment.t >= end(begin)).toBe(true);
+  }, 60_000);
+
+  test('a callback that swallows a held statement\'s rejection after a failed BEGIN still gets BEGIN\'s error, and nothing past the declaration reaches the socket', async () => {
+    let outcome: string | undefined;
+    let swallowed: unknown;
+    let count = -1;
+    const records = await traced('first-swallowed', 1, async engine => {
+      outcome = await engine.sql.begin({ mode: 'isolation level bogus', first: isPersistenceDeclaration }, async tx => {
+        await tx.unsafe(declaration);
+        swallowed = await tx.unsafe(`INSERT INTO ${table} VALUES (3) /* swallowed */`).then(() => 'sent', (e: { code?: string }) => e.code);
+        return 'returned';
+      }).then(value => `resolved:${String(value)}`, (e: { code?: string }) => e.code);
+      count = await rows(engine);
+    });
+    expect(outcome).toBe('42601');
+    // Rejected unsent: held behind the failed BEGIN (42601), or issued after the failed transaction released its connection.
+    expect(['42601', 'CONNECTION_CLOSED']).toContain(swallowed as string);
+    expect(count).toBe(0);
+    const begin = records.findIndex(r => /^begin isolation level bogus/i.test(r.sql));
+    const next = records.slice(begin + 1).filter(r => r.conn === records[begin]!.conn).map(r => r.sql);
+    expect(next[0]).toBe(declaration);
+    expect(next.slice(1).filter(sql => /swallowed|^commit|^rollback/i.test(sql))).toEqual([]);
+  }, 60_000);
+
+  type Lent = { executeRaw(sql: string): Promise<unknown>; transaction<R>(run: (tx: PostgresEngine) => Promise<R>, opts?: { pipelineFirst?: (s: string) => boolean }): Promise<R> };
+
+  test('a reserved transaction sends the declaration with BEGIN and the rest of its body after BEGIN\'s answer', async () => {
+    const records = await traced('first-reserved', 2, async engine => {
+      await engine.withReservedConnection(conn => (conn as unknown as Lent).transaction(async tx => {
+        await declarePersistenceProtocol(tx);
+        await tx.executeRaw('SELECT 1 AS reserved_after_declaration');
+      }, { pipelineFirst: isPersistenceDeclaration }));
+    });
+    const begin = records.find(r => /^begin$/i.test(r.sql))!;
+    const declared = records.find(r => r.sql === declaration)!;
+    const after = records.find(r => /AS reserved_after_declaration$/.test(r.sql))!;
+    expect([declared.conn, after.conn]).toEqual([begin.conn, begin.conn]);
+    expect(declared.t < end(begin)).toBe(true);
+    expect(after.t >= end(begin)).toBe(true);
+  }, 60_000);
+
+  test('a reserved transaction whose BEGIN fails sends nothing past the declaration, even when the body swallows the rejection', async () => {
+    let outcome: string | undefined;
+    let count = -1;
+    const records = await traced('first-reserved-fails', 2, async engine => {
+      outcome = await engine.withReservedConnection(async conn => {
+        const lent = conn as unknown as Lent;
+        // An aborted transaction left on the reserved connection makes the server refuse the next BEGIN (25P02).
+        await lent.executeRaw('BEGIN');
+        await lent.executeRaw('SELECT 1/0 AS abort_reserved').catch(() => undefined);
+        return lent.transaction(async tx => {
+          await tx.executeRaw(declaration).catch(() => undefined);
+          await tx.executeRaw(`INSERT INTO ${table} VALUES (4) /* reserved swallowed */`).catch(() => undefined);
+          return 'returned';
+        }, { pipelineFirst: isPersistenceDeclaration }).then(value => `resolved:${value}`, (e: { code?: string }) => e.code);
+      });
+      count = await rows(engine);
+    });
+    expect(outcome).toBe('25P02');
+    expect(count).toBe(0);
+    expect(records.filter(r => /reserved swallowed/.test(r.sql))).toEqual([]);
+  }, 60_000);
+
+  test('a reserved transaction whose BEGIN fails sends nothing from a nested transaction\'s body, even when it swallows the rejection', async () => {
+    let outcome: string | undefined;
+    let count = -1;
+    const records = await traced('first-reserved-savepoint-fails', 2, async engine => {
+      outcome = await engine.withReservedConnection(async conn => {
+        const lent = conn as unknown as Lent;
+        await lent.executeRaw('BEGIN');
+        await lent.executeRaw('SELECT 1/0 AS abort_reserved').catch(() => undefined);
+        return lent.transaction(async tx => {
+          await tx.executeRaw(declaration).catch(() => undefined);
+          await tx.transaction(inner => inner.executeRaw(`INSERT INTO ${table} VALUES (5) /* savepoint swallowed */`).catch(() => undefined)).catch(() => undefined);
+          return 'returned';
+        }, { pipelineFirst: isPersistenceDeclaration }).then(value => `resolved:${value}`, (e: { code?: string }) => e.code);
+      });
+      count = await rows(engine);
+    });
+    expect(outcome).toBe('25P02');
+    expect(count).toBe(0);
+    expect(records.filter(r => /savepoint swallowed/.test(r.sql))).toEqual([]);
+  }, 60_000);
+
+  test('GBRAIN_PG_TXN_PIPELINE=0 keeps the declaration behind BEGIN\'s answer', async () => {
+    const records = await traced('first-off', 1, async engine => {
+      await engine.transaction(tx => declarePersistenceProtocol(tx), { pipelineFirst: isPersistenceDeclaration });
+    }, { GBRAIN_PG_TXN_PIPELINE: '0' });
+    const begin = records.find(r => /^begin\s*$/i.test(r.sql))!;
+    const declared = records.find(r => r.sql === declaration)!;
+    expect(declared.t >= end(begin)).toBe(true);
+  }, 60_000);
+
+  test('a failed single-statement bounded read rolls back at its pipelined COMMIT without an error of its own, and leaves no transaction behind', async () => {
+    let failed: string | undefined;
+    let next: Array<{ timeout: string; fresh: boolean }> = [];
+    const records = await traced('bounded-failed', 1, async engine => {
+      failed = await engine.executeRaw('SELECT 1/0 AS bounded_failure', [], { timeoutMs: 5000 }).then(() => 'none', (e: { code?: string }) => e.code);
+      next = await engine.sql.unsafe("SELECT current_setting('statement_timeout') AS timeout, now() = statement_timestamp() AS fresh") as unknown as typeof next;
+    });
+    expect(sentBeforeAnswer(records, /^BEGIN; SET LOCAL statement_timeout|^SELECT 1\/0 AS bounded_failure$|^COMMIT$/, 3)).toEqual([true, true]);
+    expect(failed).toBe('22012');
+    expect(next.map(r => r.fresh)).toEqual([true]);
+    expect(next[0]!.timeout).not.toBe('5s');
+  }, 60_000);
+});
+

@@ -10,6 +10,15 @@
  * run in parallel. (The planner drops the trivial Subquery Scan node from
  * EXPLAIN, so the proof reads the statement, then checks it plans and returns
  * rows.)
+ *
+ * The per-page window carries ids and scores only; display columns are read
+ * for the ranked rows (KEYWORD_RANKED_ROWS_CTE). Standard for identical
+ * output: rows and order equal the wide statement's whenever the
+ * KEYWORD_RANK_CANDIDATES bound does not apply. When it applies, the ranked
+ * sample is the first matches in plan order, which on the wide statement
+ * already depended on work_mem and row width (its hash join split into
+ * batches); there the rows equal the wide statement's at a work_mem that
+ * does not spill.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
@@ -68,6 +77,22 @@ describe('keyword arm plan (postgres)', () => {
       expect(sql).not.toMatch(/cc\.search_vector @@/);
       const plan = (await engine.executeRaw<{ 'QUERY PLAN': string }>(`EXPLAIN ${sql}`, params)).map((r) => r['QUERY PLAN']).join('\n');
       expect(plan).toContain('content_chunks');
+    });
+
+    test(`\`${query}\`: the per-page window and the bounded-row count carry ids and scores only; display columns are read for the ranked rows`, async () => {
+      for (const excludePrivate of [true, false]) {
+        const { sql, params, rows } = await capturedKeywordStatement(query, excludePrivate);
+        expect(rows).toBeGreaterThan(0);
+        type Node = { 'Node Type': string; Output?: string[]; Plans?: Node[] };
+        const nodes = (node: Node): Node[] => [node, ...(node.Plans ?? []).flatMap(nodes)];
+        const [row] = await engine.executeRaw<{ 'QUERY PLAN': Array<{ Plan: Node }> }>(`EXPLAIN (VERBOSE, FORMAT JSON) ${sql}`, params);
+        const windows = nodes(row!['QUERY PLAN'][0]!.Plan).filter(node => node['Node Type'] === 'WindowAgg');
+        expect(windows.length).toBeGreaterThan(0);
+        const display = /^\w+\.(slug|title|type|source_id|effective_date|effective_date_source|message_id|thread_id|source_subject|chunk_index|chunk_text|chunk_source|frontmatter)$/;
+        for (const window of windows) {
+          expect([window, ...(window.Plans ?? [])].flatMap(node => node.Output ?? []).filter(column => display.test(column))).toEqual([]);
+        }
+      }
     });
 
     test(`\`${query}\` without excludePrivate keeps the unfenced join`, async () => {

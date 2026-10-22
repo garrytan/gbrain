@@ -1,5 +1,5 @@
 import postgres from '#postgres'
-import { claimOwner } from './persistence/claim-phase.ts';
+import { claimOwner, isOneShotCommand } from './persistence/claim-phase.ts';
 import { traceSqlOptions } from './sql-trace.ts';
 import { warnPoolerPrepareOffOnce } from './pooler-notice.ts';
 import { GBrainError, type EngineConfig } from './types.ts';
@@ -552,6 +552,9 @@ export async function connect(config: EngineConfig, hooks: PoolHealthHooks = {})
     }
     sql = postgres(url, traceSqlOptions(opts, 'module'));
 
+    // GBRA-156: a one-shot command's startup reads its retired-marker state beside its persistence row, which opened the
+    // pool's second connection on the critical path (about three round trips behind a pooler); it opens beside the first.
+    if (isOneShotCommand() && Number(opts.max) >= 3) sql`SELECT 1`.catch(() => undefined);
     // Test connection
     await checkPoolAndLoadSharedTypes(sql, url);
     connectedUrl = url;

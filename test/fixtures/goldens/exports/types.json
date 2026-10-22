@@ -4143,6 +4143,7 @@
       {
         "kind": "interface",
         "members": [
+          "pipelineFirst?: ((statement: string) => boolean) | undefined",
           "signal?: AbortSignal | undefined"
         ],
         "name": "TransactionOptions"

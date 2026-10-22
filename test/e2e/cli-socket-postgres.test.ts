@@ -132,6 +132,14 @@ describe.skipIf(!DATABASE_URL)('warm CLI socket (postgres)', () => {
     await stopServe();
   }, 90_000);
 
+  test('without a socket, GBRAIN_DEBUG names the missing socket and the read runs cold', async () => {
+    expect(existsSync(socketPath)).toBe(false);
+    const run = await cli(READS.search!, { GBRAIN_DEBUG: '1' });
+    expect(run.stderr).toContain(`[cli-socket] cold path: no socket at ${socketPath}; start the serve with gbrain serve --cli-socket or set serve.cli_socket true`);
+    expect(run.stderr).not.toContain('[cli-socket] warm:');
+    expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: cold.get('search')!.stdout, exitCode: cold.get('search')!.exitCode });
+  }, 90_000);
+
   test('serve.cli_socket true opens it without the flag (read from the connect-time config merge)', async () => {
     expect((await cli(['config', 'set', 'serve.cli_socket', 'true'])).exitCode).toBe(0);
     try {
@@ -161,8 +169,10 @@ describe.skipIf(!DATABASE_URL)('warm CLI socket (postgres)', () => {
     for (const [name, args] of Object.entries(READS)) {
       const warm = await cli(args, { GBRAIN_DEBUG: '1' });
       expect(warm.stderr, `${name} took the cold path`).not.toContain('[cli-socket] cold path');
+      expect(warm.stderr).toContain(`[cli-socket] warm: ${args[0]} answered by the serve socket at ${socketPath}\n`);
       const expected = cold.get(name)!;
-      expect({ name, ...warm }).toEqual({ name, ...expected });
+      const output = { ...warm, stderr: warm.stderr.replace(`[cli-socket] warm: ${args[0]} answered by the serve socket at ${socketPath}\n`, '') };
+      expect({ name, ...output }).toEqual({ name, ...expected });
     }
     expect(cold.get('get missing')!.exitCode).not.toBe(0);
   }, 180_000);

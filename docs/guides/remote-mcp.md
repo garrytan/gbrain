@@ -456,7 +456,14 @@ port once the cause is fixed. `--fail-fast` (or `GBRAIN_SERVE_FAIL_FAST=1`)
 exits instead.
 
 `gbrain mcp expose --status` re-runs the probes; `--json` names the failing
-check. Logs: `~/.gbrain/serve/serve.log` and `serve.err`.
+check. Logs: `~/.gbrain/serve/serve.log` and `serve.err`. Serve rotates each
+of them at 10 MiB and keeps 5 copies (`serve.log.1` to `serve.log.5`), and a
+line repeated within 10 minutes is written once, followed by one
+`[gbrain serve-log] repeated N more time(s)` line. The same applies to any
+`gbrain serve` whose output you redirect to a file with `>>`. Tune it with
+`GBRAIN_SERVE_LOG_MAX_BYTES` (0 turns rotation off),
+`GBRAIN_SERVE_LOG_MAX_FILES` and `GBRAIN_SERVE_LOG_DEDUPE_SECONDS` (0 turns
+dedupe off) in the serve wrapper's environment.
 
 <a id="remote-mcp-symptoms"></a>
 

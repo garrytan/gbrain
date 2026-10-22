@@ -12,7 +12,7 @@ import { recordChronicleDecision } from '../chronicle/ledger.ts';
 import { isFactsExtractionEnabled } from '../facts/extract.ts';
 import { loadConfig } from '../config.ts';
 import { resolveDefaultVisibility } from '../facts/visibility.ts';
-import { declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
+import { declarePersistenceProtocol, isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { EXPIRED_PREPARING_CHARGE_SQL } from './claim-phase.ts';
 import { refreshFenceClear } from './worktree-refresh-schema.ts';
 import { pageBatchChildRequestIds } from './page-batch-id.ts';
@@ -143,7 +143,7 @@ export async function claimPersistenceEffect(engine: BrainEngine, hostId: string
     const [claimed] = await tx.executeRaw<PersistenceEffect>(`UPDATE persistence_effects SET state='running',execution_token=$2::uuid,
       claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 RETURNING *`, [candidate.id, randomUUID()]);
     return claimed;
-  });
+  }, { pipelineFirst: isPersistenceDeclaration });
 }
 
 /** #5530: an effect that commits exactly one recorded file (not a withdrawal walk or a source scan). */
@@ -249,7 +249,7 @@ export async function claimCoalescedGitEffects(engine: BrainEngine, hostId: stri
       UPDATE persistence_effects p SET state='running',execution_token=gen_random_uuid(),
       claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now()
       FROM ready WHERE p.id=ready.id RETURNING p.*`, [hostId, worktreeId, limit]);
-  });
+  }, { pipelineFirst: isPersistenceDeclaration });
   return rows.sort((a, b) => Number(a.id) - Number(b.id));
 }
 

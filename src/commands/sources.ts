@@ -1204,8 +1204,15 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
 }
 
 // ── v0.40 sources status (D12) ──────────────────────────────
-async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
-  const json = args.includes('--json'), only = args.find(arg => !arg.startsWith('-'));
+async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> {
+  const { parseListingFlags } = await import('../core/bounded-listing-cli.ts');
+  const { request, rest: args } = parseListingFlags(rawArgs.filter(arg => arg !== '--holds'), 'gbrain sources status');
+  const paged = rawArgs.some(arg => /^--(limit|cursor)(=|$)/.test(arg));
+  const json = args.includes('--json'), only = args.find((arg, i) => !arg.startsWith('-') && args[i - 1] !== '--limit');
+  if (request.cursor !== undefined && !only) {
+    throw opError('invalid_params', '--cursor pages the held files of one source.', 'Rerun with the id of the source the cursor came from right after status, keeping the same --limit.');
+  }
+  const holdListing = paged ? { mode: 'page' as const, request } : rawArgs.includes('--holds') || request.limit === null ? { mode: 'all' as const } : { mode: 'summary' as const };
   const { loadAllSources } = await import('../core/sources-load.ts');
   const { computeAllSourceMetrics } = await import('../core/source-health.ts');
   const statusView = await import('../core/persistence/connector-status.ts');
@@ -1262,7 +1269,7 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
       ...(backlog.get(m.source_id) ? { managed_backlog: backlog.get(m.source_id) } : {}),
       ...(movement.get(m.source_id) ? { data_moving: movement.get(m.source_id)!.data_moving, not_moving_since: movement.get(m.source_id)!.not_moving_since,
         movement_state: movement.get(m.source_id)!.movement_state, movement: movement.get(m.source_id) } : {}),
-      ...(gitHolds.get(m.source_id) ? { git_holds: gitHolds.get(m.source_id) } : {}), ...(upstream.get(m.source_id) ? { upstream: upstream.get(m.source_id) } : {}),
+      ...(gitHolds.get(m.source_id) ? { git_holds: statusView.gitHoldStatusJson(m.source_id, gitHolds.get(m.source_id)!, holdListing) } : {}), ...(upstream.get(m.source_id) ? { upstream: upstream.get(m.source_id) } : {}),
       ...(sharedSkills.get(m.source_id) ? { shared_skills: sharedSkills.get(m.source_id) } : {}),
       ...(uncommitted.get(m.source_id) ? { fence_repairs_uncommitted: uncommitted.get(m.source_id) } : {}), ...(watermarks.get(m.source_id) ? { watermark: watermarks.get(m.source_id) } : {}),
     }));
@@ -1969,7 +1976,10 @@ Subcommands:
                                     next command; recent blocked-cursor conversions).
                                     <id> filters to that source.
                                     --json emits {schema_version:1, ...} on
-                                    stdout for monitoring pipelines.
+                                    stdout for monitoring pipelines; git_holds
+                                    lists counts per code with one example and
+                                    10 items (--holds: every item; --limit <n>
+                                    [--cursor <c>]: one page, by path).
   archived [--json]                 List soft-deleted sources and their expiry.
   purge [<id>] [--confirm-destructive]
                                     Permanently delete archived sources.

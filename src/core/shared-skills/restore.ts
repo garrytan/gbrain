@@ -4,6 +4,7 @@ import { AgentInstallError } from '../agent-install/state.ts';
 import { completeWrite } from '../persistence/journal.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { declarePersistenceProtocol } from '../persistence/protocol.ts';
+import { forgetRequestIdentity } from '../persistence/identity.ts';
 
 export interface SharedSkillRestoreOptions {
   mode?: 'new_brain' | 'recovery';
@@ -77,6 +78,7 @@ export async function quarantineSharedSkillRestore(tx: BrainEngine, restoreId: s
   await tx.executeRaw('UPDATE oauth_tokens SET expires_at=0');
   await tx.executeRaw('UPDATE oauth_codes SET expires_at=0');
   await tx.executeRaw('UPDATE persistence_local_writers SET revoked_at=COALESCE(revoked_at,now())');
+  forgetRequestIdentity();
   await tx.executeRaw('DELETE FROM persistence_writer_protocols');
   await tx.executeRaw('DELETE FROM persistence_host_bindings');
   await tx.executeRaw('DELETE FROM persistence_source_bindings');

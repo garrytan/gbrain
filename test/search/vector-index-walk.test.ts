@@ -12,10 +12,19 @@
  * the comparison is row-for-row, order included. The scope scan
  * (`scopeScanSql`) is held to the same row-for-row bar. The Postgres
  * plan proof is test/e2e/vector-plan-real-column-postgres.test.ts.
+ *
+ * The joined statement behind the walk runs with JOINED_STATEMENT_SETTINGS
+ * (materialization off). Its result set is judged under exact evaluation,
+ * like every statement here: ruling out the materialized page join can move
+ * the planner from the HNSW scan to an exact scope-first scan on a small
+ * scope or brain (this fixture is one), which returns the exact window rather
+ * than the HNSW approximation. That is accepted; on large brains the same
+ * HNSW scan stays and only the page join changes.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import * as vectorPool from '../../src/core/search/vector-pool.ts';
+import * as vectorSettings from '../../src/core/search/vector-settings.ts';
 import { buildVectorSearchStatement, INDEX_WALK_MIN_SCOPE_SHARE, INDEX_WALK_SETTINGS, PAGE_SOURCE_STATS_SQL, sourceScope, sourceScopeShare, type PageSourceStats } from '../../src/core/search/vector-statement.ts';
 import type { SearchOpts } from '../../src/core/types.ts';
 import { column, planNodes, seedVectorWalkFixture, vec, type PlanNode } from '../helpers/vector-index-walk-fixture.ts';
@@ -99,6 +108,60 @@ describe('vector index walk (PGLite)', () => {
         expect(probe).toBeDefined();
       }
       expect(nodes.some(node => node['Index Name'] === 'idx_chunks_page')).toBe(false);
+    }
+  });
+
+  /** The scan settings searchVector applies to its first pool attempt, the joined statement's. */
+  async function poolAttemptSettings(opts: SearchOpts): Promise<Record<string, string>> {
+    const applied: Array<Record<string, string>> = [];
+    const walk = spyOn(vectorPool, 'searchIndexWalk').mockResolvedValue(null);
+    const settings = spyOn(vectorSettings, 'withVectorSettings').mockImplementation(async (_query, iterative, limit, maxScanTuples, run, deadline, mode, walkOverfetch, joined) => {
+      applied.push(vectorSettings.vectorScanSettings(iterative, limit, maxScanTuples, deadline, mode, walkOverfetch, joined));
+      return run();
+    });
+    try {
+      await engine.searchVector(vec(5), opts);
+    } finally {
+      walk.mockRestore();
+      settings.mockRestore();
+    }
+    return applied[0]!;
+  }
+
+  /** Plan and rows of `sql` under `settings`. */
+  async function planAndRows(sql: string, params: unknown[], settings: Record<string, string>) {
+    for (const [name, value] of Object.entries(settings)) await engine.executeRaw('SELECT set_config($1, $2, false)', [name, value]);
+    try {
+      const [row] = await engine.executeRaw<{ 'QUERY PLAN': Array<{ Plan: PlanNode }> }>(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, params);
+      return { nodes: planNodes(row['QUERY PLAN'][0].Plan), rows: await engine.executeRaw<Record<string, unknown>>(sql, params) };
+    } finally {
+      for (const name of Object.keys(settings)) await engine.executeRaw(`RESET ${name}`);
+    }
+  }
+
+  const materializedPages = (nodes: PlanNode[]) => nodes.filter(node => node['Node Type'] === 'Materialize' && planNodes(node).some(inner => inner['Relation Name'] === 'pages')).map(node => node['Node Type']);
+
+  test('the joined statement never materializes the filtered pages and rescans them per HNSW candidate, and returns the same rows', async () => {
+    // The private-page rule's subplans drew the planner to filter every page
+    // once and rescan the materialized survivors for each candidate chunk
+    // (2.2 s per attempt on a 51k-page brain, where the pool attempt now
+    // probes pages_pkey per HNSW candidate). The rows stay the same.
+    for (const opts of [{ excludePrivate: true }, { excludePrivate: true, sourceIds: ['default', 'side'] }] as SearchOpts[]) {
+      for (const seed of [11, 202]) {
+        const searchOpts: SearchOpts = { limit: 20, embeddingColumn: column, ...opts };
+        const stmt = buildVectorSearchStatement({ dialect: 'pglite', embedding: vec(seed), limit: 20, offset: 0, opts: searchOpts });
+        const params = [...stmt.params];
+        const settings = await poolAttemptSettings(searchOpts);
+        const { nodes, rows } = await planAndRows(stmt.sql, params, settings);
+        expect(materializedPages(nodes)).toEqual([]);
+        expect(nodes.flatMap(node => node['Join Filter']?.includes('page_id') ? [node['Join Filter']] : [])).toEqual([]);
+        const materialized = await planAndRows(stmt.sql, params, { ...settings, enable_material: 'on' });
+        expect(materializedPages(materialized.nodes)).not.toEqual([]);
+        expect(shape(rows)).toHaveLength(20);
+        // Judged under exact evaluation (header): the materialized plan walks HNSW, whose
+        // approximate window depends on the randomly levelled graph, so it is not the reference.
+        expect(shape(rows)).toEqual(shape(await exactRows(stmt.sql, params)));
+      }
     }
   });
 

@@ -39,6 +39,39 @@ export const KEYWORD_RANK_CANDIDATES = 50_000;
  */
 export const KEYWORD_STATEMENT_SETTINGS = { work_mem: '32MB' } as const;
 
+/**
+ * The display columns of the keyword statement's ranked chunks, joined by key
+ * after ranking (`ranked_chunks` carries only page_id, chunk_id, score and
+ * bounded_rows). Ranking reads only the score, so the rows and their order are
+ * unchanged, except where the KEYWORD_RANK_CANDIDATES bound applies: its
+ * sample is the first matches in plan order, and the wider rows used to split
+ * the match's hash join into work_mem batches, which reordered it (the rows
+ * equal the wide statement's at a work_mem without batches). What changes is
+ * that the up to KEYWORD_RANK_CANDIDATES matches no longer carry chunk_text
+ * and the frontmatter columns through the per-page window sort and the
+ * bounded-row count. With them, a 46k-match OR
+ * retry sorted 1.3 KB rows and spilled 57 MB to disk, and the windows
+ * buffered the same rows again; now only the at most `innerLimit` ranked
+ * chunks are read for display. Each is one primary-key probe whose LIMIT 1
+ * keeps the subquery from being pulled up into a join: as a plain join, the
+ * planner (estimating a few dozen ranked rows) sorted every page by source and slug for the per-page dedup and filtered
+ * the ranked rows against all of them (15M join-filter rows, 2 s).
+ */
+// chunk-visibility-ok: joins by id only the chunks ranked_chunks selected under the statement's visibility clause
+export const KEYWORD_RANKED_ROWS_CTE = `ranked_rows AS (
+        SELECT p.slug, rc.page_id, p.title, p.type, p.source_id,
+          p.effective_date, p.effective_date_source,
+          CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+            THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
+          CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+            THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
+          rc.chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, rc.score, rc.bounded_rows
+        FROM ranked_chunks rc
+        CROSS JOIN LATERAL (SELECT c.chunk_index, c.chunk_text, c.chunk_source FROM content_chunks c WHERE c.id = rc.chunk_id LIMIT 1) cc
+        CROSS JOIN LATERAL (SELECT pg.slug, pg.title, pg.type, pg.source_id, pg.effective_date, pg.effective_date_source, pg.frontmatter
+          FROM pages pg WHERE pg.id = rc.page_id LIMIT 1) p
+      )`;
+
 export function buildKeywordChunkMatch(ftsLang: string, excludePrivate: boolean | undefined): { from: string; match: string; modality: string } {
   const tsq = `websearch_to_tsquery('${ftsLang}', $1)`;
   if (!excludePrivate) return { from: 'content_chunks cc', match: `cc.search_vector @@ ${tsq}`, modality: `AND cc.modality = 'text'` };

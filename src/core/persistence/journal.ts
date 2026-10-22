@@ -25,7 +25,7 @@ import { classifyHolderLiveness, syncLockId } from '../db-lock.ts';
 import { publicFailureDetail } from './publication-failure.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { ACTIVE_REFRESH_STATES_SQL, refreshFenceClear } from './worktree-refresh-schema.ts';
-import { assertMutationProtocol, assertSharedSkillPersistence, declareDurablePersistence, declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
+import { assertMutationProtocol, assertSharedSkillPersistence, declareDurablePersistence, declarePersistenceProtocol, isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { assertGraduationAdmission } from './graduation-custody.ts';
 import { schemaAdmissionRefusal } from './schema-admission.ts';
 import { CAPACITY_VERIFY } from './capacity-verify.ts';
@@ -241,7 +241,7 @@ export function assertReplayIntent(row: WriteRequest, expectedDigest: string): W
   return row;
 }
 export async function admitWrite(engine: BrainEngine, input: WriteAdmission, overrides?: Partial<JournalLimits>,
-  transaction: <T>(fn: (tx: BrainEngine) => Promise<T>) => Promise<T> = fn => engine.transaction(fn)): Promise<WriteRequest> {
+  transaction: <T>(fn: (tx: BrainEngine) => Promise<T>) => Promise<T> = fn => engine.transaction(fn, { pipelineFirst: isPersistenceDeclaration })): Promise<WriteRequest> {
   const { requestId, apply } = await prepareAdmission(engine, input, overrides);
   // #6355: a lent connection (the consumer's warm lane) whose session dropped is dead for every later attempt, so the
   // re-run takes a transaction from the engine's pool after the pool itself is rebuilt.
@@ -250,7 +250,7 @@ export async function admitWrite(engine: BrainEngine, input: WriteAdmission, ove
     const brain = await declareDurablePersistence(tx, `${Math.min(100, remaining)}ms`, `${remaining}ms`);
     if (input.brainId !== undefined && brain !== input.brainId) throw new PreadmitBrainChanged();
     return apply(tx);
-  }), undefined, async error => { run = fn => engine.transaction(fn); await engine.reconnect({ error }); });
+  }), undefined, async error => { run = fn => engine.transaction(fn, { pipelineFirst: isPersistenceDeclaration }); await engine.reconnect({ error }); });
 }
 /** Caller owns the transaction and retries its entire unit of work after rollback. */
 export async function admitWriteInTransaction(tx: BrainEngine, input: WriteAdmission, overrides?: Partial<JournalLimits>): Promise<WriteRequest> {
@@ -731,7 +731,7 @@ export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseM
         CASE WHEN ${SYNC_KIND('persistence_requests')} THEN (SELECT max(sequence) FROM persistence_requests)::text END AS seen_sequence`,
     [row.id, token, leaseMs, claimPhaseStamp(startClaimPhase(), token)]);
     return claimed ? { ...claimed, previous_claim_phase: row.claim_phase } : null;
-  });
+  }, { pipelineFirst: isPersistenceDeclaration });
 }
 /**
  * #5984 lanes: claims the head of the next admitted group of lane run `run` in

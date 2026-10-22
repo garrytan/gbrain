@@ -234,6 +234,7 @@ test/managed-sync-stale-group-head.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
 test/on-commit-embedding.serial.test.ts
+test/oneshot-housekeeping-cli.test.ts
 test/origin-guard-6948.test.ts
 test/origin-twin-sequence-7150.test.ts
 test/origin-twins-6948.test.ts
@@ -429,9 +430,11 @@ test/sync-full-cursor-slices-6349.test.ts
 test/sync-full-untracked-import-5459.test.ts
 test/sync-group-member-order.test.ts
 test/sync-handler-drain-6706.test.ts
+test/sync-holds-only-converge-7327.test.ts
 test/sync-import-provenance-disk.test.ts
 test/sync-inexact-rename-6729.test.ts
 test/sync-landing-gaps.test.ts
+test/sync-legacy-edit-import-7338.test.ts
 test/sync-legacy-holds.test.ts
 test/sync-legacy-retry-actions-6696.test.ts
 test/sync-legacy-slug-adoption-6727.test.ts
@@ -468,6 +471,7 @@ test/visibility-repair-scale.test.ts
 test/withdrawal-overlay-concurrency.test.ts
 test/withdrawal-publication-file.test.ts
 test/worktree-refresh-recovery-row-gbra130.test.ts
+test/write-roundtrips-gbra156.test.ts
 test/write-through-leak-guard-alias-7203.test.ts
 test/writer-status-movement-not-read-gbra130.test.ts
 test/writer-status-owner-backends.test.ts

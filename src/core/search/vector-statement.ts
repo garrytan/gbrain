@@ -33,7 +33,8 @@
  * the HNSW scan is the only ordered path, accept it when its window is full,
  * widen it when a full window's pages fall short of the limit
  * (searchIndexWalk), and otherwise run the joined statement as before, whose plans stay with the
- * planner for selective filters. A type or date filter skips the walk: it is
+ * planner for selective filters, with materialization off
+ * (JOINED_STATEMENT_SETTINGS). A type or date filter skips the walk: it is
  * an explicit narrowing that usually leaves the window short, so the walk
  * would only add its cost. So does a source scope whose share of pages
  * (`pages.source_id` planner statistics, `scope.share`) is below
@@ -122,6 +123,24 @@ export const INDEX_WALK_OVERFETCH = 2;
  * HNSW scan is the only path that delivers `ann` in distance order.
  */
 export const INDEX_WALK_SETTINGS: Readonly<Record<string, string>> = { enable_sort: 'off' };
+
+/**
+ * Session settings for the ANN attempts of a joined statement (`sql`) that
+ * backs an index walk, run when the walk times out or comes back short. The
+ * private-page rule's correlated subplans price each page lookup high and its
+ * row estimate low, so under the HNSW scan the planner preferred to filter
+ * every page once, materialize the survivors and rescan them for each
+ * candidate chunk, a join on `p.id = cc.page_id` run as a filter: about
+ * 12.7M comparisons and 3 GB of temp reads (the materialized pages pass
+ * work_mem) for a 250-row window over 51k pages, 2.2 s warm and 3-4 s under
+ * load. With materialization off, the same HNSW scan drives the same filters
+ * through a `pages_pkey` probe per candidate (10 ms). Materialize nodes
+ * Postgres needs for correctness stay. Statements without a walk (a type or
+ * date filter, a small source scope) keep their plans: there the planner may
+ * prefer an exact scope-first scan once the materialized join is ruled out,
+ * which orders a different, exact window.
+ */
+export const JOINED_STATEMENT_SETTINGS: Readonly<Record<string, string>> = { enable_material: 'off' };
 
 /** Source scopes holding a smaller share of pages skip the index walk. */
 export const INDEX_WALK_MIN_SCOPE_SHARE = 0.04;

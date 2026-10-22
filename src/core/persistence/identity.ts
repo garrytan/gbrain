@@ -115,7 +115,37 @@ export function localHostIdentity(): LocalHostIdentity {
 export function existingLocalHostId(): string | null {
   return readHostIdentity(join(persistenceHome(), 'host.json'), false)?.id ?? null;
 }
-async function brainIdentity(engine: SqlEngine): Promise<string> {
+/**
+ * GBRA-156: one operation invocation (a CLI shared operation, an MCP tool call) reads the brain identity and verifies each
+ * local writer credential once for its pre-submission checks; `withRequestIdentityMemo` scopes those reads to that one
+ * invocation, so the next request reads both again and a credential revoked in between is refused there. A locking
+ * verification (`verifyLocalWriter(..., true)`) is never memoized, and the admission transaction keeps its own fence.
+ */
+const requestIdentity = new AsyncLocalStorage<{ reads: WeakMap<object, Map<string, Promise<unknown>>> }>();
+export function withRequestIdentityMemo<T>(run: () => Promise<T>): Promise<T> {
+  return requestIdentity.getStore() ? run() : requestIdentity.run({ reads: new WeakMap() }, run);
+}
+/** A registration, rotation or revocation inside the request: its later checks read again. */
+export function forgetRequestIdentity(): void {
+  const store = requestIdentity.getStore();
+  if (store) store.reads = new WeakMap();
+}
+function requestMemo<T>(engine: object, key: string, read: () => Promise<T>): Promise<T> {
+  const store = requestIdentity.getStore();
+  if (!store) return read();
+  let reads = store.reads.get(engine);
+  if (!reads) store.reads.set(engine, reads = new Map());
+  const held = reads.get(key);
+  if (held) return held as Promise<T>;
+  const value = read();
+  reads.set(key, value);
+  value.catch(() => { if (reads!.get(key) === value) reads!.delete(key); });
+  return value;
+}
+function brainIdentity(engine: SqlEngine): Promise<string> {
+  return requestMemo(engine, 'brain', () => readBrainIdentity(engine));
+}
+async function readBrainIdentity(engine: SqlEngine): Promise<string> {
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
   if (!brain) throw opError('writer_not_initialized', 'Persistence metadata has not been initialized.',
     'This brain\'s database has no persistence metadata row, which the schema migrations create, so no local writer can be registered or verified; nothing changed. Run gbrain doctor --json on the brain host; if it reports pending migrations, bring the schema current with gbrain apply-migrations, then run the command again.',
@@ -148,8 +178,11 @@ async function ensureLocalWriterRow(engine: BrainEngine, lane: 'cli' | 'stdio', 
   if (existing?.revoked_at != null) throw new OperationError('permission_denied', 'This local writer registration was revoked.', 'Explicitly register a new writer to authorize future work.');
   if (existing && (existing.lane !== lane || existing.credential_hash !== sha256(local.credential))) throw credentialMismatch(path, local.id, lane);
   // A registered writer is left as it is (the insert would conflict and do nothing).
-  if (!existing) await engine.executeRaw(`INSERT INTO persistence_local_writers(id,lane,credential_hash,grant_ceiling)
+  if (!existing) {
+    await engine.executeRaw(`INSERT INTO persistence_local_writers(id,lane,credential_hash,grant_ceiling)
     VALUES($1::uuid,$2,$3,$4::text::jsonb) ON CONFLICT(id) DO NOTHING`, [local.id, lane, sha256(local.credential), JSON.stringify(grant)]);
+    forgetRequestIdentity();
+  }
   return { local, ...(existing ? { existing } : {}) };
 }
 /**
@@ -196,6 +229,7 @@ async function rotateLocalWriter(engine: BrainEngine, lane: 'cli' | 'stdio', gra
         VALUES($1::uuid,$2,$3,$4::text::jsonb)`, [next.id, lane, sha256(next.credential), JSON.stringify(grant)]);
       await tx.executeRaw('UPDATE persistence_local_writers SET revoked_at=COALESCE(revoked_at,now()) WHERE id=$1::uuid', [old.id]);
     });
+    forgetRequestIdentity();
     durable = true;
     linkSync(path, `${path}.revoked.${next.id}`);
     renameSync(pending, path); // readers always see one complete credential document
@@ -217,8 +251,9 @@ export async function readLocalWriter(engine: SqlEngine, lane: 'cli' | 'stdio'):
   return local;
 }
 export async function verifyLocalWriter(engine: SqlEngine, local: LocalRegistration, lock = false): Promise<{ principal: Principal; grant: LocalGrant; remote: boolean }> {
-  const [row] = await engine.executeRaw<LocalWriterRow>(
+  const read = () => engine.executeRaw<LocalWriterRow>(
     `SELECT lane,credential_hash,grant_ceiling,revoked_at FROM persistence_local_writers WHERE id=$1::uuid${lock ? ' FOR SHARE' : ''}`, [local.id]);
+  const [row] = lock ? await read() : await requestMemo(engine, `writer:${local.id}`, read);
   return verifiedFromRow(local, row);
 }
 export interface LocalWriterRow { lane: string; credential_hash: string; grant_ceiling: LocalGrant; revoked_at: unknown }
@@ -233,6 +268,7 @@ function verifiedFromRow(local: LocalRegistration, row: LocalWriterRow | undefin
   return { principal: { kind: row.lane === 'cli' ? 'local_cli' : 'local_stdio', id: local.id }, grant: row.grant_ceiling, remote: row.lane !== 'cli' };
 }
 export async function revokeLocalWriter(engine: BrainEngine, id: string): Promise<boolean> {
+  forgetRequestIdentity();
   const rows = await engine.executeRaw('UPDATE persistence_local_writers SET revoked_at=COALESCE(revoked_at,now()) WHERE id=$1::uuid RETURNING id', [id]);
   return rows.length === 1;
 }

@@ -31,7 +31,7 @@ export async function refreshManagedFilesystemRoots(engine: SqlEngine, databaseP
       FROM persistence_host_bindings h JOIN persistence_source_bindings s ON s.worktree_id=h.worktree_id WHERE h.host_id=$1::uuid
       UNION SELECT local_path,id,incarnation,NULL,NULL FROM sources WHERE local_path IS NOT NULL`, [localHostId()], { signal });
   signal?.throwIfAborted();
-  if (databasePath) rows.push({ local_path: databasePath });
+  if (databasePath) rows.push({ local_path: databasePath, datastore: true });
   const roots = recordManagedRoots(brain.brain_id, rows, brain.mode_epoch == null ? undefined : Number(brain.mode_epoch));
   managedRoots.set(brain.brain_id, new Map(roots.map(row => [row.local_path, row.source_id])));
 }

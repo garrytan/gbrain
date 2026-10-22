@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 262181,
-    "stdoutSha256": "55f775c0820181eeb400b0c9a3468f5827a8aaffc466ba3cabc19dfc09f34f12",
+    "stdoutBytes": 262439,
+    "stdoutSha256": "3a6a696129b534029d14fb5301ff3f6874724ad5e1983980f13f88d26ace18b9",
     "toolNames": [
       "remember",
       "entity",
@@ -4678,6 +4678,7 @@
         "name": "find_orphans",
         "parameters": {
           "count_only": "boolean?",
+          "cursor": "string?",
           "include_pseudo": "boolean?",
           "limit": "number?",
           "mode": "string?",
@@ -4691,12 +4692,16 @@
               "description": "Return the totals with no rows.",
               "type": "boolean"
             },
+            "cursor": {
+              "description": "next_cursor from the previous page, with the same filters (instead of offset).",
+              "type": "string"
+            },
             "include_pseudo": {
               "description": "Include auto-generated and pseudo pages (default: false)",
               "type": "boolean"
             },
             "limit": {
-              "description": "Rows per page (default 100, max 1000); total_orphans counts every orphan and next_offset names the next page.",
+              "description": "Rows per page (default 100, max 1000); total_orphans counts every orphan, complete says whether this page holds the rest, and next_cursor (or next_offset) names the next page.",
               "type": "number"
             },
             "mode": {

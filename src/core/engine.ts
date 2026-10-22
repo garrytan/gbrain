@@ -139,6 +139,13 @@ export interface BatchOpts {
  */
 export interface TransactionOptions {
   signal?: AbortSignal;
+  /**
+   * GBRA-156: Postgres behind a transaction-mode pooler (transaction pipelining on) sends the transaction's first
+   * statement with BEGIN instead of a round trip later, when this accepts its text. If BEGIN fails that statement runs
+   * in autocommit, so pass only a test that accepts a read or a transaction-local set_config, never a write
+   * (`isPersistenceDeclaration`). Ignored by PGLite and inside a transaction.
+   */
+  pipelineFirst?: (statement: string) => boolean;
 }
 
 /** Input row for addLinksBatch. Optional fields default to '' (matches NOT NULL DDL). */

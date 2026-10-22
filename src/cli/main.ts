@@ -530,6 +530,7 @@ async function main() {
  * Split out of main() (refactor wave 1, W4 cli); order and exits unchanged.
  */
 async function runSharedOperation(command: string, subArgs: string[], cliOpts: CliOptions): Promise<void> {
+  (await import('../core/persistence/claim-phase.ts')).markOneShotCommand();
   // Shared operations (fall through to aliases, e.g. link-add -> add_link)
   const meta = cliOps.get(command) ?? cliAliases.get(command);
   if (!meta) exitCliError(usageError(`Unknown command: ${command}`, 'Run `gbrain --help` for available commands.', { code: 'unknown_command' }), command);
@@ -652,6 +653,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
 
   try {
     const { withTimeout, OperationTimeoutError } = await import('../core/timeout.ts');
+    const { withRequestIdentityMemo } = await import('../core/persistence/identity.ts');
     const wallclockMs = getCliOptions().timeoutMs ?? READ_OP_TIMEOUT_MS;
     const onWallclockTimeout = (e: InstanceType<typeof OperationTimeoutError>) => {
       const hint = getCliOptions().timeoutMs
@@ -686,7 +688,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     if (op.scope === 'read') {
       try {
         rawResult = await withTimeout(
-          configSnapshot!.run(() => op.handler(ctx, params)).catch(async (e: unknown) => { // large pages: a segmented page streams to stdout
+          configSnapshot!.run(() => withRequestIdentityMemo(() => op.handler(ctx, params))).catch(async (e: unknown) => { // large pages: a segmented page streams to stdout
             if (op.name === 'get_page' && await streamSegmentedGet(engine, params, e, writeStdoutFinal)) return SEGMENTED_STREAMED;
             throw e;
           }),
@@ -701,7 +703,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
         throw e;
       }
     } else {
-      rawResult = await op.handler(ctx, params);
+      rawResult = await withRequestIdentityMemo(() => op.handler(ctx, params));
       if (op.mutating) await captureCapacityNotices(engine); // #6696 (A4)
     }
     if (rawResult === SEGMENTED_STREAMED) return;
@@ -1452,10 +1454,14 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
   const explicit = op && opOwnsSource(op) ? null : (params.source as string | undefined) ?? null;
   const { resolveSourceWithTier, localFederatedSourceIds, SourceTargetError } = await import('../core/source-resolver.ts');
   try {
-    const resolved = await resolveSourceWithTier(engine, explicit);
-    sourceId = resolved.source_id;
-    sourceImplicit = resolved.tier !== 'flag' && resolved.tier !== 'env' && resolved.tier !== 'dotfile';
-    localFederated = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
+    // GBRA-156: the source resolution reads config through the table the connect-time merge already read.
+    const { commandStartupConfig, withRequestConfigSnapshot } = await import('../core/config-snapshot.ts');
+    await withRequestConfigSnapshot(engine, async () => {
+      const resolved = await resolveSourceWithTier(engine, explicit);
+      sourceId = resolved.source_id;
+      sourceImplicit = resolved.tier !== 'flag' && resolved.tier !== 'env' && resolved.tier !== 'dotfile';
+      localFederated = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
+    }, commandStartupConfig(engine));
   } catch (err) {
     // #1712: an EXPLICIT --source that fails to resolve (invalid id, or a
     // source that doesn't exist) must error loudly — the blanket swallow
@@ -2653,8 +2659,8 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
           return connectEngine();
         },
       });
-      const { runServe } = await import('../commands/serve.ts');
-      await runServe(degraded, args);
+      (await import('../core/serve-log.ts')).installServeLogSink({ http: args.includes('--http') });
+      await (await import('../commands/serve.ts')).runServe(degraded, args);
       return null; // serve doesn't disconnect
     }
     throw serveConnectError;

@@ -401,16 +401,45 @@ function Postgres(a, b) {
 
   async function begin(options, fn) {
     !fn && (fn = options, options = '')
+    // GBrain (#6930): `{ first }` opts one transaction in to sending its first statement right behind BEGIN, before
+    // BEGIN's answer, on a pool that pipelines inside transactions (transaction_pipeline). Only that one statement, and
+    // only when `first(text)` accepts its text: if BEGIN fails it runs in autocommit, so the caller's test must accept
+    // nothing but a read or a transaction-local set_config (a no-op outside a transaction), never a write. Every
+    // other statement, the first one too when the test refuses it, waits for BEGIN's answer as before, and a failed
+    // BEGIN rejects them unsent. The transaction still settles only after `fn` does.
+    const first = typeof options === 'object' && options.first && sql.options.transaction_pipeline > sql.options.max_pipeline
+      ? options.first
+      : null
+    typeof options === 'object' && (options = options.mode || '')
     let savepoints = 0
       , connection
       , prepare = null
+      , opening = null
+      , firstSeen = false
+      , written
 
     try {
-      await sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
-      return await Promise.race([
+      const begun = sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
+      if (!first) {
+        await begun
+        return await Promise.race([
+          scope(connection, fn),
+          new Promise((_, reject) => connection.onclose = reject)
+        ])
+      }
+      await Promise.race([new Promise(resolve => written = resolve), begun])
+      opening = begun.then(() => { opening = null })
+      opening.catch(() => { /* each held statement rejects with BEGIN's error */ })
+      const ran = Promise.race([
         scope(connection, fn),
         new Promise((_, reject) => connection.onclose = reject)
       ])
+      const [opened, result] = await Promise.allSettled([begun, ran])
+      if (opened.status === 'rejected')
+        throw opened.reason
+      if (result.status === 'rejected')
+        throw result.reason
+      return result.value
     } catch (error) {
       throw error
     }
@@ -466,6 +495,18 @@ function Postgres(a, b) {
         q.catch(e => uncaughtError || (uncaughtError = e))
         if (!reservation || c.reserved !== reservation)
           return q.reject(Errors.generic('CONNECTION_CLOSED', 'Transaction connection is no longer owned'))
+        // GBrain (#6930): while BEGIN is unanswered only an accepted first statement is sent; the rest wait, in order. It
+        // is accepted on its text (`$n` for each argument, as statementText builds it) only when every argument is a
+        // parameter value: a fragment (a query, a helper, an identifier) would carry SQL the test never saw.
+        if (opening) {
+          const strings = Array.isArray(q.strings) ? q.strings : [String(q.strings)]
+          const early = !firstSeen
+            && q.args.every(x => !(x instanceof Query || x instanceof Builder || x instanceof Identifier || Array.isArray(x) && x.some(y => y instanceof Query)))
+            && first(strings.reduce((a, s, i) => a + '$' + i + s))
+          firstSeen = true
+          if (!early)
+            return opening.then(() => handler(q), q.reject)
+        }
         reservation.enqueue(q)
       }
     }
@@ -474,6 +515,7 @@ function Postgres(a, b) {
       connection = c
       move(c, reserved)
       own(c)
+      written && written()
     }
   }
 

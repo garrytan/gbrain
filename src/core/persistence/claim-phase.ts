@@ -134,6 +134,14 @@ export function claimOwnerKind(): string {
   const command = process.argv.slice(2).find(arg => !arg.startsWith('-'));
   return command && OWNER_COMMANDS.has(command) ? command : 'cli';
 }
+let oneShotCommand = false;
+/**
+ * GBRA-156: set by the CLI's shared-operation dispatch, which runs one operation and exits. The consumer such a process
+ * starts (service.ts) leaves its housekeeping off the write's path and rations it per host (housekeeping-turn.ts), and its
+ * pool opens a second connection beside the first (db.ts).
+ */
+export function markOneShotCommand(on = true): void { oneShotCommand = on; }
+export function isOneShotCommand(): boolean { return oneShotCommand; }
 /** The owning process for the stamp: the gbrain command this process runs (`cli` when none is recognisable), its pid, nonce, pid namespace and build. */
 export function claimOwner(): ClaimOwner {
   if (ownerOverride) return ownerOverride;

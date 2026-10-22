@@ -68,7 +68,12 @@ export function isAdmissionOrigin(value: unknown): value is AdmissionOrigin {
 /** The pause line as a share of each cumulative cap (0 < share <= 1); the setting is a percent (80), and a share (0.8) reads the same. */
 export async function readBackgroundPauseShare(engine: SqlEngine): Promise<number> {
   const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [BACKGROUND_PAUSE_KEY]);
-  const value = row ? Number(row.value) : DEFAULT_BACKGROUND_PAUSE_SHARE;
+  return backgroundPauseShare(row?.value);
+}
+
+/** The pause share a stored setting (undefined when unset) stands for. */
+export function backgroundPauseShare(raw: string | undefined): number {
+  const value = raw === undefined ? DEFAULT_BACKGROUND_PAUSE_SHARE : Number(raw);
   if (!Number.isFinite(value) || value <= 0 || value > 100) return DEFAULT_BACKGROUND_PAUSE_SHARE;
   return value > 1 ? value / 100 : value;
 }

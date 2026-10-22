@@ -22,7 +22,8 @@
  */
 import type { SqlEngine } from './model.ts';
 import { DEFAULT_JOURNAL_LIMITS, type JournalLimits } from './model.ts';
-import { DEFAULT_RECEIPT_RETENTION_DAYS, journalLimitKey, readJournalLimits, readReceiptRetentionDays, recommendedLimit } from './limits.ts';
+import { DEFAULT_RECEIPT_RETENTION_DAYS, journalLimitKey, parseJournalConfigValue, readJournalLimits, RECEIPT_RETENTION_KEY, recommendedLimit } from './limits.ts';
+import { BACKGROUND_PAUSE_KEY, backgroundPauseShare } from './admission-origin.ts';
 import { COMPACTED_HEADROOM_BYTES } from './receipt-bytes.ts';
 
 export const CAPACITY_WARN_DAYS_KEY = 'persistence.capacity.warn_days';
@@ -69,10 +70,36 @@ export interface CapacityForecast {
 
 interface Day { scope: string; day: string; ids: number; gross: number; net: number; recent_ids: number; recent_gross: number; recent_net: number }
 
+function daysSetting(raw: string | undefined, fallback: number): number {
+  const value = raw === undefined ? fallback : Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
 async function readDays(engine: SqlEngine, key: string, fallback: number): Promise<number> {
   const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [key]);
-  const value = row ? Number(row.value) : fallback;
-  return Number.isFinite(value) && value >= 0 ? value : fallback;
+  return daysSetting(row?.value, fallback);
+}
+
+export interface CapacityConfig { warnDays: number; failDays: number; retentionDays: number; pauseShare: number }
+
+/**
+ * GBRA-156: the forecast's settings and the background pause line in one statement. Sent one statement each, they widened
+ * the receipt's capacity read past the connections a one-shot CLI has open, so each opened a connection of its own. An
+ * unreadable retention setting keeps the default, as the forecast always treated it.
+ */
+export async function readCapacityConfig(engine: SqlEngine): Promise<CapacityConfig> {
+  const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key,value FROM config WHERE key = ANY($1::text[])',
+    [[CAPACITY_WARN_DAYS_KEY, CAPACITY_FAIL_DAYS_KEY, RECEIPT_RETENTION_KEY, BACKGROUND_PAUSE_KEY]]);
+  const value = new Map(rows.map(row => [row.key, row.value]));
+  const retention = value.get(RECEIPT_RETENTION_KEY);
+  let retentionDays = DEFAULT_RECEIPT_RETENTION_DAYS;
+  try {
+    if (retention !== undefined) retentionDays = parseJournalConfigValue(RECEIPT_RETENTION_KEY, retention);
+  } catch {
+    retentionDays = DEFAULT_RECEIPT_RETENTION_DAYS;
+  }
+  return { warnDays: daysSetting(value.get(CAPACITY_WARN_DAYS_KEY), DEFAULT_CAPACITY_WARN_DAYS), failDays: daysSetting(value.get(CAPACITY_FAIL_DAYS_KEY), DEFAULT_CAPACITY_FAIL_DAYS),
+    retentionDays, pauseShare: backgroundPauseShare(value.get(BACKGROUND_PAUSE_KEY)) };
 }
 
 /** Rows one step of the principal-index walk reads. */
@@ -116,7 +143,7 @@ export async function readCapacityThresholds(engine: SqlEngine): Promise<{ warnD
   return { warnDays, failDays };
 }
 
-export async function readCapacityForecast(engine: SqlEngine & { kind?: string }, opts: { limits?: JournalLimits; light?: boolean } = {}): Promise<CapacityForecast> {
+export async function readCapacityForecast(engine: SqlEngine & { kind?: string }, opts: { limits?: JournalLimits; light?: boolean; config?: Promise<CapacityConfig> } = {}): Promise<CapacityForecast> {
   // Every read below is independent of the others (the principal walks need only the counters), so they are issued together:
   // one round trip for the lot instead of one each (GBRA-133).
   const counterRead = engine.executeRaw<{ key: string; lifetime_ids: string; terminal_bytes: string }>(
@@ -142,8 +169,8 @@ export async function readCapacityForecast(engine: SqlEngine & { kind?: string }
       count(*) FILTER (WHERE COALESCE(octet_length(r.intent::text),0)+octet_length(r.authority::text)>r.terminal_reservation)::text AS under
     FROM r LEFT JOIN e ON e.request_id=r.id GROUP BY 1`);
   const tableBytesRead = opts.light ? Promise.resolve(null) : engine.executeRaw<{ bytes: string }>("SELECT pg_total_relation_size('persistence_requests')::text AS bytes").then(r => Number(r[0]?.bytes), () => null);
-  const [limits, { warnDays, failDays }, retention, counters, principalRows, topologyRows, [historyRow], reclaim, tableBytes] = await Promise.all([
-    opts.limits ?? readJournalLimits(engine), readCapacityThresholds(engine), readReceiptRetentionDays(engine).catch(() => DEFAULT_RECEIPT_RETENTION_DAYS),
+  const [limits, { warnDays, failDays, retentionDays: retention }, counters, principalRows, topologyRows, [historyRow], reclaim, tableBytes] = await Promise.all([
+    opts.limits ?? readJournalLimits(engine), opts.config ?? readCapacityConfig(engine),
     counterRead, principals, topology, history, reclaimRead, tableBytesRead]);
   const days: Day[] = [...principalRows.flat(), ...topologyRows.map(toDay)];
   const windowDays = Math.min(WINDOW_DAYS, Math.max(1, Number(historyRow?.age_days ?? WINDOW_DAYS)));

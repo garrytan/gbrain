@@ -51,7 +51,7 @@ export interface SyncEntry { path: string; sourcePath: string; action: 'import' 
   prescreened?: true;
   /** #6712 PR 1: the page moved since its last recorded import (or has no record); imported only when the freeze proves it a no-op, else held `file_drift`. */
   drift?: SyncDriftSide;
-  /** #6712: for `both`, the blob the last recorded import left on disk; the freeze imports when the page still holds what that blob imports. */
+  /** #6712: for `both`, the blob the last recorded import left on disk; #7338: for `unknown`, the file at the baseline commit. The freeze imports when the page still holds what that blob imports. */
   driftBaseline?: string;
   /** #6727: live pages with no recorded origin whose slugs fold to this file's slug, several or one the importer cannot write; the freeze holds it `legacy_slug_conflict`. */
   legacySlugs?: string[];

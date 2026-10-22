@@ -55,6 +55,7 @@ export function logStatusTransition(event: 'serve_status_mode_enter' | 'serve_st
 export async function runStatusModeServe(
   reason: StatusReason, initialError: unknown, args: string[], connect: () => Promise<BrainEngine>,
 ): Promise<void> {
+  (await import('../core/serve-log.ts')).installServeLogSink({ http: args.includes('--http') });
   const state = initialStatusState(reason);
   const transport: StatusTransport = args.includes('--http') ? 'http' : 'stdio';
   const enteredAt = Date.now();

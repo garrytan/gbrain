@@ -138,6 +138,19 @@ describe('sources status and retry-held on Git sources', () => {
     });
   });
 
+  test('#7326: sources status --limit / --cursor page the held files of one source by path; --cursor needs the source and --limit is never read as a source id', async () => {
+    const first = JSON.parse(await captured(() => runSources(engine, ['status', 'notes-git', '--json', '--limit', '1']))).sources[0].git_holds;
+    expect(first).toMatchObject({ count: 2, returned: 1, limit: 1, complete: false });
+    expect(first.by_code.map((group: { code: string }) => group.code).sort()).toEqual(['file_too_large', 'invalid_frontmatter']);
+    expect(first.next_command).toEqual(['gbrain', 'sources', 'status', 'notes-git', '--json', '--limit', '1', '--cursor', first.next_cursor]);
+    const second = JSON.parse(await captured(() => runSources(engine, ['status', 'notes-git', '--json', '--limit', '1', '--cursor', first.next_cursor]))).sources[0].git_holds;
+    expect(second).toMatchObject({ returned: 1, complete: true, next_cursor: null });
+    expect([...first.items, ...second.items].map((item: { path: string }) => item.path)).toEqual(['notes/huge.md', 'notes/stale.md']);
+    const unnamed = JSON.parse(await captured(() => runSources(engine, ['status', '--json', '--limit', '5'])));
+    expect(unnamed.sources.find((s: { source_id: string }) => s.source_id === 'notes-git').git_holds.returned).toBe(2);
+    await expect(runSources(engine, ['status', '--json', '--cursor', first.next_cursor])).rejects.toThrow(/one source/);
+  });
+
   test('sources status <unknown id> refuses with not_found and the list command', async () => {
     await expect(runSources(engine, ['status', 'missing-src'])).rejects.toMatchObject({ code: 'not_found',
       fix: { argv: ['gbrain', 'sources', 'list', '--json'] } });

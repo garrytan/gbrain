@@ -28,6 +28,10 @@ function debug(reason: string): void {
   if (process.env.GBRAIN_DEBUG === '1') process.stderr.write(`[cli-socket] cold path: ${reason}\n`);
 }
 
+function debugWarm(command: string, path: string): void {
+  if (process.env.GBRAIN_DEBUG === '1') process.stderr.write(`[cli-socket] warm: ${command} answered by the serve socket at ${path}\n`);
+}
+
 type Exchange = { frame: ResultFrame } | { reason: string };
 
 /**
@@ -204,15 +208,16 @@ export async function renderOp(command: string, op: import('../core/operations.t
 export async function maybeServeFromCliSocket(command: string, args: string[]): Promise<boolean> {
   if (!CLI_SOCKET_COMMANDS.includes(command) || process.env.GBRAIN_CLI_SOCKET === '0') return false;
   const config = loadConfig();
-  if (!config || config.engine !== 'postgres' || !config.database_url || isThinClient(config)) return false;
+  if (!config || config.engine !== 'postgres' || !config.database_url || isThinClient(config)) { debug('not a local postgres brain'); return false; }
   const cliOpts = getCliOptions();
-  if (cliOpts.explain) return false;
+  if (cliOpts.explain) { debug('--explain runs locally'); return false; }
   const home = configDir();
   const path = cliSocketPath(home);
   const problem = connectProblem(path, cliSocketDir(home));
-  if (problem) { if (problem !== 'missing') debug(`socket refused before connect (${problem})`); return false; }
+  if (problem === 'missing') { debug(`no socket at ${path}; start the serve with gbrain serve --cli-socket or set serve.cli_socket true`); return false; }
+  if (problem) { debug(`socket refused before connect (${problem})`); return false; }
   let brainId: string;
-  try { brainId = resolveBrainId(cliOpts.brain); } catch { return false; }
+  try { brainId = resolveBrainId(cliOpts.brain); } catch { debug('brain did not resolve'); return false; }
   if (brainId !== 'host') { debug(`mount brain ${brainId}`); return false; }
 
   const base = {
@@ -235,6 +240,7 @@ export async function maybeServeFromCliSocket(command: string, args: string[]): 
     if ('reason' in outcome) { debug(outcome.reason); return false; }
     if (outcome.frame.kind === 'fallback') { debug(outcome.frame.reason); return false; }
     const frame = outcome.frame;
+    debugWarm(command, path);
     await noteSource(frame);
     if (frame.kind === 'error' && !recall.isOneShotRecall(flags)) { await replay(frame); throw reviveOperationError(frame.error); }
     const { writeCliNotices } = await import('../core/interop-notices.ts');
@@ -254,5 +260,6 @@ export async function maybeServeFromCliSocket(command: string, args: string[]): 
   const outcome = await exchangeCliSocket(path, { ...base, kind: 'op', op: SOCKET_OPS[prepared.op.name]!, params: prepared.params }, resultTimeoutMs);
   if ('reason' in outcome) { debug(outcome.reason); return false; }
   if (outcome.frame.kind === 'fallback') { debug(outcome.frame.reason); return false; }
+  debugWarm(command, path);
   return renderOp(command, prepared.op, prepared.params, outcome.frame);
 }

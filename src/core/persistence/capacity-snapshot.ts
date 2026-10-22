@@ -23,8 +23,8 @@
  */
 import type { Notice } from '../agent-output.ts';
 import { principalKey, type Principal, type SqlEngine } from './model.ts';
-import { BACKGROUND_PRODUCERS, readBackgroundPauseShare } from './admission-origin.ts';
-import { readCapacityForecast } from './capacity-forecast.ts';
+import { BACKGROUND_PRODUCERS } from './admission-origin.ts';
+import { readCapacityConfig, readCapacityForecast } from './capacity-forecast.ts';
 import { CAPACITY_VERIFY } from './capacity-verify.ts';
 import { deadlineBoundEngine, deadlineFailure, engineCacheKey, withStatementDeadline } from '../statement-deadline.ts';
 
@@ -68,8 +68,11 @@ export function cachedCapacitySnapshot(engine: SqlEngine, now: number = Date.now
   const bounded = deadlineBoundEngine(engine);
   const startedAt = Date.now();
   const fetch = withStatementDeadline({ startedAt, deadlineAt: startedAt + CAPACITY_FETCH_BOUND_MS, expired: false },
-    () => Promise.all([readCapacityForecast(bounded, { light: true }), readBackgroundPauseShare(bounded)]));
-  const value: Promise<CapacitySnapshot> = fetch.then(([forecast, share]): CapacitySnapshot => {
+    () => {
+      const config = readCapacityConfig(bounded);
+      return Promise.all([readCapacityForecast(bounded, { light: true, config }), config]);
+    });
+  const value: Promise<CapacitySnapshot> = fetch.then(([forecast, { pauseShare: share }]): CapacitySnapshot => {
     const attention = (row: typeof forecast.rows[number]): CapacityAttention => ({ scope: row.scope, resource: row.resource, used: row.used, limit: row.limit,
       pct: row.pct, days_to_exhaustion: row.days_to_exhaustion, config_key: row.config_key, recommended_limit: row.recommended_limit,
       command: `gbrain config set ${row.config_key} ${row.recommended_limit}` });

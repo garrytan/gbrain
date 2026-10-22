@@ -3903,11 +3903,15 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
-        "description": "Rows per page (default 100, max 1000); total_orphans counts every orphan and next_offset names the next page."
+        "description": "Rows per page (default 100, max 1000); total_orphans counts every orphan, complete says whether this page holds the rest, and next_cursor (or next_offset) names the next page."
       },
       "offset": {
         "type": "number",
         "description": "Skip the first N orphans (ordered by source_id, then slug)."
+      },
+      "cursor": {
+        "type": "string",
+        "description": "next_cursor from the previous page, with the same filters (instead of offset)."
       },
       "count_only": {
         "type": "boolean",

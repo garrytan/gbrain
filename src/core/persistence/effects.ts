@@ -6,7 +6,7 @@ import { targetedWithdrawalEffect, upgradeWithdrawalEffect } from './effect-targ
 import { existsSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
-import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
+import { isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -824,7 +824,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
           const blocked = await tx.executeRaw('SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL LIMIT 1', [effect.worktree_id]);
           if (blocked.length) throw recoveryFirst(effect);
         }
-      });
+      }, { pipelineFirst: isPersistenceDeclaration });
       effect = await upgradeWithdrawalEffect(engine, effect, opts.hostId);
       if (effect.kind === 'git' || effect.kind === 'embedding') attempt.gate = (await mirrorGates(engine, [effect.request_id])).get(effect.request_id);
       if (effect.kind === 'withdrawal-mirror') await mirrorPage(engine, effect, binding, opts, attempt);
@@ -959,7 +959,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
           const blocked = await tx.executeRaw('SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL LIMIT 1', [effect.worktree_id]);
           if (blocked.length) throw recoveryFirst(effect);
           return null;
-        }).catch(error => error ?? new Error('effect guard failed')));
+        }, { pipelineFirst: isPersistenceDeclaration }).catch(error => error ?? new Error('effect guard failed')));
         if (guards.get(key)) throw guards.get(key);
         if (!binding.local_path) { await completeEffect(engine, effect, { git: 'skipped', reason: 'no_repo_configured' }); continue; }
         if (!mirrors.has(effect.source_id)) mirrors.set(effect.source_id, await sourceMirrorReadOnly(engine, effect.source_id));

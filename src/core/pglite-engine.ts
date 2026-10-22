@@ -1318,7 +1318,7 @@ export class PGLiteEngine implements BrainEngine {
     mode: string,
     corpusGeneration: string | null,
   ): Promise<void> {
-    return pagesImpl.updatePageContextualRetrievalState(this.engineSql, slug, sourceId, mode, corpusGeneration);
+    return pagesImpl.updatePageContextualRetrievalState(this.engineSql, slug, sourceId, mode, corpusGeneration, (key, read) => transactionMemo(this, key, read));
   }
 
   async migrateFactsToCanonical(
@@ -1728,7 +1728,7 @@ export class PGLiteEngine implements BrainEngine {
         const bound = [...stmt.params];
         bound[stmt.innerLimitIdx] = requested;
         return readVectorPool((await tx.query<Record<string, unknown>>(scopeScan && stmt.scopeScanSql || indexWalk && stmt.indexWalkSql || stmt.sql, bound)).rows);
-      }, undefined, opts?.hnswIterativeScan, indexWalk && stmt.indexWalkSql ? stmt.indexWalkOverfetch : undefined));
+      }, undefined, opts?.hnswIterativeScan, indexWalk && stmt.indexWalkSql ? stmt.indexWalkOverfetch : undefined, !!stmt.indexWalkSql && !indexWalk && !(scopeScan && stmt.scopeScanSql)));
     const rows = await searchIndexWalk(stmt, limit, attempt) ?? await searchVectorPool(limit, stmt.innerLimit, iterative, stmt.indexed, 'pglite',
       attempt,
       async pool => {

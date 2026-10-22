@@ -106,7 +106,9 @@ The CLI falls back to its normal path, silently, when:
 - the CLI targets a mount brain (`--brain <mount>` and the other mount tiers).
 
 `GBRAIN_DEBUG=1` prints one `[cli-socket] cold path: <reason>` line on stderr
-whenever a call falls back. `GBRAIN_CLI_SOCKET=0` makes a CLI call skip the
+whenever a call falls back, including when no socket exists (`no socket at
+<path>`, with how to start one), and one `[cli-socket] warm: <command>
+answered by the serve socket at <path>` line when the serve answers. `GBRAIN_CLI_SOCKET=0` makes a CLI call skip the
 socket entirely, for comparisons and benchmarks.
 
 ## Security

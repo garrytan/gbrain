@@ -180,6 +180,7 @@
         "./commands/salience.ts"
       ],
       "serve": [
+        "./core/serve-log.ts",
         "./commands/serve.ts"
       ],
       "skillopt": [

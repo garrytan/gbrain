@@ -20,8 +20,9 @@ import { laneClaim, laneOf, laneRoots, laneTask } from './sync-lanes.ts';
 import { runPersistenceEffects } from './effects.ts';
 import { settleNoopEmbeddingEffects, type NoopSettleCursor } from './embedding-noop-settle.ts';
 import { runCompactionPass } from './compaction-pass.ts';
+import { claimHousekeepingTurn, completeHousekeepingTurn, housekeepingIntervalMs } from './housekeeping-turn.ts';
 import { currentEmbeddingSignature } from '../embedding.ts';
-import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
+import { isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { isWriteErrorCode } from './types.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -48,6 +49,8 @@ export type EffectivePreparationPolicy = PreparationPolicy & { deadlines: boolea
 export interface AbandonedPreparation { request_id: string; operation: string; step: string | null; waiting_on: WaitingOn; claimed_at: string; abandoned_at: string; outlived_ceiling_at: string }
 /** #6278: how long stop() waits on abandoned preparations after their abort before closing the engine. */
 export const ABANDONED_STOP_GRACE_MS = 5_000;
+/** GBRA-156: how long a one-shot command's shutdown waits for its housekeeping tick (`runOneShotHousekeeping`). */
+export const ONE_SHOT_HOUSEKEEPING_BOUND_MS = 5_000;
 /** #6278: abandoned preparations past the ceiling this process tolerates before it stops claiming and reports `restart_required`. */
 export const DEFAULT_ZOMBIE_CAP = 1;
 /** An effects drain running this long names itself on stderr (serve), then again at this cadence. */
@@ -236,6 +239,16 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
   private detachedBuilds = 0;
   private detachedQueue: Array<() => void> = [];
   private abandonedReleased = false;
+  /** GBRA-156: when this one-shot consumer last asked for the host's housekeeping turn, and whether it holds the turn now. */
+  private housekeepingAskedAt = -Infinity;
+  private housekeepingTurn = false;
+  /** GBRA-156: this tick took the host's turn from the database; it is marked done once the upkeep it started settles. */
+  private turnClaimed = false;
+  private turnDone: Promise<void> | undefined;
+  /** GBRA-156: the one-shot shutdown tick runs housekeeping only and claims no write. */
+  private housekeepingOnly = false;
+  /** GBRA-156: ends the effect drain where `stop()` would have, before the one-shot shutdown's housekeeping tick. */
+  private effectsStop = new AbortController();
   /** #6317: the engine the tick's own statements run through (the direct route when the engine has one; consumer-lane.ts). */
   private readonly statements: BrainEngine;
   private routeLogged = false;
@@ -254,7 +267,14 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       /** #6278: abandoned preparations past the ceiling before this process stops claiming (default DEFAULT_ZOMBIE_CAP). */
       zombieCap?: number;
       /** Write the long-drain progress line on stderr (serve; never a CLI command that may print --json). */
-      drainNotice?: boolean } = {}) {
+      drainNotice?: boolean;
+      /**
+       * GBRA-156: the consumer of a one-shot command (`put`, `cli`, `import`, ...). While `waiting` says a caller in this
+       * process awaits a write, it runs only what that write's claim can depend on; housekeeping (recovery and topology scans,
+       * compaction, queue upkeep, the projection pass) waits until no write is awaited and then runs at most once per
+       * interval across this host's processes (housekeeping-turn.ts).
+       */
+      oneShot?: { waiting: () => boolean } } = {}) {
     this.hostId = opts.hostId ?? localHostId();
     this.statements = consumerStatementEngine(engine);
   }
@@ -263,7 +283,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     return typeof engine.onCheckout === 'function' ? (engine.onCheckout as (listener: () => void) => () => void).bind(this.engine) : undefined;
   }
   start(): void {
-    this.stopping = false; this.abort = new AbortController(); this.fullTickRequested = true; this.idleDelayMs = this.pollMs;
+    this.stopping = false; this.abort = new AbortController(); this.effectsStop = new AbortController(); this.fullTickRequested = true; this.idleDelayMs = this.pollMs;
     // #6317: one loud line when every round-trip of this consumer goes through a transaction-mode pooler with no direct route.
     const exposure = poolerExposureLine(consumerConnectionRoute(this.engine));
     if (exposure && !this.routeLogged && !this.opts.onError) { this.routeLogged = true; process.stderr.write(`${exposure}\n`); }
@@ -298,6 +318,70 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       void this.tick(afterProgress).finally(() => { const next = this.nextDelayMs ?? this.pollMs; this.nextDelayMs = undefined; this.schedule(next); });
     }, ms);
     this.timer.unref?.();
+  }
+  /**
+   * GBRA-156: recovery, expired-claim, dead-owner and topology scans. A one-shot consumer runs them while a caller in this
+   * process awaits a write that may be blocked behind them (except on the direct claim of its own admission), and otherwise
+   * only in the host's housekeeping turn (housekeeping-turn.ts).
+   */
+  private async sweepAllowed(direct: boolean): Promise<boolean> {
+    if (!this.opts.oneShot) return true;
+    return this.opts.oneShot.waiting() ? !direct : this.housekeepingTurnNow();
+  }
+  /** GBRA-156: compaction, queue upkeep and the projection pass; a one-shot consumer runs them only in the host's housekeeping turn. */
+  private async upkeepAllowed(): Promise<boolean> {
+    return !this.opts.oneShot || !this.opts.oneShot.waiting() && this.housekeepingTurnNow();
+  }
+  /** Whether this tick holds the host's housekeeping turn; asked at most once per interval per process, granted when the claim cannot be read. */
+  private async housekeepingTurnNow(): Promise<boolean> {
+    if (this.housekeepingTurn) return true;
+    const interval = housekeepingIntervalMs();
+    if (interval === 0) return true;
+    if (Date.now() - this.housekeepingAskedAt < interval) return false;
+    this.housekeepingAskedAt = Date.now();
+    const claimed = await this.phase('housekeeping_turn', signal => claimHousekeepingTurn(this.statements, this.hostId, interval, signal)).catch(() => null);
+    this.turnClaimed ||= claimed === true;
+    this.housekeepingTurn = claimed !== false;
+    return this.housekeepingTurn;
+  }
+  /**
+   * GBRA-156: a turn this tick took is marked done once the upkeep it started (compaction, projection, topology recovery)
+   * settles; a tick that failed, or a stop that aborted that upkeep, leaves the turn to its lease.
+   */
+  private settleTurn(): void {
+    if (!this.turnClaimed) return;
+    this.turnClaimed = false;
+    const upkeep = [this.maintenanceWorker, this.projectionWorker, this.topologyWorker];
+    this.turnDone = Promise.allSettled(upkeep).then(async () => {
+      if (!this.stopping) await completeHousekeepingTurn(this.statements, this.hostId);
+    }).catch(error => this.report(error));
+  }
+  /**
+   * GBRA-156: a one-shot command's consumer, at shutdown (after the command's reply), runs one housekeeping tick when no
+   * write is awaited and the host's turn is this process's (taken now when it is due): the scans, compaction and the
+   * projection pass, no write claim and no effect drain. It waits up to `boundMs` for that upkeep, so a brain with no
+   * resident process still compacts and recovers; without the turn it returns at once.
+   */
+  async runOneShotHousekeeping(boundMs = ONE_SHOT_HOUSEKEEPING_BOUND_MS): Promise<void> {
+    if (!this.opts.oneShot || this.stopping || this.opts.oneShot.waiting()) return;
+    this.effectsStop.abort();
+    this.housekeepingOnly = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bound = new Promise<void>(resolve => { timer = setTimeout(resolve, boundMs); });
+    try {
+      await Promise.race([(async () => {
+        await this.tickPromise;
+        if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
+        if (this.stopping || !await this.upkeepAllowed()) return;
+        this.fullTickRequested = true;
+        this.nextMaintenance = 0;
+        await this.tick(false);
+        await Promise.allSettled([this.maintenanceWorker, this.projectionWorker, this.topologyWorker]);
+        await this.turnDone;
+      })(), bound]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
   private backoff(): number {
     this.idleDelayMs = Math.min(Math.max(this.idleDelayMs, this.pollMs) * 2, this.idleMaxMs);
@@ -450,7 +534,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     // the lane is given up whatever `run` makes of the error (admission re-runs on the pool and may still succeed).
     let lost = false;
     const lend = async <R>(fn: (tx: BrainEngine) => Promise<R>): Promise<R> => {
-      try { return await conn.transaction!(fn); }
+      // GBRA-156: every lent body (single-write admission and publication, no lane order) opens with the declaration.
+      try { return await conn.transaction!(fn, { pipelineFirst: isPersistenceDeclaration }); }
       catch (error) { if (isConnectionLoss(error)) lost = true; throw error; }
     };
     try {
@@ -492,7 +577,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
    */
   async tick(afterProgress = false): Promise<void> {
     if (this.tickPromise) return this.tickPromise;
-    this.tickPromise = this.doTick(afterProgress).catch(error => { this.report(error); }).finally(() => {
+    this.tickPromise = this.doTick(afterProgress).then(() => this.settleTurn(), error => { this.turnClaimed = false; this.report(error); }).finally(() => {
       this.tickPromise = undefined;
       if (this.wakeRequested) { this.wakeRequested = false; this.schedule(0); }
     });
@@ -500,6 +585,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
   }
   private async doTick(afterProgress: boolean): Promise<void> {
     if (this.stopping) return;
+    if (!this.housekeepingOnly) this.housekeepingTurn = false;
     const requested = this.fullTickRequested;
     this.fullTickRequested = false;
     if (!requested) {
@@ -515,11 +601,11 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       }
       if (this.stopping) return;
       // #6650: the idle probe sees only lapsed claims; a live-leased claim of a dead owner is looked for here, on its own cadence.
-      if (!work) this.deadOwnersSeen = await this.phase('dead_owner_claims', signal => this.deadOwnerClaims(signal, true));
+      if (!work && await this.sweepAllowed(false)) this.deadOwnersSeen = await this.phase('dead_owner_claims', signal => this.deadOwnerClaims(signal, true));
       if (!work && !this.deadOwnersSeen?.length) {
         if (this.active.size > 0) { this.nextDelayMs = this.pollMs; return; }
         this.nextDelayMs = this.backoff();
-        if (!this.maintenanceWorker && Date.now() >= this.nextMaintenance) {
+        if (!this.maintenanceWorker && Date.now() >= this.nextMaintenance && await this.upkeepAllowed()) {
           this.nextMaintenance = Date.now() + 300_000;
           await this.phase('refresh_roots', signal => refreshManagedFilesystemRoots(this.engine,
             this.engine.kind === 'pglite' ? this.config.database_path : undefined, signal));
@@ -542,7 +628,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     this.nextDelayMs = this.pollMs;
     const direct = afterProgress && this.ownAdmission && fast;
     this.ownAdmission = false;
-    const scan = !direct && (!afterProgress || Date.now() - this.lastScan >= this.pollMs);
+    const scan = !direct && (!afterProgress || Date.now() - this.lastScan >= this.pollMs) && await this.sweepAllowed(direct);
+    const upkeep = await this.upkeepAllowed();
     if (scan) {
       this.lastScan = Date.now();
       await this.phase('refresh_roots', signal => refreshManagedFilesystemRoots(this.engine,
@@ -553,11 +640,11 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       .then(({ recoverSourceTopologies }) => recoverSourceTopologies(this.engine, { hostId: this.hostId, limit: 2,
         onAttempt: (id, recovered) => { if (recovered) this.topologyRetryAfter.delete(id); else this.topologyRetryAfter.set(id, Date.now() + 30_000); } }))
       .catch(error => this.report(error)).finally(() => { this.topologyWorker = undefined; });
-    if (!this.effectsWorker) this.effectsWorker = this.drainEffects().catch(error => this.report(error))
+    if (!this.effectsWorker && !this.housekeepingOnly) this.effectsWorker = this.drainEffects().catch(error => this.report(error))
       .finally(() => { this.effectsWorker = undefined; });
     // Queue upkeep also follows publication volume, like autovacuum's scale
     // factor, so a busy owner never plans against a much smaller queue.
-    if (!this.maintenanceWorker && (Date.now() >= this.nextMaintenance || this.publishedSinceMaintenance >= this.maintenanceVolume)) {
+    if (upkeep && !this.maintenanceWorker && (Date.now() >= this.nextMaintenance || this.publishedSinceMaintenance >= this.maintenanceVolume)) {
       this.nextMaintenance = Date.now() + 60_000;
       this.publishedSinceMaintenance = 0;
       this.maintenanceWorker = runCompactionPass(this.engine, { hostId: this.hostId, notice: this.opts.drainNotice })
@@ -566,7 +653,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
         .then(rows => { this.maintenanceVolume = 50 + Math.ceil(rows * 0.2); }).catch(error => this.report(error))
         .finally(() => { this.maintenanceWorker = undefined; });
     }
-    if (!this.projectionWorker) this.projectionWorker = runResidentProjectionInvocation(this.engine, this.hostId,
+    if (upkeep && !this.projectionWorker) this.projectionWorker = runResidentProjectionInvocation(this.engine, this.hostId,
       [...this.activeRoots, ...this.rootRetryAfter.keys()], Date.now, this.engine.kind === 'postgres'
         ? AbortSignal.any([this.abort.signal, AbortSignal.timeout(this.opts.phaseMs ?? 5000)]) : undefined)
       .catch(error => this.report(error)).finally(() => { this.projectionWorker = undefined; });
@@ -618,6 +705,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
           preparation_attempts=r.preparation_attempts+CASE WHEN $2::boolean THEN ${EXPIRED_PREPARING_CHARGE_SQL('r')} ELSE 0 END
         FROM expired WHERE r.id=expired.id`, [this.hostId, this.policy.deadlines, deadOwners], { signal }));
     }
+    if (this.housekeepingOnly) return;
     if (publicationConcurrency(this.engine) === 0) {
       await this.phase('capacity', signal => this.statements.executeRaw(`UPDATE persistence_requests SET blocked_reason='writer_pool_capacity'
         WHERE state='queued' AND blocked_reason IS DISTINCT FROM 'writer_pool_capacity' AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, undefined, { signal }));
@@ -734,7 +822,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     const signature = currentEmbeddingSignature();
     const drain = this.draining = { since: Date.now(), settled: 0, ran: 0, noticedAt: 0 };
     try {
-      for (let done = !signature; !done && !this.stopping;) {
+      const signal = AbortSignal.any([this.abort.signal, this.effectsStop.signal]);
+      for (let done = !signature; !done && !signal.aborted;) {
         const pass = await settleNoopEmbeddingEffects(this.engine, this.hostId, signature!, this.settleCursor);
         this.settleCursor = pass.cursor;
         done = pass.done;
@@ -742,8 +831,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
         this.drainNotice(drain);
         if (!done) await yieldToEventLoop();
       }
-      for (let ran = limit; ran >= limit && !this.stopping;) {
-        ran = await runPersistenceEffects(this.engine, this.config, { hostId: this.hostId, limit, signal: this.abort.signal });
+      for (let ran = limit; ran >= limit && !signal.aborted;) {
+        ran = await runPersistenceEffects(this.engine, this.config, { hostId: this.hostId, limit, signal });
         drain.ran += ran;
         this.drainNotice(drain);
         if (ran >= limit) await yieldToEventLoop();
@@ -989,6 +1078,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
         return this.settled(done);
       } finally { this.preparing.delete(row.id); this.executing.delete(row.id); }
     }
+    // GBRA-156: the publication ceiling (a TTL-cached config read that never rejects) is read while the write prepares.
+    const ceiling = readPublicationCeilingMs(this.engine);
     const prep = startPreparation(async signal => {
       signal.addEventListener('abort', () => cancel.abort(signal.reason), { once: true });
       await faultPoint('consumer:preparing', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation, signal });
@@ -1037,7 +1128,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       preparationActive = false;
       enterClaimPhase(clock, 'publishing');
       await faultPoint('consumer:prepared', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation });
-      const ceilingMs = await readPublicationCeilingMs(this.engine);
+      const ceilingMs = await ceiling;
       await holdClaimForPublication(lease, () => renewWriteClaim({ executeRaw: this.engine.executeRawDirect.bind(this.engine) }, row.id, row.execution_token!,
         publicationLeaseMs(ceilingMs), undefined, claimPhaseStamp(clock, row.execution_token)));
       const { done, settled } = await boundPublication(() => this.publishSingle(row, prepared), this.publicationBound(row, ceilingMs, clock));
@@ -1159,6 +1250,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     await this.effectsWorker;
     await this.topologyWorker;
     await this.maintenanceWorker;
+    await this.turnDone;
     this.unobserveCheckout?.();
     this.unobserveCheckout = undefined;
     try { this.loopDelay?.disable(); } catch { /* fail-open */ }
