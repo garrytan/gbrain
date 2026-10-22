@@ -10,12 +10,14 @@
  * returned first. One hop: an entity a returned fact names ("folded into
  * Dovalto Energy", "uses Dovalto Energy's discount code") contributes its own
  * newest facts, tagged `linked_from`, so a redirection reaches the value it
- * points to. Same source scope, active-fact and visibility rules as recall.
+ * points to. Same source scope, active-fact and visibility rules as recall,
+ * and the same quarantined-page and re-derive hiding as every other fact read arm.
  */
 
 import type { BrainEngine } from '../engine.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { privateProvenanceFilterFragment } from './private-visibility.ts';
+import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { factEntitySlugs } from '../mentions/siblings.ts';
 import { resolveQueryEntities, type ResolvedEntity } from './alias-fanout.ts';
 
@@ -33,6 +35,7 @@ async function newestFacts(engine: BrainEngine, sourceId: string, slugs: string[
       WHERE f.source_id = $1 AND f.entity_slug = ANY($2::text[])
         AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
         AND f.source != ALL($3::text[])
+        AND ${projectionEligibleSql('facts', 'f', undefined)}
         ${visibility}
       ORDER BY f.valid_from DESC, f.id DESC
       LIMIT ${limit}`,
