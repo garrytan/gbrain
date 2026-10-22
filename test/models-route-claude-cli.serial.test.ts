@@ -171,6 +171,15 @@ describe('gbrain models route claude-cli', () => {
     const snapshot = JSON.parse(engine.config.get(ROUTE_UNDO_KEY)!) as Record<string, string | null>;
     expect(snapshot['models.brainstorm.judge']).toBe('anthropic:claude-sonnet-4-6');
   });
+
+  test('--apply shadows a deprecated models.auto_think pin for pinned questions', async () => {
+    const engine = new StubConfigEngine();
+    engine.config.set('models.auto_think', 'openai:gpt-5');
+    await run(engine, ['claude-cli', '--apply']);
+    // resolveQuestionModel reads models.standing_questions, then models.auto_think, before the deep tier.
+    const { resolveQuestionModel } = await import('../src/core/questions/refresh.ts');
+    expect(await resolveQuestionModel(engine as never, { model: null })).toBe('claude-cli:claude-opus-5-5');
+  });
 });
 
 describe('routeSurfaces', () => {
@@ -217,6 +226,14 @@ describe('routeSurfaces', () => {
     const scan = await routeSurfaces(engine as never, 'claude-cli');
     expect(scan.leaving.find(s => s.surface === 'models.dream.edge_contradictions')).toMatchObject({ provider: 'openai', standing: 'fails_no_key' });
     expect(scan.leaving.find(s => s.surface === 'models.brainstorm.judge')).toMatchObject({ provider: 'anthropic', standing: 'fails_no_key' });
+  });
+
+  test('a deprecated models.auto_think pin is reported on the pinned-question route that reads it', async () => {
+    const engine = new StubConfigEngine();
+    engine.config.set('models.tier.deep', 'claude-cli:claude-opus-5-5');
+    engine.config.set('models.auto_think', 'openai:gpt-5');
+    const scan = await routeSurfaces(engine as never, 'claude-cli');
+    expect(scan.leaving.find(s => s.surface === 'models.standing_questions')).toMatchObject({ model: 'openai:gpt-5', provider: 'openai', standing: 'fails_no_key' });
   });
 
   test('a TypeSafe reranker keyed through the JEV_TYPESAFE_API_KEY alias bills TypeSafe, not off', async () => {

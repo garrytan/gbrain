@@ -7,7 +7,7 @@
  * The one preset today is `claude-cli`: every tier, the global default, the
  * `haiku`/`sonnet`/`opus` aliases and the caller-specific routes that read
  * their own key first (fact extraction, atom extraction, the edge-contradiction
- * judge, the brainstorm judge) go to the local `claude` binary, which
+ * judge, the brainstorm judge, pinned questions) go to the local `claude` binary, which
  * authenticates with the user's own Claude Code login. Every call on that
  * route, background jobs included, draws on the user's Claude plan usage
  * limits; the guide (docs/guides/claude-subscription.md) says so and points
@@ -85,6 +85,10 @@ export const CLAUDE_CLI_ROUTE_PRESET: RoutePreset = {
     // left there would keep billing its provider after the preset.
     { key: 'models.dream.edge_contradictions', value: CLAUDE_CLI_HAIKU, why: 'the edge-contradiction judge reads its own key first' },
     { key: 'models.brainstorm.judge', value: CLAUDE_CLI_SONNET, why: 'the brainstorm judge reads its own key first' },
+    // Pinned questions read models.standing_questions, then the retired
+    // models.auto_think, before the deep tier: setting the newer key
+    // shadows a leftover auto_think pin.
+    { key: 'models.standing_questions', value: CLAUDE_CLI_OPUS, why: 'pinned questions read it (then the retired models.auto_think) before the deep tier' },
   ],
 };
 

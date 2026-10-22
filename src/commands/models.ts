@@ -109,7 +109,13 @@ const PER_TASK_KEYS: PerTaskModelRoute[] = [
   },
   { key: 'models.dream.edge_contradictions', tier: 'utility', description: 'Edge-contradiction judge (edge_contradictions phase)' },
   { key: 'models.drift',                    tier: 'reasoning', description: 'Drift LLM judge (v0.29 scaffold)' },
-  { key: 'models.standing_questions',       tier: 'deep',      description: 'Pinned-question answers (standing_questions phase, questions_pin/refresh)' },
+  {
+    key: 'models.standing_questions',
+    tier: 'deep',
+    description: 'Pinned-question answers (standing_questions phase, questions_pin/refresh)',
+    // resolveQuestionModel still reads the retired auto_think key before the tier.
+    deprecatedConfigKey: 'models.auto_think',
+  },
   { key: 'models.think',                    tier: 'deep',      description: '`gbrain think` synthesis op' },
   {
     key: 'models.fence_repair',

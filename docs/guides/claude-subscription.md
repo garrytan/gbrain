@@ -55,6 +55,7 @@ The preset sets, in the brain's DB config plane:
 | `models.dream.extract_atoms` | `claude-cli:claude-haiku-5-5` | atom extraction reads its own key before any tier |
 | `models.dream.edge_contradictions` | `claude-cli:claude-haiku-5-5` | the edge-contradiction judge reads its own key before any tier |
 | `models.brainstorm.judge` | `claude-cli:claude-sonnet-5-5` | the brainstorm judge reads its own key before any tier |
+| `models.standing_questions` | `claude-cli:claude-opus-5-5` | pinned questions read it, then the retired `models.auto_think`, before the deep tier |
 | `models.route` | `claude-cli` | tells `gbrain doctor` which provider to check against |
 
 It changes nothing else. Pricing stays at the recipe's nominal API-list rate,
