@@ -43,6 +43,7 @@ import { slog } from '../core/console-prefix.ts';
 import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 import { importAnalyzeEveryPages, maybeRefreshPlannerStats, PLANNER_STATS_REPAIR_COMMAND } from '../core/planner-stats.ts';
 import { importManagedFile, nextImportBatch, settleManagedImportBatch } from '../core/persistence/import-mutations.ts';
+import { completeClassicImport, prepareManagedImportCompletion } from '../core/persistence/import-completion.ts';
 import { acceptedPendingReceipt } from '../core/persistence/accepted-pending.ts';
 import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
 import { getEmbeddingModel } from '../core/ai/gateway.ts';
@@ -523,6 +524,9 @@ export async function runImport(
   if (managedImport && dir !== resolve(dirArg)) throw symlinkedRootAbort(dirArg, dir);
   const singleFile = managedImport && lstatSync(dir).isFile();
   const importRoot = singleFile ? dirname(dir) : dir;
+  // #7323: capture owner/source identity before the walk; only a fully settled whole-root run completes it.
+  const completeManagedImport = managedImport && sourceId && !singleFile && !opts.managedBookmark && !opts.exclude?.length
+    ? await prepareManagedImportCompletion(engine, sourceId, dir, signal).catch(() => null) : null;
 
   if (!managedImport && !hasSourceFilesystemLock(dir)) {
     let entered = false;
@@ -669,6 +673,7 @@ export async function runImport(
   let imported = 0;
   let skipped = 0;
   let errors = 0;
+  let incomplete = false;
   // Per-file malformed skips (defense-in-depth hits inside importFromFile);
   // the walker-level exclusions are counted separately via malformedExcluded.
   let malformedFileSkips = 0;
@@ -726,7 +731,7 @@ export async function runImport(
     // relative (matching the incremental path's git-diff paths). The
     // checkpoint (`completed`) stays dir-relative.
     const importRelPath = opts.slugRoot ? relative(opts.slugRoot, filePath) : relative(importRoot, filePath);
-    if (opts.heldPaths?.has(importRelPath)) { skipped++; completed.add(relativePath); processed++; tickProgress(); return; }
+    if (opts.heldPaths?.has(importRelPath)) { incomplete = true; skipped++; completed.add(relativePath); processed++; tickProgress(); return; }
     // v0.31.2 (D5): per-file slow-path log. Fires only when a single
     // file takes >5s. The user's hang surfaces as one file taking
     // forever — without this, the agent can't see which file.
@@ -745,11 +750,13 @@ export async function runImport(
       // An import that landed while cancellation arrived is still complete.
       // Account for it before stopping, so resume never loses a successful path.
       noteTypeWarning((result as { type_warning?: Parameters<typeof noteTypeWarning>[0] }).type_warning); fenceTally.note(importRelPath, result);
+      if (result.searchable === 'pending') incomplete = true;
       const _fileMs = Date.now() - _fileT0;
       if (!settled && _fileMs > 5000) {
         console.error(`[gbrain phase] import.process_file slow ${_fileMs}ms ${relativePath}`);
       }
       if (await reportFileResult(opts.onFileResult, importRelPath, filePath, result) === 'held') {
+        incomplete = true;
         skipped++;
         completed.add(relativePath);
       } else if (result.status === 'imported') {
@@ -793,8 +800,8 @@ export async function runImport(
         return;
       }
       // #5600: an accepted managed import still publishing is not a failure; the next run resumes its request.
-      if (acceptedPendingReceipt(e)) { skipped++; console.error(`  Pending: ${relativePath} was accepted and is still publishing; rerun to confirm it.`); }
-      else if (await reportFileResult(opts.onFileResult, importRelPath, filePath, { status: 'error', error: e instanceof Error ? e.message : String(e) }) === 'held') { skipped++; completed.add(relativePath); } else {
+      if (acceptedPendingReceipt(e)) { incomplete = true; skipped++; console.error(`  Pending: ${relativePath} was accepted and is still publishing; rerun to confirm it.`); }
+      else if (await reportFileResult(opts.onFileResult, importRelPath, filePath, { status: 'error', error: e instanceof Error ? e.message : String(e) }) === 'held') { incomplete = true; skipped++; completed.add(relativePath); } else {
         const msg = e instanceof Error ? e.message : String(e);
         const { count, sample } = recordImportFailure(errorCounts, errorSamples, msg);
         if (count <= 5) {
@@ -1132,51 +1139,16 @@ export async function runImport(
   // that silently dropped files isn't "clean" for freshness purposes even
   // with zero recorded failures.
   const totalMalformed = malformedExcluded.length + malformedFileSkips;
+  if (completeManagedImport && failures.length === 0 && errors === 0 && totalMalformed === 0 && !incomplete) {
+    try { throwIfInterrupted(); await completeManagedImport(); }
+    catch (error) {
+      throwIfInterrupted();
+      console.error(`  Warning: import completed but source freshness was not advanced: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   if (sourceId && failures.length === 0 && totalMalformed === 0 && !opts.managedBookmark && !managedImport) {
     try {
-      const [row] = await engine.executeRaw<{ local_path: string | null; config: unknown }>(
-        `SELECT local_path, config FROM sources WHERE id = $1`,
-        [sourceId],
-      );
-      const { sourceConfigHasRemoteUrl, parseSourceConfig } = await import('../core/sources-load.ts');
-      // Connector-managed sources (config.kind: github/google, v0.47 API-backed
-      // shapes) own their last_sync_at via the connector's sync path — a google
-      // source has a non-git local_path and no remote_url, so without this
-      // check a stray `import --source-id` would mask connector staleness
-      // (and flip `gbrain waiting`'s google-freshness gate). parseSourceConfig,
-      // not a bare JSON.parse: nested-string / historical-array configs are
-      // real shapes (#2829) and must not slip past the kind check.
-      const cfg = parseSourceConfig(row?.config);
-      const isConnectorManaged = typeof cfg.kind === 'string' && cfg.kind.length > 0;
-      // Freshness is a claim about the WHOLE registered root. Configured-root
-      // enforcement is default-off, so an import of an unrelated directory —
-      // or of a mere subdirectory of the root — can complete cleanly with
-      // --source-id; neither says anything about the rest of the root, so
-      // only an import whose canonical target IS the registered local_path
-      // may stamp. `dir` is already the canonical realpath (#1728).
-      let coversRegisteredRoot = false;
-      if (row?.local_path) {
-        try {
-          const { realpathSync } = await import('fs');
-          coversRegisteredRoot = realpathSync(row.local_path) === dir;
-        } catch {
-          coversRegisteredRoot = false;
-        }
-      }
-      let isGitTracked = false;
-      if (row?.local_path) {
-        try {
-          const { discoverGitRoot } = await import('../core/sync-git.ts');
-          discoverGitRoot(row.local_path);
-          isGitTracked = true;
-        } catch {
-          isGitTracked = false;
-        }
-      }
-      if (row?.local_path && coversRegisteredRoot && !sourceConfigHasRemoteUrl(row.config) && !isGitTracked && !isConnectorManaged) {
-        throwIfInterrupted();
-        await engine.executeRaw(`UPDATE sources SET last_sync_at = now() WHERE id = $1`, [sourceId]);
-      }
+      await completeClassicImport(engine, sourceId, dir, throwIfInterrupted);
     } catch (error) {
       if (error instanceof ImportAbortError) throw error;
       // best-effort — a freshness nicety never fails the import (see above).
