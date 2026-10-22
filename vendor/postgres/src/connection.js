@@ -309,7 +309,16 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
       start() {
         handle && clearTimeout(handle)
         const ms = query && query.inflightCaps ? query.inflightCaps[kind] : 0
-        handle = ms ? setTimeout(() => (handle = null, inflightTimedOut(kind)), ms) : null
+        // GBrain (t_233071e1): the timer is armed on the clock that keeps counting while the host sleeps; the
+        // statement's age is read from performance.now(), which stops during sleep. A laptop that dark-wakes mid-run
+        // fires the budget at once while the statement ran for milliseconds. Re-arm for the unspent budget instead of
+        // retiring a healthy connection; a statement that really exceeded its budget still fires.
+        const armedAt = performance.now()
+        const arm = (wait) => setTimeout(() => {
+          const spent = performance.now() - armedAt
+          handle = spent + Math.min(1000, ms / 10) < ms ? arm(ms - spent) : (inflightTimedOut(kind), null)
+        }, wait)
+        handle = ms ? arm(ms) : null
       }
     }
   }
