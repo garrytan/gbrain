@@ -109,11 +109,34 @@ selection. No network Git operations, provider calls, repository hooks, filters,
 scripts, submodules, or LFS downloads run.
 
 New commands write one versioned JSON result to stdout with `--json`; progress
-and prompts go to stderr. Exit 0 means a completed command, 2 means invalid usage
-or required consent, and 1 means blocked, failed, or incomplete work. Always read
+and prompts go to stderr. Exit 0 means a completed command, 2 means invalid usage,
+3 means required consent, and 1 means blocked, failed, or incomplete work. Always read
 `status` and the receipt as well as the exit code.
 
 ## Resume and verify
+
+An invalid committed file that requires correction (`source_writeback_required`)
+needs a newly reviewed revision. Committing a fix does not change the revision
+owned by an incomplete receipt. To recover without removing the source:
+
+1. Correct and commit the source file, then inspect that checkout with the same
+   `--include` and `--exclude` selection and save a new plan with `--out`.
+2. Review the corrected plan and the exact incomplete receipt in source status.
+3. Approve its replacement explicitly:
+
+   ```sh
+   gbrain sources connect --plan corrected-plan.json --brain host --source wiki \
+     --replace-incomplete <receipt-uuid> --yes
+   ```
+
+Replacement preserves the source incarnation, selection, schema, policy and
+access grants. It refuses a stale plan or receipt, a different policy, or active
+writes/recovery. The old receipt remains as discarded history; a full source
+reconciliation imports the corrected revision and removes pages absent from it.
+Keep the new request ID: retry with that `--request-id` and the same plan if the
+command is interrupted. Ordinary sync still resumes its frozen approved revision.
+Replacement does not roll back pages already imported by the failed batch; the
+corrected import reconciles them before reporting verified completion.
 
 ```bash
 gbrain sources status --brain company-example --json
@@ -127,8 +150,8 @@ commit objects are gone or the approved schema changed, inspect again; GBrain
 does not substitute current HEAD silently. Managed brains retain their native
 writer, source-incarnation, and revision conflict checks.
 
-Semantic schema/extractor upgrades do not silently renew an old approval. This
-first version has no in-place reapproval command. Preview the old registration's
+Semantic schema/extractor or selection/policy changes do not silently renew an
+old approval; incomplete-receipt replacement cannot make those changes. Preview the old registration's
 removal impact with `gbrain sources remove wiki --brain company-example --dry-run`.
 Removal requires separate destructive consent and `--confirm-destructive` before
 reinspecting and reconnecting the same checkout. Alternatively, use a separate
@@ -168,7 +191,8 @@ writeback, and automatic embedding backfill remains blocked. Federation does not
 grant access or authorize enrichment; do not edit the stored profile to enable
 either.
 
-The first release does not connect into populated sources, support arbitrary
+Initial connect requires a new source; explicit replacement is limited to the
+same-policy incomplete receipt described above. This workflow does not support arbitrary
 export formats, or mix different source schemas in one brain, even when federation
 is off. An occupied destination must already use the exact company schema.
 Existing general migration tools remain available for other source formats.

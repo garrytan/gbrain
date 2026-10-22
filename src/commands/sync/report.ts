@@ -82,6 +82,10 @@ export async function maybeExtractionNudge(engine: BrainEngine, sourceId?: strin
  * JSON envelope pipes cleanly through `jq` (D4).
  */
 export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = process.stdout) {
+  if (result.sourceCorrection) {
+    sink.write(`Sync blocked by a source correction: ${result.sourceCorrection}\n`);
+    return;
+  }
   if (printManagedSyncDiagnostic(result, sink)) {
     if (result.runId) sink.write(`  Committed counts are cumulative for run ${result.runId}: added=${result.added}, modified=${result.modified}, deleted=${result.deleted}.\n`);
     return;

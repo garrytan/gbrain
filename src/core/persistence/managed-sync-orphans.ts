@@ -288,17 +288,19 @@ export async function pruneMirrorOnlyManagedFailures(engine: SqlEngine, sourceId
  * A `slug_mode_refused` pass row (#6694 on the pass) loses its `slug_mode` obligation under the previewed pass and stamp
  * while `passSlugModeRefusedSql` still holds and no pass holds the source's drain lease (its row locked, so a pass that
  * takes the lease next reads the retired row).
+ * Callers with an outer transaction defer compatibility-file cleanup with
+ * clearMirror:false until that outer transaction has committed.
  */
 export async function retireManagedSyncOrphan(engine: BrainEngine, orphan: Pick<ManagedSyncOrphan, 'kind' | 'cursor_key' | 'run_id' | 'source_id' | 'source_incarnation' | 'reason'>
   & { pending_request_id?: string | null },
-  inTx?: (tx: BrainEngine) => Promise<void>): Promise<{ cursor: boolean; failure: boolean; manifest: boolean; mirror: boolean }> {
+  inTx?: (tx: BrainEngine) => Promise<void>, options: { clearMirror?: boolean } = {}): Promise<{ cursor: boolean; failure: boolean; manifest: boolean; mirror: boolean }> {
   const retired = orphan.reason === 'incarnation_retired';
   const mode = retired ? 'retired' : orphan.reason === 'superseded_by_adoption' ? 'adoption' : orphan.reason === 'checkpoint_moved' ? 'checkpoint_moved'
     : orphan.reason === 'slug_mode_refused' ? 'slug_mode_refused' : 'orphan';
   if (orphan.kind === 'mirror_row') {
     const durable = await engine.executeRaw("SELECT 1 FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1", [orphan.cursor_key]);
     if (durable.length) return { cursor: false, failure: false, manifest: false, mirror: false };
-    return { cursor: false, failure: false, manifest: false, mirror: clearManagedSyncFailure(orphan.cursor_key) };
+    return { cursor: false, failure: false, manifest: false, mirror: options.clearMirror !== false && clearManagedSyncFailure(orphan.cursor_key) };
   }
   const removed = await engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','2000ms',true)");
@@ -353,6 +355,6 @@ export async function retireManagedSyncOrphan(engine: BrainEngine, orphan: Pick<
     }
     return { cursor, failure, manifest, mirror: false };
   });
-  if (removed.cursor || removed.failure) try { removed.mirror = clearManagedSyncFailure(orphan.cursor_key); } catch { /* the local ledger is a compatibility mirror */ }
+  if (options.clearMirror !== false && (removed.cursor || removed.failure)) try { removed.mirror = clearManagedSyncFailure(orphan.cursor_key); } catch { /* the local ledger is a compatibility mirror */ }
   return removed;
 }

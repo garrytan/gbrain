@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -16,15 +16,15 @@ const childBase = Object.fromEntries(Object.entries(process.env).filter(([key]) 
   !key.startsWith('GBRAIN_') && !key.startsWith('GIT_') &&
   !['DATABASE_URL', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'VOYAGE_API_KEY', 'PGLITE_DATA_DIR'].includes(key)));
 
-async function fixture() {
-  const root = mkdtempSync(join(tmpdir(), 'company-connect-cli-'));
+async function fixture(pages: ReadonlyArray<{ slug: string; content: string }> = COMPANY_BRAIN_SAMPLE) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'company-connect-cli-')));
   roots.push(root);
   const home = join(root, 'home');
   const repo = join(root, 'repo');
   const database = join(home, 'brain.pglite');
   mkdirSync(join(home, '.gbrain'), { recursive: true });
   mkdirSync(repo);
-  for (const page of COMPANY_BRAIN_SAMPLE) {
+  for (const page of pages) {
     const file = join(repo, `${page.slug}.md`);
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, page.content);
@@ -66,12 +66,17 @@ describe('company connect public CLI', () => {
   test('requires explicit destinations and does not reinterpret a false consent flag', () => {
     const valid = parseCompanyBrainConnectArgs(['repo', '--source=wiki', '--profile', 'company-brain', '--yes', '--json'], 'company-example');
     expect(valid).toMatchObject({ brainId: 'company-example', sourceId: 'wiki', yes: true, json: true });
+    const receipt = randomUUID();
+    expect(parseCompanyBrainConnectArgs(['--plan', 'reviewed.json', '--source', 'wiki', '--replace-incomplete', receipt], 'host'))
+      .toMatchObject({ planFile: 'reviewed.json', replaceIncomplete: receipt, yes: false });
     for (const [args, brain] of [
       [['repo', '--source', 'wiki'], null],
       [['repo'], 'host'],
       [['repo', '--source', 'wiki', '--yes=false'], 'host'],
       [['repo', '--plan', 'plan.json', '--source', 'wiki'], 'host'],
       [['--plan', 'plan.json', '--include', '**', '--source', 'wiki'], 'host'],
+      [['repo', '--source', 'wiki', '--replace-incomplete', receipt], 'host'],
+      [['--plan', 'reviewed.json', '--source', 'wiki', '--replace-incomplete', 'not-a-receipt'], 'host'],
     ] as Array<[string[], string | null]>) expect(() => parseCompanyBrainConnectArgs(args, brain)).toThrow();
   });
 
@@ -125,4 +130,73 @@ describe('company connect public CLI', () => {
     expect(JSON.parse(implicit.out).code).toBe('invalid_params');
     expect(await sources(f)).toEqual([{ id: 'default' }]);
   }, 120_000);
+
+  // Authoring gate: the public loader must preserve exact approval replay after
+  // HEAD advances while refusing a stale NEW replacement request. Core-only
+  // tests miss CLI plan validation order and the consent/repair output. The real
+  // canonical fence refusal needs no mock or production-only testing seam.
+  test('corrected receipt replacement requires consent, gives its repair command, and replays only the reviewed request', async () => {
+    const page = (title: string, body: string, type = 'concept') => `---\ntype: ${type}\ntitle: ${title}\naudience: internal\n---\n# ${title}\n${body}\n`;
+    const fence = `<!--- gbrain:facts:begin -->
+| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | Fictional fixture claim | partnership | 1.0 | private | medium | 2026-01-01 |  | fixture |  |
+<!--- gbrain:facts:end -->`;
+    const f = await fixture([{ slug: 'docs/guide', content: page('Guide', 'GUIDE_INITIAL') },
+      { slug: 'people/owner', content: page('Owner', fence, 'person') }]);
+    const commit = (message: string) => {
+      execFileSync('git', ['-C', f.repo, 'add', '.']);
+      execFileSync('git', ['-C', f.repo, 'commit', '-qm', message]);
+    };
+    const inspect = (name: string) => {
+      const file = join(f.root, `${name}.json`);
+      const result = run(f.home, ['sources', 'inspect', f.repo, '--profile', 'company-brain', '--include', 'docs/guide.md', '--include', 'people/owner.md', '--out', file, '--json']);
+      expect(result.code, result.err).toBe(0); return file;
+    };
+    const bad = run(f.home, ['sources', 'connect', '--plan', inspect('bad'), '--brain', 'host', '--source', 'wiki', '--yes', '--json']);
+    expect(bad.code).toBe(1);
+    const failed = JSON.parse(bad.out);
+    expect(failed.receipt).toMatchObject({ phase: 'CONTENT', outcome: 'incomplete' });
+    expect(failed.next_action).toContain('--replace-incomplete');
+    expect(failed.next_action).toContain(failed.receipt.id);
+    const single = run(f.home, ['sync', '--brain', 'host', '--source', 'wiki', '--no-pull', '--json']);
+    expect(single.code).toBe(1);
+    expect(JSON.parse(single.out).source_correction).toContain(`--replace-incomplete ${failed.receipt.id}`);
+    const all = run(f.home, ['sync', '--brain', 'host', '--all', '--no-pull', '--json']);
+    expect(all.code).toBe(1);
+    expect(JSON.parse(all.out).sources.find((source: { source_id: string }) => source.source_id === 'wiki').source_correction)
+      .toContain(`--replace-incomplete ${failed.receipt.id}`);
+    writeFileSync(join(f.repo, 'people/owner.md'), page('Owner', 'OWNER_CORRECTED', 'person')); commit('Correct fictional fence');
+    const correctedPlan = inspect('corrected');
+    const requestId = randomUUID();
+    const command = (plan: string, request = requestId) => ['sources', 'connect', '--plan', plan, '--brain', 'host', '--source', 'wiki',
+      '--replace-incomplete', failed.receipt.id, '--request-id', request, '--json'];
+    const preview = run(f.home, command(correctedPlan));
+    expect(preview.code).toBe(3);
+    expect(JSON.parse(preview.out)).toMatchObject({ code: 'confirmation_required', request_id: requestId });
+    const status = run(f.home, ['sources', 'status', 'wiki', '--json']);
+    expect(status.code).toBe(0);
+    expect(JSON.parse(status.out).sources[0].ingestion).toMatchObject({ state: 'incomplete', receipt_id: failed.receipt.id });
+    writeFileSync(join(f.repo, 'docs/guide.md'), page('Guide', 'GUIDE_REVIEWED')); commit('Advance before replacement approval');
+    const staleNew = run(f.home, [...command(correctedPlan, randomUUID()), '--yes']);
+    expect(staleNew.code).toBe(1);
+    expect(['plan_stale', 'source_not_ready']).toContain(JSON.parse(staleNew.out).code);
+    const stillIncomplete = run(f.home, ['sources', 'status', 'wiki', '--json']);
+    expect(stillIncomplete.code).toBe(0);
+    expect(JSON.parse(stillIncomplete.out).sources[0].ingestion).toMatchObject({ state: 'incomplete', receipt_id: failed.receipt.id });
+    const reviewedPlan = inspect('reviewed');
+    const approved = command(reviewedPlan, randomUUID());
+    const recovered = run(f.home, [...approved, '--yes']);
+    expect(recovered.code, recovered.err).toBe(0);
+    const result = JSON.parse(recovered.out);
+    expect(result).toMatchObject({ ok: true, receipt: { phase: 'COMPLETE', sourceIncarnation: failed.receipt.sourceIncarnation } });
+    writeFileSync(join(f.repo, 'docs/guide.md'), page('Guide', 'GUIDE_NOT_APPROVED_BY_THIS_REQUEST')); commit('Advance after approval');
+    const replay = run(f.home, [...approved, '--yes']);
+    expect(replay.code, replay.err).toBe(0);
+    expect(JSON.parse(replay.out).receipt).toMatchObject({ id: result.receipt.id, approvedRevision: result.receipt.approvedRevision });
+    const read = run(f.home, ['get', 'docs/guide', '--source-id', 'wiki', '--include-content', '--json']);
+    expect(read.code).toBe(0);
+    expect(JSON.parse(read.out).compiled_truth).toContain('GUIDE_REVIEWED');
+    expect(JSON.parse(read.out).compiled_truth).not.toContain('GUIDE_NOT_APPROVED_BY_THIS_REQUEST');
+  }, 180_000);
 });

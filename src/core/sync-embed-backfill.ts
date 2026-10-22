@@ -237,6 +237,7 @@ export function buildSingleSyncJsonEnvelope(
     embedded: number;
     failedFiles?: number;
     failureCodes?: Array<{ code: string; count: number }>;
+    sourceCorrection?: string;
     failures?: ManagedSyncFailure[];
     runId?: string;
     fromCommit?: string | null;

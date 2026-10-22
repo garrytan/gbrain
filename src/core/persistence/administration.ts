@@ -131,13 +131,15 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
   if (operation === 'company_brain_preview' || operation === 'company_brain_connect' || operation === 'company_brain_resume') {
     const writer = currentVerifiedLocalWriter();
     if (!writer || writer.remote || writer.principal.kind !== 'local_cli') throw trustedCliRequired('Company source administration requires an authenticated local CLI registration.');
-    keys(params, ['brain_id', 'source_id', 'path', 'plan', 'request_id']);
+    keys(params, ['brain_id', 'source_id', 'path', 'plan', 'request_id', 'replace_incomplete']);
     if (typeof params.brain_id !== 'string' || !params.brain_id.trim()) throw invalid('An explicit brain_id is required.',
       'Name the destination brain with --brain on gbrain sources connect (host, or a mounted brain id); gbrain mounts list --json shows the mounted brains.');
     const destination = { brainId: params.brain_id, sourceId: source(params.source_id), remote: false };
     const runtime = await import('../company-brain/runtime.ts');
     if (operation === 'company_brain_resume') return { ...await runtime.resumeCompanyBrain(engine, destination) };
     const input = { ...destination, path: path(params.path), plan: params.plan as import('../company-brain/types.ts').CompanyBrainPlan,
+      ...(params.replace_incomplete === undefined ? {} : { replaceIncomplete: uuid(params.replace_incomplete, 'A valid incomplete receipt UUID is required.',
+        'Pass --replace-incomplete with the receipt UUID shown by sources status and a reviewed corrected plan.') }),
       ...(params.request_id === undefined ? {} : { requestId: uuid(params.request_id, 'A valid connect request UUID is required.',
         'Pass --request-id with the UUID the earlier connect preview printed, or omit it to start a new connect request.') }) };
     if (operation === 'company_brain_preview') return { ...await runtime.previewCompanyBrain(engine, input) };

@@ -82,6 +82,7 @@ test/codex-plugin-manifest.test.ts	codex mcp.json	3	readFileSync
 test/codex-plugin-manifest.test.ts	curated tree membership + scanner guard	6	readFileSync
 test/codex-plugin-manifest.test.ts	generator negative fixtures (a guard that cannot fail is not coverage)	9	readFileSync
 test/codex-plugin-manifest.test.ts	variant ${def.plugin_name} (persona ${personaName})	5	readFileSync
+test/company-brain-reapproval.test.ts	company reapproval (${backend})	0	readFileSync
 test/compile-context-core.serial.test.ts	compile-context core arm	5	readFileSync
 test/compile-view.test.ts	compileView — determinism	3	readFileSync
 test/compile-view.test.ts	compileView — source isolation + read errors	3	readFileSync

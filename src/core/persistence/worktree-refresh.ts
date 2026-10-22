@@ -343,7 +343,7 @@ async function syncMembers(engine: BrainEngine, git: Git, row: WorktreeRefreshRo
       status = result.status;
       if (result.status === 'blocked_by_failures') {
         blocked.push({ source_id: sourceId, code: result.managedWrite?.write_error ?? result.failureCodes?.[0]?.code ?? 'sync_blocked',
-          message: result.managedWrite?.message ?? 'The managed sync is blocked by a failed write.', resume: `gbrain sync --source ${sourceId} --no-pull` });
+          message: result.managedWrite?.message ?? 'The managed sync is blocked by a failed write.', resume: result.sourceCorrection ?? `gbrain sync --source ${sourceId} --no-pull` });
         break;
       }
       if (result.status === 'partial') await new Promise(resolve => setTimeout(resolve, DRAIN_POLL_MS));

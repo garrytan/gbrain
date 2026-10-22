@@ -22,11 +22,14 @@ export const COMPANY_BRAIN_CONNECT_HELP = `Connect a reviewed company repository
                          [--profile company-brain] [--include <glob>] [--exclude <glob>]
                          [--yes] [--json] [--request-id <uuid>]
   gbrain sources connect --plan <file> --brain <id> --source <id> [--yes] [--json]
+                         [--replace-incomplete <receipt-uuid>]
 
 Both destination flags are required. A saved plan and a repository path are mutually exclusive.
 Connect previews the destination and asks before registering/indexing a new source.
 Non-interactive use needs the user's approval (--yes); without it the command exits 3.
 --yes never bypasses validation or access checks.
+--replace-incomplete approves a corrected saved plan for that exact unfinished receipt.
+It preserves the source, selection and access grants; active writes or recovery block it.
 No embeddings, Git pull/push, source edits, grants, skills, or schedules are enabled.
 Use sources inspect to create a private review plan before connecting.
 Resume incomplete work with: gbrain sync --brain <id> --source <id> --no-embed --no-pull
@@ -43,9 +46,10 @@ export interface CompanyBrainConnectArgs {
   json: boolean;
   yes: boolean;
   requestId: string;
+  replaceIncomplete?: string;
 }
 
-const CONNECT_OPTIONS = '--brain, --source, --profile company-brain, --include, --exclude, --plan, --request-id, --yes, and --json';
+const CONNECT_OPTIONS = '--brain, --source, --profile company-brain, --include, --exclude, --plan, --request-id, --replace-incomplete, --yes, and --json';
 
 function mountsFix(): Action {
   return readFix('Lists the mounted brains and their ids.', { argv: ['gbrain', 'mounts', 'list', '--json'] });
@@ -66,7 +70,7 @@ export function parseCompanyBrainConnectArgs(args: string[], explicitBrain: stri
     }
     const equal = arg.indexOf('=');
     const flag = equal < 0 ? arg : arg.slice(0, equal);
-    if (!['--source', '--profile', '--include', '--exclude', '--plan', '--request-id'].includes(flag)) {
+    if (!['--source', '--profile', '--include', '--exclude', '--plan', '--request-id', '--replace-incomplete'].includes(flag)) {
       throw opError('invalid_params', `Unknown connect option ${JSON.stringify(flag)}.`,
         `Connect accepts ${CONNECT_OPTIONS}; gbrain sources connect --help lists them.`);
     }
@@ -81,6 +85,7 @@ export function parseCompanyBrainConnectArgs(args: string[], explicitBrain: stri
     if (flag === '--source') options.sourceId = value;
     else if (flag === '--plan') options.planFile = value;
     else if (flag === '--request-id') options.requestId = value.toLowerCase();
+    else if (flag === '--replace-incomplete') options.replaceIncomplete = value.toLowerCase();
     else if (flag === '--include') options.include.push(value);
     else if (flag === '--exclude') options.exclude.push(value);
     else {
@@ -102,6 +107,10 @@ export function parseCompanyBrainConnectArgs(args: string[], explicitBrain: stri
   if (options.planFile && (options.include.length || options.exclude.length)) {
     throw opError('invalid_params', 'A saved plan fixes its selection. Inspect again to change include/exclude rules.',
       `Drop --include/--exclude to connect ${options.planFile} as reviewed, or run gbrain sources inspect again with the new rules and --out to write a new plan.`);
+  }
+  if (options.replaceIncomplete !== undefined && (!options.planFile || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(options.replaceIncomplete))) {
+    throw opError('invalid_params', '--replace-incomplete requires a receipt UUID and a reviewed --plan file.',
+      'Inspect the corrected commit with the existing selection, review the saved plan, and name the exact incomplete receipt from sources status.');
   }
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(options.requestId)) {
     throw opError('invalid_params', '--request-id must be a UUID.',
@@ -133,13 +142,17 @@ async function connectionPlan(options: CompanyBrainConnectArgs): Promise<Company
     throw opError('plan_stale', 'The saved plan has no valid repository identity. Inspect again.',
       `${options.planFile} has no repository identity. Inspect the repository again with gbrain sources inspect --profile company-brain --json --out and connect the new plan file.`);
   }
-  const validated = await validateCompanyBrainPlan(saved, { path, profile: options.profile, mode: 'apply' });
+  // Replacement replay may name a committed plan older than HEAD. The owner
+  // still requires apply-mode validation before admitting any NEW replacement.
+  const validated = await validateCompanyBrainPlan(saved, { path, profile: options.profile, mode: options.replaceIncomplete ? 'resume' : 'apply' });
   if (!validated.valid || !validated.plan) {
     throw opError(validated.code as RegistryCode, 'The saved plan is stale or not ready. Inspect the repository again.',
       `The checkout at ${path} no longer matches ${options.planFile}, or the plan has blocking findings. Inspect it again, review the new plan, and connect that one.`,
       { fix: readFix('A fresh read-only inspection shows what the checkout holds now.', { argv: ['gbrain', 'sources', 'inspect', path, '--profile', 'company-brain', '--json'] }) });
   }
-  return validated.plan;
+  // Resume validation deliberately ignores transient worktree observations.
+  // Keep the reviewed digest for request replay instead of the reinspection's.
+  return options.replaceIncomplete ? saved as CompanyBrainPlan : validated.plan;
 }
 
 export async function runCompanyBrainConnect(args: string[], connectEngine: () => Promise<BrainEngine>): Promise<void> {
@@ -167,22 +180,26 @@ export async function runCompanyBrainConnect(args: string[], connectEngine: () =
       setCliExitVerdict(1);
       return;
     }
-    const params = { brain_id: options.brainId, source_id: options.sourceId, path: plan.revision.root, plan, request_id: options.requestId };
+    const params = { brain_id: options.brainId, source_id: options.sourceId, path: plan.revision.root, plan, request_id: options.requestId,
+      ...(options.replaceIncomplete ? { replace_incomplete: options.replaceIncomplete } : {}) };
     const delegated = await maybeDelegateLocalAdministration('company_brain_preview', params, config, { timeoutMs: getCliOptions().timeoutMs ?? undefined });
-    const local = { brainId: options.brainId, sourceId: options.sourceId, path: plan.revision.root, plan, remote: false as const, requestId: options.requestId };
+    const local = { brainId: options.brainId, sourceId: options.sourceId, path: plan.revision.root, plan, remote: false as const, requestId: options.requestId,
+      ...(options.replaceIncomplete ? { replaceIncomplete: options.replaceIncomplete } : {}) };
     const preview = delegated.handled ? delegated.result : await (await import('../core/company-brain/runtime.ts')).previewCompanyBrain(engine = await connectEngine(), local);
     console.error(`Company source preview: ${JSON.stringify(preview, (_key, item) => typeof item === 'bigint' ? item.toString() : item)}`);
     console.error('This indexes the reviewed committed files. It does not change source files, access grants, or enable paid/background capabilities.');
     if (!options.yes && !isInteractive()) {
       // Exit 3 is confirmation_required's only meaning (agent operator contract v1).
-      const userMessage = `Connect the reviewed repository as source ${options.sourceId} in brain ${options.brainId}? It indexes its committed files; nothing else is enabled.`;
+      const userMessage = options.replaceIncomplete
+        ? `Replace incomplete receipt ${options.replaceIncomplete} for source ${options.sourceId} in brain ${options.brainId} with the reviewed corrected commit? Source identity and access grants stay unchanged.`
+        : `Connect the reviewed repository as source ${options.sourceId} in brain ${options.brainId}? It indexes its committed files; nothing else is enabled.`;
       if (json) await emit({ schema_version: 1, status: 'blocked', code: 'confirmation_required', brain_id: options.brainId, source_id: options.sourceId, request_id: options.requestId, preview, plan, user_message: userMessage });
       else console.error(`Connect needs the user's approval. Ask the user: ${userMessage} If they agree, run the same command with --yes and --request-id ${options.requestId}.`);
       setCliExitVerdict(CONFIRMATION_REQUIRED_EXIT_CODE);
       return;
     }
     if (!options.yes) {
-      const read = await readLine({ prompt: 'Connect this source? [y/N] ' });
+      const read = await readLine({ prompt: options.replaceIncomplete ? 'Replace this incomplete import with the reviewed plan? [y/N] ' : 'Connect this source? [y/N] ' });
       const answer = read.kind === 'line' ? read.text : '';
       if (!/^y(?:es)?$/i.test(answer.trim())) {
         if (json) await emit({ schema_version: 1, status: 'cancelled', code: 'declined', brain_id: options.brainId, source_id: options.sourceId });
@@ -207,7 +224,8 @@ export async function runCompanyBrainConnect(args: string[], connectEngine: () =
       result = { ...(json ? await withHumanLogsToStderr(connect) : await connect()) };
     }
     const status = result.ok === true ? 'complete' : 'incomplete';
-    const nextAction = `gbrain sync --brain ${options.brainId} --source ${options.sourceId} --no-embed --no-pull`;
+    const nextAction = typeof result.sourceCorrection === 'string' ? result.sourceCorrection
+      : `gbrain sync --brain ${options.brainId} --source ${options.sourceId} --no-embed --no-pull`;
     if (json) await emit({ schema_version: 1, status, ...result, brain_id: options.brainId, source_id: options.sourceId, request_id: options.requestId, next_action: nextAction });
     else await writeStdoutFinal(`Company source ${status}: ${options.brainId}/${options.sourceId}\n${JSON.stringify(result, (_key, item) => typeof item === 'bigint' ? item.toString() : item, 2)}\n${status === 'incomplete' ? 'Resume' : 'Next sync'}: ${nextAction}\n`);
     if (result.ok !== true) setCliExitVerdict(1);
