@@ -24,7 +24,7 @@ import { escapeLikePattern, hasCJK, cjkMatchTerms } from '../cjk.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import { frontmatterWhereSql } from './frontmatter-where.ts';
 import { resolveBoostMap, resolveHardExcludes } from './source-boost.ts';
-import { buildHardExcludeClause, buildSourceFactorCase, buildVisibilityClause } from './sql-ranking.ts';
+import { buildHardExcludeClause, buildSourceFactorCase, buildVisibilityClause, keywordPhraseFactorSql } from './sql-ranking.ts';
 
 /** Counts stop here; a capped count is reported as "10000+". */
 export const KEYWORD_COUNT_CAP = 10_000;
@@ -61,7 +61,8 @@ export function buildKeywordMatch(query: string, opts: SearchOpts | undefined): 
     params.push(query);
     const tsq = `websearch_to_tsquery('${getFtsLanguage()}', $${params.length})`;
     predicate = `cc.search_vector @@ ${tsq}`;
-    rank = () => `ts_rank(cc.search_vector, ${tsq})`;
+    const textParam = `$${params.length}`;
+    rank = () => `ts_rank(cc.search_vector, ${tsq}) * ${keywordPhraseFactorSql(getFtsLanguage(), textParam, opts?.keywordPhrase !== false)}`;
   }
   const add = (value: unknown, clause: (n: string) => string): string => { params.push(value); return ` AND ${clause(`$${params.length}`)}`; };
   let filters = '';

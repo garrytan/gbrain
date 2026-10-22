@@ -1414,6 +1414,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.relational_chain_slots',
   'search.collapse', // result-time collapse of twins, redirect stubs and document copies (mode.ts reads; boolean)
   'search.rank_priors', // rank priors after the reranker (mode.ts reads; boolean)
+  'search.keyword_phrase', // keyword phrase factor, #7175 (mode.ts reads; boolean)
   'search.diverse_pool_depth', // session-diverse pool before the reranker (mode.ts reads; `off` | 0..100; 0 = off)
   // Ranker wave (Phase E2): keyword-arm confidence floor — weak keyword arm fuses at half weight (mode.ts reads; `off` | (0, 1]).
   'search.keyword_arm_confidence_floor',

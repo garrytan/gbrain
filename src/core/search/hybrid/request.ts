@@ -247,6 +247,7 @@ export async function resolveHybridRequest(
     // Per-brain `search.source_boosts` (read in the mode snapshot) over the
     // defaults; the env override still wins inside resolveBoostMap.
     source_boosts: resolveBoostMap(undefined, modeInput.sourceBoosts),
+    keywordPhrase: resolvedMode.keyword_phrase,
     // v0.29.1: since/until take precedence over deprecated afterDate/beforeDate.
     // The engine still consumes the legacy field names; this aliasing keeps
     // PR #618 callers compiling while the new names are the public surface.

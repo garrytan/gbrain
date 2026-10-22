@@ -99,17 +99,23 @@ MCP:
 ```
 
 The response meta `explain_target` holds the diagnosis, and a notice carries
-the next step:
+the next step. On the command line, `gbrain search|query "<q>" --explain-target
+<source>:<slug> --json` prints `{ "results": [...], "explain_target": {...} }`
+instead of the bare array, with the fix rendered as a command (`next`, `argv`,
+`command`); without `--explain-target` the output stays an array. When an arm
+failed on the call, `why` names it, since a failed arm is not evidence of absence:
 
 | `code` | What happened | Next step |
 |---|---|---|
 | `target_returned` | The page is in the results at `rank`. | Read its `score_details`. |
-| `target_beyond_limit` | It ranked below the requested limit. | The notice repeats the search with a limit that reaches it. |
+| `target_collapsed` | It is a copy folded into the result at `rank`, which lists it in `collapsed`. | Read that row, or set `search.collapse false` to return every copy. |
+| `target_beyond_limit` | It ranked below the requested limit; `arms` and `why` give each arm's rank. | The notice repeats the search with a limit that reaches it. |
 | `target_dropped_dedup` | Dedup kept a higher-ranked row from the same page or a near-duplicate. | Read the page directly with `get_page`. |
 | `target_dropped_return_sizing` | Autocut or adaptive return trimmed it. | `get_page`, or repeat with `autocut: false` (query). |
 | `target_dropped_token_budget` | The evidence budget filled first. | Repeat with a larger `token_budget`. |
 | `target_dropped_relaxed_keyword` | Only a loose keyword match found it. | `get_page`, or rephrase with the page's own terms. |
 | `target_not_retrieved` | No arm returned it for this query. | `query --expand` (`expand: true`; one call to the configured expansion model) or rephrase. |
+| `target_not_embedded` | Its chunks have no vectors (held from embedding or not embedded yet), so only a keyword or title match can return it. | `gbrain doctor --json` names the held pages and the embed command. |
 | `target_not_indexed` | The page has no indexed chunks. | `gbrain doctor --json` names the re-index command. |
 | `target_projection_stale` | The page changed and its searchable text is still being rebuilt. | Retry after `gbrain doctor` shows the backlog drained. |
 | `target_safe_chunks_uncertified` | Remote reads withhold pages indexed before the current safe-chunk format. | The brain host runs `gbrain repair safe-chunks`. |

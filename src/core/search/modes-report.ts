@@ -68,6 +68,7 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   relational_chain_slots: 'When a multi-hop chain fired, up to this many chain rows (answers, then evidence pages) lead page 1 (0..10; 0 = single evidence slot)',
   collapse: 'Result-time collapse: same-slug twins in other sources, redirect stubs and copies of one document fold into the best row (listed in collapsed)',
   rank_priors: 'Rank priors after the reranker: organization over person when no person is named, weak OCR matches, dated over undated rows on when-questions',
+  keyword_phrase: 'Keyword phrase factor: a chunk holding the query as one contiguous phrase ranks higher in the keyword arm',
   diverse_pool_depth: 'Session-diverse pool before the reranker: each arm fetches at least N candidates, one row per session, the reranker reads at least N (0..100; 0 = off)',
   // Ranker wave (Phase E2) arm-confidence fusion
   keyword_arm_confidence_floor: 'Keyword-arm confidence floor: below this margin ratio the keyword + title lists fuse at half weight (null = off; (0, 1])',

@@ -99,6 +99,29 @@ function armsOf(trace: TargetTrace): ExplainTargetDiagnosis['arms'] {
   return trace.arms().filter(o => o.present).map(o => ({ arm: o.stage.slice(4), rank: o.rank! }));
 }
 
+type Retry = { tool: 'search' | 'query'; arguments: Record<string, unknown> };
+
+/** A complete retry: the MCP call and the CLI argv for the same arguments (#7192: a fix always names its command). */
+function retryAction(tool: 'search' | 'query', args: Record<string, unknown>, why: string): Action {
+  const { json, ...mcpArgs } = args;
+  const argv = ['gbrain', tool, String(args.query ?? '')];
+  for (const [key, value] of Object.entries(mcpArgs)) {
+    if (key === 'query' || value === undefined || value === null || typeof value === 'object') continue;
+    const flag = key.replace(/_/g, '-');
+    if (typeof value === 'boolean') argv.push(value ? `--${flag}` : `--no-${flag}`);
+    else argv.push(`--${flag}`, String(value));
+  }
+  if (json === true) argv.push('--json');
+  return { mcp: { tool, arguments: mcpArgs }, argv, consent: [], actor: 'agent', requires_exclusive: false, why };
+}
+
+/** Recall-affecting arm failures on this call, as one clause (#7171): an arm that did not answer is not evidence of absence. */
+function degradedClause(degraded: ReadonlyArray<{ stage?: string; reason?: string }> | undefined): string {
+  const arms = (degraded ?? []).filter(d => /_arm_failed$|^embed_(timeout|unavailable)$/.test(d.stage ?? ''))
+    .map(d => `${d.stage}${d.reason ? ` (${d.reason})` : ''}`);
+  return arms.length ? ` On this call ${arms.join(', ')}, so that arm returned nothing.` : '';
+}
+
 /**
  * Turn the observations into one state. `returned` is the final row list the
  * caller receives. `retry` holds the original search arguments so every fix
@@ -107,7 +130,8 @@ function armsOf(trace: TargetTrace): ExplainTargetDiagnosis['arms'] {
 export function diagnoseTrace(
   trace: TargetTrace,
   returned: readonly SearchResult[],
-  retry: { tool: 'search' | 'query'; arguments: Record<string, unknown> },
+  retry: Retry,
+  degraded?: ReadonlyArray<{ stage?: string; reason?: string }>,
 ): ExplainTargetDiagnosis {
   const target = { slug: trace.target.slug, ...(trace.target.sourceId ? { source_id: trace.target.sourceId } : {}) };
   const stages = trace.observations;
@@ -127,15 +151,21 @@ export function diagnoseTrace(
       : { target, state: 'retrieved', code: 'target_returned', rank: idx + 1, arms, stages,
           why: `The page is result #${idx + 1}; score_details on that row shows how its score was formed.` };
   }
+  const into = returned.findIndex(r => r.collapsed?.some(c => c.slug === trace.target.slug && (trace.target.sourceId === undefined || (c.source_id ?? 'default') === trace.target.sourceId)));
+  if (into >= 0) {
+    const kept = returned[into];
+    const reason = kept.collapsed!.find(c => c.slug === trace.target.slug)!.reason;
+    return { target, state: 'retrieved', code: 'target_collapsed', rank: into + 1, arms, stages,
+      why: `The page was folded into result #${into + 1} (${kept.source_id ?? 'default'}:${kept.slug}) as a ${reason}; that row lists it in \`collapsed\`. \`search.collapse false\` returns every copy.` };
+  }
   if (stages.length === 0) {
     return { target, state: 'not_recorded', code: 'target_not_recorded', arms, stages,
       why: 'This search path did not record stage observations for the target.' };
   }
   if (arms.length === 0) {
     return { target, state: 'not_retrieved', code: 'target_not_retrieved', arms, stages,
-      why: 'No retrieval arm (semantic, keyword, title, relational) returned the page for this query.',
-      fix: { mcp: { tool: 'query', arguments: { ...retry.arguments, query: retry.arguments.query } }, consent: [], actor: 'agent', requires_exclusive: false,
-        why: 'The query tool adds multi-query expansion, which recovers pages phrased differently from the question; or read the page directly with get_page.' } };
+      why: `No retrieval arm (semantic, keyword, title, relational) returned the page for this query.${degradedClause(degraded)}`,
+      fix: retryAction('query', { ...retry.arguments, expand: true }, 'Expansion (one LLM call) recovers pages phrased differently from the question; or read the page directly with get_page.') };
   }
   // The page reached at least one arm: find the first post-arm stage that lost it.
   const keywordRaw = trace.last('arm:keyword_raw');
@@ -151,12 +181,11 @@ export function diagnoseTrace(
     if (o.present) { lastSeen = o; continue; }
     const base = { target, state: 'dropped' as const, code: loss.code, why: loss.why, arms, stages, lost_at: loss.stage, last_seen: lastSeen, last_rank: lastSeen?.rank };
     if (loss.code === 'target_beyond_limit' && lastSeen?.rank) {
-      return { ...base, fix: { mcp: { tool: retry.tool, arguments: { ...retry.arguments, limit: Math.min(100, lastSeen.rank + 5) } },
-        consent: [], actor: 'agent', requires_exclusive: false, why: `Repeat the same search with a limit that reaches rank ${lastSeen.rank}.` } };
+      const armRanks = arms.map(a => a.arm + ' #' + a.rank).join(', ');
+      return { ...base, why: loss.why + ' It was #' + lastSeen.rank + ' after ranking' + (armRanks ? ' (arm ranks: ' + armRanks + ')' : '') + '.', fix: retryAction(retry.tool, { ...retry.arguments, limit: Math.min(100, lastSeen.rank + 5) }, `Repeat the same search with a limit that reaches rank ${lastSeen.rank}.`) };
     }
     if (loss.code === 'target_dropped_token_budget') {
-      return { ...base, fix: { mcp: { tool: retry.tool, arguments: { ...retry.arguments, token_budget: 12000 } },
-        consent: [], actor: 'agent', requires_exclusive: false, why: 'Repeat the same search with a larger evidence token budget, or read the page directly with get_page.' } };
+      return { ...base, fix: retryAction(retry.tool, { ...retry.arguments, token_budget: 12000 }, 'Repeat the same search with a larger evidence token budget, or read the page directly with get_page.') };
     }
     return { ...base, fix: getPage };
   }
@@ -168,6 +197,8 @@ export function diagnoseTrace(
 export interface TargetProbeRow {
   source_id: string;
   chunks: number;
+  /** Chunks with a vector; 0 with chunks > 0 means only the keyword and title arms can return the page. */
+  embedded: number;
   current: boolean;
   chunker_version: number | null;
 }
@@ -178,13 +209,14 @@ type ReadQuery = <T = Record<string, unknown>>(sql: string, params?: unknown[]) 
 export async function probeTarget(query: ReadQuery, slug: string, policy: PageReadPolicy, chunkManifest = true): Promise<TargetProbeRow[]> {
   const params: unknown[] = [slug];
   const filter = pageReadFilter('p', policy, params, true);
-  const rows = await query<{ source_id: string; chunks: number; current: boolean; chunker_version: number | null }>(
+  const rows = await query<{ source_id: string; chunks: number; embedded: number; current: boolean; chunker_version: number | null }>(
     `SELECT p.source_id,
        (SELECT COUNT(*)::int FROM content_chunks cc WHERE cc.page_id = p.id AND ${chunkGenerationFilter('p', 'cc', chunkManifest)}) AS chunks,
+       (SELECT COUNT(*)::int FROM content_chunks cc WHERE cc.page_id = p.id AND cc.embedding IS NOT NULL AND ${chunkGenerationFilter('p', 'cc', chunkManifest)}) AS embedded,
        ((p.text_projection_revision = p.knowledge_revision) IS TRUE) AS current,
        p.chunker_version
      FROM pages p WHERE p.slug = $1 AND ${filter} ORDER BY p.source_id`, params);
-  return rows.map(r => ({ source_id: r.source_id, chunks: Number(r.chunks), current: r.current === true, chunker_version: r.chunker_version == null ? null : Number(r.chunker_version) }));
+  return rows.map(r => ({ source_id: r.source_id, chunks: Number(r.chunks), embedded: Number(r.embedded), current: r.current === true, chunker_version: r.chunker_version == null ? null : Number(r.chunker_version) }));
 }
 
 /**
@@ -194,7 +226,7 @@ export async function probeTarget(query: ReadQuery, slug: string, policy: PageRe
 export function diagnoseProbe(
   ref: ExplainTargetRef,
   rows: readonly TargetProbeRow[],
-  opts: { requireSafeChunks: boolean; retry: { tool: 'search' | 'query'; arguments: Record<string, unknown> } },
+  opts: { requireSafeChunks: boolean; retry: Retry },
 ): ExplainTargetDiagnosis | null {
   const target = { slug: ref.slug, ...(ref.sourceId ? { source_id: ref.sourceId } : {}) };
   const scoped = ref.sourceId ? rows.filter(r => r.source_id === ref.sourceId) : rows;
@@ -207,8 +239,7 @@ export function diagnoseProbe(
   if (scoped.length > 1) {
     return { target, state: 'not_retrieved', code: 'target_ambiguous', arms: [], stages: [],
       why: `The slug exists in ${scoped.length} readable sources (${scoped.map(r => r.source_id).join(', ')}); name one as source:slug.`,
-      fix: { mcp: { tool: opts.retry.tool, arguments: { ...opts.retry.arguments, explain_target: `${scoped[0].source_id}:${ref.slug}` } },
-        consent: [], actor: 'agent', requires_exclusive: false, why: `Repeat with explain_target as <source>:${ref.slug}, source one of: ${scoped.map(r => r.source_id).join(', ')}.` } };
+      fix: retryAction(opts.retry.tool, { ...opts.retry.arguments, explain_target: `${scoped[0].source_id}:${ref.slug}` }, `Repeat with explain_target as <source>:${ref.slug}, source one of: ${scoped.map(r => r.source_id).join(', ')}.`) };
   }
   const row = scoped[0];
   const withSource = { ...target, source_id: row.source_id };
@@ -223,6 +254,12 @@ export function diagnoseProbe(
       why: 'The page changed and its searchable text has not been rebuilt yet; search reads only the current revision.',
       fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Doctor shows the projection backlog and whether a worker is draining it; retry the search after it catches up.' } };
+  }
+  if (row.embedded === 0) {
+    return { target: withSource, state: 'not_retrieved', code: 'target_not_embedded', arms: [], stages: [],
+      why: `None of the page's ${row.chunks} chunks has a vector (held from embedding or not embedded yet), so the semantic arm cannot return it; only an exact keyword or title match can.`,
+      fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+        why: 'Doctor reports pages held from embedding or missing vectors and the command that embeds them.' } };
   }
   if (opts.requireSafeChunks && belowSafeChunkFence(row.chunker_version)) {
     return { target: withSource, state: 'not_retrieved', code: 'target_safe_chunks_uncertified', arms: [], stages: [],

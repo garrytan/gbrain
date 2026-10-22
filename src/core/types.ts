@@ -1359,6 +1359,8 @@ export interface SearchOpts extends PageReadPolicy {
   keywordTimeoutCache?: boolean;
   /** Keyword `score` query (websearch syntax) while `query` decides the matches (alias fan-out); ignored on the CJK path. */
   rankQuery?: string;
+  /** #7175: false drops the keyword phrase factor (`search.keyword_phrase false`); unset keeps it. */
+  keywordPhrase?: boolean;
   /**
    * v0.27.1 / v0.36 (D11): target column for vector search. Two shapes:
    *
