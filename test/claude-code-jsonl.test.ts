@@ -130,6 +130,27 @@ describe('parseTranscript on the fixture [G3, A6]', () => {
     expect(r.recognizedOnly).toBeUndefined();
   });
 
+  test('turn records with a null or missing message keep the drift path open', () => {
+    const dir = tdir();
+    for (const [name, rows] of [
+      ['null-message.jsonl', [
+        { type: 'last-prompt', prompt: 'hi', sessionId: 's' },
+        { type: 'user', message: null, sessionId: 's' },
+        { type: 'assistant', message: null, sessionId: 's' },
+      ]],
+      ['missing-message.jsonl', [
+        { type: 'permission-mode', permissionMode: 'default', sessionId: 's' },
+        { type: 'user', content: 'payload moved off message', sessionId: 's' },
+      ]],
+    ] as const) {
+      const p = join(dir, name);
+      writeFileSync(p, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+      const r = parseTranscript(p);
+      expect(r.turns).toHaveLength(0);
+      expect(r.recognizedOnly).toBeUndefined();
+    }
+  });
+
   test('only unknown records (no scaffolding) keeps the drift path open', () => {
     const dir = tdir();
     const p = join(dir, 'unknown.jsonl');
