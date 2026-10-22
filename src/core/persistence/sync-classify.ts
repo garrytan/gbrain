@@ -64,6 +64,8 @@ export interface SyncPathState {
   fullObligation?: boolean;
   /** Under a `storage.keep_db` prefix, on a source that is not mirror-read-only. */
   keepDb: boolean;
+  /** #7324: declared storage.db_only page whose origin is absent from the pinned tree. */
+  databaseOnly?: boolean;
   /** Open work on the page or path (a queued/running/recovering request, a pending Git effect). */
   openWork: boolean;
   /**
@@ -145,6 +147,7 @@ function afterHold(s: SyncPathState): Matched {
   if (s.spelling) return { cls: 'spelling', settled: s.spelling === 'legacy', action: s.spelling === 'legacy' ? 'none' : 'refuse' };
   if (s.mode === 'committed' && s.tree === null && !live) return { cls: 'untracked', settled: true, action: 'none' };
   if (live && s.level === null) {
+    if (s.databaseOnly && s.tree === null) return { cls: 'kept', settled: true, action: 'none' };
     if (s.mode === 'committed' && s.present) return { cls: 'kept', settled: true, action: 'none' };
     if (!s.present) {
       if (s.originEvidence && s.originEvidence !== 'committed') return { cls: 'delete_drift', settled: false, action: 'hold', side: 'deleted', state: 'file_gone',

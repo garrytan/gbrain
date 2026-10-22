@@ -27,6 +27,7 @@ import { resolvePageWriteTarget, scannerSlugRootMode } from '../write-through.ts
 import { managedPersistenceEnabled } from './ownership.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
+import { isSourceDbOnlySlug } from './source-storage.ts';
 
 export const DETACHED_REASON = 'detached';
 const DOCS = 'docs/storage-tiering.md#restoring-a-page-whose-file-is-gone';
@@ -72,9 +73,14 @@ export async function absentRecordedFile(engine: BrainEngine, sourceId: string, 
  * refuses unless `detach`; `detach` is refused when there is nothing to detach.
  */
 export async function assertRestoreOrigin(engine: BrainEngine, input: { sourceId: string; slug: string; snapshot: PageSnapshot | null;
-  publishesFile: boolean; detach: boolean; remote: boolean }): Promise<void> {
+  publishesFile: boolean; detach: boolean; remote: boolean; root?: string }): Promise<void> {
   const { sourceId, slug, snapshot } = input;
-  const absent = snapshot?.page.deleted_at && !input.publishesFile ? await absentRecordedFile(engine, sourceId, snapshot.page) : null;
+  // #7324: a declared database-only origin that left the syncable tree is
+  // not made file-backed again merely because this source has a worktree.
+  // Presence in the tree still wins: declarations never detach tracked files.
+  const declared = !!input.root && isSourceDbOnlySlug(input.root, slug, 'refuse');
+  const absent = snapshot?.page.deleted_at && (!input.publishesFile || declared)
+    ? await absentRecordedFile(engine, sourceId, snapshot.page) : null;
   if (input.detach) {
     if (absent) return;
     throw opError('invalid_params', 'There is nothing to detach.',
