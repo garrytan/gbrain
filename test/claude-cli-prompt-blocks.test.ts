@@ -101,6 +101,10 @@ describe('claude-cli reads stream-json stdout', () => {
     expect(out.usage).toEqual({ inputTokens: 2 + 14_307 + 14_248, outputTokens: 5, totalTokens: 2 + 14_307 + 14_248 + 5, cachedInputTokens: 14_307 });
   });
 
+  test('a stream that ends after the init event reports the missing result event', async () => {
+    await expect(generate(turn1, ndjson([init]))).rejects.toThrow('no "result" event');
+  });
+
   test('a continued answer is rebuilt from the streamed assistant events (#6791)', async () => {
     const stdout = ndjson([
       init,

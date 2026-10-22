@@ -173,6 +173,11 @@ function parseResultEnvelope(stdout: string): EnvelopeParse {
       return { ok: false, reason: 'not-json', error };
     }
   }
+  // A one-line stream is a single event, not a bare result object.
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    && typeof (parsed as { type?: unknown }).type === 'string' && (parsed as { type: string }).type !== 'result') {
+    parsed = [parsed];
+  }
   const events = Array.isArray(parsed) ? parsed : null;
   if (Array.isArray(parsed)) {
     const resultEvent = parsed.find(
