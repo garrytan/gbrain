@@ -176,16 +176,16 @@ export function unionExtractableTypes(packExtractable: Iterable<string>, packExc
  * Resolve the atom-extraction type allowlist from the active schema pack.
  * Closes the D2 TODO of honoring the pack manifest (so a type declared
  * extractable — e.g. `note` — actually extracts) while preserving behavior for
- * gbrain-base via the legacy-floor union. Fail-soft: any pack-load error falls
+ * gbrain-base via the legacy-floor union. Resolved through the engine so the DB-plane
+ * `schema_pack` / `schema_pack.source.<id>` apply. Fail-soft: any pack-load error falls
  * back to the legacy floor.
  */
-async function resolveExtractableTypes(): Promise<string[]> {
+async function resolveExtractableTypes(engine: BrainEngine, sourceId?: string): Promise<string[]> {
   let packExtractable: Iterable<string> = [], packExcluded: Iterable<string> = [];
   try {
-    const { loadConfig } = await import('../config.ts');
-    const { loadActivePack } = await import('../schema-pack/load-active.ts');
+    const { loadActivePackForEngine } = await import('../schema-pack/engine-resolution.ts');
     const { extractableTypesFromPack, nonExtractableTypesFromPack } = await import('../schema-pack/extractable.ts');
-    const resolved = await loadActivePack({ cfg: loadConfig(), remote: false });
+    const resolved = await loadActivePackForEngine(engine, { remote: false, ...(sourceId ? { sourceId } : {}) });
     packExtractable = extractableTypesFromPack(resolved.manifest); packExcluded = nonExtractableTypesFromPack(resolved.manifest);
   } catch {
     // Pack unavailable (test seams, bootstrap) — legacy floor only.
@@ -437,7 +437,7 @@ export async function discoverExtractablePages(
   `;
   const params: unknown[] = [
     sourceId,
-    await resolveExtractableTypes(),
+    await resolveExtractableTypes(engine, sourceId),
     MIN_PAGE_CHARS_FOR_EXTRACTION,
     limit,
   ];
@@ -531,7 +531,7 @@ export async function countExtractAtomsBacklog(
                AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
                AND atom.deleted_at IS NULL
            )`;
-    const extractableTypes = await resolveExtractableTypes();
+    const extractableTypes = await resolveExtractableTypes(engine, scoped ? sourceId : undefined);
     const params = scoped
       ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION]
       : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION];
