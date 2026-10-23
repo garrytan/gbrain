@@ -782,7 +782,7 @@ describe('google-source materialize', () => {
         await sweep(dir, fx, vault, {}, 'gmail');
         expect(readGoogleState(dir).gmail_history_id).toBe('1000');
 
-        // History flags all six threads; the wall-clock budget expires after two.
+        // History flags all six threads; the wall-clock budget expires after one lands.
         fx.history = [tids];
         fx.historyResponseId = '1010';
         const controller = new AbortController();
@@ -793,13 +793,13 @@ describe('google-source materialize', () => {
         expect(res1.status).toBe('partial');
         let state = readGoogleState(dir);
         expect(state.gmail_history_id).toBe('1010');
-        expect(state.gmail_pending_thread_ids).toEqual(tids.slice(2));
+        expect(state.gmail_pending_thread_ids).toEqual(tids.slice(1));
 
-        // Resume: only the four unlanded threads are fetched, then the backlog clears.
+        // Resume: the five unlanded threads are fetched, then the backlog clears.
         fx.onThreadFetch = undefined;
         const fetchesBefore = fx.threadFetches;
         await sweep(dir, fx, vault, {}, 'gmail');
-        expect(fx.threadFetches - fetchesBefore).toBe(4);
+        expect(fx.threadFetches - fetchesBefore).toBe(5);
         state = readGoogleState(dir);
         expect(state.gmail_history_id).toBe('1010');
         expect(state.gmail_pending_thread_ids).toEqual([]);
@@ -1329,6 +1329,35 @@ describe('google-source materialize', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+  test('Gmail loop work is fully suppressed by the per-run opt-out', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-no-loops-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    fx.messages.push(
+      gmsg('18c2f4a9b3d21e01', T_A, daysAgoMs(2)),
+      gmsg('18c2f4a9b3d21e02', T_A, daysAgoMs(2) + 3_600_000, {
+        headers: { From: 'A Example <a@example.com>', To: 'charlie@example.com', Subject: 'Re: Quarterly zephyr roadmap' },
+        labelIds: ['SENT'], body: 'Looks good, shipping it this week.',
+      }),
+    );
+    __setChatTransportForTests(async () => {
+      throw new Error('chat transport must not be called by the sweep');
+    });
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        const result = await sweep(dir, fx, vault, { noLoopsExtract: true }, 'gmail');
+        expect(result.loops_enqueue).toEqual({ enqueued: 0, deferred: 0, skipped_reason: 'run_opt_out' });
+        const jobs = await engine.executeRaw<{ id: number }>(
+          `SELECT id FROM minion_jobs WHERE name = 'loops_extract'`,
+        );
+        expect(jobs).toHaveLength(0);
+      });
+    } finally {
+      __setChatTransportForTests(null);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ── Secondary calendars (one calendar per source) ────────────────────────────
@@ -1420,9 +1449,10 @@ describe('google-source gmail recent-first cursors', () => {
         expect(state.gmail_backfill_done).toBe(true);
         expect(state.gmail_backfill_cutoff_ms).toBe(daysAgoMs(50));
 
-        // Back to 120 days: only the four unimported archive threads are fetched.
+        // Back to 120 days: the four unimported archive threads plus two
+        // exact-second boundary threads are fetched.
         await sweepDays(dir, fx, vault, 120);
-        expect(fx.threadFetches - fetches).toBe(4);
+        expect(fx.threadFetches - fetches).toBe(6);
         state = readGoogleState(dir);
         expect(state.gmail_backfill_done).toBe(true);
         expect((await slugsWhere(`slug LIKE 'emails/%'`)).length).toBe(6);

@@ -542,8 +542,10 @@ describe('GoogleApiClient retry exhaustion + 403 mapping', () => {
 describe('GmailClient', () => {
   test('listMessageIds passes q through and drains pages', async () => {
     const seenQ: Array<string | null> = [];
+    const seenPageSizes: Array<string | null> = [];
     const h = makeHarness((u) => {
       seenQ.push(u.searchParams.get('q'));
+      seenPageSizes.push(u.searchParams.get('maxResults'));
       const t = u.searchParams.get('pageToken');
       if (!t) {
         return json({
@@ -560,6 +562,7 @@ describe('GmailClient', () => {
       { id: '18c2f4a9b3d21e02', threadId: '17aa3333cccc4444' },
     ]);
     expect(seenQ).toEqual(['after:123 before:456', 'after:123 before:456']);
+    expect(seenPageSizes).toEqual(['500', '500']);
   });
 
   test('listHistoryThreadIds dedupes thread ids across record kinds and returns the new cursor', async () => {

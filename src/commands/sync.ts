@@ -176,6 +176,8 @@ export interface SyncOpts {
   noPull?: boolean;
   noEmbed?: boolean;
   noExtract?: boolean;
+  /** Skip Gmail loop catch-up and chat-model extraction queueing for this run. */
+  noLoopsExtract?: boolean;
   /**
    * #3969: opt back into per-poll ingest_log rows. By default a sync that
    * landed nothing (no pages written, no chunks, no failures acknowledged)

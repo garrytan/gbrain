@@ -15,7 +15,7 @@
 import { afterAll, expect, test } from 'bun:test';
 import { MAINTENANCE_PUBLISH_WAIT_MS, MAINTENANCE_WRITE_WAIT_MS, MaintenanceWriteWait, __setMaintenanceWriteWaitForTests, maintenancePublishWaitMs } from '../src/core/persistence/maintenance-wait.ts';
 import { EFFECT_RENEWAL_INTERVAL_MS, __setEffectRenewalIntervalForTests, effectRenewalInterval } from '../src/core/persistence/effects.ts';
-import { CONNECTOR_WAIT_BUDGET_MS, connectorWaitBudget } from '../src/core/persistence/connector-sync.ts';
+import { CONNECTOR_WAIT_BUDGET_MS, GMAIL_CONNECTOR_WAIT_BUDGET_MS, connectorWaitBudget } from '../src/core/persistence/connector-sync.ts';
 import { createConnectorFixture, withPausedOwnerBudget } from './helpers/connector-fixture.ts';
 
 function expectProductionDefaults(): void {
@@ -23,13 +23,14 @@ function expectProductionDefaults(): void {
   expect(new MaintenanceWriteWait().ms()).toBe(MAINTENANCE_WRITE_WAIT_MS);
   expect(effectRenewalInterval()).toBe(EFFECT_RENEWAL_INTERVAL_MS);
   expect(connectorWaitBudget.ms).toBe(CONNECTOR_WAIT_BUDGET_MS);
+  expect(connectorWaitBudget.gmailMs).toBe(GMAIL_CONNECTOR_WAIT_BUDGET_MS);
 }
 
 afterAll(expectProductionDefaults);
 
 test('production defaults are the documented values', () => {
-  expect([MAINTENANCE_PUBLISH_WAIT_MS, MAINTENANCE_WRITE_WAIT_MS, EFFECT_RENEWAL_INTERVAL_MS, CONNECTOR_WAIT_BUDGET_MS])
-    .toEqual([5_000, 30_000, 10_000, 30_000]);
+  expect([MAINTENANCE_PUBLISH_WAIT_MS, MAINTENANCE_WRITE_WAIT_MS, EFFECT_RENEWAL_INTERVAL_MS, CONNECTOR_WAIT_BUDGET_MS, GMAIL_CONNECTOR_WAIT_BUDGET_MS])
+    .toEqual([5_000, 30_000, 10_000, 30_000, 60_000]);
   expectProductionDefaults();
 });
 
@@ -59,8 +60,13 @@ test('the connector fixture restores the production wait budget on teardown', as
   await fixture.setup();
   try {
     expect(connectorWaitBudget.ms).toBe(CONNECTOR_WAIT_BUDGET_MS);
-    await withPausedOwnerBudget(async () => { expect(connectorWaitBudget.ms).toBeLessThan(CONNECTOR_WAIT_BUDGET_MS); });
+    expect(connectorWaitBudget.gmailMs).toBe(GMAIL_CONNECTOR_WAIT_BUDGET_MS);
+    await withPausedOwnerBudget(async () => {
+      expect(connectorWaitBudget.ms).toBeLessThan(CONNECTOR_WAIT_BUDGET_MS);
+      expect(connectorWaitBudget.gmailMs).toBeLessThan(GMAIL_CONNECTOR_WAIT_BUDGET_MS);
+    });
     expect(connectorWaitBudget.ms).toBe(CONNECTOR_WAIT_BUDGET_MS);
+    expect(connectorWaitBudget.gmailMs).toBe(GMAIL_CONNECTOR_WAIT_BUDGET_MS);
   } finally { await fixture.teardown(); }
   expectProductionDefaults();
 }, 120_000);

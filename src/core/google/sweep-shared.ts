@@ -164,7 +164,7 @@ export async function importRendered(
   summary: GoogleSyncSummary,
   countedSlugs: Set<string>,
   identity: Record<string, string | readonly string[]> = {},
-): Promise<string> {
+): Promise<{ slug: string; pending: boolean }> {
   markdown = connectorRender(markdown, { path: relPath, account: deps.cfg.account, ...identity });
   const slug = slugifyPath(relPath);
   const [labels] = await deps.engine.executeRaw<{ type: string; frontmatter: unknown }>(
@@ -180,7 +180,7 @@ export async function importRendered(
         countedSlugs.add(result.slug);
       }
     }
-    return result.slug;
+    return { slug: result.slug, pending: result.pending };
   }
   const filePath = join(deps.cfg.dir, relPath);
   assertContained(deps.cfg.dir, filePath);
@@ -228,7 +228,7 @@ export async function importRendered(
         countedSlugs.add(result.slug);
       }
     }
-    return result.slug;
+    return { slug, pending: false };
   } finally {
     if (!databaseOnly) rmSync(tmpPath, { force: true });
   }

@@ -422,7 +422,7 @@ export class GmailClient extends GoogleApiClient {
   ): Promise<Array<{ id: string; threadId: string }>> {
     return this.drainPages(
       (t) =>
-        `${GMAIL_BASE}/users/me/messages?maxResults=100&q=${encodeURIComponent(q)}${t ? `&pageToken=${encodeURIComponent(t)}` : ''}`,
+        `${GMAIL_BASE}/users/me/messages?maxResults=500&q=${encodeURIComponent(q)}${t ? `&pageToken=${encodeURIComponent(t)}` : ''}`,
       (body) => ({
         items: (body.messages as Array<{ id: string; threadId: string }> | undefined) ?? [],
         nextPageToken: (body.nextPageToken as string | undefined) ?? null,

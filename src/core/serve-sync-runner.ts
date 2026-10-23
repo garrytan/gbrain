@@ -346,6 +346,7 @@ function classicSyncOpts(options: DelegatedSyncOptions, sourceId: string | undef
     full: options.full,
     noPull: options.noPull,
     noExtract: options.noExtract,
+    noLoopsExtract: options.noLoopsExtract,
     noSchemaPack: options.noSchemaPack,
     skipFailed: options.skipFailed,
     retryFailed: options.retryFailed,

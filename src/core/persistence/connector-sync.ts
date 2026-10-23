@@ -20,7 +20,7 @@ import { digest, sha256 } from './digest.ts';
 import { admitWriteInTransaction, assertReplayIntent, getWriteRequest, getWriteRequestById, intentDigest, receiptFor } from './journal.ts';
 import { acquireWorktree, containsPath, getWorktreeBinding, probeWorktreeWriter, readManagedMode, type WorktreeBinding } from './ownership.ts';
 import { localHostId } from './identity.ts';
-import { assertPersistenceAccepting, startPersistenceConsumer, waitForWrite, writeResponse } from './service.ts';
+import { assertPersistenceAccepting, startPersistenceConsumer, waitForWrite, waitForWrites, writeResponse } from './service.ts';
 import { maintenancePublishWaitMs } from './maintenance-wait.ts';
 import { AGENT_WRITE_WAIT_MS, configuredWriteWaitMs } from './write-wait.ts';
 import { managedSyncAuthority, validateManagedSyncOptions, validateSyncAuthority, type SyncAuthority } from './sync-authority.ts';
@@ -60,11 +60,23 @@ const CHECKPOINT_SLUG = '__managed_connector_checkpoint__';
  * for the checkpoint and state writes.
  */
 export const CONNECTOR_WAIT_BUDGET_MS = 30_000;
-/** Test seam: fixtures that pause the owner shorten the budget instead of waiting 30 s per run. */
-export const connectorWaitBudget = { ms: CONNECTOR_WAIT_BUDGET_MS };
+/** Gmail needs room for its observed 22s import receipt and a durable cursor write within one 2-minute sweep. */
+export const GMAIL_CONNECTOR_WAIT_BUDGET_MS = 60_000;
+/** Test seams: fixtures that pause the owner shorten the budget instead of waiting per run. */
+export const connectorWaitBudget = { ms: CONNECTOR_WAIT_BUDGET_MS, gmailMs: GMAIL_CONNECTOR_WAIT_BUDGET_MS };
 const WAIT_RESERVE_MS = 1_000;
 const COMMIT_GRACE_MS = 1_000;
 const ITEM_WAIT_MS = 5_000;
+// Observed Gmail receipt latency reached 25.69s; allow margin above it.
+const GMAIL_ITEM_WAIT_MS = 28_000;
+const CONNECTOR_DRAIN_MAX_PASSES = 4;
+const CONNECTOR_DRAIN_WAIT_SLICE_MS = 5_000;
+
+/** Bound each receipt-settle wait, not the wall time spent on prior provider sweeps. */
+export function continuationWaitDeadlineAtMs(now = Date.now(), runDeadlineAtMs?: number, waitBudgetMs = CONNECTOR_WAIT_BUDGET_MS): number {
+  const waitDeadlineAtMs = now + waitBudgetMs;
+  return runDeadlineAtMs === undefined ? waitDeadlineAtMs : Math.min(runDeadlineAtMs, waitDeadlineAtMs);
+}
 
 /**
  * #6831: the pages guard refused this connector item because its content matches a page purge tombstone. That is the
@@ -72,6 +84,10 @@ const ITEM_WAIT_MS = 5_000;
  * rest of the run goes on. Every other failed receipt still fails the run or joins the retry set.
  */
 const purgedRefusal = (row: WriteRequest) => row.state === 'failed' && row.error_code === 'purged_content';
+function isLiveRetainedPublication(row: WriteRequest): boolean {
+  return row.recovery != null && row.state === 'running' && row.blocked_reason == null && row.claim_expires_at != null
+    && new Date(row.claim_expires_at).getTime() > Date.now();
+}
 /**
  * Accepted-pending writes stop the sweep: the run ends partial with its pending
  * set recorded. A `write_pending` error, so direct session callers and
@@ -300,7 +316,7 @@ export async function withConnectorSync<T>(engine: BrainEngine, sourceId: string
   return withRefreshingLock(engine, syncLockId(sourceId), async (signal, handle) => {
     const combined = opts.signal ? AbortSignal.any([opts.signal, signal]) : signal;
     const options = { ...opts, signal: combined };
-    const session = await beginConnectorSync(engine, sourceId, connector, config, options, { handle, signal: combined });
+    let session = await beginConnectorSync(engine, sourceId, connector, config, options, { handle, signal: combined });
     if (!session) throw opError('source_changed', 'The managed connector mode changed before the sweep.',
       `Managed persistence was switched while the sync of ${sourceId} started, so nothing was swept. Check the mode with gbrain sources writer status --source ${sourceId} --json, then run gbrain sync --source ${sourceId}.`,
       { fix: ownerStatusFix(sourceId, 'Shows whether managed persistence is active for this brain and source.') });
@@ -308,24 +324,54 @@ export async function withConnectorSync<T>(engine: BrainEngine, sourceId: string
     // session keeps the stamp in the state row it writes back.
     await recordConnectorSyncAttempt(engine, sourceId);
     session.markSyncAttempted();
-    let result: T;
-    try {
-      result = await work(session, options);
-    } catch (error) {
-      if (!(error instanceof ConnectorWaitBudgetStop)) {
-        // #6831: a run cut short by its caller's deadline or cancel is not a failure of the source.
-        const failure = combined.aborted ? undefined : error;
-        if (error instanceof OperationError || (failure && !(error instanceof LockStolenError))) await session.finish(failure).catch(() => {});
+    let accumulated: T | undefined;
+    const waitForContinuation = (current: ManagedConnectorSync) =>
+      current.waitForRecordedPending(continuationWaitDeadlineAtMs(Date.now(), opts.deadlineAtMs, current.waitBudgetMs));
+    for (let pass = 0; ; pass++) {
+      let result: T;
+      try {
+        result = await work(session, options);
+      } catch (error) {
+        if (!(error instanceof ConnectorWaitBudgetStop)) {
+          // #6831: a run cut short by its caller's deadline or cancel is not a failure of the source.
+          const failure = combined.aborted ? undefined : error;
+          if (error instanceof OperationError || (failure && !(error instanceof LockStolenError))) await session.finish(failure).catch(() => {});
+          throw error;
+        }
+        await session.finish();
+        if (onPending) {
+          const partial = onPending(null, session);
+          accumulated = mergeConnectorResults(accumulated, partial);
+          if (connector === 'google' && opts.drain && pass < CONNECTOR_DRAIN_MAX_PASSES - 1 && !opts.full && session.canContinueAfterPending() &&
+              await waitForContinuation(session)) {
+            const skipTail = session.tailComplete();
+            session = await beginConnectorSync(engine, sourceId, connector, config, options, { handle, signal: combined });
+            if (!session) throw opError('source_changed', 'The managed connector mode changed before continuation.',
+              `Managed persistence was switched while the sync of ${sourceId} continued; the source was not re-swept.`,
+              { fix: ownerStatusFix(sourceId, 'Shows whether managed persistence remains active for this source.') });
+            session.markContinuationPass(skipTail);
+            continue;
+          }
+          return accumulated;
+        }
+        error.suggestion = `Accepted connector writes are still pending; they are recorded and resolved first on the next run: gbrain sync --source ${sourceId}`;
         throw error;
       }
+      accumulated = mergeConnectorResults(accumulated, result);
+      await session.assertLease(engine);
       await session.finish();
-      if (onPending) return onPending(null, session);
-      error.suggestion = `Accepted connector writes are still pending; they are recorded and resolved first on the next run: gbrain sync --source ${sourceId}`;
-      throw error;
+      if (connector === 'google' && session.deferred && onPending && opts.drain && !opts.full && session.canContinueAfterPending() &&
+          pass < CONNECTOR_DRAIN_MAX_PASSES - 1 && await waitForContinuation(session)) {
+        const skipTail = session.tailComplete();
+        session = await beginConnectorSync(engine, sourceId, connector, config, options, { handle, signal: combined });
+        if (!session) throw opError('source_changed', 'The managed connector mode changed before continuation.',
+          `Managed persistence was switched while the sync of ${sourceId} continued; the source was not re-swept.`,
+          { fix: ownerStatusFix(sourceId, 'Shows whether managed persistence remains active for this source.') });
+        session.markContinuationPass(skipTail);
+        continue;
+      }
+      return session.deferred && onPending ? onPending(accumulated!, session) : accumulated!;
     }
-    await session.assertLease(engine);
-    await session.finish();
-    return session.deferred && onPending ? onPending(result, session) : result;
   });
 }
 
@@ -336,6 +382,37 @@ export function pendingConnectorResult(result: SyncResult | null, session: Manag
   const base: SyncResult = result ?? { status: 'partial', fromCommit: null, toCommit: '', added: session.counts.created, modified: session.counts.updated,
     deleted: session.counts.deleted, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
   return { ...base, status: 'partial', reason: 'writer_pending' };
+}
+
+function mergeConnectorResults<T>(prior: T | undefined, next: T): T {
+  if (prior === undefined || !prior || !next || typeof prior !== 'object' || typeof next !== 'object') return next;
+  const a = prior as unknown as SyncResult;
+  const b = next as unknown as SyncResult;
+  const sum = (key: 'added' | 'modified' | 'deleted' | 'renamed' | 'chunksCreated' | 'embedded' | 'failedFiles') =>
+    (a[key] ?? 0) + (b[key] ?? 0);
+  const priorChanged = (a.added ?? 0) + (a.modified ?? 0) + (a.deleted ?? 0) > 0;
+  const priorStatus = a.reason === 'writer_pending' ? (priorChanged ? 'synced' : 'up_to_date') : a.status;
+  const status = b.status === 'partial' || priorStatus === 'partial' ? 'partial'
+    : b.status === 'up_to_date' ? priorStatus
+      : priorStatus === 'first_sync' && b.status === 'synced' ? 'first_sync' : b.status;
+  const loopsEnqueue = a.loops_enqueue || b.loops_enqueue ? {
+    enqueued: (a.loops_enqueue?.enqueued ?? 0) + (b.loops_enqueue?.enqueued ?? 0),
+    deferred: (a.loops_enqueue?.deferred ?? 0) + (b.loops_enqueue?.deferred ?? 0),
+    ...(b.loops_enqueue?.skipped_reason ?? a.loops_enqueue?.skipped_reason
+      ? { skipped_reason: b.loops_enqueue?.skipped_reason ?? a.loops_enqueue?.skipped_reason } : {}),
+  } : undefined;
+  const connectorHolds = a.connectorHolds || b.connectorHolds ? {
+    ...(a.connectorHolds ?? {}), ...(b.connectorHolds ?? {}),
+    held: b.connectorHolds?.held ?? a.connectorHolds?.held ?? 0,
+    newly_held: (a.connectorHolds?.newly_held ?? 0) + (b.connectorHolds?.newly_held ?? 0),
+  } : undefined;
+  return { ...a, ...b, status, reason: b.reason ?? (a.reason === 'writer_pending' ? undefined : a.reason),
+    added: sum('added'), modified: sum('modified'), deleted: sum('deleted'), renamed: sum('renamed'),
+    chunksCreated: sum('chunksCreated'), embedded: sum('embedded'),
+    ...(a.failedFiles !== undefined || b.failedFiles !== undefined ? { failedFiles: sum('failedFiles') } : {}),
+    ...(loopsEnqueue ? { loops_enqueue: loopsEnqueue } : {}),
+    ...(connectorHolds ? { connectorHolds } : {}),
+    pagesAffected: [...new Set([...(a.pagesAffected ?? []), ...(b.pagesAffected ?? [])])] } as T;
 }
 
 export class ManagedConnectorSync {
@@ -368,6 +445,8 @@ export class ManagedConnectorSync {
   private hasPagePurges = false;
   /** #6831: the item whose failed receipt this run last reported, so a run that ends on it can name the item. */
   private lastFailedItem: { slug: string; requestId: string } | null = null;
+  private continuationPass = false;
+  private skipTailOnContinuation = false;
   /** True when this run ended with accepted writes pending, so its checkpoint did not advance. */
   deferred = false;
   readonly counts: Omit<ConnectorRunCounts, 'finished_at' | 'pending' | 'stopped_on_wait_budget'> & { created: number; updated: number; deleted: number; purged_skipped: number } = {
@@ -376,11 +455,16 @@ export class ManagedConnectorSync {
   /** The stable key plus its #6561 alias keys: retry approvals recorded under an alias still apply. */
   private readonly checkpointKeys: string[];
   private readonly connector: ConnectorKind;
+  private readonly itemWaitMs: number;
+  readonly waitBudgetMs: number;
   constructor(private engine: BrainEngine, readonly sourceId: string, private identity: ConnectorIdentity,
     private source: ConnectorSource, private authority: SyncAuthority, private binding: WorktreeBinding | null,
     private canonicalRoot: string | null, private noEmbed: boolean, private noSchemaPack: boolean, private retryFailed = false,
     private lease?: ConnectorLease, private resetRequested = false, private targeted = false, private fullSweep = false) {
     this.connector = identity.kind;
+    const gmail = identity.kind === 'google' && (identity.config as GoogleSourceConfig).services.includes('gmail');
+    this.itemWaitMs = gmail ? GMAIL_ITEM_WAIT_MS : ITEM_WAIT_MS;
+    this.waitBudgetMs = gmail ? connectorWaitBudget.gmailMs : connectorWaitBudget.ms;
     this.checkpointKeys = connectorCheckpointKeys(sourceId, source.incarnation, identity);
     this.checkpointKey = this.checkpointKeys[0]!;
   }
@@ -561,28 +645,46 @@ export class ManagedConnectorSync {
       'SELECT * FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL ORDER BY sequence LIMIT 1', [binding.worktree_id]);
     let [row] = await retained();
     if (!row) return;
-    startPersistenceConsumer(this.engine, loadConfig() ?? { engine: this.engine.kind });
-    // The retained publication may need a slow commit; honor the operator's configured write wait.
-    const deadline = performance.now() + configuredWriteWaitMs(AGENT_WRITE_WAIT_MS);
-    while (performance.now() < deadline) {
-      const remaining = deadline - performance.now();
-      if (remaining <= 0) break;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const progress = await Promise.race([
-        (async () => {
-          const current = await getWriteRequestById(this.engine, row.id);
-          if (!current || current.recovery || !isTerminal(current)) return { row: current ?? row, drained: false };
-          writeResponse(current);
-          const [next] = await retained();
-          return { row: next ?? current, drained: !next };
-        })(),
-        new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), remaining); }),
-      ]).finally(() => { if (timer) clearTimeout(timer); });
-      if (progress?.drained) return;
-      if (progress) row = progress.row;
-      await new Promise(resolve => setTimeout(resolve, Math.min(50, Math.max(1, deadline - performance.now()))));
+    const livePublication = isLiveRetainedPublication(row);
+    if (!livePublication) startPersistenceConsumer(this.engine, loadConfig() ?? { engine: this.engine.kind });
+    // Wait within both the connector's item cap and the remaining run budget. A live
+    // publication stays with its claimant; a stale retained publication can be recovered here.
+    const remaining = this.remainingWait();
+    const waitMs = remaining > 0 ? Math.min(this.itemWaitMs, configuredWriteWaitMs(this.itemWaitMs), remaining + COMMIT_GRACE_MS) : 0;
+    const started = performance.now();
+    const deadline = started + waitMs;
+    let drained = false;
+    try {
+      while (performance.now() < deadline) {
+        const remaining = deadline - performance.now();
+        if (remaining <= 0) break;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const progress = await Promise.race([
+          (async () => {
+            const current = await getWriteRequestById(this.engine, row.id);
+            if (!current || current.recovery || !isTerminal(current)) return { row: current ?? row, drained: false };
+            writeResponse(current);
+            const [next] = await retained();
+            return { row: next ?? current, drained: !next };
+          })(),
+          new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), remaining); }),
+        ]).finally(() => { if (timer) clearTimeout(timer); });
+        if (progress?.drained) { drained = true; return; }
+        if (progress) row = progress.row;
+        await new Promise(resolve => setTimeout(resolve, Math.min(50, Math.max(1, deadline - performance.now()))));
+      }
+      const [latest] = await retained();
+      if (!latest) { drained = true; return; }
+      row = latest;
+    } finally {
+      const elapsed = performance.now() - started;
+      this.waitCharged += drained ? Math.max(0, elapsed - COMMIT_GRACE_MS) : Math.max(elapsed, waitMs);
     }
     if (!row.recovery) writeResponse(row);
+    if (isLiveRetainedPublication(row)) {
+      this.stopped = true;
+      throw new ConnectorWaitBudgetStop(row);
+    }
     const error = new OperationError('recovery_required', 'A retained connector publication still requires recovery.',
       'Inspect the retained receipt and its blocked_reason before retrying this connector.');
     error.writeRequest = receiptFor(row);
@@ -604,12 +706,13 @@ export class ManagedConnectorSync {
       { source_id: this.sourceId, worktree_id: this.binding.worktree_id, slug }, snapshot, serializePageToMarkdown(snapshot.page, snapshot.tags));
     return snapshot?.page ?? null;
   }
-  async importMarkdown(sourcePath: string, content: string): Promise<{ slug: string; chunks: number; status: 'imported' | 'skipped'; created: boolean }> {
+  async importMarkdown(sourcePath: string, content: string): Promise<{ slug: string; chunks: number; status: 'imported' | 'skipped'; created: boolean; pending: boolean }> {
     const slug = slugifyPath(sourcePath);
     const done = await this.submit('connector_v2_import', slug, sourcePath, { content });
-    if (!done.row) return { slug, chunks: 0, status: 'skipped', created: false };
-    if (done.pending) return { slug, chunks: 0, status: 'imported', created: done.created };
-    return { slug, chunks: Number(done.row.outcome?.chunks ?? 0), status: done.row.outcome?.noop ? 'skipped' : 'imported', created: done.row.outcome?.status === 'created' };
+    if (!done.row) return { slug, chunks: 0, status: 'skipped', created: false, pending: false };
+    if (done.pending) return { slug, chunks: 0, status: 'imported', created: done.created, pending: true };
+    return { slug, chunks: Number(done.row.outcome?.chunks ?? 0), status: done.row.outcome?.noop ? 'skipped' : 'imported',
+      created: done.row.outcome?.status === 'created', pending: false };
   }
   async delete(slug: string, sourcePath: string | null): Promise<boolean> {
     slug = slugifyPath(`${slug}.md`);
@@ -666,9 +769,9 @@ export class ManagedConnectorSync {
   }
   /** The run's remaining wait allowance; the caller's own deadline arrives through the lease signal. */
   private remainingWait(): number {
-    return Math.max(0, connectorWaitBudget.ms - WAIT_RESERVE_MS - this.waitCharged);
+    return Math.max(0, this.waitBudgetMs - WAIT_RESERVE_MS - this.waitCharged);
   }
-  private async budgetedWait(row: WriteRequest, cap = ITEM_WAIT_MS): Promise<WriteRequest> {
+  private async budgetedWait(row: WriteRequest, cap = this.itemWaitMs): Promise<WriteRequest> {
     if (isTerminal(row)) return row;
     const remaining = this.remainingWait();
     const waitMs = remaining > 0 ? Math.min(cap, remaining + COMMIT_GRACE_MS) : 0;
@@ -863,6 +966,39 @@ export class ManagedConnectorSync {
     const written = await writeManagedConnectorState(this.engine, this.sourceId, this.source.incarnation, this.connectorState,
       { id: handle.id, token: handle.acquisitionToken, acquiredAt: handle.acquiredAt });
     if (!written) throw new LockStolenError(handle.id);
+  }
+  tailComplete(): boolean { return this.skipTailOnContinuation; }
+  markContinuationPass(skipTail: boolean): void { this.continuationPass = true; this.skipTailOnContinuation = skipTail; }
+  shouldSkipTail(): boolean { return this.continuationPass && this.skipTailOnContinuation; }
+  markTailComplete(): void { this.skipTailOnContinuation = true; }
+  canContinueAfterPending(): boolean {
+    return this.deferred && this.failedPending.length === 0 && this.unreachedCarried().length === 0;
+  }
+  /**
+   * Hold the source lease while awaiting the exact accepted receipts from this
+   * pass. A deferred pass with no recorded receipt cannot prove re-entry is safe.
+   */
+  async waitForRecordedPending(deadlineAtMs: number): Promise<boolean> {
+    const entries = this.connectorState.pending;
+    if (!deadlineAtMs || deadlineAtMs <= Date.now() || !entries.length) return false;
+    while (true) {
+      this.lease?.signal.throwIfAborted();
+      const remaining = deadlineAtMs - Date.now();
+      if (remaining <= 0) return false;
+      const rows: WriteRequest[] = [];
+      for (const entry of entries) {
+        const [row] = await this.engine.executeRaw<WriteRequest>(
+          'SELECT * FROM persistence_requests WHERE request_id=$1::uuid AND source_id=$2 AND source_incarnation=$3::uuid',
+          [entry.requestId, this.sourceId, this.source.incarnation]);
+        if (!row || (row.recovery && !isLiveRetainedPublication(row)) || (isTerminal(row) && row.state !== 'committed')) return false;
+        if (!isTerminal(row)) rows.push(row);
+      }
+      if (!rows.length) return true;
+      const settled = await waitForWrites(this.engine, rows, loadConfig() ?? { engine: this.engine.kind },
+        Math.min(remaining, CONNECTOR_DRAIN_WAIT_SLICE_MS));
+      this.lease?.signal.throwIfAborted();
+      if (settled.every(row => row.state === 'committed')) return true;
+    }
   }
   /** The last run's counts, for the caller's result. */
   runCounts(): ConnectorRunCounts | null { return this.connectorState.last_run; }

@@ -107,6 +107,9 @@ Classic brains / advanced (classic sync, processing opt-outs, one-off repair):
   --no-extract         Skip the link/timeline extraction step. Pages will
                        show as stale in 'gbrain doctor'; run
                        'gbrain extract --stale' later to catch up.
+  --no-loops-extract   Skip Gmail loop catch-up and chat-model extraction
+                       queueing for this run. Does not suppress other
+                       extraction or embedding work.
   --workers N          Run the import phase with N parallel workers
                        (alias: --concurrency). Default: 4 when the
                        diff is >100 files, else serial.
@@ -286,6 +289,7 @@ export function parseSyncFlags(args: string[]) {
   const lanes = args.includes('--no-lanes') ? 1 : lanesAt === -1 ? undefined : intFlagValue(args[lanesAt + 1], '--lanes', { min: 1, max: 16, example: 8 });
   let noEmbed = resolveNoEmbed(args, loadConfig());
   const noExtract = args.includes('--no-extract'); // v0.42.7 #1696
+  const noLoopsExtract = args.includes('--no-loops-extract');
   const skipFailed = args.includes('--skip-failed');
   const retryFailed = args.includes('--retry-failed'), resetCheckpoint = args.includes('--reset-checkpoint');
   const noSchemaPack = args.includes('--no-schema-pack'); // v0.41.37.0 #1569
@@ -341,7 +345,7 @@ export function parseSyncFlags(args: string[]) {
     console.error(`--max-age cannot be combined with --force-break-lock (force skips all guards).`);
     process.exit(1);
   }
-  return { repoPath, watch, interval, dryRun, full, noPull, noBulk, lanes, noEmbed, noExtract, skipFailed, retryFailed, resetCheckpoint, noSchemaPack, includeGitignored, workingTree, syncAll, missingPathMode, jsonOut, redactPaths, yesFlag, breakLock, forceBreakLock, maxAgeSeconds };
+  return { repoPath, watch, interval, dryRun, full, noPull, noBulk, lanes, noEmbed, noExtract, noLoopsExtract, skipFailed, retryFailed, resetCheckpoint, noSchemaPack, includeGitignored, workingTree, syncAll, missingPathMode, jsonOut, redactPaths, yesFlag, breakLock, forceBreakLock, maxAgeSeconds };
 }
 
 export type SyncFlags = ReturnType<typeof parseSyncFlags>;

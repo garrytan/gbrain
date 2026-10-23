@@ -8,6 +8,10 @@ import { describe, expect, test } from 'bun:test';
 import { parseSyncFlags } from '../src/commands/sync/args.ts';
 
 describe('sync watch interval', () => {
+  test('recognizes the loop extraction opt-out', () => {
+    expect(parseSyncFlags(['--no-loops-extract']).noLoopsExtract).toBe(true);
+  });
+
   test('keeps the default and accepts a positive integer number of seconds', () => {
     expect(parseSyncFlags([]).interval).toBe(60);
     expect(parseSyncFlags(['--watch', '--interval', '15']).interval).toBe(15);

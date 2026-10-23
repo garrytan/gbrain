@@ -46,6 +46,7 @@ export const SYNC_FLAGS = {
   '--no-pull': managed(bool('noPull', 'forward', 'forward')),
   '--no-embed': bool('noEmbed', 'forward', 'forward'),
   '--no-extract': bool('noExtract', 'forward', 'forward'),
+  '--no-loops-extract': bool('noLoopsExtract', 'forward', 'forward'),
   '--no-schema-pack': bool('noSchemaPack', 'forward', 'forward'),
   '--skip-failed': bool('skipFailed', 'forward', 'forward'),
   '--retry-failed': bool('retryFailed', 'forward', 'forward'),

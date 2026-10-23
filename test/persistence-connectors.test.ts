@@ -18,7 +18,7 @@ import { purgeStaleCheckpoints } from '../src/core/op-checkpoint.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 import { recordFactWithdrawal } from '../src/core/facts/withdrawal.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
-import { prepareConnectorMutation } from '../src/core/persistence/connector-sync.ts';
+import { continuationWaitDeadlineAtMs, prepareConnectorMutation } from '../src/core/persistence/connector-sync.ts';
 import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { claimNextWrite } from '../src/core/persistence/journal.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
@@ -28,6 +28,17 @@ import { createConnectorFixture, options, json, googleConfig, githubConfig, cont
 const { home, engines, env, source, boundSource, setup, teardown } = createConnectorFixture();
 beforeAll(setup, 120_000);
 afterAll(teardown);
+
+test('managed connector continuation gets a fresh wait window after each completed sweep', () => {
+  const firstDeadline = continuationWaitDeadlineAtMs(1_000);
+  const nextDeadline = continuationWaitDeadlineAtMs(firstDeadline + 1);
+  expect(nextDeadline).toBeGreaterThan(firstDeadline);
+  expect(nextDeadline - firstDeadline).toBe(30_001);
+  expect(continuationWaitDeadlineAtMs(10_000, 12_000)).toBe(12_000);
+  expect(continuationWaitDeadlineAtMs(10_000, 60_000)).toBe(40_000);
+  expect(continuationWaitDeadlineAtMs(10_000, undefined, 60_000)).toBe(70_000);
+  expect(continuationWaitDeadlineAtMs(10_000, 50_000, 60_000)).toBe(50_000);
+});
 
 test('public Google sync journals DB-only imports and repeat/restart checkpoints on both engines', async () => withEnv(env, async () => {
   for (const engine of engines) {
