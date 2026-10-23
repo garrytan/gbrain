@@ -37,6 +37,9 @@ export class SupabaseStorage implements StorageBackend {
   }
 
   private headers(): Record<string, string> {
+    if (this.serviceRoleKey.startsWith('sb_secret_') || this.serviceRoleKey.startsWith('sb_publishable_')) {
+      return { 'apikey': this.serviceRoleKey };
+    }
     return {
       'Authorization': `Bearer ${this.serviceRoleKey}`,
       'apikey': this.serviceRoleKey,
