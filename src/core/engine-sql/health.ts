@@ -124,6 +124,8 @@ export async function getHealth(
     : sqlFragment`WHERE EXISTS (SELECT 1 FROM pages src WHERE src.id = l.from_page_id ${inScope.src})
                     AND EXISTS (SELECT 1 FROM pages tgt WHERE tgt.id = l.to_page_id ${inScope.tgt})`;
 
+  // Exclude deleted pages' chunks: deletion clears their text projection,
+  // so those retained chunks never get a vector.
   const { rows: [aggregate] } = await exec.run(sqlFragment`
     WITH entity_pages AS (
       SELECT p.id FROM pages p
@@ -137,8 +139,8 @@ export async function getHealth(
        GROUP BY cc.page_id
     ),
     chunk_totals AS (
-      SELECT COALESCE(sum(c.chunks) FILTER (WHERE f.eligible), 0) AS eligible,
-             COALESCE(sum(c.embedded) FILTER (WHERE f.eligible), 0) AS eligible_embedded,
+      SELECT COALESCE(sum(c.chunks) FILTER (WHERE f.eligible AND f.live), 0) AS eligible,
+             COALESCE(sum(c.embedded) FILTER (WHERE f.eligible AND f.live), 0) AS eligible_embedded,
              COALESCE(sum(c.chunks - c.embedded) FILTER (WHERE f.eligible AND f.live), 0) AS missing
         FROM chunk_pages c
         CROSS JOIN LATERAL (

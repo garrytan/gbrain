@@ -39,11 +39,11 @@ export async function legacyGetHealth(
       SELECT
         (SELECT count(*) FROM scoped_pages WHERE deleted_at IS NULL) as page_count,
         (SELECT CASE
-           WHEN count(*) FILTER (WHERE NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')) = 0
+           WHEN count(*) FILTER (WHERE p.deleted_at IS NULL AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')) = 0
            THEN 1.0
-           ELSE count(*) FILTER (WHERE cc.${colId} IS NOT NULL
+           ELSE count(*) FILTER (WHERE cc.${colId} IS NOT NULL AND p.deleted_at IS NULL
                                    AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip'))::float
-              / count(*) FILTER (WHERE NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip'))::float
+              / count(*) FILTER (WHERE p.deleted_at IS NULL AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip'))::float
          END
          FROM content_chunks cc
          JOIN scoped_pages p ON p.id = cc.page_id) as embed_coverage,
