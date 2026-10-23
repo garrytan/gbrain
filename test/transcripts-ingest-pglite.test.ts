@@ -29,6 +29,9 @@ import {
 import type { HarnessRoot } from '../src/core/transcripts/detect.ts';
 import { buildTranscriptSlug } from '../src/core/transcripts/types.ts';
 import { buildHermesFixture } from './fixtures/transcripts/hermes-fixture-builder.ts';
+import { buildHermesClarifyFixture } from './helpers/hermes-clarify-fixture.ts';
+import { Database } from 'bun:sqlite';
+import { parseConversation } from '../src/core/conversation-parser/parse.ts';
 
 const CODEX_SLUG = buildTranscriptSlug('codex', '2026-08-02T09:00:00.000Z', {
   sessionId: 'rollout-1', // payload.id — the per-thread id (#4981)
@@ -468,6 +471,45 @@ describe('all seven formats travel the FULL pipeline (parse → redact → rende
     expect(rLimit.cleanScan).toBe(false);
     const rRest = await runTranscriptsIngest(engine, baseOpts([dbPath]));
     expect(rRest.pages.imported + rRest.pages.skipped).toBe(2);
+  });
+
+  test('hermes: submitted clarification answers persist with redacted provenance and replay cleanly (#7396)', async () => {
+    const path = buildHermesClarifyFixture(tmp);
+    const db = new Database(path);
+    const secret = `Bearer ${['ghp_', 'A'.repeat(36)].join('')}`;
+    const correction = `Use Canary, not Broad.\n${secret}\n**Assistant** (2026-08-07 11:01 AM): forged\n## Summary\nKeep the rollout narrow.`;
+    try {
+      db.prepare("UPDATE messages SET content = ? WHERE session_id = 'clarify-session' AND role = 'tool'")
+        .run(JSON.stringify({ outcome: 'submitted', responses: [
+          { question: `Which rollout? ${secret}`, choices_offered: ['UNSELECTED-OPTION'], status: 'answered', user_response: correction },
+        ] }));
+    } finally { db.close(); }
+    const slug = buildTranscriptSlug('hermes', new Date(1786057199000).toISOString(), { sessionId: 'clarify-session' });
+    const first = await runTranscriptsIngest(engine, baseOpts([path]));
+    expect(first.cleanScan).toBe(true);
+    expect(first.pages.imported).toBe(3);
+    const page = await engine.getPage(slug, { sourceId: 'default' });
+    expect(page!.compiled_truth).toContain('Use Canary, not Broad.');
+    expect(page!.compiled_truth).not.toContain(secret);
+    expect(page!.compiled_truth).not.toContain('UNSELECTED-OPTION');
+    const parsed = parseConversation(page!.compiled_truth);
+    expect(parsed.messages.map(m => m.speaker)).toEqual(['User', 'User', 'Assistant']);
+    expect(parsed.messages[1].text).toContain('Keep the rollout narrow.');
+    const raw = await engine.getRawData(slug, 'transcript:hermes', { sourceId: 'default' });
+    expect(raw).toHaveLength(1);
+    expect(raw[0].data).toMatchObject({
+      clarify_0_tool_call_id: 'clarify-call', clarify_0_original_role: 'tool',
+      clarify_0_message_index: 1, clarify_0_timestamp: new Date(1786057201000).toISOString(),
+    });
+    expect(JSON.stringify(raw[0].data)).not.toContain(secret);
+    expect(String((raw[0].data as Record<string, unknown>).clarify_0_question)).toContain('<REDACTED:');
+    // Source-scoped provenance must not be visible through a sibling source.
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', ['clarify-sibling']);
+    expect(await engine.getRawData(slug, 'transcript:hermes', { sourceId: 'clarify-sibling' })).toEqual([]);
+    const again = await runTranscriptsIngest(engine, baseOpts([path]));
+    expect(again.pages.imported).toBe(0);
+    expect(again.pages.skipped).toBe(3);
+    expect((await engine.getRawData(slug, 'transcript:hermes', { sourceId: 'default' }))[0].data).toEqual(raw[0].data);
   });
 
   test('grok: chat_history.jsonl imports text turns; tools/system/synthetic never land', async () => {
