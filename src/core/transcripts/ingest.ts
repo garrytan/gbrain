@@ -7,13 +7,16 @@
  * the sessions that pass and skips the ones that fail; idempotent re-runs
  * complete the rest):
  *
- *   detect → adapter.parse (AsyncGenerator, per-session) → since/limit
+ *   detect → bounded file admission (terminal diagnostics before writes) → since/limit
  *   filters → redactSession (fail-closed) → renderSessionParts →
  *   importFromContent per part (embed OFF unless opted in) →
  *   putRawData(baseSlug) → stale-part reconciliation (delete part > of).
  *
  * Error taxonomy:
  *   - per-FILE: unreadable / unknown format / symlink → counted, run continues.
+ *     So is a REFUSED file: a truncated or drifting read, missing terminal
+ *     diagnostics, or more than maxStagedBytes of sessions. Adapters report
+ *     diagnostics only on return, so no session of a file writes before them.
  *   - per-SESSION: every failure `classifyItemFailure` calls the item's
  *     (a coordinator refusal, an oversize part, an encoding error) is
  *     recorded on the session with its typed code; the file continues.
@@ -86,6 +89,13 @@ export interface TranscriptsIngestOpts {
    * for legitimate oversized stores, not to replace the defaults.
    */
   maxBytes?: number;
+  /**
+   * Finite per-file admission buffer in serialized UTF-8 bytes (default 64MiB).
+   * Files must finish parsing cleanly before any session can write. Over-cap
+   * files are explicitly refused, never partially imported; retry with a
+   * deliberate larger finite cap. This bounds staging, not total parser RSS.
+   */
+  maxStagedBytes?: number;
   activePack?: IngestActivePack;
   /**
    * The CLI's trusted-local operation context. On a writer-claimed brain each
@@ -200,10 +210,54 @@ function lastMessageTs(messages: Array<{ timestamp: string }>): string {
   return '';
 }
 
+/**
+ * Adapter diagnostics arrive only on RETURN. Keep bounded serialized snapshots
+ * until that verdict, then replay without re-reading a possibly changed source.
+ * No raw staging files; generator closure releases snapshots on every path.
+ */
+async function* admitFileSessions(
+  producer: AsyncGenerator<ParsedSession, FileDiagnostics>,
+  maxStagedBytes: number,
+  admit: (diagnostics: FileDiagnostics) => void,
+): AsyncGenerator<ParsedSession, void> {
+  const staged: string[] = [];
+  let bytes = 0;
+  let producerDone = false;
+  try {
+    while (true) {
+      const step = await producer.next();
+      if (step.done) {
+        producerDone = true;
+        if (!step.value) throw new Error('transcript file refused: missing terminal diagnostics');
+        admit(step.value);
+        break;
+      }
+      const snapshot = JSON.stringify(step.value);
+      bytes += Buffer.byteLength(snapshot, 'utf8');
+      if (bytes > maxStagedBytes) {
+        throw new Error('transcript file refused: maxStagedBytes admission cap exceeded; retry with a larger finite cap');
+      }
+      staged.push(snapshot);
+    }
+    for (let i = 0; i < staged.length; i++) {
+      const session = JSON.parse(staged[i]) as ParsedSession;
+      staged[i] = ''; // release each serialized snapshot as it is consumed
+      yield session;
+    }
+  } finally {
+    staged.length = 0;
+    if (!producerDone) await producer.return?.(undefined as never);
+  }
+}
+
 export async function runTranscriptsIngest(
   engine: BrainEngine,
   opts: TranscriptsIngestOpts,
 ): Promise<TranscriptsIngestResult> {
+  const maxStagedBytes = opts.maxStagedBytes ?? 64 * 1024 * 1024;
+  if (!Number.isSafeInteger(maxStagedBytes) || maxStagedBytes <= 0) {
+    throw new Error('maxStagedBytes must be a positive finite safe integer');
+  }
   const result: TranscriptsIngestResult = {
     files: [],
     pages: { imported: 0, skipped: 0, errored: 0, planned: 0, pending: 0 },
@@ -265,9 +319,15 @@ export async function runTranscriptsIngest(
 
     // gbrain#4149: thread the explicit cap override; omit the opts object
     // entirely when unset so adapters keep their native defaults.
-    const gen = opts.maxBytes != null
+    const producer = opts.maxBytes != null
       ? detected.adapter.parse(path, { maxBytes: opts.maxBytes })
       : detected.adapter.parse(path);
+    const gen = admitFileSessions(producer, maxStagedBytes, (diagnostics) => {
+      applyFileDiagnostics(diagnostics, fileOutcome, result);
+      if (fileOutcome.truncated || fileOutcome.drift) {
+        throw new Error('transcript file refused: terminal diagnostics report truncation or drift');
+      }
+    });
     try {
       let step = await gen.next();
       while (!step.done) {
@@ -367,12 +427,14 @@ export async function runTranscriptsIngest(
 
         step = await gen.next();
       }
-      if (step.done && step.value) applyFileDiagnostics(step.value, fileOutcome, result);
     } catch (err) {
       if (classifyItemFailure(err).scope === 'run') throw err;
       fileOutcome.error = err instanceof Error ? err.message : String(err);
       result.erroredFiles++;
       result.cleanScan = false;
+    } finally {
+      // Release admitted snapshots even when a run-scoped failure rethrows.
+      await gen.return?.(undefined as never);
     }
 
     done++;
@@ -649,8 +711,8 @@ function applyFileDiagnostics(diag: FileDiagnostics, fileOutcome: IngestFileOutc
   if (diag.userTurnsMissing && !fileOutcome.drift) {
     // E-N4: assistant turns parsed but not one user turn — the shape
     // #5163 hid behind (a host renamed its user-turn record). The
-    // session still imports, but the file is drift: the watermark holds
-    // so a fixed parser re-reads it.
+    // file is refused before writes: the watermark holds so a fixed parser
+    // can re-read it without first persisting a partial conversation.
     fileOutcome.drift = true;
     fileOutcome.userTurnsMissing = true;
     result.driftFiles++;

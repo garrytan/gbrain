@@ -116,9 +116,9 @@ describe('#6741 A: Codex sub-agent rollouts are understood, not drift', () => {
     drifted();
     const third = await ingestSinceLast();
     expect(third).toMatchObject({ cleanScan: false, driftFiles: 1, subagentRollouts: 1 });
-    // The drift file held the watermark: its newer session is read again, never skipped.
+    // The drift file held the watermark: it is retried and refused again, never imported.
     const fourth = await ingestSinceLast();
-    expect(fourth).toMatchObject({ sessionsFiltered: 2, sessionsImported: 1, cleanScan: false });
+    expect(fourth).toMatchObject({ sessionsFiltered: 2, sessionsImported: 0, erroredFiles: 1, driftFiles: 1, cleanScan: false });
   }, 120_000);
 
   test('the scan summary reports sub-agent rollouts separately from drift', () => {
