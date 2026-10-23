@@ -868,6 +868,9 @@ Extraction:
   ("touched since"): import, sync, enrich, and extraction stamps all advance
   it. It is NOT the content's authored/effective date.
 
+  --type, --since and --infer-dates filter synced pages, so they need
+  --source db; the default --source fs walk refuses them (exit 2).
+
 Incremental sweep:
 ${ATTENDANCE_REPAIR_HELP}
   gbrain extract --stale [--source-id <id>] [--include-frontmatter]
@@ -1157,6 +1160,19 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
   if (fromMeetings && subcommand !== 'timeline' && subcommand !== 'all') {
     console.error(
       `--from-meetings is a timeline-pass only. Re-run as 'gbrain extract timeline --from-meetings' or 'gbrain extract all --from-meetings'.`,
+    );
+    process.exit(2);
+  }
+  // #7394: the file walk reads files, not page rows, so it cannot apply a page-row filter. Refuse rather than walk
+  // every file and report it as a filtered pass.
+  const rowFilters = [typeFilter !== undefined && `--type ${typeFilter}`, since !== undefined && `--since ${since}`, inferDates && '--infer-dates'].filter((f): f is string => !!f);
+  if (rowFilters.length && source === 'fs') {
+    console.error(
+      `${rowFilters.map(f => f.split(' ')[0]).join(', ')} ${rowFilters.length > 1 ? 'filter synced pages, so they require' : 'filters synced pages, so it requires'} --source db ` +
+      `(currently --source fs, which walks every file and would ignore ${rowFilters.length > 1 ? 'them' : 'it'}). Re-run as:\n\n` +
+      `  gbrain extract ${subcommand} --source db ${rowFilters.join(' ')}` +
+      (sourceIdFilter ? ` --source-id ${sourceIdFilter}` : '') +
+      (dryRun ? ' --dry-run' : '') + (jsonMode ? ' --json' : '') + '\n',
     );
     process.exit(2);
   }

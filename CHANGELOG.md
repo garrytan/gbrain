@@ -10,6 +10,27 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.390.0] - 2026-10-23
+
+**`gbrain doctor` can verify a source with 65,534 or more files for cross-source drift, and `gbrain extract` no longer ignores `--type` on its default file walk.** Before, `multi_source_drift` on such a source always reported "not verified" (`MAX_PARAMETERS_EXCEEDED`), and `extract timeline --type email` walked every file and reported the full-corpus count as if the pass had been filtered.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| doctor `multi_source_drift` on a source with 65,534 or more files | not verified: the existence probe sent one bind parameter per file, over the Postgres cap (on PGLite the statement failed), and lowering `GBRAIN_DRIFT_LIMIT` only truncated the walk | verified: the probe sends the slugs as one array parameter |
+| `gbrain extract links\|timeline\|all --type T` (or `--since`, `--infer-dates`) without `--source db` | the file walk ignored the filter and processed every file | exits 2 and prints the same command with `--source db`, which applies the filter |
+
+### What to watch for after you upgrade
+
+- A script that passed `--type`, `--since` or `--infer-dates` to `gbrain extract` without `--source db` now exits 2. Add `--source db` to get the filtered pass it meant to run.
+- Nothing is rewritten on upgrade, and there is no schema migration.
+
+### Itemized changes
+
+- `src/core/multi-source-drift.ts`: the existence probe uses `unnest($1::text[])` (#7388; `test/multi-source-drift-param-cap-7388.test.ts`, PGLite and Postgres).
+- `src/commands/extract.ts`: file-walk refusal and help (#7394; `test/extract-row-filters-fs-7394.test.ts`).
+
 ## [0.60.389.0] - 2026-10-23
 
 **Unmanaged atom extraction now replaces an origin's atoms only on a complete, non-empty result, versions what it drops first, and can undo it (GBRA-161 PR 1a).** A derived writer used to delete or keep atoms one statement at a time, so an empty model answer, a truncated read or a failed write could drop or orphan an origin's atoms with no way back. Atoms are the first writer on one generation-publish primitive with a ledger and a restore path. Managed atoms, facts and takes, chronicle and synthesis move onto it in later releases.
