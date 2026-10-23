@@ -1968,6 +1968,10 @@ export interface BrainHealth {
   embed_coverage_score: number;     // 0-35
   link_density_score: number;        // 0-25
   timeline_coverage_score: number;   // 0-15
+  /** Whole-brain timeline-score denominator: linkable pages whose active-pack type is graded. */
+  timeline_score_eligible_page_count?: number;
+  /** Whole-brain timeline-score numerator: eligible pages with at least one timeline row. */
+  timeline_score_pages_with_timeline_count?: number;
   no_orphans_score: number;          // 0-15
   no_dead_links_score: number;       // 0-10
   /**

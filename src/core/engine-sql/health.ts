@@ -266,6 +266,8 @@ export async function getHealth(
     embed_coverage_score: embedCoverageScore,
     link_density_score: linkDensityScore,
     timeline_coverage_score: timelineCoverageScore,
+    timeline_score_eligible_page_count: timelineGradedCount,
+    timeline_score_pages_with_timeline_count: linkableTimelinePages,
     no_orphans_score: noOrphansScore,
     no_dead_links_score: noDeadLinksScore,
   };

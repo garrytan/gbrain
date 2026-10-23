@@ -121,6 +121,11 @@ describe('issue #2298 — doctor rendered-message contract', () => {
     const brain = checks.find((c) => c.name === 'brain_score');
     expect(brain, 'brain_score check must be present').toBeDefined();
     expect(brain!.message).toContain('timeline density (entity and event pages) 8/15');
+    expect(brain!.message).toContain('(3/6 eligible pages)');
+    expect(brain!.details).toMatchObject({
+      timeline_score_eligible_page_count: 6,
+      timeline_score_pages_with_timeline_count: 3,
+    });
     // wrong labels must NOT be present
     expect(brain!.message).not.toMatch(/timeline 8\/15/);
     expect(brain!.message).not.toMatch(/timeline \(entity, brain score\)/);

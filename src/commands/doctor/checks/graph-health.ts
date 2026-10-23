@@ -126,10 +126,27 @@ async function runGraphCoverage(ctx: DoctorContext): Promise<Check[]> {
     // Uses distinct *_score field names (not overloading link_coverage /
     // timeline_coverage, which are entity-scoped).
     if (health.brain_score < 100) {
+      const pagesWithTimeline = health.timeline_score_pages_with_timeline_count;
+      const eligiblePages = health.timeline_score_eligible_page_count;
+      const timelineScoreCounts =
+        typeof pagesWithTimeline === 'number' &&
+        Number.isSafeInteger(pagesWithTimeline) &&
+        typeof eligiblePages === 'number' &&
+        Number.isSafeInteger(eligiblePages)
+          ? {
+              withTimeline: pagesWithTimeline,
+              eligible: eligiblePages,
+            }
+          : null;
+      const timelineScoreLabel =
+        `timeline density (entity and event pages) ${health.timeline_coverage_score}/15` +
+        (timelineScoreCounts
+          ? ` (${timelineScoreCounts.withTimeline}/${timelineScoreCounts.eligible} eligible pages)`
+          : '');
       const parts = [
         `embed ${health.embed_coverage_score}/35`,
         `links ${health.link_density_score}/25`,
-        `timeline density (entity and event pages) ${health.timeline_coverage_score}/15`,
+        timelineScoreLabel,
         `orphans ${health.no_orphans_score}/15`,
         `dead-links ${health.no_dead_links_score}/10`,
       ];
@@ -137,6 +154,14 @@ async function runGraphCoverage(ctx: DoctorContext): Promise<Check[]> {
         name: 'brain_score',
         status: health.brain_score >= 70 ? 'ok' : 'warn',
         message: `Brain score ${health.brain_score}/100 (${parts.join(', ')})`,
+        ...(timelineScoreCounts
+          ? {
+              details: {
+                timeline_score_eligible_page_count: timelineScoreCounts.eligible,
+                timeline_score_pages_with_timeline_count: timelineScoreCounts.withTimeline,
+              },
+            }
+          : {}),
         ...(health.brain_score >= 70 ? {} : { fix: brainScorePlanFix() }),
       });
     } else {

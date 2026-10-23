@@ -64,6 +64,18 @@ describe('Bug 11 — brain_score breakdown sums to total', () => {
     expect(sum).toBe(h.brain_score);
   });
 
+  test('timeline score exposes its graded numerator and denominator', async () => {
+    await engine.putPage('people/with-history', { type: 'undeclared-example', title: 'With history', compiled_truth: 'x', frontmatter: {} });
+    expect(await engine.addTimelineEntry('people/with-history', { date: '2025-01-01', source: 'note', summary: 'Joined' })).toBe(true);
+    await engine.putPage('people/without-history', { type: 'undeclared-example', title: 'Without history', compiled_truth: 'y', frontmatter: {} });
+
+    const h = await engine.getHealth();
+
+    expect(h.timeline_score_pages_with_timeline_count).toBe(1);
+    expect(h.timeline_score_eligible_page_count).toBe(2);
+    expect(h.timeline_coverage_score).toBe(Math.round((1 / 2) * 15));
+  });
+
   test('brain_score caps at 100', async () => {
     const h = await engine.getHealth();
     expect(h.brain_score).toBeGreaterThanOrEqual(0);
@@ -128,6 +140,8 @@ describe('Bug 11 — doctor renders brain_score breakdown', () => {
     expect(source).toContain('link_density_score');
     expect(source).toContain('no_orphans_score');
     expect(source).toContain('no_dead_links_score');
+    expect(source).toContain('timeline_score_pages_with_timeline_count');
+    expect(source).toContain('timeline_score_eligible_page_count');
   });
 });
 
