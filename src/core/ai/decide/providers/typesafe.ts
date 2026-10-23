@@ -97,6 +97,14 @@ export function parseTypeSafeResponse(value: unknown, questions: readonly Decide
   return { model: value.model, answers, inputTokens: tokens(usage.input_tokens), outputTokens: tokens(usage.output_tokens) };
 }
 
+/** Explicit client refusals did not run inference. Timeouts and server errors
+ * can follow execution, so retain their pessimistic estimate. Never inspect
+ * error bodies for usage: they can echo evidence or arbitrary request data.
+ */
+export function typeSafeHttpFailureTokens(status: number, estimate: number): number {
+  return status >= 400 && status < 500 && status !== 408 ? 0 : estimate;
+}
+
 /**
  * Classify a non-OK HTTP response without keeping its body (provider errors
  * can echo evidence). 400 "unknown model" becomes pinned_model_unavailable.

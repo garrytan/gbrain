@@ -24,12 +24,12 @@ import { runDecide } from '../core/ai/decide/index.ts';
 import { estimateContextTokens, packShape, planBatches } from '../core/ai/decide/pack.ts';
 import { KEY_DEFAULT_LABEL, keyDefaultOptOut, readiness, resolveSlotPolicy, type PolicyInputs, type SlotPolicy } from '../core/ai/decide/policy.ts';
 import { newerReference, recommendedSlots } from '../core/ai/decide/reference-calibrations.ts';
-import { REFUSAL_CATALOG, SLOT_PLAIN_NAMES, refusalLine } from '../core/ai/decide/outcomes.ts';
+import { REFUSAL_CATALOG, SKIP_REASONS, SLOT_PLAIN_NAMES, refusalLine } from '../core/ai/decide/outcomes.ts';
 import { toWireQuestion } from '../core/ai/decide/providers/typesafe.ts';
 import { SLOT_SPECS } from '../core/ai/decide/slots.ts';
 import {
   conflictNoEntityShare, dailySpend, deleteDecideState, flushDecideWrites, getDecideState, listCalibrations, recentResolvedModels, setDecideState,
-  slotUsage, type CalibrationRow,
+  receiptStats, slotUsage, type CalibrationRow,
 } from '../core/ai/decide/store.ts';
 import { DECIDE_SLOTS, DecideError, EVIDENCE_CLASSES, type DecideQuestion, type DecideSlot } from '../core/ai/decide/types.ts';
 import { usageCostUsd } from '../core/budget/reservation-cost.ts';
@@ -187,10 +187,11 @@ function costPer1k(slot: DecideSlot, provider: string, usage?: { decisions: numb
 // ---------------------------------------------------------------------------
 
 export async function buildStatus(engine: BrainEngine, state: DecideState) {
-  const [spend, usage, noEntity, reviewRates] = await Promise.all([
+  const [spend, usage, noEntity, reviewRates, stats] = await Promise.all([
     dailySpend(engine).catch(() => ({ total: 0, remote: 0 })), slotUsage(engine, 24).catch(() => []),
     conflictNoEntityShare(engine).catch(() => ({ skipped: 0, receipts: 0, share: 0 })),
     import('../core/ai/decide/review-lane.ts').then(m => m.proposalReviewRates(engine)).catch(() => []),
+    receiptStats(engine, { sinceHours: 24 }),
   ]);
   const slots = DECIDE_SLOTS.map((slot) => {
     const p = policyFor(state, slot);
@@ -204,6 +205,10 @@ export async function buildStatus(engine: BrainEngine, state: DecideState) {
       newer_reference: newerReference(p),
       receipts_24h: u?.rows ?? 0, decisions_24h: u?.decisions ?? 0, errors_24h: u?.errors ?? 0,
       error_rate_24h: u && u.rows > 0 ? Number((u.errors / u.rows).toFixed(4)) : 0, egress_refusals_24h: u?.egress ?? 0,
+      errors_by_reason_24h: Object.entries(stats.filter(s => s.slot === slot && s.outcome === 'error' && s.error_reason && (SKIP_REASONS as readonly string[]).includes(s.error_reason))
+        .reduce<Record<string, number>>((counts, s) => { counts[s.error_reason!] = (counts[s.error_reason!] ?? 0) + s.n; return counts; }, {}))
+        .map(([reason, count]) => ({ reason, count })),
+      error_fix: stats.some(s => s.slot === slot && s.outcome === 'error' && s.error_reason === 'provider_error') ? 'gbrain decide probe' : null,
       status: !u || u.rows === 0 ? 'pending' : u.skipped === u.rows ? (p.inactive ? 'demoted' : 'blocked') : 'active',
       cost_per_1k: { ...costPer1k(slot, p.provider, u), unit: COST_UNITS[slot]?.unit ?? 'units' },
       effective_line: effectiveModeLine(p),
@@ -251,6 +256,7 @@ async function cmdStatus(engine: BrainEngine, args: string[]): Promise<number> {
     const activity = s.receipts_24h > 0 ? ` 24h: ${s.decisions_24h} decisions, ${(s.error_rate_24h * 100).toFixed(1)}% errors` : '';
     console.log(`  ${s.slot.padEnd(14)} ${s.readiness}${threshold}${cost}${activity}${s.wired ? '' : ' (not available in this build)'}`);
     if (s.force_on) console.log(`    WARN: decide.slots.${s.slot}.force_on bypasses the action-precision gate`);
+    if (s.errors_by_reason_24h.length) console.log(`    errors in 24 h: ${s.errors_by_reason_24h.map(e => `${e.reason}=${e.count}`).join(', ')}; ${s.error_fix ?? `gbrain decide receipts --slot ${s.slot}`}`);
     if (s.newer_reference) console.log(`    newer reference available: ${s.newer_reference} (gbrain decide calibrations adopt ${s.newer_reference})`);
     if (s.no_entity_7d && s.no_entity_7d.skipped > 0) {
       console.log(`    ${(s.no_entity_7d.share * 100).toFixed(1)}% of conflict receipts in 7 days (${s.no_entity_7d.skipped} of ${s.no_entity_7d.receipts}) skipped a fact with no entity (no_entity); link them: gbrain facts relink --dry-run`);
@@ -318,7 +324,8 @@ export async function cmdProbe(engine: BrainEngine | null, args: string[]): Prom
     return 0;
   } catch (err) {
     const reason = err instanceof DecideError ? err.reason : 'provider_error';
-    console.error(`probe failed: ${refusalLine(reason)}`);
+    const status = err instanceof DecideError && err.status !== undefined ? ` (HTTP ${err.status})` : '';
+    console.error(`probe failed: ${refusalLine(reason)}${status}`);
     return 1;
   }
 }
