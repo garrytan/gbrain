@@ -32,7 +32,7 @@ import type { ChronicleReasonCode } from './reasons.ts';
 import type { ChronicleSettings } from './config.ts';
 import { chroniclePageDate, isChronicleEligible } from './eligibility.ts';
 import {
-  allDroppedReason, buildChronicleEvents, chronicleJudgeContext, isValidProposal, JUDGE_BODY_CHARS, lastMessageAt, replacesPreviousGeneration,
+  allDroppedReason, buildChronicleEvents, chronicleJudgeContext, chronicleProposalValidationCodes, isValidProposal, JUDGE_BODY_CHARS, lastMessageAt, replacesPreviousGeneration,
   type ChronicleDropCounts, type ChronicleJudge, type ChronicleJudgeResult,
 } from './extract-events.ts';
 import { endedInviteProposal, markInviteEvents } from './invite-projection.ts';
@@ -247,6 +247,11 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   const overCap = tracker.cap !== undefined && tracker.totalSpent > tracker.cap;
   const failure: JudgeFailure | null = overCap && !thrown ? { state: 'failed', reason: 'budget_exhausted' } : classifyJudge(result, thrown);
   if (failure) {
+    if (failure.reason === 'malformed_proposal') {
+      const diagnostic = chronicleProposalValidationCodes(Array.isArray(result?.events) ? result.events : []);
+      const detail = diagnostic.join(',') || 'validation_issue_not_located';
+      console.warn(`[chronicle] malformed proposal rejected; validation_codes=${detail}`);
+    }
     const next = failure.state === 'skipped' || CONFIG_BLOCKED.has(failure.reason) ? null : backoff(attempts, now, maxAttempts);
     await finish(engine, row, attempts, { state: failure.state, reason: failure.reason, nextAttemptAt: next, ...spend });
     if (!failure.malformed) return done(failure.state, failure.reason, judged);
