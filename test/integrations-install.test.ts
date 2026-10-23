@@ -103,6 +103,17 @@ describe('installRecipeIntoHostRepo — happy path', () => {
     expect(existsSync(join(scratch, 'skills/retrieval-reflex/SKILL.md'))).toBe(true);
   });
 
+  it('installs the travel-booking skill and fences its resolver row', async () => {
+    const result = await installRecipeIntoHostRepo('travel-booking', { target: scratch });
+    expect(result.written).toBe(1);
+    const skill = readFileSync(join(scratch, 'skills/travel-booking/SKILL.md'), 'utf8');
+    expect(skill).toBe(readFileSync(join(REPO_ROOT, 'recipes/travel-booking/skills/travel-booking/SKILL.md'), 'utf8'));
+    const agentsMd = readFileSync(join(scratch, 'AGENTS.md'), 'utf8');
+    expect(agentsMd).toContain('gbrain:travel-booking:resolver-rows');
+    expect(agentsMd).toContain('/gbrain:travel-booking:resolver-rows');
+    expect(agentsMd).toContain('travel-booking |');
+  });
+
   it('respects file modes from the manifest', async () => {
     await installRecipeIntoHostRepo('agent-voice', { target: scratch });
     const serverPath = join(scratch, 'services/voice-agent/code/server.mjs');

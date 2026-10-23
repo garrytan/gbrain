@@ -203,7 +203,7 @@ test/hook-command.serial.test.ts	user-prompt	18	source-surface-helper
 test/hook-push-spawn-env.test.ts	spawnDetachedPush env handoff	2	readFileSync
 test/hook-push-spawn-env.test.ts	tryExecAsync env handoff	1	readFileSync
 test/init-mode-picker.test.ts	cost matrix: newest models, priced from model-pricing	6	readFileSync
-test/integrations-install.test.ts	installRecipeIntoHostRepo — happy path	6	readFileSync
+test/integrations-install.test.ts	installRecipeIntoHostRepo — happy path	7	readFileSync
 test/integrations.test.ts	CLI integration	3	source-surface-helper
 test/jobs-embed-background-parity.serial.test.ts	embed job background parity (D7)	2	readFileSync,source-surface-helper
 test/jobs-gateway-refresh-set.test.ts	#3387 — GATEWAY_REFRESH_JOB_NAMES ⇔ registerBuiltinJob call sites	5	source-surface-helper
