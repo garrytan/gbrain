@@ -5,7 +5,7 @@ import { buildBasenameIndex, extractPageLinks, isGlobalBasenameEnabled, makeReso
   type PageLinksResult } from '../link-extraction.ts';
 import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
 import { DerivedLinkEndpointChangedError } from '../derived-links.ts';
-import { capturedLinkEndpoints, indexLinkSources, loadLinkSourcePolicy, makeLinkSourceResolver } from '../link-reconciliation.ts';
+import { capturedLinkEndpoints, indexLinkSources, LIVE_LINK_SOURCES_SQL, loadLinkSourcePolicy, makeLinkSourceResolver } from '../link-reconciliation.ts';
 import { collectWantedLinks, isWantedPagesEnabled, possibleWantedRows } from '../wanted-links.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { readLineGrammarSettings, type LineGrammarSettings } from '../line-grammar.ts';
@@ -65,15 +65,16 @@ async function sourceBasenameIndex(engine: BrainEngine, sourceId: string): Promi
 
 /**
  * Link endpoints by slug: every live page in the origin source, plus other
- * sources' pages for the slugs the origin lacks or a link names elsewhere ($3).
+ * live sources' pages for the slugs the origin lacks or a link names elsewhere ($3).
  * The origin read and each source's residual read use (source_id, slug).
  */
 export const LINK_ENDPOINTS_SQL = `WITH own AS (
-    SELECT slug, source_id, type, knowledge_revision FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL),
+    SELECT slug, source_id, type, knowledge_revision FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL
+      AND source_id IN (${LIVE_LINK_SOURCES_SQL})),
   elsewhere AS (SELECT array_agg(k) AS refs FROM unnest($2::text[]) k WHERE k=ANY($3::text[]) OR NOT EXISTS (SELECT 1 FROM own WHERE own.slug=k))
   SELECT slug, source_id, type, knowledge_revision FROM own
   UNION ALL
-  SELECT p.slug, p.source_id, p.type, p.knowledge_revision FROM elsewhere e, sources s, LATERAL (SELECT slug, source_id, type, knowledge_revision
+  SELECT p.slug, p.source_id, p.type, p.knowledge_revision FROM elsewhere e, (${LIVE_LINK_SOURCES_SQL}) s, LATERAL (SELECT slug, source_id, type, knowledge_revision
     FROM pages WHERE source_id=s.id AND slug=ANY(e.refs) AND deleted_at IS NULL OFFSET 0) p
   WHERE s.id<>$1`;
 
