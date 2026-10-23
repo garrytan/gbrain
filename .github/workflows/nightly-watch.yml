@@ -51,6 +51,7 @@ on:
       - Scale tier
       - Convergence nightly
       - Sync freshness gate
+      - Production soak
       - macOS 26 validation
       - Semgrep
       - OSV-Scanner

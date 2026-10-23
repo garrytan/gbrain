@@ -187,6 +187,9 @@ CHECKS=(
   # Goal (a) (refactor wave 1): engine SQL only shrinks; baseline
   # scripts/engine-sql-baseline.tsv.
   "check:engine-sql-ratchet"
+  # GBRA-161: derived-retire writers only shrink; reviewed ceilings in
+  # docs/architecture/derived-census.tsv.
+  "check:derived-census"
   # Wave B segmented storage (spec 1.5 layer 4): whole-body page readers only
   # shrink; baseline scripts/page-body-readers-baseline.tsv.
   "check:page-body-readers"

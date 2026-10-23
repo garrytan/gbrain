@@ -67,6 +67,9 @@ describe('extract_atoms reconciles atoms with their source (C-14)', () => {
 
   test('a re-extracted transcript retires atoms its new extraction dropped', async () => {
     const filePath = '/corpus/2026-05-01-standup.txt';
+    // GBRA-161: one atom replacing two is a shrink the default floor (0.5) holds for review; this test is about the
+    // retirement of the dropped atom, so it lowers the floor to its minimum.
+    await engine.setConfig('generations.shrink_floor', '0.05');
     await runPhaseExtractAtoms(engine, {
       _transcripts: [{ filePath, content: 'v1', contentHash: 'a'.repeat(64) }], _pages: [],
       _chat: chatWithTitles(['Ship smaller', 'Measure first']),

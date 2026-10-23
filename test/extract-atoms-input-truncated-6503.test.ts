@@ -78,7 +78,11 @@ const transcriptState = (engine: BrainEngine, sourceId: string, filePath: string
 /** An atom an earlier, larger-cap extraction derived from the item's tail: another source_hash, same origin. */
 async function seedTailAtom(engine: BrainEngine, sourceId: string, originKey: 'source_slug' | 'source_path', origin: string, slug: string, managed: boolean) {
   await engine.putPage(slug, { type: 'atom', title: 'Hidden decision from the tail', compiled_truth: 'The tail decision was recorded by an earlier extraction.',
-    frontmatter: { atom_type: 'insight', [originKey]: origin, source_hash: 'earlier0000cap00', dream_generated: true, ...(managed ? { managed_extraction: true } : {}) } }, { sourceId });
+    frontmatter: { atom_type: 'insight', [originKey]: origin, source_hash: 'earlier0000cap00', dream_generated: true, extracted_by: 'extract_atoms-v0.41.2.1',
+      ...(managed ? { managed_extraction: true } : {}) } }, { sourceId });
+  // GBRA-161: an atom from before the generation ledger is retired only on retained extractor evidence (a page version
+  // the extractor wrote, unedited since), which a real earlier extraction leaves behind.
+  await engine.createVersion(slug, { sourceId });
 }
 
 describe('extract_atoms partial disposition for items cut at max_input_chars (#6503)', () => {
@@ -145,6 +149,8 @@ describe('extract_atoms partial disposition for items cut at max_input_chars (#6
   test('unmanaged page: head atoms publish, the tail atom survives, no completion stamp, skipped until the cap rises', async () => {
     for (const { backend, engine } of engines) {
       await engine.setConfig(KNOB, String(CAP));
+      // GBRA-161: the released run replaces the head atom and the tail atom with one atom, a shrink the default floor holds.
+      await engine.setConfig('generations.shrink_floor', '0.05');
       const sourceId = `cut-page-${backend}`;
       await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
       const slug = 'notes/long-decision';
@@ -183,6 +189,8 @@ describe('extract_atoms partial disposition for items cut at max_input_chars (#6
   test('unmanaged transcript: the same disposition through the transcript seam', async () => {
     for (const { backend, engine } of engines) {
       await engine.setConfig(KNOB, String(CAP));
+      // GBRA-161: as above, one atom replaces two when the cap rises.
+      await engine.setConfig('generations.shrink_floor', '0.05');
       const sourceId = `cut-transcript-${backend}`;
       await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
       const filePath = `/corpus/${sourceId}/session.txt`;

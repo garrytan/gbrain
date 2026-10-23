@@ -250,6 +250,7 @@ export async function publishChronicleGeneration(engine: BrainEngine, opts: {
           if (reason) throw supersededError(reason);
           const live = await tx.readPageSnapshot(event.slug, { sourceId });
           if (!live || !owned.has(String(live.page.content_hash ?? ''))) return;
+          await tx.createVersion(event.slug, { sourceId, preimage: live });
           await tx.softDeletePage(event.slug, { sourceId });
           await stampRetired(tx, sourceId, event.slug);
         });

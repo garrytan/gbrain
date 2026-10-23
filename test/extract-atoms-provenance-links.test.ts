@@ -596,10 +596,11 @@ describe('provenance edges are banked BEFORE the completion flip (#4733)', () =>
 
     const originalAddLinksBatch = engine.addLinksBatch;
     let provenanceWrites = 0;
-    engine.addLinksBatch = async (links, opts) => {
+    // GBRA-161: the edges are written inside the generation's activation transaction, so the stub keeps its receiver.
+    engine.addLinksBatch = async function (this: typeof engine, links, opts) {
       provenanceWrites++;
       if (provenanceWrites === 1) throw new Error('forced provenance write failure');
-      return originalAddLinksBatch.call(engine, links, opts);
+      return originalAddLinksBatch.call(this, links, opts);
     };
     try {
       const first = await runPhaseExtractAtoms(engine, {
@@ -616,15 +617,15 @@ describe('provenance edges are banked BEFORE the completion flip (#4733)', () =>
           error: expect.stringContaining('forced provenance write failure'),
         }),
       ]);
-      // No edge banked, and the atom's receipt NEVER flipped: the pending
-      // hash keeps the item discoverable for the next run.
+      // No edge banked, and the atom's receipt NEVER flipped. GBRA-161: the atoms, edges and flip are one generation
+      // transaction, so the failed publication left no atom row at all; the item stays discoverable for the next run.
       expect((await engine.getLinks(sourceSlug)).filter(l => l.link_source === 'atom-provenance')).toHaveLength(0);
       const pending = await engine.executeRaw<{ source_hash: string }>(
         `SELECT frontmatter->>'source_hash' AS source_hash
            FROM pages WHERE type = 'atom' AND frontmatter->>'source_slug' = $1`,
         [sourceSlug],
       );
-      expect(pending).toEqual([{ source_hash: `pending:${contentHash.slice(0, 16)}` }]);
+      expect(pending).toEqual([]);
 
       const retry = await runPhaseExtractAtoms(engine, {
         _transcripts: [],
@@ -760,21 +761,28 @@ describe('case-insensitive same-page atom adoption (#5030)', () => {
 
     await engine.putPage(slugA, {
       type: 'atom', title: titleA, compiled_truth: 'Duplicate atom A.', timeline: '',
-      frontmatter: { source_slug: sourceSlug, source_hash: 'eeee111122223333', atom_type: 'insight' },
+      frontmatter: { source_slug: sourceSlug, source_hash: 'eeee111122223333', atom_type: 'insight', extracted_by: 'extract_atoms-v0.41.2.1' },
     });
     await engine.putPage(slugB, {
       type: 'atom', title: titleB, compiled_truth: 'Duplicate atom B.', timeline: '',
-      frontmatter: { source_slug: sourceSlug, source_hash: 'ffff444455556666', atom_type: 'insight' },
+      frontmatter: { source_slug: sourceSlug, source_hash: 'ffff444455556666', atom_type: 'insight', extracted_by: 'extract_atoms-v0.41.2.1' },
     });
+    // GBRA-161: an atom from before the generation ledger is retired only on retained extractor evidence (a page
+    // version the extractor wrote, unedited since), so the seed keeps one like a real extraction would.
+    await engine.createVersion(slugA, { sourceId: 'default' });
+    await engine.createVersion(slugB, { sourceId: 'default' });
 
     // Re-extraction returns yet a THIRD case variant of the same title. Must
     // not throw, and must not silently adopt either pre-existing duplicate.
     const thirdCaseTitle = 'ambiguous Duplicate title';
+    // GBRA-161: one atom replacing two is a shrink the default floor (0.5) holds for review; this test is about slug
+    // choice, so it lowers the floor to its minimum for this one run.
+    await engine.setConfig('generations.shrink_floor', '0.05');
     const result = await runPhaseExtractAtoms(engine, {
       _transcripts: [],
       _pages: [{ slug: sourceSlug, content: 'A claim with an ambiguous title history.', contentHash: 'gggg777788889999' }],
       _chat: stubChat(thirdCaseTitle),
-    });
+    }).finally(() => engine.setConfig('generations.shrink_floor', '0.5'));
     expect(result.status).toBe('ok');
     expect(result.details?.failures).toEqual([]);
     expect(result.details?.atoms_extracted).toBe(1);

@@ -13,7 +13,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { VERSION } from '../version.ts';
-import { OperationError, __registerOperationErrorRenderer, type WithdrawnDetail } from './ops/contract.ts';
+import { OperationError, __registerOperationErrorRenderer, provesNotAdmitted, type WithdrawnDetail } from './ops/contract.ts';
 import { StructuredAgentError } from './errors.ts';
 import { canonicalCodeFor, codeEntry, codeClass, codeRetryable, exitCodeForCode } from './error-catalogue.ts';
 import { VERB_NAMES } from './verbs.ts';
@@ -831,7 +831,7 @@ export function toAgentError(e: unknown, ctx: AgentErrorContext): AgentEnvelope 
     if (!parts.fix && (codeClass(parts.code) === 'server' || codeClass(parts.code) === 'unavailable')) {
       parts = { ...parts, fix: diagnosticFix(ctx, 'Doctor reports what is missing or failing on the brain host.') };
     }
-    if (ctx.mutating === true && ctx.idempotent !== true) parts = { ...parts, retryable: false };
+    if (ctx.mutating === true && ctx.idempotent !== true && !provesNotAdmitted(e)) parts = { ...parts, retryable: false };
     const env = buildEnvelope(parts, ctx.render);
     if (env.code === 'internal_error' || env.code === 'internal' || !env.suggestion) {
       recordAgentContractEvent({ transport: ctx.transport, op: ctx.op, command: ctx.command, code: env.code, has_suggestion: !!env.suggestion, outcome: ctx.outcome });

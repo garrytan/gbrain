@@ -526,6 +526,7 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
       const inline = pageIds.filter(id => !bodies.segmented.includes(id));
       const chunks = inline.length ? (await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=ANY($1::integer[]) RETURNING 1', [inline])).length : 0;
       const versions = await redactPageVersions(tx, p.sourceId, current.fact, pageIds);
+      const ledger = await (await import('../generations/ledger-scrub.ts')).scrubGenerationLedger(tx, p.sourceId, { needles: [current.fact] });
       prose = versions.prose;
       const segments = await purgeSegmentStorage(tx, p.sourceId, current.fact, plan, [...new Set([...bodies.segmented, ...versions.segmentedPages])],
         [...bodies.replaced, ...versions.replaced], admitted.id);
@@ -540,7 +541,7 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
         commit_subject: `gbrain: purge fact ${token}`, commit_line: `purge fact ${token}`,
         targets: pages.map(page => ({ slug: page.slug, page_id: Number(page.id), revision: page.knowledge_revision })) })]);
       counts = { facts, takes, chunks, page_versions: versions.redacted, pages: rewritten.length, persistence_requests: intents,
-        query_cache: cache, decide_review: review, open_loops: loops, take_proposals: proposals, core_edit_notices: notices,
+        query_cache: cache, decide_review: review, open_loops: loops, take_proposals: proposals, core_edit_notices: notices, ...ledger,
         write_gate_holds: holdIds.length, write_gate_receipts: gateReceipts, page_segment_texts: segments.texts,
         page_body_stagings: segments.stagings, page_body_staging_parts: segments.parts, persistence_requests_cancelled: segments.cancelled,
         derived_hidden: Object.values(derived.hidden).reduce((a, b) => a + b, 0) };

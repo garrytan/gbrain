@@ -60,6 +60,17 @@
       "decision_receipts.decision_receipts_pkey": "p PRIMARY KEY (id)",
       "derivation_inputs.derivation_inputs_pkey": "p PRIMARY KEY (derived_table, derived_id, input_table, input_id)",
       "derivation_inputs.derivation_inputs_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "derived_generation_attempts.derived_generation_attempts_pkey": "p PRIMARY KEY (hold_id)",
+      "derived_generation_attempts.derived_generation_attempts_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "derived_generation_items.derived_generation_items_action_check": "c CHECK ((action = ANY (ARRAY['published'::text, 'retired'::text, 'revived'::text, 'kept'::text, 'adopted'::text])))",
+      "derived_generation_items.derived_generation_items_generation_id_fkey": "f FOREIGN KEY (generation_id) REFERENCES derived_generations(id) ON DELETE CASCADE",
+      "derived_generation_items.derived_generation_items_pkey": "p PRIMARY KEY (generation_id, item_key)",
+      "derived_generation_valve.derived_generation_valve_pkey": "p PRIMARY KEY (source_id, kind, window_key)",
+      "derived_generation_valve.derived_generation_valve_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "derived_generations.derived_generations_held_reason_check": "c CHECK (((held_reason IS NULL) OR (held_reason = ANY (ARRAY['shrunk'::text, 'oversize'::text, 'valve'::text, 'no_proof'::text, 'fence_absent'::text, 'attempts_exhausted'::text, 'segmented_unsupported'::text, 'tie'::text]))))",
+      "derived_generations.derived_generations_pkey": "p PRIMARY KEY (id)",
+      "derived_generations.derived_generations_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "derived_generations.derived_generations_state_check": "c CHECK ((state = ANY (ARRAY['live'::text, 'held'::text, 'superseded'::text])))",
       "dream_synthesis_completions.dream_synthesis_completions_pkey": "p PRIMARY KEY (source_id, idempotency_key)",
       "dream_verdicts.dream_verdicts_pkey": "p PRIMARY KEY (file_path, content_hash)",
       "drift_decisions.drift_decisions_pkey": "p PRIMARY KEY (id)",
@@ -621,6 +632,18 @@
       "derivation_inputs": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "derived_generation_attempts": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "derived_generation_items": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "derived_generation_valve": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "derived_generations": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "dream_synthesis_completions": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1062,6 +1085,16 @@
       "decision_receipts_pkey": "CREATE UNIQUE INDEX decision_receipts_pkey ON public.decision_receipts USING btree (id)",
       "decision_receipts_slot_created_idx": "CREATE INDEX decision_receipts_slot_created_idx ON public.decision_receipts USING btree (slot, created_at)",
       "derivation_inputs_pkey": "CREATE UNIQUE INDEX derivation_inputs_pkey ON public.derivation_inputs USING btree (derived_table, derived_id, input_table, input_id)",
+      "derived_generation_attempts_key": "CREATE INDEX derived_generation_attempts_key ON public.derived_generation_attempts USING btree (source_id, kind, owner_key)",
+      "derived_generation_attempts_pkey": "CREATE UNIQUE INDEX derived_generation_attempts_pkey ON public.derived_generation_attempts USING btree (hold_id)",
+      "derived_generation_items_key": "CREATE INDEX derived_generation_items_key ON public.derived_generation_items USING btree (item_key)",
+      "derived_generation_items_pkey": "CREATE UNIQUE INDEX derived_generation_items_pkey ON public.derived_generation_items USING btree (generation_id, item_key)",
+      "derived_generation_valve_pkey": "CREATE UNIQUE INDEX derived_generation_valve_pkey ON public.derived_generation_valve USING btree (source_id, kind, window_key)",
+      "derived_generations_one_hold": "CREATE UNIQUE INDEX derived_generations_one_hold ON public.derived_generations USING btree (source_id, kind, owner_key) WHERE (state = 'held'::text)",
+      "derived_generations_one_live": "CREATE UNIQUE INDEX derived_generations_one_live ON public.derived_generations USING btree (source_id, kind, owner_key) WHERE (state = 'live'::text)",
+      "derived_generations_operation": "CREATE INDEX derived_generations_operation ON public.derived_generations USING btree (operation_id)",
+      "derived_generations_pkey": "CREATE UNIQUE INDEX derived_generations_pkey ON public.derived_generations USING btree (id)",
+      "derived_generations_state_created": "CREATE INDEX derived_generations_state_created ON public.derived_generations USING btree (state, created_at)",
       "dream_synthesis_completions_pkey": "CREATE UNIQUE INDEX dream_synthesis_completions_pkey ON public.dream_synthesis_completions USING btree (source_id, idempotency_key)",
       "dream_verdicts_expires_idx": "CREATE INDEX dream_verdicts_expires_idx ON public.dream_verdicts USING btree (expires_at)",
       "dream_verdicts_pkey": "CREATE UNIQUE INDEX dream_verdicts_pkey ON public.dream_verdicts USING btree (file_path, content_hash)",
@@ -1469,6 +1502,7 @@
       "decide_proposals_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=decide_proposals.id",
       "decide_review_proposals_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=decide_review_proposals.id",
       "decision_receipts_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=decision_receipts.id",
+      "derived_generations_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=derived_generations.id",
       "drift_decisions_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=drift_decisions.id",
       "entity_identities_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=entity_identities.id",
       "eval_candidates_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=eval_candidates.id",
@@ -2019,6 +2053,66 @@
           "6 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=true force_rls=false"
+      },
+      "derived_generation_attempts": {
+        "columns": [
+          "1 hold_id text/text NOT NULL",
+          "2 source_id text/text NOT NULL",
+          "3 kind text/text NOT NULL",
+          "4 owner_key text/text NOT NULL",
+          "5 attempts integer/int4 NOT NULL DEFAULT 0",
+          "6 codes jsonb/jsonb NOT NULL DEFAULT '[]'::jsonb",
+          "7 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
+      "derived_generation_items": {
+        "columns": [
+          "1 generation_id bigint/int8 NOT NULL",
+          "2 item_key text/text NOT NULL",
+          "3 identity_hash text/text NOT NULL",
+          "4 action text/text NOT NULL",
+          "5 preimage jsonb/jsonb NULL",
+          "6 preimage_bytes integer/int4 NULL"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
+      "derived_generation_valve": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 kind text/text NOT NULL",
+          "3 window_key text/text NOT NULL",
+          "4 retired integer/int4 NOT NULL DEFAULT 0",
+          "5 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
+      "derived_generations": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('derived_generations_id_seq'::regclass)",
+          "2 source_id text/text NOT NULL",
+          "3 kind text/text NOT NULL",
+          "4 owner_key text/text NOT NULL",
+          "5 generation integer/int4 NOT NULL DEFAULT 0",
+          "6 state text/text NOT NULL",
+          "7 run_id text/text NULL",
+          "8 operation_id text/text NOT NULL",
+          "9 hold_id text/text NULL",
+          "10 input_pin text/text NULL",
+          "11 input_size bigint/int8 NULL",
+          "12 completeness jsonb/jsonb NOT NULL DEFAULT '{}'::jsonb",
+          "13 item_set_hash text/text NOT NULL",
+          "14 held_reason text/text NULL",
+          "15 held_context jsonb/jsonb NULL",
+          "16 proposal jsonb/jsonb NULL",
+          "17 proposal_bytes integer/int4 NULL",
+          "18 attempts integer/int4 NOT NULL DEFAULT 0",
+          "19 superseded_by bigint/int8 NULL",
+          "20 restore_of bigint/int8 NULL",
+          "21 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "22 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
       },
       "dream_synthesis_completions": {
         "columns": [

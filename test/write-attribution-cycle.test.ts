@@ -84,7 +84,10 @@ describe('cycle and synthesis writers on an unmanaged brain', () => {
       const source = 'writings/essay-example';
       await creatorPage(brain, source, { compiled_truth: 'A long essay with extractable claims.' });
       const stale = 'atoms/2026-01-01/retired-example';
-      await creatorPage(brain, stale, { type: 'atom', compiled_truth: 'An older claim.', frontmatter: { type: 'atom', source_slug: source, source_hash: 'aaaaaaaaaaaaaaaa' } });
+      await creatorPage(brain, stale, { type: 'atom', compiled_truth: 'An older claim.', frontmatter: { type: 'atom', source_slug: source, source_hash: 'aaaaaaaaaaaaaaaa', extracted_by: 'extract_atoms-v0.41.2.1' } });
+      // GBRA-161: an atom from before the generation ledger is retired only on retained extractor evidence (a page version
+      // the extractor wrote, unedited since), which a real earlier extraction leaves behind.
+      await asCreator(engine, tx => tx.createVersion(stale, { sourceId: brain.sourceId }));
       const chat = async (): Promise<ChatResult> => ({
         text: '[{"title":"Prototypes beat renders","atom_type":"insight","body":"Buyers want tangible prototypes."}]',
         blocks: [{ type: 'text', text: '' }], stopReason: 'end', model: 'anthropic:claude-haiku-4-5', providerId: 'anthropic',

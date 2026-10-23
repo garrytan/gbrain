@@ -2,7 +2,6 @@ import type { SqlEngine } from '../persistence/model.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { stableJson } from '../persistence/digest.ts';
 import type { BrainEngine } from '../engine.ts';
-import { maintenanceTransaction } from '../persistence/attribution.ts';
 
 /**
  * gbrain#4148: consecutive same-content failures of a content-deterministic
@@ -69,32 +68,6 @@ export async function writeAtomPageState(
   });
   if (!row) throw new AtomPageStateError('changed');
   return Number(row.fail_count);
-}
-
-export async function completeAtomReceipts(
-  engine: BrainEngine, sourceId: string, importedSlugs: string[], hash16: string, page?: AtomPageInput,
-): Promise<void> {
-  await maintenanceTransaction(engine, async tx => {
-    const completed = await tx.executeRaw(
-      `UPDATE pages
-          SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
-        WHERE source_id = $2 AND type = 'atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL
-          ${page ? `AND EXISTS (
-            SELECT 1 FROM pages origin JOIN sources s ON s.id=origin.source_id
-            WHERE origin.id=$4 AND s.incarnation=$5::uuid AND origin.source_id=$2
-              AND origin.content_hash=$6 AND origin.knowledge_revision=$7::uuid AND origin.deleted_at IS NULL
-            FOR SHARE OF origin, s
-          )` : ''}
-        RETURNING slug`,
-      page
-        ? [hash16, sourceId, importedSlugs, page.identity?.pageId ?? null,
-          page.identity?.sourceIncarnation ?? null, page.contentHash, page.identity?.revision ?? null]
-        : [hash16, sourceId, importedSlugs],
-    );
-    if (completed.length !== new Set(importedSlugs).size) {
-      throw new Error('atom completion could not be saved because the source or atom pages changed; pending atoms remain retryable');
-    }
-  });
 }
 
 const LEGACY_KEYS = ['atoms_scan_hash', 'atoms_fail_hash', 'atoms_fail_count'];

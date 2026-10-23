@@ -12,13 +12,14 @@
  * probe makes each new file's slug cost SLUG_CPU_MS of CPU, so a build that does not yield holds timers well past the
  * bound on any machine (451 ms here before the fix).
  */
-import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import type { BrainEngine } from '../src/core/engine.ts';
 import * as syncCore from '../src/core/sync.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { watchLoopLag } from './helpers/cpu-time.ts';
+import { isolatedTest } from './helpers/isolated-test.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 
 const PATHS = 8_000;
@@ -55,13 +56,13 @@ describe('GBRA-133 PR 2b: a first sync builds its batch in linear time', () => {
   };
   const window = { open: false };
 
-  test(`the batch build of ${PATHS} new same-blob files never blocks a timer for ${MAX_LAG_MS} ms`, () => managedBrain(async ({ engine }) => {
+  isolatedTest(import.meta.path, `the batch build of ${PATHS} new same-blob files never blocks a timer for ${MAX_LAG_MS} ms`, () => managedBrain(async ({ engine }) => {
     const maxLag = await batchBuildLag(engine);
     expect(maxLag).toBeDefined();
     expect(Math.round(maxLag!)).toBeLessThan(MAX_LAG_MS);
   }, { setup }), 300_000);
 
-  test(`with ${SLUG_CPU_MS} ms of CPU per new file's slug, the batch build still yields within ${MAX_LAG_MS} ms`, () => managedBrain(async ({ engine }) => {
+  isolatedTest(import.meta.path, `with ${SLUG_CPU_MS} ms of CPU per new file's slug, the batch build still yields within ${MAX_LAG_MS} ms`, () => managedBrain(async ({ engine }) => {
     const resolve = syncCore.resolveSlugForPath;
     let slowed = 0;
     const spy = spyOn(syncCore, 'resolveSlugForPath').mockImplementation(((...args: Parameters<typeof resolve>) => {

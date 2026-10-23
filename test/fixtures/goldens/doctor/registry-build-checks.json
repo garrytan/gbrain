@@ -547,6 +547,14 @@
       },
       {
         "category": "brain",
+        "name": "generation_retirements"
+      },
+      {
+        "category": "brain",
+        "name": "generation_held"
+      },
+      {
+        "category": "brain",
         "name": "extractor_facts_expired"
       },
       {

@@ -87,7 +87,10 @@ export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${Effect
   | 'large_file:stage_copying' | 'large_file:stage_flushed'
   // A streamed file (large-file.ts `stageStreamedContent`: restore_page, a segmented withdrawal mirror) after each piece is
   // written to its in-progress name, before the stream is verified, flushed and renamed to the reserved stage name.
-  | 'large_file:stage_streaming';
+  | 'large_file:stage_streaming'
+  // GBRA-161: inside a generation activation, after its items are written and after its retirements, both before the commit;
+  // and after the activation committed, before the producer acknowledges it.
+  | 'generation:published' | 'generation:retired' | 'generation:activated';
 /**
  * `signal` (#6278, `consumer:preparing` only): the preparation's abort signal, so
  * a stalling hook can model both the reporter's cases: a preparer that honours

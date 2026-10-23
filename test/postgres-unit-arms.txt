@@ -320,6 +320,11 @@ test/pathological/d7-synthesize-reverse-write.test.ts
 test/pathological/d8-patterns-reverse-write.test.ts
 test/pathological/d9-dream-summary-overwrite.test.ts
 test/pathological/facts-mirror-failures.test.ts
+test/pathological/g0-derived-retirement-hold.test.ts
+test/pathological/g1-atom-generations.test.ts
+test/pathological/g1-generation-crash.test.ts
+test/pathological/g1-generation-probes.test.ts
+test/pathological/g1-generations.test.ts
 test/pathological/h1-zero-yield-atom-reextract.test.ts
 test/pathological/h2-git-effect-moved-remote.test.ts
 test/pathological/h3-chronicle-partial-generation.test.ts

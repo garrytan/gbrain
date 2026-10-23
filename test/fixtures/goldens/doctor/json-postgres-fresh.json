@@ -978,7 +978,7 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "RLS enabled on 151/151 public tables",
+          "message": "RLS enabled on 155/155 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -992,14 +992,14 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "1302 column(s) verified against live schema",
+          "message": "1342 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 151 table(s) the applied migrations create exist.",
+          "message": "All 155 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -1659,6 +1659,35 @@
           "elapsed_ms": "<volatile>",
           "message": "No atom retired by an empty re-extraction is waiting to be restored.",
           "name": "atom_retirements_restorable",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "by_source": [],
+            "docs": "docs/guides/repair.md#generations",
+            "items": 0,
+            "keys": 0,
+            "repair": "generations",
+            "restore_days": 30
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No live generation retired items in the last 30 day(s).",
+          "name": "generation_retirements",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "by_reason": [],
+            "count": 0,
+            "docs": "docs/guides/repair.md#generations",
+            "releasable": 0,
+            "repair": "generations"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No derived generation is held.",
+          "name": "generation_held",
           "status": "ok"
         },
         {

@@ -1263,6 +1263,11 @@ export async function deliverEvidence(
     for (const h of g.hits) passthrough.push({ rank: hits.indexOf(h), hit: h, reason: 'long_page_chunk' });
   };
 
+  const unit = plan.unit === 'auto' ? 'page' : plan.unit;
+  const segmentedReads = new Map(groups.flatMap(g => {
+    const page = !fetchFailure && g.reason !== 'long_page' && g.pageId !== null ? pages?.get(g.pageId) : undefined;
+    return page?.segmented ? [[g, planSegmentedBlock(engine, page, g.hits, unit, plan.window, scope.detail !== 'low').catch(() => null)] as const] : [];
+  }));
   // C1 date headers: one line per block (passthrough rows included), paid for inside the budget like the title.
   const headerFor = plan.dateHeader ? await blockDateHeaders(engine, hits, () => fallbacks.add('date_header_unavailable')) : () => '';
 
@@ -1287,8 +1292,7 @@ export async function deliverEvidence(
     } else {
       const page = pages?.get(g.pageId);
       if (!page) { dropped.not_readable = (dropped.not_readable ?? 0) + 1; continue; }
-      const unit = plan.unit === 'auto' ? 'page' : plan.unit;
-      const read = page.segmented ? await planSegmentedBlock(engine, page, g.hits, unit, plan.window, scope.detail !== 'low').catch(() => null) : planBlock(page, g.hits, unit, plan.window, scope.detail !== 'low');
+      const read = page.segmented ? await segmentedReads.get(g)! : planBlock(page, g.hits, unit, plan.window, scope.detail !== 'low');
       if (!read && opts.liveHits === false) { dropped.not_readable = (dropped.not_readable ?? 0) + 1; continue; }
       b = read ?? fallbackBlock(g.hits[0], g.hits, 'segment_read_failed');
     }

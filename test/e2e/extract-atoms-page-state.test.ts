@@ -122,7 +122,7 @@ describeDb('Postgres derived atom page state', () => {
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   });
 
-  test.each(['atom', 'links', 'deleted-before-completion'])('partial %s writes retain pending receipts until every atom and edge persists', async failure => {
+  test.each(['atom', 'links', 'deleted-before-completion'])('partial %s writes leave no atom row until every atom and edge persists', async failure => {
     const put = engine.putPage, addLinks = engine.addLinksBatch;
     let writes = 0;
     engine.putPage = async function (...args) {
@@ -145,12 +145,12 @@ describeDb('Postgres derived atom page state', () => {
       const result = await runPhaseExtractAtoms(engine, { _transcripts: [], _chat: atomChat });
       expect(result.status).toBe('warn');
       if (failure === 'deleted-before-completion') {
-        expect(JSON.stringify(result.details.failures)).toContain('pending atoms remain retryable');
+        expect(JSON.stringify(result.details.failures)).toContain('is not live at the content just written; nothing was committed');
       }
     } finally { engine.putPage = put; engine.addLinksBatch = addLinks; }
-    const pending = await engine.executeRaw<{ hash: string }>("SELECT frontmatter->>'source_hash' AS hash FROM pages WHERE type='atom'");
-    expect(pending).toHaveLength(failure === 'links' ? 2 : 1);
-    expect(pending.every(row => row.hash.startsWith('pending:'))).toBe(true);
+    // GBRA-161: the atoms, their edges and the completion flip are one generation transaction, so a failed publication
+    // rolls back whole: no atom row, provisional or final (the PGLite twin asserts the same).
+    expect(await engine.executeRaw("SELECT slug FROM pages WHERE type='atom'")).toEqual([]);
     expect(await engine.executeRaw('SELECT 1 FROM extract_atoms_page_state WHERE tombstoned')).toEqual([]);
     expect(await countExtractAtomsBacklog(engine, 'default')).toBe(1);
     expect((await runPhaseExtractAtoms(engine, { _transcripts: [], _chat: atomChat })).status).toBe('ok');

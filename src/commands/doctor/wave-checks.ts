@@ -323,6 +323,20 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async (engine, scope) => (await import('./checks/atom-retirements.ts')).atomRetirementsRestorableCheck(engine, scope.sourceIds),
   },
   {
+    id: 'generation_retirements', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Restoring a derived generation is a host-side, explicit-only repair.',
+    count: d => Number(d.items ?? 0),
+    impact: 'Live generations retired derived items inside the restore window; they stay restorable until the purge hold ends',
+    run: async (engine, scope) => (await import('./checks/generations.ts')).generationRetirementsCheck(engine, scope.sourceIds),
+  },
+  {
+    id: 'generation_held', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Releasing a held derived generation is a host-side, explicit-only repair.',
+    count: d => Number(d.count ?? 0),
+    impact: 'Some derived results were held instead of published, so their keys keep the previous generation',
+    run: async (engine, scope) => (await import('./checks/generations.ts')).generationHeldCheck(engine, scope.sourceIds),
+  },
+  {
     id: 'extractor_facts_expired', resolution: 'repair', registration: 'wave',
     hostOnly: 'Restoring expired extractor facts is a host-side, explicit-only repair.',
     count: d => Number(d.evidenced ?? 0) + Number(d.ambiguous ?? 0),

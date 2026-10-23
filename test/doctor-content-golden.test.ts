@@ -62,6 +62,12 @@ const PAGES: Record<string, string> = {
 const BROKEN_PAGE = ['---', 'title: [unclosed', 'tags: a: b', '---', 'Body with [[alice-example]].', ''].join('\n');
 
 const FIXED_DATE = '2024-01-01T00:00:00Z';
+/**
+ * The fixture's clock (fixed-clock-preload.ts). The capacity forecast's `max_day_7d` is the largest UTC day of journal
+ * rows, so a capture whose writes straddle midnight UTC splits its 7 rows across two days (6 on one read on #7375's
+ * 00:06 UTC shard). Noon leaves 12 hours for a capture's writes to stay on one day.
+ */
+const CONTENT_CLOCK = '2026-10-10T12:00:00Z';
 
 function writeSource(dir: string): void {
   for (const [rel, body] of Object.entries(PAGES)) {
@@ -79,7 +85,7 @@ type Captures = Record<string, GbrainRun>;
 const ALL = defineNormalizer<Captures>(DOCTOR.name, (c) => Object.fromEntries(Object.entries(c).map(([k, v]) => [k, DOCTOR.apply(v)])));
 
 async function capture(): Promise<Captures> {
-  const h = makeDoctorHome('doctor-content-golden');
+  const h = makeDoctorHome('doctor-content-golden', { clock: CONTENT_CLOCK });
   homes.push(h);
   const src = join(h.home, 'notes-src');
   writeSource(src);

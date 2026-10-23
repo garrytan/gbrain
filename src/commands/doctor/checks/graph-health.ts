@@ -353,6 +353,8 @@ export const timelineHistoryEntry: DoctorEntry = {
     'google_calendar_readable',
     'google_api_access',
     'atom_retirements_restorable',
+    'generation_retirements',
+    'generation_held',
     'extractor_facts_expired',
     'conversation_label_facts',
     'conversation_outcomes_stale',

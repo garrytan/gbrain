@@ -175,11 +175,13 @@ describe('derived atom page state', () => {
       if (failure === 'atom' && args[1].type === 'atom' && ++writes === 2) throw new Error('synthetic second atom failure');
       return put.apply(this, args);
     }) as typeof put;
-    engine.addLinksBatch = async (...args) => {
+    // GBRA-161: the atoms, their edges and the completion flip are written in one generation transaction, so the stubs
+    // keep their receiver (the transaction) instead of writing around it.
+    engine.addLinksBatch = async function (this: PGLiteEngine, ...args: Parameters<typeof links>) {
       if (failure === 'links') throw new Error('synthetic provenance failure');
-      const result = await links.apply(engine, args);
+      const result = await links.apply(this, args);
       if (failure === 'deleted-before-completion') {
-        await engine.executeRaw("DELETE FROM pages WHERE source_id='default' AND slug=$1", [args[0][0].to_slug]);
+        await this.executeRaw("DELETE FROM pages WHERE source_id='default' AND slug=$1", [args[0][0].to_slug]);
       }
       return result;
     };
@@ -187,19 +189,19 @@ describe('derived atom page state', () => {
       const result = await scan(atoms);
       expect(result.status).toBe('warn');
       if (failure === 'deleted-before-completion') {
-        expect(JSON.stringify(result.details.failures)).toContain('pending atoms remain retryable');
+        expect(JSON.stringify(result.details.failures)).toContain('is not live at the content just written; nothing was committed');
       }
     }
     finally { engine.putPage = put; engine.addLinksBatch = links; }
-    const pending = await engine.executeRaw<{ hash: string }>("SELECT frontmatter->>'source_hash' AS hash FROM pages WHERE type='atom'");
-    expect(pending).toHaveLength(failure === 'links' ? 2 : 1);
-    expect(pending.every(row => row.hash.startsWith('pending:'))).toBe(true);
+    // GBRA-161: a failed publication rolls back whole: no atom row, provisional or final, and no scan state.
+    expect(await engine.executeRaw("SELECT slug FROM pages WHERE type='atom'")).toEqual([]);
     expect((await rows()).every(row => !row.tombstoned)).toBe(true);
     expect(await countExtractAtomsBacklog(engine, 'default')).toBe(1);
     expect((await scan(atoms)).status).toBe('ok');
+    const [origin] = await engine.executeRaw<{ content_hash: string }>("SELECT content_hash FROM pages WHERE source_id='default' AND slug=$1", [slug]);
     const complete = await engine.executeRaw<{ hash: string }>("SELECT frontmatter->>'source_hash' AS hash FROM pages WHERE type='atom'");
     expect(complete).toHaveLength(2);
-    expect(complete.every(row => row.hash === (pending[0].hash.slice('pending:'.length)))).toBe(true);
+    expect(complete.every(row => row.hash === origin!.content_hash.slice(0, 16))).toBe(true);
     expect((await engine.getLinks(slug)).filter(link => link.link_source === 'atom-provenance')).toHaveLength(2);
     expect(await countExtractAtomsBacklog(engine, 'default')).toBe(0);
   });

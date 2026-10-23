@@ -198,7 +198,9 @@ for (const backend of testBackends()) {
           frontmatter: 'gbrain repair frontmatter', 'timeline-comments': 'gbrain repair timeline-comments', 'managed-sync-orphans': 'gbrain repair managed-sync-orphans', 'content-receipt-root': 'gbrain repair content-receipt-root', 'frontmatter-keys': 'gbrain repair frontmatter-keys', 'file-drift': 'gbrain repair file-drift',
           'stuck-recovery': 'gbrain repair stuck-recovery', 'ghost-pages': 'gbrain repair ghost-pages', 'origin-twins': 'gbrain repair origin-twins', 'receipt-compaction': 'gbrain repair receipt-compaction', aliases: 'gbrain repair aliases', 'rename-identity': 'gbrain repair rename-identity',
           'overwritten-edits': 'gbrain repair overwritten-edits', 'legacy-twins': 'gbrain repair legacy-twins', 'missing-tables': 'gbrain repair missing-tables', 'url-clone-fences': 'gbrain repair url-clone-fences', 'segmented-mirror': 'gbrain repair segmented-mirror',
-          'uncommitted-deletions': 'gbrain repair uncommitted-deletions' };
+          'uncommitted-deletions': 'gbrain repair uncommitted-deletions',
+          // GBRA-161: the generations preview carries its ledger kind and the restore window, so the printed command runs as is.
+          generations: 'gbrain repair generations --kind atom --since 30d' };
 
         // The post-upgrade banner names both findings with the kind's read-only preview.
         const banner = await postUpgradeRecoveryBanner(engine, 'host');

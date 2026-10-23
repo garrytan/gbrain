@@ -20,6 +20,11 @@
  *   mi_page_purge_holes_now < _mi_thread_idle_work < waitSyncImpl < atomicsFuncWait.
  * With a 6M-object heap and 1.5M objects dropped before each of 40 blocks, Atomics.wait read up to 108 ms and
  * Bun.sleepSync at most 0.3 ms.
+ * A collection the engine starts while the thread blocks charges its own pause to the reading: the collector stops the
+ * thread when the block returns, and that pause grows with the heap. Bun.sleepSync read 31 ms on #7383 (Bun 1.4.4).
+ * With a 4M-object heap, 50k objects dropped and an async collection requested before each of 12 blocks, one block per
+ * process read 45-64 ms of thread CPU and 193-213 ms of wall time, on Bun 1.4.3 and 1.4.4 (8 of 8 processes, a full
+ * collection's first pause); a full collection run before each block left at most 4 ms (8 of 8).
  */
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
@@ -31,6 +36,7 @@ const MAX_LAG_MS = 100;
 const turn = () => new Promise<void>(resolve => setTimeout(resolve, 20));
 /** Blocks the thread off the CPU for `ms`; returns the thread CPU the block cost. */
 const offCpu = (ms: number) => {
+  Bun.gc(true);
   const start = threadCpuNow();
   Bun.sleepSync(ms);
   return threadCpuNow() - start;

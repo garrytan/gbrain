@@ -606,4 +606,13 @@ src/core/persistence/page-edit.ts	applyPageEdits	call:serializePageToMarkdown	SE
 src/core/persistence/page-edit.ts	applyPageEdits	field	SEGW	within's stored-offset mapping on the materialized snapshot, as pageSegments; a segmented page takes prepareSegmentedEditMutation first
 src/core/persistence/page-edit.ts	prepareSegmentedEditMutation	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body; the body streams from the segments
 src/core/persistence/page-edit.ts	assertSegmentedFencesCompile	field	NONE	the fields hold only the stored fence text laid out at its lines (scanCanonicalFences input); no page body is read
+src/core/generations/adapters/page.ts	pageIdentityHash	field	INLINE	identity hash of a derived page item: a segmented row hashes its empty inline body and is held segmented_unsupported before any write, so no segmented page is rewritten or retired
+src/core/generations/adapters/page.ts	markdownItem	field	NONE	reads the compiled_truth parseMarkdown returns for the producer's proposed markdown; no stored page body is read
+src/core/generations/adapters/page.ts	readPageRows	sql	INLINE	reads derived page items (atoms) with body_storage; a segmented row is marked segmented and held segmented_unsupported, with no preimage
+src/core/generations/adapters/page.ts	pagePreimage	field	INLINE	bounded preimage copy for the generation ledger; a segmented or oversize page stores no preimage (json null) and a restore refuses it
+src/core/generations/adapters/page.ts	preimageIdentity	field	NONE	hashes a ledger preimage JSON copy, never a stored page body
+src/core/generations/adapters/page.ts	preimageMarkdown	call:serializeMarkdown	NONE	serializes a ledger preimage JSON copy for restore; segmented and oversize pages have no preimage
+src/core/generations/adapters/page.ts	preimageMarkdown	field	NONE	reads the body field of a ledger preimage JSON copy; segmented and oversize pages have no preimage
+src/core/generations/adapters/page.ts	pageVersionEvidence	sql	INLINE	legacy-adoption evidence: hashes retained page_versions copies of derived atom pages and compares identity hashes only; segmented versions (compiled_truth NULL) are skipped
+src/core/generations/adapters/atoms.ts	atomGenerationAdapter	sql	META	input size only: body_bytes for a segmented page, octet_length of an inline page columns (pages leave body_bytes NULL inline)
 src/core/search/exact-scan.ts	buildExactBatchStatement	sql	META	#7191: octet_length of the body columns (stored size, never the body) decides an unreadable page

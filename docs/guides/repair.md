@@ -1528,6 +1528,50 @@ their count, origins, oldest and newest retirement and the date the first hold
 ends; its fix is the read-only preview. Show the user the preview before
 running the apply.
 
+### Generations
+
+Unmanaged atom extraction publishes each page's or transcript's atoms as one
+generation (GBRA-161, [generations](../architecture/generations.md)). A result
+that would shrink the atom set below `generations.shrink_floor`, retire items
+without proof that the input is empty, change more than `generations.max_items`
+items, trip the retirement valve or touch a segmented page is held: nothing is
+written or retired, and the previous atoms stay live. A complete result retires
+what it no longer has (versioned, stamped `retired_by: extract-atoms`, held from
+the purge for `generations.restore_days`, 30 by default). `gbrain repair
+generations` undoes or releases them. It is explicit-only and preview-bound,
+and nothing runs on upgrade.
+
+```bash
+gbrain repair generations --kind atom --since 30d --json   # --mode defaults to restore
+gbrain repair generations --kind atom --mode release-held --held --json
+gbrain repair generations --kind atom --key source_slug:<slug> --source <id> --apply --expect <hash> --yes
+```
+
+`--kind` names the ledger kind (`atom` in this release); one selector bounds
+the set: `--run <id>` (one extraction run), `--since <ISO-8601|7d>` (resolved
+once to an instant the preview and apply carry), `--key <owner>`
+(`source_slug:<page>` or `source_path:<transcript>`), `--generation <id>`, or
+`--held` (with `--mode release-held`).
+
+- `--mode restore` republishes the item set the selected live generation
+  replaced, as a new generation: atoms it retired come back from their ledger
+  preimages, atoms it overwrote return to their earlier content, and atoms it
+  added are versioned and retired (`retired_by: generation-restore`). A key with
+  an atom edited since, or one whose preimage is missing (segmented, too large,
+  or purged), is refused whole and listed `refused`; the apply exits incomplete
+  and nothing of that key changes.
+- `--mode release-held` publishes a held result once: `shrunk`, `valve` and
+  `attempts_exhausted` always, `oversize` after `generations.max_items` was
+  raised. `no_proof`, `fence_absent`, `segmented_unsupported` and `tie` are
+  refused, because releasing them would supply the proof they lack.
+
+The preview saves the set under its hash; `--apply --expect <hash> --yes`
+applies exactly that set and rechecks each key under its locks
+(`changed_since_preview` otherwise). Doctor `generation_held` warns while a
+held result waits, with the read-only release preview as its fix;
+`generation_retirements` reports what is restorable. Show the user the preview
+before running the apply. Managed brains keep their coordinator path for now.
+
 ### Extractor facts
 
 A managed write by a gbrain older than v0.60.11.0 to a conversation page

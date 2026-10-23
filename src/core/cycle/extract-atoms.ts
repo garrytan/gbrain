@@ -66,7 +66,6 @@ import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { chat as gatewayChat, withBudgetTracker, isAvailable } from '../ai/gateway.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, providerContentBlockReason, type GlobalLlmErrorClass } from '../ai/errors.ts';
-import { importFromContent } from '../import-file.ts';
 import { derivedWriteThrough, reportFileHolds } from './derived-write-through.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { DEFAULT_EXTRACT_MAX_INPUT_CHARS, extractAtomsInput, inputTruncatedLine, recordPartialDisposition, releasePartialDispositions, resolveExtractAtomsInputCap, stampTranscriptTombstone, type ExtractAtomsInput, type ExtractAtomsItem } from './extract-atoms-input.ts';
@@ -94,10 +93,11 @@ import { OperationError } from '../ops/contract.ts';
 import { isOpPageSlug } from '../ops/context.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
-import { AtomPageStateError, completeAtomReceipts, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
-import { maintenanceTransaction } from '../persistence/attribution.ts';
-import { deriveTrust, lowerDerivedPage } from '../trust/taint.ts';
-import { derivedGateInput } from '../trust/derived-gate.ts';
+import { AtomPageStateError, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
+import { ATOM_KIND, atomGenerationAdapter, atomOwnerKey, atomPagePin, type AtomGenerationContext } from '../generations/adapters/atoms.ts';
+import { markdownItem } from '../generations/adapters/page.ts';
+import type { GenerationKey } from '../generations/contract.ts';
+import { heldForInput, publishGeneration } from '../generations/publish.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
 import { parseAtomsOutcome } from './extract-atoms-parse.ts';
 export { parseAtomsOutcome, parseAtomsResponse, type AtomsParseOutcome } from './extract-atoms-parse.ts';
@@ -992,6 +992,8 @@ export async function runPhaseExtractAtoms(
   let hardFailureCount = 0;
   let writesPending = 0; // #5601: accepted atom batches still publishing (progress, not failures)
   let heldFailed = 0;
+  // GBRA-161: one run id for the receipt and every generation this run publishes (`gbrain repair generations --run`).
+  const runId = `atoms-${Date.now().toString(36)}-${sourceId.slice(0, 4)}`;
   let inputTruncated = 0; // #6503: items cut at the input cap this run (partial disposition, see extract-atoms-input.ts)
 
   async function stampAtomsScanHash(item: AtomPageInput): Promise<void> {
@@ -1096,6 +1098,8 @@ export async function runPhaseExtractAtoms(
       const resumed = !opts.dryRun && managed && origin ? await resumeManagedAtoms(engine, managed, origin) : 'run';
       if (resumed === 'done') { duplicatesSkipped++; continue; }
       if (resumed === 'held') { heldFailed++; continue; } // #6325: settled after repeated failures; doctor lists it
+      // GBRA-161: a complete read whose result for this same input and policy is already held is not computed again.
+      if (!opts.dryRun && !managed && !truncated && await heldForInput(engine, atomGenerationOrigin(sourceId, item).key, atomInputPin(item))) { duplicatesSkipped++; continue; }
       const cutLine = truncated ? inputTruncatedLine(originLabel, input, maxInputChars) : null; // A7: a complete appended-tail read prints nothing
       if (cutLine) { inputTruncated++; console.error(cutLine); } // counted only for a model call
 
@@ -1172,6 +1176,7 @@ export async function runPhaseExtractAtoms(
         const hash16 = item.contentHash.slice(0, 16);
         const importedSlugs: string[] = [];
         const managedAtoms: Array<{ slug: string; content: string; links: LinkBatchInput[] }> = [];
+        const unmanagedAtoms: Array<{ slug: string; content: string }> = [];
         // #3961: provenance edges source-page → atom, accumulated during the
         // atom loop and flushed BEFORE the completion-receipt flip (see the
         // write below). Page-kind items only — transcripts are files, not
@@ -1246,8 +1251,7 @@ export async function runPhaseExtractAtoms(
             { type: 'atom', title: atom.title, tags: [] },
           );
           if (managed) managedAtoms.push({ slug, content: md, links: [] });
-          else { const taint = await deriveTrust(engine, item.kind === 'page' ? [{ table: 'pages', sourceId, slug: item.slug }] : [], { channel: 'derive:atoms' }); // #5575 I2/B3: gated and stamped at the origin's taint
-            await importFromContent(engine, slug, md, { sourceId, preserveGateMarkers: true, noEmbed: !isAvailable('embedding'), writeGate: derivedGateInput(taint.trust) }).then(() => lowerDerivedPage(engine, taint, sourceId, slug)); }
+          else unmanagedAtoms.push({ slug, content: md });
           importedSlugs.push(slug);
           if (item.kind === 'page') {
             provenanceLinks.push({
@@ -1291,18 +1295,10 @@ export async function runPhaseExtractAtoms(
           totalAtomsExtracted += managedAtoms.length;
           await commitAtomsWatermark(item, input, published);
         } else {
-        if (provenanceLinks.length > 0) {
-          await engine.addLinksBatch(provenanceLinks, { auditSite: 'cycle.extract_atoms.provenance' }); // gbrain-allow-direct-insert: atom-provenance edges derived from the extraction itself (no markdown body to reconcile from)
-        }
-        // Completion receipt: flip provisional → real in one statement (only
-        // after every atom AND provenance edge persisted), then stamp the
-        // source page. A crash between flip and stamp degrades to the legacy
-        // atom-rows-mean-done semantics — safe, not lossy.
         throwIfAborted(opts.signal, 'extract_atoms');
-        // #6503: a cut item keeps its atoms provisional (`pending:<hash>`, the upsert path when it runs
-        // again), retires nothing and records its partial disposition instead of a completion stamp.
-        const retired = truncated ? [] : await completeUnmanagedItem(engine, sourceId, item, hash16, importedSlugs);
-        await atomFiles?.write(importedSlugs, retired);
+        const outcome = await publishUnmanagedAtoms(engine, sourceId, item, unmanagedAtoms, provenanceLinks, { partial: truncated, runId, originLabel });
+        if (outcome.state === 'held') continue;
+        await atomFiles?.write(unmanagedAtoms.map(atom => atom.slug), outcome.retired);
         if (truncated) await recordPartialDisposition(engine, sourceId, item, maxInputChars);
         else if (item.kind === 'page') await stampAtomsScanHash(item);
         await commitAtomsWatermark(item, input, []);
@@ -1375,7 +1371,6 @@ export async function runPhaseExtractAtoms(
   // audit-trail / search-visibility surfaces don't block the phase result.
   const hardStopped = opts.signal?.aborted === true;
   if (!opts.dryRun && !managed && totalAtomsExtracted > 0 && !hardStopped) {
-    const runId = `atoms-${Date.now().toString(36)}-${sourceId.slice(0, 4)}`;
     try {
       await writeReceipt(engine, {
         kind: 'atoms',
@@ -1459,50 +1454,37 @@ export async function runPhaseExtractAtoms(
 }
 
 /**
- * Completion receipt: flip provisional → real in one statement (only after
- * every atom AND provenance edge persisted). C-14: atoms are keyed by
- * LLM-chosen titles, which drift between extractions, so once this extraction
- * is complete, retire the atoms an earlier extraction of the same source
- * produced that this one did not. Returns the retired slugs.
+ * GBRA-161: one unmanaged item's atoms, their provenance edges (#3961, #4733), the completion flip (source_hash, #4148)
+ * and the versioned retirement of the atoms this extraction no longer produced (C-14) publish as one generation in one
+ * transaction (#5575 I2/B3: gated and stamped at the origin's taint inside the adapter). #6503: a cut item publishes
+ * additively, stays provisional (`pending:<hash>`) and retires nothing. A held result changes nothing and is logged.
  */
-async function completeUnmanagedItem(engine: BrainEngine, sourceId: string,
-  item: { kind: 'transcript'; filePath: string } | ({ kind: 'page' } & AtomPageInput), hash16: string, importedSlugs: string[]): Promise<string[]> {
-  await completeAtomReceipts(engine, sourceId, importedSlugs, hash16, item.kind === 'page' ? item : undefined);
-  return retireStaleAtoms(engine, sourceId, item.kind === 'page'
-    ? { key: 'source_slug', value: item.slug } : { key: 'source_path', value: item.filePath }, hash16, importedSlugs);
+async function publishUnmanagedAtoms(engine: BrainEngine, sourceId: string, item: ExtractAtomsItem, atoms: ReadonlyArray<{ slug: string; content: string }>,
+  links: LinkBatchInput[], opts: { partial: boolean; runId: string; originLabel: string }) {
+  const { key, context } = atomGenerationOrigin(sourceId, item);
+  context.links = links;
+  context.embed = isAvailable('embedding');
+  const outcome = await publishGeneration(engine, atomGenerationAdapter, { key, items: atoms.map(atom => markdownItem(atom.slug, atom.content)),
+    input: { pin: atomInputPin(item), size: Buffer.byteLength(item.content) }, partial: opts.partial, context, runId: opts.runId });
+  for (const complete of context.postCommit ?? []) {
+    await complete().catch(error => console.error(`[extract_atoms] ${opts.originLabel}: post-commit embedding failed (the embedding backfill retries it): ${error instanceof Error ? error.message : String(error)}`));
+  }
+  if (outcome.state === 'held') {
+    console.error(`[extract_atoms] ${opts.originLabel}: result held (${outcome.reason}); the previous atoms stay live. Preview: gbrain repair generations --kind ${ATOM_KIND} --mode release-held --key ${key.ownerKey} --source ${sourceId}`);
+  }
+  return outcome;
 }
 
-/**
- * Soft-delete a source's atoms from earlier extractions (a different or
- * provisional source_hash) that the current, completed extraction did not
- * re-produce. Imported atoms (`imported_from`) and managed atoms are left
- * alone. Best-effort: a failure leaves duplicates, never loses current atoms.
- */
-async function retireStaleAtoms(
-  engine: BrainEngine,
-  sourceId: string,
-  origin: { key: 'source_slug' | 'source_path'; value: string },
-  hash16: string,
-  currentSlugs: string[],
-): Promise<string[]> {
-  try {
-    const rows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages
-        WHERE source_id = $1 AND type = 'atom' AND deleted_at IS NULL
-          AND frontmatter->>'${origin.key}' = $2
-          AND COALESCE(frontmatter->>'source_hash', '') <> $3
-          AND (frontmatter->>'imported_from') IS NULL
-          AND COALESCE(frontmatter->>'managed_extraction', '') <> 'true'
-          AND NOT (slug = ANY($4::text[]))`,
-      [sourceId, origin.value, hash16, currentSlugs],
-    );
-    const stale = rows.map(r => r.slug);
-    for (let i = 0; i < stale.length; i += 500) await maintenanceTransaction(engine, tx => tx.softDeletePages(stale.slice(i, i + 500), { sourceId }));
-    return stale;
-  } catch (err) {
-    console.error(`[extract_atoms] stale atom cleanup failed for ${origin.value} (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
-    return [];
-  }
+/** GBRA-161: the input pin an unmanaged item was read at (a page's is bound to its row and revision, see atomPagePin). */
+function atomInputPin(item: ExtractAtomsItem): string {
+  return item.kind === 'page' ? atomPagePin(item.contentHash, item.identity) : item.contentHash;
+}
+
+/** GBRA-161: the generation key of one unmanaged item and the context its adapter reads (a transcript's input is not in the database). */
+function atomGenerationOrigin(sourceId: string, item: ExtractAtomsItem): { key: GenerationKey; context: AtomGenerationContext } {
+  const ownerKey = atomOwnerKey(item.kind === 'page' ? { kind: 'page', slug: item.slug } : { kind: 'transcript', filePath: item.filePath });
+  return { key: { kind: ATOM_KIND, sourceId, ownerKey },
+    context: { postCommit: [], ...(item.kind === 'transcript' ? { transcriptInput: { pin: item.contentHash, size: Buffer.byteLength(item.content) } } : {}) } };
 }
 
 /**

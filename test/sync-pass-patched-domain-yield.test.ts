@@ -8,19 +8,20 @@
  * a confirm round patches all 4,000 pages (about 800 ms of keys). Without yields that is one stretch; with them, none
  * passes the bound, and the patch equals the full build.
  */
-import { expect, test } from 'bun:test';
+import { expect } from 'bun:test';
 import { domainCache, levelDomain, type DomainInput } from '../src/core/persistence/sync-pass-narrow.ts';
 import { PageTable } from '../src/core/persistence/sync-pass.ts';
 import type { GitTreeEntry } from '../src/core/persistence/sync-git-stream.ts';
 import { loopYield } from '../src/core/persistence/sync-yield.ts';
 import { spinCpuMs, watchLoopLag } from './helpers/cpu-time.ts';
+import { isolatedTest } from './helpers/isolated-test.ts';
 
 const MAX_LAG_MS = 100;
 const PAGES = 4_000;
 /** Thread CPU clocks tick in about 4 ms steps, so the cost comes in 4 ms pieces. */
 const KEY_CPU_MS = 4, KEY_COST_EVERY = 20;
 
-test('a confirm round that patches every page yields; no stretch passes the bound and the patch equals a full build', async () => {
+isolatedTest(import.meta.path, 'a confirm round that patches every page yields; no stretch passes the bound and the patch equals a full build', async () => {
   const tree = new Map<string, GitTreeEntry>(), pages = new PageTable({ name: 'markdown', version: 1 } as never);
   for (let i = 0; i < PAGES; i++) {
     const path = `notes/n${i}.md`;
@@ -42,4 +43,4 @@ test('a confirm round that patches every page yields; no stretch passes the boun
   expect(patched!.touched!.size).toBe(PAGES);
   expect({ domain: [...patched!.domain].sort(), byOrigin: [...patched!.byOrigin].sort() }).toEqual(expected);
   expect(Math.round(maxLag)).toBeLessThan(MAX_LAG_MS);
-});
+}, 60_000);
