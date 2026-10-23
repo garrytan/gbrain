@@ -17,7 +17,7 @@ import { digest } from '../persistence/digest.ts';
 import { assertCompanyBrainPolicy, assertCompanyBrainExtractor, companyBrainPolicyFingerprint, companyBrainRepository } from './policy.ts';
 import { admitCompanyBrain, assertCompanyBrainCaller, checkCompanyBrainDestination, ingestionFence, ownerStatusFix, reinspectFix, sourceStatusFix,
   type CompanyBrainConnectInput, type CompanyBrainDestination } from './admission.ts';
-import { companyBrainProfile, getCompanyBrainProfile, readCompanyBrainPlan, withCompanyBrainSync } from './profile.ts';
+import { companyBrainCorrectionHint, companyBrainProfile, getCompanyBrainProfile, readCompanyBrainPlan, withCompanyBrainSync } from './profile.ts';
 import type { CompanyBrainSyncContext } from './profile.ts';
 import { beginSourceIngestionReceipt, getSourceIngestionReceipt, linkSourceIngestionCheckpoints, transitionSourceIngestionReceipt,
   recordSourceIngestionOutcome, type SourceIngestionReceipt, type SourceIngestionMutation } from './receipts.ts';
@@ -32,6 +32,7 @@ export interface CompanyBrainResult {
   receipt: SourceIngestionReceipt;
   sync?: SyncResult;
   evidence?: CompanyBrainEvidence;
+  sourceCorrection?: string;
 }
 
 function resumeFix(input: CompanyBrainDestination, why: string): Action {
@@ -95,6 +96,9 @@ async function execute(engine: BrainEngine, input: CompanyBrainDestination, opts
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
   assertCompanyBrainPolicy(profile, receipt, brain?.brain_id, source.local_path);
   assertCompanyBrainExtractor(receipt.extractorVersion, input);
+  // A replayed connect approves its recorded plan, not whatever HEAD has become.
+  if (expected && receipt.outcome === 'complete') return { ok: true, code: 'complete', receipt,
+    evidence: await readCompanyBrainEvidence(engine, input.sourceId) };
   const policyFingerprint = companyBrainPolicyFingerprint(profile, input.sourceId);
   let plan = receipt.outcome === 'complete'
     ? await inspectCompanyBrain({ path: source.local_path, profile: 'company-brain', include: profile.selection.include, exclude: profile.selection.exclude, limits: profile.limits })
@@ -167,11 +171,14 @@ async function execute(engine: BrainEngine, input: CompanyBrainDestination, opts
         protect: async checkpoints => { receipt = await linkSourceIngestionCheckpoints(engine, { ...mutation(), checkpoints }); } };
       sync = await withCompanyBrainSync(context,
       () => performSync(engine, { ...opts, sourceId: input.sourceId, repoPath: source.local_path, noEmbed: true, noPull: true, noExtract: true,
+        full: opts.full || receipt!.checkpointRefs.some(ref => ref.op === 'company-brain-replacement'),
         workingTree: false, noSchemaPack: false, concurrency: 1 }));
       if (!['synced', 'first_sync', 'up_to_date'].includes(sync.status) || sync.failedFiles) {
         receipt = await recordSourceIngestionOutcome(engine, { ...mutation(), outcome: 'incomplete', diagnostic: 'content_incomplete',
           counts: { failedFiles: sync.failedFiles ?? 0, pendingWrites: sync.reason === 'writer_pending' ? 1 : 0 } });
-        return { ok: false, code: context.failureCode ?? sync.failureCodes?.[0]?.code ?? 'content_incomplete', receipt, sync };
+        const code = context.failureCode ?? sync.failureCodes?.[0]?.code ?? 'content_incomplete';
+        return { ok: false, code, receipt, sync, ...(code === 'source_writeback_required'
+          ? { sourceCorrection: companyBrainCorrectionHint(input.brainId, input.sourceId, receipt.id) } : {}) };
       }
       receipt = await transitionSourceIngestionReceipt(engine, { ...mutation(), phase: 'GRAPH', counts: { importedPages: plan.counts.included, failedFiles: 0, pendingWrites: 0 } });
     }
@@ -257,5 +264,6 @@ export async function performCompanyBrainSync(engine: BrainEngine, opts: SyncOpt
   const result = await resumeCompanyBrain(engine, { brainId: profile.brainId, sourceId: opts.sourceId!, remote: false }, opts);
   return { fromCommit: null, toCommit: result.receipt.approvedRevision,
     added: 0, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [], ...result.sync,
+    ...(result.sourceCorrection ? { sourceCorrection: result.sourceCorrection } : {}),
     ...(!result.ok ? { status: 'blocked_by_failures' as const, failedFiles: Math.max(1, result.receipt.counts.failedFiles), failureCodes: [{ code: result.code, count: 1 }] } : { status: opts.dryRun ? 'dry_run' as const : 'synced' as const }) };
 }

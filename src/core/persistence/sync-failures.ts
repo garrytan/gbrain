@@ -229,8 +229,9 @@ export function managedSyncRetryCommand(failure: ManagedSyncFailure, repoPath?: 
   return checkpointRetryCommand({ sourceId: failure.source_id, processingOptions: failure.processingOptions, syncOptions: failure.syncOptions ?? null, repoPath });
 }
 
-export function syncFailureJsonFields(result: { failedFiles?: number; failureCodes?: Array<{ code: string; count: number }>; failures?: ManagedSyncFailure[]; runId?: string; fromCommit?: string | null; toCommit?: string; bankedFiles?: number }): Record<string, unknown> {
+export function syncFailureJsonFields(result: { failedFiles?: number; failureCodes?: Array<{ code: string; count: number }>; sourceCorrection?: string; failures?: ManagedSyncFailure[]; runId?: string; fromCommit?: string | null; toCommit?: string; bankedFiles?: number }): Record<string, unknown> {
   return { ...(result.failedFiles !== undefined ? { failed_files: result.failedFiles } : {}),
     ...(result.failureCodes ? { failure_codes: result.failureCodes } : {}), ...(result.failures ? { failures: result.failures } : {}),
+    ...(result.sourceCorrection ? { source_correction: result.sourceCorrection } : {}),
     ...(result.runId ? { run_id: result.runId, from_commit: result.fromCommit, target_commit: result.toCommit, banked_files: result.bankedFiles, counts_scope: 'run_cumulative' } : {}) };
 }

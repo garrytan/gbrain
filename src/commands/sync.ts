@@ -16,6 +16,8 @@ export { parseMissingPathMode, partitionMissingPathSources, type MissingPathMode
 export { __resetPGLiteTierWarn, manageGitignore } from './sync/gitignore.ts';
 
 export interface SyncResult {
+  /** Explicit corrected-plan approval required instead of retrying an immutable failed receipt. */
+  sourceCorrection?: string;
   failures?: ManagedSyncFailure[];
   runId?: string;
   managedWrite?: import('../core/persistence/sync-run.ts').ManagedSyncWriteDiagnostic;

@@ -67,6 +67,7 @@ export interface CompanyBrainConnectInput extends CompanyBrainDestination {
   plan: CompanyBrainPlan;
   path: string;
   requestId?: string;
+  replaceIncomplete?: string;
 }
 export function unwrapCompanyBrainPlan(value: unknown): CompanyBrainPlan {
   if (value && typeof value === 'object' && 'plan' in value) value = (value as { plan: unknown }).plan;
@@ -217,6 +218,9 @@ export async function previewCompanyBrain(engine: BrainEngine, input: CompanyBra
   assertCompanyBrainCaller(input);
   if (input.requestId !== undefined && !isWriteRequestId(input.requestId)) throw requestIdError();
   await assertIngestionStorage(engine);
+  if (input.replaceIncomplete !== undefined) {
+    return (await import('./reapproval.ts')).previewCompanyBrainReplacement(engine, input);
+  }
   const replay = await approvedReplay(engine, input);
   const checked = await validateCompanyBrainPlan(input.plan, { path: input.path, mode: replay ? 'resume' : 'apply' });
   if (!checked.valid) throw planNotReady(checked.code, 'The source no longer matches its approved inspection plan.', input.path);
@@ -229,6 +233,9 @@ export async function admitCompanyBrain(engine: BrainEngine, input: CompanyBrain
   await assertIngestionStorage(engine);
   const requestId = input.requestId ?? randomUUID();
   if (!isWriteRequestId(requestId)) throw requestIdError();
+  if (input.replaceIncomplete !== undefined) {
+    return (await import('./reapproval.ts')).replaceCompanyBrainReceipt(engine, { ...input, requestId });
+  }
   const replay = await approvedReplay(engine, { ...input, requestId });
   if (replay) {
     const validation = await validateCompanyBrainPlan(input.plan, { path: input.path, mode: 'resume' });
