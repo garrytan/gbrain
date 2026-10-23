@@ -9,6 +9,10 @@
  *   previous generation stays live and nothing was retired; `warn` names each reason and the preview that lists them.
  *   Releasable reasons take `--mode release-held` after the user agrees; the others clear when the producer's input
  *   gives the proof it lacked.
+ * - `generation_pending` (GBRA-161 PR 1b, managed sources): items an activated generation still waits on a member
+ *   request for (`retire_pending` retirements and pending overwrites, still live), which the next extraction run of the
+ *   source resumes, and orphan candidates: pages a `create` member wrote for an activation that never happened, listed
+ *   with their activation id and never retired automatically. Either warns; nothing here writes.
  */
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
@@ -16,6 +20,7 @@ import { agentFix } from '../check-fix.ts';
 import { readGenerationsConfig } from '../../../core/generations/config.ts';
 import { RELEASABLE_HELD_REASONS, type HeldReason } from '../../../core/generations/contract.ts';
 import { generationsPreviewArgv } from '../../../core/generations/repair.ts';
+import { listOrphanCandidates, listPendingMembers } from '../../../core/generations/managed.ts';
 
 const DOCS = 'docs/guides/repair.md#generations';
 
@@ -70,5 +75,33 @@ export async function generationHeldCheck(engine: BrainEngine, sourceIds?: strin
   } catch (error) {
     return { name: 'generation_held', status: 'warn', details: { count: 'unknown' },
       message: `Held generations could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.` };
+  }
+}
+
+export async function generationPendingCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
+  try {
+    const sources = await activeSources(engine, sourceIds);
+    const pending = await listPendingMembers(engine, sources);
+    const orphans = await listOrphanCandidates(engine, sources);
+    const count = (rows: Array<{ source_id: string; kind: string }>) => [...rows.reduce((acc, row) => acc.set(`${row.source_id}/${row.kind}`, (acc.get(`${row.source_id}/${row.kind}`) ?? 0) + 1), new Map<string, number>())]
+      .map(([group, n]) => `${group}: ${n}`).join('; ');
+    const details = { pending: pending.length, retire_pending: pending.filter(row => row.action === 'retire').length, orphans: orphans.length,
+      pending_items: pending.slice(0, 20).map(row => ({ source_id: row.source_id, kind: row.kind, slug: row.slug, action: row.action, activation_id: row.activation_id })),
+      orphan_candidates: orphans.slice(0, 20).map(row => ({ source_id: row.source_id, kind: row.kind, slug: row.slug, activation_id: row.activation_id })), docs: DOCS };
+    if (!pending.length && !orphans.length) return { name: 'generation_pending', status: 'ok', details, message: 'No activated generation waits on a member request, and no orphan candidate exists.' };
+    const parts = [
+      ...(pending.length ? [`${pending.length} item(s) of activated generations wait on their member request (${count(pending)}; ${details.retire_pending} retire_pending, still live). `
+        + 'The next extraction run of each source resumes them; a page edited since keeps its content.'] : []),
+      ...(orphans.length ? [`${orphans.length} orphan candidate(s): pages written for an activation that never happened (${orphans.slice(0, 5).map(row => `${row.source_id}:${row.slug} activation ${row.activation_id}`).join('; ')}). `
+        + 'They are never retired automatically; whether to keep or delete each is the user\'s decision.'] : []),
+    ];
+    const first = orphans[0] ?? pending[0]!;
+    const preview = generationsPreviewArgv({ kind: first.kind, sourceId: first.source_id }, 'cleanup');
+    return { name: 'generation_pending', status: 'warn', details, message: `${parts.join(' ')} List them with ${preview.join(' ')} (read-only).`,
+      fix: agentFix(preview, 'Lists each pending member and orphan candidate with its activation id; it writes nothing. Pending members resume on the next extraction run; orphan candidates stay until the user decides.',
+        'generation_pending', { docs: DOCS }) };
+  } catch (error) {
+    return { name: 'generation_pending', status: 'warn', details: { pending: 'unknown' },
+      message: `Pending generation members could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.` };
   }
 }

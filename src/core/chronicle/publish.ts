@@ -1,30 +1,32 @@
 /**
- * Life Chronicle event publication (#5876, E5/E8, C4b/C12).
+ * Life Chronicle event publication (#5876, E5/E8, C4b/C12; GBRA-161 PR 3).
  *
  * One extraction generation of a depth page (meeting, conversation, calendar
- * page) is published against the immutable snapshot the judge read:
+ * page) is published against the immutable snapshot the judge read, through the
+ * generation primitive (generations/adapters/chronicle-events.ts):
  *
- *   - Every event write re-validates, in its own publication step, that the
- *     depth page still has the judged revision, content hash, source
- *     incarnation and privacy, and that the writer whose revision was decided
- *     still holds the extraction grant. Any change → `superseded`; no model
- *     call or transaction spans the judge.
+ *   - The activation re-validates that the depth page still has the judged
+ *     revision, content hash, source incarnation and privacy, and that the
+ *     writer whose revision was decided still holds the extraction grant. Any
+ *     change → `superseded`; no model call or transaction spans the judge.
  *   - Events carry the depth page's effective visibility.
  *   - Ownership is content-addressed: an event is the extractor's while its
  *     live content_hash is one the ledger recorded for this depth page. An
  *     operator-edited event (hash changed) is never overwritten or retired;
- *     an operator-deleted event (deleted without `retired_by`) is never
- *     resurrected.
- *   - Only after the whole generation published, and only when the caller
- *     declares it a complete replacement (`replaces`), the previous
- *     generation's owned events it did not reproduce are retired (soft-deleted
- *     with `retired_by: life-chronicle`, reversible); a later generation that
- *     produces one again restores it. A failed or superseded run, and an empty
- *     or partial one (#7013), retires nothing.
+ *     an operator-deleted event (deleted without a verified retirement) is
+ *     never resurrected.
+ *   - A complete generation (`replaces`) retires the previous generation's
+ *     owned events it did not reproduce, with their timeline projection rows, in
+ *     the activation: versioned, soft-deleted, `retired_by: life-chronicle`, and
+ *     restorable with `gbrain repair generations --kind chronicle-event`. A result
+ *     below the shrink floor is held and retires nothing; so does an empty or
+ *     partial one (#7013). An empty generation retires only with a proof: the
+ *     revision became ineligible (`originIneligible`) or the depth page is gone
+ *     (`originGone`).
  *
- * Managed brains publish through two maintenance intents (database-only);
- * unmanaged brains write directly inside one attributed maintenance
- * transaction per event.
+ * Managed brains publish each new or changed event through the chronicle event
+ * intent (database-only), then one `managed_generation_activate` request that
+ * retires and flips the ledger; unmanaged brains do it all in one transaction.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -35,60 +37,26 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { computeContentHash } from '../ingestion/types.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { digest } from '../persistence/digest.ts';
-import { authorizeFactsBackstop } from '../persistence/effect-facts.ts';
-import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { preparePageMutation } from '../persistence/page-prepare.ts';
-import { effectiveVisibility, type Visibility } from '../search/private-visibility.ts';
+import type { Visibility } from '../search/private-visibility.ts';
 import type { ChronicleEventProposal } from './extract-events.ts';
 import { resolveChronicleEventSlugs } from './event-identity.ts';
-import { declareDerivation, declaredWriteTrust, deriveTrust, derivedMaintenanceTransaction, readDerivationDeclaration } from '../trust/taint.ts';
+import { declareDerivation, declaredWriteTrust, deriveTrust, readDerivationDeclaration } from '../trust/taint.ts';
 import { derivedGateConfig, derivedGateInput, timelineRowAllowed } from '../trust/derived-gate.ts';
 import { assessTimelineForGate, type WriteGateAssessment } from '../write-gate.ts';
 import { recordWriteGateReceipt } from '../write-gate-store.ts';
+import type { InputState, ProposedItem } from '../generations/contract.ts';
+import { originGone, type EmptySourceProof } from '../generations/proofs.ts';
+import { publishGeneration, type PublishOutcome, type PublishRequest } from '../generations/publish.ts';
+import { planManagedGeneration, recordActivation, type ActivationIntent } from '../generations/managed.ts';
+import { CHRONICLE_EVENT_KIND, CHRONICLE_RETIRED_BY, chronicleEventAdapter, chronicleEventItem, chronicleOwnerKey, depthInputPin, depthPinBroken,
+  orphanedDepthKeys, ownedEventHashes, pinDepth, verifiedChronicleRetirement, type ChronicleDepthPin, type ChronicleGenerationContext } from '../generations/adapters/chronicle-events.ts';
 
-export const CHRONICLE_RETIRED_BY = 'life-chronicle';
+export { CHRONICLE_RETIRED_BY, depthPinBroken, ownedEventHashes, pinDepth, type ChronicleDepthPin };
 export const CHRONICLE_EVENT_INTENT = 'managed_maintenance_chronicle_event';
 export const CHRONICLE_RETIRE_INTENT = 'managed_maintenance_chronicle_retire';
 export const CHRONICLE_CAPTURED_VIA = 'life-chronicle:auto';
-
-/** The judged depth page; publication re-checks every field. */
-export interface ChronicleDepthPin {
-  slug: string;
-  pageId: number;
-  revision: string;
-  contentHash: string;
-  incarnation: string;
-  visibility: Visibility;
-}
-
-export function pinDepth(snapshot: PageSnapshot): ChronicleDepthPin {
-  return {
-    slug: snapshot.page.slug, pageId: Number(snapshot.page.id), revision: snapshot.revision,
-    contentHash: String(snapshot.page.content_hash ?? ''), incarnation: snapshot.sourceIncarnation,
-    visibility: effectiveVisibility({ kind: 'page', page: snapshot.page }),
-  };
-}
-
-/** null while the pin holds; otherwise why the generation is superseded. */
-export async function depthPinBroken(tx: BrainEngine, sourceId: string, pin: ChronicleDepthPin,
-  decisionRequestId: string | null): Promise<string | null> {
-  const current = await tx.readPageSnapshot(pin.slug, { sourceId });
-  if (!current) return 'page_missing';
-  if (Number(current.page.id) !== pin.pageId || current.revision !== pin.revision
-    || String(current.page.content_hash ?? '') !== pin.contentHash || current.sourceIncarnation !== pin.incarnation
-    || effectiveVisibility({ kind: 'page', page: current.page }) !== pin.visibility) return 'superseded';
-  if (decisionRequestId) {
-    const [request] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [decisionRequestId]);
-    if (!request) return 'superseded';
-    try { await authorizeFactsBackstop(tx, request); }
-    catch (error) {
-      if (error instanceof OperationError) return 'superseded';
-      throw error;
-    }
-  }
-  return null;
-}
 
 export interface BuiltChronicleEvent {
   slug: string;
@@ -119,20 +87,13 @@ export function buildChronicleEvent(ev: ChronicleEventProposal, ctx: {
   };
 }
 
-/** Every event content hash the extractor ever wrote for this depth page. */
-export async function ownedEventHashes(engine: BrainEngine, sourceId: string, pageId: number): Promise<Set<string>> {
-  const rows = await engine.executeRaw<{ hash: string }>(
-    'SELECT DISTINCT unnest(event_hashes) AS hash FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2',
-    [sourceId, pageId]);
-  return new Set(rows.map((r) => r.hash));
-}
-
 type TargetVerdict = { write: true; restore: boolean; expectedRevision: string | null } | { write: false; reason: 'operator_deleted' | 'operator_edited' };
 
-function judgeTarget(existing: PageSnapshot | null, owned: Set<string>): TargetVerdict {
+/** Whether an event slug may be written: absent, owned and live, or retired by a verified chronicle retirement (restored). */
+async function judgeTarget(db: BrainEngine, sourceId: string, existing: PageSnapshot | null, owned: Set<string>): Promise<TargetVerdict> {
   if (!existing) return { write: true, restore: false, expectedRevision: null };
   if (existing.page.deleted_at) {
-    return existing.page.frontmatter?.retired_by === CHRONICLE_RETIRED_BY
+    return await verifiedChronicleRetirement(db, sourceId, existing.page)
       ? { write: true, restore: true, expectedRevision: existing.revision }
       : { write: false, reason: 'operator_deleted' };
   }
@@ -154,7 +115,7 @@ function supersededError(reason: string): OperationError {
 /** A publication failure that means the judged generation no longer applies. */
 export function isSupersession(error: unknown): boolean {
   return error instanceof OperationError
-    && ['revision_conflict', 'page_identity_changed', 'source_changed', 'permission_denied', 'page_not_found'].includes(error.code);
+    && ['revision_conflict', 'page_identity_changed', 'source_changed', 'permission_denied', 'page_not_found', 'generation_fenced', 'generation_live_conflict'].includes(error.code);
 }
 
 export interface ChronicleGenerationResult {
@@ -162,116 +123,117 @@ export interface ChronicleGenerationResult {
   retired: string[];
   protected: Array<{ slug: string; reason: 'operator_deleted' | 'operator_edited' }>;
   superseded?: string;
+  /** The result was held (`generation_held`): nothing was published or retired. */
+  held?: string;
 }
 
 /**
- * Publish one generation (possibly empty) for a pinned depth page. With `replaces` (a complete judged generation, or
- * an ineligible revision's empty one) it then retires the previous generation's owned events it did not reproduce;
- * without it (an empty or partial judged generation, #7013) it retires nothing.
+ * Publish one generation (possibly empty) for a pinned depth page. `replaces`: a complete judged generation, which may
+ * retire the previous generation's owned events it did not reproduce (within the shrink floor and valve); without it
+ * (an empty or partial judged generation, #7013) it adds and retires nothing. `proof` makes an empty `replaces`
+ * generation retire every owned event: `originIneligible` (the revision no longer qualifies) or `originGone` (the
+ * depth page is gone; `pin` is then null).
  */
 export async function publishChronicleGeneration(engine: BrainEngine, opts: {
-  sourceId: string; pin: ChronicleDepthPin; events: BuiltChronicleEvent[]; decisionRequestId: string | null;
-  replaces: boolean; maintenance?: MaintenanceAuthority | null; signal?: AbortSignal;
+  sourceId: string; pin: ChronicleDepthPin | null; depthSlug?: string; events: BuiltChronicleEvent[]; decisionRequestId: string | null;
+  replaces: boolean; proof?: EmptySourceProof; maintenance?: MaintenanceAuthority | null; signal?: AbortSignal;
 }): Promise<ChronicleGenerationResult> {
   const { sourceId, pin } = opts;
+  const depthSlug = pin?.slug ?? opts.depthSlug!;
   const maintenance = opts.maintenance === undefined ? await maintenancePreflight(engine, sourceId) : opts.maintenance;
-  const owned = await ownedEventHashes(engine, sourceId, pin.pageId);
   const result: ChronicleGenerationResult = { written: [], retired: [], protected: [] };
-  const abort = () => { if (opts.signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; } };
-  const broken = await depthPinBroken(engine, sourceId, pin, opts.decisionRequestId);
-  if (broken) return { ...result, superseded: broken };
-  const events = await resolveChronicleEventSlugs(engine, sourceId, opts.events);
-  // #5575 I2: the judge read only the depth page, so its events carry that page's tier (capped at agent_written).
-  const derivation = await deriveTrust(engine, [{ table: 'pages', id: pin.pageId }], { channel: 'derive:chronicle' });
-  const gateCfg = await derivedGateConfig(engine);
+  if (opts.signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
+  const key = { kind: CHRONICLE_EVENT_KIND, sourceId, ownerKey: chronicleOwnerKey(depthSlug) };
+  const context: ChronicleGenerationContext = { decisionRequestId: opts.decisionRequestId };
+  let input: InputState | null = null;
+  const items: ProposedItem[] = [];
+  const members = new Map<string, { event: BuiltChronicleEvent; verdict: Extract<TargetVerdict, { write: true }>; markdown: string }>();
+  if (pin) {
+    const broken = await depthPinBroken(engine, sourceId, pin, opts.decisionRequestId);
+    if (broken) return { ...result, superseded: broken };
+    input = await chronicleEventAdapter.readInput(engine, key, context);
+    if (input?.pin !== depthInputPin(pin)) return { ...result, superseded: 'superseded' };
+    const owned = await ownedEventHashes(engine, sourceId, pin.pageId);
+    for (const event of await resolveChronicleEventSlugs(engine, sourceId, opts.events)) {
+      const verdict = await judgeTarget(engine, sourceId, await engine.readPageSnapshot(event.slug, { sourceId, includeDeleted: true }), owned);
+      if (!verdict.write) { result.protected.push({ slug: event.slug, reason: verdict.reason }); continue; }
+      const markdown = serializeMarkdown(event.frontmatter, event.compiledTruth, '', { type: 'event', title: event.title, tags: [] });
+      items.push(chronicleEventItem(event.slug, { markdown, title: event.title, compiledTruth: event.compiledTruth, frontmatter: event.frontmatter,
+        when: event.when, day: event.day, summary: event.summary }));
+      members.set(event.slug, { event, verdict, markdown });
+    }
+  }
+  if (!opts.replaces && !items.length) return result;
+  context.planned = Object.fromEntries(items.map(item => [item.key, item.identityHash]));
+  const request = { key, items, input, partial: !opts.replaces, ...(opts.proof ? { proof: opts.proof } : {}), context };
+  let outcome: PublishOutcome | null;
+  try {
+    outcome = maintenance ? await publishManagedChronicle(engine, maintenance, request, pin, members, opts.decisionRequestId)
+      : await publishGeneration(engine, chronicleEventAdapter, request);
+  } catch (error) {
+    if (!isSupersession(error)) throw error;
+    return { ...result, written: await writtenEvents(engine, sourceId, items), superseded: 'superseded' };
+  }
+  if (outcome?.state === 'held') return { ...result, held: outcome.reason };
+  return { ...result, written: await writtenEvents(engine, sourceId, items), retired: outcome?.state === 'published' ? outcome.retired : [] };
+}
 
-  for (const ev of events) {
-    abort();
-    const existing = await engine.readPageSnapshot(ev.slug, { sourceId, includeDeleted: true });
-    const verdict = judgeTarget(existing, owned);
-    if (!verdict.write) { result.protected.push({ slug: ev.slug, reason: verdict.reason }); continue; }
-    const content = serializeMarkdown(ev.frontmatter, ev.compiledTruth, '', { type: 'event', title: ev.title, tags: [] });
+/** The live content hash of each proposed event (what the chronicle ledger records as the extractor's). */
+async function writtenEvents(engine: BrainEngine, sourceId: string, items: readonly ProposedItem[]): Promise<Array<{ slug: string; hash: string }>> {
+  if (!items.length) return [];
+  const rows = await engine.executeRaw<{ slug: string; content_hash: string | null }>(
+    'SELECT slug, content_hash FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL', [sourceId, items.map(item => item.key)]);
+  const hashes = new Map(rows.map(row => [row.slug, row.content_hash]));
+  return items.flatMap(item => hashes.get(item.key) ? [{ slug: item.key, hash: String(hashes.get(item.key)) }] : []);
+}
+
+/**
+ * The managed publication (database-only): the plan's new and changed events go through the chronicle event intent,
+ * one request each, then one `managed_generation_activate` request, journaled on the depth page and bound to its
+ * revision, rechecks the pin and every member, retires the dropped events with their projection rows and flips the
+ * ledger in one transaction. null: nothing to publish.
+ */
+async function publishManagedChronicle(engine: BrainEngine, maintenance: MaintenanceAuthority, request: PublishRequest<ChronicleGenerationContext>,
+  pin: ChronicleDepthPin | null, members: Map<string, { event: BuiltChronicleEvent; verdict: Extract<TargetVerdict, { write: true }>; markdown: string }>,
+  decisionRequestId: string | null): Promise<PublishOutcome | null> {
+  const plan = await planManagedGeneration(engine, chronicleEventAdapter, request, { scope: decisionRequestId });
+  if (plan.kind === 'held') return plan.outcome;
+  if (plan.kind === 'unchanged') return { state: 'unchanged', generation: null, retired: [], protected: [] };
+  await engine.transaction(tx => recordActivation(tx, plan.intent));
+  const owned = pin ? await ownedEventHashes(engine, request.key.sourceId, pin.pageId) : new Set<string>();
+  const derivation = pin ? await deriveTrust(engine, [{ table: 'pages', id: pin.pageId }], { channel: 'derive:chronicle' }) : null;
+  const gateCfg = pin ? await derivedGateConfig(engine) : null;
+  for (const member of plan.members) {
+    if (member.action === 'retire' || !pin || !derivation || !gateCfg) continue;
+    const { event, verdict, markdown } = members.get(member.slug)!;
+    if (member.action === 'overwrite' && member.identity === member.before) continue;
     // #5575 B3: the event's summary lands on the depth page's timeline; a quarantined or rejected one projects nothing.
-    const projectionGate = assessTimelineForGate({ summary: ev.summary, source: `life-chronicle:event:${ev.slug}` }, derivedGateInput(derivation.trust), gateCfg);
-    const projection = timelineRowAllowed(projectionGate) ? { depth_slug: pin.slug, date: ev.day, summary: ev.summary } : undefined;
-    try {
-      if (maintenance) {
-        const intent = { kind: CHRONICLE_EVENT_INTENT, content, expected_revision: verdict.expectedRevision,
-          restore_retired: verdict.restore, depth: pin, decision_request_id: opts.decisionRequestId,
-          owned_hashes: [...owned], ...(projection ? { event_projection: projection } : {}), derivation: declareDerivation(derivation.trust, derivation.inputs) };
-        await submitDatabaseMaintenanceIntent(engine, maintenance, ev.slug, intent,
-          requestIdFor({ writer: maintenance.writer.principal, slug: ev.slug, intent }));
-      } else {
-        await derivedMaintenanceTransaction(engine, derivation, async (tx) => {
-          const reason = await depthPinBroken(tx, sourceId, pin, null);
-          if (reason) throw supersededError(reason);
-          const again = judgeTarget(await tx.readPageSnapshot(ev.slug, { sourceId, includeDeleted: true }), owned);
-          if (!again.write) throw supersededError(again.reason);
-          const page = await tx.putPage(ev.slug, { type: 'event', title: ev.title, compiled_truth: ev.compiledTruth,
-            frontmatter: { type: 'event', ...ev.frontmatter }, effective_date: safeDate(ev.when) }, { sourceId });
-          if (projection) {
-            await tx.upsertEventProjection({ depthSlug: pin.slug, eventSlug: ev.slug, date: ev.day, summary: ev.summary, sourceId });
-            await recordProjectionFlag(tx, projectionGate, page.id, ev.day, sourceId);
-          }
-          return { result: undefined, rows: [{ table: 'pages', id: page.id, sourceId }] };
-        });
-      }
-    } catch (error) {
-      if (!isSupersession(error)) throw error;
-      return { ...result, superseded: 'superseded' };
-    }
-    const written = await engine.readPageSnapshot(ev.slug, { sourceId });
-    if (written?.page.content_hash) {
-      result.written.push({ slug: ev.slug, hash: String(written.page.content_hash) });
-      owned.add(String(written.page.content_hash));
-    }
+    const gate = assessTimelineForGate({ summary: event.summary, source: `life-chronicle:event:${event.slug}` }, derivedGateInput(derivation.trust), gateCfg);
+    const projection = timelineRowAllowed(gate) ? { depth_slug: pin.slug, date: event.day, summary: event.summary } : undefined;
+    const intent = { kind: CHRONICLE_EVENT_INTENT, content: markdown, expected_revision: verdict.expectedRevision,
+      restore_retired: verdict.restore, depth: pin, decision_request_id: decisionRequestId, activation_id: plan.intent.activationId,
+      owned_hashes: [...owned], ...(projection ? { event_projection: projection } : {}), derivation: declareDerivation(derivation.trust, derivation.inputs) };
+    await submitDatabaseMaintenanceIntent(engine, maintenance, event.slug, intent, requestIdFor({ writer: maintenance.writer.principal, slug: event.slug, intent }));
   }
-
-  if (!opts.replaces) return result;
-  const keep = new Set(events.map((e) => e.slug));
-  const stale = await engine.executeRaw<{ slug: string; revision: string; content_hash: string }>(
-    `SELECT slug, knowledge_revision::text AS revision, content_hash FROM pages
-      WHERE source_id=$1 AND type='event' AND deleted_at IS NULL AND frontmatter->'event'->>'depth'=$2
-        AND frontmatter->>'captured_via' LIKE 'life-chronicle:%' AND content_hash = ANY($3::text[])
-      ORDER BY slug`,
-    [sourceId, pin.slug, [...owned]]);
-  for (const event of stale) {
-    if (keep.has(event.slug)) continue;
-    abort();
-    try {
-      if (maintenance) {
-        const intent = { kind: CHRONICLE_RETIRE_INTENT, expected_revision: event.revision, depth: pin,
-          decision_request_id: opts.decisionRequestId, owned_hashes: [...owned] };
-        await submitDatabaseMaintenanceIntent(engine, maintenance, event.slug, intent,
-          requestIdFor({ writer: maintenance.writer.principal, slug: event.slug, intent }));
-      } else {
-        await maintenanceTransaction(engine, async (tx) => {
-          const reason = await depthPinBroken(tx, sourceId, pin, null);
-          if (reason) throw supersededError(reason);
-          const live = await tx.readPageSnapshot(event.slug, { sourceId });
-          if (!live || !owned.has(String(live.page.content_hash ?? ''))) return;
-          await tx.createVersion(event.slug, { sourceId, preimage: live });
-          await tx.softDeletePage(event.slug, { sourceId });
-          await stampRetired(tx, sourceId, event.slug);
-        });
-      }
-      result.retired.push(event.slug);
-    } catch (error) {
-      if (!isSupersession(error)) throw error;
-      return { ...result, superseded: 'superseded' };
-    }
-  }
-  return result;
+  const depth = await engine.readPageSnapshot(request.key.ownerKey.slice('depth:'.length), { sourceId: request.key.sourceId, includeDeleted: true });
+  const activation: ActivationIntent & { expected_revision: string | null } = { ...plan.intent, runKey: plan.intent.activationId,
+    expected_revision: depth?.revision ?? null, ...(depth?.page.deleted_at ? { deleted_page: true } : {}) };
+  await submitDatabaseMaintenanceIntent(engine, maintenance, request.key.ownerKey.slice('depth:'.length), activation, plan.intent.activationId);
+  const retired = plan.members.filter(member => member.action === 'retire').map(member => member.slug);
+  return { state: 'published', generationId: 0, generation: plan.intent.expectedGeneration + 1, puts: [], kept: [], adopted: [], retired, protected: [] };
 }
 
-async function stampRetired(tx: BrainEngine, sourceId: string, slug: string): Promise<void> {
-  await tx.executeRaw(`UPDATE pages SET frontmatter=frontmatter||jsonb_build_object('retired_by',$1::text,'retired_at',$2::text)
-    WHERE source_id=$3 AND slug=$4 AND deleted_at IS NOT NULL`, [CHRONICLE_RETIRED_BY, new Date().toISOString(), sourceId, slug]);
-}
-
-function safeDate(s: string): Date | null {
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d;
+/** C-6: retires the events of up to `limit` depth pages of `sourceId` that are gone, each through `originGone`; returns the count. */
+export async function retireOrphanedChronicleEvents(engine: BrainEngine, sourceId: string, maintenance?: MaintenanceAuthority | null, limit = 50): Promise<number> {
+  let retired = 0;
+  const keys = await orphanedDepthKeys(engine, sourceId, limit);
+  if (keys.length && maintenance === undefined) maintenance = await maintenancePreflight(engine, sourceId);
+  for (const ownerKey of keys) {
+    const generation = await publishChronicleGeneration(engine, { sourceId, pin: null, depthSlug: ownerKey.slice('depth:'.length), events: [],
+      decisionRequestId: null, replaces: true, proof: originGone(), maintenance });
+    retired += generation.retired.length;
+  }
+  return retired;
 }
 
 interface ChronicleIntent extends Record<string, unknown> {
@@ -300,7 +262,7 @@ export async function prepareChronicleMutation(engine: BrainEngine, row: WriteRe
       if (!target || target.page.deleted_at || !owned.has(String(target.page.content_hash ?? ''))) throw supersededError('event_changed');
       return;
     }
-    const verdict = judgeTarget(target, owned);
+    const verdict = await judgeTarget(tx, row.source_id, target, owned);
     if (!verdict.write) throw supersededError(verdict.reason);
   };
   await check(engine);
@@ -328,6 +290,13 @@ export async function prepareChronicleMutation(engine: BrainEngine, row: WriteRe
       }
       return { ...outcome, event_projected: projected };
     } };
+}
+
+/** A retirement journaled by an earlier release (`managed_maintenance_chronicle_retire`): the stamp, and its projection row goes with it (C-3). */
+async function stampRetired(tx: BrainEngine, sourceId: string, slug: string): Promise<void> {
+  await tx.executeRaw(`UPDATE pages SET frontmatter=frontmatter||jsonb_build_object('retired_by',$1::text,'retired_at',$2::text)
+    WHERE source_id=$3 AND slug=$4 AND deleted_at IS NOT NULL`, [CHRONICLE_RETIRED_BY, new Date().toISOString(), sourceId, slug]);
+  await tx.executeRaw('DELETE FROM timeline_entries t USING pages p WHERE p.id=t.event_page_id AND p.source_id=$1 AND p.slug=$2', [sourceId, slug]);
 }
 
 /** A flagged event projection's receipt on its timeline row (found by its event page and date). */

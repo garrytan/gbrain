@@ -39,6 +39,7 @@ import { endedInviteProposal, markInviteEvents } from './invite-projection.ts';
 import { RETIRE_REASONS, reserveChronicleSlot } from './ledger.ts';
 import { CAMPAIGN_PRICING_POLICY, rowMaxAttempts } from './campaign.ts';
 import { pinDepth, publishChronicleGeneration, type ChronicleDepthPin } from './publish.ts';
+import { describeMalformedProposals, diagnoseMalformedProposals, type MalformedProposalDiagnostics } from './proposal-diagnostics.ts';
 
 export interface ChronicleExecContext {
   engine: BrainEngine;
@@ -59,7 +60,9 @@ export type ChronicleRowOutcome =
   | { kind: 'waiting'; reason: string }
   | { kind: 'deferred'; reason: 'daily_limit' }
   | { kind: 'done'; state: ChronicleLedgerRow['state']; reason: string | null; judged: boolean;
-      written: number; retired: number; costUsd: number | null; unpriced: boolean; dropped: ChronicleDropCounts };
+      written: number; retired: number; costUsd: number | null; unpriced: boolean; dropped: ChronicleDropCounts;
+      /** #7234: which check refused a `malformed_proposal` batch (fixed codes and counts, never values). */
+      malformed?: MalformedProposalDiagnostics };
 
 const CONFIG_BLOCKED = new Set(['judge_llm_unavailable', 'no_pricing']);
 const LEASE_MS = 15 * 60_000;
@@ -134,8 +137,10 @@ function propagateSpend(parent: BudgetTracker | null, child: BudgetTracker): voi
   }
 }
 
+type JudgeFailure = { state: 'failed' | 'skipped'; reason: ChronicleReasonCode; malformed?: MalformedProposalDiagnostics };
+
 /** Classify a judge result or throw into the ledger vocabulary (E2/D5). */
-function classifyJudge(result: ChronicleJudgeResult | null, thrown: unknown): { state: 'failed' | 'skipped'; reason: ChronicleReasonCode } | null {
+function classifyJudge(result: ChronicleJudgeResult | null, thrown: unknown): JudgeFailure | null {
   if (thrown) {
     const budget = thrown as { tag?: string; reason?: string };
     if (budget.tag === 'BUDGET_EXHAUSTED') return { state: 'failed', reason: budget.reason === 'no_pricing' ? 'no_pricing' : 'budget_exhausted' };
@@ -150,7 +155,7 @@ function classifyJudge(result: ChronicleJudgeResult | null, thrown: unknown): { 
     case 'parse_failed': return { state: 'failed', reason: 'judge_parse_failed' };
   }
   const events = Array.isArray(result?.events) ? result!.events : [];
-  if (!events.every(isValidProposal)) return { state: 'failed', reason: 'malformed_proposal' };
+  if (!events.every(isValidProposal)) return { state: 'failed', reason: 'malformed_proposal', malformed: diagnoseMalformedProposals(events) };
   return null;
 }
 
@@ -175,7 +180,7 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   // An ineligible revision of a page that once produced events retires them (E8). No model call.
   if (row.state === 'skipped') {
     const generation = await publishChronicleGeneration(engine, { sourceId: row.source_id, pin, events: [],
-      decisionRequestId: null, replaces: true, maintenance: ctx.maintenance, signal: ctx.signal });
+      decisionRequestId: null, replaces: true, proof: { kind: 'originIneligible', reason: String(row.reason) }, maintenance: ctx.maintenance, signal: ctx.signal });
     await setNextAttempt(engine, row, null);
     return done('skipped', row.reason, { retired: generation.retired.length });
   }
@@ -240,11 +245,13 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
 
   // E4: gateway accounting defers a breach to the next reservation; check the cap explicitly.
   const overCap = tracker.cap !== undefined && tracker.totalSpent > tracker.cap;
-  const failure = overCap && !thrown ? { state: 'failed' as const, reason: 'budget_exhausted' as const } : classifyJudge(result, thrown);
+  const failure: JudgeFailure | null = overCap && !thrown ? { state: 'failed', reason: 'budget_exhausted' } : classifyJudge(result, thrown);
   if (failure) {
     const next = failure.state === 'skipped' || CONFIG_BLOCKED.has(failure.reason) ? null : backoff(attempts, now, maxAttempts);
     await finish(engine, row, attempts, { state: failure.state, reason: failure.reason, nextAttemptAt: next, ...spend });
-    return done(failure.state, failure.reason, judged);
+    if (!failure.malformed) return done(failure.state, failure.reason, judged);
+    console.warn(`[chronicle] ${row.slug}: the judge's events failed validation (malformed_proposal: ${describeMalformedProposals(failure.malformed)}); nothing was written${next ? ' and the row retries with backoff' : ''}.`);
+    return done(failure.state, failure.reason, { ...judged, malformed: failure.malformed });
   }
 
   const proposals = result?.events ?? [];

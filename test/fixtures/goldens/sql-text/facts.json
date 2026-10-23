@@ -399,10 +399,13 @@
             "lane": "tx",
             "params": [
               "number",
+              "Date",
+              "Date",
+              "Date",
               "number"
             ],
-            "sql": "UPDATE facts SET expired_at = now(), superseded_by = $1 WHERE id = $2 AND expired_at IS NULL",
-            "textSha256": "fc363c8ea84c55f67cf320921cec09fd141e9392b5c8dcad59afaec778dc5b1f"
+            "sql": "UPDATE facts SET expired_at = now(), superseded_by = $1, valid_until = CASE WHEN valid_from < $2::timestamptz AND (valid_until IS NULL OR valid_until > $3::timestamptz) THEN $4::timestamptz ELSE valid_until END WHERE id = $5 AND expired_at IS NULL",
+            "textSha256": "aa8e803c695469877ce7546bddfbd038658079b3d7dba01bdbc3acd2f5cfdeaa"
           },
           {
             "event": "commit",

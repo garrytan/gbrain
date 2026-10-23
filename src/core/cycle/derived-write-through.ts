@@ -190,7 +190,7 @@ export async function writeDreamPageFile(engine: BrainEngine, brainDir: string, 
   if (await isWriteThroughDisabled(engine)) return { written: false, skipped: 'disabled_by_config' };
   if (await urlCloneReadOnly(engine, sourceId)) return { written: false, skipped: 'url_clone' };
   const target = await resolvePageWriteTarget(engine, slug, sourceId);
-  if (!target.ok && target.skipped !== 'no_repo_configured' && target.skipped !== 'repo_not_found') return { written: false, skipped: target.skipped };
+  if (!target.ok && (!brainDir || (target.skipped !== 'no_repo_configured' && target.skipped !== 'repo_not_found'))) return { written: false, skipped: target.skipped };
   try {
     const storage = loadStorageConfig(target.ok ? target.writeRoot : brainDir);
     if (storage && isDbOnly(slug, storage)) return { written: false, skipped: 'db_only' };
@@ -208,6 +208,27 @@ export async function writeDreamPageFile(engine: BrainEngine, brainDir: string, 
   }
   renameSync(staged, filePath);
   return { written: true, path: filePath };
+}
+
+/**
+ * GBRA-161 PR 4: remove the file of a dream page a generation retired, resolved the way `writeDreamPageFile` wrote it, only
+ * when the retired page (or one of its versions) holds everything in it; re-read right before the unlink. A file holding
+ * an edit the database lacks stays, with its `file_database_drift` entry returned as `held`.
+ */
+export async function removeDreamPageFile(engine: BrainEngine, brainDir: string, slug: string, sourceId: string,
+  nativeSourceId: string): Promise<{ removed: boolean; held?: string }> {
+  if (await isWriteThroughDisabled(engine) || await urlCloneReadOnly(engine, sourceId)) return { removed: false };
+  const target = await resolvePageWriteTarget(engine, slug, sourceId);
+  if (!target.ok && (!brainDir || (target.skipped !== 'no_repo_configured' && target.skipped !== 'repo_not_found'))) return { removed: false };
+  const filePath = target.ok ? target.filePath
+    : sourceId === nativeSourceId ? join(brainDir, `${slug}.md`) : join(brainDir, '.sources', sourceId, `${slug}.md`);
+  if (!existsSync(filePath)) return { removed: false };
+  const check = await replaceableFile(engine, sourceId, slug, filePath);
+  if (!check.ok || readFileSync(filePath, 'utf-8') !== check.expectedFileBytes) {
+    return { removed: false, held: fileDatabaseDriftToken(slug, sourceId, 'before', "the retired dream page's file was not removed") };
+  }
+  rmSync(filePath, { force: true });
+  return { removed: true };
 }
 
 /** #6982: the hold entry for a dream page whose file holds an edit the database lacks. */

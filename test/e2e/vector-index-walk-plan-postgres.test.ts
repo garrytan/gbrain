@@ -6,8 +6,12 @@
  * and assertions as the PGLite plan tests in
  * test/search/vector-index-walk.test.ts, in a dedicated database so the
  * shared schema keeps its dimensions. The joined statement's rows are judged
- * under exact evaluation: on this small fixture the planner may answer with an
- * exact scope-first scan once the materialized join is ruled out.
+ * under exact evaluation: each settings set's rows are read with index scans
+ * off and compared with the statement's exact window. Its plan is read with
+ * index scans on, where the planner may answer with an exact scope-first scan
+ * once the materialized join is ruled out, while the materialized plan walks
+ * HNSW. An HNSW window is approximate and depends on the graph each fresh
+ * database builds with random levels, so no HNSW plan's rows are a reference.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
@@ -74,7 +78,12 @@ import { hasDatabase } from './helpers.ts';
       const run = (values: Record<string, string>) => engine.transaction(async tx => {
         for (const [name, value] of Object.entries(values)) await tx.executeRaw('SELECT set_config($1, $2, true)', [name, value]);
         const [row] = await tx.executeRaw<{ 'QUERY PLAN': Array<{ Plan: PlanNode }> }>(`EXPLAIN (ANALYZE, FORMAT JSON) ${stmt.sql}`, [...stmt.params]);
+        await tx.executeRaw("SELECT set_config('enable_indexscan', 'off', true)");
         return { nodes: planNodes(row!['QUERY PLAN'][0]!.Plan), rows: await tx.executeRaw<Record<string, unknown>>(stmt.sql, [...stmt.params]) };
+      });
+      const exact = await engine.transaction(async tx => {
+        await tx.executeRaw("SELECT set_config('enable_indexscan', 'off', true)");
+        return tx.executeRaw<Record<string, unknown>>(stmt.sql, [...stmt.params]);
       });
       const joined = await run(pool);
       expect(materializedPages(joined.nodes)).toEqual([]);
@@ -82,7 +91,8 @@ import { hasDatabase } from './helpers.ts';
       const materialized = await run({ ...pool, enable_material: 'on' });
       expect(materializedPages(materialized.nodes)).not.toEqual([]);
       expect(shape(joined.rows)).toHaveLength(20);
-      expect(shape(joined.rows)).toEqual(shape(materialized.rows));
+      expect(shape(joined.rows)).toEqual(shape(exact));
+      expect(shape(materialized.rows)).toEqual(shape(exact));
     }
   }, 60_000);
 });

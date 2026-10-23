@@ -87,6 +87,7 @@ import { segmentedBodyMatchesFile, segmentedFactsFenceView } from '../page-body/
 import {
   duplicateActiveFenceRows,
   extractFactsFromFenceText,
+  FACT_DATE_SOURCES,
   type FenceExtractedFact,
 } from '../facts/extract-from-fence.ts';
 import {
@@ -369,7 +370,7 @@ async function listExistingFactsForPage(
 
 /** The page a reconcile plans from: its body as strings, or a segmented page whose fences are read from its segments. */
 type PageFenceInput = { id?: number; slug?: string; source_id?: string; body_storage?: Page['body_storage']; compiled_truth: string | null; timeline: string | null;
-  effective_date?: Date | string | null };
+  effective_date?: Date | string | null; effective_date_source?: string | null };
 
 interface FenceReconcilePlan {
   /** Rows the parsed fence carries (duplicates included), for the pages-with-facts count. */
@@ -423,8 +424,9 @@ async function planFenceReconcile(db: BrainEngine, page: PageFenceInput, slug: s
     return null;
   }
   // v0.35.4 (D-ENG-1): page.effective_date is the fallback valid_from, so
-  // trajectory queries see claim dates rather than import dates.
-  const pageEffectiveDate = page.effective_date ? new Date(page.effective_date) : null;
+  // trajectory queries see claim dates rather than import dates. #7247: only a date the
+  // page states; a creation or fallback date is when the page was made or imported.
+  const pageEffectiveDate = page.effective_date && FACT_DATE_SOURCES.has(page.effective_date_source ?? '') ? new Date(page.effective_date) : null;
   // #1781: duplicate ACTIVE rows (same claim and source) index once.
   const duplicates = duplicateActiveFenceRows(parsed.facts);
   const extracted = extractFactsFromFenceText(parsed.facts, slug, sourceId, { pageEffectiveDate })

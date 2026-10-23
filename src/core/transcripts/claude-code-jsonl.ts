@@ -222,10 +222,13 @@ export interface ParsedTranscript {
    * newest. Claude Code records a UserPromptSubmit hook's additionalContext
    * as a structured `{"type":"attachment","attachment":{"type":
    * "hook_additional_context","content":[...]}}` line (verified live against
-   * claude CLI 2.1.224). Selected structurally — never by substring matching
-   * over raw turn text, which would over-suppress short slugs appearing in
-   * tool payloads. The user-prompt hook feeds these back as priorContextText
-   * so a page is volunteered once per session, not once per mention.
+   * claude CLI 2.1.224), and a SessionStart hook's stdout as an attachment
+   * `{"type":"hook_success","hookEvent":"SessionStart","content":"<stdout>"}`,
+   * kept from gbrain's envelope on (#7026). Selected structurally — never by
+   * substring matching over raw turn text, which would over-suppress short
+   * slugs appearing in tool payloads. The user-prompt hook feeds these back
+   * as priorContextText so a page is volunteered once per session, not once
+   * per mention.
    */
   injectedContextBlocks: string[];
   /** Bytes actually read (== min(file size, maxBytes)). */
@@ -444,7 +447,7 @@ const GBRAIN_BLOCK_MARKERS = [
 
 /**
  * One transcript line → a previously-injected GBRAIN context block, or null.
- * See ParsedTranscript.injectedContextBlocks for the recorded shape.
+ * See ParsedTranscript.injectedContextBlocks for the recorded shapes.
  */
 function entryToInjectedBlock(entry: unknown): string | null {
   if (typeof entry !== 'object' || entry === null) return null;
@@ -453,6 +456,15 @@ function entryToInjectedBlock(entry: unknown): string | null {
   const att = e.attachment;
   if (typeof att !== 'object' || att === null) return null;
   const a = att as Record<string, unknown>;
+  // #7026: `gbrain hook session-start` prints plain stdout, recorded as a
+  // SessionStart hook_success whose `content` is that stdout. Only the part
+  // from gbrain's envelope on is an injected block: the core memory and
+  // digest printed before it must not suppress pointers for the session.
+  if (a.type === 'hook_success') {
+    if (a.hookEvent !== 'SessionStart' || typeof a.content !== 'string') return null;
+    const at = a.content.indexOf(GBRAIN_BLOCK_MARKERS[0]);
+    return at < 0 ? null : a.content.slice(at).trim();
+  }
   if (a.type !== 'hook_additional_context' || !Array.isArray(a.content)) return null;
   const text = (a.content as unknown[]).filter((c): c is string => typeof c === 'string').join('\n').trim();
   if (!text) return null;

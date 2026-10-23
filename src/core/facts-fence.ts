@@ -663,8 +663,9 @@ export function factsFenceEditor<T extends { compiled_truth: string; timeline: s
       }
       rows.push(factRow(newRow, newRow.rowNum));
     },
-    strike(rowNum: number, by: number): void {
-      const struck = (f: ParsedFact): ParsedFact => f.rowNum === rowNum ? { ...f, active: false, supersededBy: by, context: `superseded by #${by}` } : f;
+    strike(rowNum: number, by: number, validUntil?: string): void {
+      const struck = (f: ParsedFact): ParsedFact => f.rowNum === rowNum
+        ? { ...f, active: false, supersededBy: by, context: `superseded by #${by}`, ...(validUntil ? { validUntil } : {}) } : f;
       for (const key of ['compiled_truth', 'timeline'] as const) {
         if (key === section && rows) {
           if (!rows.some(f => f.rowNum === rowNum)) continue;
@@ -806,12 +807,12 @@ export function factsFenceSection(page: { compiled_truth: string | null; timelin
  * #6686: strike fence row `rowNum` as superseded by row `by` in whichever section's fence holds it (a split page can
  * hold the old row in the other section than the one the new row went to); a page without the row is returned as is.
  */
-export function strikeFactRowInPage<T extends { compiled_truth: string; timeline: string }>(page: T, rowNum: number, by: number): T {
+export function strikeFactRowInPage<T extends { compiled_truth: string; timeline: string }>(page: T, rowNum: number, by: number, validUntil?: string): T {
   for (const key of ['compiled_truth', 'timeline'] as const) {
     const rows = parseFactsFence(page[key]).facts;
     if (!rows.some(f => f.rowNum === rowNum)) continue;
     return { ...page, [key]: replaceOrInsertFactsFence(page[key], renderFactsTable(rows.map(f => f.rowNum === rowNum
-      ? { ...f, active: false, supersededBy: by, context: `superseded by #${by}` } : f))) };
+      ? { ...f, active: false, supersededBy: by, context: `superseded by #${by}`, ...(validUntil ? { validUntil } : {}) } : f))) };
   }
   return page;
 }

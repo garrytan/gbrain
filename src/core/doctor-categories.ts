@@ -70,6 +70,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'fence_integrity',
   // GBRA-161: derived items live generations retired in the restore window, and results held instead of published (doctor/checks/generations.ts).
   'generation_held',
+  'generation_pending',
   'generation_retirements',
   // #5575: stored trust tier counts, the legacy-row backfill, scan and source claims.
   'trust_tiers',

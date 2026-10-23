@@ -85,6 +85,7 @@ export const REPAIR_HELP = `Usage: gbrain repair [<kind>] [--apply] [--source <i
        gbrain repair generations --kind <kind> [--mode restore|release-held] (--run <id> | --since <ISO-8601|7d> | --key <owner> | --generation <id> | --held)
                                  [--source <id>] [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair url-clone-fences [--source <id>] [--apply --expect <preview-hash> --yes] [--json]
+       gbrain repair duplicate-facts [--source <id>] [--include-cross-entity] [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair rename-identity --source <id> [--slug <new-slug> [--from <old-slug>] [--close]
                                      [--apply --expect <preview-hash> --yes]] [--json]
 ${REPAIR_CONTENT_HELP}
@@ -110,6 +111,8 @@ Options:
                  preview printed under this hash. content: one hash per lane kind, comma-separated, in lane order.
   --include-ambiguous
                  Explicit-only kinds: widen the preview to ambiguous items (its hash covers them).
+  --include-cross-entity
+                 duplicate-facts: also retire copies that sit on other entities than the kept row (its hash covers them).
   --only <path>, --skip <path>
                  frontmatter, fences, slug-conflicts, content: select source-relative files (repeatable); the hash covers the selection.
                  file-drift: narrow the selected pages by canonical file path (repeatable; an exact path, or, on file-drift
@@ -158,7 +161,7 @@ Options:
   --kind <kind> [--mode restore|release-held] (--run <id> | --since <ISO-8601|7d> | --key <owner> | --generation <id> | --held)
                  generations: the ledger kind and the operation (one of --run, --since, --key, --generation
                  or --held is required; --mode defaults to restore); the hash and the apply command carry them.
-  --yes          frontmatter, conversation-labels, stuck-recovery, ghost-pages, legacy-twins, rename-identity, url-clone-fences, uncommitted-deletions, generations --apply: the user agreed
+  --yes          frontmatter, conversation-labels, stuck-recovery, ghost-pages, legacy-twins, rename-identity, url-clone-fences, uncommitted-deletions, generations, duplicate-facts --apply: the user agreed
                  to the previewed changes (destructive consent; without it a terminal asks, and a non-interactive run exits 3 with the consent payload).
   --json         Machine-readable output with a stable shape (frontmatter: every per-file diff).
 
@@ -174,11 +177,12 @@ Pages a sync soft-deleted although Git never held their file (restore before the
 A sources add --url clone whose pull stops at pull_blocked_local_changes: docs/guides/repair.md#url-clone-fences.
 Renames whose identity sync did not keep (rename-identity): docs/guides/live-sync.md#renaming-a-page.`;
 
-const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--diff', '--yes', '--no-llm', '--all-drifted', '--include-failures', '--force', '--close', '--held']);
+const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--include-cross-entity', '--diff', '--yes', '--no-llm', '--all-drifted', '--include-failures', '--force', '--close', '--held']);
 const VALUE_FLAGS = new Set(['--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--since', '--keep', '--request-id', '--older-than', '--from', '--side', '--state', '--after', '--cursor', '--provenance', '--kind', '--mode', '--run', '--key', '--generation']);
 /** Flags only some kinds accept, with the kinds that do. */
 const KIND_FLAGS: Record<string, readonly string[]> = {
   '--only': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--skip': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--diff': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--yes': ['frontmatter', 'conversation-labels', 'stuck-recovery', 'ghost-pages', 'legacy-twins', 'rename-identity', 'url-clone-fences'],
+  '--include-cross-entity': ['duplicate-facts'],
   '--slug': ['fences', 'file-drift', 'rename-identity', 'overwritten-edits', 'origin-twins'], '--from': ['rename-identity'], '--close': ['rename-identity'], '--prefer': ['file-drift'], '--request': ['file-drift'], '--all-drifted': ['file-drift'], '--class': ['file-drift', 'visibility'], '--since': ['file-drift', 'generations'],
   '--held': ['file-drift', 'generations'], '--side': ['file-drift'], '--state': ['file-drift'], '--cursor': ['file-drift'], '--provenance': ['file-drift'],
   '--keep': ['stuck-recovery'], '--request-id': ['stuck-recovery'],
@@ -194,7 +198,7 @@ const VALUE_EXAMPLES: Record<string, string> = { '--source': 'default', '--limit
 const invalid = (message: string, suggestion: string, preview: string[] = ['gbrain', 'repair', '--json']) => opError('invalid_params', message, suggestion,
   { fix: readFix('Previews the repair; without --apply it writes nothing.', { argv: preview }) });
 
-interface RepairArgs { kind?: string; apply: boolean; all: boolean; json: boolean; noEmbed: boolean; includeAmbiguous: boolean; diff: boolean; yes: boolean;
+interface RepairArgs { kind?: string; apply: boolean; all: boolean; json: boolean; noEmbed: boolean; includeAmbiguous: boolean; includeCrossEntity: boolean; diff: boolean; yes: boolean;
   noLlm: boolean; source?: string; limit?: string; expect?: string; maxUsd?: number; only: string[]; skip: string[]; slugs: string[];
   allDrifted: boolean; prefer?: 'file' | 'database'; requests: string[]; driftClass?: string; since?: string;
   held: boolean; side?: string; state?: string; provenance?: string; cursor?: string;
@@ -231,7 +235,7 @@ function fileDriftKeepRefusal(args: string[], keep: string): OperationError {
 
 /** Strict parse: every flag is known, value flags carry a value, at most one kind. */
 export function parseRepairArgs(args: string[]): RepairArgs {
-  const parsed: RepairArgs = { apply: false, all: false, json: false, noEmbed: false, includeAmbiguous: false, diff: false, yes: false, noLlm: false, only: [], skip: [], slugs: [],
+  const parsed: RepairArgs = { apply: false, all: false, json: false, noEmbed: false, includeAmbiguous: false, includeCrossEntity: false, diff: false, yes: false, noLlm: false, only: [], skip: [], slugs: [],
     allDrifted: false, held: false, requests: [], includeFailures: false, force: false, close: false };
   const used = new Set<string>();
   const positional: string[] = [];
@@ -255,6 +259,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
       else if (flag === '--all') parsed.all = true;
       else if (flag === '--json') parsed.json = true;
       else if (flag === '--include-ambiguous') parsed.includeAmbiguous = true;
+      else if (flag === '--include-cross-entity') parsed.includeCrossEntity = true;
       else if (flag === '--diff') parsed.diff = true;
       else if (flag === '--yes') parsed.yes = true;
       else if (flag === '--no-llm') parsed.noLlm = true;
@@ -400,7 +405,7 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
 
 export async function runRepairCommand(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { console.log(REPAIR_HELP); return; }
-  const { kind, apply, all, json, noEmbed, includeAmbiguous, source, expect, only, skip, slugs, diff, noLlm, maxUsd, limit: limitText,
+  const { kind, apply, all, json, noEmbed, includeAmbiguous, includeCrossEntity, source, expect, only, skip, slugs, diff, noLlm, maxUsd, limit: limitText,
     prefer, requests, allDrifted, driftClass, since, held, side, state, provenance, cursor, keep, requestId, olderThan, includeFailures, force, from, close, afterPage,
     generationKind, generationMode, run, key, generation } = parseRepairArgs(args);
   const generations: GenerationsSelection | undefined = kind === 'generations' ? { kind: generationKind ?? '', mode: (generationMode ?? 'restore') as GenerationMode,
@@ -431,7 +436,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
   const scope = await resolveRepairScope(engine, source);
   if (apply && kind && expect && repairSpec(kind as RepairKind).consent === 'destructive') {
     const preview = ['gbrain', 'repair', kind, ...(source ? ['--source', source] : []), ...only.flatMap(path => ['--only', path]), ...skip.flatMap(path => ['--skip', path]),
-      ...(includeAmbiguous ? ['--include-ambiguous'] : []), ...(requestId ? ['--request-id', requestId] : []),
+      ...(includeAmbiguous ? ['--include-ambiguous'] : []), ...(includeCrossEntity ? ['--include-cross-entity'] : []), ...(requestId ? ['--request-id', requestId] : []),
       ...(olderThan ? ['--older-than', olderThan] : []), ...(includeFailures ? ['--include-failures'] : []), ...(force ? ['--force'] : []),
       ...(afterPage !== undefined ? ['--after', String(afterPage)] : []),
       ...(kind === 'rename-identity' ? [...slugs.flatMap(slug => ['--slug', slug]), ...(from ? ['--from', from] : []), ...(close ? ['--close'] : [])] : []),
@@ -455,7 +460,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     if (!stop.signal.aborted) { process.stderr.write(`[repair] ${signal}: stopping after the current item; send it again to exit now\n`); stop.abort(signal); return; }
     releaseSignals?.(); process.kill(process.pid, signal);
   }) : undefined;
-  const results = await runRepairKinds(kinds, scope, { apply, source, noEmbed, named: kind !== undefined }, k => runner.run(k, scope, { limit, sourceFlag: source, explicit: k === kind, expect, includeAmbiguous,
+  const results = await runRepairKinds(kinds, scope, { apply, source, noEmbed, named: kind !== undefined }, k => runner.run(k, scope, { limit, sourceFlag: source, explicit: k === kind, expect, includeAmbiguous, ...(k === kind && includeCrossEntity ? { includeCrossEntity } : {}),
     ...(k === kind && KIND_FLAGS['--only']!.includes(k) ? { only, skip } : {}), ...(k === kind && slugs.length ? { slugs } : {}),
     ...(k === kind && noLlm ? { noLlm } : {}), ...(k === kind && maxUsd !== undefined ? { maxLlmUsd: maxUsd } : {}),
     ...(k === kind && k === 'visibility' && driftClass ? { driftClass } : {}),

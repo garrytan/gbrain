@@ -34,6 +34,7 @@ import { coreTrustIdentity } from '../core/context/openclaw-core.ts';
 import type { TurnContextResult } from '../core/context/turn-context.ts';
 import { attachBrief, briefEnabled, resetBriefLedger, sessionStartBrief, SESSION_BRIEF_CUTOFF_MS, withBriefDeadline } from '../core/context/proactive-brief.ts';
 import { proactiveEligibility } from '../core/eligibility/registry.ts';
+import { readHotMemorySessionOnly } from '../core/facts/meta-hook.ts';
 
 /** Tighter entity-card fan-out on the PUSH path (eng 4A): the server budget
  * can't absorb the pull path's 8-card ceiling on a cold cache. */
@@ -190,6 +191,7 @@ export function makeContextPackIpcHandler(
       sourceId: sessionSource,
       entities,
       sessionId: sessionId ?? undefined,
+      sessionOnly: await readHotMemorySessionOnly(engine),
       since: state?.last_wake_at ?? undefined,
       maxEntities: PUSH_PACK_MAX_ENTITIES,
       deadlineMs: CONTEXT_PACK_SERVER_BUDGET_MS,

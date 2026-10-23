@@ -337,6 +337,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async (engine, scope) => (await import('./checks/generations.ts')).generationHeldCheck(engine, scope.sourceIds),
   },
   {
+    id: 'generation_pending', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Pending generation members and orphan candidates are host-side state of managed derived writers.',
+    count: d => Number(d.pending ?? 0) + Number(d.orphans ?? 0),
+    impact: 'Some activated generations still wait on member requests, or pages were written for an activation that never happened',
+    run: async (engine, scope) => (await import('./checks/generations.ts')).generationPendingCheck(engine, scope.sourceIds),
+  },
+  {
     id: 'extractor_facts_expired', resolution: 'repair', registration: 'wave',
     hostOnly: 'Restoring expired extractor facts is a host-side, explicit-only repair.',
     count: d => Number(d.evidenced ?? 0) + Number(d.ambiguous ?? 0),

@@ -154,8 +154,10 @@ async function submitMaintenance(engine: BrainEngine, authority: MaintenanceAuth
     throw opError('page_identity_changed', 'The deleted page was restored or purged before maintenance admitted its request.',
       `Page ${slug} in '${authority.writer.sourceId}' is no longer soft-deleted, so nothing was submitted for it. Run maintenance again to plan from the current pages.`);
   }
-  // #5876: only a Life Chronicle event its extractor retired may be restored by a later generation.
-  if (snapshot?.page.deleted_at && intent.deleted_page !== true && !(intent.restore_retired === true && snapshot.page.frontmatter?.retired_by === 'life-chronicle')) {
+  // #5876: only a Life Chronicle event its extractor retired may be restored by a later generation; the stamp counts only
+  // when the generation ledger (or the chronicle ledger's owned hashes) verifies it (GBRA-161 PR 3).
+  if (snapshot?.page.deleted_at && intent.deleted_page !== true && !(intent.restore_retired === true
+    && await (await import('../generations/adapters/chronicle-events.ts')).verifiedChronicleRetirement(engine, authority.writer.sourceId, snapshot.page))) {
     throw opError('page_not_found', 'Maintenance cannot restore a deleted page.',
       `Page ${slug} in '${authority.writer.sourceId}' was deleted after maintenance read it, and maintenance never recreates deleted pages; nothing was submitted. Run maintenance again to plan from the current pages.`);
   }

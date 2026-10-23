@@ -17,6 +17,7 @@ import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { chroniclePageDate } from './eligibility.ts';
 import { chronicleSettings } from './config.ts';
 import { buildChronicleEvent, pinDepth, publishChronicleGeneration, type BuiltChronicleEvent } from './publish.ts';
+import { diagnoseMalformedProposals, type MalformedProposalDiagnostics } from './proposal-diagnostics.ts';
 
 export interface ChronicleEventProposal {
   when: string;            // ISO datetime or YYYY-MM-DD
@@ -68,6 +69,8 @@ export interface ChronicleExtractResult {
   events_retired?: number;
   /** Proposals refused before publication, by reason. */
   events_dropped?: ChronicleDropCounts;
+  /** #7234: on `malformed_proposal`, which check refused the batch (fixed codes and counts, never values). */
+  malformed?: MalformedProposalDiagnostics;
 }
 
 const KIND_VOCAB = new Set([
@@ -284,7 +287,7 @@ export async function runChronicleExtract(
   const proposals = Array.isArray(result?.events) ? result.events : [];
   // PARSE BARRIER — reject the WHOLE batch on any malformed proposal; no partial writes.
   if (!proposals.every(isValidProposal)) {
-    return { slug: opts.slug, status: 'skipped', events_written: 0, reason: 'malformed_proposal' };
+    return { slug: opts.slug, status: 'skipped', events_written: 0, reason: 'malformed_proposal', malformed: diagnoseMalformedProposals(proposals) };
   }
   const pin = pinDepth(snapshot);
   const built = buildChronicleEvents(proposals, ctx, { slug: pin.slug, visibility: pin.visibility, contentHash: pin.contentHash },

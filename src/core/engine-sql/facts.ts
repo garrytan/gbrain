@@ -128,7 +128,8 @@ export async function insertFact(
           ) RETURNING id
         `)).rows;
         const id = Number(ins[0].id);
-        (await tx.run(sqlFragment`UPDATE facts SET expired_at = now(), superseded_by = ${id}
+        (await tx.run(sqlFragment`UPDATE facts SET expired_at = now(), superseded_by = ${id},
+                   valid_until = CASE WHEN valid_from < ${validFrom}::timestamptz AND (valid_until IS NULL OR valid_until > ${validFrom}::timestamptz) THEN ${validFrom}::timestamptz ELSE valid_until END
                  WHERE id = ${supersedeId} AND expired_at IS NULL`)).rows;
         return id;
       });

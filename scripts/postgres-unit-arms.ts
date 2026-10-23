@@ -44,7 +44,7 @@ export const ARMS_LIST = 'test/postgres-unit-arms.txt';
 export const ARM_WEIGHTS = 'scripts/postgres-arm-weights.json';
 export const ARM_WEIGHTS_POSTGRES_ONLY = 'scripts/postgres-arm-weights-postgres-only.json';
 /** persistence-validation's unit-postgres-arms matrix size; test/scripts/postgres-unit-arms.test.ts pins the workflow to it. */
-export const ARM_SHARDS = 11;
+export const ARM_SHARDS = 12;
 /** Files run at once per job, each against its own PostgreSQL service; the workflow lists one URL per worker. */
 export const ARM_WORKERS = 2;
 /** The workflow step's `timeout-minutes: 20`: a shard whose files run longer is cut off mid-list. */

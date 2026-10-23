@@ -766,7 +766,8 @@ describe('runExtractConversationFactsCore', () => {
         sourceId: 'default', slug, sleepMs: 0,
         extractor: async ({ turnText }) => {
           extracted.push(turnText);
-          return [{ fact: 'alice-example said hi', kind: 'event', confidence: 1, entity_slug: null, source: 'test' }];
+          // #7043: each body states its own claim; the very same claim on the second page is skipped as a duplicate.
+          return [{ fact: `alice-example said hi in body ${index}`, kind: 'event', confidence: 1, entity_slug: null, source: 'test' }];
         },
       });
       expect(result).toMatchObject({ pages_processed: 1, pages_skipped_unparsed: 0, segments_processed: 1, facts_inserted: 1 });

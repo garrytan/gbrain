@@ -277,6 +277,19 @@ brackets are filled in with real values on each surface.
 | `no_chat_provider` | phase | No chat provider is configured on the brain host, so the chronicle phase made no calls. | — | user | credentials |
 <!-- chronicle-reasons:end -->
 
+A `malformed_proposal` refusal also says which check failed, without the
+proposal itself. The chronicle phase prints one warning line per refused page
+(`code=when_unparseable field=when; proposal 2 of 7; 1 of 7 inspected invalid`),
+and the extractor result carries the same fields under `malformed`: `code`
+(`not_object`, `missing_field`, `wrong_type`, `when_too_short`,
+`when_unparseable`, `what_blank`, `who_item_not_string`, or `beyond_bounds`
+when the defect lies past what was inspected), the schema `field`, the JSON
+`shape` found there, and counts. It never contains a value, a key the model
+invented, the prompt or the raw response. At most 50 proposals, 50 `who`
+entries each and 256 characters per string are inspected, and nested values
+are never walked. The refusal itself, its retry with backoff and the ledger
+row are unchanged.
+
 Don't hand-write `life/events/` pages: extraction owns them and retires events
 the page no longer supports. Edit the meeting page instead. Only a complete
 re-extraction retires events: one that finds no events, drops or caps a

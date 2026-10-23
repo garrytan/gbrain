@@ -210,6 +210,7 @@ used?"* — your agent runs `gbrain volunteer-context --stats`.
 | `retrieval_reflex_volunteer` | true | the reflex volunteer arm (Arm 2) — the incident kill switch for volunteered pages on the OpenClaw lane (env: `GBRAIN_RETRIEVAL_REFLEX_VOLUNTEER`, env above config) |
 | `retrieval_reflex_max_pointers` | 3 | pointer cap per turn |
 | `retrieval_reflex_lexical_arms` | true | the lowercase-alias + surname recall arms (env: `GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS`); off = disables both arms |
+| `context.hot_memory.session_only` | off | hot facts on the turn and session-start hooks come from the current session only, with no fallback to other sessions' recent facts (DB-plane; see [ambient writeback](ambient-writeback.md#hot-memory-and-other-sessions)) |
 | `context.proactive_brief` | off | the proactive brief ("Before you start") on the SessionStart and UserPromptSubmit hooks (DB-plane: `gbrain config set context.proactive_brief true`) |
 
 Per-call knobs: `max_pages` + `min_confidence` on both the op and `gbrain watch`

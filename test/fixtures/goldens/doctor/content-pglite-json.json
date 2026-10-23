@@ -1036,14 +1036,14 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "1336 column(s) verified against live schema",
+          "message": "1351 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 156 table(s) the applied migrations create exist.",
+          "message": "All 157 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -1712,6 +1712,7 @@
             "count": 0,
             "docs": "docs/guides/repair.md#atoms-restore",
             "hold_until": null,
+            "ledger_covered": 0,
             "newest_retired_at": null,
             "oldest_retired_at": null,
             "origins": 0,
@@ -1750,6 +1751,21 @@
           "elapsed_ms": "<volatile>",
           "message": "No derived generation is held.",
           "name": "generation_held",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "docs": "docs/guides/repair.md#generations",
+            "orphan_candidates": [],
+            "orphans": 0,
+            "pending": 0,
+            "pending_items": [],
+            "retire_pending": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No activated generation waits on a member request, and no orphan candidate exists.",
+          "name": "generation_pending",
           "status": "ok"
         },
         {

@@ -641,7 +641,7 @@ function logLockBusyRateLimited(sourceId: string, slug: string): void {
  * active batch and the facts inserted.
  */
 function publishPageFacts(state: ExtractCoreState, slug: string, rows: Array<NewFact & { row_num: number; source_markdown_slug: string }>,
-  scope: ConversationScope): Promise<{ deleted: number; facts_inserted: number }> {
+  scope: ConversationScope): Promise<{ deleted: number; facts_inserted: number; duplicates_skipped: number }> {
   return writeDerivedFacts(state.engine, state.sourceId, slug, db => publishConversationFacts(db, state.sourceId, slug, rows, { scope }));
 }
 
@@ -1135,7 +1135,8 @@ async function processPage(
   const published = await publishPageFacts(state, page.slug, pageRows, scope);
   state.result.facts_inserted += published.facts_inserted;
   state.result.orphan_facts_cleaned += published.deleted;
-  if (published.facts_inserted < pageRows.filter(row => row.source !== TERMINAL_AUDIT_SOURCE).length) {
+  if (published.duplicates_skipped) process.stderr.write(`[extract-conversation-facts] ${page.slug}: skipped ${published.duplicates_skipped} fact(s) an active fact of the source already states (#7043)\n`);
+  if (published.facts_inserted + published.duplicates_skipped < pageRows.filter(row => row.source !== TERMINAL_AUDIT_SOURCE).length) {
     process.stderr.write(`[extract-conversation-facts] ${page.slug}: kept its prior facts; this ${scope} run's facts were not published over them (#7013)\n`);
   }
 

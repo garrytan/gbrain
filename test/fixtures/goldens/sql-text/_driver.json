@@ -1905,7 +1905,7 @@
             "via": "unsafe"
           },
           {
-            "paramCount": 2,
+            "paramCount": 5,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

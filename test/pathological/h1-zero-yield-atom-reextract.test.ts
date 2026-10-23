@@ -107,7 +107,6 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         await extract(engine, ['Launch exit criteria', 'Weekly review owner']);
         const first = await atoms(engine);
         expect(first.map(row => row.live)).toEqual([true, true]);
-        const kept = first.find(row => row.slug.includes('exit-criteria'))!.slug;
         const retiring = first.find(row => row.slug.includes('review-owner'))!.slug;
         await edit(ctx, 'second');
         let fired = false;
@@ -115,9 +114,11 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
           if (fired || point !== 'consumer:preparing' || !detail.writeId) return;
           const [row] = await engine.executeRaw<{ slug: string; kind: string | null }>(
             "SELECT slug, intent->>'kind' AS kind FROM persistence_requests WHERE id=$1::uuid", [detail.writeId]);
-          if (row?.kind !== 'managed_atom_page' || row.slug !== kept) return;
+          // GBRA-161 PR 1b: the replacement is the new identity (a create member, admitted before the activation); a
+          // same-identity sibling is rewritten only after the activation accepted the complete result.
+          if (row?.kind !== 'managed_atom_page' || !row.slug.includes('review-cadence')) return;
           fired = true;
-          throw new OperationError('revision_conflict', `Page ${kept} changed after the atom batch was accepted.`, 'Run the atom drain again.');
+          throw new OperationError('revision_conflict', `Page ${row.slug} changed after the atom batch was accepted.`, 'Run the atom drain again.');
         });
         try { await extract(engine, ['Launch exit criteria', 'Launch review cadence']).catch(() => undefined); }
         finally { installFaultHook(undefined); }

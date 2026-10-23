@@ -87,6 +87,9 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
     throw new OperationError('unsupported_mutation_protocol', 'No compatible skill mutation preparer is registered.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
   }
   if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_atom_')) return (await import('./atom-maintenance.ts')).prepareManagedAtomMutation(e, row, cfg);
+  if (row.operation === 'submit_job' && row.intent?.kind === 'managed_generation_activate') return (await import('../generations/managed.ts')).prepareGenerationActivation(e, row);
+  if (row.operation === 'submit_job' && row.intent?.kind === 'managed_generation_restore') return (await import('../generations/repair.ts')).prepareGenerationRestore(e, row);
+  if (row.operation === 'submit_job' && row.intent?.kind === 'managed_generation_retire') return (await import('../generations/managed-retire.ts')).prepareGenerationRetireMember(e, row, cfg);
   if (row.operation === 'extract_facts' && String(row.intent?.kind).startsWith('managed_facts_')) return (await import('./facts-prepare.ts')).prepareManagedFactsMutation(e, row, cfg);
   if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('connector_v2_')) return (await import('./connector-sync.ts')).prepareConnectorMutation(e, row);
   if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_connector_')) return (await import('./connector-sync.ts')).prepareOutdatedConnectorMutation(e, row);

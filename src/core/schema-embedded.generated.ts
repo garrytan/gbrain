@@ -1971,7 +1971,9 @@ CREATE TABLE IF NOT EXISTS derived_generations (
   superseded_by BIGINT,
   restore_of BIGINT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  locator TEXT,
+  activation_id TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS derived_generations_one_live ON derived_generations (source_id, kind, owner_key) WHERE state = 'live';
 CREATE UNIQUE INDEX IF NOT EXISTS derived_generations_one_hold ON derived_generations (source_id, kind, owner_key) WHERE state = 'held';
@@ -1984,9 +1986,11 @@ CREATE TABLE IF NOT EXISTS derived_generation_items (
   action TEXT NOT NULL CHECK (action IN ('published','retired','revived','kept','adopted')),
   preimage JSONB,
   preimage_bytes INTEGER,
+  pending BOOLEAN NOT NULL DEFAULT false,
   PRIMARY KEY (generation_id, item_key)
 );
 CREATE INDEX IF NOT EXISTS derived_generation_items_key ON derived_generation_items (item_key);
+CREATE INDEX IF NOT EXISTS derived_generation_items_pending ON derived_generation_items (generation_id) WHERE pending;
 CREATE TABLE IF NOT EXISTS derived_generation_valve (
   source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
   kind TEXT NOT NULL,
@@ -2005,6 +2009,21 @@ CREATE TABLE IF NOT EXISTS derived_generation_attempts (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS derived_generation_attempts_key ON derived_generation_attempts (source_id, kind, owner_key);
+CREATE TABLE IF NOT EXISTS derived_generation_activations (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  owner_key TEXT NOT NULL,
+  expected_generation INTEGER NOT NULL,
+  input_pin TEXT,
+  item_set_hash TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending','activated')),
+  generation_id BIGINT REFERENCES derived_generations(id) ON DELETE SET NULL,
+  members JSONB NOT NULL DEFAULT '[]',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS derived_generation_activations_key ON derived_generation_activations (source_id, kind, owner_key, state);
 -- (migration v246) Per-page embedding spend ledger for large pages
 -- (page-embedding-budget.ts): held pages wait for approval, capped pages are
 -- partially embedded up to embed.max_usd_per_page.

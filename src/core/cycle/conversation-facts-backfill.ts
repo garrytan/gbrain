@@ -37,6 +37,7 @@
  *   cycle.conversation_facts_backfill.max_walltime_min     (20)
  *   cycle.conversation_facts_backfill.max_total_walltime_min (30)
  *   cycle.conversation_facts_backfill.types                (all of ALLOWED_TYPES — src/core/facts/conversation-types.ts)
+ *   cycle.conversation_facts_backfill.exclude_sources      (none: a JSON array or comma list of source ids the phase skips, #7043)
  *
  * `.types` is the single source of truth for "enabled types" — the CLI
  * default reads from the same key (Eng-v2 A2).
@@ -97,6 +98,8 @@ export interface ResolvedConfig {
   maxWalltimeMin: number;      // per source per cycle
   maxTotalWalltimeMin: number; // brain-wide per cycle
   types: AllowedType[];
+  /** #7043: source ids the phase never extracts (`exclude_sources`, default none). */
+  excludeSources: string[];
   /**
    * v0.41.15.0 (D9 in cycle context): in-process worker count per
    * per-source invocation. Default 1 — cycle is opt-in per CLAUDE.md,
@@ -109,7 +112,7 @@ export interface ResolvedConfig {
 /** The backfill's resolved config (switch, caps, types); doctor reads the same values. */
 export async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
   const get = (k: string) => engine.getConfig(`${CFG_PREFIX}.${k}`);
-  const [enabled, maxCost, maxTotalCost, maxWall, maxTotalWall, typesRaw, workersRaw] =
+  const [enabled, maxCost, maxTotalCost, maxWall, maxTotalWall, typesRaw, workersRaw, excludeRaw] =
     await Promise.all([
       get('enabled'),
       get('max_cost_usd'),
@@ -118,6 +121,7 @@ export async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
       get('max_total_walltime_min'),
       get('types'),
       get('workers'),
+      get('exclude_sources'),
     ]);
 
   // Truthy-string parse mirrors isFactsExtractionEnabled.
@@ -160,6 +164,7 @@ export async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
 
   return {
     enabled: enabledFlag,
+    excludeSources: parseSourceList(excludeRaw),
     maxCostUsd: parseFloatOrDefault(maxCost, 1.0),
     maxTotalCostUsd: parseFloatOrDefault(maxTotalCost, 5.0),
     explicitCostCap: maxCost !== null || maxTotalCost !== null,
@@ -202,14 +207,16 @@ export async function runPhaseConversationFactsBackfill(
   const maxTotalWalltimeMs = cfg.maxTotalWalltimeMin * 60_000;
   const maxWalltimeMs = cfg.maxWalltimeMin * 60_000;
 
-  const sources = await listSources(engine);
+  const listed = await listSources(engine);
+  const excluded = listed.filter(src => cfg.excludeSources.includes(src.id)).map(src => src.id);
+  const sources = listed.filter(src => !excluded.includes(src.id));
   if (sources.length === 0) {
     return {
       phase: 'conversation_facts_backfill',
       status: 'ok',
       duration_ms: Date.now() - startedAt,
-      summary: 'no sources to process',
-      details: { sources_count: 0 },
+      summary: excluded.length ? `no sources to process (${excluded.length} excluded by ${CFG_PREFIX}.exclude_sources)` : 'no sources to process',
+      details: { sources_count: 0, ...(excluded.length ? { sources_excluded: excluded } : {}) },
     };
   }
 
@@ -402,7 +409,8 @@ export async function runPhaseConversationFactsBackfill(
   const noPricing = [...new Map(Object.values(perSourceResults)
     .flatMap((r) => r.budget_pricing ? [[r.budget_pricing.model, r.budget_pricing] as const] : [])).values()];
   const summary = `${totals.facts_inserted} facts inserted across ${totals.sources_processed}/${sources.length} sources, ~$${totalSpent.toFixed(4)} spent` +
-    noPricing.map((g) => `. ${noPricingMessage(g)}`).join('') + notOwnedNote(sourcesNotOwned);
+    noPricing.map((g) => `. ${noPricingMessage(g)}`).join('') + notOwnedNote(sourcesNotOwned)
+    + (excluded.length ? `. Skipped ${excluded.length} source(s) listed in ${CFG_PREFIX}.exclude_sources (${excluded.join(', ')})` : '');
 
   return {
     phase: 'conversation_facts_backfill',
@@ -433,6 +441,7 @@ export async function runPhaseConversationFactsBackfill(
       sources_budget_exhausted: sourcesBudgetExhausted,
       sources_walltime_exhausted: sourcesWalltimeExhausted,
       sources_skipped_not_owner: sourcesNotOwned,
+      sources_excluded: excluded,
       no_pricing: noPricing,
       types: cfg.types,
       max_cost_usd: cfg.maxCostUsd,
@@ -443,6 +452,17 @@ export async function runPhaseConversationFactsBackfill(
       per_source: perSourceResults,
     },
   };
+}
+
+/** `exclude_sources`: a JSON array of source ids or a comma-separated list; anything else excludes nothing. */
+function parseSourceList(raw: string | null): string[] {
+  if (!raw?.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.filter((id): id is string => typeof id === 'string' && id.trim() !== '').map(id => id.trim());
+    if (typeof parsed !== 'string') return [];
+  } catch { /* a comma-separated list */ }
+  return raw.split(',').map(id => id.trim()).filter(Boolean);
 }
 
 function notOwnedNote(ids: string[]): string {

@@ -23,10 +23,13 @@
  * unlinked. Every query is bounded by created_at
  * through idx_facts_since (source_id, created_at DESC WHERE expired_at IS
  * NULL) or by primary key; without fact_relink_attempts (a brain before
- * v187) the relink figures are omitted and nothing is excluded.
+ * v187) the relink figures are omitted and nothing is excluded. A fact the
+ * assistant or a third party said is never counted (#7270): relink never
+ * attaches it to an entity page, so it is not a fact waiting for a link.
  */
 import type { BrainEngine } from '../../../core/engine.ts';
 import { AUDIT_ROW_SOURCES } from '../../../core/facts/audit-sources.ts';
+import { ENTITY_LINKABLE_SQL } from '../../../core/facts/attribution.ts';
 import type { Check } from '../../doctor.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import { doctorVerify } from '../check-fix.ts';
@@ -61,7 +64,7 @@ export interface UnlinkedFactsStats {
   relinked_7d: Record<string, number> | null;
 }
 
-const ACTIVE = `f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source <> ALL($2::text[])`;
+const ACTIVE = `f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source <> ALL($2::text[]) AND ${ENTITY_LINKABLE_SQL}`;
 const ORIGIN = `CASE WHEN ${DERIVED} THEN 'conversation' WHEN f.source = 'mcp:put_page' THEN 'mcp:put_page'
   WHEN f.source LIKE 'mcp:%' OR f.source LIKE 'sync:%' OR f.source LIKE 'hook:%' OR f.source IN ('file_upload', 'code_import') THEN 'extraction'
   ELSE 'remember' END`;

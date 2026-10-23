@@ -5,7 +5,7 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence } from '../takes-fence.ts';
-import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
+import { extractFactsFromFenceText, pageFactDate } from '../facts/extract-from-fence.ts';
 import { takesPreparation } from '../takes-write.ts';
 import { parseTimelineEntries } from '../link-extraction.ts';
 import { eachStoredTimelineRow, extractTimelineFromContent, hasExtractorDetail, supersededCitationTimeline, TimelineKeySet,
@@ -486,11 +486,11 @@ export async function reprojectTimelineRow(tx: BrainEngine, pageId: number, body
   return true;
 }
 
-export function compileCanonicalProjections(page: ParsedPage, slug: string, sourceId: string) {
+export function compileCanonicalProjections(page: ParsedPage, slug: string, sourceId: string, factDate: Date | null = null) {
   const scan=scanCanonicalFences(page);
   if(scan.defects.length) throw fenceOperationError(scan.defects[0]!, slug, sourceId);
   const fields:Array<[FenceSection,string]>=[['body',page.compiled_truth],['timeline',page.timeline ?? '']];
-  return { factRows: extractFactsFromFenceText(scan.facts,slug,sourceId), takes: scan.takes, sections: scan.sections, quoted: scan.quoting ? quotedFenceRows(fields) : null };
+  return { factRows: extractFactsFromFenceText(scan.facts,slug,sourceId,{ pageEffectiveDate: factDate }), takes: scan.takes, sections: scan.sections, quoted: scan.quoting ? quotedFenceRows(fields) : null };
 }
 
 /**
@@ -532,7 +532,9 @@ function takeCollision(rows: number[], sections: Map<number, FenceSection>, slug
  */
 export async function prepareCanonicalProjections(engine: BrainEngine, page: ParsedPage, slug: string, sourceId: string,
   prior: PageSnapshot | null, writer: ProjectionWriter, policy?: TimelineWritePolicy): Promise<(tx: BrainEngine, pageId?: number) => Promise<CanonicalProjectionResult>> {
-  const { factRows, takes, quoted, sections } = compileCanonicalProjections(page, slug, sourceId);
+  // #7247: a fence row without a valid_from takes the page's stated date, as extract_facts does, never the import time.
+  const factDate = pageFactDate({ slug, frontmatter: page.frontmatter, timeZone: await engine.getConfig('brain.timezone') });
+  const { factRows, takes, quoted, sections } = compileCanonicalProjections(page, slug, sourceId, factDate);
   // #6259: a page the content-quality gate hid as junk projects no facts or takes. Rows projected before it
   // was quarantined are left as they are (hiding them would need a new row state); only new projection stops.
   const projectFences = !isQuarantined(page.frontmatter);

@@ -73,13 +73,16 @@ import { join } from 'node:path';
 const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/cycle/extract-facts.ts',
   'src/core/cycle/phases/consolidate.ts',
+  'src/core/engine-sql/facts.ts', // #7214: insertFact's supersede closes the retired interval at the replacement's valid_from
   'src/core/facts/forget.ts',
   'src/core/facts/insert-guard-schema.ts',
   'src/core/facts/proposal-supersede.ts',
   'src/core/facts/withdrawal.ts',
   'src/core/facts/withdrawal-schema.ts',
   'src/core/persistence/canonical-projections.ts',
+  'src/core/persistence/facts-prepare.ts', // #7214: a published supersession closes the retired interval (supersededValidUntil)
   'src/core/persistence/loop-fact-retirement.ts',
+  'src/core/persistence/memory-prepare.ts', // #7214: remember (replaces or cosine) closes the retired interval (supersededValidUntil)
   'src/core/persistence/prepared-maintenance.ts',
   'src/core/postgres-engine.ts',
   'src/core/pglite-engine.ts',

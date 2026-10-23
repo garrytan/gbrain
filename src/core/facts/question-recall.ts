@@ -18,6 +18,7 @@ import { MEMORY_VERBS_VERSION } from '../verbs.ts';
 import { getEmbeddingDimensions, getEmbeddingModel, isAvailable } from '../ai/gateway.ts';
 import { calibrationKey } from './supersession-threshold.ts';
 import { rowToFact, type FactRowSqlShape } from '../engine-sql/facts.ts';
+import { collapseFactReads, type CollapsedFactRead } from './capture-dedup.ts';
 import { loadEmbeddingQueryPrefix } from '../search/query-prefix.ts';
 import { embedQueryBounded, makeQueryEmbedDeadline } from '../search/hybrid.ts';
 import { resolveHnswIterativeScan } from '../search/hnsw-iterative-scan.ts';
@@ -172,7 +173,8 @@ export interface QuestionRecallInput {
 }
 
 export interface QuestionRecall {
-  rows: FactRow[];
+  /** Ranked rows, copies of one claim collapsed (#7043) before the `limit` cut. */
+  rows: CollapsedFactRead<FactRow>[];
   /** fact id → relevance (cosine + term share + 0.1 when dated). */
   relevance: Map<number, number>;
   degraded?: FactsDegraded;
@@ -214,7 +216,7 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
       embedding ? countUncomparableFacts(ctx.engine, scope, filters, embedding.length) : [],
       admissionRule(ctx.engine),
     ]);
-    const ranked = scoreFactCandidates(question, pool.candidates).filter(s => admitted(s, rule)).slice(0, input.limit);
+    const ranked = scoreFactCandidates(question, pool.candidates).filter(s => admitted(s, rule));
     const unembedded = uncomparable.reduce((n, r) => n + r.n, 0);
     const why = reason ?? (embedding && !pool.column ? 'facts_embedding_column_missing' : undefined);
     const degraded: FactsDegraded | undefined = why || unembedded ? { ...(why ? { reason: why } : {}), ...(unembedded ? { unembedded } : {}) } : undefined;
@@ -225,7 +227,7 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
     const byId = new Map(raw.map(r => { const row = rowToFact(r); return [row.id, { ...row, embedding: null }] as const; }));
     const modelKey = embedding && pool.column ? calibrationKey(getEmbeddingModel(), getEmbeddingDimensions()) : null;
     return {
-      rows: ids.flatMap(id => byId.get(id) ?? []),
+      rows: (await collapseFactReads(ctx.engine, ids.flatMap(id => byId.get(id) ?? []))).slice(0, input.limit),
       relevance: new Map(ranked.map(s => [s.candidate.id, Math.round(s.score * 1e4) / 1e4])),
       ambiguousEntity: null,
       ...(degraded ? { degraded } : {}),

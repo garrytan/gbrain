@@ -22,6 +22,11 @@ Migration v265 (a placeholder number, restamped when the change merges) adds fou
   later run of the same result stops at that held row until `--mode release-held` publishes it. A fenced producer is
   not counted. Only error codes are stored.
 
+Migration v266 (also a placeholder) adds the managed side (PR 1b): `derived_generations.locator` (a transcript key's
+current file) and `activation_id`, `derived_generation_items.pending` (an item a member request still overwrites or
+retires; a retirement marked pending is `retire_pending` and still live), and `derived_generation_activations`: one row
+per admitted managed activation with its members and whether it activated.
+
 ## Publishing
 
 Under the item page locks (slug order) and then the key's advisory lock, `publishGeneration`:
@@ -45,15 +50,94 @@ Under the item page locks (slug order) and then the key's advisory lock, `publis
 A partial result (an input cut at its cap, #6503) publishes additively: it writes its items, carries the rest of the
 live generation forward, retires nothing and completes nothing.
 
-Adapters (`contract.ts`) own one kind each: `adapters/atoms.ts` (unmanaged atoms, one key per origin page or
-transcript) in this release. Managed brains keep the coordinator path until PR 1b.
+Adapters (`contract.ts`) own one kind each: `adapters/atoms.ts` (atoms, one key per origin page or transcript) in this
+release. An atom's identity leaves out the provenance a managed writer stamps (`source_kind`, `ingested_via`,
+`ingested_at`, `trust_tier` and the other content-hash ephemeral keys), so a managed write never reads as an edit.
+
+Life Chronicle events publish through `publishChronicleGeneration` (`adapters/chronicle-events.ts`, kind
+`chronicle_event`, key `depth:<slug>`, GBRA-161 PR 3). Each judged revision of a depth page (meeting, conversation,
+calendar page) is a generation of event pages; each event's timeline projection row on the depth page belongs to its
+item. A complete re-judgment retires the events it dropped together with their projection rows in the activation
+(versioned, `retired_by: life-chronicle`); a result below the model floor is held `shrunk`, and an empty or partial one
+(#7013) retires nothing. An empty generation retires only with a proof: `originIneligible` (the revision became
+ineligible: `not_chronicle_shaped`, `dream_generated` or `too_short`, rechecked against the chronicle ledger by the
+adapter's `proofHolds`) or `originGone` (the chronicle phase retires the events of a deleted depth page). Ownership
+stays content-addressed: an event is the extractor's while its content hash is on the chronicle ledger, its identity is
+the one the live generation recorded, or it is exactly what this publication proposed; an operator-edited or
+operator-deleted event is never an item, so nothing overwrites, retires or revives it.
+`gbrain repair generations --kind chronicle-event --mode restore` brings retired events and their rows back.
+
+### Synthesis
+
+Dream synthesis outputs (kind `synthesis`, one key per transcript: the PR 1b transcript key, `transcript:<root>/<path>`;
+`adapters/synthesis.ts`, GBRA-161 PR 4, #7065) publish in place (`publishesInPlace`): the synthesize phase's children
+write the reflection and original pages as they always did, and after postprocess and the provenance stamp
+`cycle/synthesize-generations.ts` records each synthesized transcript's outputs as its new generation. The decision is
+the plan approved on Oct 21: replace only on a complete, non-empty result, always version first, always reversible.
+
+- An earlier output retires at activation (versioned, `retired_by: synthesis-resynthesis`, its file removed when the
+  database holds everything in it) only when it is matched (`generations/synthesis-coverage.ts`): an exact duplicate of a
+  new page, or a page of the new generation with the same subject (slug without its hash suffix and date, or the same
+  lowercased title tokens) while every claim unit (each sentence outside a quote), every verbatim quote (a `>` block or a
+  quoted span of three or more words) and every citation (wikilink or link target) of the earlier page appears in the new
+  generation.
+- Every other earlier output is carried into the new generation, stays live and is recorded on it as an unmatched
+  predecessor (why, and how many claims, quotes and citations it holds alone; a segmented page is never compared and is
+  listed `unreadable`). `gbrain repair generations --kind synthesis --mode cleanup --since 30d` lists them and
+  `--apply --expect <hash> --yes` retires exactly the previewed ones (`retired_by: synthesis-cleanup`).
+- A transcript is complete only when every child of every chunk completed and nothing of the run is deferred or still
+  pending publication. Otherwise, or with `generations.synthesis.retire_previous` set to false, the generation is
+  partial: the new outputs are recorded and nothing retires.
+- An output from before the ledger is never adopted as an earlier output (no legacy evidence), so the duplicate backlog
+  an upgraded brain already holds is untouched. The shrink floor applies, measured against the live generation's items
+  (an in-place kind's new outputs carry new keys), and so does the valve: a mass re-synthesis retires at most its share
+  per run window and holds the rest (`valve`).
+- `--mode restore` brings a retired earlier output back from its ledger preimage, retires the outputs that replaced it
+  and puts the files back the same way (unmanaged brains). A managed brain admits the activation and one versioned
+  delete per retirement (`managed_generation_retire`, `generations/managed-retire.ts`) in one transaction; the next run
+  resumes a retirement left behind.
+
+### Managed sources
+
+A managed source (`generations/managed.ts`) never composes a generation in one transaction: every page write is its own
+coordinated request with its own file. A publication is planned without locks and admitted as one batch, in order:
+
+1. `create` members: page writes of new identities only (a key no live row holds);
+2. one `managed_generation_activate` request (trusted local only; a remote one is refused): under the member page locks
+   and then the key lock it rechecks the expected generation, the input pin and each member at its planned identity,
+   flips the ledger and marks every item a member still overwrites or retires `pending`;
+3. `overwrite` and `retire` members: the existing per-page managed put and delete requests (version first, stamp), each
+   refusing unless its item is pending on the live generation its activation made, and clearing the mark on commit.
+
+A database-only kind (`databaseOnly`: chronicle events, which have no canonical file) writes its new and changed items
+as their own requests before the activation, which it journals on the input page bound to its revision; the activation
+checks those members at the identity they now hold, records their before-states from the plan and retires the dropped
+items itself, so nothing is left pending. Its restore runs as one coordinated `managed_generation_restore` request.
+
+The activation id is digest(operation id, run scope) and each member's digest(activation id, slug, action), so a rerun
+replays them. Between steps 1 and 3 old and new items are both live, never neither. The next extraction run of the
+source resumes pending members (`resumeManagedGenerationMembers`): a request still queued is waited on, one that ended
+without committing is submitted again, and a page edited since keeps its content. Pages a `create` member wrote for an
+activation that never happened are orphan candidates: doctor `generation_pending` and `--mode cleanup` list them with
+their activation id, and nothing retires them automatically.
+
+A transcript's key is its corpus root label and root-relative path (`transcript:corpus/team-a/2026-09-07-standup.txt`),
+never its basename or content hash. A file a live generation names as its `locator` keeps that key, and a file whose
+content equals the input of a live generation whose file is gone was moved: it keeps that key and the locator follows.
+
+`gbrain repair stale-atoms` retires each listed atom as an approved generation of its origin key (no floor or valve),
+bound to the atom's identity; `atoms-restore` keeps its command and JSON and still restores managed retirements, and
+doctor `atom_retirements_restorable` leaves out an atom whose retirement the ledger records, so it warns once.
 
 ## Repair
 
 `gbrain repair generations --kind <kind>` is explicit-only and preview-bound (docs/guides/repair.md#generations):
 `--mode restore` (the default) republishes the item set the selected live generation replaced, `--mode release-held`
-publishes a held result once. Doctor reports `generation_retirements` (ok, with the restorable count) and
-`generation_held` (warn).
+publishes a held result once (a managed source releases an atom page key through its writer), and `--mode cleanup` lists
+pending members and orphan candidates, read-only (for `synthesis` it also lists unmatched predecessors, which its
+`--apply` retires; see [Synthesis](#synthesis)). A managed source restores retired atoms with `gbrain repair
+atoms-restore`; `--mode restore` refuses there. Doctor reports `generation_retirements` (ok, with the restorable
+count), `generation_held` (warn) and `generation_pending` (warn).
 
 ## Purge
 
@@ -75,6 +159,7 @@ proposal carrying the claim (`ledger-scrub.ts`). Restore then refuses that item 
 | `generations.max_items` | 64 | 8 to 1024 |
 | `generations.valve.max_per_run` | 500 | 1 to 100000 |
 | `generations.valve.max_ratio` | 0.5 | 0.01 to 1 |
+| `generations.synthesis.retire_previous` | true | true or false |
 
 `gbrain config set` refuses a value out of range; a stored value out of range reads as the default.
 
@@ -95,3 +180,18 @@ proposal carrying the claim (`ledger-scrub.ts`). Restore then refuses that item 
 - Attempts have their own table instead of the held row's `attempts` column, because a held row means a result
   waits for the operator (doctor warns, release-held lists it) and a key has at most one; counting failures there
   would warn before any result is held and displace a real held result.
+- The shrink floor holds a result strictly below `shrink_floor` of the owned items (scaled by the input ratio), so a
+  result exactly at the floor publishes; this is the plan's "below it the result is held".
+- A managed activation's id includes the producer's run scope, because a connector run refused after an owner claimed the
+  source must not collide with the owner's run of the same result.
+- Managed `--mode restore` is refused and `atoms-restore` stays the managed restore path, because a generation restore
+  writes pages in one transaction, which a managed source cannot do; a managed restore through member requests is left
+  for a later PR.
+- Synthesis subject matching accepts the slug stem (hash suffix and date prefix removed) or the lowercased title tokens,
+  because a re-run may rename either; the coverage test (every sentence, quote and citation) is what makes a retirement
+  safe, and an earlier page that fails it stays live whatever its subject.
+- An in-place kind's shrink floor counts the live generation's items only, because its new outputs carry new keys and
+  would otherwise count as owned before the run: a re-synthesis with fewer pages than before would always hold.
+- A managed brain's synthesis restore is refused like every non-fence managed restore (see above); its retirements are
+  versioned deletes, and the earlier pages come back through `gbrain repair generations` on an unmanaged brain or a
+  later managed restore path.

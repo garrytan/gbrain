@@ -431,6 +431,7 @@ test/sync-drain-inpass-stall.test.ts
 test/sync-drain-write-capacity.test.ts
 test/sync-dry-run-drain-7167.test.ts
 test/sync-exits-l4-6712.test.ts
+test/sync-fenced-slices-gbra133.test.ts
 test/sync-freshness-6858.test.ts
 test/sync-frontmatter-recovery.test.ts
 test/sync-frontmatter-slug-conflict.test.ts
@@ -453,6 +454,7 @@ test/sync-page-write-failed-gbra130.test.ts
 test/sync-pass-abandoned-7355.test.ts
 test/sync-pass-cost-grouping-gbra130.test.ts
 test/sync-pass-dirty-after-freeze-gbra130.test.ts
+test/sync-pass-stop-in-level-gbra133.test.ts
 test/sync-prescreen-both-delta-6712.test.ts
 test/sync-prescreen-drift-6712.test.ts
 test/sync-slug-root-mode-6694.test.ts

@@ -117,7 +117,7 @@ export interface PreparationStallMeta {
 }
 export type GitHoldReason = InvalidFrontmatterReason | 'rename_source_changed' | 'explicit_id_conflict' | FenceReason | OriginConflictReason | PageIdentityHoldReason
   | 'symlink_in_repo' | 'symlink_outside_root' | 'symlink_dangling' | 'symlink_loop' | 'permission_denied' | 'not_regular_file' | 'skip_worktree' | 'deleted_locally'
-  | 'not_utf8' | 'control_character' | 'never_committed' | 'ignored';
+  | 'not_utf8' | 'control_character' | 'never_committed' | 'ignored' | 'origin_unknown';
 /** GBRA-130: why a `page_identity_changed` hold's path has no page sync may write (A-17, B-3, B-4). */
 export type PageIdentityHoldReason = 'several_tombstones' | 'spelling' | 'identity_differs';
 /** #6712 PR 4b: the sides a `file_drift` Decision can be about, and the states of a deleted side (design v3.2 §4). */
@@ -681,7 +681,8 @@ function deletedDriftFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'met
   const preview = (prefer: 'database' | 'file') => heldDriftPreviewArgv(source, 'deleted', state, prefer, record.path);
   const verify = { argv: ['gbrain', 'sources', 'status', source, '--json'] };
   const uncommitted = state === 'file_gone' && (record.meta.reason === 'never_committed' || record.meta.reason === 'ignored');
-  const what = uncommitted ? `${record.path} is gone, but Git never committed it${record.meta.reason === 'ignored' ? ' (.gitignore excludes it)' : ''}, so its absence is no evidence of a deletion and sync kept page ${slug} instead of deleting it (#7130). Put the file back and commit it (un-ignore it first) to keep the page file-backed. `
+  const what = state === 'file_gone' && record.meta.reason === 'origin_unknown' ? `${record.path} is gone, and Git could not show whether a commit held it (its history read did not finish), so sync kept page ${slug} instead of deleting it (#7130). The --held preview reads the whole history and names the file's provenance. `
+    : uncommitted ? `${record.path} is gone, but Git never committed it${record.meta.reason === 'ignored' ? ' (.gitignore excludes it)' : ''}, so its absence is no evidence of a deletion and sync kept page ${slug} instead of deleting it (#7130). Put the file back and commit it (un-ignore it first) to keep the page file-backed. `
     : state === 'tombstone_edited' ? `Page ${slug} was deleted${revision} and ${record.path} then changed, so sync held the file instead of restoring the page or dropping the edit. `
     : state === 'purged_differs' ? `The page of ${record.path} was purged and the file differs from what the brain held, so sync held the file instead of importing it as a new page. `
     : `${record.path} is gone from the last commit but page ${slug} changed${revision}, so sync held the deletion instead of removing a page that changed. `;

@@ -555,6 +555,10 @@
       },
       {
         "category": "brain",
+        "name": "generation_pending"
+      },
+      {
+        "category": "brain",
         "name": "extractor_facts_expired"
       },
       {

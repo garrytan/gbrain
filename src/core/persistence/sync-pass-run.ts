@@ -835,7 +835,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
         writeIds: value.obligations.converged?.writeback ?? [] })) return synced(true);
       const levelInput = { sourceId, context, workingTree: mode === 'working',
         pass: { noSchemaPack: processingOptions.noSchemaPack, episodeFullId: episode?.full_id ?? null, retryConsumed: round > 1 ? retryConsumed : undefined, exclude: opts.exclude, includeHidden: opts.includeHidden, strategy: opts.strategy, bootstrap: markersOwed(),
-          slugMode: value.obligations.slug_mode, cache: levelCache, passId, recorded: applied.recorded, onProgress: beat.report } };
+          slugMode: value.obligations.slug_mode, cache: levelCache, passId, recorded: applied.recorded, onProgress: beat.report, assertActive } };
       const level = await readShadowLevel(engine, levelInput);
       await faultPoint('sync:level_read', { sourceId, round, level: level ? { statements: level.statements, confirm: level.confirm ?? null, reused: level.reused ?? 0, shadow: level, input: levelInput } : undefined });
       assertActive();

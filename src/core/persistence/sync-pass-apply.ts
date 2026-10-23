@@ -48,7 +48,7 @@ import { faultPoint } from './fault-points.ts';
 import { RECOVERY_VERSION } from '../markdown.ts';
 import { readSyncImportProvenances, recordSyncImportProvenances, syncImportParserFor, writeGitHold,
   type GitHoldCode, type GitHoldMeta, type SyncImportProvenance } from './sync-holds.ts';
-import { assertDrainLease } from './sync-lease.ts';
+import { assertDrainLease, inFencedSlices } from './sync-lease.ts';
 import { clearDeletesWithheld, deleteSetHash, readDeletesWithheld, readOriginDeletedMarker, retireOriginDeletedMarker, writeDeletesWithheld, type DeletesWithheld } from './sync-markers.ts';
 import { isCompactMatched, type ShadowLevel, type ShadowPath } from './sync-pass.ts';
 import { SETTLE_MISMATCH_STREAK, type ManagedSyncPassValue, type PassRoundSummary } from './sync-pass-row.ts';
@@ -204,17 +204,13 @@ export function summarizeRound(level: ShadowLevel, state: PassApplyState): void 
 async function retireMarkers(engine: BrainEngine, level: ShadowLevel, state: PassApplyState): Promise<void> {
   const retire = await filterYielding(level.paths, entry => !isCompactMatched(entry) && entry.state.marker && !entry.legacyPageless
     && ((entry.state.tree === null && !entry.state.present) || entry.state.page?.live === true));
-  if (!retire.length) return;
-  await engine.transaction(async tx => {
-    await assertDrainLease(tx, level.sourceId);
-    for (const entry of retire) {
-      const { sourcePath } = passEntryPaths(level, entry.path);
-      const stored = await readStoredMarker(tx, level, sourcePath);
-      if (!stored) continue;
-      const blobOids = Array.isArray(stored.blob_oids) ? stored.blob_oids : [];
-      if ((stored.kind === 'legacy' ? 'legacy' : 'deleted') !== entry.state.marker!.kind || blobOids.join('\0') !== entry.state.marker!.blobOids.join('\0')) continue;
-      if (await retireOriginDeletedMarker(tx, { sourceId: level.sourceId, incarnation: level.incarnation, origin: sourcePath, expected: stored })) state.markersRetired++;
-    }
+  await inFencedSlices(engine, level.sourceId, retire, async (tx, entry) => {
+    const { sourcePath } = passEntryPaths(level, entry.path);
+    const stored = await readStoredMarker(tx, level, sourcePath);
+    if (!stored) return;
+    const blobOids = Array.isArray(stored.blob_oids) ? stored.blob_oids : [];
+    if ((stored.kind === 'legacy' ? 'legacy' : 'deleted') !== entry.state.marker!.kind || blobOids.join('\0') !== entry.state.marker!.blobOids.join('\0')) return;
+    if (await retireOriginDeletedMarker(tx, { sourceId: level.sourceId, incarnation: level.incarnation, origin: sourcePath, expected: stored })) state.markersRetired++;
   });
 }
 
@@ -308,7 +304,7 @@ async function writePassHolds(engine: BrainEngine, level: ShadowLevel, input: Pa
     }
     if (r.cls === 'delete_drift' && heldRenameOrigins.has(syncOriginPath(passEntryPaths(level, entry.path).sourcePath))) continue;
     if (r.cls === 'delete_drift' && r.uncommitted) {
-      const why = r.uncommitted === 'ignored' ? '.gitignore excludes it, so Git never kept it' : 'no commit in its history holds it (or Git could not show one)';
+      const why = r.uncommitted === 'ignored' ? '.gitignore excludes it, so Git never kept it' : r.uncommitted === 'origin_unknown' ? 'Git could not show whether a commit held it (its history read did not finish)' : 'no commit in its history holds it';
       pending.push({ entry, code: 'file_drift', slug: entry.slug, kind: 'uncommitted', meta: { side: 'deleted', state: 'file_gone', reason: r.uncommitted, ...(entry.revision ? { page_revision: entry.revision } : {}) },
         message: `${path}: the file is gone, but ${why}, so its absence is no evidence that page ${entry.slug} was deleted; sync held it and kept the page instead of deleting it (#7130); the rest of the source synced.` });
     } else if (r.cls === 'delete_drift') {
@@ -348,25 +344,22 @@ function spellingGroups(level: ShadowLevel): Map<string, string[]> {
   return groups;
 }
 
-/** Writes the round's holds at level `L` under the drain lease, counts them and settles their paths `held`. */
+/** Writes the round's holds at level `L` under the drain lease, counts them and settles their paths `held` as each slice commits. */
 async function writeHolds(engine: BrainEngine, level: ShadowLevel, input: Pick<PassApplyInput, 'passId' | 'observedAt'>, state: PassApplyState, pending: PendingHold[]): Promise<void> {
-  if (!pending.length) return;
-  await engine.transaction(async tx => {
-    await assertDrainLease(tx, level.sourceId);
-    for (const hold of pending) {
-      const { path, sourcePath } = passEntryPaths(level, hold.entry.path);
-      await writeGitHold(tx, { source_id: level.sourceId, incarnation: level.incarnation, path, source_path: sourcePath, slug: hold.slug,
-        page_id: hold.pageId !== undefined ? hold.pageId : hold.entry.state.page?.live ? hold.entry.pageId : null,
-        code: hold.code, message: hold.message, upstream_version: hold.entry.state.levelSha256, observed_at: input.observedAt, run_id: input.passId, mode: 'managed',
-        meta: { recovery_version: RECOVERY_VERSION, ...levelMeta(level, hold.entry), ...hold.meta } });
+  await inFencedSlices(engine, level.sourceId, pending, async (tx, hold) => {
+    const { path, sourcePath } = passEntryPaths(level, hold.entry.path);
+    await writeGitHold(tx, { source_id: level.sourceId, incarnation: level.incarnation, path, source_path: sourcePath, slug: hold.slug,
+      page_id: hold.pageId !== undefined ? hold.pageId : hold.entry.state.page?.live ? hold.entry.pageId : null,
+      code: hold.code, message: hold.message, upstream_version: hold.entry.state.levelSha256, observed_at: input.observedAt, run_id: input.passId, mode: 'managed',
+      meta: { recovery_version: RECOVERY_VERSION, ...levelMeta(level, hold.entry), ...hold.meta } });
+  }, slice => {
+    for (const hold of slice) {
+      state.holds[hold.kind]++;
+      if (hold.code === 'settle_mismatch') state.settleMismatch.push(passEntryPaths(level, hold.entry.path).path);
+      if (hold.code === 'origin_conflict' || hold.code === 'page_identity_changed') state.originHeld.add(hold.entry.path);
+      settleAs(hold.entry, { cls: 'held', settled: true, action: 'none', classAction: 'repair' });
     }
   });
-  for (const hold of pending) {
-    state.holds[hold.kind]++;
-    if (hold.code === 'settle_mismatch') state.settleMismatch.push(passEntryPaths(level, hold.entry.path).path);
-    if (hold.code === 'origin_conflict' || hold.code === 'page_identity_changed') state.originHeld.add(hold.entry.path);
-    settleAs(hold.entry, { cls: 'held', settled: true, action: 'none', classAction: 'repair' });
-  }
 }
 
 /**

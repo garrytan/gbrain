@@ -130,12 +130,13 @@ export async function exerciseAtomRetryFence(engine: BrainEngine, state: typeof 
       expect(first.status).toBe('warn');
       expect(failureInjected).toBe(true);
       expect(calls).toBe(1);
-      const accepted = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [sourceId]);
+      const accepted = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind' IS DISTINCT FROM 'managed_generation_activate' ORDER BY sequence", [sourceId]);
       expect(accepted).toHaveLength(slugs.length + 1);
+      expect(await engine.executeRaw("SELECT state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_generation_activate'", [sourceId])).toHaveLength(1);
       const completion = await waitForWrite(observedEngine, accepted.at(-1)!, { engine: engine.kind });
       expect(completion.state).toBe('conflict');
       await disposePersistenceConsumer(observedEngine);
-      const originals = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [sourceId]);
+      const originals = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind' IS DISTINCT FROM 'managed_generation_activate' ORDER BY sequence", [sourceId]);
       expect(originals[0].state).toBe(state);
       expect(originals[0].page_id).toBe(originalTarget?.page.id ?? null);
       expect(originals[0].intent?.expected_revision).toBe(originalTarget?.revision);
@@ -229,8 +230,9 @@ export async function exerciseAtomWriteThroughPolicy(engine: BrainEngine, value:
       expect((await run()).status).toBe('ok');
       await disposePersistenceConsumer(engine);
       expect(calls).toBe(1);
-      const rows = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [sourceId]);
+      const rows = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind' IS DISTINCT FROM 'managed_generation_activate' ORDER BY sequence", [sourceId]);
       expect(rows).toHaveLength(2);
+      expect(await engine.executeRaw("SELECT state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_generation_activate'", [sourceId])).toEqual([{ state: 'committed' }]);
       expect(rows.every(row => row.state === 'committed')).toBe(true);
       const atom = (await engine.getPage(rows[0].slug, { sourceId }))!;
       expect(atom.frontmatter.visibility).toBe('private');

@@ -90,7 +90,9 @@ export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${Effect
   | 'large_file:stage_streaming'
   // GBRA-161: inside a generation activation, after its items are written and after its retirements, both before the commit;
   // and after the activation committed, before the producer acknowledges it.
-  | 'generation:published' | 'generation:retired' | 'generation:activated';
+  | 'generation:published' | 'generation:retired' | 'generation:activated'
+  // GBRA-161 PR 1b: as a managed generation member (an overwrite or retirement after its activation committed) is prepared.
+  | 'generation:member';
 /**
  * `signal` (#6278, `consumer:preparing` only): the preparation's abort signal, so
  * a stalling hook can model both the reporter's cases: a preparer that honours

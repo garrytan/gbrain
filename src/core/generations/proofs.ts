@@ -8,7 +8,7 @@ import type { InputState } from './contract.ts';
 export type EmptySourceProof =
   /** The input is gone (deleted page, removed transcript) and a live generation was derived from it. */
   | { kind: 'originGone' }
-  /** The input no longer qualifies for this kind; only an adapter that can recheck the rule accepts it (none in this release). */
+  /** The input no longer qualifies for this kind; only an adapter that rechecks the rule accepts it (`proofHolds`: chronicle events). */
   | { kind: 'originIneligible'; reason: string }
   /** A canonical fence was read whole and holds no rows (fence kinds, PR 2). */
   | { kind: 'fenceParsedEmpty'; pin: string }

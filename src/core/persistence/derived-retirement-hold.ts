@@ -15,7 +15,7 @@ import { maintenanceTransaction } from './attribution.ts';
 import { GENERATION_BOUNDS, RESTORE_DAYS_SQL } from '../generations/config.ts';
 
 /** The `retired_by` stamps derived writers put on the pages they retire. */
-export const DERIVED_RETIRED_BY = ['extract-atoms', 'managed-reextract', 'stale-atoms', 'life-chronicle', 'generation-restore'] as const;
+export const DERIVED_RETIRED_BY = ['extract-atoms', 'managed-reextract', 'stale-atoms', 'life-chronicle', 'generation-restore', 'synthesis-resynthesis', 'synthesis-cleanup'] as const;
 export type DerivedRetiredBy = typeof DERIVED_RETIRED_BY[number];
 
 /** The unmanaged extract_atoms retirement of atoms a completed re-extraction did not reproduce. */

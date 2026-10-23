@@ -37,12 +37,23 @@ export interface GenerationAdapter<C = unknown> {
   modelProduced: boolean;
   /** The result is a ranked cut: every item carries a distinct `order`, and a tie (or a missing rank) holds the result (`tie`). */
   strictOrder?: boolean;
+  /**
+   * Its items are database-only pages (no canonical file). A managed source then writes the new and changed items as
+   * ordinary requests before the activation, and the activation itself retires what the generation dropped (no retire
+   * members, nothing left pending); a restore runs as one coordinated request (managed.ts).
+   */
+  databaseOnly?: boolean;
+  /**
+   * Its producer writes the items itself before the activation (synthesis: the phase's children). The activation records
+   * them where they are and never writes one; a managed plan keeps them without members and only retires (managed-retire.ts).
+   */
+  publishesInPlace?: boolean;
   /** Page keys locked before the ledger row, in slug order with the input guard (D7). */
   lockKeys(key: GenerationKey, itemKeys: readonly string[]): Array<{ sourceId: string; slug: string }>;
   /** The input as stored now, or null when it is gone. `context` carries an input the database does not hold (a transcript). */
   readInput(engine: BrainEngine, key: GenerationKey, context: C | undefined): Promise<InputState | null>;
   /** Rows of the named keys (deleted rows included) and of every live row the key owns by its origin metadata. */
-  readItems(engine: BrainEngine, key: GenerationKey, itemKeys: readonly string[]): Promise<Map<string, ItemRow>>;
+  readItems(engine: BrainEngine, key: GenerationKey, itemKeys: readonly string[], context?: C): Promise<Map<string, ItemRow>>;
   /** Of these unrecorded owned rows, the keys whose retained producer evidence shows them unedited at their identity. */
   legacyEvidence(engine: BrainEngine, key: GenerationKey, rows: readonly ItemRow[]): Promise<Set<string>>;
   /** Writes new and changed items inside the activation transaction. */
@@ -55,4 +66,6 @@ export interface GenerationAdapter<C = unknown> {
   restoreItem(tx: BrainEngine, key: GenerationKey, itemKey: string, preimage: Record<string, unknown>): Promise<void>;
   /** The identity hash of a preimage, so a restore can tell whether the item changed since. */
   preimageIdentity(preimage: Record<string, unknown>): string;
+  /** Rechecks an `originIneligible` proof against the input as stored now (proofs.ts); an adapter without it never accepts one. */
+  proofHolds?(engine: BrainEngine, key: GenerationKey, proof: import('./proofs.ts').EmptySourceProof): Promise<boolean>;
 }

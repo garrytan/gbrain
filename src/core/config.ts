@@ -1766,8 +1766,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'fences.normalize', // #6188: inline Tier 1 fence normalization (fence-repair/config.ts); default on
   'fences.repair.enabled', 'fences.repair.llm', // #6188: the fence_repair cycle phase and its Tier 3 model step (fence-repair/config.ts); default on
   'fences.repair.max_usd_per_page', 'fences.repair.max_usd_per_day', // #6188: Tier 3 fence repair caps; 0 = no model spend
-  // GBRA-161: the generation primitive's restore window, shrink floor, item cap and retirement valve (generations/config.ts)
-  'generations.restore_days', 'generations.shrink_floor', 'generations.max_items', 'generations.valve.max_per_run', 'generations.valve.max_ratio',
+  // GBRA-161: the generation primitive's restore window, shrink floor, item cap and retirement valve (generations/config.ts); PR 4 (#7065): synthesis retire_previous, default on
+  'generations.restore_days', 'generations.shrink_floor', 'generations.max_items', 'generations.valve.max_per_run', 'generations.valve.max_ratio', 'generations.synthesis.retire_previous',
   // #2179: clamp window for DCR-requested per-client token TTLs. Read by
   // `gbrain serve --http` at startup; unset min defaults to 300s, unset max
   // defaults fail-closed to max(--token-ttl, min).

@@ -80,6 +80,7 @@ import { recordReextractMemo } from './conversation-memo.ts';
 import { recordTaintEdges } from '../trust/taint.ts';
 import { applyGateDecision, derivedGateConfig, derivedGateInput } from '../trust/derived-gate.ts';
 import { decideFactWrite, recordFlaggedRow } from '../write-gate-store.ts';
+import { findCaptureDuplicate } from './capture-dedup.ts';
 
 export const CONVERSATION_FACTS_INTENT = 'managed_maintenance_conversation_facts';
 export const CONVERSATION_FACTS_PROTOCOL = 1;
@@ -423,9 +424,12 @@ type UnnumberedFact = Omit<ConversationFactRow, 'row_num' | 'source_markdown_slu
  * prior facts stay: the outcome replaces the page's prior outcome rows, so
  * the page is not paid for again, a `window` run's facts are added beside
  * the prior ones, and a partial run's facts are not published over them.
+ * #7043: a fact an active row of the source already states is not stored
+ * again (the capture lane's fingerprint, entity and visibility rule with no
+ * time bound); the page's own rows a replacement clears do not count.
  */
 export async function publishConversationFacts(tx: BrainEngine, sourceId: string, slug: string, rows: UnnumberedFact[],
-  opts: { scope: ConversationScope; requestId?: string }): Promise<{ deleted: number; facts_inserted: number }> {
+  opts: { scope: ConversationScope; requestId?: string }): Promise<{ deleted: number; facts_inserted: number; duplicates_skipped: number }> {
   const derivation = await conversationDerivation(tx, sourceId, slug);
   const cfg = await derivedGateConfig(tx);
   const gated = rows.map(row => ({ row, decision: OUTCOME_SOURCES.has(row.source) ? null : decideFactWrite(row,
@@ -435,7 +439,15 @@ export async function publishConversationFacts(tx: BrainEngine, sourceId: string
   const [active] = await tx.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug=$2
     AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' AND f.expired_at IS NULL AND NOT (f.source = ANY($3::text[]))`, [sourceId, slug, [...AUDIT_ROW_SOURCES]]);
   const retire = !Number(active?.n ?? 0) || (opts.scope === 'full' && kept.length === rows.length && kept.some(({ row }) => !OUTCOME_SOURCES.has(row.source)));
-  const published = retire || opts.scope === 'window' ? kept : kept.filter(({ row }) => OUTCOME_SOURCES.has(row.source));
+  const scope = { engine: tx, sourceId, lane: CONVERSATION_FACTS_SOURCE_PREFIX, sessionId: null, anchor: null, ...(retire ? { replacingPage: slug } : {}) };
+  const published: typeof kept = [];
+  let duplicates = 0;
+  for (const entry of retire || opts.scope === 'window' ? kept : kept.filter(({ row }) => OUTCOME_SOURCES.has(row.source))) {
+    const { row } = entry;
+    if (OUTCOME_SOURCES.has(row.source) || !await findCaptureDuplicate(scope, { fact: row.fact, entitySlug: row.entity_slug ?? null,
+      visibility: row.visibility ?? 'private', attributedTo: row.attributed_to ?? null })) published.push(entry);
+    else duplicates++;
+  }
   const { deleted, ids } = await withWriteTrust(tx, derivation.trust, async () => {
     if (retire) return replaceConversationFacts(tx, sourceId, slug, published.map(({ row }) => row));
     const outcomes = published.some(({ row }) => OUTCOME_SOURCES.has(row.source)) ? await tx.executeRaw<{ id: number }>(`DELETE FROM facts
@@ -448,7 +460,7 @@ export async function publishConversationFacts(tx: BrainEngine, sourceId: string
     if (decision && ids.length === published.length) await recordFlaggedRow(tx, decision, { table: 'facts', id, sourceId });
   }
   if (published.some(({ row }) => row.source === TERMINAL_AUDIT_SOURCE)) await recordReextractMemo(tx, sourceId, slug); // #6764
-  return { deleted, facts_inserted: published.filter(({ row }) => !OUTCOME_SOURCES.has(row.source)).length };
+  return { deleted, facts_inserted: published.filter(({ row }) => !OUTCOME_SOURCES.has(row.source)).length, duplicates_skipped: duplicates };
 }
 
 /**

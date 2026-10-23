@@ -57,6 +57,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('decide_sweep_deferred', 'operational', 'Deferred System One sweep work with its schedule.'),
     carry('decision_receipts', 'user_data', 'Durable System One decision receipts.'),
     carry('derivation_inputs', 'user_data', 'Derivation dependency edges (#5575); purge needs them to find artifacts derived from purged content.'),
+    carry('derived_generation_activations', 'operational', 'Managed generation activations (GBRA-161 PR 1b): each admitted activation, its members and whether it activated; resume and the orphan listing read it.'),
     carry('derived_generation_attempts', 'operational', 'Generation attempt counters per hold identity (GBRA-161): three terminal failures hold the result attempts_exhausted.'),
     carry('derived_generation_items', 'user_data', 'Generation ledger items (GBRA-161): which derived items each generation owns, with the bounded preimages a restore republishes.'),
     carry('derived_generation_valve', 'operational', 'Generation retirement valve counters per run window (GBRA-161).'),

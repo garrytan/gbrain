@@ -88,8 +88,8 @@ export interface SyncClassified {
   /** `drift` and `delete_drift`: the hold's side. `deleted_edited`: its state. */
   side?: 'both' | 'unknown' | 'deleted';
   state?: 'tombstone_edited' | 'purged_differs' | 'file_gone';
-  /** #7130: a `delete_drift` whose file Git never committed (`never_committed`, also when that could not be read) or `.gitignore` excludes. */
-  uncommitted?: 'never_committed' | 'ignored';
+  /** #7130: a `delete_drift` whose file Git never committed (`never_committed`), `.gitignore` excludes, or whose history read did not answer (`origin_unknown`). */
+  uncommitted?: 'never_committed' | 'ignored' | 'origin_unknown';
   /** `db_ahead` `db_only` under keep_db: also gets the DB-wins write. */
   keepDbWrite?: true;
   /** `db_ahead` `db_only`/`unproven` under an open full obligation: excluded and counted (`full_skipped_db_ahead`). */
@@ -148,7 +148,7 @@ function afterHold(s: SyncPathState): Matched {
     if (s.mode === 'committed' && s.present) return { cls: 'kept', settled: true, action: 'none' };
     if (!s.present) {
       if (s.originEvidence && s.originEvidence !== 'committed') return { cls: 'delete_drift', settled: false, action: 'hold', side: 'deleted', state: 'file_gone',
-        uncommitted: s.originEvidence === 'ignored' ? 'ignored' : 'never_committed' };
+        uncommitted: s.originEvidence === 'unknown' ? 'origin_unknown' : s.originEvidence };
       return proof ? { cls: 'delete', settled: false, action: 'delete' } : { cls: 'delete_drift', settled: false, action: 'hold', side: 'deleted', state: 'file_gone' };
     }
   }

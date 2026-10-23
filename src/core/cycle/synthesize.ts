@@ -76,6 +76,7 @@ import { buildManifestContext, buildLinkManifest, type ManifestContext } from '.
 import { resolveCycleDate, utcDate } from './cycle-date.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { stampDreamProvenance, summaryProvenanceLines } from './dream-provenance.ts';
+import { activateSynthesisGenerations } from './synthesize-generations.ts';
 import { putDerivedPage, summaryDerivation, withTranscriptTaint } from './dream-taint.ts';
 import { findSynthV2Completion, partitionCompletedSynthesis } from './synthesize-completion.ts';
 
@@ -1194,6 +1195,11 @@ async function runPhaseSynthesizeInner(
     // #4077: nothing below runs for a cancelled cycle — no phase-end embed
     // spend, no cooldown stamp (the next run must retry these transcripts).
     throwIfAborted(opts.signal, '[dream] synthesize completion');
+    const synthesisGenerations = await activateSynthesisGenerations(engine, { sourceId: cycleSourceId, maintenance, brainDir: opts.brainDir,
+      transcripts: worthProcessing, refs: writtenRefs, outcomes: childOutcomes, jobRawSource, deferred: new Set(budgetExhaustedDeferrals),
+      publicationIncomplete: publishPending > 0 || postprocessConflicts.length > 0 || postprocessDeferral !== null,
+      corpusDir: config.corpusDir, meetingDir: config.meetingTranscriptsDir });
+    fileHolds.push(...synthesisGenerations.file_holds);
 
     // CDX-8: deferred-embed closure. Oneshot children write chunks with
     // `embedding IS NULL`; the global `embed` phase only runs on SOME
@@ -1370,6 +1376,7 @@ async function runPhaseSynthesizeInner(
       written_slugs: writtenSlugs,
       reverse_write_count: reverseWriteCount,
       child_outcomes: childOutcomes,
+      synthesis_generations: synthesisGenerations,
       // Children submitted (one per chunk for chunked transcripts; one per
       // transcript for single-chunk). Differs from transcripts_processed
       // when chunking is in play.

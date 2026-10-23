@@ -51,7 +51,7 @@ import { classifyItemFailure, ItemRun, type ItemFailure } from '../item-failure.
 import type { ProgressReporter } from '../progress.ts';
 import type { GenerationsSelection } from '../generations/repair.ts';
 
-export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'accepted-takes', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'google-file-modes', 'stale-atoms', 'atoms-restore', 'extractor-facts', 'conversation-labels', 'captured-facts', 'redacted-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'consolidate-ties', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'fences', 'slug-conflicts', 'timeline-comments', 'managed-sync-orphans', 'content-receipt-root', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'legacy-twins', 'missing-tables', 'url-clone-fences', 'segmented-mirror', 'uncommitted-deletions', 'generations'] as const;
+export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'accepted-takes', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'google-file-modes', 'stale-atoms', 'atoms-restore', 'extractor-facts', 'conversation-labels', 'captured-facts', 'redacted-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'consolidate-ties', 'duplicate-facts', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'fences', 'slug-conflicts', 'timeline-comments', 'managed-sync-orphans', 'content-receipt-root', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'legacy-twins', 'missing-tables', 'url-clone-fences', 'segmented-mirror', 'uncommitted-deletions', 'generations'] as const;
 export type RepairKind = typeof REPAIR_KINDS[number];
 
 export interface RepairScope { brain_id: string; source_ids: string[] }
@@ -100,6 +100,8 @@ export interface RepairListing { item: string; class: string; detail?: string }
  * the run's paid-model allowance (it only lowers the kind's own cap). `deadline` (epoch ms) bounds a discovery scan.
  */
 export interface RepairPlanOptions { apply: boolean; expect?: string; includeAmbiguous?: boolean; only?: string[]; skip?: string[]; slugs?: string[];
+  /** `duplicate-facts` (#7043): also retire copies of a claim that sit on other entities than the kept row. */
+  includeCrossEntity?: boolean;
   noLlm?: boolean; maxLlmUsd?: number; deadline?: number;
   /** `ctx.remote !== false` of the run: a remote caller's plan never names a local path (unset reads as remote). */
   remote?: boolean;
@@ -318,7 +320,7 @@ function writerHeld(error: unknown): error is OperationError {
  */
 export async function runRepair(ctx: OperationContext, handler: RepairHandler, scope: RepairScope,
   opts: { apply: boolean; limit?: number; embeddingModel?: string; sourceFlag?: string; embed?: boolean; applyArgs?: string[];
-    explicit?: boolean; expect?: string; includeAmbiguous?: boolean; only?: string[]; skip?: string[]; slugs?: string[]; noLlm?: boolean;
+    explicit?: boolean; expect?: string; includeAmbiguous?: boolean; includeCrossEntity?: boolean; only?: string[]; skip?: string[]; slugs?: string[]; noLlm?: boolean;
     prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string;
     provenance?: string; cursor?: string; progress?: ProgressReporter;
     keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection;
@@ -342,6 +344,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
   const { cursor: resumed, runId: storedRunId } = await readCursor(ctx.engine, handler.kind, scope, opts.apply ? opts.expect : undefined);
   const now = opts.now ?? Date.now;
   const planOpts: RepairPlanOptions = { apply: opts.apply, expect: opts.expect, includeAmbiguous: opts.includeAmbiguous, only: opts.only, skip: opts.skip,
+    ...(opts.includeCrossEntity ? { includeCrossEntity: true } : {}),
     ...(opts.slugs?.length ? { slugs: opts.slugs } : {}), ...(opts.noLlm ? { noLlm: true } : {}), ...(opts.maxLlmUsd !== undefined ? { maxLlmUsd: opts.maxLlmUsd } : {}),
     ...(opts.deadline !== undefined ? { deadline: opts.deadline } : {}), remote: ctx.remote !== false,
     ...(opts.prefer ? { prefer: opts.prefer } : {}), ...(opts.requests?.length ? { requests: opts.requests } : {}),
@@ -380,7 +383,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
         ...(opts.held ? ['--held'] : []), ...(opts.side ? ['--side', opts.side] : []), ...(opts.state ? ['--state', opts.state] : []),
         ...(opts.provenance ? ['--provenance', opts.provenance] : []), ...(opts.cursor ? ['--cursor', opts.cursor] : []),
         ...(opts.prefer ? ['--prefer', opts.prefer] : [])].map(arg => ` ${shellQuote([arg])}`).join('')}`
-      + `${opts.includeAmbiguous ? ' --include-ambiguous' : ''}${llm && opts.noLlm ? ' --no-llm' : ''}${llm && opts.maxLlmUsd !== undefined ? ` --max-usd ${opts.maxLlmUsd}` : ''}`
+      + `${opts.includeAmbiguous ? ' --include-ambiguous' : ''}${opts.includeCrossEntity ? ' --include-cross-entity' : ''}${llm && opts.noLlm ? ' --no-llm' : ''}${llm && opts.maxLlmUsd !== undefined ? ` --max-usd ${opts.maxLlmUsd}` : ''}`
       + ` --apply${plan.preview_hash ? ` --expect ${plan.preview_hash}` : ''}${spec?.consent === 'destructive' ? ' --yes' : ''}`,
     ...(plan.scan ? { scan: plan.scan } : {}),
   };

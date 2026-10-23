@@ -13,10 +13,15 @@ import { PAGE_INLINE_MAX_BYTES } from '../../page-size-policy.ts';
 import { stableJson } from '../../persistence/digest.ts';
 import { RESERVED_RETIREMENT_KEYS } from '../../persistence/derived-retirement-hold.ts';
 import type { PageType } from '../../types.ts';
+import { HASH_EPHEMERAL_FRONTMATTER_KEYS } from '../../utils.ts';
 import type { ItemRow, Preimage, ProposedItem } from '../contract.ts';
 
-/** Frontmatter keys the identity hash ignores: completion, extraction and retirement stamps. */
-export const IDENTITY_EXCLUDED_KEYS: ReadonlySet<string> = new Set(['source_hash', 'extracted_at', 'extracted_by', ...RESERVED_RETIREMENT_KEYS]);
+/**
+ * Frontmatter keys the identity hash ignores: completion, extraction and retirement stamps, the keys the content hash
+ * already treats as ephemeral, and the first-write provenance a managed writer stamps (source_kind, ingested_via).
+ */
+export const IDENTITY_EXCLUDED_KEYS: ReadonlySet<string> = new Set(['source_hash', 'extracted_at', 'extracted_by', 'source_kind', 'ingested_via',
+  ...HASH_EPHEMERAL_FRONTMATTER_KEYS, ...RESERVED_RETIREMENT_KEYS]);
 
 /** The largest preimage a generation item keeps (UTF-8 bytes of its JSON); a larger page restores from no copy. */
 export const PREIMAGE_MAX_BYTES = PAGE_INLINE_MAX_BYTES;

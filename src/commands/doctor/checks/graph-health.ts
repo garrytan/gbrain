@@ -355,6 +355,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'atom_retirements_restorable',
     'generation_retirements',
     'generation_held',
+    'generation_pending',
     'extractor_facts_expired',
     'conversation_label_facts',
     'conversation_outcomes_stale',

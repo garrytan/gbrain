@@ -10,7 +10,9 @@
  * returned first. One hop: an entity a returned fact names ("folded into
  * Dovalto Energy", "uses Dovalto Energy's discount code") contributes its own
  * newest facts, tagged `linked_from`, so a redirection reaches the value it
- * points to. Same source scope, active-fact and visibility rules as recall.
+ * points to. Same source scope, active-fact and visibility rules as recall,
+ * and recall's collapse (#7043): copies of one claim read as one fact, before
+ * the caps, so they never crowd out a distinct one.
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -18,36 +20,51 @@ import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { privateProvenanceFilterFragment } from './private-visibility.ts';
 import { factEntitySlugs } from '../mentions/siblings.ts';
 import { resolveQueryEntities, type ResolvedEntity } from './alias-fanout.ts';
+import { collapseFactReads } from '../facts/capture-dedup.ts';
+import type { FactAttribution } from '../engine.ts';
 
 export const ENTITY_FACTS_CAP = 5;
 export const LINKED_FACTS_CAP = 3;
 const LINKED_ENTITIES_CAP = 2;
 
-export interface EntityFact { id: number; fact: string; entity_slug: string | null; kind: string; valid_from: string; source: string; linked_from?: string }
+export interface EntityFact { id: number; fact: string; entity_slug: string | null; kind: string; valid_from: string; source: string; linked_from?: string;
+  /** #7043: every entity of the copies this row stands for, and how many rows it stands for. */
+  entity_slugs?: string[]; collapsed_count?: number }
 
-async function newestFacts(engine: BrainEngine, sourceId: string, slugs: string[], remote: boolean, limit: number): Promise<EntityFact[]> {
+/** Rows read per cap so copies of one claim collapse before the cap (#7043). */
+export const SAVED_FACTS_COLLAPSE_WINDOW = 50;
+/** The columns the collapse reads besides a saved fact's own; `stripCollapseColumns` drops them from the response. */
+export const SAVED_FACT_COLLAPSE_COLUMNS = 'f.source_id, f.visibility, f.created_at, f.attributed_to, gbrain_fact_fingerprint(f.fact) AS fact_fingerprint';
+export type CollapseColumns = { source_id: string; visibility: string; created_at: Date | string; attributed_to: FactAttribution | null; fact_fingerprint: string };
+
+/** A saved fact as the response carries it, without the collapse columns and member ids. */
+export function stripCollapseColumns<T extends CollapseColumns & { collapsed_ids?: number[] }>({ source_id: _s, visibility: _v, created_at: _c, attributed_to: _a, fact_fingerprint: _f, collapsed_ids: _i, ...rest }: T): Omit<T, keyof CollapseColumns | 'collapsed_ids'> {
+  return rest;
+}
+
+async function newestFacts(engine: BrainEngine, sourceId: string, slugs: string[], remote: boolean, limit: number): Promise<Array<EntityFact & CollapseColumns>> {
   const visibility = remote ? `AND f.visibility = 'world' AND ${privateProvenanceFilterFragment('f')}` : '';
-  const rows = await engine.executeRaw<EntityFact>(
-    `SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source
+  const rows = await engine.executeRaw<EntityFact & CollapseColumns>(
+    `SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, ${SAVED_FACT_COLLAPSE_COLUMNS}
        FROM facts f
       WHERE f.source_id = $1 AND f.entity_slug = ANY($2::text[])
         AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
         AND f.source != ALL($3::text[])
         ${visibility}
       ORDER BY f.valid_from DESC, f.id DESC
-      LIMIT ${limit}`,
+      LIMIT ${SAVED_FACTS_COLLAPSE_WINDOW}`,
     [sourceId, slugs, [...AUDIT_ROW_SOURCES]]);
-  return rows.map(r => ({ ...r, id: Number(r.id) }));
+  return (await collapseFactReads(engine, rows.map(r => ({ ...r, id: Number(r.id) })))).slice(0, limit);
 }
 
-/** The named entity's newest facts, then those of entities its facts name. Fail-soft: errors return []. */
-export async function entitySavedFacts(engine: BrainEngine, entity: ResolvedEntity, opts: { remote: boolean; excludePrivate: boolean }): Promise<EntityFact[]> {
+/** The named entity's newest facts, then those of entities its facts name, with the collapse columns. Fail-soft: errors return []. */
+export async function entitySavedFacts(engine: BrainEngine, entity: ResolvedEntity, opts: { remote: boolean; excludePrivate: boolean }): Promise<Array<EntityFact & CollapseColumns>> {
   try {
     const sourceId = entity.pages[0]!.source_id;
     const own = new Set<string>();
     for (const p of entity.pages) for (const s of await factEntitySlugs(engine, sourceId, p.slug, { excludePrivate: opts.excludePrivate })) own.add(s);
     const facts = await newestFacts(engine, sourceId, [...own], opts.remote, ENTITY_FACTS_CAP);
-    const out: EntityFact[] = [...facts];
+    const out: Array<EntityFact & CollapseColumns> = [...facts];
     const seenEntities = new Set(own);
     let linked = 0;
     for (const f of facts) {

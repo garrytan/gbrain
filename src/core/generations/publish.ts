@@ -15,8 +15,9 @@ import { digest, jsonBytes } from '../persistence/digest.ts';
 import { faultPoint } from '../persistence/fault-points.ts';
 import { LATEST_VERSION } from '../migrate.ts';
 import { policyHash, readGenerationsConfig, type GenerationsConfig } from './config.ts';
-import type { GenerationAdapter, GenerationKey, HeldReason, InputState, Preimage, ProposedItem } from './contract.ts';
-import { planGeneration, type LiveGeneration } from './plan.ts';
+import type { DerivedRetiredBy } from '../persistence/derived-retirement-hold.ts';
+import type { GenerationAdapter, GenerationKey, HeldReason, InputState, ItemRow, Preimage, ProposedItem } from './contract.ts';
+import { planGeneration, type LiveGeneration, type Plan } from './plan.ts';
 import { proofHolds, type EmptySourceProof } from './proofs.ts';
 
 /** The largest held proposal the ledger keeps (UTF-8 bytes of its JSON); a larger one is held without a releasable copy. */
@@ -37,6 +38,14 @@ export interface PublishRequest<C = unknown> {
   context?: C;
   /** An operator release of this held row (repair generations --mode release-held). */
   release?: { holdId: string; reason: HeldReason };
+  /** A previewed operator retirement (`gbrain repair stale-atoms`): retire exactly these keys, stamped `retiredBy`; `items` is ignored. */
+  approved?: { retire: readonly string[]; retiredBy: DerivedRetiredBy; expect?: Readonly<Record<string, string>> };
+  /** Unmanaged only: runs in the activation transaction after the retirements (stale-atoms invalidates the origin's completions there). */
+  onRetired?: (tx: BrainEngine, retired: readonly string[]) => Promise<void>;
+  /** A transcript key's current file, recorded on the generation so a moved file keeps its key. */
+  locator?: string;
+  /** Recorded on the generation's completeness evidence (synthesis: the earlier outputs it left live, for the cleanup listing). */
+  note?: Record<string, unknown>;
 }
 
 export type PublishOutcome =
@@ -49,50 +58,55 @@ export function itemSetHash(items: readonly Pick<ProposedItem, 'key' | 'identity
   return digest(['generation-items-v1', [...items].map(item => [item.key, item.identityHash]).sort((a, b) => a[0]!.localeCompare(b[0]!))]);
 }
 
-const keyLock = (key: GenerationKey) => `gbrain:generation:${key.kind}:${key.sourceId}:${key.ownerKey}`;
+/** The advisory lock name of a generation key (taken after its page locks, D7). */
+export const generationKeyLock = (key: GenerationKey) => `gbrain:generation:${key.kind}:${key.sourceId}:${key.ownerKey}`;
 
 /** Takes the item page locks (slug order) and then the generation key lock (D7). */
 export async function lockGeneration(tx: BrainEngine, adapter: GenerationAdapter<unknown>, key: GenerationKey, itemKeys: readonly string[]): Promise<void> {
   const pages = adapter.lockKeys(key, itemKeys).sort((a, b) => a.slug.localeCompare(b.slug));
   if (pages.length) await tx.lockPageKeys(pages);
-  await tx.executeRaw('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [keyLock(key)]);
+  await tx.executeRaw('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [generationKeyLock(key)]);
 }
 
 /** The live generation of `key` with its owned items, or null. */
 export async function readLiveGeneration(db: BrainEngine, key: GenerationKey): Promise<LiveGeneration | null> {
-  const [row] = await db.executeRaw<{ id: number; generation: number; input_pin: string | null; input_size: number | null }>(
-    `SELECT id, generation, input_pin, input_size FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='live'`,
+  const [row] = await db.executeRaw<{ id: number; generation: number; input_pin: string | null; input_size: number | null; locator: string | null }>(
+    `SELECT id, generation, input_pin, input_size, locator FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='live'`,
     [key.sourceId, key.kind, key.ownerKey]);
   if (!row) return null;
   const items = await db.executeRaw<{ item_key: string; identity_hash: string }>(
     `SELECT item_key, identity_hash FROM derived_generation_items WHERE generation_id=$1 AND action IN ('published','kept','adopted','revived')`, [row.id]);
   return { id: Number(row.id), generation: Number(row.generation), inputPin: row.input_pin, inputSize: row.input_size === null ? null : Number(row.input_size),
-    items: new Map(items.map(item => [item.item_key, item.identity_hash])) };
+    items: new Map(items.map(item => [item.item_key, item.identity_hash])), locator: row.locator };
 }
 
-function fenced(reason: 'stale_generation' | 'pin_moved', key: GenerationKey, detail: string) {
+export function generationFenced(reason: 'stale_generation' | 'pin_moved', key: GenerationKey, detail: string) {
   return opError('generation_fenced', `The ${key.kind} generation of ${key.ownerKey} was not published: ${detail}; nothing was written.`,
     'Run the producer again; it reads the current generation and input and recomputes.', { reason, docs: 'docs/architecture/generations.md#publishing' });
 }
 
-export interface LedgerItem { key: string; identityHash: string; action: 'published' | 'retired' | 'revived' | 'kept' | 'adopted'; preimage?: Preimage }
+/** `pending`: a managed member request still has to overwrite or retire the item (it stays live until then). */
+export interface LedgerItem { key: string; identityHash: string; action: 'published' | 'retired' | 'revived' | 'kept' | 'adopted'; preimage?: Preimage; pending?: boolean }
 
 /** Supersedes the live row (if any) and activates a new generation with its items, in the caller's transaction. */
 export async function activateGeneration(tx: BrainEngine, key: GenerationKey, live: LiveGeneration | null, row: {
   operationId: string; runId?: string; input: InputState | null; setHash: string; completeness: Record<string, unknown>; restoreOf?: number;
+  activationId?: string; locator?: string | null;
 }, items: readonly LedgerItem[]): Promise<{ id: number; generation: number }> {
   const generation = (live?.generation ?? 0) + 1;
   if (live) await tx.executeRaw(`UPDATE derived_generations SET state='superseded', updated_at=now() WHERE id=$1 AND state='live'`, [live.id]);
   const [created] = await tx.executeRaw<{ id: number }>(
-    `INSERT INTO derived_generations (source_id, kind, owner_key, generation, state, run_id, operation_id, input_pin, input_size, completeness, item_set_hash, restore_of)
-     VALUES ($1,$2,$3,$4,'live',$5,$6,$7,$8,$9::text::jsonb,$10,$11) RETURNING id`,
+    `INSERT INTO derived_generations (source_id, kind, owner_key, generation, state, run_id, operation_id, input_pin, input_size, completeness, item_set_hash, restore_of,
+       activation_id, locator)
+     VALUES ($1,$2,$3,$4,'live',$5,$6,$7,$8,$9::text::jsonb,$10,$11,$12,$13) RETURNING id`,
     [key.sourceId, key.kind, key.ownerKey, generation, row.runId ?? null, row.operationId, row.input?.pin ?? null, row.input?.size ?? null,
-      JSON.stringify(row.completeness), row.setHash, row.restoreOf ?? null]);
+      JSON.stringify(row.completeness), row.setHash, row.restoreOf ?? null, row.activationId ?? null, row.locator ?? live?.locator ?? null]);
   const id = Number(created!.id);
   if (live) await tx.executeRaw('UPDATE derived_generations SET superseded_by=$1 WHERE id=$2', [id, live.id]);
   for (const item of items) {
-    await tx.executeRaw(`INSERT INTO derived_generation_items (generation_id, item_key, identity_hash, action, preimage, preimage_bytes) VALUES ($1,$2,$3,$4,$5::text::jsonb,$6)`,
-      [id, item.key, item.identityHash, item.action, item.preimage?.json ? JSON.stringify(item.preimage.json) : null, item.preimage?.bytes ?? null]);
+    await tx.executeRaw(`INSERT INTO derived_generation_items (generation_id, item_key, identity_hash, action, preimage, preimage_bytes, pending)
+      VALUES ($1,$2,$3,$4,$5::text::jsonb,$6,$7)`,
+      [id, item.key, item.identityHash, item.action, item.preimage?.json ? JSON.stringify(item.preimage.json) : null, item.preimage?.bytes ?? null, item.pending === true]);
   }
   await tx.executeRaw(`DELETE FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held'`, [key.sourceId, key.kind, key.ownerKey]);
   await tx.executeRaw('DELETE FROM derived_generation_attempts WHERE source_id=$1 AND kind=$2 AND owner_key=$3', [key.sourceId, key.kind, key.ownerKey]);
@@ -100,14 +114,17 @@ export async function activateGeneration(tx: BrainEngine, key: GenerationKey, li
 }
 
 /** Rechecks that each item is live at the identity the generation records (Eng-outside r3). */
-export async function assertItemsLive(tx: BrainEngine, adapter: GenerationAdapter<unknown>, key: GenerationKey, expected: ReadonlyMap<string, string>): Promise<void> {
+export async function assertItemsLive(tx: BrainEngine, adapter: GenerationAdapter<unknown>, key: GenerationKey, expected: ReadonlyMap<string, string>, context?: unknown): Promise<void> {
   if (!expected.size) return;
-  const rows = await adapter.readItems(tx, key, [...expected.keys()]);
+  const rows = await adapter.readItems(tx, key, [...expected.keys()], context);
   const wrong = [...expected].filter(([itemKey, identity]) => { const row = rows.get(itemKey); return !row?.live || row.identityHash !== identity; }).map(([itemKey]) => itemKey);
-  if (wrong.length) {
-    throw opError('generation_live_conflict', `The ${key.kind} generation of ${key.ownerKey} was not activated: ${wrong.slice(0, 5).join(', ')} is not live at the content just written; nothing was committed.`,
-      'Run the producer again; it reads the items as they are now.', { docs: 'docs/architecture/generations.md#publishing' });
-  }
+  if (wrong.length) throw liveConflict(key, wrong);
+}
+
+/** `generation_live_conflict`: these items are not live at the identity the generation records. */
+export function liveConflict(key: GenerationKey, wrong: readonly string[]) {
+  return opError('generation_live_conflict', `The ${key.kind} generation of ${key.ownerKey} was not activated: ${wrong.slice(0, 5).join(', ')} is not live at the content just written; nothing was committed.`,
+    'Run the producer again; it reads the items as they are now.', { docs: 'docs/architecture/generations.md#publishing' });
 }
 
 /** A held result's identity: key, input pin, policy, item set and reason. The attempts counter and `heldForInput` share it. */
@@ -118,7 +135,7 @@ function holdIdFor(key: GenerationKey, pin: string | null, config: GenerationsCo
 /** Terminal failures of one hold identity before its result is held `attempts_exhausted` (plan D2, CEO r3 F4). */
 export const MAX_GENERATION_ATTEMPTS = 3;
 
-async function recordHeld(tx: BrainEngine, key: GenerationKey, config: GenerationsConfig, request: PublishRequest<unknown>, setHash: string,
+export async function recordHeld(tx: BrainEngine, key: GenerationKey, config: GenerationsConfig, request: PublishRequest<unknown>, setHash: string,
   reason: HeldReason, context: Record<string, unknown>): Promise<PublishOutcome> {
   const holdId = holdIdFor(key, request.input?.pin ?? null, config, setHash, reason);
   const [existing] = await tx.executeRaw<{ id: number; hold_id: string }>(
@@ -173,19 +190,69 @@ function logFailure(key: GenerationKey, operationId: string, mode: string, error
   console.error(`[generations] ${mode} failed: kind=${key.kind} source=${key.sourceId} schema=v${LATEST_VERSION} mode=unmanaged operation=${operationId}: ${message.slice(0, 300)}`);
 }
 
+/** The set hash an operation binds: the proposal, or for an approved retirement the keys it retires. */
+export function requestSetHash(request: Pick<PublishRequest<unknown>, 'items' | 'approved'>): string {
+  return request.approved ? digest(['generation-approved-retire-v1', [...request.approved.retire].sort(), request.approved.retiredBy, request.approved.expect ?? null]) : itemSetHash(request.items);
+}
+
+/** The operation identity an identical replay matches (D2): kind, key, expected generation, input pin and result item-set hash. */
+export function publishOperationId(request: PublishRequest<unknown>, setHash: string): string {
+  return digest(['generation-publish-v1', request.key, request.expectedGeneration ?? null, request.input?.pin ?? null, setHash,
+    request.partial === true, request.release?.holdId ?? null]);
+}
+
+/** The held `attempts_exhausted` outcome this result already stopped at, or null (an operator release never stops here). */
+export async function exhaustedHold(db: BrainEngine, request: PublishRequest<unknown>, config: GenerationsConfig, setHash: string): Promise<PublishOutcome | null> {
+  if (request.release) return null;
+  const { key } = request;
+  const exhausted = holdIdFor(key, request.input?.pin ?? null, config, setHash, 'attempts_exhausted');
+  const [stopped] = await db.executeRaw<{ held_context: Record<string, unknown> | null }>(
+    `SELECT held_context FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held' AND hold_id=$4`, [key.sourceId, key.kind, key.ownerKey, exhausted]);
+  return stopped ? { state: 'held', reason: 'attempts_exhausted', holdId: exhausted, context: stopped.held_context ?? {} } : null;
+}
+
+/** Reads the input, the items and the valve and plans the result (plan.ts); under the key lock for a publication, unlocked for a managed preview. */
+export async function planPublication<C>(db: BrainEngine, adapter: GenerationAdapter<C>, request: PublishRequest<C>, config: GenerationsConfig,
+  live: LiveGeneration | null, extraKeys: readonly string[] = []): Promise<{ input: InputState | null; rows: Map<string, ItemRow>; plan: Plan }> {
+  const { key } = request;
+  const itemKeys = [...new Set([...request.items.map(item => item.key), ...(request.approved?.retire ?? []), ...(live?.items.keys() ?? []), ...extraKeys])];
+  const named = new Set([...request.items.map(item => item.key), ...(request.approved?.retire ?? [])]);
+  const input = await adapter.readInput(db, key, request.context);
+  const rows = await adapter.readItems(db, key, itemKeys, request.context);
+  const unrecorded = [...rows.values()].filter(row => row.owned && row.live && !live?.items.has(row.key) && !named.has(row.key));
+  const evidence = unrecorded.length ? await adapter.legacyEvidence(db, key, unrecorded) : new Set<string>();
+  const valve = await readValve(db, key, request.runId);
+  const proven = request.proof?.kind === 'originIneligible' ? await adapter.proofHolds?.(db, key, request.proof) === true
+    : request.proof ? proofHolds(request.proof, input, live?.inputPin) : false;
+  const plan = planGeneration({ live, rows, proposal: request.items, input, config, modelProduced: adapter.modelProduced, inPlace: adapter.publishesInPlace, strictOrder: adapter.strictOrder, additive: request.partial === true,
+    proofHolds: proven, evidence, valve, release: request.release?.reason, approvedRetire: request.approved?.retire, approvedExpect: request.approved?.expect });
+  return { input, rows, plan };
+}
+
+/** The ledger rows of a publish plan; `pending` marks the items a managed member request still overwrites or retires. */
+export function ledgerItems(plan: Extract<Plan, { kind: 'publish' }>, rows: ReadonlyMap<string, ItemRow>, live: LiveGeneration | null,
+  pending: { overwrites?: ReadonlySet<string>; retires?: boolean } = {}): LedgerItem[] {
+  const preimage = (itemKey: string) => rows.get(itemKey)?.preimage();
+  const rewritten = (itemKey: string) => pending.overwrites?.has(itemKey) === true;
+  return [
+    ...plan.puts.map(item => ({ key: item.key, identityHash: item.identityHash, action: 'published' as const,
+      ...(rows.get(item.key)?.live ? { preimage: preimage(item.key) } : {}), ...(rewritten(item.key) ? { pending: true } : {}) })),
+    ...plan.kept.map(itemKey => ({ key: itemKey, identityHash: rows.get(itemKey)!.identityHash, action: 'kept' as const, ...(rewritten(itemKey) ? { pending: true } : {}) })),
+    ...plan.adopted.map(itemKey => ({ key: itemKey, identityHash: rows.get(itemKey)!.identityHash, action: 'adopted' as const, ...(rewritten(itemKey) ? { pending: true } : {}) })),
+    ...plan.carried.map(itemKey => ({ key: itemKey, identityHash: live!.items.get(itemKey)!, action: 'kept' as const })),
+    ...plan.retires.map(itemKey => ({ key: itemKey, identityHash: rows.get(itemKey)!.identityHash, action: 'retired' as const, preimage: preimage(itemKey),
+      ...(pending.retires ? { pending: true } : {}) })),
+  ];
+}
+
 export async function publishGeneration<C>(engine: BrainEngine, adapter: GenerationAdapter<C>, request: PublishRequest<C>): Promise<PublishOutcome> {
   const { key } = request;
   const config = await readGenerationsConfig(engine);
-  const setHash = itemSetHash(request.items);
-  const operationId = digest(['generation-publish-v1', key, request.expectedGeneration ?? null, request.input?.pin ?? null, setHash,
-    request.partial === true, request.release?.holdId ?? null]);
-  const itemKeys = request.items.map(item => item.key);
-  if (!request.release) {
-    const exhausted = holdIdFor(key, request.input?.pin ?? null, config, setHash, 'attempts_exhausted');
-    const [stopped] = await engine.executeRaw<{ held_context: Record<string, unknown> | null }>(
-      `SELECT held_context FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held' AND hold_id=$4`, [key.sourceId, key.kind, key.ownerKey, exhausted]);
-    if (stopped) return { state: 'held', reason: 'attempts_exhausted', holdId: exhausted, context: stopped.held_context ?? {} };
-  }
+  const setHash = requestSetHash(request);
+  const operationId = publishOperationId(request as PublishRequest<unknown>, setHash);
+  const itemKeys = [...request.items.map(item => item.key), ...(request.approved?.retire ?? [])];
+  const stopped = await exhaustedHold(engine, request as PublishRequest<unknown>, config, setHash);
+  if (stopped) return stopped;
   try {
     const outcome = await maintenanceTransaction(engine, async tx => {
       await lockGeneration(tx, adapter as GenerationAdapter<unknown>, key, itemKeys);
@@ -193,38 +260,26 @@ export async function publishGeneration<C>(engine: BrainEngine, adapter: Generat
       if (replay) return { state: 'unchanged', generation: Number(replay.generation), retired: [], protected: [] } satisfies PublishOutcome;
       const live = await readLiveGeneration(tx, key);
       if (request.expectedGeneration !== undefined && (live?.generation ?? 0) !== request.expectedGeneration) {
-        throw fenced('stale_generation', key, `the live generation is ${live?.generation ?? 0}, the producer planned against ${request.expectedGeneration}`);
+        throw generationFenced('stale_generation', key, `the live generation is ${live?.generation ?? 0}, the producer planned against ${request.expectedGeneration}`);
       }
-      const input = await adapter.readInput(tx, key, request.context);
-      if (request.input && input?.pin !== request.input.pin) throw fenced('pin_moved', key, 'its input changed after the producer read it');
-      const rows = await adapter.readItems(tx, key, itemKeys);
-      const unrecorded = [...rows.values()].filter(row => row.owned && row.live && !live?.items.has(row.key) && !itemKeys.includes(row.key));
-      const evidence = unrecorded.length ? await adapter.legacyEvidence(tx, key, unrecorded) : new Set<string>();
-      const valve = await readValve(tx, key, request.runId);
-      const plan = planGeneration({ live, rows, proposal: request.items, input, config, modelProduced: adapter.modelProduced, strictOrder: adapter.strictOrder, additive: request.partial === true,
-        proofHolds: request.proof ? proofHolds(request.proof, input, live?.inputPin) : false, evidence, valve, release: request.release?.reason });
+      const { input, rows, plan } = await planPublication(tx, adapter, request, config, live);
+      if (request.input && input?.pin !== request.input.pin) throw generationFenced('pin_moved', key, 'its input changed after the producer read it');
       if (plan.kind === 'held') return recordHeld(tx, key, config, request, setHash, plan.reason, plan.context);
       if (plan.kind === 'unchanged') {
         if (!request.partial) await adapter.completeItems?.(tx, key, itemKeys, request.context);
         return { state: 'unchanged', generation: live?.generation ?? null, retired: [], protected: plan.protectedKeys } satisfies PublishOutcome;
       }
-      const preimage = (itemKey: string) => rows.get(itemKey)?.preimage();
       if (plan.puts.length) await adapter.publishItems(tx, key, plan.puts, request.context);
       await faultPoint('generation:published', { sourceId: key.sourceId, operation: key.kind });
       const current = [...plan.puts.map(item => [item.key, item.identityHash] as const), ...[...plan.kept, ...plan.adopted].map(itemKey => [itemKey, rows.get(itemKey)!.identityHash] as const)];
       if (!request.partial) await adapter.completeItems?.(tx, key, current.map(([itemKey]) => itemKey), request.context);
-      await assertItemsLive(tx, adapter as GenerationAdapter<unknown>, key, new Map(current));
-      await adapter.retireItems(tx, key, plan.retires, adapter.retiredBy);
+      await assertItemsLive(tx, adapter as GenerationAdapter<unknown>, key, new Map(current), request.context);
+      await adapter.retireItems(tx, key, plan.retires, request.approved?.retiredBy ?? adapter.retiredBy);
+      if (plan.retires.length) await request.onRetired?.(tx, plan.retires);
       await faultPoint('generation:retired', { sourceId: key.sourceId, operation: key.kind });
-      const items: LedgerItem[] = [
-        ...plan.puts.map(item => ({ key: item.key, identityHash: item.identityHash, action: 'published' as const, ...(rows.get(item.key)?.live ? { preimage: preimage(item.key) } : {}) })),
-        ...plan.kept.map(itemKey => ({ key: itemKey, identityHash: rows.get(itemKey)!.identityHash, action: 'kept' as const })),
-        ...plan.adopted.map(itemKey => ({ key: itemKey, identityHash: rows.get(itemKey)!.identityHash, action: 'adopted' as const })),
-        ...plan.carried.map(itemKey => ({ key: itemKey, identityHash: live!.items.get(itemKey)!, action: 'kept' as const })),
-        ...plan.retires.map(itemKey => ({ key: itemKey, identityHash: rows.get(itemKey)!.identityHash, action: 'retired' as const, preimage: preimage(itemKey) })),
-      ];
-      const activated = await activateGeneration(tx, key, live, { operationId, runId: request.runId, input, setHash,
-        completeness: { complete: !request.partial, proof: request.proof?.kind ?? null, released: request.release?.reason ?? null } }, items);
+      const activated = await activateGeneration(tx, key, live, { operationId, runId: request.runId, input, setHash, locator: request.locator,
+        completeness: { complete: !request.partial, proof: request.proof?.kind ?? null, released: request.release?.reason ?? null,
+          ...(request.approved ? { approved: request.approved.retiredBy } : {}), ...request.note } }, ledgerItems(plan, rows, live));
       if (plan.retires.length) await bumpValve(tx, key, request.runId, plan.retires.length);
       return { state: 'published', generationId: activated.id, generation: activated.generation, puts: plan.puts.map(item => item.key), kept: plan.kept,
         adopted: plan.adopted, retired: plan.retires, protected: plan.protectedKeys } satisfies PublishOutcome;
@@ -244,7 +299,7 @@ export async function publishGeneration<C>(engine: BrainEngine, adapter: Generat
 
 const windowKey = (runId: string | undefined) => runId ? `run:${runId}` : `day:${new Date().toISOString().slice(0, 10)}`;
 
-async function readValve(tx: BrainEngine, key: GenerationKey, runId: string | undefined): Promise<{ windowRetired: number; ownedTotal: number }> {
+export async function readValve(tx: BrainEngine, key: GenerationKey, runId: string | undefined): Promise<{ windowRetired: number; ownedTotal: number }> {
   const [row] = await tx.executeRaw<{ retired: number | null; owned: number }>(
     `SELECT (SELECT retired FROM derived_generation_valve WHERE source_id=$1 AND kind=$2 AND window_key=$3) AS retired,
             (SELECT count(*)::int FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id
@@ -253,7 +308,7 @@ async function readValve(tx: BrainEngine, key: GenerationKey, runId: string | un
   return { windowRetired: Number(row?.retired ?? 0), ownedTotal: Number(row?.owned ?? 0) };
 }
 
-async function bumpValve(tx: BrainEngine, key: GenerationKey, runId: string | undefined, retired: number): Promise<void> {
+export async function bumpValve(tx: BrainEngine, key: GenerationKey, runId: string | undefined, retired: number): Promise<void> {
   await tx.executeRaw(`INSERT INTO derived_generation_valve (source_id, kind, window_key, retired) VALUES ($1,$2,$3,$4)
     ON CONFLICT (source_id, kind, window_key) DO UPDATE SET retired=derived_generation_valve.retired+EXCLUDED.retired, updated_at=now()`,
     [key.sourceId, key.kind, windowKey(runId), retired]);

@@ -152,6 +152,7 @@ export function formatRelinkReport(report: RelinkReport, args: string[]): string
 export function formatConversationRelinkReport(r: ConversationRelinkReport, args: string[]): string {
   const lines = [`${r.dry_run ? 'DRY RUN: would link' : 'Linked'} ${r.linked} conversation fact(s) on ${r.pages.length} page(s) in source ${r.source_id}`
     + ` (mention tier, no model call); ${r.unresolved} unresolved${r.changed ? `; ${r.changed} changed before the write (run again)` : ''}.`];
+  if (r.not_user_attributed) lines.push(`  not_user_attributed: ${r.not_user_attributed}. ${RELINK_REASONS.not_user_attributed.fix}`);
   for (const p of r.pages) lines.push(`  ${p.slug}: ${p.linked} linked, ${p.unresolved} unresolved`);
   if (r.dry_run && r.linked) lines.push(`Apply with:\n  gbrain facts relink ${args.filter(a => a !== '--dry-run').join(' ')}`);
   if (r.reextract_slugs.length) {

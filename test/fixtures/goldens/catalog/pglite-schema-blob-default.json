@@ -40,6 +40,10 @@
       "decision_receipts.decision_receipts_pkey": "p PRIMARY KEY (id)",
       "derivation_inputs.derivation_inputs_pkey": "p PRIMARY KEY (derived_table, derived_id, input_table, input_id)",
       "derivation_inputs.derivation_inputs_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "derived_generation_activations.derived_generation_activations_generation_id_fkey": "f FOREIGN KEY (generation_id) REFERENCES derived_generations(id) ON DELETE SET NULL",
+      "derived_generation_activations.derived_generation_activations_pkey": "p PRIMARY KEY (id)",
+      "derived_generation_activations.derived_generation_activations_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "derived_generation_activations.derived_generation_activations_state_check": "c CHECK ((state = ANY (ARRAY['pending'::text, 'activated'::text])))",
       "derived_generation_attempts.derived_generation_attempts_pkey": "p PRIMARY KEY (hold_id)",
       "derived_generation_attempts.derived_generation_attempts_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "derived_generation_items.derived_generation_items_action_check": "c CHECK ((action = ANY (ARRAY['published'::text, 'retired'::text, 'revived'::text, 'kept'::text, 'adopted'::text])))",
@@ -467,6 +471,9 @@
       "derivation_inputs": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "derived_generation_activations": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "derived_generation_attempts": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -829,9 +836,12 @@
       "decision_receipts_pkey": "CREATE UNIQUE INDEX decision_receipts_pkey ON public.decision_receipts USING btree (id)",
       "decision_receipts_slot_created_idx": "CREATE INDEX decision_receipts_slot_created_idx ON public.decision_receipts USING btree (slot, created_at)",
       "derivation_inputs_pkey": "CREATE UNIQUE INDEX derivation_inputs_pkey ON public.derivation_inputs USING btree (derived_table, derived_id, input_table, input_id)",
+      "derived_generation_activations_key": "CREATE INDEX derived_generation_activations_key ON public.derived_generation_activations USING btree (source_id, kind, owner_key, state)",
+      "derived_generation_activations_pkey": "CREATE UNIQUE INDEX derived_generation_activations_pkey ON public.derived_generation_activations USING btree (id)",
       "derived_generation_attempts_key": "CREATE INDEX derived_generation_attempts_key ON public.derived_generation_attempts USING btree (source_id, kind, owner_key)",
       "derived_generation_attempts_pkey": "CREATE UNIQUE INDEX derived_generation_attempts_pkey ON public.derived_generation_attempts USING btree (hold_id)",
       "derived_generation_items_key": "CREATE INDEX derived_generation_items_key ON public.derived_generation_items USING btree (item_key)",
+      "derived_generation_items_pending": "CREATE INDEX derived_generation_items_pending ON public.derived_generation_items USING btree (generation_id) WHERE pending",
       "derived_generation_items_pkey": "CREATE UNIQUE INDEX derived_generation_items_pkey ON public.derived_generation_items USING btree (generation_id, item_key)",
       "derived_generation_valve_pkey": "CREATE UNIQUE INDEX derived_generation_valve_pkey ON public.derived_generation_valve USING btree (source_id, kind, window_key)",
       "derived_generations_one_hold": "CREATE UNIQUE INDEX derived_generations_one_hold ON public.derived_generations USING btree (source_id, kind, owner_key) WHERE (state = 'held'::text)",
@@ -1564,6 +1574,23 @@
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
+      "derived_generation_activations": {
+        "columns": [
+          "1 id text/text NOT NULL",
+          "2 source_id text/text NOT NULL",
+          "3 kind text/text NOT NULL",
+          "4 owner_key text/text NOT NULL",
+          "5 expected_generation integer/int4 NOT NULL",
+          "6 input_pin text/text NULL",
+          "7 item_set_hash text/text NOT NULL",
+          "8 state text/text NOT NULL",
+          "9 generation_id bigint/int8 NULL",
+          "10 members jsonb/jsonb NOT NULL DEFAULT '[]'::jsonb",
+          "11 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "12 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
       "derived_generation_attempts": {
         "columns": [
           "1 hold_id text/text NOT NULL",
@@ -1583,7 +1610,8 @@
           "3 identity_hash text/text NOT NULL",
           "4 action text/text NOT NULL",
           "5 preimage jsonb/jsonb NULL",
-          "6 preimage_bytes integer/int4 NULL"
+          "6 preimage_bytes integer/int4 NULL",
+          "7 pending boolean/bool NOT NULL DEFAULT false"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -1620,7 +1648,9 @@
           "19 superseded_by bigint/int8 NULL",
           "20 restore_of bigint/int8 NULL",
           "21 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "22 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+          "22 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "23 locator text/text NULL",
+          "24 activation_id text/text NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

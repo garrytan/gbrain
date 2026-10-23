@@ -9,6 +9,7 @@ import { factsFenceEditor, factsFenceSection, parseFactsFence, formatFenceDate }
 import { serializePageToMarkdown } from '../markdown.ts';
 import { wholeBodySnapshot } from './segmented-apply.ts';
 import { assertFactNotWithdrawn, decideSingleFact, factWithdrawnRefusal, type FactCandidate } from '../facts/single-prepare.ts';
+import { supersededValidUntil } from '../facts/supersede-interval.ts';
 import { assertFactNotPurged, isFactWithdrawn } from '../facts/withdrawal.ts';
 import { samePageRewording, warnSamePageShadow } from '../facts/same-page-shadow.ts';
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
@@ -215,7 +216,8 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
       ...(fact.attributed_to ? { attributedTo: fact.attributed_to } : {}) }));
     // Strike the superseded row in this page's fence, as the remember mutation does (#6686: in the section that holds it).
     if (supersedes && rowNum !== undefined && supersedes.source_markdown_slug === row.slug && supersedes.row_num != null) {
-      fence.strike(Number(supersedes.row_num), rowNum);
+      const until = supersededValidUntil(supersedes, fact.valid_from!);
+      fence.strike(Number(supersedes.row_num), rowNum, until ? formatFenceDate(until) : undefined);
     }
     entries.push({ fact, duplicateId: null, rowNum, supersedes, gate });
   }
@@ -282,8 +284,8 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
         if (taint) await recordTaintEdges(tx, { table: 'facts', id: ids[ids.length - 1], sourceId: row.source_id }, taint.inputs);
         if (entry.gate) await recordFlaggedRow(tx, entry.gate, { table: 'facts', id: ids[ids.length - 1], sourceId: row.source_id });
         if (entry.supersedes) {
-          await tx.executeRaw('UPDATE facts SET expired_at=COALESCE(expired_at,now()),superseded_by=$3 WHERE id=$1 AND source_id=$2',
-            [entry.supersedes.id, row.source_id, ids[ids.length - 1]]);
+          await tx.executeRaw('UPDATE facts SET expired_at=COALESCE(expired_at,now()),superseded_by=$3,valid_until=COALESCE($4::timestamptz,valid_until) WHERE id=$1 AND source_id=$2',
+            [entry.supersedes.id, row.source_id, ids[ids.length - 1], supersededValidUntil(entry.supersedes, entry.fact.valid_from!)]);
           superseded++;
         }
       }

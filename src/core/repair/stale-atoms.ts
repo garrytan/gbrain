@@ -18,12 +18,16 @@
  * with its class and saves the set under its hash; `--apply --expect <hash>`
  * retires exactly that set. Each atom is rechecked when it is retired; one
  * whose revision, class, origin or completion evidence changed reports
- * `changed_since_preview` and is kept. A managed brain retires one atom per
- * `managed_maintenance_retire_stale_atoms` request bound to the atom's
- * revision (no live origin is required); an unmanaged brain soft-deletes it
- * directly. Both stamp `retired_by: stale-atoms`, so a later extraction that
- * produces the atom again restores it, and both invalidate the origin page's
- * earlier completed extractions so a restored page is extracted again.
+ * `changed_since_preview` and is kept. GBRA-161 PR 1b: each atom retires as an
+ * approved generation of its origin key (generations/publish.ts, no floor or
+ * valve), bound to the atom's identity: unmanaged in one activation
+ * transaction, managed as a `managed_generation_activate` request and then a
+ * gated `managed_atom_delete` member (version first; no live origin is
+ * required). Both stamp `retired_by: stale-atoms`, record the retirement in
+ * the ledger (restorable through `gbrain repair generations`), and invalidate
+ * the origin page's earlier completed extractions so a restored page is
+ * extracted again. `managed_maintenance_retire_stale_atoms` requests journaled
+ * by an earlier version still publish through their preparer below.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -32,13 +36,12 @@ import type { WriteRequest } from '../persistence/model.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { authorizeWrite } from '../persistence/authority.ts';
-import { managedPersistenceEnabled } from '../persistence/ownership.ts';
-import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { preparePageMutation } from '../persistence/page-prepare.ts';
-import { maintenancePreflight, submitMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
-import { bumpAtomGeneration, managedAtomCompletedSql } from '../persistence/atom-maintenance.ts';
+import { bumpAtomGeneration, managedAtomCompletedSql, managedAtomSession, publishManagedAtomGeneration, type AtomOrigin } from '../persistence/atom-maintenance.ts';
+import { atomGenerationAdapter, atomOwnerKey, readAtomInput } from '../generations/adapters/atoms.ts';
+import { publishGeneration } from '../generations/publish.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
-import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
+import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
 
 export const STALE_ATOMS_RETIRED_BY = 'stale-atoms';
 export const STALE_ATOMS_INTENT = 'managed_maintenance_retire_stale_atoms';
@@ -172,31 +175,37 @@ async function retireStaleAtom(ctx: OperationContext, atom: StaleAtom): Promise<
   const engine = ctx.engine;
   const changed = (reason: string): RepairItemOutcome => ({ applied: false, outcome: 'changed_since_preview', reason });
   if (!sameAtom((await staleAtoms(engine, [atom.source_id], atom.id))[0], atom)) return changed('the atom or its source page changed');
-  if (await managedPersistenceEnabled(engine)) {
-    const authority = (await maintenancePreflight(engine, atom.source_id))!;
-    try {
-      await submitMaintenanceIntent(engine, authority, atom.slug, { kind: STALE_ATOMS_INTENT, expected_revision: atom.revision, atom },
-        await repairRequestId(ctx, 'stale-atoms', atom, atom.revision));
-    } catch (error) {
-      if (error instanceof OperationError && ['revision_conflict', 'page_not_found', 'page_identity_changed'].includes(error.code)) return changed(error.message);
-      if (error instanceof OperationError && error.code === 'source_changed') return { applied: false, outcome: 'file_conflict', reason: error.message };
-      throw error;
+  // GBRA-161 PR 1b: the retirement is an approved generation of the atom's origin key (no floor or valve), bound to the
+  // atom's identity now; the primitive rechecks it live, owned and unedited under the origin and atom locks.
+  const key = { kind: atomGenerationAdapter.kind, sourceId: atom.source_id, ownerKey: atomOwnerKey({ kind: 'page', slug: atom.origin_slug }) };
+  const row = (await atomGenerationAdapter.readItems(engine, key, [atom.slug])).get(atom.slug);
+  if (!row?.live) return changed('the atom was removed');
+  const approved = { retire: [atom.slug], retiredBy: STALE_ATOMS_RETIRED_BY, expect: { [atom.slug]: row.identityHash } } as const;
+  try {
+    const session = await managedAtomSession(engine, atom.source_id);
+    if (session) {
+      const origin: AtomOrigin = { kind: 'page', locator: atom.origin_slug, contentHash: atom.class === 'origin_changed' ? atom.origin_hash! : '', textHash: '',
+        pageId: atom.origin_page_id, revision: null, visibility: 'world' };
+      const outcome = await publishManagedAtomGeneration(engine, session, origin, [], { key, content: null, approved: { ...approved, retire: [...approved.retire] } });
+      if (outcome.state !== 'admitted') return changed('the atom is no longer an owned, unedited atom of its origin');
+      const receipt = outcome.receipts.at(-1);
+      return receipt?.state === 'committed' ? { applied: true, outcome: 'retired' } : changed(`the retirement request ended ${receipt?.state ?? 'unrecorded'}`);
     }
-    return { applied: true, outcome: 'retired' };
+    const outcome = await publishGeneration(engine, atomGenerationAdapter, { key, items: [], input: await readAtomInput(engine, key), approved,
+      onRetired: tx => stampRetirement(tx, atom, false) });
+    return outcome.state === 'published' && outcome.retired.includes(atom.slug) ? { applied: true, outcome: 'retired' }
+      : changed('the atom is no longer an owned, unedited atom of its origin');
+  } catch (error) {
+    if (error instanceof OperationError && ['revision_conflict', 'page_not_found', 'page_identity_changed', 'generation_fenced', 'generation_live_conflict'].includes(error.code)) {
+      return changed(error.message);
+    }
+    if (error instanceof OperationError && error.code === 'source_changed') return { applied: false, outcome: 'file_conflict', reason: error.message };
+    throw error;
   }
-  const retired = await maintenanceTransaction(engine, async tx => {
-    await tx.lockPageKeys([{ sourceId: atom.source_id, slug: atom.slug }, { sourceId: atom.source_id, slug: atom.origin_slug }]);
-    if (!sameAtom((await staleAtoms(tx, [atom.source_id], atom.id))[0], atom)) return false;
-    await tx.createVersion(atom.slug, { sourceId: atom.source_id });
-    await tx.softDeletePage(atom.slug, { sourceId: atom.source_id });
-    await stampRetirement(tx, atom);
-    return true;
-  });
-  return retired ? { applied: true, outcome: 'retired' } : changed('the atom or its source page changed');
 }
 
-async function stampRetirement(tx: BrainEngine, atom: StaleAtom): Promise<void> {
-  await tx.executeRaw(`UPDATE pages SET frontmatter=frontmatter||jsonb_build_object('retired_by',$1::text,'retired_at',$2::text)
+async function stampRetirement(tx: BrainEngine, atom: StaleAtom, stamp = true): Promise<void> {
+  if (stamp) await tx.executeRaw(`UPDATE pages SET frontmatter=frontmatter||jsonb_build_object('retired_by',$1::text,'retired_at',$2::text)
     WHERE id=$3 AND source_id=$4 AND deleted_at IS NOT NULL`, [STALE_ATOMS_RETIRED_BY, new Date().toISOString(), atom.id, atom.source_id]);
   if (atom.origin_page_id === null) return;
   const [{ incarnation }] = await tx.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [atom.source_id]);

@@ -56,7 +56,8 @@ import { pageReadFilter } from '../search/read-policy-sql.ts';
 import { QUERY_DESCRIPTION, SEARCH_DESCRIPTION, SEARCH_MATCH_DESCRIPTION } from '../operations-descriptions.ts';
 import { declaredNames, titleName } from '../mentions/aliases.ts';
 import { aliasPhrase, resolveQueryEntity, wholeQueryEntityNames, withAliasFanOut, type FanoutMeta, type ResolvedEntity } from '../search/alias-fanout.ts';
-import { entitySavedFacts } from '../search/entity-facts.ts';
+import { entitySavedFacts, SAVED_FACT_COLLAPSE_COLUMNS, stripCollapseColumns, type CollapseColumns } from '../search/entity-facts.ts';
+import { collapseFactReads } from '../facts/capture-dedup.ts';
 import { mentionCoverageNotice, readMentionCoverage } from '../mentions/coverage.ts';
 import { keepEnumeratedRows, keywordCountMeta, parseSearchPaging, readKeywordPage, startKeywordCount, withCountMeta } from '../search/keyword-paging.ts';
 import { searchLimitCap } from '../search/eval-pool-depth.ts';
@@ -364,16 +365,19 @@ function startEntityResolution(ctx: OperationContext, queryText: string, scope: 
   return resolving;
 }
 
-export interface SavedFactMatch { id: number; fact: string; entity_slug: string | null; kind: string; valid_from: string; source: string }
+export interface SavedFactMatch { id: number; fact: string; entity_slug: string | null; kind: string; valid_from: string; source: string;
+  /** #7043: every entity of the copies this row stands for, and how many rows it stands for. */
+  entity_slugs?: string[]; collapsed_count?: number }
 
 /**
  * Facts saved with `remember` live in the facts table, not in page chunks, so
  * page search never returns them (gbrain-evals Cat 40: agents saved a
  * correction with remember and the next session's search missed it). This
  * finds active facts whose text or entity shares at least three quarters of the query's words,
- * under the same source scope and visibility rules recall applies.
+ * under the same source scope and visibility rules recall applies, copies of one claim collapsed
+ * before the cap (#7043).
  */
-async function matchingSavedFacts(ctx: OperationContext, scope: SourceScope, queryText: string, aliases: AliasDeclaration[] = []): Promise<SavedFactMatch[]> {
+async function matchingSavedFacts(ctx: OperationContext, scope: SourceScope, queryText: string, aliases: AliasDeclaration[] = []): Promise<Array<SavedFactMatch & CollapseColumns>> {
   // A query naming one of two declared names also matches facts saved under the other.
   for (const a of aliases) queryText += ` ${a.name} ${a.alias}`;
   const terms = [...new Set(queryText.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}'-]+/gu) ?? [])]
@@ -397,9 +401,9 @@ async function matchingSavedFacts(ctx: OperationContext, scope: SourceScope, que
     // The term threshold is applied before the cut: a fact matching every term is never crowded
     // out by newer facts that match only one.
     const need = Math.max(Math.min(2, terms.length), Math.ceil(terms.length * 0.75));
-    const rows = await ctx.engine.executeRaw<SavedFactMatch & { haystack: string; at: unknown; hits: unknown }>(
+    const rows = await ctx.engine.executeRaw<SavedFactMatch & CollapseColumns & { haystack: string; at: unknown; hits: unknown }>(
       `SELECT * FROM (
-         SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, f.valid_from AS at,
+         SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, f.valid_from AS at, ${SAVED_FACT_COLLAPSE_COLUMNS},
            lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) AS haystack,
            (SELECT count(*) FROM unnest($3::text[]) AS t(pattern) WHERE lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) LIKE t.pattern) AS hits
          FROM facts f
@@ -413,12 +417,12 @@ async function matchingSavedFacts(ctx: OperationContext, scope: SourceScope, que
        LIMIT 200`,
       [sources, [...AUDIT_ROW_SOURCES], terms.map(t => `%${t.replace(/[\\%_]/g, m => `\\${m}`)}%`), need],
     );
-    return rows
+    const matched = rows
       .map(r => ({ r, hits: terms.filter(t => r.haystack.includes(t)).length }))
       .filter(x => x.hits >= need)
       .sort((a, b) => b.hits - a.hits)
-      .slice(0, 5)
       .map(({ r: { haystack: _h, at: _a, hits: _n, ...fact } }) => ({ ...fact, id: Number(fact.id) }));
+    return (await collapseFactReads(ctx.engine, matched)).slice(0, 5);
   } catch {
     return [];
   }
@@ -490,8 +494,9 @@ async function buildRetrievalResponseMeta(
   const freshness = sourceFreshness.map(f => ({ ...f, held_count: heldBySource.get(f.source_id) ?? 0 }));
   // A fact the facts arm already returned as a row is not repeated beside the blocks.
   const factRowIds = new Set((results as SearchResult[]).flatMap(r => r.fact_row ? [r.fact_row.id] : []));
-  const savedFacts = [...entityFacts, ...matchedFacts.filter(m => !entityFacts.some(e => e.id === m.id))]
-    .filter(f => !factRowIds.has(f.id));
+  // #7043: a matched fact may copy an entity fact; the merged list collapses again before the response.
+  const savedFacts = (await collapseFactReads(ctx.engine, [...entityFacts, ...matchedFacts.filter(m => !entityFacts.some(e => e.id === m.id))]
+    .filter(f => !factRowIds.has(f.id)))).map(stripCollapseColumns);
   const heldTotal = [...heldBySource.values()].reduce((sum, n) => sum + n, 0);
   const embedding = embeddingHeld?.total ? embeddingHeld : null;
   const coverage: RetrievalCoverage | undefined = pending || heldTotal || embedding ? {

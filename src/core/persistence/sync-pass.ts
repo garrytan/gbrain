@@ -43,7 +43,7 @@ import { buildConvergenceReceipt, readOnlySameContentScreen, type ConvergenceRec
 import { readManagedMode } from './ownership.ts';
 import { MANAGED_SYNC_PASS_OP, SYNC_ORIGIN_DELETED_OP, type SyncSelection } from './sync-pass-row.ts';
 import { faultPoint } from './fault-points.ts';
-import { filterYielding, loopYield, progressYield, sortYielding, turnYield, type LoopYield } from './sync-yield.ts';
+import { filterYielding, loopYield, progressYield, sortYielding, turnYield, whileActive, type LoopYield } from './sync-yield.ts';
 import { countsMatch, proveConfirm, readLevelMark, type ConfirmProof, type LevelMark } from './sync-pass-confirm.ts';
 import { domainCache, levelDomain, narrowedWalk, walkAttestations, type LevelDomainCache } from './sync-pass-narrow.ts';
 
@@ -76,6 +76,8 @@ export interface PassLevelInput {
   recorded?: ReadonlySet<number>;
   /** #7355: called while the read works (its loops' pauses, at most once a second, and the origin history walk), so the drain sees progress before the first commit. */
   onProgress?: () => void;
+  /** Throws once the pass must stop (a job deadline, a lost drain lease): checked at the read's pauses and while its origin history walk runs. */
+  assertActive?: () => void;
 }
 /** PGLite's keyset page size (design v3.2 §2.1). */
 const PGLITE_KEYSET_ROWS = 2_000;
@@ -576,10 +578,12 @@ async function readUntracked(gitRoot: string, scope: string): Promise<string[]> 
 const timer = () => { const started = performance.now(); return () => Math.round((performance.now() - started) * 10) / 10; };
 
 /** #7130: an absent file is deletion evidence only when Git once committed it (sync-origin-evidence.ts); read for those paths alone. */
-async function reclassifyByOrigin(gitRoot: string, tips: Array<string | null | undefined>, paths: ShadowPath[], step: LoopYield, onProgress?: () => void): Promise<boolean> {
+async function reclassifyByOrigin(gitRoot: string, tips: Array<string | null | undefined>, paths: ShadowPath[], step: LoopYield, pass?: PassLevelInput): Promise<boolean> {
   const absent = await filterYielding(paths, entry => (entry.result.cls === 'delete' || entry.result.cls === 'delete_drift') && entry.state.originEvidence === undefined, step);
   if (!absent.length) return false;
-  const evidence = await readOriginEvidence(gitRoot, tips, absent.map(entry => entry.path), { onCommit: onProgress });
+  // A stopped pass leaves the shared walk running: the next pass joins it, or reads the history it cached.
+  pass?.assertActive?.();
+  const evidence = await whileActive(readOriginEvidence(gitRoot, tips, absent.map(entry => entry.path), { onCommit: pass?.onProgress }), pass?.assertActive);
   for (const entry of absent) {
     const state = { ...entry.state, originEvidence: evidence.get(entry.path) ?? 'unknown' as const };
     Object.assign(entry, { state, result: classifySyncPath(state) });
@@ -622,7 +626,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
   // the one rule discovery and preparation use (sameSyncOrigin; it refuses an origin that could name two files).
   const originScope = { sourceId, root, scope, slugMode };
   const pageOrigin = (sourcePath: string, slug: string): string => scopedPageOrigin(originPath(sourcePath), slug, originScope);
-  const step = progressYield(turnYield(), input.pass?.onProgress);
+  const step = progressYield(turnYield(), { onProgress: input.pass?.onProgress, assertActive: input.pass?.assertActive });
 
   t = timer();
   const { head, detached } = await readLevelHead(gitRoot, sourceId);
@@ -856,7 +860,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
   }
 
   t = timer();
-  if (await reclassifyByOrigin(gitRoot, [head, baselineCommit], paths, step, input.pass?.onProgress)) timings.origin = t();
+  if (await reclassifyByOrigin(gitRoot, [head, baselineCommit], paths, step, input.pass)) timings.origin = t();
 
   // Adoption by hash needs the level's bytes: committed mode reads the blobs of the candidates that could adopt.
   const needBytes = await filterYielding(paths, entry => !['matched', 'held', 'dirty'].includes(entry.result.cls) && entry.state.levelSha256 === null && entry.state.level !== null

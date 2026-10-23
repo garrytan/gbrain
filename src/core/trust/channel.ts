@@ -95,7 +95,7 @@ export function requestChannelTrust(row: Pick<WriteRequest, 'id' | 'operation' |
     return effectiveWriteTrust({ channel: 'agent_written', lowerTo: lowered ? [lowered] : [], origin });
   }
   if (kind.startsWith('managed_sync_') || kind.startsWith('managed_maintenance_') || kind.startsWith('managed_facts_')
-    || kind.startsWith('managed_atom_') || OWNER_SOURCE_KINDS.includes(kind)) return undefined;
+    || kind.startsWith('managed_atom_') || kind.startsWith('managed_generation_') || OWNER_SOURCE_KINDS.includes(kind)) return undefined;
   if (AGENT_WRITE_OPERATIONS.includes(row.operation)) {
     const lowered = intentContentOrigin(row.intent);
     return effectiveWriteTrust({ channel: 'agent_written', lowerTo: lowered ? [lowered] : [], origin });

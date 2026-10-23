@@ -93,6 +93,30 @@ export async function assertDrainLease(tx: Pick<BrainEngine, 'executeRaw'>, sour
   if (!rows.length) throw new LockStolenError(lease.lockId, `the drain lease of source ${sourceId} is no longer held by this pass`);
 }
 
+/** GBRA-133: the longest a transaction holding the fence stays open (plus the item that crosses it); a renewal times out after 30 s. */
+export const FENCED_SLICE_MS = 5_000;
+
+/**
+ * GBRA-133: `write` for each item in fenced transactions of at most `FENCED_SLICE_MS`. The fence holds the lock row
+ * `FOR SHARE`, which blocks this lease's own renewal and release until the transaction ends: one transaction that wrote a
+ * round's holds at 65 ms per round trip stayed open for 14 minutes, every renewal timed out and the lease lapsed under the
+ * pass. Each slice is fenced again, so a lapsed lease stops the writes at the next slice. `committed` sees each slice once it commits.
+ */
+export async function inFencedSlices<T>(engine: BrainEngine, sourceId: string, items: readonly T[],
+  write: (tx: BrainEngine, item: T) => Promise<void>, committed?: (slice: readonly T[]) => void): Promise<void> {
+  for (let start = 0; start < items.length;) {
+    const end = await engine.transaction(async tx => {
+      await assertDrainLease(tx, sourceId);
+      const began = performance.now();
+      let next = start;
+      do await write(tx, items[next++]!); while (next < items.length && performance.now() - began < FENCED_SLICE_MS);
+      return next;
+    });
+    committed?.(items.slice(start, end));
+    start = end;
+  }
+}
+
 const iso = (value: Date | null | undefined) => value ? value.toISOString() : null;
 
 /** The live holder of a source's drain lease (kind and id from the row this module writes beside the lock), or null. */
