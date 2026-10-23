@@ -25,6 +25,7 @@ import { isOpenclawCheckpointFile } from './openclaw.ts';
 import { isGrokChatHistoryFile } from './grok.ts';
 import { isClaudeCodeSubagentFile, isClaudeCodeWorkflowArtifactFile } from './claude-code.ts';
 import { isClaudeCliSelfTranscriptPath } from '../ai/providers/claude-cli-scratch.ts';
+import { isCompressedJsonlPath, preferPlainTwins } from './zstd.ts';
 
 export interface DiscoveredFile {
   format: TranscriptFormat;
@@ -85,7 +86,8 @@ export function discoverTranscriptFiles(roots?: HarnessRoot[], opts: DiscoverOpt
     const files: string[] = [];
     walk(root, files);
     for (const p of files) {
-      if (!p.endsWith(extension)) continue;
+      // Codex compresses idle rollouts in place to rollout-*.jsonl.zst.
+      if (!p.endsWith(extension) && !(format === 'codex' && isCompressedJsonlPath(p))) continue;
       if (isOpenclawCheckpointFile(p)) continue;
       // Grok: only chat_history.jsonl is a session; updates/events/rewind
       // JSONL next to it would otherwise inflate found-counts and freeze
@@ -115,7 +117,8 @@ export function discoverTranscriptFiles(roots?: HarnessRoot[], opts: DiscoverOpt
       out.push({ format, path: p, bytes });
     }
   }
-  return out;
+  // X.jsonl and X.jsonl.zst are one session: keep the plain file only.
+  return preferPlainTwins(out, (d) => d.path);
 }
 
 export interface ImportedSessionIndex {
@@ -229,7 +232,7 @@ export function resolveTranscriptPageSlugs(
   index: TranscriptPageIndex,
 ): string[] {
   const base = filePath.split(/[/\\]/).pop() ?? '';
-  const stem = base.replace(/\.(md|markdown|txt|jsonl|json)$/i, '');
+  const stem = base.replace(/\.(md|markdown|txt|jsonl\.zst|jsonl|json)$/i, '');
   if (stem === '') return [];
   return index.bySessionKey.get(sessionKey(stem)) ?? [];
 }
@@ -245,7 +248,7 @@ function pathMatchesImportedSession(path: string, sessionIds: Set<string>): bool
   const base = segs[segs.length - 1] ?? '';
   // Fast path: for claude-code/openclaw the basename stem IS the session id
   // — a Set hit avoids the O(ids) substring scan.
-  const stem = base.replace(/\.jsonl$/, '');
+  const stem = base.replace(/\.jsonl(\.zst)?$/, '');
   if (sessionIds.has(stem)) return true;
   const parent = segs[segs.length - 2] ?? '';
   if (sessionIds.has(parent)) return true;

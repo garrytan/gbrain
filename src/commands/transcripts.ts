@@ -23,6 +23,7 @@ import type { RecentTranscript } from '../core/transcripts.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import type { TranscriptFormat } from '../core/transcripts/types.ts';
 import { runTranscriptsIngest, type TranscriptsIngestResult } from '../core/transcripts/ingest.ts';
+import { preferPlainTwins } from '../core/transcripts/zstd.ts';
 import { isOpenclawCheckpointFile } from '../core/transcripts/openclaw.ts';
 import { isGrokSessionSidecarStrict } from '../core/transcripts/grok.ts';
 import {
@@ -242,7 +243,7 @@ On PGLite, stop gbrain serve first (single-writer lock).
 `;
 
 /** Extensions the importer understands; directory expansion filters to these. */
-const IMPORTABLE_EXTENSIONS = ['.jsonl', '.db', '.json'];
+const IMPORTABLE_EXTENSIONS = ['.jsonl', '.jsonl.zst', '.db', '.json'];
 
 /**
  * Expand path-or-glob args. Directory specs filter to importable extensions —
@@ -302,7 +303,7 @@ export async function expandPaths(specs: string[]): Promise<string[]> {
       out.push(spec);
     }
   }
-  return [...new Set(out)].filter(
+  const kept = [...new Set(out)].filter(
     (p) =>
       !isOpenclawCheckpointFile(p) &&
       !isGrokSessionSidecarStrict(p) &&
@@ -310,6 +311,7 @@ export async function expandPaths(specs: string[]): Promise<string[]> {
       !isClaudeCodeWorkflowArtifactFile(p) &&
       !isClaudeCodeRemoteControlStateFile(p),
   );
+  return preferPlainTwins(kept, (p) => p);
 }
 
 export function fmtSummary(r: TranscriptsIngestResult): string {
