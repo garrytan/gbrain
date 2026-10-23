@@ -115,9 +115,9 @@ describe('#5163 import adapter: item_completed UserMessage is a user turn', () =
     expect(sessions[0]!.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
   });
 
-  test('mapCodexLine: AgentMessage, other item types and empty or non-text UserMessage content are skipped', () => {
+  test('mapCodexLine: completed AgentMessage is text; other items and empty or non-text content are skipped', () => {
     const item = (it: unknown) => ({ type: 'event_msg', payload: { type: 'item_completed', item: it } });
-    expect(mapCodexLine(item({ type: 'AgentMessage', content: [{ type: 'text', text: 'dup' }] })).kind).toBe('skip');
+    expect(mapCodexLine(item({ type: 'AgentMessage', content: [{ type: 'text', text: 'dup' }] })).kind).toBe('assistant');
     expect(mapCodexLine(item({ type: 'CommandExecution', command: 'ls' })).kind).toBe('skip');
     expect(mapCodexLine(item({ type: 'UserMessage', content: [{ type: 'image', image_url: 'x' }] })).kind).toBe('skip');
     expect(mapCodexLine(item({ type: 'UserMessage', content: [{ type: 'text', text: '   ' }] })).kind).toBe('skip');
