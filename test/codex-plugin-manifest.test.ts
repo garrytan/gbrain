@@ -1,7 +1,7 @@
 /**
- * Codex + Claude Code plugin lane manifests — the packaging contract.
+ * Codex, Claude Code and Cursor plugin lane manifests — the packaging contract.
  *
- * Mirrors test/openclaw-plugin-manifest.test.ts for the two new lanes:
+ * Mirrors test/openclaw-plugin-manifest.test.ts for these lanes:
  * version lockstep across every plugin manifest, exact MCP declarations
  * (registration surface + --source-guard), launcher static AND behavioral
  * invariants (every resolver branch), marketplace content-equivalence
@@ -25,6 +25,8 @@ const pkg = json('package.json');
 const codexPlugin = json('.codex-plugin/plugin.json');
 const codexMcp = json('.codex-plugin/mcp.json');
 const claudePlugin = json('.claude-plugin/plugin.json');
+// A missing manifest must fail the assertions below, not crash the file at import.
+const cursorPlugin = existsSync(join(ROOT, '.cursor-plugin/plugin.json')) ? json('.cursor-plugin/plugin.json') : {};
 const codexMarketplace = json('.agents/plugins/marketplace.json');
 const claudeMarketplace = json('.claude-plugin/marketplace.json');
 const openclawPlugin = json('openclaw.plugin.json');
@@ -37,6 +39,7 @@ describe('version lockstep (the merge-drift catcher)', () => {
   test('every plugin manifest ships at the repo version', () => {
     expect(codexPlugin.version).toBe(pkg.version);
     expect(claudePlugin.version).toBe(pkg.version);
+    expect(cursorPlugin.version).toBe(pkg.version);
     expect(openclawPlugin.version).toBe(pkg.version);
   });
 });
@@ -129,6 +132,51 @@ describe('claude plugin.json', () => {
   test('skill tree pointer matches the codex lane', () => {
     expect(claudePlugin.skills).toBe('./plugin/skills/');
     expect(claudePlugin.name).toBe('gbrain');
+  });
+});
+
+// Top-level keys of Cursor's plugin schema (additionalProperties: false):
+// https://github.com/cursor/plugins/blob/main/schemas/plugin.schema.json
+const CURSOR_MANIFEST_KEYS = ['name', 'displayName', 'version', 'description', 'author', 'publisher', 'homepage', 'repository', 'license', 'keywords', 'category', 'tags', 'logo', 'minClientVersions', 'rules', 'agents', 'skills', 'commands', 'hooks', 'mcpServers', 'variables'];
+
+describe('cursor plugin.json', () => {
+  test('inline mcpServers with the shared launcher via ${CURSOR_PLUGIN_ROOT}', () => {
+    expect(Object.keys(cursorPlugin.mcpServers ?? {})).toEqual(['gbrain']);
+    const server = cursorPlugin.mcpServers.gbrain;
+    expect(Object.keys(server).sort()).toEqual(['args', 'command', 'cwd']);
+    expect(server.command).toBe('${CURSOR_PLUGIN_ROOT}/.agents/gbrain-launcher');
+    expect(server.args).toEqual(EXPECTED_ARGS);
+    expect(server.cwd).toBe('${CURSOR_PLUGIN_ROOT}');
+  });
+
+  test('identity and skill tree match the Claude Code lane', () => {
+    expect(cursorPlugin.name).toBe('gbrain');
+    expect(cursorPlugin.displayName).toBe('GBrain');
+    expect(cursorPlugin.skills).toBe('./plugin/skills/');
+    for (const field of ['description', 'homepage', 'repository', 'license', 'keywords'] as const) {
+      expect(cursorPlugin[field]).toEqual(claudePlugin[field]);
+    }
+  });
+
+  test('only fields the Cursor schema accepts', () => {
+    expect(Object.keys(cursorPlugin).filter(k => !CURSOR_MANIFEST_KEYS.includes(k))).toEqual([]);
+    expect(Object.keys(cursorPlugin.author ?? {}).filter(k => k !== 'name' && k !== 'email')).toEqual([]);
+    expect(typeof cursorPlugin.author?.name).toBe('string');
+    expect(cursorPlugin.name).toMatch(/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/);
+  });
+
+  test('no Agent Plugins variable that Cursor leaves unexpanded', () => {
+    expect(JSON.stringify(cursorPlugin)).not.toMatch(/\$\{(PLUGIN_ROOT|PLUGIN_DATA)\}/);
+  });
+
+  test('every bundled skill name is a Cursor skill identifier (lowercase kebab-case)', () => {
+    const dir = join(ROOT, 'plugin/skills');
+    const bad = readdirSync(dir).filter(d => existsSync(join(dir, d, 'SKILL.md'))).filter(d => !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(d));
+    expect(bad).toEqual([]);
+  });
+
+  test('one plugin at the repo root: no Cursor marketplace manifest until variants are verified in Cursor', () => {
+    expect(existsSync(join(ROOT, '.cursor-plugin/marketplace.json'))).toBe(false);
   });
 });
 
@@ -235,11 +283,12 @@ describe('launcher (static)', () => {
     expect(text).not.toMatch(/npm install -g gbrain(?!['\w-])(?![^\n]*unrelated)/);
   });
 
-  test('all three manifests reference the shared launcher (#4841)', () => {
+  test('every lane manifest references the shared launcher (#4841)', () => {
     expect(codexMcp.mcpServers.gbrain.command).toBe(LAUNCHER);
     expect(claudePlugin.mcpServers.gbrain.command).toBe('${CLAUDE_PLUGIN_ROOT}/.agents/gbrain-launcher');
     expect(openclawPlugin.mcpServers.gbrain.command).toBe(LAUNCHER);
     expect(openclawPlugin.mcpServers.gbrain.args).toEqual(['serve']);
+    expect(cursorPlugin.mcpServers?.gbrain?.command).toBe('${CURSOR_PLUGIN_ROOT}/.agents/gbrain-launcher');
   });
 
   test('the OpenClaw command is a TRACKED file, never a build artifact (#4841)', () => {

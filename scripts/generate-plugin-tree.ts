@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 /**
  * scripts/generate-plugin-tree.ts — generator for the committed `plugin/`
- * tree that the Codex and Claude Code plugin lanes ship as their skill set.
+ * tree that the Codex, Claude Code and Cursor plugin lanes ship as their
+ * skill set.
  *
  * Repo-only release/CI tooling — deliberately NOT wired into src/cli.ts
  * (same posture as generate-template-repo.ts). Consumers:
@@ -244,7 +245,7 @@ function pinnedSurface(args: unknown): string | undefined {
   const i = args.indexOf('--surface');
   return i >= 0 ? String(args[i + 1]) : undefined;
 }
-for (const file of ['.codex-plugin/mcp.json', '.claude-plugin/plugin.json']) {
+for (const file of ['.codex-plugin/mcp.json', '.claude-plugin/plugin.json', '.cursor-plugin/plugin.json']) {
   if (!existsSync(join(ROOT, file))) continue;
   const servers = (JSON.parse(readFileSync(join(ROOT, file), 'utf8')) as { mcpServers?: Record<string, { args?: unknown }> }).mcpServers;
   const pinned = pinnedSurface(servers?.gbrain?.args);
