@@ -16,7 +16,7 @@ import { disposePersistenceConsumer, startPersistenceConsumer } from '../src/cor
 import { claimNextWrite, getWriteRequestById } from '../src/core/persistence/journal.ts';
 import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { localHostId, revokeLocalWriter } from '../src/core/persistence/identity.ts';
-import { submitForgetMutation } from '../src/core/persistence/memory-mutations.ts';
+import { submitForgetMutation, submitRememberMutation } from '../src/core/persistence/memory-mutations.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { readJournalLimits } from '../src/core/persistence/limits.ts';
@@ -104,6 +104,49 @@ async function seedFacts(engine: BrainEngine, sourceId: string, slug: string, vi
     [sourceId, slug, `Example claim ${WORDS[i]}`, visibility, 0.9 - i / 10, `2026-01-0${i + 1}T00:00:00Z`, vector]);
   }
 }
+
+test('consolidate closes explicit remember replacement validity in its canonical fence, scoped and idempotent', async () => {
+  await fixture(async (engine, sourceId, root) => {
+    const ctx = { engine, sourceId, remote: false as const, config: { engine: engine.kind, embedding_disabled: true },
+      dryRun: false, logger: { info() {}, warn() {}, error() {} } };
+    const slug = 'cases/supersession-validity';
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug,
+      content: '---\ntype: case\ntitle: Supersession test\n---\nTEST money source: $100 then $200.', request_id: randomUUID() } });
+    const first = await submitRememberMutation(ctx, { fact: 'TEST charge is $100.', entity: slug, provenance: 'test source' });
+    const next = await submitRememberMutation(ctx, { fact: 'TEST charge is $200.', entity: slug, provenance: 'test correction', replaces: first.id });
+    const [before] = await engine.executeRaw<{ expired_at: Date; valid_until: Date | null; superseded_by: number }>(
+      'SELECT expired_at,valid_until,superseded_by FROM facts WHERE id=$1', [Number(first.id)]);
+    expect(before.expired_at).not.toBeNull();
+    expect(before.valid_until).toBeNull();
+    expect(Number(before.superseded_by)).toBe(Number(next.id));
+    const [replacement] = await engine.executeRaw<{ valid_from: Date }>('SELECT valid_from FROM facts WHERE id=$1', [Number(next.id)]);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    const preview = await runPhaseConsolidate(engine, { sourceId, dryRun: true });
+    expect((await engine.executeRaw<{ valid_until: Date | null }>('SELECT valid_until FROM facts WHERE id=$1', [Number(first.id)]))[0].valid_until).toBeNull();
+    const other = await runPhaseConsolidate(engine, { sourceId: 'default' });
+    expect((await engine.executeRaw<{ valid_until: Date | null }>('SELECT valid_until FROM facts WHERE id=$1', [Number(first.id)]))[0].valid_until).toBeNull();
+    const applied = await runPhaseConsolidate(engine, { sourceId });
+    const [after] = await engine.executeRaw<{ expired_at: Date; valid_until: Date; superseded_by: number }>(
+      'SELECT expired_at,valid_until,superseded_by FROM facts WHERE id=$1', [Number(first.id)]);
+    expect(after.valid_until).not.toBeNull();
+    expect(new Date(after.valid_until).toISOString()).toBe(new Date(replacement.valid_from).toISOString());
+    expect(preview.details.supersession_validity).toMatchObject({ stamped: 1 });
+    expect(other.details.supersession_validity).toMatchObject({ stamped: 0 });
+    expect(applied.details.supersession_validity).toMatchObject({ stamped: 1 });
+    expect(Number(after.superseded_by)).toBe(Number(next.id));
+    const active = await engine.listFactsByEntity(sourceId, slug, { activeOnly: true });
+    expect(active.map(f => f.id)).toEqual([Number(next.id)]);
+    const page = (await engine.readPageSnapshot(slug, { sourceId }))!;
+    expect(readFileSync(join(root, slug + '.md'), 'utf8')).toContain(new Date(after.valid_until).toISOString());
+    expect((await runPhaseConsolidate(engine, { sourceId })).details.supersession_validity).toMatchObject({ stamped: 0 });
+    expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(page.revision);
+    // A later canonical rewrite/reprojection must keep the validity stamp.
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug,
+      content: serializePageToMarkdown(page.page, page.tags), expected_revision: page.revision, request_id: randomUUID() } });
+    const [reprojected] = await engine.executeRaw<{ valid_until: Date }>('SELECT valid_until FROM facts WHERE id=$1', [Number(first.id)]);
+    expect(new Date(reprojected.valid_until).toISOString()).toBe(new Date(after.valid_until).toISOString());
+  });
+}, 60_000);
 
 test('runCycle consolidates only its explicitly selected source across two eligible source clusters', async () => {
   await fixture(async (engine, sourceId, root) => {

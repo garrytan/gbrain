@@ -31,6 +31,7 @@ import { claimsDiverge, EXPLICIT_DUPLICATE_THRESHOLD } from '../../facts/capture
 import { sameInstantTies, type SameInstantTie } from '../../facts/claim-ties.ts';
 import { createHash } from 'node:crypto';
 import { isAborted } from '../../abort-check.ts';
+import { closeSupersededValidity } from '../supersession-validity.ts';
 import { classifyItemFailure, ItemRun } from '../../item-failure.ts';
 import { maintenancePreflight, submitMaintenanceConsolidation } from '../../persistence/prepared-maintenance.ts';
 import { clearConsolidationTies, consolidationRestored, factPreimages, holdConsolidationTie, recordConsolidationGeneration } from '../../generations/adapters/fact-rows.ts';
@@ -146,6 +147,8 @@ export async function runPhaseConsolidate(
   const disabled = await disabledSkip(engine, opts);
   if (disabled) return disabled;
   const dryRun = opts.dryRun === true;
+  const validity = await closeSupersededValidity(engine, { sourceId: opts.sourceId, dryRun,
+    stopped: () => isAborted(opts.signal) });
   const managed = await managedPersistenceEnabled(engine);
   const { threshold, thresholdInvalid } = await resolveClusterThreshold(engine, opts.clusterThreshold);
   const minPerBucket = opts.minFactsPerBucket ?? 3;
@@ -419,6 +422,7 @@ export async function runPhaseConsolidate(
       (clustersHeldSameInstant ? `; held ${clustersHeldSameInstant} cluster(s) whose typed claims state one metric for the same effective time (details.same_instant_clusters)` : ''),
     details: {
       dryRun,
+      supersession_validity: validity,
       cluster_threshold: threshold,
       untyped_cluster_threshold: untypedClusterThreshold(threshold),
       ...(thresholdInvalid !== undefined ? { cluster_threshold_invalid: thresholdInvalid } : {}),
