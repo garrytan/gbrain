@@ -390,18 +390,27 @@ test('interrupted publication preserves private recovery staging and refuses an 
 test('a changing managed file inventory prevents backup publication and preserves the brain', async () => {
   const output = join(temporary, 'changing-files.gbrain-backup');
   const added = join(root, 'memory', 'concurrent-writer.md');
+  let injected = false;
   const connect = PGLiteEngine.prototype.connect;
   const probe = spyOn(PGLiteEngine.prototype, 'connect').mockImplementation(async function (this: PGLiteEngine, config) {
     await connect.call(this, config);
-    const dump = this.db.dumpDataDir.bind(this.db);
-    this.db.dumpDataDir = async (...args) => {
-      const result = await dump(...args);
-      writeFileSync(added, '# A source file added during the database snapshot\n');
+    // A backup must stay streamable when the database is too large to buffer.
+    // Existing roundtrips alone also pass through the old whole-cluster dump.
+    this.db.dumpDataDir = async () => { throw new Error('Whole-cluster dump cannot fit in this fixture'); };
+    const filesystem = this.db.Module.FS;
+    const read = filesystem.read.bind(filesystem);
+    filesystem.read = (...args: Parameters<typeof filesystem.read>) => {
+      const result = read(...args);
+      if (!injected && args[0].path === '/pglite/data/PG_VERSION') {
+        injected = true;
+        writeFileSync(added, '# A source file added during the database snapshot\n');
+      }
       return result;
     };
   });
   try { await expect(createPgliteBackup({ root, output })).rejects.toMatchObject({ code: 'writers_active' }); }
   finally { probe.mockRestore(); rmSync(added, { force: true }); }
+  expect(injected).toBe(true);
   expect(existsSync(output)).toBe(false);
   expect(await withBrain(root, e => e.executeRaw('SELECT fact FROM facts'))).toContainEqual({ fact: 'unique DB-only durable fact' });
 });
