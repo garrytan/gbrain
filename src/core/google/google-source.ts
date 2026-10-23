@@ -179,7 +179,7 @@ async function processThread(
   });
   seen.thread = thread;
   summary.threadsSeen++;
-  const rendered = renderThreadPage(thread);
+  const rendered = renderThreadPage(thread, { importAutomated: deps.importAutomated });
   // Pure noise renders no page AND skips detection — an all-noise thread
   // produces an empty verdict anyway, so nothing opens and nothing closes.
   if (!rendered) return thread;
@@ -744,7 +744,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
   const people = new PeopleClient(...clientArgs);
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   const tick = (note: string): void => progress.tick(1, note);
-  const deps: GoogleSyncDeps = { engine, sourceId, cfg, opts, entry, log, tick, exclusion: NO_EXCLUSION, extractCandidates: [], managed, processedThreads: new Set() };
+  const deps: GoogleSyncDeps = { engine, sourceId, cfg, opts, importAutomated: cfg.importAutomated === true, entry, log, tick, exclusion: NO_EXCLUSION, extractCandidates: [], managed, processedThreads: new Set() };
 
   const summary: GoogleSyncSummary = {
     status: 'synced',

@@ -43,6 +43,8 @@ export interface GoogleSourceConfig {
   services: GoogleService[];
   /** Backfill/reconcile window in days (default 90). */
   historyDays: number;
+  /** Keep all-automated Gmail threads (`g_import_automated`); unset defaults to false. */
+  importAutomated?: boolean;
   /**
    * How far ahead calendar pages are kept, in days (`g_future_days`, 1..3650).
    * Present only when the source sets it, so an unset knob leaves every

@@ -239,14 +239,22 @@ export interface RenderedPage {
   markdown: string;
 }
 
+export interface RenderThreadOptions {
+  /** Keep threads whose every sender is automated (noreply, donotreply, ...). They render with
+   *  `automated: true` so a later judge can tell them apart. Off by default: upstream behaviour. */
+  importAutomated?: boolean;
+}
+
 /**
  * Render one Gmail thread as a page. Returns null for pure noise (every
- * message from a noise sender) — those threads never materialize.
+ * message from a noise sender) — those threads never materialize — unless
+ * `importAutomated` is set for a source that keeps automated notices.
  */
-export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
+export function renderThreadPage(thread: GmailThreadData, opts: RenderThreadOptions = {}): RenderedPage | null {
   if (thread.messages.length === 0) return null;
   const nonNoise = thread.messages.filter((m) => !isNoiseSender(m.fromAddress));
-  if (nonNoise.length === 0) return null;
+  const automated = nonNoise.length === 0;
+  if (automated && !opts.importAutomated) return null;
 
   const first = thread.messages[0];
   const last = thread.messages[thread.messages.length - 1];
@@ -281,6 +289,7 @@ export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
     `senders: ${yamlList([...senders].sort())}`,
     `labels: ${yamlList([...new Set(thread.messages.flatMap((m) => m.labelIds))].sort())}`,
     ...(signature ? [`noise: signature-request`] : []),
+    ...(automated ? [`automated: true`] : []),
     '---',
   ];
 
