@@ -124,6 +124,8 @@ const JSON_ROWS: Record<string, JsonRow> = {
   trust: { ok: ['trust', 'backfill', '--dry-run', '--json'], fail: ['trust', 'explain', 'f999999', '--json'], failOnBrain: true },
   // W1 belief ledger: status is read-only; an unknown source is an invalid_params envelope.
   beliefs: { ok: ['beliefs', 'status', '--source', 'notes', '--json'], fail: ['beliefs', 'status', '--source', 'no-such-source', '--json'], failOnBrain: true },
+  // GBRA-151: the bundle is read-only and bounded; a budget that is not a positive number is an invalid_params envelope.
+  diag: { ok: ['diag', '--json', '--budget-ms', '20000'], fail: ['diag', '--json', '--budget-ms', '0'], failOnBrain: true },
   // D8: the dry run resolves and prints the target without writing; an unwired harness id is a coded refusal.
   setup: { ok: ['setup', 'claude-code', '--dry-run', '--json', '--gbrain-bin', process.execPath], fail: ['setup', 'codex', '--json'], okOnEmpty: true },
 };

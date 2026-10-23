@@ -2231,6 +2231,16 @@ gbrain repair file-drift --source <id> --held --side deleted --state file_gone -
 gbrain repair file-drift --source <id> --held --side deleted --state file_gone --provenance deleted_by_commit --prefer file
 ```
 
+A `deleted_by_commit` page whose revision is not file-backed (written in the
+database after its file last held it: not the revision sync last imported from
+the file, and not one a committed sync or Git-published write produced; for a
+page no import record covers, written after the commit that deleted its file) is
+listed apart as `database_ahead_of_file` and not soft-deleted, since it holds
+the only copy of that content. Recreate its file with
+`gbrain repair file-drift --source <id> --slug <slug> --prefer database`, or
+keep it. `gbrain repair ghost-pages` lists such a page apart the same way, and
+the soft-delete itself refuses one (`refused`, `database_ahead_of_file`).
+
 `--provenance never_committed --prefer file` is refused: it would soft-delete
 the only copy of each page. A database-only page is no longer screened against
 a file; a file synced back at its old path binds it again. The apply re-checks

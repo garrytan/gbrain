@@ -83,7 +83,7 @@ import { DETACHED_REASON } from '../persistence/detached-pages.ts';
 import { DELETION_PROVENANCES, readDeletionProvenance, type DeletionProvenance } from '../persistence/sync-origin-evidence.ts';
 import { ghostPageNow, scanGhostSource, type GhostOwner, type GhostPage } from '../ghost-pages.ts';
 import { MASS_RECONCILE_MIN_PAGES, MASS_RECONCILE_RATIO, massReconcileAllowed } from '../sync-reconcile.ts';
-import { GHOST_PURGE_FUSE_HOURS, GHOST_REPAIR_LIMIT, ghostScanRefusal, massGhosts, massRefusal, retireGhost } from './ghost-pages.ts';
+import { DATABASE_AHEAD_CODE, databaseAheadDetail, ghostFileBacked, GHOST_PURGE_FUSE_HOURS, GHOST_REPAIR_LIMIT, ghostScanRefusal, massGhosts, massRefusal, retireGhost } from './ghost-pages.ts';
 import { prepareReconcileResult } from '../persistence/reconcile-prepare.ts';
 import { canonicalOriginPage, originConflictMessage, originTwinsFix } from '../persistence/origin-guard.ts';
 import { assertReconcileOutputPath, assertReconcileSize } from '../persistence/reconcile-backup.ts';
@@ -517,6 +517,7 @@ async function fileGonePage(engine: BrainEngine, sourceId: string, slug: string,
     return { page: { slug, prefer: 'database', exceptions: [], detach_page: { path: now.ghost.path, page_id: now.ghost.page_id, revision: now.ghost.revision, observed_at: target.hold.observed_at } },
       detail: `keeps the page database-only: no commit ever held ${now.ghost.path}, so the page holds the only copy; no file is written and the page forgets that path` };
   }
+  if (opts.prefer === 'file' && !await ghostFileBacked(engine, now.ghost, now.owner)) return { skip: DATABASE_AHEAD_CODE, detail: databaseAheadDetail(now.ghost) };
   if (opts.prefer === 'file') return { page: { slug, prefer: 'file', exceptions: [], soft_delete: { ghost: now.ghost, owner: now.owner } },
     detail: `soft-deletes the page: its file ${now.ghost.path} is gone from the last commit (purged after ${GHOST_PURGE_FUSE_HOURS} h; gbrain restore ${slug} --force undoes it until then)` };
   const page = await prepareDriftPage(engine, sourceId, slug, 'database', assessmentAt, { fileGone: true });

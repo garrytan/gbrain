@@ -37,7 +37,7 @@ import { clampSearchLimit } from '../core/engine.ts';
 import { effectiveConfidence } from '../core/facts/decay.ts';
 import { resolveEntitySlug } from '../core/entities/resolve.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
-import { callRemoteTool, RemoteMcpError, unpackToolResult } from '../core/mcp-client.ts';
+import { RemoteMcpError } from '../core/remote-mcp-error.ts';
 import { readRecallCursor, writeCursor, writePagedCursor, type RecallCursor } from '../core/recall-cursor-state.ts';
 import { resolveSourceId, resolveSourceIdEngineFree, SourceTargetError } from '../core/source-resolver.ts';
 import { usageError } from '../cli/cli-error.ts';
@@ -491,9 +491,9 @@ async function recallVerbResult(engine: BrainEngine, flags: ParsedFlags, sourceI
       ...(flags.pending ? { include_pending: true } : {}),
     } : {}),
   };
-  return (oneShot && isThinClient(ctx.config)
-    ? unpackToolResult(await callRemoteTool(ctx.config, 'recall', params, { timeoutMs: 30_000 }))
-    : await op.handler(ctx, params)) as RecallVerbResult;
+  if (!oneShot || !isThinClient(ctx.config)) return await op.handler(ctx, params) as RecallVerbResult;
+  const { callRemoteTool, unpackToolResult } = await import('../core/mcp-client.ts');
+  return unpackToolResult(await callRemoteTool(ctx.config, 'recall', params, { timeoutMs: 30_000 })) as RecallVerbResult;
 }
 
 export async function renderRecallVerbResult(flags: ParsedFlags, result: RecallVerbResult): Promise<void> {
@@ -686,6 +686,7 @@ async function runRecallOnce(
 
   if (thinClient) {
     const cfg = loadConfig();
+    const { callRemoteTool, unpackToolResult } = await import('../core/mcp-client.ts');
     const params: Record<string, unknown> = {
       limit: flags.limit,
       include_expired: flags.includeExpired,
@@ -1213,6 +1214,7 @@ export async function runForget(engine: BrainEngine | (() => Promise<BrainEngine
   // remote brain.
   const cfg = loadConfig();
   if (isThinClient(cfg)) {
+    const { callRemoteTool, unpackToolResult } = await import('../core/mcp-client.ts');
     try {
       if (sourceValue) throw opError('invalid_params', '--source cannot override the remote memory writer grant.',
         'Drop --source: on a remote brain the connection\'s memory writer grant decides the source.',

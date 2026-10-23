@@ -2,7 +2,7 @@
  * Agent contract v1 D3/D4 (CLI-only half): curated help specs, their renderer
  * and the typed flag-value validator built from them.
  *
- * Protects: the 7 ops-critical commands carry a curated spec whose flags the
+ * Protects: the 8 ops-critical commands carry a curated spec whose flags the
  * acceptance registry accepts (so help never advertises a flag the CLI then
  * rejects), `--yes` is listed wherever the handler parses it, the rendered
  * help shows type/values/consent, `curatedFlagError` turns a NaN number or an
@@ -22,7 +22,7 @@ import { loadCuratedHelp, renderCuratedHelp } from '../src/cli/help/render.ts';
 import { curatedFlagError } from '../src/cli/help/validate.ts';
 import { unknownFlagError } from '../src/cli/cli-error.ts';
 
-const OPS_CRITICAL = ['apply-migrations', 'autopilot', 'doctor', 'import', 'onboard', 'serve', 'status'];
+const OPS_CRITICAL = ['apply-migrations', 'autopilot', 'diag', 'doctor', 'import', 'onboard', 'serve', 'status'];
 /** Handlers that parse `--yes` (doctor --remediate, apply-migrations parseArgs). */
 const PARSES_YES = ['apply-migrations', 'doctor'];
 

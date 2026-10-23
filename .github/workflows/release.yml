@@ -91,7 +91,7 @@ jobs:
             src/core/behavior-change-notice.ts
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
       # A since: 'TBD' BEHAVIOR_CHANGES row never ships (scripts/check-behavior-since.ts).
       - name: Refuse a since 'TBD' BEHAVIOR_CHANGES row
         run: bun scripts/check-behavior-since.ts --stamped
@@ -126,7 +126,7 @@ jobs:
           ref: ${{ needs.ci-gate.outputs.sha }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
       - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/.bun/install/cache
@@ -287,7 +287,7 @@ jobs:
       - if: steps.gate.outputs.publish == 'true'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
       - if: steps.gate.outputs.publish == 'true'
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
@@ -370,7 +370,7 @@ jobs:
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
       - name: Install dependencies (bounded, retried once)
         timeout-minutes: 8
         run: bun scripts/ci-bun-install.ts --frozen-lockfile

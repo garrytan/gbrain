@@ -28,6 +28,7 @@ import { defineNormalizer, mapStrings, scrubKeys, scrubPaths, scrubTimestamps } 
 import { PROVIDER_ENV_KEYS } from './provider-env.ts';
 import { MIGRATIONS } from '../../src/core/schema-migrations/registry.generated.ts';
 import { SEGMENTED_WRITER_FLOOR } from '../../src/core/page-body/writer-floor.ts';
+import { SECURE_BUN_VERSION } from '../../src/core/runtime-version.ts';
 
 const REPO_ROOT = join(import.meta.dir, '..', '..');
 const CLI = join(REPO_ROOT, 'src', 'cli.ts');
@@ -161,6 +162,13 @@ const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g
 const VOLATILE_KEYS = /(^|_)(ms|pid|elapsed|duration|uptime)$|_ms$|^elapsed|^table_bytes$|^oldest_age_seconds$/i;
 
 export function normalizeDoctorText(text: string, roots: Record<string, string>, extra: Array<[RegExp | string, string]> = []): string {
+  if (Bun.semver.order(Bun.version, SECURE_BUN_VERSION) < 0) {
+    throw new Error([
+      `FAIL: the doctor goldens are recorded on Bun ${SECURE_BUN_VERSION} or newer, and this run is Bun ${Bun.version}.`,
+      `Why:  below ${SECURE_BUN_VERSION} the bun_runtime row warns about CVE-2026-111497 (#7373), which changes the row, the score and the top issues.`,
+      'Fix:  bun upgrade, then rerun this test (CI and the Ubicloud gate pin the build runtime).',
+    ].join('\n'));
+  }
   let out = scrubPaths(text, roots);
   for (const [pattern, label] of extra) out = typeof pattern === 'string' ? out.split(pattern).join(label) : out.replace(pattern, label);
   out = scrubTimestamps(out).replace(UUID, '<uuid>');

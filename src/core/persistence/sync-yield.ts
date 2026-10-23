@@ -29,6 +29,16 @@ export function loopYield(): LoopYield {
   };
 }
 
+/**
+ * #7355: `step` that also reports from its pauses, at most once per `everyMs`: a level read that screens a large source for
+ * minutes before its first commit tells the drain's in-pass governor it is working, as a commit does.
+ */
+export function progressYield(step: LoopYield, onProgress: (() => void) | undefined, everyMs = 1_000): LoopYield {
+  if (!onProgress) return step;
+  let last = performance.now();
+  return { due: step.due, over: step.over, pause: async () => { await step.pause(); if (performance.now() - last >= everyMs) { last = performance.now(); onProgress(); } } };
+}
+
 /** How often the shared budget's clock notes that timers ran, and for how many ticks it keeps going once nothing asks. */
 const TURN_TICK_MS = 4, TURN_QUIET_TICKS = 25;
 

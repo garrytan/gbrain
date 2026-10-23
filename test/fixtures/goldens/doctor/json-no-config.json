@@ -17,6 +17,7 @@
         "errors",
         "no_brain"
       ],
+      "elapsed_ms": "<volatile>",
       "error": "no_brain",
       "fix": {
         "actor": "agent",
@@ -37,6 +38,7 @@
       "suggestion": "Run `gbrain init --pglite --no-embedding` for a local keyless brain, or `gbrain init --help` for hosted and Postgres options."
     },
     "stderr": [
+      "[gbrain] reading doctor checks; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready.",
       "GBRAIN_DB_ACCESS no_url",
       "Error [no_brain]: No brain configured. Run: gbrain init",
       "Fix: gbrain init --pglite --no-embedding"

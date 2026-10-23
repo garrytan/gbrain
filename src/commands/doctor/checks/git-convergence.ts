@@ -121,7 +121,7 @@ function probe(root: string, sourceIds: string[], now: number, tracked: Map<stri
 }
 
 /** Every non-archived filesystem source root plus `sync.repo_path`, with the source ids that name each root. */
-async function sourceRoots(engine: BrainEngine): Promise<Map<string, string[]>> {
+export async function sourceRoots(engine: BrainEngine): Promise<Map<string, string[]>> {
   const sources = await engine.executeRaw<{ id: string; local_path: string | null; config: unknown }>(
     'SELECT id, local_path, config FROM sources WHERE archived IS NOT TRUE AND local_path IS NOT NULL ORDER BY id');
   const roots = new Map<string, string[]>();

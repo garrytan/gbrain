@@ -59,7 +59,8 @@ timings: 74ms total — setup 1, lexical 12, relational 0, embed 0, vector 16, f
 | `total_ms` | Wall time of the whole operation, measured on its own clock after the response is assembled. |
 | `stages_ms` | Time the request spent blocked in each stage that ran: `setup` (scope, config, mode), `lexical`, `relational`, `expansion`, `embed`, `vector`, `fuse`, `post_fusion` (boosts, dedup, identity tiers, return sizing), `rerank`, `alias_fanout`, `anchoring`, `facts_arm` (query), `response` (evidence delivery, response metadata, redaction). A second search the operation runs (a retry, a CRAG re-run) adds to the same stages; the alias fan-out's keyword searches count under `alias_fanout`. |
 | `other_ms` | Time no stage claimed. `sum(stages_ms) + other_ms = total_ms`. |
-| `overlapped_ms` | Work that ran alongside a stage, so it is not added to the total: the keyword and title arms run in parallel inside `lexical` (`keyword_arm`, `title_arm`), `search`'s total-match count runs alongside the whole request (`keyword_count`), and the vector side (query expansion, the query embed and the vector search) starts with the lexical arms, so the part of `expansion`, `embed` and `vector` that finished while they ran is listed here under the stage's name. The rest of those stages, the part the request had to wait for, stays in `stages_ms`. |
+| `overlapped_ms` | Work that ran alongside a stage, so it is not added to the total: the keyword and title arms run in parallel inside `lexical` (`keyword_arm`, `title_arm`), `search`'s total-match count runs alongside the whole request (`keyword_count`), and the vector side (query expansion, the query embed and the vector search) starts with the lexical arms, so the part of `expansion`, `embed` and `vector` that finished while they ran is listed here under the stage's name. The rest of those stages, the part the request had to wait for, stays in `stages_ms`. The response metadata's concurrent reads are listed as `meta_saved_facts`, `meta_entity_facts`, `meta_held`, `meta_readiness`, `meta_freshness`, `meta_embedding_held`, `meta_safe_index` and `meta_filter_hint`; `response.meta` waits for the slowest of them. |
+| `parts_ms` | Present when a stage records its steps: `response` splits into `evidence` (evidence delivery), `trust` (the page-trust stamp), `meta` (the response metadata), `keyword_count` (the wait for `search`'s total-match count) and `feedback` (the answer-feedback record). Parts run one after another and never overlap, so they sum to at most the stage; the rest of `response` is redaction, snippet caps and row projection. `stages_ms.response` keeps its whole time. |
 
 All values are integer milliseconds.
 
@@ -75,7 +76,7 @@ adds one `timings:` line on stderr.
 `connect` (opening the brain), `context` (operation context and source
 resolution), `remote` (a thin client's round trip to its server), `op` (the
 operation's `total_ms`), `stages` (its `stages_ms` plus `other`),
-`overlapped` and `cli_other` (CLI time in no phase: formatting, notices). A
+`overlapped`, `parts` (the operation's `parts_ms`) and `cli_other` (CLI time in no phase: formatting, notices). A
 phase that did not run is absent; `0` means it took under half a
 millisecond. On a thin client `op` and `stages` are the server's.
 

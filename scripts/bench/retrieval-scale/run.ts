@@ -8,7 +8,7 @@
  *     [--direct-url postgresql://...:5434/bench_retrieval_300k] [--n 20] [--warmup 3] \
  *     [--ops search,query,get,recall] [--modes cold,warm] [--search-mode tokenmax] \
  *     [--embed-ms 0] [--rerank-ms 0] [--toxiproxy http://127.0.0.1:8474 --rtt-ms 40] [--trace] [--serve-cpu-prof <dir>] \
- *     [--tree <checkout>] [--keep] [--label <name>] [--out results.jsonl]
+ *     [--tree <checkout>] [--keep] [--label <name>] [--out results.jsonl] [--results calls.jsonl]
  *
  * --toxiproxy adds --rtt-ms of round-trip latency to its `pooler` proxy (vm-setup.sh
  * creates it on 127.0.0.1:6544 in front of PgBouncer); point --url at 6544 to use it.
@@ -56,6 +56,8 @@ const searchMode = flag('--search-mode', 'tokenmax')!;
 const label = flag('--label', manifest.db + (flag('--rtt-ms') ? '-rtt' + flag('--rtt-ms') : ''))!;
 const out = flag('--out');
 const trace = has('--trace');
+/** --results <file>: one JSONL line per warm call with its arguments and returned content (compare two trees' output). */
+const resultsOut = flag('--results');
 const log = (m: string) => console.error('[retrieval-run] ' + m);
 
 export const pct = (xs: number[], q: number) => { if (!xs.length) return NaN; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.ceil(q * s.length) - 1)]!; };
@@ -131,6 +133,7 @@ async function main() {
     if (trace) { row.startup_p50_ms = med('startup'); row.db_p50_ms = med('db'); row.tail_p50_ms = med('tail'); row.round_trips_p50 = med('trips'); }
     const stageNames = new Set(ok.flatMap(x => Object.keys(x.stages ?? {})));
     if (stageNames.size) row.stages_p50_ms = Object.fromEntries([...stageNames].map(k => [k, r0(pct(ok.map(x => x.stages?.[k] ?? 0), 0.5))]));
+    if (stageNames.size) row.stages_p95_ms = Object.fromEntries([...stageNames].map(k => [k, r0(pct(ok.map(x => x.stages?.[k] ?? 0), 0.95))]));
     const worst = s.reduce((w, x, i) => (x.ok && x.ms > s[w]!.ms ? i : w), 0);
     if (s[worst]) row.slowest = { i: worst, ms: r0(s[worst]!.ms), target: op === 'get' ? pk(worst).slug : q(worst + opBase(op)), ...(s[worst]!.stages ? { stages: s[worst]!.stages } : {}) };
     rows.push(row);
@@ -224,7 +227,12 @@ async function main() {
         const timings = r?.result?._meta?.retrieval?.timings;
         const trips = trace ? await tripsBetween(performance.timeOrigin + t0, performance.timeOrigin + t0 + ms) : undefined;
         if (trace) appendFileSync(join(home, 'warm-calls.jsonl'), JSON.stringify({ op, t0: performance.timeOrigin + t0, t1: performance.timeOrigin + t0 + ms }) + '\n');
-        return { ms, ok: !r.error && !r.result?.isError, ...(trips !== undefined ? { trips } : {}), ...(timings ? { stages: { ...timings.stages_ms, other: timings.other_ms, total: timings.total_ms } } : {}) };
+        if (resultsOut) {
+          const { timings: _t, cost: _c, ...retrieval } = r?.result?._meta?.retrieval ?? {};
+          appendFileSync(resultsOut, JSON.stringify({ op, i, arguments: args, content: r?.result?.content, meta: { ...r?.result?._meta, retrieval } }) + '\n');
+        }
+        const parts = Object.entries(timings?.parts_ms ?? {}).flatMap(([stage, byPart]) => Object.entries(byPart as Record<string, number>).map(([part, v]) => [stage + '.' + part, v]));
+        return { ms, ok: !r.error && !r.result?.isError, ...(trips !== undefined ? { trips } : {}), ...(timings ? { stages: { ...timings.stages_ms, ...Object.fromEntries(parts), other: timings.other_ms, total: timings.total_ms } } : {}) };
       };
       for (let i = 0; i < WARMUP; i++) await call(2000 + i);
       const samples: Sample[] = [];

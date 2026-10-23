@@ -9,7 +9,7 @@ import { execFileSync, spawn } from 'child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { acquireCommitLock, commitAndPush, commitPathsLocked, pullShared, readIntegrateConflict } from '../src/core/git/commit-push.ts';
+import { acquireCommitLock, commitAndPush, commitPathsLocked, pullShared, readIntegrateConflict, readPendingWriteThrough } from '../src/core/git/commit-push.ts';
 import { getLastPushOutcome } from '../src/core/brain-repo-durability.ts';
 
 let root: string;
@@ -374,19 +374,28 @@ exec "${Bun.which('git')}" "$@"
     expect(existsSync(join(a, '.git', 'brain-publish.requested'))).toBe(false);
   }, 60_000);
 
-  test('write-through commits still land path-scoped when another writer holds the lock past the short budget', async () => {
+  test('write-through never commits without the lock: a holder past the short budget leaves the file pending, and the next locked write-through commits it', async () => {
     const { a } = setup();
     const lockPath = join(a, '.git', 'brain-commit.lock');
     writeFileSync(lockPath, '');
-    const holder = spawn('flock', [lockPath, 'sleep', '20'], { stdio: 'ignore' });
+    const holder = spawn('flock', ['-o', lockPath, 'sleep', '20'], { stdio: 'ignore' });
+    const head = git(a, 'rev-parse', 'HEAD');
     try {
       await new Promise(r => setTimeout(r, 300));
       writeFileSync(join(a, 'x.md'), 'page write\n');
       writeFileSync(join(a, 'y.md'), 'other writer\n');
-      expect(commitPathsLocked(a, [join(a, 'x.md')], 'gbrain: write-through x', { lockWaitMs: 200 })).not.toBeNull();
-      expect(git(a, 'show', 'HEAD:x.md')).toBe('page write');
-      expect(status(a)).toBe(' M y.md');
+      expect(() => commitPathsLocked(a, [join(a, 'x.md')], 'gbrain: write-through x', { lockWaitMs: 200 })).toThrow(expect.objectContaining({ code: 'commit_lock_busy' }));
+      expect(git(a, 'rev-parse', 'HEAD')).toBe(head);
+      expect(status(a)).toBe(' M x.md\n M y.md');
+      expect(readPendingWriteThrough(a).map(e => e.path)).toEqual(['x.md']);
     } finally { holder.kill('SIGKILL'); }
+    await new Promise(r => setTimeout(r, 200));
+    writeFileSync(join(a, 'z.md'), 'next page write\n');
+    expect(commitPathsLocked(a, [join(a, 'z.md')], 'gbrain: write-through z', { lockWaitMs: 2000 })).not.toBeNull();
+    expect(git(a, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort()).toEqual(['x.md', 'z.md']);
+    expect(git(a, 'show', 'HEAD:x.md')).toBe('page write');
+    expect(status(a)).toBe(' M y.md');
+    expect(readPendingWriteThrough(a)).toEqual([]);
   }, 30_000);
 });
 

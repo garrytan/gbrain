@@ -4,6 +4,13 @@
  */
 export const MINIMUM_BUN_VERSION = '1.4.0';
 
+/**
+ * First Bun with the Brotli decoder fix for CVE-2026-111497 (oven-sh/bun#46392),
+ * reachable through fetch() with `Content-Encoding: br` and the decompression
+ * APIs (#7373). Older supported runtimes still start; doctor warns.
+ */
+export const SECURE_BUN_VERSION = '1.4.4';
+
 export const BUN_VERSION_RE = /^(\d{1,4})\.(\d{1,4})\.(\d{1,4})(-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 /**

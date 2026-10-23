@@ -13,6 +13,7 @@ import { loadConfig, configDir, configPath, isThinClient } from '../core/config.
 import { getCliOptions } from '../core/cli-options.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { VERSION } from '../version.ts';
+import type { OperationMeta } from '../core/ops/contract.ts';
 import { cliSocketDir, cliSocketPath, connectProblem } from '../core/cli-socket/fs-guard.ts';
 import { cliSocketIdentity } from '../core/cli-socket/identity.ts';
 import { peerCredSupport, peerUid, type PeerCredSupport } from '../core/cli-socket/peer-cred.ts';
@@ -108,13 +109,11 @@ async function replay(frame: { output: OutputChunk[] }): Promise<void> {
   }
 }
 
-async function opRequest(command: string, args: string[]): Promise<{ op: import('../core/operations.ts').Operation; params: Record<string, unknown> } | string> {
+async function opRequest(command: string, args: string[]): Promise<{ op: OperationMeta; params: Record<string, unknown> } | string> {
   const { cliOps } = await import('./op-manifest.ts');
   const { cliAliases, parseOpArgs } = await import('./main.ts');
-  const meta = cliOps.get(command) ?? cliAliases.get(command);
-  if (!meta || !SOCKET_OPS[meta.name]) return 'not_a_socket_op';
-  const { loadOperation } = await import('../core/operation-load.ts');
-  const op = (await loadOperation(meta.name))!;
+  const op = cliOps.get(command) ?? cliAliases.get(command);
+  if (!op || !SOCKET_OPS[op.name]) return 'not_a_socket_op';
   const params = parseOpArgs(op, args);
   if (op.cliHints?.stdin && !params[op.cliHints.stdin]) return 'stdin_input';
   if (typeof params.image === 'string' && params.image.length > 0) return 'image_query';
@@ -162,7 +161,7 @@ function renderFailed(error: unknown): false {
 }
 
 /** Prints an answered op frame the way the cold path would; false (nothing printed) when the frame cannot be rendered. */
-export async function renderOp(command: string, op: import('../core/operations.ts').Operation, params: Record<string, unknown>, frame: Exclude<ResultFrame, { kind: 'fallback' }>): Promise<boolean> {
+export async function renderOp(command: string, op: OperationMeta, params: Record<string, unknown>, frame: Exclude<ResultFrame, { kind: 'fallback' }>): Promise<boolean> {
   const { formatResult, captureRetrievalMeta, maybePrintConceptNudge } = await import('./main.ts');
   const { applyCliOpNotices, captureOpNotice } = await import('./op-notices.ts');
   const { setCliExitVerdict, writeStdoutFinal } = await import('../core/cli-force-exit.ts');

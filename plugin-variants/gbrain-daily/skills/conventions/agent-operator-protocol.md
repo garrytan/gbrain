@@ -1028,7 +1028,26 @@ exactly one JSON document to stdout (or NDJSON lines for `eval export`,
 `eval replay`, `eval gate` and `bench-publish`); everything else goes to
 stderr. If such a command exits non-zero without writing its document, gbrain
 writes a fallback: `{error: "command_failed", code, message, suggestion,
-exit_code, contract_version: 1}`.
+exit_code, contract_version: 1}`. A signal (exit 129, 130 or 143) writes
+`error: "interrupted"` with `code: "interrupted"` instead: the command was cut
+off, and it read nothing. That is not an empty result.
+
+**Slow reads.** `sync status`, `sources status`, `doctor`, `orphans`,
+`anomalies`, `status` and `diag` can take minutes on a large brain. They print
+`[gbrain] reading <what>; large brains can take minutes` on stderr when they
+start and a `still reading` line every 10 s, so silence on stdout means "not
+ready yet". Their `--json` document carries `elapsed_ms` and `complete`. When
+`complete` is false, `incomplete` lists each field a budget or bound left out
+(`{field, reason}`, reason `not_read`, `bounded` or `budget`); read those
+fields as unknown, never as none. A signal mid-read prints
+`[gbrain] Interrupted by <signal> after N s while reading <what>` on stderr and,
+under `--json`, writes `{error: "interrupted", signal, read, elapsed_ms,
+complete: false}` at once. If your harness cut the call off, re-run it with a
+longer timeout, or run `gbrain diag --json`: it returns one bounded bundle
+(version and build skew, each source's freshness and HEAD lag, holds by code,
+database connections, one search's stage timing). Each of its sections carries
+`elapsed_ms` and a status: `ok`, `not_read` with its reason, `not_applicable`
+or `error`.
 
 ## A write refused `owner_unavailable` with `detail: unbound_source`
 

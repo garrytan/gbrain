@@ -34,17 +34,29 @@ async function audit(statuses: number[], env: Record<string, string> = {}) {
   return { status, out: out + err, calls };
 }
 
+/** Requests one `bun audit` makes against a registry that keeps answering 503: 1 on Bun 1.4.3, 6 on 1.4.4, which retries itself. */
+async function requestsPerAudit() {
+  plan = [503]; calls = 0;
+  const child = Bun.spawn(['bun', 'audit'], { cwd: ROOT, stdout: 'ignore', stderr: 'ignore', env: { ...process.env, BUN_CONFIG_REGISTRY: `http://127.0.0.1:${server.port}/` } });
+  await child.exited;
+  return calls;
+}
+
 test('a registry that keeps answering 503 is audit_registry_unavailable after bounded retries, never advisories', async () => {
+  const perAudit = await requestsPerAudit();
+  expect(perAudit).toBeGreaterThan(0);
   const run = await audit([503]);
   expect(run.status).toBe(1);
   expect(run.out).toContain('::error::audit_registry_unavailable');
   expect(run.out).toContain('- 503 (attempt 3)');
   expect(run.out).not.toContain('found advisories');
-  expect(run.calls).toBe(6);
-});
+  // Root and admin/, three attempts each.
+  expect(run.calls).toBe(2 * 3 * perAudit);
+}, 60_000);
 
 test('a 503 that recovers on retry is a clean audit', async () => {
-  const run = await audit([503, 200]);
+  // Every request of the first attempt fails, so the script's own retry is what recovers.
+  const run = await audit([...Array<number>(await requestsPerAudit()).fill(503), 200]);
   expect(run.status).toBe(0);
   expect(run.out).toContain('retrying in 0s');
   expect(run.out).toContain('bun audit: no advisories.');

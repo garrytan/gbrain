@@ -207,9 +207,10 @@ async function evidenceOutput(ctx: OperationContext, p: Record<string, unknown>,
     // Every returned row is a copy of one of `results`, so their page trust is read alongside evidence delivery.
     const pageTrust = loadPageTrust(ctx.engine, results.filter(r => typeof r.fact_row?.id !== 'number'));
     pageTrust.catch(() => {});
-    const ev = await withEvidence(ctx, p, results, plan, scope, meta);
-    const rows = await stampPageTrust(ctx.engine, keepEnumerated ? keepEnumeratedRows(results, ev.rows) : ev.rows, scope.minTrust, pageTrust);
-    return searchOutput(ctx, p, rows, await buildMeta(rows), snippetCap, timings, ev.evidence);
+    const ev = await timings.part('response', 'evidence', () => withEvidence(ctx, p, results, plan, scope, meta));
+    const rows = await timings.part('response', 'trust', () => stampPageTrust(ctx.engine, keepEnumerated ? keepEnumeratedRows(results, ev.rows) : ev.rows, scope.minTrust, pageTrust));
+    const responseMeta = await timings.part('response', 'meta', () => buildMeta(rows));
+    return searchOutput(ctx, p, rows, responseMeta, snippetCap, timings, ev.evidence);
   });
 }
 
@@ -380,34 +381,44 @@ async function matchingSavedFacts(ctx: OperationContext, scope: SourceScope, que
   if (terms.length === 0 || !ctx.emitResponseMeta) return [];
   const sources = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'];
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
-  const visibility = `${ctx.remote !== false ? `AND f.visibility = 'world'` : ''} ${excludePrivate ? `AND ${privateProvenanceFilterFragment('f')}` : ''}
-         AND ${projectionEligibleSql('facts', 'f', { floor: scope.minTrust })}`;
   const active = `f.source_id = ANY($1::text[])
          AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
          AND f.source != ALL($2::text[])
-         ${visibility}`;
+         ${ctx.remote !== false ? `AND f.visibility = 'world'` : ''}`;
+  const eligible = `${excludePrivate ? `AND ${privateProvenanceFilterFragment('f')}` : ''}
+         AND ${projectionEligibleSql('facts', 'f', { floor: scope.minTrust })}`;
   try {
     // Most searches have no saved fact to find: the uncorrelated EXISTS is an indexed probe
     // (idx_facts_since) the planner runs once, before the LIKE ANY scan, and the scan is skipped
-    // when no fact qualifies; one statement, so one round trip either way.
-    const rows = await ctx.engine.executeRaw<SavedFactMatch & { haystack: string }>(
-      `SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source,
-         lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) AS haystack
-       FROM facts f
-       WHERE ${active}
-         AND lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) LIKE ANY($3::text[])
-         AND EXISTS (SELECT 1 FROM facts f WHERE ${active} LIMIT 1)
-       ORDER BY f.valid_from DESC, f.id DESC
-       LIMIT 200`,
-      [sources, [...AUDIT_ROW_SOURCES], terms.map(t => `%${t.replace(/[\\%_]/g, m => `\\${m}`)}%`)],
-    );
+    // when no fact qualifies; one statement, so one round trip either way. The probe reads the
+    // fact's own columns only: every row the scan returns passes it, so it never changes the
+    // result, and the page-eligibility filters stay on the scan, where they cost an index
+    // lookup per candidate. In the probe the planner joined them to the whole pages index.
+    // The term threshold is applied before the cut: a fact matching every term is never crowded
+    // out by newer facts that match only one.
     const need = Math.max(Math.min(2, terms.length), Math.ceil(terms.length * 0.75));
+    const rows = await ctx.engine.executeRaw<SavedFactMatch & { haystack: string; at: unknown; hits: unknown }>(
+      `SELECT * FROM (
+         SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, f.valid_from AS at,
+           lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) AS haystack,
+           (SELECT count(*) FROM unnest($3::text[]) AS t(pattern) WHERE lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) LIKE t.pattern) AS hits
+         FROM facts f
+         WHERE ${active}
+           ${eligible}
+           AND lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) LIKE ANY($3::text[])
+           AND EXISTS (SELECT 1 FROM facts f WHERE ${active} LIMIT 1)
+       ) m
+       WHERE m.hits >= $4::int
+       ORDER BY m.hits DESC, m.at DESC, m.id DESC
+       LIMIT 200`,
+      [sources, [...AUDIT_ROW_SOURCES], terms.map(t => `%${t.replace(/[\\%_]/g, m => `\\${m}`)}%`), need],
+    );
     return rows
       .map(r => ({ r, hits: terms.filter(t => r.haystack.includes(t)).length }))
       .filter(x => x.hits >= need)
       .sort((a, b) => b.hits - a.hits)
       .slice(0, 5)
-      .map(({ r: { haystack: _h, ...fact } }) => ({ ...fact, id: Number(fact.id) }));
+      .map(({ r: { haystack: _h, at: _a, hits: _n, ...fact } }) => ({ ...fact, id: Number(fact.id) }));
   } catch {
     return [];
   }
@@ -443,8 +454,10 @@ async function buildRetrievalResponseMeta(
   queryText: string,
   results: unknown[],
   meta: HybridSearchMeta | null,
-  opts: { conceptHint?: boolean; types?: string[]; typeFilterNotice?: string; declarations?: DeclarationMemo; feedbackOp?: 'query' | 'search'; entity?: ResolvedEntity; filterHintFor?: { op: 'search' | 'query'; p: Record<string, unknown> } } = {},
+  opts: { conceptHint?: boolean; types?: string[]; typeFilterNotice?: string; declarations?: DeclarationMemo; feedbackOp?: 'query' | 'search'; entity?: ResolvedEntity; filterHintFor?: { op: 'search' | 'query'; p: Record<string, unknown> }; timings?: SearchTimings } = {},
 ): Promise<Record<string, unknown>> {
+  // Each concurrent read below is reported in `overlapped_ms` under its own `meta_*` label.
+  const timed = <T>(label: string, work: T | Promise<T>): Promise<T> => opts.timings ? opts.timings.overlap(`meta_${label}`, Promise.resolve(work)) : Promise.resolve(work);
   const m = meta as (HybridSearchMeta & { degraded?: unknown[]; retrieved_count?: number }) | null;
   const hint = opts.conceptHint && looksConceptShaped(queryText)
     ? "concept-shaped question — the 'query' tool ranks the same and adds saved-fact rows and a confidence grade."
@@ -457,17 +470,17 @@ async function buildRetrievalResponseMeta(
   // #6721: these reads depend on nothing but the inputs above, so they run at once: on a pooled Postgres
   // the wall time is the slowest read's round trips, not their sum. The answer-feedback write still runs last.
   const [safeIndexPending, [readiness, pendingCount], entityFacts, matchedFacts, held, sourceFreshness, embeddingHeld, filterNotice] = await Promise.all([
-    ctx.remote !== false && hasUnsealedPagesInScope(ctx, scope, excludePrivate, { types: opts.types, excludeSlugPrefixes }),
-    probeProjectionReadiness(ctx.engine, readinessScope).then(async r =>
-      [r, r.status === 'projection_pending' ? await countPendingProjections(ctx.engine, readinessScope, relevance) : null] as const),
+    timed('safe_index', ctx.remote !== false && hasUnsealedPagesInScope(ctx, scope, excludePrivate, { types: opts.types, excludeSlugPrefixes })),
+    timed('readiness', probeProjectionReadiness(ctx.engine, readinessScope).then(async r =>
+      [r, r.status === 'projection_pending' ? await countPendingProjections(ctx.engine, readinessScope, relevance) : null] as const)),
     // Facts saved about the entity the query names come first (newest first, one hop through entities they name).
-    opts.entity && ctx.emitResponseMeta ? entitySavedFacts(ctx.engine, opts.entity, { remote: ctx.remote !== false, excludePrivate }) : [],
-    matchingSavedFacts(ctx, scope, queryText, aliases),
-    stampHeldHits(ctx.engine, results as SearchResult[], scope, relevance, ctx).catch(() => ({ coverage: [], couldAffect: 0 })),
+    timed('entity_facts', opts.entity && ctx.emitResponseMeta ? entitySavedFacts(ctx.engine, opts.entity, { remote: ctx.remote !== false, excludePrivate }) : []),
+    timed('saved_facts', matchingSavedFacts(ctx, scope, queryText, aliases)),
+    timed('held', stampHeldHits(ctx.engine, results as SearchResult[], scope, relevance, ctx).catch(() => ({ coverage: [], couldAffect: 0 }))),
     // GBRA-133 PR 2a.5: per-source freshness from the notifier's cached coverage record (no git call).
-    readSourceFreshness(ctx.engine, scope),
-    countEmbeddingHeld(ctx.engine, readinessScope, relevance),
-    opts.filterHintFor ? searchFilterHint(ctx, scope, excludePrivate, queryText, results as SearchResult[], opts.types, opts.filterHintFor) : null,
+    timed('freshness', readSourceFreshness(ctx.engine, scope)),
+    timed('embedding_held', countEmbeddingHeld(ctx.engine, readinessScope, relevance)),
+    timed('filter_hint', opts.filterHintFor ? searchFilterHint(ctx, scope, excludePrivate, queryText, results as SearchResult[], opts.types, opts.filterHintFor) : null),
   ]);
   const heldFiles = held.coverage;
   const topHitExact = pendingCount?.top_counted === false;
@@ -528,7 +541,7 @@ async function buildRetrievalResponseMeta(
     ...(coverage ? { coverage } : {}),
     ...(freshness.length ? { freshness } : {}),
     ...(hint || readinessHint ? { hint: [hint, readinessHint].filter(Boolean).join(' ') } : {}),
-    ...(opts.feedbackOp ? await searchAnswerFeedback(ctx, opts.feedbackOp, results as SearchResult[]) : {}),
+    ...(opts.feedbackOp ? await (opts.timings ? opts.timings.part('response', 'feedback', () => searchAnswerFeedback(ctx, opts.feedbackOp!, results as SearchResult[])) : searchAnswerFeedback(ctx, opts.feedbackOp, results as SearchResult[])) : {}),
   };
 }
 
@@ -786,8 +799,8 @@ const search: Operation = {
       await stampKeywordRows(ctx, results, { ...scope, excludePrivate }, queryText, startedAt, timings);
       // #3800: cap AFTER capture/meta so eval + cache see the real payload.
       return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, null, snippetCap, timings,
-        async rows => withCountMeta(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, null, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, filterHintFor: { op: 'search', p } }),
-          page ?? keywordCountMeta(await keywordCount!, offset + limit)), page !== null);
+        async rows => withCountMeta(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, null, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, filterHintFor: { op: 'search', p }, timings }),
+          page ?? keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount!), offset + limit)), page !== null);
     }
 
     // Cheap-hybrid (D4/D15): full vector+keyword+RRF+pool+title+alias, but
@@ -832,8 +845,8 @@ const search: Operation = {
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
     // #3800: cap AFTER capture/meta so eval + cache see the real payload.
     return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, capturedMeta, snippetCap, timings,
-      async rows => withCountMeta(withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'search', entity: fanned.entity, filterHintFor: { op: 'search', p } })), ...(fanned.fanout ? { fanout: fanned.fanout } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'search')),
-        keywordCountMeta(await keywordCount, offset + limit)));
+      async rows => withCountMeta(withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'search', entity: fanned.entity, filterHintFor: { op: 'search', p }, timings })), ...(fanned.fanout ? { fanout: fanned.fanout } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'search')),
+        keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount), offset + limit)));
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'search', positional: ['query'] },
@@ -1242,7 +1255,7 @@ const query: Operation = {
     // #3800: cap AFTER capture/meta/CRAG so every internal consumer graded
     // and recorded the real payload; only the returned envelope is snipped.
     return evidenceOutput(ctx, p, results, plan, { ...querySourceScope, excludePrivate, detail }, capturedMeta, snippetCap, timings,
-      async rows => withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query', entity: fanned.entity, filterHintFor: { op: 'query', p } })), crag, ...(fanned.fanout ? { fanout: fanned.fanout } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'query')));
+      async rows => withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query', entity: fanned.entity, filterHintFor: { op: 'query', p }, timings })), crag, ...(fanned.fanout ? { fanout: fanned.fanout } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'query')));
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'query', positional: ['query'] },

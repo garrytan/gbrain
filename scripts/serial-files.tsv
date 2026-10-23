@@ -204,6 +204,7 @@ test/fts-language-schema-replay.serial.test.ts	R1	R1: mutates process.env (GBRAI
 test/fts-language.serial.test.ts	R1	R1: mutates process.env (bracket or computed key)
 test/gateway-reconfigure-clobber.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/git-commit-push-6530.serial.test.ts	R1	R1: mutates process.env (GBRAIN_GIT_ALLOW_FILE_TRANSPORT, BRAIN_COMMIT_LOCK_HELD, GBRAIN_GIT_NO_MERGE_TREE, PATH for a racing git shim)
+test/git-writer-safety-7381.serial.test.ts	R1	R1: mutates process.env (GBRAIN_GIT_ALLOW_FILE_TRANSPORT, GBRAIN_GIT_NO_MERGE_TREE) for real git against local bare remotes and spawns the CLI and git hooks that read it
 test/git-listing-memo.serial.test.ts	R1	R1: puts a git-counting shim on process.env.PATH for every spawn in the process (git child processes inherit it, so withEnv cannot scope it)
 test/git-remote-durable.serial.test.ts	R1	R1: mutates process.env (GBRAIN_GIT_ALLOW_FILE_TRANSPORT)
 test/git-remote-pull-file-transport.serial.test.ts	R1	R1: mutates process.env (GBRAIN_GIT_ALLOW_FILE_TRANSPORT)

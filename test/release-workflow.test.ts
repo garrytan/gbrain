@@ -29,7 +29,7 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
   test('release compiler is covered by the required native runtime matrix', () => {
     const build = WORKFLOW.slice(WORKFLOW.indexOf('  build:'), WORKFLOW.indexOf('  release:'));
     const compiler = build.match(/bun-version:\s*(\S+)/)?.[1];
-    expect(compiler).toBe('1.4.3');
+    expect(compiler).toBe('1.4.4');
     const native = readFileSync(join(ROOT, '.github/workflows/native-locks.yml'), 'utf8');
     const matrices = [...native.matchAll(/bun:\s*\[([^\]]+)\]/g)];
     expect(matrices).toHaveLength(4);

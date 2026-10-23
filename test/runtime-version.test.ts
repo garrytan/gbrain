@@ -14,7 +14,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { MINIMUM_BUN_VERSION, assertSupportedBun, exitOnUnsupportedBun, unsupportedBunMessage } from '../src/core/runtime-version.ts';
+import { MINIMUM_BUN_VERSION, SECURE_BUN_VERSION, assertSupportedBun, exitOnUnsupportedBun, unsupportedBunMessage } from '../src/core/runtime-version.ts';
 import { checkBunRuntime } from '../src/commands/doctor/checks/upgrade-health.ts';
 
 const root = join(import.meta.dir, '..');
@@ -47,9 +47,28 @@ describe('Bun runtime floor', () => {
   });
 
   test('doctor reports the running Bun against the floor, with the fix on failure', () => {
-    expect(checkBunRuntime('1.4.2')).toEqual({ name: 'bun_runtime', status: 'ok', message: 'Bun 1.4.2 (minimum 1.4.0)' });
+    expect(checkBunRuntime('1.4.4')).toEqual({ name: 'bun_runtime', status: 'ok', message: 'Bun 1.4.4 (minimum 1.4.0)' });
+    expect(checkBunRuntime('1.5.0+abc123')).toEqual({ name: 'bun_runtime', status: 'ok', message: 'Bun 1.5.0+abc123 (minimum 1.4.0)' });
     expect(checkBunRuntime('1.3.14')).toEqual({ name: 'bun_runtime', status: 'fail', message: OLD_BUN_REFUSAL.replace('\n', ' ') });
-    expect(checkBunRuntime().status).toBe('ok');
+    expect(checkBunRuntime().status).toBe(Bun.semver.order(Bun.version, SECURE_BUN_VERSION) >= 0 ? 'ok' : 'warn');
+  });
+
+  test('#7373: a supported Bun without the Brotli fix warns with the CVE and the upgrade path for how gbrain is installed', () => {
+    expect(SECURE_BUN_VERSION).toBe('1.4.4');
+    for (const version of ['1.4.0', '1.4.3', '1.4.4-canary.2']) {
+      const standalone = checkBunRuntime(version, '/usr/local/bin/gbrain');
+      expect(standalone.status).toBe('warn');
+      expect(standalone.message).toStartWith(`Bun ${version} carries the Brotli decoder flaw CVE-2026-111497, fixed in Bun 1.4.4`);
+      expect(standalone.message).toContain('This gbrain binary embeds that Bun: install the latest gbrain binary (`gbrain upgrade`)');
+      expect(standalone.fix).toMatchObject({ argv: ['gbrain', 'upgrade'], actor: 'user', verify: { argv: expect.arrayContaining(['doctor']) } });
+      for (const runtime of ['/home/alice-example/.bun/bin/bun', 'C:\\Users\\alice-example\\.bun\\bin\\bun.exe', '/opt/bun-1.4.3/bun-linux-x64']) {
+        const viaBun = checkBunRuntime(version, runtime);
+        expect(viaBun.status).toBe('warn');
+        expect(viaBun.message).toEndWith('Run `bun upgrade`, then restart GBrain services.');
+        expect(viaBun.fix).toMatchObject({ argv: ['bun', 'upgrade'], actor: 'user' });
+      }
+    }
+    expect(MINIMUM_BUN_VERSION).toBe('1.4.0');
   });
 });
 

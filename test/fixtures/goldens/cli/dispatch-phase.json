@@ -547,6 +547,13 @@
         "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
+      "diag": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "doctor": {
         "hasSwitchCase": false,
         "phase": "pre-connect-own-engine",

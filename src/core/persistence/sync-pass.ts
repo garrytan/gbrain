@@ -43,7 +43,7 @@ import { buildConvergenceReceipt, readOnlySameContentScreen, type ConvergenceRec
 import { readManagedMode } from './ownership.ts';
 import { MANAGED_SYNC_PASS_OP, SYNC_ORIGIN_DELETED_OP, type SyncSelection } from './sync-pass-row.ts';
 import { faultPoint } from './fault-points.ts';
-import { filterYielding, loopYield, sortYielding, turnYield, type LoopYield } from './sync-yield.ts';
+import { filterYielding, loopYield, progressYield, sortYielding, turnYield, type LoopYield } from './sync-yield.ts';
 import { countsMatch, proveConfirm, readLevelMark, type ConfirmProof, type LevelMark } from './sync-pass-confirm.ts';
 import { domainCache, levelDomain, narrowedWalk, walkAttestations, type LevelDomainCache } from './sync-pass-narrow.ts';
 
@@ -74,6 +74,8 @@ export interface PassLevelInput {
   passId?: string;
   /** The pages whose import record the pass's previous round wrote (sync-pass-apply.ts `recorded`). */
   recorded?: ReadonlySet<number>;
+  /** #7355: called while the read works (its loops' pauses, at most once a second, and the origin history walk), so the drain sees progress before the first commit. */
+  onProgress?: () => void;
 }
 /** PGLite's keyset page size (design v3.2 §2.1). */
 const PGLITE_KEYSET_ROWS = 2_000;
@@ -462,17 +464,24 @@ async function readAttestations(exec: Exec, kind: 'postgres' | 'pglite', sourceI
   for (let i = 0; i < rows.length; i += size) {
     const chunk = rows.slice(i, i + size);
     statements++;
-    const found = await exec.executeRaw<{ page_id: number; arm1: boolean; attested_hash: string | null }>(`SELECT x.page_id,
+    const found = await readRevisionAttestations(exec, sourceId, incarnation, chunk.map(row => ({ pageId: Number(pages.id[row]), requestId: pages.requestId[row] ?? null,
+      revision: pages.revision[row]!, sourcePath: pages.sourcePath[row] ?? null })));
+    for (const hit of found) pages.attested.set(byId.get(Number(hit.page_id))!, { arm1: hit.arm1, hash: hit.attested_hash });
+  }
+  return statements;
+}
+
+/** `A` for one statement's pages, by the request that wrote each page's current revision (see `readAttestations`); a page with no committed request has no row. */
+export async function readRevisionAttestations(exec: Exec, sourceId: string, incarnation: string,
+  rows: ReadonlyArray<{ pageId: number; requestId: string | null; revision: string; sourcePath: string | null }>): Promise<Array<{ page_id: number; arm1: boolean; attested_hash: string | null }>> {
+  return exec.executeRaw<{ page_id: number; arm1: boolean; attested_hash: string | null }>(`SELECT x.page_id,
         (r.intent->>'kind' = ANY($3::text[]) AND r.source_incarnation::text=$2 AND (r.page_id IS NULL OR r.page_id=x.page_id)) AS arm1,
         COALESCE((SELECT e.data->>'expected_hash' FROM persistence_effects e WHERE e.request_id=r.id AND e.kind='git' AND e.revision=x.revision
           AND e.data->>'expected_hash' IS NOT NULL AND (e.data->>'relative_path'=x.source_path OR right(e.data->>'relative_path', length(x.source_path)+1)='/'||x.source_path) LIMIT 1),
           CASE WHEN r.intent->>'kind'='managed_file_import' AND r.intent->>'sourcePath'=x.source_path AND r.intent->>'inputHash'=r.intent->>'targetHash' THEN r.intent->>'targetHash' END) AS attested_hash
       FROM unnest($4::int[], $5::uuid[], $6::uuid[], $7::text[]) AS x(page_id, request_id, revision, source_path)
       JOIN persistence_requests r ON r.id=x.request_id AND r.state='committed' AND r.source_id=$1`,
-      [sourceId, incarnation, SYNC_WRITE_KINDS, chunk.map(row => Number(pages.id[row])), chunk.map(row => pages.requestId[row]), chunk.map(row => pages.revision[row]), chunk.map(row => pages.sourcePath[row])]);
-    for (const hit of found) pages.attested.set(byId.get(Number(hit.page_id))!, { arm1: hit.arm1, hash: hit.attested_hash });
-  }
-  return statements;
+      [sourceId, incarnation, SYNC_WRITE_KINDS, rows.map(row => row.pageId), rows.map(row => row.requestId), rows.map(row => row.revision), rows.map(row => row.sourcePath)]);
 }
 
 /** `U_db`: open requests of the worktree (the `persistence_requests_pending` index) and pending Git effects of the source. */
@@ -567,10 +576,10 @@ async function readUntracked(gitRoot: string, scope: string): Promise<string[]> 
 const timer = () => { const started = performance.now(); return () => Math.round((performance.now() - started) * 10) / 10; };
 
 /** #7130: an absent file is deletion evidence only when Git once committed it (sync-origin-evidence.ts); read for those paths alone. */
-async function reclassifyByOrigin(gitRoot: string, tips: Array<string | null | undefined>, paths: ShadowPath[], step: LoopYield): Promise<boolean> {
+async function reclassifyByOrigin(gitRoot: string, tips: Array<string | null | undefined>, paths: ShadowPath[], step: LoopYield, onProgress?: () => void): Promise<boolean> {
   const absent = await filterYielding(paths, entry => (entry.result.cls === 'delete' || entry.result.cls === 'delete_drift') && entry.state.originEvidence === undefined, step);
   if (!absent.length) return false;
-  const evidence = await readOriginEvidence(gitRoot, tips, absent.map(entry => entry.path));
+  const evidence = await readOriginEvidence(gitRoot, tips, absent.map(entry => entry.path), { onCommit: onProgress });
   for (const entry of absent) {
     const state = { ...entry.state, originEvidence: evidence.get(entry.path) ?? 'unknown' as const };
     Object.assign(entry, { state, result: classifySyncPath(state) });
@@ -613,7 +622,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
   // the one rule discovery and preparation use (sameSyncOrigin; it refuses an origin that could name two files).
   const originScope = { sourceId, root, scope, slugMode };
   const pageOrigin = (sourcePath: string, slug: string): string => scopedPageOrigin(originPath(sourcePath), slug, originScope);
-  const step = turnYield();
+  const step = progressYield(turnYield(), input.pass?.onProgress);
 
   t = timer();
   const { head, detached } = await readLevelHead(gitRoot, sourceId);
@@ -847,7 +856,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
   }
 
   t = timer();
-  if (await reclassifyByOrigin(gitRoot, [head, baselineCommit], paths, step)) timings.origin = t();
+  if (await reclassifyByOrigin(gitRoot, [head, baselineCommit], paths, step, input.pass?.onProgress)) timings.origin = t();
 
   // Adoption by hash needs the level's bytes: committed mode reads the blobs of the candidates that could adopt.
   const needBytes = await filterYielding(paths, entry => !['matched', 'held', 'dirty'].includes(entry.result.cls) && entry.state.levelSha256 === null && entry.state.level !== null

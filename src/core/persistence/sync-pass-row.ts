@@ -72,6 +72,8 @@ export interface ManagedSyncPassValue {
     converged?: PassConverged;
     mismatch: Record<string, { level: string | null; streak: number }>;
     not_converged_streak: number;
+    /** #7355: at this pass's pin, how many passes in a row before it never ended (their row was left `open`: a pass the drain's governor abandoned, or a killed process). Status counts it only while this pass's row is open. */
+    abandoned_streak?: number;
     /** When the current run of unhealthy endings (`blocked`, `not_converged`) began; kept across them, cleared at `synced`/`up_to_date`. The §3.7 readers age a stuck source from it. */
     stuck_since?: string | null;
     faults: Record<string, { level: string | null; class: string; attempts: number }>;
@@ -132,6 +134,10 @@ export const OPEN_AT_STAMP_CAP = 256;
 export const SETTLE_MISMATCH_STREAK = 3;
 /** Consecutive `not_converged` passes after which `fix.next` becomes `report` (design §3.1, DX R9). */
 export const NOT_CONVERGED_REPORT_STREAK = 3;
+/** #7355: passes in a row that never ended (the newest counted once its row has been quiet for ABANDONED_QUIET_MS) before status stops sending the plain sync. */
+export const ABANDONED_REPORT_STREAK = 2;
+/** The drain's in-pass no-progress window: an open row quiet this long belongs to no live pass. */
+export const ABANDONED_QUIET_MS = 5 * 60_000;
 
 export const passFingerprint = (sourceId: string, incarnation: string) => `${sourceId}:${incarnation}`;
 

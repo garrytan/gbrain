@@ -8,6 +8,7 @@
     "exit_code": 1,
     "report": null,
     "stderr": [
+      "[gbrain] reading doctor checks; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready.",
       "[doctor.db_checks] start",
       "[doctor.db_checks] done"
     ],

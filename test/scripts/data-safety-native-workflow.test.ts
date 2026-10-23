@@ -38,7 +38,7 @@ describe('data-safety native CI coverage', () => {
     expect(job['timeout-minutes']).toBe(5);
     expect(job.strategy['fail-fast']).toBe(false);
     expect(job.strategy.matrix.runner).toEqual(['windows-2022', 'windows-11-arm']);
-    expect(job.strategy.matrix.bun).toEqual(['1.4.0', '1.4.3']);
+    expect(job.strategy.matrix.bun).toEqual(['1.4.0', '1.4.4']);
     expect(job.steps.some(entry => entry.run === 'bun scripts/native/verify.ts')).toBe(true);
     const step = job.steps.find(entry => entry.name === 'Compare native hidden-window launch behavior');
     expect(step).toBeDefined();
@@ -73,7 +73,7 @@ describe('data-safety native CI coverage', () => {
     expect(job['timeout-minutes']).toBe(5);
     expect(job.strategy['fail-fast']).toBe(false);
     expect(job.strategy.matrix.runner).toEqual(['windows-2022', 'windows-11-arm']);
-    expect(job.strategy.matrix.bun).toEqual(['1.4.0', '1.4.3']);
+    expect(job.strategy.matrix.bun).toEqual(['1.4.0', '1.4.4']);
     expect(job.steps.some(entry => entry.run === 'bun scripts/native/verify.ts')).toBe(true);
     const step = job.steps.find(entry => entry.name === 'Compare cmdlet and direct dotnet ACL programs');
     expect(step).toBeDefined();
@@ -176,11 +176,51 @@ describe('data-safety native CI coverage', () => {
     const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
       bun() { if [[ "$4" == "$GBRAIN_TEST_STUCK_SUITE" ]]; then exec sleep 600; fi; printf '%s\\n' "$4"; }
       ${step.run}
-    `], { env: { PATH: process.env.PATH ?? '', GBRAIN_TEST_STUCK_SUITE: stuck, GBRAIN_NATIVE_SUITE_BOUND_S: '2' }, timeout: 60_000 });
+    `], { env: { GBRAIN_JOB_DEADLINE: String(Math.floor(Date.now() / 1000) + 3600), PATH: process.env.PATH ?? '', GBRAIN_TEST_STUCK_SUITE: stuck, GBRAIN_NATIVE_SUITE_BOUND_S: '2' }, timeout: 60_000 });
     expect(result.exitCode).toBe(1);
     const stdout = result.stdout.toString();
     expect(stdout).toContain(`::error::${stuck} was still running after 2 s, this target's bound`);
     expect(stdout.trim().split('\n').filter(line => line.startsWith('test/'))).toEqual(suites.filter(suite => suite !== stuck));
+  });
+
+  test('a stall in every suite still ends the step, with its diagnostics, before the job timeout cancels the log', () => {
+    // Two darwin-x64 cells (#7303 on Bun 1.4.0, #7238 on Bun 1.4.3) ran this step into the 15-minute job timeout and kept
+    // no log: six suites at a 180 s bound each outlast the job, so the bound's own process table and sample were lost.
+    const step = workflow.jobs.native.steps.find(entry => entry.name === 'Verify native data-safety contracts')!;
+    const started = performance.now();
+    const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
+      bun() { exec sleep 600; }
+      ${step.run}
+    `], { env: { PATH: process.env.PATH ?? '', GBRAIN_NATIVE_SUITE_BOUND_S: '3', GBRAIN_JOB_DEADLINE: String(Math.floor(Date.now() / 1000) + 90 + 5) }, timeout: 120_000 });
+    const seconds = (performance.now() - started) / 1000;
+    const stdout = result.stdout.toString();
+    expect(result.exitCode).toBe(1);
+    expect(stdout).toContain(`::error::${suites[0]} was still running after 3 s, this target's bound`);
+    expect(stdout).toContain(`::error::${suites.at(-1)} not run: the job timeout is near`);
+    expect(seconds).toBeLessThan(40);
+  }, 130_000);
+
+  test('a suite that outlives SIGKILL is reported and does not hold the step', () => {
+    const step = workflow.jobs.native.steps.find(entry => entry.name === 'Verify native data-safety contracts')!;
+    const stuck = suites[1]!;
+    const started = performance.now();
+    const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
+      bun() { if [[ "$4" == "$GBRAIN_TEST_STUCK_SUITE" ]]; then exec sleep 40 >/dev/null 2>&1; fi; printf '%s\\n' "$4"; }
+      kill() { case "$1" in -TERM|-KILL) return 0 ;; *) command kill "$@" ;; esac; }
+      ${step.run}
+    `], { env: { PATH: process.env.PATH ?? '', GBRAIN_TEST_STUCK_SUITE: stuck, GBRAIN_NATIVE_SUITE_BOUND_S: '2', GBRAIN_JOB_DEADLINE: String(Math.floor(Date.now() / 1000) + 3600) }, timeout: 90_000 });
+    const stdout = result.stdout.toString();
+    expect(result.exitCode).toBe(1);
+    expect(stdout).toContain(`::error::${stuck} is still running after SIGKILL`);
+    expect((performance.now() - started) / 1000).toBeLessThan(35);
+    expect(stdout.trim().split('\n').filter(line => line.startsWith('test/'))).toEqual(suites.filter(suite => suite !== stuck));
+  }, 100_000);
+
+  test('the native job records its deadline from its own timeout before any other step', () => {
+    const job = workflow.jobs.native as unknown as { steps: Step[]; 'timeout-minutes': number };
+    expect(job.steps[0]!.name).toBe('Record the job deadline');
+    expect(job.steps[0]!.shell).toBe('bash');
+    expect(job.steps[0]!.run!.trim()).toBe(`echo "GBRAIN_JOB_DEADLINE=$(( $(date +%s) + ${job['timeout-minutes']} * 60 ))" >> "$GITHUB_ENV"`);
   });
 
   for (const failed of ['', ...suites]) test(`every native safety suite runs and failures remain fatal (${failed || 'all pass'})`, () => {
@@ -188,7 +228,7 @@ describe('data-safety native CI coverage', () => {
     const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
       bun() { printf '%s\\n' "$4"; [[ "$4" != "$GBRAIN_TEST_FAILED_SUITE" ]]; }
       ${step.run}
-    `], { env: { PATH: process.env.PATH ?? '', GBRAIN_TEST_FAILED_SUITE: failed, GBRAIN_NATIVE_SUITE_BOUND_S: '60' } });
+    `], { env: { GBRAIN_JOB_DEADLINE: String(Math.floor(Date.now() / 1000) + 3600), PATH: process.env.PATH ?? '', GBRAIN_TEST_FAILED_SUITE: failed, GBRAIN_NATIVE_SUITE_BOUND_S: '60' } });
     expect(result.exitCode).toBe(failed ? 1 : 0);
     expect(result.stdout.toString().trim().split('\n')).toEqual(suites);
   });

@@ -56,6 +56,7 @@ import {
   type FindMentionsOpts, type Gazetteer, type GazetteerEntry, type GazetteerEntryKey, type Mention,
 } from '../by-mention.ts';
 import { bodyBlocks } from '../page-body/segment-blocks.ts';
+import { classifyItemFailure } from '../item-failure.ts';
 import { linkableTypesFor, loadSourcePack, parseNameList, readMentionPolicy, type MentionPolicy, type PackTypes } from './policy.ts';
 import { deriveEntityAliases, type DerivedAlias } from './aliases.ts';
 import { normalizeAliasList } from '../search/alias-normalize.ts';
@@ -87,7 +88,15 @@ export interface MentionPassResult {
   remaining: number;
   state: MentionState;
   error?: string;
+  /** Pages whose own content the scanner refused (a run it must read whole is over its bound); they stay due and the pass goes on. */
+  failed?: number;
+  failures?: MentionPageFailure[];
 }
+
+export interface MentionPageFailure { slug: string; source_id: string; code: string; message: string }
+
+/** The failed pages a pass lists; `failed` still counts every one. */
+export const MENTION_FAILURE_REPORT_LIMIT = 20;
 
 export interface MentionPassOpts {
   sourceId?: string;
@@ -461,15 +470,29 @@ async function reconcileSource(engine: BrainEngine, sourceId: string, gazetteer:
     if (!pages.length) return;
     after = pages[pages.length - 1]!.id;
     const found = new Map<number, Mention[]>();
-    for (const p of pages) found.set(Number(p.id), await pageMentions(engine, p, gazetteer,
-      { fromSlug: p.slug, fromSourceId: p.source_id, allowCrossSource, ignoreNames: parseNameList(p.mention_ignore) }));
-    await opts.beforePublish?.(pages.map(p => Number(p.id)));
+    const readable: DuePage[] = [];
+    for (const p of pages) {
+      try {
+        found.set(Number(p.id), await pageMentions(engine, p, gazetteer,
+          { fromSlug: p.slug, fromSourceId: p.source_id, allowCrossSource, ignoreNames: parseNameList(p.mention_ignore) }));
+        readable.push(p);
+      } catch (error) {
+        const failure = classifyItemFailure(error);
+        if (failure.scope !== 'item' || failure.class !== 'content') throw error;
+        result.failed = (result.failed ?? 0) + 1;
+        if ((result.failures ??= []).length < MENTION_FAILURE_REPORT_LIMIT) {
+          result.failures.push({ slug: p.slug, source_id: p.source_id, code: failure.code, message: failure.message.slice(0, 500) });
+        }
+      }
+    }
+    if (!readable.length) continue;
+    await opts.beforePublish?.(readable.map(p => Number(p.id)));
     const outcome = await engine.transaction(async tx => {
       if (!sameGenerations(generations, await readGenerations(tx, genSources, true))) return null;
       const current = new Map((await tx.executeRaw<{ id: number; revision: string }>(
         `SELECT id, knowledge_revision::text AS revision FROM pages WHERE id = ANY($1::int[]) AND deleted_at IS NULL FOR SHARE`,
-        [pages.map(p => p.id)])).map(r => [Number(r.id), r.revision]));
-      const fresh = pages.filter(p => current.get(Number(p.id)) === p.revision);
+        [readable.map(p => p.id)])).map(r => [Number(r.id), r.revision]));
+      const fresh = readable.filter(p => current.get(Number(p.id)) === p.revision);
       if (!fresh.length) return { fresh: 0, created: 0, removed: 0 };
       const rows = await tx.executeRaw<{ id: number; from_page_id: number; to_slug: string; to_source_id: string; plain: boolean }>(
         `SELECT l.id, l.from_page_id, t.slug AS to_slug, t.source_id AS to_source_id,
@@ -500,9 +523,9 @@ async function reconcileSource(engine: BrainEngine, sourceId: string, gazetteer:
         [sourceId, fresh.map(p => p.id), fresh.map(p => p.revision), MENTION_EXTRACTOR_VERSION, generations.get(sourceId) ?? '0']);
       return { fresh: fresh.length, created, removed: drop.length };
     });
-    if (!outcome) { result.skipped += pages.length; return; }
+    if (!outcome) { result.skipped += readable.length; return; }
     result.pages += outcome.fresh;
-    result.skipped += pages.length - outcome.fresh;
+    result.skipped += readable.length - outcome.fresh;
     result.created += outcome.created;
     result.removed += outcome.removed;
   }

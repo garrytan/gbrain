@@ -34,11 +34,9 @@ import type { AIGatewayConfig } from '../core/ai/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { OperationError, type OperationMeta } from '../core/ops/contract.ts';
 import { OPERATION_MANIFEST, cliOps } from './op-manifest.ts';
-import { loadOperation } from '../core/operation-load.ts';
 import { openRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { resolveSourceIdEngineFree } from '../core/source-resolver.ts';
 import { installCliRoutingFor } from './fix-routing-provider.ts';
-import { formatVolunteeredPage } from '../core/context/volunteer.ts';
 import type { Operation, OperationContext } from '../core/operations.ts';
 import { currentCliWriteWait } from '../core/persistence/write-wait.ts';
 import { isScopeErrorCode } from '../core/error-catalogue.ts';
@@ -51,7 +49,6 @@ import type { Notice } from '../core/agent-output.ts';
 import { opError, opOwnsSource } from '../core/ops/contract.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
 import { opFlagValue, opParamValue, opStructuredValue } from './op-param-values.ts';
-import { SEGMENTED_STREAMED, formatGetPage, printPagedPage, remoteErrorCode, streamSegmentedGet, wantsWholePage } from './page-render.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from '../core/cli-options.ts';
 import { runCliPreflight } from '../core/cli-preflight.ts';
 import { isBooleanLiteral, isKnownOpFlag } from '../core/op-flag-tokens.ts';
@@ -516,7 +513,7 @@ async function main() {
   if (['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)) return; // warm serve socket (opt-in)
   // CLI-only commands
   if (CLI_ONLY.has(command)) {
-    await handleCliOnly(command, subArgs);
+    const endRead = (await import('./slow-read.ts')).beginCommandRead(command, subArgs); try { await handleCliOnly(command, subArgs); } finally { endRead(); }
     return;
   }
 
@@ -534,6 +531,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
   // Shared operations (fall through to aliases, e.g. link-add -> add_link)
   const meta = cliOps.get(command) ?? cliAliases.get(command);
   if (!meta) exitCliError(usageError(`Unknown command: ${command}`, 'Run `gbrain --help` for available commands.', { code: 'unknown_command' }), command);
+  const { loadOperation } = await import('../core/operation-load.ts');
   const op = (await loadOperation(meta.name))!;
 
   // v0.31.1 (Issue #734, CDX-1): parse CLI args BEFORE engine connect so
@@ -689,7 +687,9 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
       try {
         rawResult = await withTimeout(
           configSnapshot!.run(() => withRequestIdentityMemo(() => op.handler(ctx, params))).catch(async (e: unknown) => { // large pages: a segmented page streams to stdout
-            if (op.name === 'get_page' && await streamSegmentedGet(engine, params, e, writeStdoutFinal)) return SEGMENTED_STREAMED;
+            if (op.name !== 'get_page') throw e;
+            const { streamSegmentedGet, SEGMENTED_STREAMED } = await import('./page-render.ts');
+            if (await streamSegmentedGet(engine, params, e, writeStdoutFinal)) return SEGMENTED_STREAMED;
             throw e;
           }),
           wallclockMs,
@@ -706,7 +706,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
       rawResult = await withRequestIdentityMemo(() => op.handler(ctx, params));
       if (op.mutating) await captureCapacityNotices(engine); // #6696 (A4)
     }
-    if (rawResult === SEGMENTED_STREAMED) return;
+    if (op.name === 'get_page' && rawResult === (await import('./page-render.ts')).SEGMENTED_STREAMED) return;
     captureRetrievalNotices(op.name, rawResult, lastRetrievalMeta, params, ctx.config);
     // ENG-2 (renderer parity by data shape): JSON-round-trip the local-engine
     // path's return value so renderers see the same shape they'd see on the
@@ -815,7 +815,9 @@ async function runThinClientRouted(
       signal: sigintController.signal,
       ...(op.mutating ? { writeWaitMs: currentCliWriteWait().waitMs } : {}),
     }).catch(async (e: unknown) => { // large pages: a page too big for one response is paged to its end, verified, then printed
-      if (op.name !== 'get_page' || remoteErrorCode(e) !== 'page_too_large_for_inline' || !wantsWholePage(params)) throw e;
+      if (op.name !== 'get_page') throw e;
+      const { printPagedPage, remoteErrorCode, wantsWholePage } = await import('./page-render.ts');
+      if (remoteErrorCode(e) !== 'page_too_large_for_inline' || !wantsWholePage(params)) throw e;
       await printPagedPage(async p => unpackToolResult(await callRemoteTool(cfg, 'get_page', p, { timeoutMs, signal: sigintController.signal })), params, writeStdoutFinal);
       return null;
     }));
@@ -1050,7 +1052,7 @@ export function resolveQueryImage(
   return { path: imagePath, base64, mime };
 }
 
-export function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
+export function parseOpArgs(op: OperationMeta, args: string[]): Record<string, unknown> {
   // `gbrain search --explain`: the CLI-local formatter flag also asks the op for score attribution.
   const params: Record<string, unknown> = (op.name === 'search' || op.name === 'query') && (getCliOptions().explain || args.includes('--explain')) ? { explain: true } : {};
   const positional = op.cliHints?.positional || [];
@@ -1640,9 +1642,10 @@ export function formatResult(
       }
       const pages = (r?.pages ?? []) as any[];
       if (!pages.length) return 'Nothing volunteered (no entity cleared the confidence gate).\n';
+      const { formatVolunteeredPage } = require('../core/context/volunteer.ts');
       return pages.map((p) => formatVolunteeredPage(p)).join('\n') + '\n';
     }
-    case 'get_page': return formatGetPage(result as Record<string, any>);
+    case 'get_page': return require('./page-render.ts').formatGetPage(result as Record<string, any>);
     case 'search_exact': return formatSearchExact(result as Parameters<typeof formatSearchExact>[0]);
     case 'list_pages': {
       const pages = result as any[];

@@ -87,7 +87,7 @@ link it here rather than raising the cap.
 | [Google connector + open-loop engine](key-files/google-and-loops.md) | Cross-file contract; [more](key-files/google-and-loops-continued.md), [API](key-files/google-api-access.md) |
 | [Open loops](key-files/open-loops-engine.md) | detect, extract, store |
 | [Always-loaded core memory](key-files/core-memory.md) | Core tier, write-path guard and lock order, delivery lanes, pressure notice |
-| [Workspace push and backup coverage](key-files/workspace-push-and-backup.md) | Workspace push, hook push backstops, backup verdicts |
+| [Workspace push and backup coverage](key-files/workspace-push-and-backup.md) | Workspace push, hook push backstops, backup verdicts, git writer |
 | [Secret and sensitivity scanning](key-files/secret-scan.md) | `secret-scan*.ts`: detection, allowlist, scan counters |
 | [Ambient capture consent gate](key-files/ambient-capture.md) | `memory.auto_writeback` capture lanes |
 | [Belief ledger](key-files/belief-ledger.md) | `src/core/belief/`, `gbrain beliefs`, doctor coverage |

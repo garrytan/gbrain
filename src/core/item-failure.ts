@@ -121,7 +121,8 @@ function classifyOne(error: unknown): ClassifiedItemFailure | null {
   if (error instanceof OperationError) {
     const code = String(error.code === 'storage_error' && error.writeError ? error.writeError : error.canonicalCode);
     const requestId = error.writeRequest?.request_id ?? null;
-    if (RUN_SCOPED_CODES.has(code) || (code === 'storage_error' && error.detail === 'database_contention')) {
+    if (code === 'storage_error' && error.detail === 'database_contention') return { code: 'database_contention', scope: 'run', class: 'transient', message, requestId };
+    if (RUN_SCOPED_CODES.has(code)) {
       return { code, scope: 'run', class: 'transient', message, requestId };
     }
     const registryClass = (CODES as Record<string, { class: string }>)[code]?.class;

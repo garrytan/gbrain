@@ -388,6 +388,7 @@
       "unknown_sections": []
     },
     "stderr": [
+      "[gbrain] reading doctor checks; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready.",
       "[doctor] DB-backed doctor run failed (Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check the database URL; `gbrain engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME)) — falling back to filesystem-only checks",
       "GBRAIN_DB_ACCESS conn_refused",
       "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. Run: gbrain db-repair",

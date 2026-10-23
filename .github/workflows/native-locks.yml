@@ -47,7 +47,7 @@ jobs:
           node-version: 24.18.0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
       - name: Install dependencies (bounded, retried once)
         timeout-minutes: 8
         run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
@@ -66,13 +66,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bun: ['1.4.0', '1.4.3']
+        bun: ['1.4.0', '1.4.4']
         target: [linux-x64-glibc, linux-arm64-glibc, darwin-arm64, darwin-x64, win32-x64, win32-arm64]
         # Pull requests: primary Bun on every target (native paths changed) or
         # the Linux x64 glibc smoke cell. Runners map from the target above.
         # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity).
         exclude: ${{ fromJSON(inputs.scope == 'full' && '[]' || inputs.scope == 'primary' && '[{"bun":"1.4.0"}]' || '[{"bun":"1.4.0"},{"target":"linux-arm64-glibc"},{"target":"darwin-arm64"},{"target":"darwin-x64"},{"target":"win32-x64"},{"target":"win32-arm64"}]') }}
     steps:
+      # The data-safety step stops its suites before this job's timeout: a timeout cancel keeps no log.
+      - name: Record the job deadline
+        shell: bash
+        run: echo "GBRAIN_JOB_DEADLINE=$(( $(date +%s) + 15 * 60 ))" >> "$GITHUB_ENV"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
@@ -113,23 +117,44 @@ jobs:
           GBRAIN_NATIVE_SUITE_BOUND_S: ${{ fromJSON('{"linux-x64-glibc":"180","linux-arm64-glibc":"150","darwin-arm64":"120","darwin-x64":"180","win32-x64":"540","win32-arm64":"390"}')[matrix.target] }}
         # A file still running at its target's bound is stuck: its process table and, on macOS,
         # a native stack sample go to the log before it is killed, because a job the timeout
-        # cancels keeps no log at all.
+        # cancels keeps no log at all. Six suites at their bounds outlast the job (two darwin-x64
+        # cells ran into the timeout with no log, #7303 and #7238), so every suite also stops
+        # 90 s before the job deadline, and no diagnostic or kill can hold the step.
         run: |
           status=0
           bound_s="$GBRAIN_NATIVE_SUITE_BOUND_S"
           case "$bound_s" in ''|*[!0-9]*) echo "::error::GBRAIN_NATIVE_SUITE_BOUND_S is not set for this target"; exit 1 ;; esac
+          case "${GBRAIN_JOB_DEADLINE:-}" in ''|*[!0-9]*) echo "::error::GBRAIN_JOB_DEADLINE is not set (the job's first step records it)"; exit 1 ;; esac
+          stop_at=$((GBRAIN_JOB_DEADLINE - 90))
+          within() {
+            "$@" &
+            local helper=$!
+            for _ in $(seq 1 20); do
+              if ! kill -0 "$helper" 2>/dev/null; then wait "$helper"; return; fi
+              sleep 1
+            done
+            kill -KILL "$helper" 2>/dev/null
+            echo "($1 was still running after 20 s and was stopped)"
+          }
           bounded() {
+            local left=$((stop_at - $(date +%s)))
+            if [ "$left" -le 0 ]; then echo "::error::$1 not run: the job timeout is near"; return 1; fi
+            local limit=$((left < bound_s ? left : bound_s))
             bun --no-env-file test --timeout=180000 "$1" &
             pid=$!
-            for _ in $(seq 1 "$bound_s"); do
+            for _ in $(seq 1 "$limit"); do
               if ! kill -0 "$pid" 2>/dev/null; then wait "$pid"; return $?; fi
               sleep 1
             done
-            echo "::error::$1 was still running after $bound_s s, this target's bound (its slowest suite's measured p99 plus margin); process table and stack sample follow, then it is killed"
-            ps -A -o pid,ppid,stat,etime,command 2>/dev/null || ps -ef
-            if command -v sample >/dev/null 2>&1; then sample "$pid" 3 2>&1 | head -200; fi
+            echo "::error::$1 was still running after $limit s, this target's bound (its slowest suite's measured p99 plus margin) or the time left before the job timeout; process table and stack sample follow, then it is killed"
+            within ps -A -o pid,ppid,stat,etime,command 2>/dev/null || within ps -ef
+            if command -v sample >/dev/null 2>&1; then within sample "$pid" 3 2>&1 | head -200; fi
             kill -TERM "$pid" 2>/dev/null; sleep 5; kill -KILL "$pid" 2>/dev/null
-            wait "$pid" 2>/dev/null
+            for _ in $(seq 1 10); do
+              if ! kill -0 "$pid" 2>/dev/null; then wait "$pid" 2>/dev/null; return 1; fi
+              sleep 1
+            done
+            echo "::error::$1 is still running after SIGKILL: $(within ps -o pid,stat,wchan,command -p "$pid")"
             return 1
           }
           bounded test/persistence-publication-native.serial.test.ts || status=1
@@ -144,7 +169,7 @@ jobs:
         timeout-minutes: 8
         run: |
           bun build --compile --no-compile-autoload-bunfig --outfile bin/gbrain-native-validation src/cli.ts
-          if [ "${{ runner.os }}" = "macOS" ] && [ "${{ matrix.bun }}" = "1.4.3" ]; then
+          if [ "${{ runner.os }}" = "macOS" ] && [ "${{ matrix.bun }}" = "1.4.4" ]; then
             codesign --verify --strict --verbose=2 bin/gbrain-native-validation
           fi
           bun scripts/native/compiled-smoke.ts --binary bin/gbrain-native-validation
@@ -160,7 +185,7 @@ jobs:
       fail-fast: false
       matrix:
         runner: [windows-2022, windows-11-arm]
-        bun: ['1.4.0', '1.4.3']
+        bun: ['1.4.0', '1.4.4']
         # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity).
         exclude: ${{ fromJSON(inputs.scope == 'full' && '[]' || '[{"bun":"1.4.0"}]') }}
     steps:
@@ -191,7 +216,7 @@ jobs:
       fail-fast: false
       matrix:
         runner: [windows-2022, windows-11-arm]
-        bun: ['1.4.0', '1.4.3']
+        bun: ['1.4.0', '1.4.4']
         # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity).
         exclude: ${{ fromJSON(inputs.scope == 'full' && '[]' || '[{"bun":"1.4.0"}]') }}
     steps:
@@ -222,7 +247,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bun: ['1.4.0', '1.4.3']
+        bun: ['1.4.0', '1.4.4']
         target: [linux-x64-musl, linux-arm64-musl]
         # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity).
         exclude: ${{ fromJSON(inputs.scope == 'full' && '[]' || '[{"bun":"1.4.0"}]') }}

@@ -181,7 +181,8 @@ describe('failure step summary (B13)', () => {
 
   it('an assertion failure shows the diff and a -t repro for exactly that test', async () => {
     const r = await failing('math.test.ts', `import { describe, test, expect } from 'bun:test';
-describe('math', () => { test('adds (carry)', () => { expect(1 + 1).toBe(3); }); test('passes', () => {}); });`);
+describe('math', () => { test('adds (carry)', () => { expect(1 + 1).toBe(3); });
+  test('passes', () => {}); });`);
     expect(r.code).toBe(1);
     expect(r.summary).toContain('### test (3): exited 1');
     expect(r.summary).toContain('#### math.test.ts › math > adds (carry)');

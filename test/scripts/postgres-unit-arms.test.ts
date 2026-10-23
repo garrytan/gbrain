@@ -40,7 +40,7 @@ describe('postgres-unit-arms list', () => {
     const shards = Array.from({ length: ARM_SHARDS }, (_, i) => i + 1);
     expect(job).toContain(`shard: [${shards.join(', ')}]`);
     expect(job).toContain(`Unit-lane PostgreSQL arms \${{ matrix.shard }}/${ARM_SHARDS}`);
-    expect(job).toContain(`run: bun scripts/postgres-unit-arms.ts run \${{ matrix.shard }} ${ARM_SHARDS} \${{ matrix.bun == '1.4.3' && '--postgres-only' || '' }}\n`);
+    expect(job).toContain(`run: bun scripts/postgres-unit-arms.ts run \${{ matrix.shard }} ${ARM_SHARDS} \${{ matrix.bun == '1.4.4' && '--postgres-only' || '' }}\n`);
     expect(job).toMatch(new RegExp(`- name: Require PostgreSQL arms of unit-lane suites\\n\\s+timeout-minutes: ${ARM_STEP_TIMEOUT_MS / 60_000}\\n`));
     const ports = [...job.matchAll(/ports: \['(\d+):5432'\]/g)].map(m => m[1]);
     const urls = [...job.matchAll(/postgres:\/\/gbrain_test:gbrain_test@127\.0\.0\.1:(\d+)\/gbrain_test/g)].map(m => m[1]);

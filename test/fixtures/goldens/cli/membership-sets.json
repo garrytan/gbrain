@@ -69,6 +69,7 @@
       "refusedNotInCliOnly": [],
       "refusedWithoutHint": [
         "beliefs",
+        "diag",
         "edge-proposals",
         "feedback",
         "questions",
@@ -124,6 +125,7 @@
         "creds",
         "db-repair",
         "decide",
+        "diag",
         "doctor",
         "dream",
         "edge-proposals",
@@ -381,6 +383,7 @@
         "compile-context",
         "config",
         "decide",
+        "diag",
         "dream",
         "edge-proposals",
         "embed",

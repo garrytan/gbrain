@@ -802,6 +802,22 @@
         "name": "tracked_ownership_marker"
       },
       {
+        "category": "brain",
+        "name": "checkout_lagging"
+      },
+      {
+        "category": "brain",
+        "name": "dirty_age"
+      },
+      {
+        "category": "brain",
+        "name": "commits_outside_source_root"
+      },
+      {
+        "category": "brain",
+        "name": "quarantined_changes"
+      },
+      {
         "category": "ops",
         "name": "decide_health"
       },

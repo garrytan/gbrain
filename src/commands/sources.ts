@@ -1273,7 +1273,7 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
       ...(sharedSkills.get(m.source_id) ? { shared_skills: sharedSkills.get(m.source_id) } : {}),
       ...(uncommitted.get(m.source_id) ? { fence_repairs_uncommitted: uncommitted.get(m.source_id) } : {}), ...(watermarks.get(m.source_id) ? { watermark: watermarks.get(m.source_id) } : {}),
     }));
-    console.log(JSON.stringify({ schema_version: 1, sources: enriched }, null, 2));
+    console.log(JSON.stringify((await import('../core/read-heartbeat.ts')).withReadMeta({ schema_version: 1, sources: enriched }), null, 2));
     return;
   }
 

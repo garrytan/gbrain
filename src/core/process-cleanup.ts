@@ -43,6 +43,8 @@
  *    double-DELETE.
  */
 
+import { noteInterrupted } from './read-heartbeat.ts';
+
 const CLEANUP_DEADLINE_MS = 3_000;
 
 interface CleanupEntry {
@@ -204,6 +206,9 @@ export function installSignalHandlers(opts: { keepServingOnLogEpipe?: boolean } 
 
   const handleSignal = (signal: NodeJS.Signals) => {
     if (forwardToSignalOwner(signal)) return;
+    // A slow read (sync status, doctor, ...) says it was cut off before cleanup runs, so a harness that follows its
+    // SIGTERM with SIGKILL still sees the note.
+    if (signal !== 'SIGPIPE') noteInterrupted(signal);
     void runCleanupPass().finally(() => {
       // Match GNU `kill` exit-code convention: 128 + signal number for
       // signal-terminated processes. The actual integer doesn't matter

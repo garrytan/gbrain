@@ -335,6 +335,16 @@
       "stdout": []
     },
     {
+      "argv": "diag",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `gbrain diag` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain diag",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
       "argv": "orphans",
       "exitCode": 1,
       "stderr": [
@@ -379,6 +389,7 @@
       "argv": "anomalies",
       "exitCode": 1,
       "stderr": [
+        "[gbrain] reading anomalous cohorts; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready.",
         "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: gbrain remote doctor",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
@@ -398,7 +409,9 @@
     {
       "argv": "status",
       "exitCode": 0,
-      "stderr": [],
+      "stderr": [
+        "[gbrain] reading the brain status snapshot; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready."
+      ],
       "stdout": [
         "",
         "GBrain Status",

@@ -425,8 +425,8 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
     if (event.phase === 'managed_sync.lanes' && event.lanes) lanes = { effective: event.lanes.effective, stepDown: event.lanes.stepDown, overlapped: event.lanes.overlapped, fallbacks: event.lanes.fallbacks };
     // #6696 C4: the checkpoint commit is a commit; the tail after it is governed by its own budget.
     if (event.phase === 'managed_sync.finish') { lastCommitAt = clock(); drops = 0; noteForwardProgress(); return; }
-    // GBRA-108: a pass's committed legacy-sweep slice (sync-pass-apply.ts) is progress, though it publishes no page.
-    if (event.phase === 'managed_sync.legacy_swept') { lastCommitAt = clock(); noteForwardProgress(); return; }
+    // GBRA-108: a committed legacy-sweep slice is progress, though it publishes no page; #7355: so is a level read still working.
+    if (event.phase === 'managed_sync.legacy_swept' || event.phase === 'managed_sync.level_progress') { lastCommitAt = clock(); noteForwardProgress(); return; }
     if (event.phase !== 'managed_sync.page_committed') return;
     if (event.waived) waived++; else written++;
     lastCommitAt = clock(); drops = 0;

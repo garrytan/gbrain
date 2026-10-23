@@ -5,7 +5,8 @@
  * - short_lived: a command that owns a consumer or takes a lease gets one connection.
  * - one_shot: a command that takes no lease routes nothing through the direct
  *   pool; schema DDL still uses one connection for its session advisory lock
- *   and long statement timeout. Taking a lease makes it short_lived.
+ *   and long statement timeout. Taking a lease or starting a persistence
+ *   consumer makes it short_lived.
  * GBRAIN_DIRECT_POOL_BY_COMMAND=0 restores the earlier behavior: resident everywhere.
  *
  * No imports: db-lock.ts reads this on PGLite too.
@@ -27,7 +28,7 @@ export function setDirectPoolProfile(profile: DirectPoolProfile): void {
   processProfile = profile;
 }
 
-/** A one-shot command that takes a lease renews it on the direct lane, so it becomes short-lived. */
+/** A one-shot command that takes a lease or starts a persistence consumer runs them on the direct lane, so it becomes short-lived. */
 export function noteDirectPoolLease(): void {
   if (processProfile === 'one_shot') processProfile = 'short_lived';
 }

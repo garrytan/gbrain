@@ -31,6 +31,8 @@ export interface SearchTimingsMeta {
   stages_ms: Partial<Record<SearchStage, number>>;
   other_ms: number;
   overlapped_ms?: Record<string, number>;
+  /** Sequential parts of a stage (`part`), integer ms; the rest of the stage is in no part. */
+  parts_ms?: Partial<Record<SearchStage, Record<string, number>>>;
 }
 
 export interface StageTimer {
@@ -56,6 +58,8 @@ export class SearchTimings implements StageTimer {
   private since: number;
   private readonly spent = new Map<SearchStage, number>();
   private readonly overlapped = new Map<string, number>();
+  private readonly parts = new Map<SearchStage, Map<string, number>>();
+  private currentPart: { stage: SearchStage; part: string; since: number } | null = null;
 
   constructor(private readonly now: () => number = () => performance.now()) {
     this.startedAt = this.since = now();
@@ -78,6 +82,39 @@ export class SearchTimings implements StageTimer {
     } finally {
       this.switchTo(previous);
     }
+  }
+
+  /**
+   * Book one sequential part of the current stage (`parts_ms[stage][part]`), for a stage whose
+   * steps run one after another (`response`). Like stages, a nested part takes the clock and
+   * hands it back, so parts never overlap and sum to at most the stage. The stage's own
+   * booking is unchanged.
+   */
+  async part<T>(stage: SearchStage, part: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.switchPart({ stage, part, since: 0 });
+    try {
+      return await work();
+    } finally {
+      this.switchPart(previous);
+    }
+  }
+
+  private switchPart(next: { stage: SearchStage; part: string; since: number } | null): { stage: SearchStage; part: string; since: number } | null {
+    const at = this.now();
+    const previous = this.currentPart;
+    if (previous) this.bookPart(previous.stage, previous.part, at - previous.since);
+    if (next) {
+      next.since = at;
+      if (!this.parts.get(next.stage)?.has(next.part)) this.bookPart(next.stage, next.part, 0);
+    }
+    this.currentPart = next;
+    return previous;
+  }
+
+  private bookPart(stage: SearchStage, part: string, ms: number): void {
+    let byPart = this.parts.get(stage);
+    if (!byPart) this.parts.set(stage, byPart = new Map());
+    byPart.set(part, (byPart.get(part) ?? 0) + ms);
   }
 
   overlap<T>(label: string, work: Promise<T>): Promise<T> {
@@ -128,11 +165,18 @@ export class SearchTimings implements StageTimer {
     const other = Math.max(0, total - parts.reduce((sum, [, ms]) => sum + ms, 0));
     const ints = apportion([...parts.map(([, ms]) => ms), other], Math.round(total));
     const overlappedMs = Object.fromEntries([...this.overlapped].map(([label, ms]) => [label, Math.round(ms)]));
+    const partSpent = new Map([...this.parts].map(([stage, byPart]) => [stage, new Map(byPart)]));
+    if (this.currentPart) {
+      const { stage, part, since } = this.currentPart;
+      partSpent.get(stage)!.set(part, partSpent.get(stage)!.get(part)! + at - since);
+    }
+    const partsMs = Object.fromEntries([...partSpent].map(([stage, byPart]) => [stage, Object.fromEntries([...byPart].map(([part, ms]) => [part, Math.round(ms)]))]));
     return {
       total_ms: Math.round(total),
       stages_ms: Object.fromEntries(parts.map(([stage], i) => [stage, ints[i]])),
       other_ms: ints[ints.length - 1],
       ...(this.overlapped.size > 0 ? { overlapped_ms: overlappedMs } : {}),
+      ...(partSpent.size > 0 ? { parts_ms: partsMs } : {}),
     };
   }
 }
@@ -208,11 +252,13 @@ function apportion(values: number[], total: number): number[] {
   return floors;
 }
 
-/** One `--explain` header line: `timings: 142ms total — lexical 12, embed 30, …, other 5 (overlapped: keyword_arm 10)`. */
+/** One `--explain` header line: `timings: 142ms total — lexical 12, embed 30, …, other 5 (overlapped: keyword_arm 10) (parts: response.meta 3)`. */
 export function formatTimingsSummary(timings: SearchTimingsMeta | undefined): string | null {
   if (!timings || typeof timings.total_ms !== 'number') return null;
   const stages = Object.entries(timings.stages_ms ?? {}).map(([stage, ms]) => `${stage} ${ms}`);
   const overlapped = Object.entries(timings.overlapped_ms ?? {}).map(([label, ms]) => `${label} ${ms}`);
+  const parts = Object.entries(timings.parts_ms ?? {}).flatMap(([stage, byPart]) => Object.entries(byPart ?? {}).map(([part, ms]) => `${stage}.${part} ${ms}`));
   return `timings: ${timings.total_ms}ms total — ${[...stages, `other ${timings.other_ms}`].join(', ')}`
-    + (overlapped.length > 0 ? ` (overlapped: ${overlapped.join(', ')})` : '');
+    + (overlapped.length > 0 ? ` (overlapped: ${overlapped.join(', ')})` : '')
+    + (parts.length > 0 ? ` (parts: ${parts.join(', ')})` : '');
 }

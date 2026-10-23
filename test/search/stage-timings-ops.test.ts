@@ -104,7 +104,10 @@ describe('timings ride every search and query response', () => {
     for (const stage of ['setup', 'lexical', 'relational', 'embed', 'vector', 'fuse', 'post_fusion', 'rerank', 'alias_fanout', 'anchoring', 'response']) {
       expect(t.stages_ms).toHaveProperty(stage);
     }
-    expect(Object.keys(t.overlapped_ms ?? {}).sort()).toEqual(['embed', 'keyword_arm', 'keyword_count', 'title_arm', 'vector']);
+    expect(Object.keys(t.overlapped_ms ?? {}).sort()).toEqual(['embed', 'keyword_arm', 'keyword_count', 'meta_embedding_held', 'meta_entity_facts', 'meta_filter_hint',
+      'meta_freshness', 'meta_held', 'meta_readiness', 'meta_safe_index', 'meta_saved_facts', 'title_arm', 'vector']);
+    expect(Object.keys(t.parts_ms?.response ?? {}).sort()).toEqual(['evidence', 'feedback', 'keyword_count', 'meta', 'trust']);
+    expect(Object.values(t.parts_ms!.response!).reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(t.stages_ms.response! + 1);
   });
 
   test('query adds the facts arm and expansion stages', async () => {

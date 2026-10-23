@@ -95,6 +95,7 @@ import { linksExtractionLagEntry, syncFreshnessEntry, searchModeEntry } from './
 import { persistenceConsumersEntry, serveBuildDriftEntry } from './checks/persistence-consumers.ts';
 import { runtimeBuildSkewEntry } from './checks/runtime-build-skew.ts';
 import { gitConvergenceEntry } from './checks/git-convergence.ts';
+import { gitWriterEntry } from './checks/git-writer.ts';
 import { retrievalFeedbackEntry } from './checks/retrieval-feedback.ts';
 import { transcriptSecretExposureEntry } from './checks/transcript-secrets.ts';
 import { autoChronicleEntry } from './checks/auto-chronicle.ts';
@@ -245,6 +246,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   managedSyncLatencyEntry,
   commitNotifierEntry,
   gitConvergenceEntry,
+  gitWriterEntry,
   decideHealthEntry,
   unlinkedFactsEntry,
   edgeValidityEntry,

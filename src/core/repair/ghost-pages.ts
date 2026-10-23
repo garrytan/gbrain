@@ -47,6 +47,9 @@ import { authorizeWrite } from '../persistence/authority.ts';
 import { getWorktreeBinding, managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { preparePageMutation } from '../persistence/page-prepare.ts';
+import { readSyncImportProvenance } from '../persistence/sync-holds.ts';
+import { readRevisionAttestations } from '../persistence/sync-pass.ts';
+import { readDeletionProvenance } from '../persistence/sync-origin-evidence.ts';
 import { maintenancePreflight, submitMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { MASS_RECONCILE_MIN_PAGES, MASS_RECONCILE_RATIO, massReconcileAllowed } from '../sync-reconcile.ts';
@@ -158,20 +161,24 @@ export const ghostPagesRepair: RepairHandler = {
     const mass = massGhosts(scan.ghosts.length, scan.file_backed);
     if (!opts?.apply) {
       const skillPaths = scan.skill_paths.length;
-      const hash = previewHash(hashParts(scope, scan.owner, scan.ghosts));
-      if (scan.ghosts.length) await saveApprovedSet<ApprovedGhost>(engine, { command: 'ghost-pages', hash },
-        scan.ghosts.map(ghost => ({ ...ghost, owner: scan.owner!, selection: scope.source_ids })));
+      const ahead: GhostPage[] = [], ghosts: GhostPage[] = [];
+      for (const ghost of scan.ghosts) (await ghostFileBacked(engine, ghost, scan.owner!) ? ghosts : ahead).push(ghost);
+      const hash = previewHash(hashParts(scope, scan.owner, ghosts));
+      if (ghosts.length) await saveApprovedSet<ApprovedGhost>(engine, { command: 'ghost-pages', hash },
+        ghosts.map(ghost => ({ ...ghost, owner: scan.owner!, selection: scope.source_ids })));
       const warnings = [
         ...(mass ? [`${scan.ghosts.length} of ${scan.file_backed} file-backed page(s) are ghosts (more than ${Math.round(MASS_RECONCILE_RATIO * 100)}%): the apply refuses (ghost_mass_delete_refused) unless GBRAIN_ALLOW_MASS_RECONCILE=1; check the checkout first.`] : []),
         ...(scan.truncated ? [`More ghosts may exist past the first ${GHOST_REPAIR_LIMIT} checked; apply this set, then preview again.`] : []),
         ...(skillPaths ? [`${skillPaths} ghost page(s) on files of the shared skillpack are listed apart (${SKILL_PACK_MEMBER_CODE}) and not applied: ${SKILL_PATH_NOTE}`] : []),
+        ...(ahead.length ? [`${ahead.length} ghost page(s) were written in the database after their file last held them, so each holds the only copy of that content; they are listed apart (${DATABASE_AHEAD_CODE}) and not applied.`] : []),
         ...(scan.reason === 'mirror_read_only' ? [`Source ${sourceId} is a read-only mirror: its pages publish no file, so none is a ghost.`] : []),
-        ...(scan.ghosts.length ? Object.values(GHOST_CONSEQUENCES) : []),
+        ...(ghosts.length ? Object.values(GHOST_CONSEQUENCES) : []),
       ];
-      return { warnings, items: scan.ghosts.map((ghost, index) => item(ghost, scan.owner!, hash, index === scan.ghosts.length - 1)), preview_hash: hash,
-        residuals: { ghosts: scan.ghosts.length, file_backed: scan.file_backed, inspected: scan.inspected, ...(skillPaths ? { skill_paths: skillPaths } : {}) },
-        listing: [...scan.ghosts.map(ghost => ({ item: `${ghost.source_id}:${ghost.slug}`, class: 'canonical_file_missing',
+      return { warnings, items: ghosts.map((ghost, index) => item(ghost, scan.owner!, hash, index === ghosts.length - 1)), preview_hash: hash,
+        residuals: { ghosts: ghosts.length, file_backed: scan.file_backed, inspected: scan.inspected, ...(skillPaths ? { skill_paths: skillPaths } : {}), ...(ahead.length ? { database_ahead: ahead.length } : {}) },
+        listing: [...ghosts.map(ghost => ({ item: `${ghost.source_id}:${ghost.slug}`, class: 'canonical_file_missing',
           detail: `file ${ghost.path} is missing; revision ${ghost.revision}` })),
+        ...ahead.map(ghost => ({ item: `${ghost.source_id}:${ghost.slug}`, class: DATABASE_AHEAD_CODE, detail: databaseAheadDetail(ghost) })),
         ...scan.skill_paths.map(ghost => ({ item: `${ghost.source_id}:${ghost.slug}`, class: SKILL_PACK_MEMBER_CODE,
           detail: `shared skillpack file ${ghost.path} is missing; not applied. Restore it: ${skillPathRestore(scan.root, ghost)}` }))],
         details: { purge_fuse_hours: GHOST_PURGE_FUSE_HOURS, undo: 'gbrain restore <slug> --force', keep: GHOST_CONSEQUENCES.keep, mass_delete: mass, truncated: scan.truncated, docs: DOCS,
@@ -215,12 +222,40 @@ const restored = (ghost: GhostPage): RepairItemOutcome => ({ applied: false, out
   reason: `The canonical file ${ghost.path} exists again, so ${ghost.slug} was kept; run ${ghostPreviewCommand(ghost.source_id)} again for a new preview.` });
 const changed = (reason: string): RepairItemOutcome => ({ applied: false, outcome: 'changed_since_preview', reason });
 
-/** Whether the live page is still the approved ghost under the approved owner; otherwise the outcome that skips it. */
+/**
+ * Whether a ghost's live revision is file-backed: the revision sync last imported from its file (the import record), or
+ * one a committed sync write or a Git-published write produced (the attestation sync's own deletion proof reads). Any
+ * other revision of a recorded page was written in the database after its file last held it, so the file's absence,
+ * even a committed deletion, says nothing about that content and soft-deleting the page would drop the only copy of it.
+ * A page with no import record is judged against the date of the commit that deleted its file, when one did.
+ */
+export async function ghostFileBacked(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner): Promise<boolean> {
+  const recorded = (await readSyncImportProvenance(engine, ghost.source_id, owner.source_incarnation, ghost.page_id))?.revision;
+  if (recorded === ghost.revision) return true;
+  const [page] = await engine.executeRaw<{ request_id: string | null; source_path: string | null; updated_ms: number }>(
+    'SELECT revision_write_request_id::text AS request_id, source_path, (extract(epoch FROM updated_at) * 1000)::float8 AS updated_ms FROM pages WHERE id=$1 AND knowledge_revision::text=$2', [ghost.page_id, ghost.revision]);
+  if (!page) return false;
+  const [hit] = page.request_id ? await readRevisionAttestations(engine, ghost.source_id, owner.source_incarnation,
+    [{ pageId: ghost.page_id, requestId: page.request_id, revision: ghost.revision, sourcePath: page.source_path ?? ghost.path }]) : [];
+  if (hit && (hit.arm1 || hit.attested_hash !== null)) return true;
+  if (recorded !== undefined) return false;
+  // A page no import record covers (an older or unmanaged import) is ahead only when it was written after the commit that deleted its file.
+  const binding = await getWorktreeBinding(engine, ghost.source_id, owner.host_id);
+  if (!binding?.local_path) return true;
+  const deletion = (await readDeletionProvenance(join(binding.local_path, binding.relative_path), [ghost.path])).get(ghost.path);
+  return deletion?.kind !== 'deleted_by_commit' || Number(page.updated_ms) <= Date.parse(deletion.date);
+}
+
+export const DATABASE_AHEAD_CODE = 'database_ahead_of_file';
+export const databaseAheadDetail = (ghost: GhostPage) => `file ${ghost.path} is gone, but page ${ghost.slug} was written in the database after the file last held it, so it holds the only copy of that content; not soft-deleted. Recreate the file from the page with gbrain repair file-drift --source ${ghost.source_id} --slug ${ghost.slug} --prefer database, or keep the page as it is`;
+
+/** Whether the live page is still the approved ghost under the approved owner, with a file-backed revision; otherwise the outcome that skips it. */
 async function stillApproved(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner): Promise<RepairItemOutcome | null> {
   const now = await ghostPageNow(engine, ghost.source_id, ghost.slug);
   if (!now.ghost) return now.reason === 'agrees' || now.reason === 'file_database_drift' ? restored(ghost) : changed(`the page is no longer a ghost (${now.reason})`);
   if (!sameOwner(now.owner, owner)) return changed('the source\'s canonical owner changed since the preview');
   if (now.ghost.revision !== ghost.revision || now.ghost.page_id !== ghost.page_id || now.ghost.path !== ghost.path) return changed('the page or its recorded canonical path changed since the preview');
+  if (!await ghostFileBacked(engine, ghost, owner)) return { applied: false, outcome: 'refused', reason: DATABASE_AHEAD_CODE, detail: { message: databaseAheadDetail(ghost) } };
   return null;
 }
 

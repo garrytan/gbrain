@@ -70,6 +70,8 @@ export const PASS_MAX_ROUNDS = 4;
 export const PASS_BATCH_MAX = 10_000;
 /** Waits for in-flight work a pass makes before it stops `writer_pending`, each bounded by the wait budget. */
 const IN_FLIGHT_WAITS = 4;
+/** #7355: how often a long level read writes the open pass row, so a follower and `sync status` see it working. */
+const PASS_HEARTBEAT_MS = 30_000;
 
 export interface SyncPassInput {
   opts: SyncOpts; slice?: { maxPages: number; maxMs: number }; context: ManagedSyncContext; authority: SyncAuthority;
@@ -387,6 +389,8 @@ async function pinPass(engine: BrainEngine, input: SyncPassInput, lease: NonNull
   const obligations: ManagedSyncPassValue['obligations'] = prior ? structuredClone(prior.value.obligations)
     : { baseline_commit: context.source.last_commit, mismatch: {}, not_converged_streak: 0, faults: {} };
   obligations.mismatch ??= {}; obligations.faults ??= {}; obligations.not_converged_streak ??= 0;
+  const abandoned = prior?.value.telemetry.outcome === 'open' ? (obligations.abandoned_streak ?? 0) + 1 : 0;
+  if (abandoned) obligations.abandoned_streak = abandoned; else delete obligations.abandoned_streak;
   if (handover.episode && !obligations.episode) obligations.episode = handover.episode;
   const passId = randomUUID();
   // #6696: a cost-gate deferral rides as noEmbed but is this run's constraint (its requests carry embedDeferred), never an opt-out an episode keeps.
@@ -434,6 +438,24 @@ async function pinPass(engine: BrainEngine, input: SyncPassInput, lease: NonNull
   const markersOwed = () => remote ? !prior : !value.obligations.legacy_markers_at;
   return { prior, admission, tail, retry, failed, holds, idleFacts, head, mode, selection, configured, selectionFp, parserFp, obligations, passId, optOutEpisode, episode,
     processingOptions, inherited, pack, converged, cacheKey, kindStarted, working, kind, value, markersOwed };
+}
+
+/**
+ * #7355: a level read that screens a large source for minutes before its first commit is progress too. `report` tells the
+ * drain's governor it is working and, every PASS_HEARTBEAT_MS, saves the open row (what a follower and `sync status` read);
+ * `pending` is that save, which the pass's next save waits for so an older row never lands over a newer one.
+ */
+function levelBeat(opts: SyncOpts, sliceBase: { pages: number }, save: () => Promise<void>): { report: () => void; readonly pending: Promise<void> | null } {
+  let at = Date.now(), pending: Promise<void> | null = null;
+  return {
+    report: () => {
+      opts.onProgress?.({ phase: 'managed_sync.level_progress', bankedFiles: sliceBase.pages });
+      if (Date.now() - at < PASS_HEARTBEAT_MS || pending) return;
+      at = Date.now();
+      pending = save().catch(() => undefined).finally(() => { pending = null; });
+    },
+    get pending() { return pending; },
+  };
 }
 
 /** A pass result that imported nothing, at the source's last commit. */
@@ -705,7 +727,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
     pack, full: kind === 'full', counts, extract: !processingOptions.noExtract, since: value.telemetry.started_at, rescreen: legacyWaived.size > 0, closures });
 
   const save = async (outcome: PassOutcome, stopReason: string | null, pin = false) => {
-    const ended = outcome !== 'open';
+    await beat.pending; const ended = outcome !== 'open';
     if (ended && outcome !== 'synced') {
       const open = await openPassRequests(engine, { sourceId, passId, carried: value.obligations.pending_requests ?? [] });
       if (open.length) value.obligations.pending_requests = open; else delete value.obligations.pending_requests;
@@ -716,8 +738,8 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
     if (outcome === 'blocked' || stopReason === 'not_converged') value.obligations.stuck_since ??= new Date().toISOString();
     await engine.transaction(async tx => { await assertDrainLease(tx, sourceId); await writePassRow(tx, value, { pin }); });
   };
-  // GBRA-108: a committed legacy-sweep slice is progress: the row a follower watches and the drain's in-pass governor see it.
-  const onSwept = async () => { assertActive(); await save('open', null); opts.onProgress?.({ phase: 'managed_sync.legacy_swept', bankedFiles: sliceBase.pages }); };
+  // GBRA-108: a committed legacy-sweep slice is progress the row and the drain's governor see; #7355: so is a level read still working (`levelBeat`).
+  const onSwept = async () => { assertActive(); await save('open', null); opts.onProgress?.({ phase: 'managed_sync.legacy_swept', bankedFiles: sliceBase.pages }); }, beat = levelBeat(opts, sliceBase, () => save('open', null));
   const identityDowngrades: DowngradedRename[] = [];
   const fileRefusals = new Map<string, SyncFileRefusal>();
   const keptCount = () => lastLevel?.paths.filter(entry => entry.result.cls === 'kept').length ?? 0;
@@ -813,7 +835,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
         writeIds: value.obligations.converged?.writeback ?? [] })) return synced(true);
       const levelInput = { sourceId, context, workingTree: mode === 'working',
         pass: { noSchemaPack: processingOptions.noSchemaPack, episodeFullId: episode?.full_id ?? null, retryConsumed: round > 1 ? retryConsumed : undefined, exclude: opts.exclude, includeHidden: opts.includeHidden, strategy: opts.strategy, bootstrap: markersOwed(),
-          slugMode: value.obligations.slug_mode, cache: levelCache, passId, recorded: applied.recorded } };
+          slugMode: value.obligations.slug_mode, cache: levelCache, passId, recorded: applied.recorded, onProgress: beat.report } };
       const level = await readShadowLevel(engine, levelInput);
       await faultPoint('sync:level_read', { sourceId, round, level: level ? { statements: level.statements, confirm: level.confirm ?? null, reused: level.reused ?? 0, shadow: level, input: levelInput } : undefined });
       assertActive();

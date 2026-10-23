@@ -10,13 +10,13 @@ import { existsSync, readFileSync } from 'fs';
 import type { BrainEngine } from '../../../core/engine.ts';
 import { gbrainPath } from '../../../core/config.ts';
 import { LATEST_VERSION } from '../../../core/migrate.ts';
-import { MINIMUM_BUN_VERSION, unsupportedBunMessage } from '../../../core/runtime-version.ts';
+import { MINIMUM_BUN_VERSION, SECURE_BUN_VERSION, bunVersionMeets, unsupportedBunMessage } from '../../../core/runtime-version.ts';
 import { isNewerVersion, isValidVersionString } from '../../../core/semver.ts';
 import type { SelfUpgradeAction } from '../../../core/self-upgrade.ts';
 import type { SelfUpgradeAuditEvent } from '../../../core/audit/self-upgrade-audit.ts';
 import { VERSION as GBRAIN_BINARY_VERSION } from '../../../version.ts';
 import type { Check } from '../../doctor.ts';
-import { agentFix } from '../check-fix.ts';
+import { agentFix, doctorVerify } from '../check-fix.ts';
 
 /**
  * #4517: is the latest upgrade-errors.jsonl record superseded? True when the
@@ -223,10 +223,30 @@ export async function checkUpgradeErrors(
 /**
  * The running Bun against the supported floor. The CLI refuses to start below
  * it, so a local doctor normally reports ok; the fail row keeps the fix
- * command for any caller that reaches doctor on an older runtime.
+ * command for any caller that reaches doctor on an older runtime. A supported
+ * runtime below SECURE_BUN_VERSION warns (#7373): a standalone binary embeds
+ * the Bun it was built with, so its fix is a new gbrain binary, while a bun
+ * install runs on the user's Bun and `bun upgrade` fixes it.
  */
-export function checkBunRuntime(version = typeof Bun === 'undefined' ? '' : Bun.version): Check {
+export function checkBunRuntime(version = typeof Bun === 'undefined' ? '' : Bun.version, executable = process.execPath): Check {
   const refusal = unsupportedBunMessage(version);
   if (refusal) return { name: 'bun_runtime', status: 'fail', message: refusal.replaceAll('\n', ' ') };
-  return { name: 'bun_runtime', status: 'ok', message: `Bun ${version} (minimum ${MINIMUM_BUN_VERSION})` };
+  if (bunVersionMeets(version, SECURE_BUN_VERSION)) return { name: 'bun_runtime', status: 'ok', message: `Bun ${version} (minimum ${MINIMUM_BUN_VERSION})` };
+  const standalone = !/^bun(-[\w.-]+)?(\.exe)?$/i.test(executable.split(/[\\/]/).pop() ?? '');
+  return {
+    name: 'bun_runtime',
+    status: 'warn',
+    message: `Bun ${version} carries the Brotli decoder flaw CVE-2026-111497, fixed in Bun ${SECURE_BUN_VERSION} (reachable through fetch() with Content-Encoding: br and the decompression APIs). `
+      + (standalone
+        ? 'This gbrain binary embeds that Bun: install the latest gbrain binary (`gbrain upgrade`), then restart GBrain services. Upgrading a separately installed bun does not change it.'
+        : 'Run `bun upgrade`, then restart GBrain services.'),
+    fix: {
+      argv: standalone ? ['gbrain', 'upgrade'] : ['bun', 'upgrade'],
+      consent: [],
+      actor: 'user',
+      why: `Bun ${SECURE_BUN_VERSION} carries the Brotli fix for CVE-2026-111497; GBrain services pick it up on restart.`,
+      verify: doctorVerify('bun_runtime'),
+      requires_exclusive: false,
+    },
+  };
 }

@@ -211,6 +211,7 @@ export function syncStatusHeadline(status: Pick<SyncStatus, 'source_id' | 'state
     case 'head_blocked': return `Source ${status.source_id} is blocked: its oldest write waits on something only an operator clears.`;
     case 'recovery_blocked': return `Source ${status.source_id} is blocked: a write's recovery record found changed bytes on disk.`;
     case 'pass_unfinished': return `Source ${status.source_id} is resumable: the newest sync pass did not finish; the next sync continues it.`;
+    case 'pass_abandoned': return `Source ${status.source_id} is blocked: its sync passes keep stopping before they end; another plain sync will not change that (report what doctor shows).`;
     case 'not_converged': return `Source ${status.source_id} is resumable: the newest sync pass ran out of rounds before every path settled.`;
     case 'settle_mismatch': return `Source ${status.source_id} is resumable: a path keeps settling without reading settled; three passes in a row hold it.`;
     case 'deletes_withheld': return `Source ${status.source_id} is blocked: sync withheld a mass delete; the rest of the source is synced.`;

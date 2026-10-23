@@ -34,6 +34,7 @@ import { quarantineFilterFragment } from '../core/quarantine.ts';
 import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts';
 import { pageSortedRows, topCounts, type ListingPage } from '../core/bounded-listing.ts';
 import { nextListingCommand, parseListingFlags } from '../core/bounded-listing-cli.ts';
+import { withReadMeta } from '../core/read-heartbeat.ts';
 
 // --- Types ---
 
@@ -362,7 +363,7 @@ Pages: the totals always count every orphan; one page of rows follows, and
   const nextCommand = nextListingCommand(['gbrain', 'orphans', ...rest], page);
 
   if (json) {
-    console.log(JSON.stringify(orphansJson(result, page, nextCommand, request.cursor !== undefined || !page.complete), null, 2));
+    console.log(JSON.stringify(withReadMeta(orphansJson(result, page, nextCommand, request.cursor !== undefined || !page.complete)), null, 2));
     return;
   }
 

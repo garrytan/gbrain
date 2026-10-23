@@ -54,6 +54,7 @@ import {
   summarizeCrashes,
 } from '../core/minions/handlers/supervisor-audit.ts';
 import { formatSyncFreshness, readSyncFreshness, type SourceFreshness } from '../core/persistence/sync-freshness.ts';
+import { withReadMeta } from '../core/read-heartbeat.ts';
 
 const SCHEMA_VERSION = 1 as const;
 
@@ -903,7 +904,7 @@ export async function runStatus(
   }
 
   if (json) {
-    stdout(JSON.stringify(report) + '\n');
+    stdout(JSON.stringify(withReadMeta(report)) + '\n');
   } else {
     stdout(renderHuman(report));
   }

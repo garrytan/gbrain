@@ -7,6 +7,7 @@ import { WaiterOnlyConsumer, type ElectedOwner } from './consumer-election.ts';
 import { RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat, type ConsumerHeartbeat } from './consumer-heartbeat.ts';
 import { enginePoolStats } from '../postgres-engine/pool-stats.ts';
 import { claimOwnerKind, isOneShotCommand } from './claim-phase.ts';
+import { noteDirectPoolLease } from '../direct-pool-profile.ts';
 import { preparePageMutation } from './page-prepare.ts';
 import { prepareSemanticPageMutation } from './semantic-pages.ts';
 import { getWriteRequestById, getWriteRequestProgress, receiptFor, type WriteRequestProgress } from './journal.ts';
@@ -123,6 +124,7 @@ export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConf
     }
     return prior.consumer;
   }
+  noteDirectPoolLease();
   const kind = claimOwnerKind();
   const oneShot = isOneShotCommand() && kind !== 'serve' && !RESIDENT_CONSUMER_KINDS.includes(kind) ? { waiting: () => (settledWaiters.get(engine)?.size ?? 0) > 0 } : undefined;
   const full = () => new PersistenceConsumer(engine, config, preparePersistedMutation,

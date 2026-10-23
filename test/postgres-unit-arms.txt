@@ -234,6 +234,7 @@ test/managed-sync-stale-group-head.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
 test/on-commit-embedding.serial.test.ts
+test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts
 test/origin-guard-6948.test.ts
 test/origin-twin-sequence-7150.test.ts
@@ -376,6 +377,7 @@ test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
 test/purge-read-surfaces.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
+test/read-meta-diag.test.ts
 test/recall-page-fill.test.ts
 test/receipt-compaction-newest-sync-gbra130.test.ts
 test/remediation-manual-only.test.ts
@@ -391,6 +393,7 @@ test/repair-file-drift-held-window-gbra133.test.ts
 test/repair-file-drift-provenance-gbra133.test.ts
 test/repair-frontmatter-keys-sweep-6454.test.ts
 test/repair-frontmatter.test.ts
+test/repair-ghost-database-ahead-gbra133.test.ts
 test/repair-receipt-compaction.test.ts
 test/repair-rename-identity-6729.test.ts
 test/retrieval-coverage-notices.test.ts
@@ -442,6 +445,7 @@ test/sync-legacy-sweep-resume-7189.test.ts
 test/sync-origin-live-wins-6517.test.ts
 test/sync-page-identity-hold-gbra130.test.ts
 test/sync-page-write-failed-gbra130.test.ts
+test/sync-pass-abandoned-7355.test.ts
 test/sync-pass-cost-grouping-gbra130.test.ts
 test/sync-pass-dirty-after-freeze-gbra130.test.ts
 test/sync-prescreen-both-delta-6712.test.ts

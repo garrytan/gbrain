@@ -306,7 +306,7 @@ test/scripts/ci-runner-routing.test.ts	CI runner routing	7	readFileSync
 test/scripts/classify-tests.test.ts	classify-tests detectors	23	bun-file,doctor-source-helper,exec-scan,readFileSync,source-surface-helper
 test/scripts/classify-tests.test.ts	structural-suites manifest	1	readFileSync
 test/scripts/coverage-diff-gate.test.ts	exemptions	3	readFileSync
-test/scripts/data-safety-native-workflow.test.ts	data-safety native CI coverage	16	readFileSync
+test/scripts/data-safety-native-workflow.test.ts	data-safety native CI coverage	19	readFileSync
 test/scripts/e2e-backend-matrix.test.ts	scripts/e2e-backend-matrix.txt	3	readFileSync
 test/scripts/e2e-live-key-only.test.ts	shared live-key E2E exclusion list	4	readFileSync
 test/scripts/e2e-matrix.test.ts	frozen E2E matrix	9	readFileSync

@@ -7,8 +7,9 @@
  * is parsed as it streams; nothing but the result maps is held, so a
  * 600k-path tree costs its map and one chunk.
  */
-import { lstatSync, realpathSync, type BigIntStats } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { lstatSync, readFileSync, realpathSync, rmSync, writeFileSync, type BigIntStats } from 'node:fs';
+import { join, relative, resolve, sep } from 'node:path';
 import { hardenedGitStream, hardenedStreamComplete, NulRecordSplitter, type HardenedGitStreamResult } from '../hardened-git.ts';
 import { gitBlobOid, sha256 } from './digest.ts';
 import { readSyncFile } from './sync-discovery.ts';
@@ -313,7 +314,8 @@ interface ReadFile { path: string; sha256: string; localOid: string; foldedOid: 
  * is the tree's: a clean verdict depends on the raw bytes alone, so it needs no
  * read, hash or attribute lookup. A probe is vouched only when the stat taken
  * before the read is unchanged after the batch's hash and its `mtime` and
- * `ctime` are older than 2 s before the call began (the working stat cache's
+ * `ctime` are older than 2 s before the call began, by the earlier of the
+ * process's and the filesystem's clocks (`racyFloor`, the working stat cache's
  * racy window), so an edit made during or after the read always rehashes.
  */
 export async function probeDirtiness(root: string, gitRoot: string, paths: string[], tree: Map<string, GitTreeEntry>,
@@ -328,7 +330,7 @@ export async function probeDirtiness(root: string, gitRoot: string, paths: strin
   const step = opts.step ?? loopYield();
   const cleanKey = !opts.working && realRoot !== null && realGitRoot !== null ? `${realRoot}\0${realGitRoot}` : null;
   const vouched = cleanKey === null ? null : new Map(cleanProbes.get(cleanKey));
-  const racyFrom = BigInt(Date.now()) * 1_000_000n - WORKING_RACY_WINDOW_NS;
+  const racyFrom = vouched ? racyFloor(realGitRoot!) : 0n;
   for (let start = 0; start < paths.length; start += batch) {
     const decided = new Map<string, Dp | null>();
     const read: ReadFile[] = [];
@@ -450,6 +452,25 @@ async function readAttributes(gitRoot: string, paths: string[]): Promise<Map<str
 export interface WorkingStatCache { v: 1; root: string; entries: Record<string, string> }
 
 const WORKING_RACY_WINDOW_NS = 2_000_000_000n;
+
+/**
+ * The newest time a vouched stat may carry: 2 s before the earlier of this process's clock and the filesystem's, read as
+ * the mtime of a file just written in the Git directory (Git anchors its racy entries to the index's mtime). On a mount
+ * whose clock lags the process's, the process clock alone vouched a file written a moment ago, and a same-size edit in
+ * the same timestamp tick then kept its stale verdict. The process clock alone when the Git directory cannot be written.
+ */
+function racyFloor(gitRoot: string): bigint {
+  const local = BigInt(Date.now()) * 1_000_000n;
+  let fs: bigint | null = null;
+  try {
+    const dotGit = join(gitRoot, '.git');
+    const dir = lstatSync(dotGit).isDirectory() ? dotGit : resolve(gitRoot, /^gitdir: (.+)$/m.exec(readFileSync(dotGit, 'utf8'))?.[1]?.trim() ?? '.git');
+    const clock = join(dir, `gbrain-clock-${process.pid}-${randomUUID()}`);
+    writeFileSync(clock, '');
+    try { fs = lstatSync(clock, { bigint: true }).mtimeNs; } finally { rmSync(clock, { force: true }); }
+  } catch {}
+  return (fs !== null && fs < local ? fs : local) - WORKING_RACY_WINDOW_NS;
+}
 const WORKING_HASH_ATTEMPTS = 3;
 const WORKING_STAT_CACHES_REMEMBERED = 64;
 const ABSENT = 'absent';
@@ -501,7 +522,8 @@ export function workingChanged(cache: WorkingStatCache | null, paths: Iterable<s
  * stat'd before and after its bytes are hashed; a path whose stat moved is
  * discarded and rehashed, up to three attempts, and one still moving keeps its
  * last probe but no entry. An entry is written only for a stable stat whose
- * `mtime` and `ctime` are older than 2 s before that attempt began (a racy entry is
+ * `mtime` and `ctime` are older than 2 s before that attempt began, by the earlier of
+ * the process's and the filesystem's clocks (`racyFloor`; a racy entry is
  * left out, so the next pass rehashes it), and only for a probe with a level
  * (raw bytes read, or `deleted` with nothing at the path). `afterHash` runs between
  * the hash and the re-stat (tests inject an edit there).
@@ -515,7 +537,7 @@ export async function hashWorkingLevel(root: string, gitRoot: string, paths: str
   const entries = new Map<string, string>();
   let pending = [...new Set(paths)];
   for (let attempt = 0; attempt < WORKING_HASH_ATTEMPTS && pending.length > 0; attempt++) {
-    const racyFrom = BigInt(Date.now()) * 1_000_000n - WORKING_RACY_WINDOW_NS;
+    const racyFrom = realGitRoot === null ? BigInt(Date.now()) * 1_000_000n - WORKING_RACY_WINDOW_NS : racyFloor(realGitRoot);
     const before = new Map(pending.map(path => [path, statOf(path)]));
     const probed = await probeDirtiness(root, gitRoot, pending, tree, new Map(), { batch: opts.batch, working: true });
     await opts.afterHash?.(pending);

@@ -8,7 +8,7 @@ lives in `CHANGELOG.md`; per-file detail lives in the test files and in
 
 ## Quick start
 
-Prerequisites: Bun 1.4.0 or newer (CI pins 1.4.3), Git, and bash. E2E needs
+Prerequisites: Bun 1.4.0 or newer (CI pins 1.4.4), Git, and bash. E2E needs
 Docker for a `pgvector/pgvector:pg16` container and Python 3 on `PATH` (the E2E
 runner validates Bun's JUnit reports with the standard-library XML parser).
 
@@ -1771,7 +1771,7 @@ existing fence and timeline suites.
 
 `test/guarded-http.test.ts` and `test/guarded-http-tls.serial.test.ts` cover DNS,
 TLS identity and ports, redirects, deadlines, body limits, and cleanup. CI runs
-these boundaries on Bun 1.4.0 and 1.4.3, audits root and admin dependencies, and
+these boundaries on Bun 1.4.0 and 1.4.4, audits root and admin dependencies, and
 executes `scripts/test-gitleaks-config.sh` to prove fixture exceptions still
 report an unrelated secret in the same file. `scripts/scan-worktree-secrets.sh`
 scans tracked files plus new files eligible for commit; tracked ignored files

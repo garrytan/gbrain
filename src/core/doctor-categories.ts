@@ -191,6 +191,11 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'git_convergence',
   // #5186: an ownership marker committed to a source checkout's Git index.
   'tracked_ownership_marker',
+  // #7381: a source checkout behind its upstream, write-through files or staged files waiting for a commit, unpushed commits outside the source root (doctor/checks/git-writer.ts).
+  'checkout_lagging',
+  'dirty_age',
+  'commits_outside_source_root',
+  'quarantined_changes',
   'takes_count',
   'takes_weight_grid',
   // #5836: active facts with no entity (invisible to entity recall and the conflict sweep).

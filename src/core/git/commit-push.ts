@@ -25,7 +25,7 @@
  * (#7010; the owner's Git effects publish this way). CLI-only; never exposed
  * over MCP (it pushes with host credentials).
  */
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { execFileSync } from '../spawn.ts';
@@ -42,6 +42,12 @@ export const COMMIT_LOCK_ENV = 'BRAIN_COMMIT_LOCK_HELD';
 export const PUBLISH_LOCK_NAME = 'brain-publish.lock';
 const PUBLISH_REQUEST_NAME = 'brain-publish.requested';
 const CONFLICT_STATE_NAME = 'brain-integrate-conflict.json';
+/** Write-through files gbrain wrote but could not commit (lock busy past the short budget, or a refused commit): one `<iso>\t<json path>` line each. */
+const PENDING_NAME = 'brain-writethrough-pending.log';
+/** Toplevel-relative source root(s) of this checkout, one value each (`gbrain sources harden` writes them); unset means the whole checkout. */
+export const SOURCE_ROOT_CONFIG = 'gbrain.sourceRoot';
+/** Set to the commit lock path on every commit gbrain makes under that lock; the opt-in commit guard admits only these. */
+export const COMMIT_VIA_ENV = 'GBRAIN_COMMIT_VIA';
 const MAX_PUSH_ATTEMPTS = 8;
 const sleeper = new Int32Array(new SharedArrayBuffer(4));
 const INDEX_LOCK_RETRIES = 5;
@@ -63,6 +69,8 @@ export interface CommitPushResult {
   confirmed?: 'push' | 'remote';
   checkout: CheckoutState;
   lagging_reason?: string;
+  /** Opt-in quarantine (git config gbrain.quarantine): the local versions of conflicting files, parked under a ref; the remote's version was published. */
+  quarantined?: QuarantineEntry;
 }
 
 export interface PullResult {
@@ -94,6 +102,10 @@ export interface CommitPushOptions {
   branch?: string;
   /** Push-only: never advance the checkout and skip its pre-push hook (a managed canonical worktree; see the header). */
   keepCheckout?: boolean;
+  /** Commit the pending write-through files (`--pending`) instead of named paths. */
+  pending?: boolean;
+  /** Commit and publish files outside the configured source root(s): the user's explicit choice, or gbrain's own scaffolding at the checkout root. */
+  allowOutsideSourceRoot?: boolean;
 }
 
 export type Resolution = { kind: 'ours' } | { kind: 'theirs' } | { kind: 'file'; path: string };
@@ -303,6 +315,26 @@ export function scopePaths(root: string, paths: string[], cwd: string): string[]
   return [...new Set(out)];
 }
 
+/** The checkout's configured source roots (`gbrain.sourceRoot`, toplevel-relative); [''] (the whole checkout) when none is set. */
+export function configuredSourceRoots(root: string): string[] {
+  const roots: string[] = [];
+  for (const raw of git(root, ['config', '--get-all', SOURCE_ROOT_CONFIG]).stdout.split('\n').map(v => v.trim()).filter(Boolean)) {
+    const rel = (isAbsolute(raw) ? relative(root, raw) : raw).split('\\').join('/').replace(/^(\.\/)+/, '').replace(/\/+$/, '');
+    if (rel === '' || rel === '.') return [''];
+    if (!rel.startsWith('..')) roots.push(rel);
+  }
+  return roots.length ? [...new Set(roots)] : [''];
+}
+
+const covers = (spec: string, path: string) => spec === '' || path === spec || path.startsWith(`${spec}/`);
+export const insideSourceRoots = (path: string, roots: string[]) => roots.some(r => covers(r, path));
+
+function outsideRootError(root: string, roots: string[], paths: string[], what: string): OperationError {
+  return opError('commit_outside_source_root', `${what} ${paths.slice(0, 10).join(', ')}${paths.length > 10 ? ', ...' : ''}, outside this brain's source root (${roots.join(', ')}).`,
+    `Commit only files under the source root. Files elsewhere in ${root} belong to other projects or writers; commit those with their own tools. Nothing was staged or committed.`,
+    { detail: JSON.stringify({ roots, paths }) });
+}
+
 // ── Commit ──────────────────────────────────────────────────────────────────
 
 function indexLocked(r: GitRun): boolean {
@@ -310,9 +342,9 @@ function indexLocked(r: GitRun): boolean {
 }
 
 /** Run an index-writing git command; a lockless git holding index.lock gets a bounded, jittered retry. */
-function withIndexRetry(root: string, args: string[], what: string, env?: NodeJS.ProcessEnv): GitRun {
+function withIndexRetry(root: string, args: string[], what: string, env?: NodeJS.ProcessEnv, input?: string): GitRun {
   for (let attempt = 0; ; attempt++) {
-    const r = git(root, args, { env, timeoutMs: 120_000 });
+    const r = git(root, args, { env, timeoutMs: 120_000, input });
     if (r.code === 0 || !indexLocked(r)) return r;
     if (attempt >= INDEX_LOCK_RETRIES) {
       const lock = absGitPath(root, 'index.lock');
@@ -345,40 +377,191 @@ function withRenamePartners(root: string, rel: string[]): string[] {
   return [...out];
 }
 
-function commitPaths(root: string, rel: string[], message: string, lockPath: string | null): string | null {
+/** Index entries that differ from HEAD, whoever staged them, with rename detection off so both sides of a rename are listed. */
+function stagedPaths(root: string): string[] {
+  return git(root, ['diff', '--cached', '--no-renames', '--name-only', '-z']).stdout.split('\0').filter(Boolean);
+}
+
+/** The index entries under `rel` as `ls-files -s` records, so a failed commit can put them back exactly. */
+function indexEntries(root: string, rel: string[]): string[] {
+  return git(root, ['--literal-pathspecs', 'ls-files', '-s', '-z', '--', ...rel]).stdout.split('\0').filter(Boolean);
+}
+
+/**
+ * Put the index under `rel` back to `before` after a commit that did not land:
+ * `git add` already staged the paths, and an entry left staged in the shared
+ * index is what the next writer's commit without paths sweeps up.
+ */
+function restoreIndex(root: string, rel: string[], before: string[]): void {
+  const pathOf = (line: string) => line.slice(line.indexOf('\t') + 1);
+  const kept = new Set(before.map(pathOf));
+  const zero = '0'.repeat(git(root, ['rev-parse', 'HEAD']).stdout.trim().length || 40);
+  const records = [...indexEntries(root, rel).map(pathOf).filter(p => !kept.has(p)).map(p => `0 ${zero}\t${p}`), ...before];
+  if (records.length) withIndexRetry(root, ['update-index', '-z', '--index-info'], 'index restore', undefined, records.map(l => `${l}\0`).join(''));
+}
+
+interface CommitScope { roots: string[]; lockPath: string; markHeld: boolean }
+
+/**
+ * Stage and commit exactly `rel` (the caller holds the commit lock). Refused
+ * before anything is staged: a path outside the source root(s), and a file
+ * another writer already staged under a named directory (name it to claim
+ * it). A commit git refuses leaves the index as it found it.
+ */
+function commitPaths(root: string, rel: string[], message: string, scope: CommitScope): string | null {
+  const outside = rel.filter(p => !insideSourceRoots(p, scope.roots));
+  if (outside.length) throw outsideRootError(root, scope.roots, outside, 'Refusing to commit');
+  const swept = stagedPaths(root).filter(p => !rel.includes(p) && rel.some(spec => covers(spec, p)));
+  if (swept.length) {
+    const list = `${swept.slice(0, 10).join(', ')}${swept.length > 10 ? ', ...' : ''}`;
+    throw opError('commit_prestaged_paths', `${swept.length} file(s) under the named path(s) were already staged by another writer: ${list}.`,
+      'Nothing was staged or committed. If they are yours, name each file explicitly; otherwise leave them to the writer that staged them, or unstage them with the user\'s agreement (git restore --staged -- <file>; the working tree keeps its bytes).',
+      { detail: JSON.stringify({ paths: swept }), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+        argv: ['git', '-C', root, 'restore', '--staged', '--', ...swept],
+        why: 'Another writer staged these files; committing them would publish whatever that writer had in progress, and unstaging them drops its staging.',
+        user_message: `Files already staged by another writer sit under the path you asked to commit (${list}). Commit only the files you name, or unstage those (their bytes stay on disk)?`,
+        docs: 'docs/guides/shared-checkout-git.md#outcomes' } });
+  }
+  const before = indexEntries(root, rel);
   const add = withIndexRetry(root, ['--literal-pathspecs', 'add', '-A', '--', ...rel], 'git add');
   if (add.code !== 0) {
     throw opError('commit_paths_invalid', 'git add refused the given paths.', add.stderr.trim().slice(0, 300) || 'Check the paths exist or are tracked.');
   }
-  rel = withRenamePartners(root, rel);
-  if (git(root, ['--literal-pathspecs', 'diff', '--cached', '--quiet', '--', ...rel]).code === 0) return null;
-  const commit = withIndexRetry(root, ['--literal-pathspecs', 'commit', '--only', '-m', message, '--', ...rel], 'git commit',
-    lockPath ? { [COMMIT_LOCK_ENV]: lockPath } : undefined);
-  if (commit.code !== 0) {
-    throw opError('git_unavailable', `git commit failed in ${root}.`,
-      `${commit.stderr.trim().slice(0, 300)} A missing git identity (user.name, user.email) or a refusing pre-commit hook are common causes.`);
+  try {
+    const paths = withRenamePartners(root, rel);
+    const partners = paths.filter(p => !insideSourceRoots(p, scope.roots));
+    if (partners.length) throw outsideRootError(root, scope.roots, partners, 'A staged rename would commit');
+    if (git(root, ['--literal-pathspecs', 'diff', '--cached', '--quiet', '--', ...paths]).code === 0) return null;
+    const env = { [COMMIT_VIA_ENV]: scope.lockPath, ...(scope.markHeld ? { [COMMIT_LOCK_ENV]: scope.lockPath } : {}) };
+    const commit = withIndexRetry(root, ['--literal-pathspecs', 'commit', '--only', '-m', message, '--', ...paths], 'git commit', env);
+    if (commit.code !== 0) {
+      throw opError('git_unavailable', `git commit failed in ${root}; the paths were unstaged again and keep their bytes.`,
+        `${commit.stderr.trim().slice(0, 300)} A missing git identity (user.name, user.email) or a refusing pre-commit hook are common causes.`);
+    }
+    return gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
+  } catch (e) {
+    try { restoreIndex(root, rel, before); } catch { /* the index lock outlasted the retries; the error below still stands */ }
+    throw e;
   }
-  return gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
+}
+
+// ── Pending write-through ───────────────────────────────────────────────────
+
+export interface PendingWriteThrough { path: string; since: string }
+
+const PENDING_NOTED = new Set(['commit_lock_busy', 'git_index_locked', 'git_index_stale', 'git_unavailable', 'git_operation_in_progress']);
+
+function readPendingFile(file: string, into: Map<string, string>): void {
+  let text: string;
+  try { text = readFileSync(file, 'utf8'); } catch { return; }
+  for (const line of text.split('\n')) {
+    const tab = line.indexOf('\t');
+    if (tab === -1) continue;
+    let path: unknown;
+    try { path = JSON.parse(line.slice(tab + 1)); } catch { continue; }
+    const since = line.slice(0, tab);
+    if (typeof path === 'string' && path && (!into.has(path) || since < into.get(path)!)) into.set(path, since);
+  }
+}
+
+/** Write-through files gbrain wrote in this checkout but could not commit, oldest first. A path committed since stays listed until the next locked commit settles the ledger. */
+export function readPendingWriteThrough(repo: string): PendingWriteThrough[] {
+  try {
+    const file = absGitPath(checkoutRoot(repo), PENDING_NAME);
+    const entries = new Map<string, string>();
+    readPendingFile(file, entries);
+    readPendingFile(`${file}.settle`, entries);
+    return [...entries].map(([path, since]) => ({ path, since })).sort((a, b) => a.since.localeCompare(b.since));
+  } catch {
+    return [];
+  }
+}
+
+/** The pending ledger's files that still differ from HEAD (doctor's `dirty_age`); the others were committed since. */
+export function pendingWriteThroughStillDirty(repo: string): PendingWriteThrough[] {
+  const pending = readPendingWriteThrough(repo);
+  if (!pending.length) return [];
+  const dirty = dirtyPaths(checkoutRoot(repo), pending.map(e => e.path));
+  return pending.filter(e => dirty.has(e.path));
+}
+
+/** Appends without the lock (O_APPEND), so a writer that could not get it still records its file. */
+function notePending(root: string, paths: string[]): void {
+  try { appendFileSync(absGitPath(root, PENDING_NAME), paths.map(p => `${new Date().toISOString()}\t${JSON.stringify(p)}\n`).join('')); } catch { /* best-effort */ }
+}
+
+/** Which of `paths` differ from HEAD in the index or the working tree. */
+function dirtyPaths(root: string, paths: string[]): Set<string> {
+  const out = new Set<string>();
+  for (let i = 0; i < paths.length; i += 500) {
+    const entries = git(root, ['--literal-pathspecs', 'status', '--porcelain', '-z', '--untracked-files=all', '--', ...paths.slice(i, i + 500)]).stdout.split('\0');
+    for (let j = 0; j < entries.length; j++) {
+      if (entries[j].length < 4) continue;
+      out.add(entries[j].slice(3));
+      if (/^[RC]/.test(entries[j])) j++;
+    }
+  }
+  return out;
+}
+
+/** Drop ledger entries whose file no longer differs from HEAD (the caller holds the commit lock). New lines appended meanwhile go to a fresh ledger file. */
+function settlePending(root: string): void {
+  try {
+    const file = absGitPath(root, PENDING_NAME);
+    const settle = `${file}.settle`;
+    const moved = `${file}.${process.pid}.tmp`;
+    if (existsSync(file)) renameSync(file, moved);
+    const entries = new Map<string, string>();
+    readPendingFile(settle, entries);
+    readPendingFile(moved, entries);
+    const dirty = dirtyPaths(root, [...entries.keys()]);
+    const keep = [...entries].filter(([path]) => dirty.has(path)).map(([path, since]) => `${since}\t${JSON.stringify(path)}\n`);
+    if (keep.length) { writeFileSync(`${settle}.tmp`, keep.join('')); renameSync(`${settle}.tmp`, settle); }
+    else rmSync(settle, { force: true });
+    rmSync(moved, { force: true });
+  } catch { /* best-effort: the ledger only feeds retries and doctor */ }
 }
 
 /**
- * Commit-only entry for gbrain's own write paths (write-through pages): the
- * commit lock when it frees within `lockWaitMs`, else a path-scoped commit
- * without it (safe: the shared checkout only fast-forwards, so no lock holder
- * can revert it). No marker is set, so the post-commit hook publishes.
- * Returns the new commit, or null when the paths had no change.
+ * Commit-only entry for gbrain's own write paths (write-through pages, facts
+ * fences, takes, timeline, lint fixes), always under the commit lock. A writer
+ * holding the lock past `lockWaitMs` makes this fail `commit_lock_busy` (the
+ * file write itself stands) and the file goes into the pending ledger, which
+ * the next locked write-through or `gbrain git commit-push --pending` commits and
+ * doctor's `dirty_age` reports. It never commits without the lock: that races
+ * other writers on the shared index. Paths must sit under `repo` (the source
+ * root). No marker is set, so the post-commit hook publishes. Returns the new
+ * commit, or null when the paths had no change.
  */
 export function commitPathsLocked(repo: string, rel: string[], message: string, opts: { lockWaitMs: number }): string | null {
   const root = checkoutRoot(repo);
   assertManagedFilesystemWrite(root);
   assertNoOperationInProgress(root);
   const paths = scopePaths(root, rel, root);
-  let lock: CommitLock | null = null;
-  try { lock = acquireCommitLock(root, opts.lockWaitMs); } catch (e) { if ((e as { code?: string }).code !== 'commit_lock_busy') throw e; }
+  const own = relative(realpathSync(root), realpathSync(repo)).split('\\').join('/');
+  const roots = [own.startsWith('..') ? '' : own];
+  let lock: CommitLock;
+  try { lock = acquireCommitLock(root, opts.lockWaitMs); } catch (e) {
+    if (PENDING_NOTED.has((e as { code?: string }).code ?? '')) notePending(root, paths);
+    throw e;
+  }
   try {
-    return commitPaths(root, paths, message, null);
+    const pending = [...dirtyPaths(root, readPendingWriteThrough(root).map(e => e.path).filter(p => !paths.includes(p) && insideSourceRoots(p, roots)))];
+    const scope = { roots, lockPath: lock.lockPath, markHeld: false };
+    let sha: string | null;
+    try {
+      sha = commitPaths(root, [...paths, ...pending], pending.length ? `${message} (+${pending.length} pending write-through file(s))` : message, scope);
+    } catch (e) {
+      if (!pending.length) throw e;
+      sha = commitPaths(root, paths, message, scope);
+    }
+    settlePending(root);
+    return sha;
+  } catch (e) {
+    if (PENDING_NOTED.has((e as { code?: string }).code ?? '')) notePending(root, paths);
+    throw e;
   } finally {
-    lock?.release();
+    lock.release();
   }
 }
 
@@ -409,11 +592,15 @@ function fetchFlags(root: string): string[] {
   return ['--no-tags', ...(maj > 2 || (maj === 2 && min >= 29) ? ['--no-write-fetch-head'] : [])];
 }
 
-/** merge-tree --write-tree on git >= 2.38; else (or with the GBRAIN_GIT_NO_MERGE_TREE=1 test seam) a 3-way read-tree that treats any same-path change on both sides as a conflict. */
-function mergeTrees(root: string, ours: string, theirs: string): MergeTree {
+/**
+ * merge-tree --write-tree on git >= 2.38; else (or with the GBRAIN_GIT_NO_MERGE_TREE=1 test seam) a 3-way read-tree
+ * that treats any same-path change on both sides as a conflict. `base` replaces the merge base (a replayed commit's
+ * parent); merge-tree takes it from git 2.40.
+ */
+function mergeTrees(root: string, ours: string, theirs: string, base?: string): MergeTree {
   const [maj, min] = cachedGitVersion(root);
-  if ((maj > 2 || (maj === 2 && min >= 38)) && process.env.GBRAIN_GIT_NO_MERGE_TREE !== '1') {
-    const r = git(root, ['merge-tree', '--write-tree', '--name-only', '-z', ours, theirs]);
+  if ((maj > 2 || (maj === 2 && min >= (base ? 40 : 38))) && process.env.GBRAIN_GIT_NO_MERGE_TREE !== '1') {
+    const r = git(root, ['merge-tree', '--write-tree', '--name-only', '-z', ...(base ? [`--merge-base=${base}`] : []), ours, theirs]);
     if (r.code !== 0 && r.code !== 1) throw opError('git_unavailable', 'git merge-tree failed.', r.stderr.trim().slice(0, 300));
     const f = r.stdout.split('\0');
     const tree = f[0] || null;
@@ -433,12 +620,12 @@ function mergeTrees(root: string, ours: string, theirs: string): MergeTree {
     }
     return { tree, conflicts: [...conflicts], structural: [...conflicts].filter(p => structural.has(p)) };
   }
-  const base = git(root, ['merge-base', ours, theirs]).stdout.trim();
-  if (!base) throw opError('integrate_conflict', 'The local and remote branches share no history.', 'Reconcile the branches by hand.');
+  const mergeBase = base ?? git(root, ['merge-base', ours, theirs]).stdout.trim();
+  if (!mergeBase) throw opError('integrate_conflict', 'The local and remote branches share no history.', 'Reconcile the branches by hand.');
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-integrate-'));
   try {
     const env = { GIT_INDEX_FILE: join(dir, 'index') };
-    const read = git(root, ['read-tree', '-m', '-i', '--aggressive', base, ours, theirs], { env });
+    const read = git(root, ['read-tree', '-m', '-i', '--aggressive', mergeBase, ours, theirs], { env });
     if (read.code !== 0) throw opError('git_unavailable', 'git read-tree failed.', read.stderr.trim().slice(0, 300));
     const unmerged = git(root, ['ls-files', '-u', '-z'], { env }).stdout.split('\0').filter(Boolean);
     if (!unmerged.length) return { tree: gitOk(root, ['write-tree'], 'write-tree', { env }), conflicts: [], structural: [] };
@@ -455,6 +642,52 @@ function mergeTrees(root: string, ours: string, theirs: string): MergeTree {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+const treeOf = (root: string, commit: string) => gitOk(root, ['rev-parse', `${commit}^{tree}`], 'rev-parse tree');
+
+interface Integration extends MergeTree {
+  /** Local commits left out because an upstream commit already carries the same patch (`git patch-id`). */
+  skipped: string[];
+}
+
+const MAX_REPLAY = 500;
+
+/**
+ * The tree a publish of `local` over `remote` should carry. A 3-way merge of the two tips
+ * counts a local commit whose patch already reached the remote (cherry-picked or rebased there) as a new
+ * change again: a remote that edited those lines since conflicts forever, and a remote that reverted it gets
+ * the change back silently. So when any local commit is patch-equivalent to an upstream one, the local
+ * commits are replayed in memory onto the remote tip instead, oldest first, leaving out the equivalent ones
+ * and the clean merges (their content is their parents'). A merge that carries its own resolution, a root
+ * commit, or more than MAX_REPLAY commits fall back to the tip merge.
+ */
+function integrate(root: string, local: string, remote: string): Integration {
+  const commits = git(root, ['rev-list', '--reverse', '--topo-order', '--cherry-mark', '--right-only', '--parents', `${remote}...${local}`])
+    .stdout.split('\n').filter(Boolean).map(line => {
+      const [head, ...parents] = line.split(' ');
+      return { sha: head.slice(1), equivalent: head.startsWith('='), parents };
+    });
+  const tipMerge = (): Integration => ({ ...mergeTrees(root, local, remote), skipped: [] });
+  if (!commits.some(c => c.equivalent) || commits.length > MAX_REPLAY) return tipMerge();
+  let acc = remote;
+  const conflicts = new Set<string>();
+  const structural = new Set<string>();
+  const skipped: string[] = [];
+  for (const c of commits) {
+    if (c.equivalent) { skipped.push(c.sha); continue; }
+    if (c.parents.length !== 1) {
+      if (c.parents.length !== 2) return tipMerge();
+      const own = mergeTrees(root, c.parents[0], c.parents[1]);
+      if (own.conflicts.length || own.tree !== treeOf(root, c.sha)) return tipMerge();
+      continue;
+    }
+    const step = mergeTrees(root, acc, c.sha, c.parents[0]);
+    for (const p of step.conflicts) conflicts.add(p);
+    for (const p of step.structural) structural.add(p);
+    acc = gitOk(root, ['commit-tree', '--no-gpg-sign', step.tree!, '-p', acc, '-m', 'gbrain: replay'], 'commit-tree');
+  }
+  return { tree: treeOf(root, acc), conflicts: [...conflicts], structural: [...structural], skipped };
 }
 
 interface TreeEntry { mode: string; type: string; sha: string }
@@ -530,9 +763,11 @@ function conflictError(ctx: Ctx, ours: string, theirs: string, merged: MergeTree
 }
 
 /** Honors the user's commit signing config, like the `git pull` it replaces. */
-function buildMerge(ctx: Ctx, ours: string, theirs: string, tree: string): string {
-  return gitOk(ctx.root, ['commit-tree', tree, '-p', ours, '-p', theirs,
-    '-m', `gbrain: merge ${ctx.remote}/${ctx.mergeRef.replace(/^refs\/heads\//, '')} into ${ctx.branch}`], 'commit-tree');
+function buildMerge(ctx: Ctx, ours: string, theirs: string, tree: string, skipped: string[] = [], extra: string[] = []): string {
+  const remote = `${ctx.remote}/${ctx.mergeRef.replace(/^refs\/heads\//, '')}`;
+  const note = skipped.length
+    ? ['-m', `Left out ${skipped.length} local commit(s) whose patch ${remote} already has: ${skipped.slice(0, 20).map(s => s.slice(0, 12)).join(' ')}${skipped.length > 20 ? ' ...' : ''}`] : [];
+  return gitOk(ctx.root, ['commit-tree', tree, '-p', ours, '-p', theirs, '-m', `gbrain: merge ${remote} into ${ctx.branch}`, ...note, ...extra.flatMap(m => ['-m', m])], 'commit-tree');
 }
 
 function fetchTracking(ctx: Ctx): string | null {
@@ -571,7 +806,41 @@ function remoteContains(ctx: Ctx, sha: string): boolean {
   return true;
 }
 
-interface Published { sha: string; integrated: number; confirmed: 'push' | 'remote' }
+interface Published { sha: string; integrated: number; confirmed: 'push' | 'remote'; quarantined?: QuarantineEntry }
+
+// ── Quarantine (opt-in) ─────────────────────────────────────────────────────
+
+const QUARANTINE_LEDGER_NAME = 'brain-quarantine.log';
+export const QUARANTINE_REF_PREFIX = 'refs/gbrain/quarantine/';
+
+export interface QuarantineEntry { ref: string; local: string; remote: string; paths: string[]; at: string }
+
+const quarantineEnabled = (root: string) => git(root, ['config', '--type=bool', '--get', 'gbrain.quarantine']).stdout.trim() === 'true';
+
+/** Name the local commit under refs/gbrain/quarantine/ and note which files it parks; the ref keeps it even if history is later rewritten. */
+function parkLocalVersion(root: string, local: string, remote: string, paths: string[]): QuarantineEntry {
+  const at = new Date().toISOString();
+  const ref = `${QUARANTINE_REF_PREFIX}${at.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z')}-${local.slice(0, 12)}`;
+  gitOk(root, ['update-ref', ref, local], 'update-ref quarantine');
+  const entry = { ref, local, remote, paths, at };
+  appendFileSync(absGitPath(root, QUARANTINE_LEDGER_NAME), `${JSON.stringify(entry)}\n`);
+  return entry;
+}
+
+/** Parked local versions whose ref still exists (deleting the ref is how the user says they are done with it). */
+export function readQuarantine(repo: string): QuarantineEntry[] {
+  try {
+    const root = checkoutRoot(repo);
+    const p = absGitPath(root, QUARANTINE_LEDGER_NAME);
+    if (!existsSync(p)) return [];
+    const live = new Set(git(root, ['for-each-ref', '--format=%(refname)', QUARANTINE_REF_PREFIX]).stdout.split('\n').filter(Boolean));
+    return readFileSync(p, 'utf8').split('\n').flatMap(line => {
+      try { const e = JSON.parse(line) as QuarantineEntry; return live.has(e.ref) ? [e] : []; } catch { return []; }
+    });
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Push `start` (an immutable sha), merging remote commits in memory as needed.
@@ -583,14 +852,15 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
   let integrated = 0;
   let lastError = '';
   let stalled = 0;
+  let quarantined: QuarantineEntry | undefined;
   const onRemote = (): Published => {
     const tip = fetchTracking(ctx);
-    return { sha: tip && isAncestor(ctx.root, candidate, tip) ? tip : candidate, integrated, confirmed: 'remote' };
+    return { sha: tip && isAncestor(ctx.root, candidate, tip) ? tip : candidate, integrated, confirmed: 'remote', ...(quarantined ? { quarantined } : {}) };
   };
   for (let attempt = 0; attempt < MAX_PUSH_ATTEMPTS; attempt++) {
     if (attempt) Atomics.wait(sleeper, 0, 0, Math.min(2000, 50 * 2 ** attempt) + Math.floor(Math.random() * 100));
     const push = remoteGit(ctx.root, 'push', [...(ctx.keepCheckout ? ['--no-verify'] : []), '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
-    if (push.code === 0) return { sha: candidate, integrated, confirmed: 'push' };
+    if (push.code === 0) return { sha: candidate, integrated, confirmed: 'push', ...(quarantined ? { quarantined } : {}) };
     lastError = push.stderr.trim();
     if (remoteContains(ctx, candidate)) return onRemote();
     const remoteTip = fetchTracking(ctx);
@@ -599,9 +869,14 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
       if (++stalled > 1) break;
       continue;
     }
-    const merged = mergeTrees(ctx.root, candidate, remoteTip);
+    const merged = integrate(ctx.root, candidate, remoteTip);
     let tree = merged.tree!;
-    if (merged.conflicts.length) {
+    let parkedNote: string[] = [];
+    if (merged.conflicts.length && !resolutions?.size && !merged.structural.length && quarantineEnabled(ctx.root)) {
+      tree = resolvedTree(ctx, candidate, remoteTip, merged, new Map(merged.conflicts.map(p => [p, { kind: 'theirs' } as Resolution])), cwd);
+      quarantined = parkLocalVersion(ctx.root, candidate, remoteTip, merged.conflicts);
+      parkedNote = [`Quarantined this machine's version of ${merged.conflicts.length} conflicting file(s) under ${quarantined.ref}: ${merged.conflicts.slice(0, 20).join(', ')}`];
+    } else if (merged.conflicts.length) {
       if (!resolutions?.size) throw conflictError(ctx, candidate, remoteTip, merged);
       if (!expectRemote || !remoteTip.startsWith(expectRemote.toLowerCase())) {
         throw conflictError(ctx, candidate, remoteTip, merged,
@@ -610,12 +885,47 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
       tree = resolvedTree(ctx, candidate, remoteTip, merged, resolutions, cwd);
     }
     integrated += Number(git(ctx.root, ['rev-list', '--count', `${candidate}..${remoteTip}`]).stdout.trim() || 0);
-    candidate = buildMerge(ctx, candidate, remoteTip, tree);
+    candidate = buildMerge(ctx, candidate, remoteTip, tree, merged.skipped, parkedNote);
   }
   if (remoteContains(ctx, candidate)) return onRemote();
   throw opError('push_unconfirmed', `The commit is durable locally but no push to ${ctx.remote}/${ctx.mergeRef.replace(/^refs\/heads\//, '')} was confirmed.`,
     `git push failed (network, credentials, branch protection, or a remote that kept moving): ${lastError.slice(0, 500) || 'no detail'}. Rerun gbrain git commit-push --push-only once the remote is reachable; never git pull --rebase in this checkout.`,
     { detail: candidate, retryable: true });
+}
+
+/** Non-merge commits in `target` but not in `upstream` (at most 200) that change files outside `roots`; null when git cannot list them. */
+export function localCommitsOutsideRoots(root: string, target: string, upstream: string, roots: string[]): Array<{ sha: string; paths: string[] }> | null {
+  if (roots.includes('')) return [];
+  const local = git(root, ['rev-list', '--no-merges', '--max-count=200', target, '--not', upstream]);
+  if (local.code !== 0) return null;
+  const offending: Array<{ sha: string; paths: string[] }> = [];
+  for (const sha of local.stdout.split('\n').filter(Boolean)) {
+    const paths = git(root, ['diff-tree', '--no-commit-id', '--name-only', '--no-renames', '-r', '-z', '--root', sha]).stdout.split('\0').filter(p => p && !insideSourceRoots(p, roots));
+    if (paths.length) offending.push({ sha, paths });
+  }
+  return offending;
+}
+
+/**
+ * Refuse to publish a local commit that changes files outside the configured source root(s). In a shared
+ * checkout a commit made without paths (a cron's `git add <dir>; git commit`) carries whatever any writer
+ * had staged; the source-root config is how a brain inside a larger repository says which files are its own.
+ * Merge commits are not judged (gbrain's in-memory merges bring remote files in). With no root configured
+ * the whole checkout is the root and nothing is refused.
+ */
+function assertLocalCommitsInsideRoots(ctx: Ctx, target: string, roots: string[]): void {
+  const offending = localCommitsOutsideRoots(ctx.root, target, ctx.trackingRef, roots) ?? [];
+  if (!offending.length) return;
+  const files = [...new Set(offending.flatMap(o => o.paths))];
+  const shas = offending.map(o => o.sha.slice(0, 12)).join(', ');
+  throw opError('commit_outside_source_root', `${offending.length} local commit(s) (${shas}) change ${files.length} file(s) outside this brain's source root (${roots.join(', ')}): ${files.slice(0, 10).join(', ')}${files.length > 10 ? ', ...' : ''}. Nothing was pushed.`,
+    `A commit made without gbrain git commit-push (for example a cron's git add plus git commit) can carry files other writers had staged. Show the user git show --stat ${offending[0].sha.slice(0, 12)}; if they want it published as is, rerun with --allow-outside-source-root. See docs/guides/shared-checkout-git.md#source-roots.`,
+    { detail: JSON.stringify({ roots, commits: offending }),
+      fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+        argv: ['gbrain', 'git', 'commit-push', '--push-only', '--allow-outside-source-root', '--path', ctx.root],
+        why: 'These commits change files that are not the brain\'s; publishing them can overwrite other projects\' or writers\' work on the remote.',
+        user_message: `Local commit(s) ${shas} change files outside the brain's folder (${files.slice(0, 5).join(', ')}${files.length > 5 ? ', ...' : ''}). Publish them anyway?`,
+        docs: 'docs/guides/shared-checkout-git.md#source-roots' } });
 }
 
 /** Advance the shared checkout (caller holds the commit lock) with a real compare-and-swap: fast-forward only, hooks off, never autostash. */
@@ -687,7 +997,10 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
   if (opts.keepCheckout && !opts.pushOnly) throw opError('commit_paths_invalid', 'keepCheckout publishes commits already on the branch; it commits nothing.', 'Use --push-only --keep-checkout.');
   if (!opts.keepCheckout) assertManagedFilesystemWrite(root);
   const cwd = opts.cwd ?? process.cwd();
-  const rel = opts.pushOnly ? [] : scopePaths(root, opts.paths ?? [], cwd);
+  const roots = configuredSourceRoots(root);
+  const rel = opts.pushOnly ? [] : opts.pending
+    ? [...dirtyPaths(root, readPendingWriteThrough(root).map(e => e.path).filter(p => insideSourceRoots(p, roots)))]
+    : scopePaths(root, opts.paths ?? [], cwd);
   if (!opts.pushOnly && !opts.message?.trim()) {
     throw opError('commit_paths_invalid', 'A commit message is required.', 'Pass -m "<message>".');
   }
@@ -701,7 +1014,8 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
     const lock = acquireCommitLock(root, opts.lockWaitMs);
     try {
       assertNoOperationInProgress(root);
-      committed = commitPaths(root, rel, opts.message!.trim(), lock.lockPath);
+      committed = rel.length ? commitPaths(root, rel, opts.message!.trim(), { roots: opts.allowOutsideSourceRoot ? [''] : roots, lockPath: lock.lockPath, markHeld: true }) : null;
+      settlePending(root);
     } finally {
       lock.release();
     }
@@ -730,7 +1044,9 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
     rmSync(requestPath, { force: true });
     try {
       const head = gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
-      const published = publish(ctx, start && !isAncestor(root, start, head) ? start : head, resolutions, opts.expectRemote, cwd);
+      const target = start && !isAncestor(root, start, head) ? start : head;
+      if (!opts.allowOutsideSourceRoot) assertLocalCommitsInsideRoots(ctx, target, roots);
+      const published = publish(ctx, target, resolutions, opts.expectRemote, cwd);
       if (!elsewhere) rmSync(absGitPath(root, CONFLICT_STATE_NAME), { force: true });
       const moved = published.sha === head || elsewhere || opts.keepCheckout ? { checkout: 'unchanged' as const } : advanceWithLock(root, published.sha, head, onlyWhenClean, opts.lockWaitMs);
       return { published, moved };
@@ -759,6 +1075,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
     outcome: moved.checkout === 'lagging' ? 'pushed_checkout_lagging' : committed || opts.pushOnly ? 'pushed' : 'nothing_to_commit',
     sha: published.sha, committed, branch: ctx.branch, remote: ctx.remote, paths: rel,
     integrated: published.integrated, confirmed: published.confirmed, checkout: moved.checkout, ...(moved.reason ? { lagging_reason: moved.reason } : {}),
+    ...(published.quarantined ? { quarantined: published.quarantined } : {}),
   };
 }
 
@@ -789,9 +1106,9 @@ export function pullShared(repo: string, opts: { requireClean?: boolean; lockWai
     let target = remoteTip;
     let merged = false;
     if (!isAncestor(root, head, remoteTip)) {
-      const tree = mergeTrees(root, head, remoteTip);
+      const tree = integrate(root, head, remoteTip);
       if (tree.conflicts.length) throw conflictError(ctx, head, remoteTip, tree);
-      target = buildMerge(ctx, head, remoteTip, tree.tree!);
+      target = buildMerge(ctx, head, remoteTip, tree.tree!, tree.skipped);
       merged = true;
     }
     const moved = advanceLocked(root, target, head);

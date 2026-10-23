@@ -311,7 +311,7 @@ async function main() {
 
   const bunVersion = process.env.GBRAIN_CI_BUN_TAG
     ?? /oven\/bun:\$\{GBRAIN_CI_BUN_TAG:-([^}]+)\}/.exec(readFileSync(join(ROOT, "docker-compose.ci.yml"), "utf8"))?.[1]
-    ?? "1.4.3";
+    ?? "1.4.4";
 
   // ── Teardown on every exit path ──────────────────────────────────────────
   const owner = sh("bash", [RUNNER, "owner"]).trim();

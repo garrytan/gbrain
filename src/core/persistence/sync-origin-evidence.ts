@@ -123,12 +123,27 @@ async function isAncestor(gitRoot: string, ancestor: string, commit: string): Pr
 /**
  * The history of the commit `tip` (a full object id) in the work tree at `gitRoot`: a cached walk, a cached walk of an
  * ancestor extended by the commits after it (those are newer, so their deletions win), or one full walk. Null when Git
- * could not answer.
+ * could not answer. #7355: a caller that asks while that walk runs joins it (and hears its commits) instead of starting
+ * another, so a pass that follows an abandoned one waits for the walk already under way rather than walking from the start.
  */
 async function historyIndex(gitRoot: string, tip: string, onCommit?: (commits: number) => void): Promise<HistoryIndex | null> {
-  const cached = historyIndexes.get(gitRoot) ?? [];
-  const exact = cached.find(index => index.tip === tip);
+  const exact = (historyIndexes.get(gitRoot) ?? []).find(index => index.tip === tip);
   if (exact) return exact;
+  const key = `${gitRoot}\0${tip}`;
+  let running = historyWalks.get(key);
+  if (!running) {
+    const listeners = new Set<(commits: number) => void>();
+    running = { listeners, index: indexAt(gitRoot, tip, commits => { for (const listener of listeners) listener(commits); }).finally(() => historyWalks.delete(key)) };
+    historyWalks.set(key, running);
+  }
+  if (onCommit) running.listeners.add(onCommit);
+  try { return await running.index; } finally { if (onCommit) running!.listeners.delete(onCommit); }
+}
+
+const historyWalks = new Map<string, { listeners: Set<(commits: number) => void>; index: Promise<HistoryIndex | null> }>();
+
+async function indexAt(gitRoot: string, tip: string, onCommit: (commits: number) => void): Promise<HistoryIndex | null> {
+  const cached = historyIndexes.get(gitRoot) ?? [];
   let base: HistoryIndex | undefined;
   for (const index of cached) if (await isAncestor(gitRoot, index.tip, tip)) { base = index; break; }
   const walked = await walkHistory(gitRoot, base ? [tip, `^${base.tip}`] : [tip], onCommit);
@@ -153,9 +168,10 @@ async function commitId(gitRoot: string, rev: string): Promise<string | null> {
 /**
  * The evidence for each Git-root-relative path in `gitPaths`, read in the work tree at `gitRoot`. `commits` are the
  * history tips to search (the pinned target and the pass's baseline); a path any commit reachable from one of them
- * touched was committed. `.gitignore` is read as the checkout has it now.
+ * touched was committed. `.gitignore` is read as the checkout has it now. `onCommit` hears every 1,000 commits a walk reads.
  */
-export async function readOriginEvidence(gitRoot: string, commits: ReadonlyArray<string | null | undefined>, gitPaths: readonly string[]): Promise<Map<string, OriginEvidence>> {
+export async function readOriginEvidence(gitRoot: string, commits: ReadonlyArray<string | null | undefined>, gitPaths: readonly string[],
+  opts: { onCommit?: (commits: number) => void } = {}): Promise<Map<string, OriginEvidence>> {
   const evidence = new Map<string, OriginEvidence>();
   const tips = [...new Set(commits.filter((commit): commit is string => typeof commit === 'string' && commit.length > 0))];
   const paths = [...new Set(gitPaths)];
@@ -170,7 +186,7 @@ export async function readOriginEvidence(gitRoot: string, commits: ReadonlyArray
   }
   const indexes: HistoryIndex[] = [];
   for (const id of walked) {
-    const index = await historyIndex(gitRoot, id);
+    const index = await historyIndex(gitRoot, id, opts.onCommit);
     if (index) indexes.push(index); else historyKnown = false;
   }
   for (let i = 0; i < paths.length; i += BATCH) {
