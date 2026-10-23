@@ -321,9 +321,10 @@ function axis(d: number): Float32Array {
     // 300 stale chunks nearest e_1, then 30 current ones: the first 100-row
     // raw window is entirely stale.
     await seedCluster('stale-wall', 330, [1, 2], 0.0005, i => ({ hash: i < 300 ? 'stale' : 'current' }));
+    // Exercise raw-window escalation, independently of source-aware recovery.
     const attempts = spyAttempts();
     const events: PoolMeta[] = [];
-    const hits = await engine.searchVector(axis(1), { limit: 10, embeddingColumn: column, onVectorPoolMeta: meta => events.push(meta) });
+    const hits = await engine.searchVector(axis(1), { limit: 10, embeddingColumn: column, source_boosts: {}, onVectorPoolMeta: meta => events.push(meta) });
     expect(hits.map(hit => hit.slug)).toEqual(Array.from({ length: 10 }, (_, i) => `stale-wall-${300 + i}`));
     expect(attempts.map(a => [a.innerLimit, a.exact])).toEqual([[100, false], [400, false]]);
     expect(attempts[0].batch).toMatchObject({ candidatePool: 100, eligiblePool: 0 });
@@ -370,9 +371,10 @@ function axis(d: number): Float32Array {
     const previous = capability.vectorIterativeScan;
     capability.vectorIterativeScan = Promise.resolve(false);
     try {
+      // Exercise raw-window escalation, independently of source-aware recovery.
       const attempts = spyAttempts();
       const events: PoolMeta[] = [];
-      const hits = await engine.searchVector(axis(1), { limit: 10, embeddingColumn: column, onVectorPoolMeta: meta => events.push(meta) });
+      const hits = await engine.searchVector(axis(1), { limit: 10, embeddingColumn: column, source_boosts: {}, onVectorPoolMeta: meta => events.push(meta) });
       expect(attempts.map(a => a.exact)).toEqual([false, true]);
       expect(hits.map(hit => hit.slug)).toEqual(Array.from({ length: 10 }, (_, i) => `stale-wall-${300 + i}`));
       expect(events).toEqual([]);

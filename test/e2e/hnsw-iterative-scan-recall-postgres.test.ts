@@ -43,7 +43,8 @@ async function meanRecall(mode?: 'strict_order' | 'relaxed_order'): Promise<numb
     const q = centers[qi % centers.length]!.map((x) => x + qg() * 0.6);
     const truth = new Set(pageIds.map((id, i) => ({ id, d: cosineDistance(q, vectors[i]!), ok: allowed[i] }))
       .filter((r) => r.ok).sort((a, b) => a.d - b.d).slice(0, K).map((r) => r.id));
-    const hits = await engine.searchVector(Float32Array.from(q), { sourceId: 'iter-allowed', limit: K, embeddingColumn: column, ...(mode ? { hnswIterativeScan: mode } : {}) });
+    // Compare HNSW scan modes, not the independent source-candidate supplement.
+    const hits = await engine.searchVector(Float32Array.from(q), { sourceId: 'iter-allowed', source_boosts: {}, limit: K, embeddingColumn: column, ...(mode ? { hnswIterativeScan: mode } : {}) });
     total += hits.filter((h) => truth.has(h.page_id)).length / K;
   }
   return total / Q;

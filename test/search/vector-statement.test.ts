@@ -20,9 +20,14 @@ function build(overrides: Partial<VectorSearchStatementInput['opts']> = {}, dial
   return buildVectorSearchStatement({ dialect, embedding: new Float32Array([1, 0, 0]), limit: 10, offset: 0, opts: { embeddingColumn: indexedColumn, ...overrides }, scope: scopeShare === undefined ? undefined : { share: scopeShare, chunks: scopeChunks } });
 }
 
-/** The WHERE of the `hnsw_candidates` CTE, between its FROM and its ORDER BY. */
+// Inspect the primary candidate window, not the supplementary candidate union.
+function primaryCandidates(sql: string): string {
+  return sql.includes('primary_candidates AS (') ? 'primary_candidates AS (' : 'hnsw_candidates AS (';
+}
+
+/** The primary candidate WHERE, between its FROM and its ORDER BY. */
 function candidateWhere(sql: string): string {
-  const cte = sql.slice(sql.indexOf('WITH hnsw_candidates AS ('), sql.indexOf('scored AS ('));
+  const cte = sql.slice(sql.indexOf(primaryCandidates(sql)), sql.indexOf('scored AS ('));
   return cte.slice(cte.indexOf('FROM content_chunks cc'), cte.indexOf('ORDER BY'));
 }
 
@@ -84,7 +89,7 @@ describe('vector statement freshness placement (#5824)', () => {
       expect(lite.params).toEqual(pg.params);
       expect(lite.innerLimitIdx).toBe(pg.innerLimitIdx);
       expect(lite.hasMoreSql).toBe(pg.hasMoreSql);
-      const strip = (sql: string) => sql.replace(' p.updated_at,', '').replace(/CASE WHEN bpp\.updated_at < \([\s\S]*?\) THEN true ELSE false END AS stale/, 'false AS stale');
+      const strip = (sql: string) => sql.replaceAll(' p.updated_at,', '').replace(/CASE WHEN bpp\.updated_at < \([\s\S]*?\) THEN true ELSE false END AS stale/, 'false AS stale');
       expect(strip(lite.sql)).toBe(pg.sql);
     }
   });
@@ -100,7 +105,7 @@ describe('vector statement freshness placement (#5824)', () => {
 describe('vector index walk statement', () => {
   /** The `ann` CTE: the only part that touches the HNSW index. */
   function annCte(sql: string): string {
-    return sql.slice(sql.indexOf('WITH ann AS MATERIALIZED ('), sql.indexOf('hnsw_candidates AS ('));
+    return sql.slice(sql.indexOf('WITH ann AS MATERIALIZED ('), sql.indexOf(primaryCandidates(sql)));
   }
 
   test('orders content_chunks alone and applies page filters and visibility after the key joins', () => {
@@ -114,7 +119,7 @@ describe('vector index walk statement', () => {
     expect(ann).toContain('AND (cc.model=$5 OR');
     expect(ann).not.toContain(MD5);
     expect(ann).toContain(`LIMIT $${stmt.innerLimitIdx + 1}::int * 2`);
-    const candidates = walk.slice(walk.indexOf('hnsw_candidates AS ('), walk.indexOf('scored AS ('));
+    const candidates = walk.slice(walk.indexOf(primaryCandidates(walk)), walk.indexOf(walk.includes('source_candidates AS (') ? 'source_candidates AS (' : 'scored AS ('));
     expect(candidates).toContain('CROSS JOIN LATERAL (SELECT * FROM content_chunks c WHERE c.id = ann.id OFFSET 0) cc');
     expect(candidates).toContain(`CROSS JOIN LATERAL (SELECT ${INDEX_WALK_PAGE_COLUMNS.map(c => `pg.${c}`).join(', ')} FROM pages pg WHERE pg.id = cc.page_id OFFSET 0) p`);
     expect(candidates).toContain('AND p.slug != ALL($2::text[])');
@@ -132,7 +137,7 @@ describe('vector index walk statement', () => {
     const read = new Set<string>();
     for (const dialect of ['postgres', 'pglite'] as const) for (const v of variants) {
       const walk = build(v, dialect).indexWalkSql!;
-      const candidates = walk.slice(walk.indexOf('hnsw_candidates AS ('), walk.indexOf('ORDER BY ann.distance'));
+      const candidates = walk.slice(walk.indexOf(primaryCandidates(walk)), walk.indexOf('ORDER BY ann.distance'));
       for (const m of candidates.matchAll(/\bp\.(\w+)/g)) read.add(m[1]!);
     }
     expect([...read].filter(c => !(INDEX_WALK_PAGE_COLUMNS as readonly string[]).includes(c))).toEqual([]);
@@ -150,7 +155,7 @@ describe('vector index walk statement', () => {
     const lite = build({ excludePrivate: true }, 'pglite');
     const placeholders = (sql: string) => [...new Set(sql.match(/\$\d+/g))].sort();
     expect(placeholders(pg.indexWalkSql!)).toEqual(placeholders(pg.sql));
-    expect(lite.indexWalkSql!.replace(' p.updated_at,', '').replace(/CASE WHEN bpp\.updated_at < \([\s\S]*?\) THEN true ELSE false END AS stale/, 'false AS stale'))
+    expect(lite.indexWalkSql!.replaceAll(' p.updated_at,', '').replace(/CASE WHEN bpp\.updated_at < \([\s\S]*?\) THEN true ELSE false END AS stale/, 'false AS stale'))
       .toBe(pg.indexWalkSql!);
   });
 });
@@ -228,7 +233,7 @@ describe('source scope strategy: walk overfetch, walk skip and scope scan', () =
   test('the scope scan orders only chunk ids over the eligible pages, with the index kept out, then joins the window back', () => {
     const stmt = build({ sourceIds: ['a'], exclude_slugs: ['x'], language: 'typescript', detail: 'low', excludePrivate: true, type: 'note' }, 'postgres', 0.01, 500);
     const scan = stmt.scopeScanSql!;
-    const cte = scan.slice(scan.indexOf('WITH scope_scan AS MATERIALIZED ('), scan.indexOf('hnsw_candidates AS ('));
+    const cte = scan.slice(scan.indexOf('WITH scope_scan AS MATERIALIZED ('), scan.indexOf(primaryCandidates(scan)));
     const pagesSubquery = cte.slice(cte.indexOf('ANY(ARRAY('), cte.indexOf('))'));
     expect(cte).toContain('SELECT cc.id\n        FROM content_chunks cc\n        WHERE cc.page_id = ANY(ARRAY(');
     for (const filter of ['AND p.type = $2', 'AND p.slug != ALL($3::text[])', 'AND p.source_id = ANY($5::text[])', `COALESCE(p.frontmatter->>'visibility'`, "AND NOT (p.slug LIKE 'test/%'"]) {
@@ -246,7 +251,7 @@ describe('source scope strategy: walk overfetch, walk skip and scope scan', () =
     const placeholders = (sql: string) => [...new Set(sql.match(/\$\d+/g))].sort();
     expect(placeholders(scan)).toEqual(placeholders(stmt.sql));
     const lite = build({ sourceIds: ['a'], excludePrivate: true }, 'pglite', 0.01, 500).scopeScanSql!;
-    expect(lite.replace(' p.updated_at,', '').replace(/CASE WHEN bpp\.updated_at < \([\s\S]*?\) THEN true ELSE false END AS stale/, 'false AS stale'))
+    expect(lite.replaceAll(' p.updated_at,', '').replace(/CASE WHEN bpp\.updated_at < \([\s\S]*?\) THEN true ELSE false END AS stale/, 'false AS stale'))
       .toBe(build({ sourceIds: ['a'], excludePrivate: true }, 'postgres', 0.01, 500).scopeScanSql!);
   });
 
