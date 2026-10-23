@@ -72,6 +72,7 @@ import { preparePageAdvisories, remoteLinkHint, pageNoopAdvisories, timelineRows
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { colonSlugWindowsRefusal, isWindowsColonTarget, nativeFileTarget } from './native-file-target.ts';
 import { isSourceDbOnlySlug } from './source-storage.ts';
+import { assertRestoreOrigin } from './detached-pages.ts';
 import { gitIgnoresUntracked } from './sync-origin-evidence.ts';
 import { gitDurabilityPolicy } from './git-durability-policy.ts';
 import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
@@ -251,7 +252,7 @@ async function segmentedFileMatches(engine: BrainEngine, slug: string, bytes: By
   const prefix = await inferredHeadPrefix(bytes.subarray(skip, skip + FRONTMATTER_HEAD_MAX_BYTES), await sourcePath());
   return !!prefix?.length && await matches({ prefix, skip }, true) === true;
 }
-export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'> & { operation?: string }, snapshot: PageSnapshot | null,
+export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'> & { operation?: string; intent?: WriteRequest['intent'] }, snapshot: PageSnapshot | null,
   content: string | Uint8Array | StreamedFileContent | null, hostId?: string, options: { allowMissing?: boolean; deleting?: boolean; capture?: { path: string; hash: string }; activePack?: ParseOpts['activePack']; remote?: boolean;
     /** #6368: a tombstone purge whose file matches these sync.exclude globs (relative to the source root) owns no file. */
     excludeTombstone?: { patterns: string[]; onExcluded: (path: string) => void };
@@ -287,6 +288,14 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     `This host does not hold source ${row.source_id}'s canonical worktree (or it has no local path), so the file of ${row.slug} was not written. Inspect the owner before resubmitting; the write publishes on the host that owns the source.`,
     { fix: ownerStatusFix(row.source_id) });
   const root = join(binding.local_path, binding.relative_path);
+  if (row.operation === 'restore_page' && row.intent?.detach === true) {
+    // Recheck the admission decision under publication's worktree lock. Never
+    // compare or overwrite an ignored cache, and refuse if the origin returned
+    // to the syncable tree while the request was queued.
+    await assertRestoreOrigin(engine, { sourceId: row.source_id, slug: row.slug, snapshot,
+      publishesFile: true, detach: true, remote: options.remote === true, root });
+    return undefined;
+  }
   // #5622: a new page captured from a file inside the source is published to that file.
   const capturedPath = !snapshot && options.capture ? options.capture.path : recordedPathFromFileUri(snapshot?.page.source_uri, root);
   const mode = snapshot?.page.source_path ? await scannerSlugRootMode(engine, row.source_id, root) : undefined;

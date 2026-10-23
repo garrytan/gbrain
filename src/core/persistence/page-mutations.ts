@@ -418,7 +418,8 @@ export async function preparePageAdmission(ctx: OperationContext,
   }
   // #6609 (D5): a restore that writes no file refuses a page whose recorded file is gone, unless detach.
   if (input.operation === 'restore_page') await assertRestoreOrigin(ctx.engine, { sourceId, slug, snapshot,
-    publishesFile: writeThrough && binding !== null, detach: p.detach === true, remote: ctx.remote !== false });
+    publishesFile: writeThrough && binding !== null, detach: p.detach === true, remote: ctx.remote !== false,
+    root: binding?.owner_host_id === localHostId() && binding.local_path ? join(binding.local_path, binding.relative_path) : undefined });
   // #5032: this host publishes the canonical file, and on Windows a ':' in its
   // name cannot be stored; refuse before admission. Database-only writes pass,
   // including read-only mirror sources and pages created while one (#5409).
