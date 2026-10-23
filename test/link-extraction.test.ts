@@ -2352,7 +2352,7 @@ describe('makeResolver — dir-hint step tries both slug grammars (#4855)', () =
 describe('#4995 — markdown link anchors are stripped, pass-1 targets lowercased', () => {
   test('pass-1 dir-shaped link drops the anchor and the .md', () => {
     expect(extractEntityRefs('[D](registry/sessions/tally.md#x)')).toEqual([
-      { name: 'D', slug: 'registry/sessions/tally', dir: 'registry', index: 0 },
+      { name: 'D', slug: 'registry/sessions/tally', dir: 'registry', fileRelative: true, index: 0 },
     ]);
     expect(extractEntityRefs('[D](registry/sessions/tally#x)')[0].slug).toBe('registry/sessions/tally');
     expect(extractEntityRefs('[D](../registry/tally.md#a b)')[0]).toEqual(

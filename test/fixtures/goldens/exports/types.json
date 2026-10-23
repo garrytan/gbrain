@@ -5001,6 +5001,7 @@
         "kind": "interface",
         "members": [
           "dir: string",
+          "fileRelative?: boolean | undefined",
           "index?: number | undefined",
           "name: string",
           "needsResolution?: boolean | undefined",
@@ -5067,7 +5068,7 @@
         "kind": "variable",
         "name": "LINK_EXTRACTOR_VERSION_TS",
         "signature": [
-          "\"2026-10-08T00:00:00Z\""
+          "\"2026-10-21T00:00:00Z\""
         ]
       },
       {

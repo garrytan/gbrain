@@ -104,7 +104,7 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
 // belongs to another link in the window no longer types this one; "joined [X] as <role>" reads as works_at.
 // 2026-10-08: held-out-confirmed Q2 units U1, U3, U4 (core/link-typing-units.ts). Re-extract so pages pick these up.
 // A bump needs its entry in EXTRACTOR_BUMP_NOTES (link-extraction-watermark.ts), copied into the CHANGELOG at ship.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-10-08T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-10-21T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -147,14 +147,14 @@ export interface EntityRef {
    */
   upLevels?: number;
   /**
-   * #3190: set for a same-directory markdown link — `[Name](slug.md)` with
-   * no directory segment and no scheme. `slug` holds the target basename
-   * (`.md` stripped); the caller (`extractPageLinks`) resolves it against
-   * the LINKING page's directory, mirroring the FS path's `resolveSlug`.
-   * Pre-fix these refs were silently dropped (pass 1 requires `dir/`),
-   * so flat directories and sibling links produced zero DB-path edges.
+   * #3190: a sibling markdown link — `[Name](slug.md)` with no directory
+   * segment or scheme. `slug` holds the basename (`.md` stripped), resolved
+   * against the LINKING page's directory, mirroring the FS path's resolveSlug.
+   * Pre-fix pass 1 required `dir/`, silently dropping these sibling edges.
    */
   sameDir?: boolean;
+  /** A child-directory .md target; resolve relative to the linking page, not the source root. */
+  fileRelative?: boolean;
   /**
    * Char offset of the link match in the page content
    * (stripCodeBlocks and the pass masks are length-preserving, so the
@@ -440,10 +440,10 @@ export function entityRefPasses(content: string): EntityRef[][] {
     const rawTarget = match[0].slice(match[0].indexOf('](') + 2, -1);
     const up = rawTarget.match(/^(?:\.\.\/)+/);
     const ref: EntityRef = { name, slug, dir };
-    // Only relative links carry depth; absolute / engine-slug refs keep the
-    // exact {name, slug, dir} shape (no upLevels key) so equality consumers
-    // are unaffected.
+    // Preserve parent depth, and file intent for child paths whose .md suffix
+    // the regex stripped. Explicit /root paths and engine slugs stay absolute.
     if (up) ref.upLevels = up[0].length / 3;
+    if (!up && !rawTarget.startsWith('/') && rawTarget.split('#', 1)[0].endsWith('.md')) ref.fileRelative = true;
     ref.index = match.index;
     refs.push(ref);
     markdownRanges.push([match.index, match.index + match[0].length]);
@@ -617,14 +617,14 @@ function resolveSameDirSlug(pageSlug: string, ref: EntityRef): string {
 /**
  * The page slug a markdown link `href` on page `pageSlug` points at, resolved
  * exactly as extractPageLinks resolves it (page-relative `./` and `../`,
- * root-relative dir paths, `.md` and `#anchor` stripped). Null when the
+ * page-relative .md paths, root-relative engine slugs, `.md` and `#anchor` stripped). Null when the
  * extractor would emit no link for it. The writer's link validator calls
  * this, so "the validator accepts it" means "the graph links it".
  */
 export function resolveMarkdownLinkSlug(pageSlug: string, href: string): string | null {
   const ref = extractEntityRefs(`[link](${href})`)[0];
   if (!ref) return null;
-  const target = ref.sameDir ? resolveSameDirSlug(pageSlug, ref) : resolveRelativeSlug(pageSlug, ref).toLowerCase();
+  const target = ref.sameDir || ref.fileRelative ? resolveSameDirSlug(pageSlug, ref) : resolveRelativeSlug(pageSlug, ref).toLowerCase();
   return target || null;
 }
 
@@ -849,12 +849,12 @@ export async function extractBodyLinks(slug: string, content: string, pageType: 
   for (const [refPass, refs] of entityRefPasses(content).entries()) for (const ref of refs) {
     pass = refPass;
     if (!inWindow(ref.index!)) continue;
-    // #3190: same-directory markdown link — resolve against THIS page's
+    // #3190/#6983: sibling or child-directory .md link — resolve against THIS page's
     // directory (the FS path's resolveSlug does exactly this via
     // join(fileDir, target)). Slugified through the sync grammar so
     // `[Alice](Alice%20Chen.md)` reaches `people/alice-chen`. Downstream
     // existence checks drop targets that aren't pages.
-    if (ref.sameDir) {
+    if (ref.sameDir || ref.fileRelative) {
       const target = resolveSameDirSlug(slug, ref);
       if (target && target !== slug) {
         const idx = ref.index ?? content.indexOf(ref.name);
