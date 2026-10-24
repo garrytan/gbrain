@@ -52,6 +52,16 @@ export type CliSocketRequest = {
   cli: { quiet: boolean; timeout_ms: number | null };
 } & ({ kind: 'op'; op: CliSocketOp; params: Record<string, unknown> } | { kind: 'recall'; args: string[] });
 
+/**
+ * GBRA-175: a handshake-only probe. The serve checks the identity exactly as for a request and answers the handshake
+ * line alone, running nothing, so `gbrain upgrade` can prove after a restart that the serve accepts this build.
+ */
+export interface CliSocketProbe { v: 1; kind: 'probe'; identity: CliSocketIdentity }
+
+export function isCliSocketProbe(value: unknown): value is CliSocketProbe {
+  return record(value) && value.v === CLI_SOCKET_PROTOCOL && value.kind === 'probe' && isCliSocketIdentity(value.identity);
+}
+
 /** A refusal for `identity_mismatch` names the identity part that differed in `mismatch` (cliSocketIdentityMismatch), never its value. */
 export type HandshakeFrame = { v: 1; accepted: true } | { v: 1; accepted: false; reason: string; mismatch?: string };
 

@@ -3547,6 +3547,26 @@ More: [docs/guides/troubleshooting.md#upstream-rewritten](../../docs/guides/trou
 |---|---|---|---|---|---|---|
 | Persistence response exceeds the local transport limit. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### restart_refused
+
+<a id="restart_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| `gbrain upgrade` (or `--restart-only`) found a gbrain process on this host it cannot restart onto the new build (a serve or worker started by hand, an autopilot without its service, a running sync, or an MCP server an agent harness started), so it restarted nothing and, before a swap, installed nothing. | A process keeps the build it started with, so restarting only some of them leaves serve, workers and MCP servers on different builds; the upgrade refuses instead of leaving that skew. Each process is named with the exact step that restarts it. | Handle each listed process as the message says (MCP servers only: rerun with --stop-mcp after the user agrees), then run the same command again; `gbrain upgrade --no-restart` installs without restarting. Run: gbrain upgrade --restart-only --dry-run --json | user | `repeat the read that failed` | 3 | no |
+
+More: [docs/guides/upgrades-auto-update.md#restart](../../docs/guides/upgrades-auto-update.md#restart)
+
+### restart_unverified
+
+<a id="restart_unverified"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| After `gbrain upgrade` restarted this host's gbrain processes, one of them still runs another build, did not come back, or the warm CLI socket refused the new build. | The restart is done only when every gbrain process on the host reports the installed build and serve's warm CLI socket accepts it; anything less is the version skew the restart exists to remove. | Restart each process the message lists with the command the plan printed, then run `gbrain upgrade --restart-only` again. Run: gbrain upgrade --restart-only --dry-run --json | agent | `gbrain doctor --only runtime_build_skew --json` | 1 | no |
+
+More: [docs/guides/upgrades-auto-update.md#restart](../../docs/guides/upgrades-auto-update.md#restart)
+
 ### result_too_large
 
 <a id="result_too_large"></a>
@@ -3970,6 +3990,18 @@ More: [docs/guides/write-refusals.md#slug_page_mismatch](../../docs/guides/write
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Split unparseable. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### stable_channel_unresolved
+
+<a id="stable_channel_unresolved"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| `gbrain upgrade --channel stable` (or `self_upgrade.channel stable`) could not name the stable release: the repository's tags could not be read, no release has been promoted to stable yet, or the `stable` tag does not share a commit with a `v<version>` release tag. Nothing was changed. | The stable channel installs only a release a maintainer promoted after the production-shaped soak passed on its exact tree; without that answer it installs nothing rather than guess. | Retry later, or upgrade on the latest channel with `gbrain upgrade --channel latest`. | agent | `gbrain doctor --json` | 1 | no |
+
+Reasons: `unreadable`, `no_stable`, `no_release_tag`.
+
+More: [docs/guides/upgrades-auto-update.md#stable-channel](../../docs/guides/upgrades-auto-update.md#stable-channel)
 
 ### stale_unavailable
 

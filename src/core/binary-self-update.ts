@@ -156,8 +156,17 @@ export interface BinarySelfUpdateDeps {
 }
 
 async function defaultFetchRelease(): Promise<{ tag: string; assets: ReleaseAsset[] } | null> {
+  return fetchReleaseJson('https://api.github.com/repos/garrytan/gbrain/releases/latest');
+}
+
+/** GBRA-175: one named release (the stable channel's), in the same shape as the latest release. */
+export function fetchReleaseByTag(tag: string): Promise<{ tag: string; assets: ReleaseAsset[] } | null> {
+  return fetchReleaseJson(`https://api.github.com/repos/garrytan/gbrain/releases/tags/${encodeURIComponent(tag)}`);
+}
+
+async function fetchReleaseJson(url: string): Promise<{ tag: string; assets: ReleaseAsset[] } | null> {
   try {
-    const res = await fetch('https://api.github.com/repos/garrytan/gbrain/releases/latest', {
+    const res = await fetch(url, {
       headers: { 'User-Agent': 'gbrain-self-upgrade' },
       signal: AbortSignal.timeout(5_000),
     });

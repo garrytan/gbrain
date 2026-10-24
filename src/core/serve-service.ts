@@ -50,6 +50,13 @@ export function serveErrPath(dir: string = serveDir()): string { return join(dir
 export function launchdPlistPath(home: string): string { return join(home, 'Library', 'LaunchAgents', `${SERVE_LAUNCHD_LABEL}.plist`); }
 export function systemdUnitPath(home: string): string { return join(home, '.config', 'systemd', 'user', SERVE_SYSTEMD_UNIT); }
 
+/** The installed serve service's restart command on this platform; null when no serve service is installed. */
+export function serveServiceRestartArgv(service: { platform: string; home: string; uid: number }): string[] | null {
+  if (service.platform === 'darwin' && existsSync(launchdPlistPath(service.home))) return ['launchctl', 'kickstart', '-k', `gui/${service.uid}/${SERVE_LAUNCHD_LABEL}`];
+  if (service.platform === 'linux' && existsSync(systemdUnitPath(service.home))) return ['systemctl', '--user', 'restart', SERVE_SYSTEMD_UNIT];
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Target detection (pure — probe results are passed in)
 // ---------------------------------------------------------------------------

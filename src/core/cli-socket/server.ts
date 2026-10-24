@@ -20,7 +20,7 @@ import { installOutputCapture } from './output-capture.ts';
 import { refusalCounter } from './refusals.ts';
 import { beginForegroundRequest } from '../foreground-activity.ts';
 import { peerCredSupport, peerUid, type PeerCredSupport } from './peer-cred.ts';
-import { FrameReader, isCliSocketRequest, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, MAX_ROUND_TRIP_MS, REQUEST_READ_TIMEOUT_MS,
+import { FrameReader, isCliSocketProbe, isCliSocketRequest, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, MAX_ROUND_TRIP_MS, REQUEST_READ_TIMEOUT_MS,
   type CliSocketRequest, type HandshakeFrame, type ResultFrame } from './protocol.ts';
 
 const MAX_CONNECTIONS = 32;
@@ -161,6 +161,11 @@ export async function startCliSocketServer(opts: CliSocketServerOptions): Promis
       void (async () => {
         let request: unknown;
         try { request = JSON.parse(frames[0]!); } catch { request = null; }
+        if (isCliSocketProbe(request)) {
+          const mismatch = cliSocketIdentityMismatch(identity, request.identity);
+          socket.end(frame(mismatch ? { v: 1, accepted: false, reason: 'identity_mismatch', mismatch } : { v: 1, accepted: true }));
+          return;
+        }
         if (!isCliSocketRequest(request)) { socket.end(frame({ v: 1, accepted: false, reason: 'malformed_request' })); return; }
         const mismatch = cliSocketIdentityMismatch(identity, request.identity);
         if (mismatch) {

@@ -1,0 +1,83 @@
+name: Promote stable
+
+# Maintainer-only promotion of a published release to the stable channel
+# (docs/RELEASING.md#stable-channel-promotion). Weekly or manual promotions
+# both go through this dispatch; there is no schedule.
+#
+# scripts/promote-stable.ts refuses unless: the actor has the admin or
+# maintain role; v<version> is an existing release tag; soak_run_url is a
+# successful completed run of the workflow named by the STABLE_SOAK_WORKFLOW
+# repository variable; that run's head commit has the release's exact git
+# tree; and the version is newer than the current stable (an older one only
+# with rollback=true and a reason). It then creates the immutable annotated
+# record tag stable-v<version> (first promotion only) and moves the annotated
+# `stable` tag to the release commit, both carrying the same key: value body.
+# Clients read refs/tags/stable^{}; the update check reads
+# raw.githubusercontent.com/<repo>/stable/VERSION, mirroring latest-stable
+# in release.yml.
+#
+# Inputs reach the script through env only, never interpolated into run:
+# (script injection). No dependency install runs in this job, so the
+# checkout credentials that push the tags are only ever used by git.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release VERSION to promote (an existing v<VERSION> tag), e.g. 0.60.361.0
+        required: true
+        type: string
+      soak_run_url:
+        description: GitHub Actions run URL of the passed soak on this release's tree
+        required: true
+        type: string
+      scoreboard_url:
+        description: Scoreboard URL (defaults to soak_run_url)
+        required: false
+        type: string
+        default: ''
+      rollback:
+        description: Allow moving stable to an older release
+        required: false
+        type: boolean
+        default: false
+      reason:
+        description: Why (required when rollback is true)
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write  # create and push the stable-v<version> and stable tags
+  actions: read    # read the soak run
+
+concurrency:
+  group: promote-stable
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          # Full history and every tag: the script resolves v<version>,
+          # peels the current stable tag and compares trees locally.
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.3
+      - name: Promote the release to stable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STABLE_SOAK_WORKFLOW: ${{ vars.STABLE_SOAK_WORKFLOW }}
+          PROMOTE_VERSION: ${{ inputs.version }}
+          PROMOTE_SOAK_RUN_URL: ${{ inputs.soak_run_url }}
+          PROMOTE_SCOREBOARD_URL: ${{ inputs.scoreboard_url }}
+          PROMOTE_ROLLBACK: ${{ inputs.rollback }}
+          PROMOTE_REASON: ${{ inputs.reason }}
+        run: |
+          git config user.name "gbrain-release-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bun run scripts/promote-stable.ts

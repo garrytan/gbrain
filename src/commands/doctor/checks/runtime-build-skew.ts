@@ -17,9 +17,13 @@
  *   build differs from its worker's (`jobChildBuildVerdict`), on the newest 500
  *   jobs of the last 24 h, counted while that worker is still alive.
  *
- * Read-only. It warns with the processes and versions involved and names one
- * restart (serve first, then the supervisor, then a worker); nothing restarts
- * automatically. Output carries pids and versions only, never a path.
+ * Read-only. Two or more builds among the running processes (and their recent
+ * job children) fail the check (GBRA-175); one process older than its install
+ * alone warns. The fix asks the user, then runs `gbrain upgrade --restart-only`,
+ * which restarts every process onto the installed build and verifies one build
+ * runs; the message also names the first manual restart (serve first, then the
+ * supervisor, then a worker). Nothing restarts automatically. Output carries
+ * pids and versions only, never a path.
  */
 import { homedir } from 'node:os';
 import type { Check } from '../../doctor.ts';
@@ -39,6 +43,7 @@ const DOCS = 'docs/guides/troubleshooting.md#runtime-build-skew';
 const CHILD_WINDOW_HOURS = 24;
 const CHILD_SCAN_JOBS = 500;
 const ROLE_ORDER = ['serve', 'supervisor', 'worker'];
+const RESTART_ARGV = ['gbrain', 'upgrade', '--restart-only'];
 
 export interface RunningBuild { role: string; pid: number; version: string | null; installed_version: string | null }
 export interface ChildBuild { job_id: number; child_version: string; worker_pid: number; worker_version: string; refused: boolean }
@@ -122,13 +127,16 @@ export async function runtimeBuildSkewCheck(engine: BrainEngine, hostId: string,
     });
     const restartHow = target.role === 'supervisor' ? ' and start it again with `gbrain jobs supervisor start --detach` (it respawns its worker from the install on disk)'
       : argv[0] === 'kill' ? ' (SIGTERM: it drains its jobs; a supervisor respawns a worker from the install on disk) and start it again the way it was launched if nothing supervises it' : '';
-    return { name: 'runtime_build_skew', status: 'warn', details,
+    const running = processes.filter(p => p.version).map(label).join('; ');
+    return { name: 'runtime_build_skew', status: versions.size > 1 ? 'fail' : 'warn', details,
       message: `runtime_build_skew: ${versions.size > 1 ? `${versions.size} gbrain builds are running on this host` : 'a gbrain process runs an older build than its install'} (newest v${newest}): `
-        + `${processes.filter(p => p.version).map(label).join('; ')}${childLines.length ? `; ${childLines.join('; ')}` : ''}. `
+        + `${running}${childLines.length ? `; ${childLines.join('; ')}` : ''}. `
         + 'A process keeps the build it started with, and every job child it spawns runs the build its install holds on disk now. '
-        + `Restart with \`${argv.join(' ')}\`${restartHow}, then restart each other process listed on an older build; nothing restarts automatically.${unknownNote}`,
-      fix: { argv, consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify('runtime_build_skew'), docs: DOCS,
-        why: `Restarts ${label(target)} on the build its install holds (v${target.installed_version ?? newest}); restart every other listed process the same way.` } };
+        + `\`gbrain upgrade --restart-only\` restarts every listed process onto the installed build and verifies one build runs (it refuses, naming the step, for a process it cannot restart). `
+        + `By hand: restart with \`${argv.join(' ')}\`${restartHow}, then restart each other process listed on an older build. Nothing restarts automatically.${unknownNote}`,
+      fix: { ask_user: true, argv: RESTART_ARGV, consent: [], actor: 'agent', requires_exclusive: false, verify: doctorVerify('runtime_build_skew'), docs: DOCS,
+        why: `Restarts every gbrain process on this host that is not on the installed build (first ${label(target)}), drain-first, then verifies they all report one build and the warm CLI socket accepts it.`,
+        user_message: `gbrain processes on this host run different builds (${running}). Restart them onto the installed build with \`gbrain upgrade --restart-only\`? Serve and the jobs worker drain and come back within a minute.` } };
   } catch (error) {
     return checkError('runtime_build_skew', 'read the builds of this host\'s gbrain processes', error, { details: { count: 'unknown', health: 'unknown', docs: DOCS } });
   }

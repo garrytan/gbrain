@@ -8,7 +8,8 @@ import {
   semverGt,
   semverLte,
 } from '../core/semver.ts';
-import { readUpdateCache, writeUpdateCache, type UpdateMarker } from '../core/self-upgrade.ts';
+import { readUpdateCache, resolveReleaseChannel, writeUpdateCache, type ReleaseChannel, type UpdateMarker } from '../core/self-upgrade.ts';
+import { loadConfig } from '../core/config.ts';
 
 /** Best-effort cache write — a read-only ~/.gbrain must never make the check throw. */
 function safeWriteCache(marker: UpdateMarker): void {
@@ -57,9 +58,13 @@ function upgradeCommandForMethod(method: string): string {
  * stays unread: it was a permanent 404 before releases existed (#3520). An npm
  * fallback was rejected: the `gbrain` package on npm is an unrelated GPU
  * library (#505), so it would produce false upgrade prompts pointing at a
- * stranger's package. */
+ * stranger's package. A brain on the stable channel (`self_upgrade.channel
+ * stable`) reads the VERSION file at the `stable` tag instead: the newest
+ * release a maintainer promoted after the production-shaped soak passed on its
+ * exact tree (.github/workflows/promote-stable.yml). */
 const RELEASE_REF_RAW = 'https://raw.githubusercontent.com/garrytan/gbrain/latest-stable';
-const VERSION_SOURCE_URL = `${RELEASE_REF_RAW}/VERSION`;
+export const CHANNEL_REFS: Record<ReleaseChannel, string> = { latest: 'latest-stable', stable: 'stable' };
+const versionSourceUrl = (channel: ReleaseChannel) => `https://raw.githubusercontent.com/garrytan/gbrain/${CHANNEL_REFS[channel]}/VERSION`;
 const RELEASE_NOTES_URL = 'https://github.com/garrytan/gbrain/blob/latest-stable/CHANGELOG.md';
 
 /** Extract a version from the raw VERSION file body: first line, optional `v`
@@ -77,16 +82,16 @@ export type LatestReleaseResult =
   | { ok: false; reason: 'network_error' | 'no_releases' };
 
 /**
- * Resolve the latest published gbrain version (from VERSION at the
- * latest-stable tag — see VERSION_SOURCE_URL). Exported (v0.42) so the self-upgrade refresh path and
+ * Resolve the newest gbrain version on a release channel (from VERSION at the
+ * channel's tag — see CHANNEL_REFS). Exported (v0.42) so the self-upgrade refresh path and
  * tests can reuse it. 5s timeout — this runs on the detached refresh, never the
  * hot path. Failures are discriminated: `network_error` (offline/timeout) vs
  * `no_releases` (endpoint answered but no usable version).
  */
-export async function fetchLatestRelease(): Promise<LatestReleaseResult> {
+export async function fetchLatestRelease(channel: ReleaseChannel = resolveReleaseChannel(loadConfig())): Promise<LatestReleaseResult> {
   let res: Response;
   try {
-    res = await fetch(VERSION_SOURCE_URL, {
+    res = await fetch(versionSourceUrl(channel), {
       headers: { 'User-Agent': `gbrain/${VERSION}` },
       signal: AbortSignal.timeout(5_000),
     });
@@ -212,10 +217,10 @@ export async function runCheckUpdate(args: string[]) {
   }
 
   const json = args.includes('--json');
-  const method = detectInstallMethod();
-  const upgradeCmd = upgradeCommandForMethod(method);
+  const channel = resolveReleaseChannel(loadConfig());
+  const upgradeCmd = channel === 'stable' ? 'gbrain upgrade' : upgradeCommandForMethod(detectInstallMethod());
 
-  const release = await fetchLatestRelease();
+  const release = await fetchLatestRelease(channel);
 
   if (!release.ok) {
     preserveCacheOnFailedCheck();

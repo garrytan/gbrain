@@ -10,6 +10,29 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.428.0] - 2026-10-24
+
+**Production agents can now follow a stable release channel: a release a maintainer promotes only after the production-shaped soak passed on its exact git tree. `gbrain upgrade` also restarts every gbrain process on the host onto the new build and verifies that one build runs, and doctor fails when two builds run.**
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| Choosing which releases a host follows | every published release (`latest`) | `gbrain upgrade --channel stable` or `gbrain config set self_upgrade.channel stable` installs the release the annotated `stable` tag names, pinned to its `v<version>` tag, and never downgrades; the update check and the autopilot's Bun-floor gate follow the same channel |
+| Promoting a release to stable | no mechanism | the maintainer-only `Promote stable` workflow moves `stable` and writes an immutable `stable-v<version>` record, only for a published release whose exact tree passed a successful run of the `STABLE_SOAK_WORKFLOW` workflow; a move back needs `rollback` and a reason |
+| After `gbrain upgrade` swaps the install | serve, autopilot, the jobs supervisor and its worker, and MCP servers kept running the old build until someone restarted them | the new build runs `gbrain upgrade --restart-only`, which restarts them (serve and autopilot through their installed services, the supervisor with its own queue, concurrency and PID file, MCP servers only with `--stop-mcp`) and verifies for up to three minutes that every process reports the new build and the warm CLI socket accepts it |
+| A running process the upgrade cannot restart (hand-started serve or worker, autopilot without its service, a running sync, an MCP server without `--stop-mcp`) | it stayed on the old build | the upgrade refuses before installing anything (`restart_refused`, exit 3) and names the exact step for each process |
+| A process starts from a separate Bun global copy, for example one pinned to a commit | the restart brought it back on the old build | that copy is replaced first (`bun remove -g`, then `bun add -g` the release tag under its own `BUN_INSTALL`, restoring the old tag if the add fails); a process back on another build after the restart fails `restart_unverified` with the replacement and restart as its fix |
+| A global install pinned to a tag or commit, on the latest channel | `bun update` kept the pin, and upgrade printed a reinstall | upgrade replaces it with the newest published release (remove, then add, restoring on failure) |
+| doctor `runtime_build_skew` with two or more builds running | warn | fail; its fix asks, then runs `gbrain upgrade --restart-only` |
+
+### What to watch for after you upgrade
+
+- An upgrade on a host with MCP servers that agent harnesses started refuses until you rerun it with `--stop-mcp`; reconnect gbrain in each harness afterwards. `gbrain upgrade --no-restart` installs without restarting, and doctor then fails `runtime_build_skew` until `gbrain upgrade --restart-only` runs.
+- `gbrain upgrade --restart-only --dry-run --json` lists every gbrain process with its build and how it would restart, and changes nothing.
+- Promotion refuses until the repository variable `STABLE_SOAK_WORKFLOW` names the soak workflow.
+- Nothing is rewritten on upgrade, and there is no schema migration.
+
 ## [0.60.427.0] - 2026-10-24
 
 **A managed cycle whose sync gave it no page list now drains stale links within its budget instead of running past the job timeout, a gitignored Git target parks at once naming the ignore rule, and more gbrain state follows GBRAIN_HOME.**

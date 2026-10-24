@@ -57,6 +57,24 @@ export const SNOOZE_DURATIONS_MS = [
 
 export type SelfUpgradeMode = 'auto' | 'notify' | 'off';
 
+/**
+ * The release line an install follows. `latest` is every published release (the `latest-stable` tag release.yml
+ * advances); `stable` is the newest release a maintainer promoted after the production-shaped soak passed on its
+ * exact tree (the `stable` tag .github/workflows/promote-stable.yml advances). Set per brain home with
+ * `gbrain config set self_upgrade.channel stable`; `gbrain upgrade --channel <name>` overrides it for one run.
+ */
+export type ReleaseChannel = 'latest' | 'stable';
+export const RELEASE_CHANNELS: readonly ReleaseChannel[] = ['latest', 'stable'];
+
+export function normalizeChannel(raw: unknown): ReleaseChannel | null {
+  return raw === 'latest' || raw === 'stable' ? raw : null;
+}
+
+/** The configured channel (file plane), else `latest`. */
+export function resolveReleaseChannel(cfg: { self_upgrade?: { channel?: string } } | null | undefined): ReleaseChannel {
+  return normalizeChannel(cfg?.self_upgrade?.channel) ?? 'latest';
+}
+
 export type SelfUpgradeChannel = 'invocation' | 'autopilot';
 
 /**
@@ -517,6 +535,7 @@ export function readSwapReceipt(path: string): SwapReceipt | null {
 /** The mutable slice of `config.self_upgrade` the autopilot channel manages. */
 export interface SelfUpgradeState {
   mode?: SelfUpgradeMode;
+  channel?: ReleaseChannel;
   mode_prompted?: boolean;
   quiet_hours?: { start?: number; end?: number; tz?: string };
   failed_versions?: string[];
@@ -636,6 +655,7 @@ export function resolveQuietHoursWindow(
  * would be accepted and never read (#5489). */
 export const SELF_UPGRADE_CONFIG_LEAVES = [
   'mode',
+  'channel',
   'mode_prompted',
   'quiet_hours',
   'failed_versions',
@@ -736,6 +756,10 @@ export function parseSelfUpgradeConfigValue(leaf: SelfUpgradeConfigLeaf, raw: st
     case 'mode': {
       const mode = normalizeMode(raw.trim());
       return mode ? { ok: true, value: mode } : { ok: false, error: `must be auto, notify or off (got '${raw}')` };
+    }
+    case 'channel': {
+      const channel = normalizeChannel(raw.trim());
+      return channel ? { ok: true, value: channel } : { ok: false, error: `must be latest or stable (got '${raw}')` };
     }
     case 'mode_prompted': {
       if (isConfigTruthy(raw)) return { ok: true, value: true };

@@ -10,7 +10,7 @@
  * `fetch` (cross-file-unsafe under the parallel runner).
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { VERSION } from '../src/version.ts';
@@ -76,6 +76,24 @@ describe('fetchLatestRelease — resolves from the VERSION file, discriminates f
   test('garbage body → no_releases', async () => {
     stubVersionFetch('<html>rate limited</html>');
     expect(await fetchLatestRelease()).toEqual({ ok: false, reason: 'no_releases' });
+  });
+
+  test('GBRA-175: the stable channel reads VERSION at the stable tag, from the argument or self_upgrade.channel', async () => {
+    const urls: string[] = [];
+    globalThis.fetch = (async (url: any) => {
+      urls.push(String(url));
+      return new Response(String(url).includes('/gbrain/stable/VERSION') ? '0.99.0.0\n' : '0.99.9.0\n', { status: 200 });
+    }) as typeof fetch;
+    expect(await fetchLatestRelease('stable')).toMatchObject({ ok: true, tag: '0.99.0.0' });
+    expect(await fetchLatestRelease()).toMatchObject({ ok: true, tag: '0.99.9.0' });
+    mkdirSync(join(homeDir, '.gbrain'), { recursive: true });
+    writeFileSync(join(homeDir, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: join(homeDir, 'brain.pglite'), self_upgrade: { channel: 'stable' } }));
+    expect(await fetchLatestRelease()).toMatchObject({ ok: true, tag: '0.99.0.0' });
+    expect(urls).toEqual([
+      'https://raw.githubusercontent.com/garrytan/gbrain/stable/VERSION',
+      'https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/VERSION',
+      'https://raw.githubusercontent.com/garrytan/gbrain/stable/VERSION',
+    ]);
   });
 });
 

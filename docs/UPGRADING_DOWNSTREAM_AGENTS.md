@@ -44,6 +44,61 @@ not know to backfill the structured timeline.
 
 Total time: ~10 minutes for all four skills.
 
+## Upgrading a production agent's brain: the stable channel
+
+A downstream agent whose brain is large or always on (an OpenClaw deployment, a
+team brain behind `gbrain serve --http`) should not track every PATCH release.
+Put that brain on the **stable channel**: the newest release a maintainer
+promoted after the production-shaped soak passed on that release's exact git
+tree. Promotion is weekly or manual; `git show stable` prints the promoted
+version, the soak run and its scoreboard link.
+
+```bash
+gbrain config set self_upgrade.channel stable   # once per brain home; update checks then offer only the stable release
+gbrain upgrade                                  # installs the stable release, then restarts every gbrain process onto it
+```
+
+`gbrain upgrade --channel stable` does the same for one run without changing
+the config. The stable channel never downgrades: a build at or above the stable
+release changes nothing.
+
+**Restarts are part of the upgrade.** `gbrain upgrade` restarts serve, autopilot,
+the jobs supervisor and its worker onto the new build, then verifies that every
+gbrain process on the host reports one build and that serve's warm CLI socket
+accepts it. When a process cannot be restarted automatically it refuses before
+installing anything (`restart_refused`, exit 3) and names the exact step for
+each one. Teach your agent's upgrade skill to handle that refusal:
+
+1. Read the refusal's `fix`. When it is `ask_user` (only MCP servers block the
+   restart), relay `user_message`; after the user agrees, run the `fix.argv` it
+   names (the same upgrade with `--stop-mcp`) and reconnect gbrain in each
+   harness afterwards.
+2. When it is `tell_user_to_run`, a serve, worker or autopilot was started by
+   hand, or a `gbrain sync` is running: give the user the listed steps, then run
+   the upgrade again. Run serve and autopilot under their installed services
+   (`gbrain autopilot --install`) and workers under
+   `gbrain jobs supervisor start --detach` so later upgrades restart them on
+   their own.
+3. A process that starts from another gbrain install (a second Bun global copy
+   the serve service points at, often pinned to a tag or commit) would come back
+   on the old build, so the upgrade replaces that copy first (`bun remove -g`,
+   then `bun add -g` the release tag, under the copy's own `BUN_INSTALL`; a
+   plain `bun add` or `bun update` keeps a pin) and refuses for any other kind
+   of install (a git clone) with its exact commands. If a process still comes
+   back on another build, `restart_unverified` names the install it runs from
+   and its `fix` is that replacement followed by `gbrain upgrade --restart-only`
+   (`ask_user`: relay `user_message`, run the chain after the user agrees).
+4. Verify with `gbrain doctor --only runtime_build_skew --json`: it fails while
+   two builds run, and its fix (`gbrain upgrade --restart-only`, after the user
+   agrees) restarts every process onto the installed build.
+
+`gbrain upgrade --restart-only --dry-run --json` lists every gbrain process on
+the host with its build and how it restarts, and changes nothing. A routine
+upgrade-and-restart onto the stable release is a good candidate for a standing
+approval from the operator; data-changing repairs still need a yes each time.
+Full reference: [upgrades](guides/upgrades-auto-update.md#stable-channel) and
+[restart](guides/upgrades-auto-update.md#restart).
+
 ---
 
 ## 1. brain-ops/SKILL.md
