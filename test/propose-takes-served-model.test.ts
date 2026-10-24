@@ -105,6 +105,24 @@ function buildCtx(engine: BrainEngine): OperationContext {
   };
 }
 
+describe('defaultExtractor rejection context (#7299)', () => {
+  test('forwards review history separately from fence rows; empty history leaves the prompt unchanged', async () => {
+    const requests: string[] = [];
+    __setChatTransportForTests(async request => {
+      requests.push(JSON.stringify(request));
+      return chatResult(GOOD_JSON, SERVED_MODEL);
+    });
+    const input = { pagePath: 'wiki/thesis', pageBody: 'Original prose.', existingTakes: [] };
+    await defaultExtractor({ ...input, rejectedClaims: ['A previously rejected prediction'] });
+    await defaultExtractor({ ...input, rejectedClaims: [] });
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toContain('OPERATOR-REJECTED CLAIMS');
+    expect(requests[0]).toContain('A previously rejected prediction');
+    expect(requests[0]).toContain('Original prose.');
+    expect(requests[1]).not.toContain('OPERATOR-REJECTED CLAIMS');
+  });
+});
+
 describe('defaultExtractor served-model stamp (#4737)', () => {
   test('attaches ChatResult.model as served_model on every take', async () => {
     __setChatTransportForTests(async () => chatResult(GOOD_JSON, SERVED_MODEL));
@@ -147,7 +165,7 @@ describe('runPhaseProposeTakes model_id provenance (#4737)', () => {
     expect((result.details as Record<string, unknown>).proposals_inserted).toBe(1);
 
     const inserts = captured.filter(
-      (c) => c.sql.includes('INSERT INTO take_proposals') && !c.sql.includes("'rejected'"),
+      (c) => c.sql.includes('INSERT INTO take_proposals') && c.sql.includes('RETURNING id'),
     );
     expect(inserts).toHaveLength(1);
     expect(inserts[0]!.params[11]).toBe(CONFIGURED_MODEL);
@@ -163,7 +181,7 @@ describe('runPhaseProposeTakes model_id provenance (#4737)', () => {
     expect(details.proposals_inserted).toBe(1);
 
     const inserts = captured.filter(
-      (c) => c.sql.includes('INSERT INTO take_proposals') && !c.sql.includes("'rejected'"),
+      (c) => c.sql.includes('INSERT INTO take_proposals') && c.sql.includes('RETURNING id'),
     );
     expect(inserts).toHaveLength(1);
     // Param 12 (index 11) is model_id.
@@ -179,7 +197,7 @@ describe('runPhaseProposeTakes model_id provenance (#4737)', () => {
     await runPhaseProposeTakes(buildCtx(engine), { extractor, model: 'test:injected-model' });
 
     const inserts = captured.filter(
-      (c) => c.sql.includes('INSERT INTO take_proposals') && !c.sql.includes("'rejected'"),
+      (c) => c.sql.includes('INSERT INTO take_proposals') && c.sql.includes('RETURNING id'),
     );
     expect(inserts).toHaveLength(1);
     expect(inserts[0]!.params[11]).toBe('test:injected-model');
