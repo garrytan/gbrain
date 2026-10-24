@@ -115,6 +115,19 @@ Full takes extraction on a ~100K-page brain (measured 2026-05-10):
 5. **No false precision.** Use 0.05 increments (0.35, 0.55, 0.75), not 0.74 or 0.82
 6. **"So what" test.** Skip Twitter handles, follower counts, obvious metadata
 
+### Proposal claim-shape gate
+
+Before enqueueing extractor output, `propose_takes` drops standalone operational
+fragments: traffic-light status, remaining-quota snapshots, bare tasks beginning
+with should/must/needs, and explicit option menus. These belong in task or runbook
+notes. A recommendation with a rationale or predicted consequence remains eligible,
+as do predictions mentioning quotas, colors, or technology choices. This cheap
+filter complements the extractor's semantic gradeability and signal-density bar;
+it is not a complete semantic classifier. An all-filtered page uses the same
+rejected cache tombstone as an empty extraction, avoiding repeated provider calls.
+Existing pending proposals and canonical takes are unchanged; promotion still
+requires the official accept path.
+
 ## Owner-holder canonicalization
 
 "The brain owner" is, by convention, the holder string **`self`** — the value the
