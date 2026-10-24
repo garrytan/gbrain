@@ -30,7 +30,7 @@ import {
 // two surfaces can't drift again. Match on word-segments to avoid
 // false-positives (e.g. `monkey` doesn't match `key`).
 export function isSensitiveConfigKey(key: string): boolean {
-  const lower = key.toLowerCase();
+  const lower = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
   // Word-boundary matches: foo_key, foo.key, key_foo, key, api_key, ...
   return /(^|[._-])(key|secret|token|password|pwd|passwd|auth)([._-]|$)/.test(lower);
 }
@@ -273,11 +273,23 @@ export const FILE_PLANE_API_KEYS: readonly string[] = [
 ];
 
 export function redactConfigValue(key: string, value: string): string {
+  if (isSensitiveConfigKey(key)) return '***';
+  // Object settings arrive as JSON from get/set. Inspect nested fields before
+  // treating the value as a scalar so credentials cannot hide inside a group.
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed !== null && typeof parsed === 'object') {
+      return JSON.stringify(parsed, (field, nested) => {
+        if (isSensitiveConfigKey(field)) return '***';
+        return typeof nested === 'string' && /postgres(ql)?:\/\//.test(nested)
+          ? redactPgUrl(nested) : nested;
+      });
+    }
+  } catch { /* Plain string config value. */ }
   // Both scheme spellings — the old local regex only matched postgresql://,
   // so a postgres:// DSN's password echoed in the clear. redactPgUrl is the
   // canonical single home (drops the whole userinfo, both schemes).
   if (/postgres(ql)?:\/\//.test(value)) return redactPgUrl(value);
-  if (isSensitiveConfigKey(key)) return '***';
   return value;
 }
 
@@ -674,7 +686,7 @@ async function showConfig(engine: BrainEngine): Promise<void> {
     const display = typeof v === 'string'
       ? redactConfigValue(k, v)
       : v !== null && typeof v === 'object'
-        ? (isSensitiveConfigKey(k) ? '***' : JSON.stringify(v))
+        ? redactConfigValue(k, JSON.stringify(v))
         : v;
     console.log(`  ${k}: ${display}`);
   }
