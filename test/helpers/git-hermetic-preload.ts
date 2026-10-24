@@ -1,3 +1,12 @@
+import { GIT_LOCAL_ENV_VARS } from '../../src/core/git-env';
+
+// A git hook exports the caller's repository (GIT_DIR, GIT_INDEX_FILE, ...), so a
+// test run started from a hook would write its git config into that repository.
+// GIT_CONFIG_COUNT stays: the signing overrides below compose with it.
+for (const key of [...GIT_LOCAL_ENV_VARS, 'GIT_QUARANTINE_PATH']) {
+  if (key !== 'GIT_CONFIG_COUNT') delete process.env[key];
+}
+
 /**
  * Pre-test setup: force `commit.gpgsign=false` / `tag.gpgsign=false` for every
  * git invocation in the test run — the test files' own `git init`/`git commit`
