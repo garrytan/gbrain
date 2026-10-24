@@ -107,7 +107,7 @@ export function resolveHermeticConfigDir(
   return v;
 }
 
-/** Parsed shape of `claude --print --output-format json`. */
+/** Parsed shape of the `claude --print` result event. */
 interface ClaudeJsonResult {
   type: 'result';
   subtype: 'success' | string;
@@ -153,18 +153,30 @@ type EnvelopeParse =
   | { ok: false; reason: 'no-result-event' };
 
 /**
- * Unwrap `--output-format json` stdout into the result envelope and the event
- * array it came in. `runClaude` passes `--verbose` (#6791), so the CLI emits
- * [{type:"system",subtype:"init",...}, ..., {type:"result",...}]; the bare
- * result object (events null) is still accepted. The array shape was verified on
- * CLI 2.1.145; that it carries every assistant message, in the 2.1.296 bundle.
+ * Unwrap `--output-format stream-json --verbose` stdout into the result envelope
+ * and the session's event list (#6791): one event per line,
+ * {type:"system",subtype:"init",...} ... {type:"result",...}. Stdout that is a
+ * single JSON value parses whole: an event array (the `--output-format json
+ * --verbose` shape, same events) or the bare result object (events null).
+ * The stream-json event list was verified on CLI 2.1.308.
  */
 function parseResultEnvelope(stdout: string): EnvelopeParse {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
-  } catch (error) {
-    return { ok: false, reason: 'not-json', error };
+  } catch (wholeError) {
+    const lines = stdout.split('\n').filter(line => line.trim() !== '');
+    if (lines.length < 2) return { ok: false, reason: 'not-json', error: wholeError };
+    try {
+      parsed = lines.map(line => JSON.parse(line) as unknown);
+    } catch (error) {
+      return { ok: false, reason: 'not-json', error };
+    }
+  }
+  // A one-line stream is a single event, not a bare result object.
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    && typeof (parsed as { type?: unknown }).type === 'string' && (parsed as { type: string }).type !== 'result') {
+    parsed = [parsed];
   }
   const events = Array.isArray(parsed) ? parsed : null;
   if (Array.isArray(parsed)) {
@@ -279,13 +291,22 @@ function buildToolUseInstructions(
 }
 
 /**
- * Render the ai-sdk message array into a single text prompt for `claude --print`
- * stdin. System messages are extracted up-front and concatenated into the
- * `--system-prompt` flag value. Tool calls and tool results are rendered as
- * placeholders so the model sees the conversation in a coherent shape even
- * though the adapter does not natively round-trip tool calls through claude-cli.
+ * Render the ai-sdk message array into the text blocks of the one user message
+ * `claude --print` reads from stdin. System messages are extracted up-front and
+ * concatenated into the `--system-prompt` flag value. Tool calls and tool
+ * results are rendered as placeholders so the model sees the conversation in a
+ * coherent shape even though the adapter does not natively round-trip tool
+ * calls through claude-cli.
+ *
+ * One block per conversation message, because prompt caching matches at block
+ * boundaries only: a tool loop that re-sent its growing transcript as a single
+ * text block wrote the whole transcript to cache on every turn and never read
+ * it back. Turn N's cache entry ends on its last block, which turn N+1 carries
+ * unchanged at the same position. Every block after the first starts with the
+ * `\n\n` separator, so a message renders the same whether it is last or not,
+ * and the blocks concatenate to the former single-string prompt.
  */
-function renderPrompt(prompt: LanguageModelV2Prompt): { systemText: string; userPrompt: string } {
+function renderPrompt(prompt: LanguageModelV2Prompt): { systemText: string; blocks: string[] } {
   const systemParts: string[] = [];
   const convo: string[] = [];
 
@@ -339,11 +360,17 @@ function renderPrompt(prompt: LanguageModelV2Prompt): { systemText: string; user
     }
   }
 
-  return { systemText: systemParts.join('\n'), userPrompt: convo.join('\n\n') };
+  return { systemText: systemParts.join('\n'), blocks: convo.map((m, i) => (i === 0 ? m : `\n\n${m}`)) };
+}
+
+/** The `--input-format stream-json` stdin line: the prompt blocks as one user message. */
+function streamJsonUserMessage(blocks: string[]): string {
+  return JSON.stringify({ type: 'user', message: { role: 'user', content: blocks.map(text => ({ type: 'text', text })) } }) + '\n';
 }
 
 /** Oldest claude CLI that accepts every flag `runClaude` passes (probed:
- * 2.0.59 rejects `--disable-slash-commands`, 2.0.60 accepts the full argv). */
+ * 2.0.59 rejects `--disable-slash-commands`, 2.0.60 accepts the full argv,
+ * stream-json input with a multi-block user message included). */
 export const MIN_CLAUDE_CLI_VERSION = '2.0.60';
 
 /** The CLI's argument parser rejected a flag (`error: unknown option '--x'`). */
@@ -375,13 +402,13 @@ export function thinkingDisabledBelowFloor(maxOutputTokens: number | undefined):
 }
 
 /**
- * Spawn `claude --print` with the contamination-suppression flags and return
- * the parsed `--output-format json` envelope. Aborts propagate to SIGTERM on
- * the child.
+ * Spawn `claude --print` with the contamination-suppression flags, write the
+ * prompt blocks to its stdin and return the parsed result envelope. Aborts
+ * propagate to SIGTERM on the child.
  */
 function runClaude(
   systemPrompt: string,
-  userPrompt: string,
+  promptBlocks: string[],
   model: string,
   signal?: AbortSignal,
   maxOutputTokens?: number,
@@ -398,10 +425,14 @@ function runClaude(
       : '{"disableAllHooks":true}';
     const args = [
       '--print',
-      // #6791: --verbose turns the json output into the session's event
-      // array, the only record of the segments before an automatic
-      // continuation (the envelope's result holds the last one).
-      '--output-format', 'json', '--verbose',
+      // The prompt arrives as a stream-json user message so each conversation
+      // message stays its own content block (see renderPrompt); stream-json
+      // input requires stream-json output.
+      '--input-format', 'stream-json',
+      // #6791: --verbose makes stdout the session's events, the only record of
+      // the segments before an automatic continuation (the envelope's result
+      // holds the last one). stream-json without it is a CLI error.
+      '--output-format', 'stream-json', '--verbose',
       '--model', model,
       '--disable-slash-commands',
       // Agent isolation: this subprocess must behave like a raw LLM, not a
@@ -542,7 +573,7 @@ function runClaude(
     // error itself is safe to swallow.
     child.stdin.on('error', () => { /* surfaced via child 'error'/'close' */ });
     try {
-      child.stdin.write(userPrompt);
+      child.stdin.write(streamJsonUserMessage(promptBlocks));
       child.stdin.end();
     } catch (e) {
       if (signal) signal.removeEventListener('abort', onAbort);
@@ -728,11 +759,11 @@ export class ClaudeCliLanguageModel implements LanguageModelV2 {
     providerMetadata?: SharedV2ProviderMetadata;
     warnings: never[];
   }> {
-    const { systemText, userPrompt } = renderPrompt(options.prompt);
+    const { systemText, blocks } = renderPrompt(options.prompt);
     const toolInstructions = buildToolUseInstructions(options.tools);
     const systemPrompt = [systemText, toolInstructions].filter(s => s.length > 0).join('\n');
 
-    const result = await runClaude(systemPrompt, userPrompt, this.modelId, options.abortSignal, options.maxOutputTokens);
+    const result = await runClaude(systemPrompt, blocks, this.modelId, options.abortSignal, options.maxOutputTokens);
     // The CLI reports Anthropic's separate buckets; LanguageModelV2Usage wants
     // the TOTAL input with the cache read as a subset (what every SDK provider
     // reports), so the gateway prices cache tokens once. Cache creation has no
