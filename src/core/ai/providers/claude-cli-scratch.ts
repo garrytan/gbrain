@@ -81,11 +81,34 @@ export function claudeCliSelfProjectDirs(projectsRoot: string = claudeProjectsDi
   }
 }
 
+/** Build the per-run lookup used when classifying many captures against the
+ * same scratch projects. The first matching project wins, as with the old
+ * `projectDirs.some(existsSync)` check. */
+export function claudeCliSelfSessionFilesByProject(projectDirs: readonly string[]): Map<string, string> {
+  const filesById = new Map<string, string>();
+  for (const project of projectDirs) {
+    let files: string[];
+    try {
+      files = readdirSync(project);
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      if (!file.endsWith('.jsonl')) continue;
+      const id = file.slice(0, -'.jsonl'.length);
+      if (/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(id) && !filesById.has(id)) {
+        filesById.set(id, join(project, file));
+      }
+    }
+  }
+  return filesById;
+}
+
 /**
  * #5820 — the ONE single-session self-capture classifier (serve-side
  * writeback harvest, the sweep's corpus pass, doctor `self_capture`): true
- * when a scratch project holds `<id>.jsonl`. Pass `projectDirs` to classify
- * many ids against one listing.
+ * when a scratch project holds `<id>.jsonl`. Use
+ * `claudeCliSelfSessionFilesByProject` to classify many ids from one listing.
  */
 export function isClaudeCliSelfSessionId(
   id: string,

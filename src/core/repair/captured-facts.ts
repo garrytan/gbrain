@@ -49,7 +49,7 @@ import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
-import { claudeCliSelfProjectDirs, isClaudeCliSelfSessionId } from '../ai/providers/claude-cli-scratch.ts';
+import { claudeCliSelfProjectDirs, claudeCliSelfSessionFilesByProject } from '../ai/providers/claude-cli-scratch.ts';
 import { claudeProjectsDir } from '../bootstrap/host-specs.ts';
 import { corpusFileSessionId, corpusTextForExtraction } from '../context/corpus-segments.ts';
 import { pruneDir } from '../sync.ts';
@@ -168,6 +168,7 @@ export async function classifyCapturedFacts(db: BrainEngine, sourceIds: string[]
   if (!rows.length) return { candidates: [], unclassifiable: 0, not_suspect: 0, unreadable_corpus_files: [] };
   const projectsRoot = opts.projectsRoot ?? claudeProjectsDir();
   const selfDirs = claudeCliSelfProjectDirs(projectsRoot);
+  const selfFilesBySession = claudeCliSelfSessionFilesByProject(selfDirs);
   const known = harnessSessionIds(projectsRoot);
   const corpusDir = opts.corpusDir === undefined ? await db.getConfig(CORPUS_KEY) : opts.corpusDir;
   const unreadable: string[] = [];
@@ -194,9 +195,10 @@ export async function classifyCapturedFacts(db: BrainEngine, sourceIds: string[]
   const classified: Array<Hit | 'unclassifiable' | 'not_suspect'> = rows.map(row => {
     const session = captureSessionId(row.source_session);
     if (!session) return 'unclassifiable';
-    if (isClaudeCliSelfSessionId(session, selfDirs)) {
-      const dir = selfDirs.find(d => existsSync(join(d, `${session}.jsonl`)))!;
-      return { klass: 'evidenced', reason: 'self_capture_transcript', session, evidence: join(basename(dir), `${session}.jsonl`) };
+    const selfFile = selfFilesBySession.get(session);
+    if (selfFile) {
+      const evidence = join(basename(dirname(selfFile)), basename(selfFile));
+      return { klass: 'evidenced', reason: 'self_capture_transcript', session, evidence };
     }
     const quarantined = quarantine.get(session);
     if (quarantined?.length) return { klass: 'evidenced', reason: 'self_capture_quarantined', session, evidence: basename(quarantined[0]!) };

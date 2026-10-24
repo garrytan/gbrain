@@ -827,8 +827,9 @@ async function runCorpusIngestPass(
 
   const { runFactsPipeline } = await import('./facts/backstop.ts');
   const { isDreamOutput } = await import('./cycle/transcript-discovery.ts');
-  const { claudeCliSelfProjectDirs, isClaudeCliSelfSessionId } = await import('./ai/providers/claude-cli-scratch.ts');
+  const { claudeCliSelfProjectDirs, claudeCliSelfSessionFilesByProject } = await import('./ai/providers/claude-cli-scratch.ts');
   const selfProjectDirs = claudeCliSelfProjectDirs();
+  const selfFilesBySession = claudeCliSelfSessionFilesByProject(selfProjectDirs);
 
   let windowsLeft = windows.resolveCorpusWindowsPerSweepTotal(process.env, log);
   for (let i = 0; i < candidates.length; i++) {
@@ -866,7 +867,7 @@ async function runCorpusIngestPass(
       // #5413: a corpus file captured from gbrain's own claude-cli call, in
       // any capture form. Extracting it spawns another claude-cli call; the
       // classification is permanent, so the terminal sidecar stops the retry.
-      if (isClaudeCliSelfSessionId(corpusFileSessionId(name), selfProjectDirs)) {
+      if (selfFilesBySession.has(corpusFileSessionId(name))) {
         await writeFile(full + CORPUS_INGESTED_SUFFIX, selfCaptureSidecarJson());
         skip('self_capture');
         continue;

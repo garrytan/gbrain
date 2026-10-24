@@ -15,7 +15,7 @@ import { readdirSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative } from 'node:path';
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
-import { claudeCliSelfProjectDirs, isClaudeCliSelfSessionId } from '../../../core/ai/providers/claude-cli-scratch.ts';
+import { claudeCliSelfProjectDirs, claudeCliSelfSessionFilesByProject } from '../../../core/ai/providers/claude-cli-scratch.ts';
 import { claudeProjectsDir } from '../../../core/bootstrap/host-specs.ts';
 import { corpusFileSessionId } from '../../../core/context/corpus-segments.ts';
 import { pruneDir } from '../../../core/sync.ts';
@@ -64,12 +64,13 @@ export async function selfCaptureCheck(engine: BrainEngine, opts: { projectsRoot
     const { files, unreadable } = corpusTextFiles(corpusDir);
     const projectsRoot = opts.projectsRoot ?? claudeProjectsDir();
     const selfDirs = claudeCliSelfProjectDirs(projectsRoot);
+    const selfFilesBySession = claudeCliSelfSessionFilesByProject(selfDirs);
     const known = harnessSessionIds(projectsRoot);
     const classified: string[] = [], unclassifiable: string[] = [];
     let newestMs = 0;
     for (const file of files) {
       const session = corpusFileSessionId(basename(file));
-      if (isClaudeCliSelfSessionId(session, selfDirs)) {
+      if (selfFilesBySession.has(session)) {
         classified.push(file);
         try { newestMs = Math.max(newestMs, statSync(file).mtimeMs); } catch { /* raced away */ }
       } else if (!known.has(session)) unclassifiable.push(file);
