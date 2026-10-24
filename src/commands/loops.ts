@@ -43,9 +43,9 @@ export function printUsage(): void {
       '  drop  sender <email> [--source <id>] [--note <text>] [--dry-run]',
       '        close every open reply-owed loop from one sender (preview with --dry-run; cannot be undone)',
       '  mute  sender <email> | thread <thread-id>   [--source <id>] [--dry-run]',
-      '        stop new loops and close its open reply-owed loops',
+      '        stop new loops; sender mute closes all types, thread mute closes reply-owed loops',
       '  unmute sender <email> | thread <thread-id>  [--source <id>] [--dry-run]',
-      '        undo a mute; loops it closed are re-checked on the next sync',
+      '        undo a mute; deterministic loops are re-checked on the next sync',
       '',
       'The ranked digest lives at: gbrain waiting',
     ].join('\n') + '\n',
@@ -406,15 +406,15 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
       if (dryRun) {
         const ids = result.would_close ?? [];
         if (json) process.stdout.write(JSON.stringify({ ok: true, status: 'dry_run', ...result }, null, 2) + '\n');
-        else process.stdout.write(`Dry run: muting ${kind} ${value} would close ${ids.length} open reply-owed loop(s)${idList(ids)}. Nothing changed.\n`);
+        else process.stdout.write(`Dry run: muting ${kind} ${value} would close ${ids.length} open ${kind === 'thread' ? 'reply-owed ' : ''}loop(s)${idList(ids)}. Nothing changed.\n`);
         return;
       }
       if (json) {
         process.stdout.write(JSON.stringify({ ok: result.muted, status: result.muted ? 'muted' : 'not_muted', ...result }, null, 2) + '\n');
       } else if (result.muted) {
         const closed = result.closed ?? [];
-        process.stdout.write(`Muted ${kind} ${value}. New loops won't open for it; closed ${closed.length} open reply-owed loop(s)${idList(closed)}.\n`
-          + `Undo: ${result.undo_command} (re-checks the closed loops on the next sync)\n`);
+        process.stdout.write(`Muted ${kind} ${value}. New loops won't open for it; closed ${closed.length} open ${kind === 'thread' ? 'reply-owed ' : ''}loop(s)${idList(closed)}.\n`
+          + `Undo: ${result.undo_command} (re-checks deterministic loops on the next sync)\n`);
       } else {
         process.stdout.write(`Not muted: ${result.reason}\n`);
       }
@@ -445,7 +445,7 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
           ? `Unmuted ${kind} ${value}. New loops can open for it again.\n`
           : `Not muted: ${kind} ${value} had no suppression in ${sourceId}.\n`)
         + (requeued.length > 0 ? `Queued ${requeued.length} loop(s) the mute closed for re-check on the next sync${idList(requeued)}; each reopens only if nothing answered its thread since.\n` : '')
-        + (result.unverifiable.length > 0 ? `${result.unverifiable.length} closed loop(s) have no thread to re-check and stay closed${idList(result.unverifiable)}.\n` : '')
+        + (result.unverifiable.length > 0 ? `${result.unverifiable.length} closed loop(s) have no deterministic thread re-check and stay closed until newer evidence${idList(result.unverifiable)}.\n` : '')
         + (result.stale_source ? `This source has not synced in 24h; the re-check runs on its next sync: ${result.recheck_command}\n` : '')
         + (result.removed ? `Undo: ${result.undo_command}\n` : ''),
       );

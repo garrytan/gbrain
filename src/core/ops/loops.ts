@@ -752,9 +752,9 @@ const loops_mute: Operation = {
   outputRedaction: 'no_stored_text',
   description:
     'Suppress a sender (email address) or thread id from opening NEW loops — the detector feedback ' +
-    'primitive behind "never track this sender". It also closes that sender\'s (or thread\'s) open reply-owed ' +
-    '(unanswered_inbound) loops as dropped with closed_by "muted" and lists their ids in `closed`; other loop types ' +
-    'keep their state. dry_run lists `would_close` and changes nothing. loops_unmute re-checks the closed loops.',
+    'primitive behind "never track this sender". It also closes that sender\'s open loops of every type ' +
+    '(a thread mute closes only unanswered_inbound) as dropped with closed_by "muted" and lists their ids in `closed`. ' +
+    'dry_run lists `would_close` and changes nothing. loops_unmute re-checks only deterministic thread loops.',
   params: {
     kind: { type: 'string', required: true, enum: ['sender', 'thread'], description: 'What to mute.' },
     value: { type: 'string', required: true, description: 'The sender email or Gmail thread id.' },
@@ -803,9 +803,9 @@ const loops_unmute: Operation = {
   outputRedaction: 'no_stored_text',
   description:
     'Remove a sender/thread suppression added by loops_mute, so the detector can open NEW loops for ' +
-    'it again. Exact-match only. The reply-owed loops the mute closed (unless another mute still covers them) are queued ' +
+    'it again. Exact-match only. The deterministic thread loops the mute closed (unless another mute still covers them) are queued ' +
     'for re-check on the next Gmail sync and listed in `requeued`: a loop reopens only when nothing answered its thread ' +
-    'since the mute. `unverifiable` lists closed loops with no thread to re-check (they stay closed); `stale_source` ' +
+    'since the mute. `unverifiable` lists closed loops with no thread or no deterministic re-check (including extracted commitments; they stay closed until newer evidence); `stale_source` ' +
     'means the re-check waits on a sync that has not run in 24h. Manually closed loops are never touched. dry_run lists ' +
     '`would_requeue` and changes nothing.',
   params: {
