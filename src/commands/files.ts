@@ -347,6 +347,8 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   const hash = createHash('sha256').update(content).digest('hex');
   const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
   const bucket = (config.storage as any).bucket || 'brain-files';
+  const backend = (config.storage as StorageConfig).backend;
+  const reference = `${backend}://${bucket}/${storagePath}`;
 
   const method = content.length >= SIZE_THRESHOLD ? 'TUS resumable' : 'standard';
   console.error(`Uploading ${humanSize(stat.size)} via ${method}...`);
@@ -357,7 +359,7 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   if (!noPointer && pageSlug) {
     const { stringify } = await import('../core/yaml-lite.ts');
     const pointer = stringify({
-      target: `supabase://${bucket}/${storagePath}`,
+      target: reference,
       bucket,
       storage_path: storagePath,
       size: stat.size,
@@ -393,10 +395,10 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   // Output JSON for scripting
   console.log(JSON.stringify({
     success: true,
-    storage: 'supabase',
+    storage: backend,
     storagePath,
     bucket,
-    reference: `supabase://${bucket}/${storagePath}`,
+    reference,
     pointerPath,
     size: stat.size,
     size_human: humanSize(stat.size),
