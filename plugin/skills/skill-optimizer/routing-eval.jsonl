@@ -1,0 +1,6 @@
+{"intent":"Can you optimize this skill against my benchmark?","expected_skill":"skill-optimizer"}
+{"intent":"Tune the skill against the benchmark fixtures","expected_skill":"skill-optimizer"}
+{"intent":"Run skillopt for the brain-ops skill","expected_skill":"skill-optimizer"}
+{"intent":"Make the skill better via the optimizer","expected_skill":"skill-optimizer"}
+{"intent":"Run skillopt for my-skill to improve it","expected_skill":"skill-optimizer"}
+{"intent":"How do I create a new skill from scratch?","expected_skill":"skill-creator","ambiguous_with":["skill-optimizer"]}

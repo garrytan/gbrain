@@ -1,0 +1,15 @@
+// Routing eval fixtures for skills/remote-mcp. Each positive intent
+// includes exactly one trigger string as substring and no other skill's
+// trigger; negative cases must match nothing.
+{"intent":"I want to use my brain over mcp from my other laptop","expected_skill":"remote-mcp"}
+{"intent":"serve my brain over mcp so the desktop app can see it","expected_skill":"remote-mcp"}
+{"intent":"expose my brain over mcp to the agents I run in the cloud","expected_skill":"remote-mcp"}
+{"intent":"set up a gbrain mcp server that stays running on this machine","expected_skill":"remote-mcp"}
+{"intent":"give me remote mcp access to my brain from the office","expected_skill":"remote-mcp"}
+{"intent":"put my brain on tailscale so my phone can reach it","expected_skill":"remote-mcp"}
+{"intent":"connect grok bot to my brain, it runs in the vendor cloud","expected_skill":"remote-mcp"}
+{"intent":"connect muse to my brain on this mac","expected_skill":"remote-mcp"}
+{"intent":"connect claude desktop to my brain over https","expected_skill":"remote-mcp"}
+{"intent":"run gbrain mcp expose with funnel for the chatgpt connector","expected_skill":"remote-mcp"}
+{"intent":"what is the capital of portugal","expected_skill":null}
+{"intent":"reformat this csv as a markdown table","expected_skill":null}

@@ -1,0 +1,9 @@
+// Routing eval fixtures for skills/db-repair. Each intent
+// includes at least one trigger string as substring.
+{"intent":"The tool result says GBRAIN_DB_ACCESS conn_refused — handle it","expected_skill":"db-repair"}
+{"intent":"gbrain database error on every call, can you fix it","expected_skill":"db-repair"}
+{"intent":"gbrain connection refused when I query the brain","expected_skill":"db-repair"}
+{"intent":"I cannot reach the brain database from this session","expected_skill":"db-repair"}
+{"intent":"The brain database is down again — repair access","expected_skill":"db-repair"}
+{"intent":"fix gbrain database access so recall works","expected_skill":"db-repair"}
+{"intent":"repair gbrain postgres, the pooler keeps rejecting us","expected_skill":"db-repair"}
