@@ -36,10 +36,12 @@ const RESPONSE_SCHEMA = {
           type: 'object',
           properties: { i: { type: 'integer' }, subject: { type: ['string', 'null'] } },
           required: ['i', 'subject'],
+          additionalProperties: false,
         },
       },
     },
     required: ['subjects'],
+    additionalProperties: false,
   },
 };
 
