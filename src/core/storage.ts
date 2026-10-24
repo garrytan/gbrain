@@ -1,3 +1,6 @@
+import { openSync, readSync, closeSync, readFileSync } from 'fs';
+import { createHash } from 'crypto';
+
 /**
  * StorageBackend — pluggable interface for binary file storage.
  *
@@ -7,6 +10,7 @@
 
 export interface StorageBackend {
   upload(path: string, data: Buffer, mime?: string): Promise<void>;
+  uploadFile?(path: string, filePath: string, mime?: string): Promise<void>;
   download(path: string): Promise<Buffer>;
   delete(path: string): Promise<void>;
   exists(path: string): Promise<boolean>;
@@ -49,4 +53,28 @@ export async function createStorage(config: StorageConfig): Promise<StorageBacke
     default:
       throw new Error(`Unknown storage backend: ${config.backend}`);
   }
+}
+
+/** Hash originals with a fixed-size buffer. */
+export function hashStorageFile(filePath: string): string {
+  const fd = openSync(filePath, 'r');
+  try {
+    const hash = createHash('sha256');
+    const chunk = Buffer.allocUnsafe(1024 * 1024);
+    let length: number;
+    while ((length = readSync(fd, chunk, 0, chunk.length, null)) > 0) {
+      hash.update(chunk.subarray(0, length));
+    }
+    return hash.digest('hex');
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Prefer bounded-memory file uploads where supported. */
+export async function uploadStorageFile(
+  storage: StorageBackend, path: string, filePath: string, mime?: string,
+): Promise<void> {
+  if (storage.uploadFile) await storage.uploadFile(path, filePath, mime);
+  else await storage.upload(path, readFileSync(filePath), mime);
 }

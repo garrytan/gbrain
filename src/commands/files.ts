@@ -1,3 +1,4 @@
+import { hashStorageFile, uploadStorageFile } from '../core/storage.ts';
 import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-guard.ts';
 import { readFileSync, readdirSync, statSync, lstatSync, existsSync, writeFileSync, unlinkSync, mkdirSync, copyFileSync } from 'fs';
 import { join, relative, extname, basename, dirname, resolve } from 'path';
@@ -42,8 +43,7 @@ export function getMimeType(filePath: string): string | null {
 }
 
 function fileHash(filePath: string): string {
-  const content = readFileSync(filePath);
-  return createHash('sha256').update(content).digest('hex');
+  return hashStorageFile(filePath);
 }
 
 export function formatFileSizeKb(rawSizeBytes: number | bigint | string | null): string {
@@ -201,10 +201,9 @@ async function uploadFile(engine: BrainEngine, args: string[]) {
     return;
   }
 
-  const content = readFileSync(filePath);
-  const method = content.length >= SIZE_THRESHOLD ? 'TUS resumable' : 'standard';
+  const method = stat.size >= SIZE_THRESHOLD ? 'TUS resumable' : 'standard';
   console.log(`Uploading ${humanSize(stat.size)} via ${method}...`);
-  await storage.upload(storagePath, content, mimeType || undefined);
+  await uploadStorageFile(storage, storagePath, filePath, mimeType || undefined);
 
   // files.metadata is JSONB — bind a real object via executeRawJsonb instead
   // of casting a string into ::jsonb (the #2339 double-encode class).
@@ -343,14 +342,13 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
 
   const { createStorage } = await import('../core/storage.ts');
   const storage = await createStorage(config.storage as any);
-  const content = readFileSync(filePath);
-  const hash = createHash('sha256').update(content).digest('hex');
+  const hash = fileHash(filePath);
   const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
   const bucket = (config.storage as any).bucket || 'brain-files';
 
-  const method = content.length >= SIZE_THRESHOLD ? 'TUS resumable' : 'standard';
+  const method = stat.size >= SIZE_THRESHOLD ? 'TUS resumable' : 'standard';
   console.error(`Uploading ${humanSize(stat.size)} via ${method}...`);
-  await storage.upload(storagePath, content, mimeType || undefined);
+  await uploadStorageFile(storage, storagePath, filePath, mimeType || undefined);
 
   // Create .redirect.yaml pointer in the brain repo
   let pointerPath: string | null = null;
@@ -470,7 +468,7 @@ async function syncFiles(engine: BrainEngine, dir?: string) {
     const pageSlug = pathParts.length > 1 ? pathParts.slice(0, -1).join('/') : null;
 
     // Actually put the bytes in storage before recording them as stored.
-    await storage.upload(storagePath, readFileSync(filePath), mimeType || undefined);
+    await uploadStorageFile(storage, storagePath, filePath, mimeType || undefined);
 
     // files.metadata is JSONB — bind a real object via executeRawJsonb instead
     // of casting a string into ::jsonb (the #2339 double-encode class).
@@ -642,9 +640,8 @@ async function mirrorFiles(args: string[]) {
   let uploaded = 0;
   for (const filePath of files) {
     const relPath = relative(dir, filePath);
-    const data = readFileSync(filePath);
     const mime = getMimeType(filePath);
-    await storage.upload(relPath, data, mime || undefined);
+    await uploadStorageFile(storage, relPath, filePath, mime || undefined);
     uploaded++;
   }
 

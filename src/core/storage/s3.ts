@@ -1,5 +1,10 @@
+import { open } from 'fs/promises';
 import {
   S3Client,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
@@ -52,6 +57,61 @@ export class S3Storage implements StorageBackend {
       Body: data,
       ContentType: mime || 'application/octet-stream',
     }));
+  }
+
+  /** Sequential multipart upload bounds memory independently of original size. */
+  async uploadFile(path: string, filePath: string, mime?: string): Promise<void> {
+    const file = await open(filePath, 'r');
+    let uploadId: string | undefined;
+    const target = { Bucket: this.bucket, Key: path };
+    try {
+      const { size } = await file.stat();
+      // Keep within S3's 10,000-part limit for multi-terabyte originals.
+      const partSize = Math.max(16 * 1024 * 1024, Math.ceil(size / 10000));
+      const buffer = Buffer.allocUnsafe(Math.min(size, partSize));
+      const readPart = async (offset: number, length: number) => {
+        let filled = 0;
+        while (filled < length) {
+          const { bytesRead } = await file.read(buffer, filled, length - filled, offset + filled);
+          if (!bytesRead) throw new Error('File ended during S3 upload');
+          filled += bytesRead;
+        }
+        return buffer.subarray(0, length);
+      };
+      if (size <= partSize) {
+        await this.upload(path, await readPart(0, size), mime);
+        return;
+      }
+      const created = await this.client.send(new CreateMultipartUploadCommand({
+        ...target, ContentType: mime || 'application/octet-stream',
+      }));
+      uploadId = created.UploadId;
+      if (!uploadId) throw new Error('S3 multipart upload returned no upload ID');
+      const parts: { PartNumber: number; ETag: string }[] = [];
+      for (let offset = 0; offset < size;) {
+        const length = Math.min(partSize, size - offset);
+        const PartNumber = parts.length + 1;
+        const result = await this.client.send(new UploadPartCommand({
+          ...target, UploadId: uploadId, PartNumber,
+          Body: await readPart(offset, length), ContentLength: length,
+        }));
+        if (!result.ETag) throw new Error('S3 multipart part returned no ETag');
+        parts.push({ PartNumber, ETag: result.ETag });
+        offset += length;
+      }
+      await this.client.send(new CompleteMultipartUploadCommand({
+        ...target, UploadId: uploadId, MultipartUpload: { Parts: parts },
+      }));
+    } catch (error) {
+      if (uploadId) {
+        await this.client.send(new AbortMultipartUploadCommand({
+          ...target, UploadId: uploadId,
+        })).catch(() => {}); // Preserve the original failure if cleanup also fails.
+      }
+      throw error;
+    } finally {
+      await file.close();
+    }
   }
 
   async download(path: string): Promise<Buffer> {
