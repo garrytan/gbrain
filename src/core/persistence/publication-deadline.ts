@@ -62,6 +62,7 @@ export function _setPublicationTimingForTest(timing: { ceilingMs: number; graceM
  */
 export function publicationDeadlinePassed(): boolean {
   const signal = signals.getStore();
+  if (signal && (signal as any).__settled) console.error('DBG_LPC LEAK publicationDeadlinePassed aborted=' + signal.aborted, new Error().stack?.split('\n').slice(2, 9).join(' | '));
   return !!signal?.aborted && (signal.reason as { code?: unknown } | null)?.code === 'publication_deadline';
 }
 
@@ -99,6 +100,7 @@ export async function declarePublication(tx: BrainEngine, bound: Pick<BrainEngin
 export async function publicationTransaction<T>(engine: BrainEngine, fn: (tx: BrainEngine) => Promise<T>,
   { pipelineFirst }: Pick<TransactionOptions, 'pipelineFirst'> = {}): Promise<T> {
   const signal = signals.getStore();
+  if (signal && (signal as any).__settled) console.error('DBG_LPC LEAK publicationTransaction aborted=' + signal.aborted, new Error().stack?.split('\n').slice(2, 9).join(' | '));
   const first = pipelineFirst ? { pipelineFirst } : {};
   if (!signal) return pipelineFirst ? engine.transaction(fn, first) : engine.transaction(fn);
   let body: Promise<unknown> = Promise.resolve();
@@ -144,6 +146,6 @@ export function boundPublication<T>(publish: () => Promise<T>, bound: Publicatio
   later(bound.ceilingMs, () => bound.onOverdue?.());
   later(bound.ceilingMs + grace, () => controller.abort(Object.assign(new Error('publication_deadline'), { code: 'publication_deadline' })));
   later(bound.ceilingMs + grace + settle, () => bound.onStuck?.(settled));
-  void settled.then(() => { for (const cancel of cancels) cancel(); });
+  void settled.then(() => { (controller.signal as any).__settled = true; for (const cancel of cancels) cancel(); });
   return work;
 }

@@ -61,5 +61,6 @@ export async function chargeTransientInterruption(engine: SqlEngine, row: WriteR
     next_attempt_at=now()+(LEAST($3::double precision*power(2::double precision,LEAST(transient_interruptions,30)),$4::double precision)*interval '1 millisecond'),
     updated_at=now() WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING transient_interruptions`,
   [row.id, row.execution_token, TRANSIENT_BACKOFF_BASE_MS, TRANSIENT_BACKOFF_MAX_MS]);
+  console.error('DBG_LPC charge', row.slug, row.id, 'token=' + row.execution_token, charged?.transient_interruptions, 'deadlinePassed=' + publicationDeadlinePassed(), new Error().stack?.split('\n').slice(2, 9).join(' | '));
   return charged?.transient_interruptions ?? (row.transient_interruptions ?? 0) + 1;
 }

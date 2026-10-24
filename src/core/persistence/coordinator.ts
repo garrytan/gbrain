@@ -260,6 +260,7 @@ const TRANSIENT_RETRIES_KEY = PREPARATION_BUDGET_KEYS.transientRetries;
  */
 async function interruptionCharge(engine: BrainEngine, error: unknown, interruption = transientInterruption(error)): Promise<{ interruption: TransientInterruption; limit: number } | null> {
   if (!interruption) return null;
+  console.error('DBG_LPC interruption', JSON.stringify(interruption), (error as { name?: string })?.name, (error as { code?: string })?.code, String((error as { message?: string })?.message ?? '').slice(0, 120));
   if (isSharedReadFailure(error)) {
     if (chargedSharedReads.has(error as object)) return null;
     chargedSharedReads.add(error as object);
