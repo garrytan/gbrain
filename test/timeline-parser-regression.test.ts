@@ -26,10 +26,34 @@ describe('timeline prefix compatibility', () => {
   });
 
   test('keeps invalid calendar dates and unsupported ASCII shapes rejected', () => {
-    for (const date of ['**2026-02-29**', '**1900-02-29**', '**2026-13-01**', '**2026-01-00**', '2026年2月30日', '**2026年0月1日**', '2026年1月32日', '2024-02-29', '**2024-2-29**']) {
+    for (const date of ['**2026-02-29**', '**1900-02-29**', '**2026-13-01**', '**2026-01-00**', '2026年2月30日', '**2026年0月1日**', '2026年1月32日', '２０２６年２月３０日', '2024-02-29', '**2024-2-29**']) {
       expect(parseTimelineEntries(` \t- ${date} | Event`)).toEqual([]);
     }
     expect(parseTimelineEntries(' \t- **2024-02-29** |   ')).toEqual([]);
+  });
+
+  test('reads weekday suffixes and full-width digits on CJK date lines', () => {
+    const cases: Array<[string, string]> = [
+      ['2026年10月22日（木）', '2026-10-22'],
+      ['2026年10月22日(木)', '2026-10-22'],
+      ['2026年10月22日 （木曜日）', '2026-10-22'],
+      ['**2026年10月22日（木）**', '2026-10-22'],
+      ['２０２６年１０月２２日', '2026-10-22'],
+      ['２０２６年１１月３日（火・祝）', '2026-11-03'],
+      ['2026年10月22日（周四）', '2026-10-22'],
+    ];
+    for (const [date, iso] of cases) {
+      expect(parseTimelineEntries(`- ${date} | Notes — Event`)).toEqual([
+        { date: iso, summary: 'Event', detail: '', source: 'Notes' },
+      ]);
+    }
+  });
+
+  test('starts a new entry at each consecutive unbulleted CJK date line', () => {
+    expect(parseTimelineEntries('## Timeline\n2026年10月21日 | A\n2026年10月22日 | B\n')).toEqual([
+      { date: '2026-10-21', summary: 'A', detail: '', source: 'markdown' },
+      { date: '2026-10-22', summary: 'B', detail: '', source: 'markdown' },
+    ]);
   });
 
   test('bounds adversarial whitespace in a child process and reports 1x/2x/4x scaling', () => {
