@@ -72,7 +72,7 @@ test/claude-cli-recipe.test.ts	claude-cli LanguageModel — CLI too old for the 
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — abort + error envelopes	13	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — context isolation	2	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — output cap (#6424)	2	readFileSync
-test/claude-cli-recipe.test.ts	claude-cli LanguageModel — text-only round trip	4	readFileSync
+test/claude-cli-recipe.test.ts	claude-cli LanguageModel — text-only round trip	6	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — tool use	17	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli recipe registration	2	readFileSync
 test/cli-force-exit-teardown-arming.test.ts	cli.ts — disconnect hard-deadline armed at teardown entry, not before the op body	1	readFileSync,source-surface-helper

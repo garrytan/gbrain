@@ -78,6 +78,26 @@ describe('provider wildcard keys', () => {
   });
 });
 
+describe('claude-cli family names price at the newest model of the family', () => {
+  test('haiku, sonnet and opus price like the newest table row; explicit ids are unchanged', () => {
+    expect(priceFor('claude-cli:haiku', 'chat')).toEqual(priceFor('claude-cli:claude-haiku-5-5', 'chat'));
+    expect(priceFor('claude-cli:sonnet', 'chat')).toEqual(priceFor('claude-cli:claude-sonnet-5-5', 'chat'));
+    expect(priceFor('claude-cli:opus', 'chat')).toEqual(priceFor('claude-cli:claude-opus-5-5', 'chat'));
+    expect(priceFor('claude-cli:claude-haiku-4-5-20251001', 'chat')?.pricing.input).toBe(1);
+    expect(priceFor('claude-cli:haiku', 'chat')?.pricing.input).toBe(0.1);
+  });
+
+  test('only the claude CLI resolves family names; other providers stay unpriced', () => {
+    expect(priceFor('litellm:haiku', 'chat')).toBeNull();
+    expect(priceFor('claude-cli:fable', 'chat')).toBeNull();
+  });
+
+  test('an override on the family name or the provider wildcard still wins', () => {
+    expect(priceFor('claude-cli:haiku', 'chat', parsePricingOverrides('{"claude-cli:haiku": 0}'))?.source).toBe('override');
+    expect(priceFor('claude-cli:haiku', 'chat', parsePricingOverrides('{"claude-cli:*": 0}'))?.source).toBe('provider_wildcard');
+  });
+});
+
 describe('#5847 deepseek:deepseek-flash is priced', () => {
   test('BudgetMeter meters it at the peak row without the NO_PRICING warning', () => {
     let err = '';

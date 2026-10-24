@@ -112,10 +112,10 @@ describe('BudgetTracker ledger', () => {
 
   test('requested vs served stay distinct; alias and canonical served ids aggregate to one row', () => {
     const t = tracker();
-    t.record({ modelId: 'claude-cli:haiku', requestedModelId: 'claude-cli:haiku', inputTokens: 10, label: 'gateway.chat' });
-    t.record({ modelId: 'claude-cli:claude-haiku-4-5-20251001', requestedModelId: 'claude-cli:haiku', inputTokens: 10, label: 'gateway.chat' });
+    t.record({ modelId: 'claude-cli:claude-haiku-4-5', requestedModelId: 'claude-cli:claude-haiku-4-5', inputTokens: 10, label: 'gateway.chat' });
+    t.record({ modelId: 'claude-cli:claude-haiku-4-5-20251001', requestedModelId: 'claude-cli:claude-haiku-4-5', inputTokens: 10, label: 'gateway.chat' });
     expect(t.snapshot().models).toEqual([expect.objectContaining({
-      requested_model: 'claude-cli:haiku', model: 'claude-cli:claude-haiku-4-5-20251001', calls: 2,
+      requested_model: 'claude-cli:claude-haiku-4-5', model: 'claude-cli:claude-haiku-4-5-20251001', calls: 2,
     })]);
   });
 

@@ -12,6 +12,7 @@ import { lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { splitProviderModelId } from '../model-id.ts';
 import { resolveRecipe } from '../ai/model-resolver.ts';
 import { getRecipe } from '../ai/recipes/index.ts';
+import { newestInFamily } from '../ai/anthropic-model-ids.ts';
 
 export type BudgetKind = 'chat' | 'embed' | 'rerank' | 'decide';
 
@@ -26,7 +27,7 @@ export type PricingOverrides = Record<string, ModelPricing>;
 
 /**
  * Recipe-alias normalization shared by the override and table lookups:
- * `claude-cli:haiku` → `claude-cli:claude-haiku-4-5-20251001`. Bare ids and
+ * `claude-cli:claude-haiku-4-5` → `claude-cli:claude-haiku-4-5-20251001`. Bare ids and
  * unknown providers throw out of resolveRecipe and keep the raw id, so the
  * downstream chains decide those exactly as before.
  */
@@ -148,9 +149,9 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   // brainstorm/lsd.
   const bare = ANTHROPIC_PRICING[modelId];
   if (bare) return bare;
-  // Recipe aliases (`claude-cli:haiku`, `anthropic:sonnet`) are not pricing
+  // Recipe aliases (`claude-cli:claude-haiku-4-5`, `anthropic:sonnet`) are not pricing
   // keys, and the gateway reserves with the string the user configured —
-  // BEFORE alias resolution — so `claude-cli:haiku` under a cap used to TX2
+  // BEFORE alias resolution — so an alias under a cap used to TX2
   // hard-fail with no_pricing while the dated id it maps to priced fine.
   // Normalize once here; the chain below then prices the canonical id, and
   // alias vs dated id agree at reserve(), record() and isModelPriceable().
@@ -161,6 +162,13 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   if (modelTail) {
     const tailHit = ANTHROPIC_PRICING[modelTail];
     if (tailHit) return tailHit;
+    // `claude-cli:haiku` passes the family name to `claude --model`, which
+    // runs the family's newest model, so it prices at the newest row of that
+    // family in the table: no pinned id here, and a new row moves it.
+    if (providerId && getRecipe(providerId)?.implementation === 'claude-cli') {
+      const newest = newestInFamily(modelTail, Object.keys(ANTHROPIC_PRICING));
+      if (newest) return ANTHROPIC_PRICING[newest.id];
+    }
   }
   if (kind === 'rerank' || kind === 'decide') {
     const hit = lookupEmbeddingPrice(key);
