@@ -61,7 +61,7 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
   // #6280: an unusable request_id refuses the batch before any write (F6 accepts a UUID or a printable client id).
   if (p.request_id !== undefined) parseWriteRequestId(p.request_id);
   const shared: Record<string, unknown> = {};
-  for (const key of ['provenance', 'source_id', 'kind', 'ttl', 'visibility', 'infer_entity']) if (p[key] !== undefined) shared[key] = p[key];
+  for (const key of ['provenance', 'source_id', 'entity', 'kind', 'ttl', 'visibility', 'infer_entity']) if (p[key] !== undefined) shared[key] = p[key];
   const normalized = items.map((raw, index) => {
     // A bare string is the common shorthand for one fact.
     if (typeof raw === 'string') return { ...shared, fact: raw };
