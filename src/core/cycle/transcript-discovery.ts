@@ -19,6 +19,8 @@ import { realpathOrResolve, resolvedPrefixContained } from '../path-confine.ts';
 import { CORPUS_SPOOL_SUBDIR, corpusFileSessionId } from '../context/corpus-segments.ts';
 import { withoutOffPeriodTurns } from '../context/capture-consent.ts';
 import { readSeatSidecar } from '../context/seat.ts';
+import { resolveSourceLocalFilePath, sourceGitScope } from '../markdown.ts';
+import { scannerSlugRootMode } from '../write-through.ts';
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
@@ -474,10 +476,13 @@ export interface ConversationPageDiscoverOpts {
   bypassGuard?: boolean;
   /** #5413: gbrain's own claude-cli session ids; their imported pages are self-captures. */
   selfCaptureSessionIds?: ReadonlySet<string>;
+  /** Realpaths of files the corpus walk returned; a page synced from one of them is left to the corpus. */
+  corpusFiles?: ReadonlySet<string>;
 }
 
 interface ConversationRow {
   slug: string;
+  source_path: string | null;
   compiled_truth: string;
   frontmatter: Record<string, unknown> | string | null;
 }
@@ -495,6 +500,39 @@ function pageDate(fm: Record<string, unknown>, slug: string): string | null {
   return DATE_RE.exec(raw)?.[1] ?? DATE_RE.exec(slug.split('/').pop() ?? '')?.[1] ?? null;
 }
 
+/**
+ * Maps a page row to the realpath of its file in the source checkout
+ * (`local_path`, or the default source's `sync.repo_path`), so a page synced
+ * from a corpus file (often through a symlinked corpus folder) is recognised
+ * as that file. Null when the source has no checkout, the legacy checkout is
+ * another source's tree, or the mapping cannot be read; discovery then falls
+ * back to the body-hash dedupe.
+ */
+async function pageFileResolver(engine: BrainEngine, sourceId: string): Promise<((row: ConversationRow) => string | null) | null> {
+  try {
+    const [source] = await engine.executeRaw<{ local_path: string | null }>(
+      'SELECT local_path FROM sources WHERE id = $1', [sourceId],
+    );
+    let localPath = source?.local_path ?? null;
+    if (!localPath && sourceId === 'default') {
+      const repoPath = await engine.getConfig('sync.repo_path');
+      const owned = repoPath
+        ? await engine.executeRaw('SELECT 1 FROM sources WHERE id <> $1 AND local_path = $2 LIMIT 1', [sourceId, repoPath])
+        : [];
+      if (repoPath && owned.length === 0) localPath = repoPath;
+    }
+    if (!localPath) return null;
+    const slugRootMode = await scannerSlugRootMode(engine, sourceId, localPath);
+    const gitScope = sourceGitScope(localPath);
+    return (row) => {
+      const path = resolveSourceLocalFilePath(localPath, row.source_path, row.slug, slugRootMode, gitScope);
+      return path ? realpathOrResolve(path) : null;
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Live conversation pages in one source (used for the not-consumed warning). */
 export async function countConversationPages(engine: BrainEngine, sourceId: string): Promise<number> {
   const rows = await engine.executeRaw<{ n: string | number }>(
@@ -510,15 +548,17 @@ export async function discoverConversationPages(
 ): Promise<DiscoveredTranscript[]> {
   const minChars = opts.minChars ?? 2000;
   const rows = await engine.executeRaw<ConversationRow>(
-    `SELECT slug, compiled_truth, frontmatter FROM pages
+    `SELECT slug, source_path, compiled_truth, frontmatter FROM pages
       WHERE source_id = $1 AND type = 'conversation' AND deleted_at IS NULL
         AND length(compiled_truth) >= $2::int
       ORDER BY slug`,
     [opts.sourceId, minChars],
   );
   const excludes = compileExcludePatterns(opts.excludePatterns);
+  const fileOf = opts.corpusFiles?.size ? await pageFileResolver(engine, opts.sourceId) : null;
   let excluded = 0;
   let guarded = 0;
+  let corpusTwins = 0;
   const out: DiscoveredTranscript[] = [];
   for (const row of rows) {
     const fm = frontmatterOf(row);
@@ -529,6 +569,8 @@ export async function discoverConversationPages(
       if (opts.from && date < opts.from) continue;
       if (opts.to && date > opts.to) continue;
     }
+    const file = fileOf?.(row);
+    if (file && opts.corpusFiles?.has(file)) { corpusTwins++; continue; }
     if (fm.mode === 'lsd' || (fm.dream_generated === true && !opts.bypassGuard)) { guarded++; continue; }
     const imported = fm.transcript_import as { session_id?: unknown } | undefined;
     if (typeof imported?.session_id === 'string' && opts.selfCaptureSessionIds?.has(imported.session_id)) { guarded++; continue; }
@@ -547,6 +589,9 @@ export async function discoverConversationPages(
   if (guarded > 0) {
     process.stderr.write(`[dream] skipped ${guarded} conversation page(s): dream output or gbrain's own sessions (self-consumption guard)\n`);
   }
+  if (corpusTwins > 0) {
+    process.stderr.write(`[dream] skipped ${corpusTwins} conversation page(s) synced from a corpus file; the corpus file is synthesized instead\n`);
+  }
   return out;
 }
 
@@ -561,8 +606,9 @@ export async function conversationPagesOptedIn(engine: Pick<BrainEngine, 'getCon
 
 /**
  * The synthesize phase's transcript list: the corpus walk (or `--input`)
- * first, then the source's conversation pages when the setting is on; a page
- * whose body hash a corpus file already carries is not processed twice.
+ * first, then the source's conversation pages when the setting is on. A page
+ * synced from a corpus file, or whose body hash a corpus file carries, is not
+ * processed twice: the corpus file wins, so its existing completions hold.
  */
 export async function withConversationPages(
   engine: BrainEngine,
@@ -577,6 +623,7 @@ export async function withConversationPages(
     sourceId: opts.sourceId ?? 'default', minChars: config.minChars, excludePatterns: config.excludePatterns,
     date: opts.date, from: opts.from, to: opts.to, bypassGuard: opts.bypassDreamGuard,
     selfCaptureSessionIds: claudeCliSelfSessionIds(),
+    corpusFiles: new Set(corpus.map((t) => realpathOrResolve(t.filePath))),
   });
   const seen = new Set(corpus.map((t) => t.contentHash));
   return [...corpus, ...pages.filter((p) => !seen.has(p.contentHash))];
