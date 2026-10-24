@@ -174,16 +174,16 @@ describe('mute closes, unmute re-checks', () => {
     const other = await upsertOpenLoop(engine, loop({ threadId: '18c2f4a9b3d21e0b', counterpartyEmail: 'carol@example.com' }));
     const commitment = await upsertOpenLoop(engine, loop({ dedupKey: 'commit:aaaa1111', loopType: 'commitment_owed_by_me', detector: 'llm_extract' }));
     const preview = await captured(() => runLoops(engine, ['mute', 'sender', 'alerts@bank-example.test', '--dry-run', '--json']));
-    expect(JSON.parse(preview.out)).toMatchObject({ status: 'dry_run', would_close: [a.id, b.id], count: 2 });
+    expect(JSON.parse(preview.out)).toMatchObject({ status: 'dry_run', would_close: [a.id, b.id, commitment.id], count: 3 });
     expect((await row(a.id)).status).toBe('open');
 
     const r = await captured(() => runLoops(engine, ['mute', 'sender', 'Alerts@Bank-Example.test']));
-    expect(r.out).toContain(`closed 2 open reply-owed loop(s): ${a.id}, ${b.id}`);
+    expect(r.out).toContain(`closed 3 open loop(s): ${a.id}, ${b.id}, ${commitment.id}`);
     expect(r.out).toContain('Undo: gbrain loops unmute sender alerts@bank-example.test --source g1');
     expect(await row(a.id)).toEqual({ status: 'dropped', closed_by: 'muted' });
     expect(await row(b.id)).toEqual({ status: 'dropped', closed_by: 'muted' });
     expect((await row(other.id)).status).toBe('open');
-    expect((await row(commitment.id)).status).toBe('open');
+    expect(await row(commitment.id)).toEqual({ status: 'dropped', closed_by: 'muted' });
   });
 
   test('mute thread closes that thread\'s reply-owed loop; the MCP result lists it', async () => {

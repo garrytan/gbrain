@@ -252,8 +252,9 @@ gbrain loops list|show <id>          inspect
 gbrain loops done <id> | drop <id>   close (a closed commitment retires its
                                      projected fact too; see Close semantics)
 gbrain loops mute sender <email>     never open loops for this sender again
-gbrain loops mute thread <id>        ...or this thread; both also close its
-                                     open reply-owed loops (--dry-run lists them)
+                                     also closes its open loops of every type
+gbrain loops mute thread <id>        ...or this thread; closes its open
+                                     reply-owed loops (--dry-run lists them)
 gbrain loops unmute sender <email>   undo a mute: new loops can open again, and
 gbrain loops unmute thread <id>      the loops it closed are re-checked on the
                                      next sync (--dry-run lists them)
@@ -276,10 +277,11 @@ none or more than one (`--source` disambiguates). `loops unmute` resolves
 its source the same way, so an unmute cannot aim at a different source than
 the mute it reverses.
 
-**Mute closes; unmute re-checks (#5012).** A mute also closes the muted
-sender's or thread's open reply-owed (`unanswered_inbound`) loops as
-`dropped` with `closed_by: muted`, and prints how many it closed plus the
-exact unmute command. Commitment and decision loops keep their state. A
+**Mute closes; unmute re-checks.** A sender mute also closes that sender's
+open loops of every type, including extracted commitments and decisions with
+that counterparty email. A thread mute closes its open reply-owed
+(`unanswered_inbound`) loops. Both use `dropped` with `closed_by: muted`,
+and print how many they closed plus the exact unmute command. A
 sweep never reopens a muted loop for the same counterparty, even on newer
 activity. `--dry-run` lists the loops a mute would close and changes nothing.
 
@@ -287,12 +289,18 @@ Unmute is exact. It deletes the one
 `(source_id, kind, value)` row the mute wrote — the same lower-casing, so
 `unmute sender BOB@Example.com` reverses `mute sender bob@example.com`, while
 a sibling source, the other `kind`, or a different value are untouched. It
-then queues the loops that mute closed for a re-check (`closed_by:
+then queues the deterministic thread loops that mute closed for a re-check (`closed_by:
 mute_recheck`): the next Gmail sync re-fetches each thread and reopens a loop
 only when nothing answered the thread since. A thread you answered during the
 mute stays closed. A loop another remaining mute still covers is left alone,
-a manual `done`/`drop` is never touched, and a loop with no thread to re-check
-stays closed (`unverifiable`, `closed_by: unmuted`). When the source has not
+a manual `done`/`drop` is never touched. Extracted commitments/decisions and
+loops with no thread cannot be verified by the reply detector: they stay closed
+(`unverifiable`, `closed_by: unmuted`) until genuinely newer evidence arrives.
+Muting does not retire or delete previously projected facts or source email;
+use `loops done`/`drop` on an individual commitment to retire its fact.
+The extractor rechecks sender/thread suppression after a model response, before
+publishing any projections, so a mute committed during inference is respected.
+When the source has not
 synced in 24 hours, unmute says so and prints the sync that runs the
 re-check. A repeated unmute
 is a no-op that reports `removed: false` and exits 0, so a script may call it
