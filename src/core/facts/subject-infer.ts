@@ -127,6 +127,7 @@ export async function inferFactSubject(engine: BrainEngine, sourceId: string, in
     ...extractCandidates(input.fact).filter(c => !c.weak).map(shedOpener),
   ];
   const resolved = new Set<string>();
+  const subjects = new Set<string>();
   const misses: Array<Exclude<StrictResolution, { slug: string }>['miss']> = [];
   let vetoed = false;
   const memo = new Map<string, StrictResolution>();
@@ -140,6 +141,7 @@ export async function inferFactSubject(engine: BrainEngine, sourceId: string, in
     }
     if (r.slug !== null) {
       resolved.add(r.slug);
+      if (!onlyExampleMentions(input.fact, candidate.query)) subjects.add(r.slug);
       if (resolved.size >= DISTINCT_ENTITY_LIMIT) return { slug: null, reason: 'ambiguous', resolved: [...resolved] };
       continue;
     }
@@ -148,7 +150,8 @@ export async function inferFactSubject(engine: BrainEngine, sourceId: string, in
     // capitalized sentence opener with no page ("Met", "Raised") is no name
     // evidence; anything else unresolved is a real competing reference.
     if (r.miss === 'not_entity') continue;
-    if (r.miss === 'no_page' && (isNonName(candidate.query) || (candidate.sentenceStart && SENTENCE_OPENERS.has(candidate.query.toLowerCase())))) continue;
+    if (r.miss === 'no_page' && (isNonName(candidate.query) || isContextualLabel(input.fact, candidate.query)
+      || (candidate.sentenceStart && SENTENCE_OPENERS.has(candidate.query.toLowerCase())))) continue;
     vetoed = true;
   }
 
@@ -157,7 +160,7 @@ export async function inferFactSubject(engine: BrainEngine, sourceId: string, in
     if (vetoed || (resolved.size === 1 && !resolved.has(page))) return { slug: null, reason: 'ambiguous', resolved: [...resolved] };
     return { slug: page, via: 'page' };
   }
-  if (resolved.size === 1 && !vetoed) return { slug: [...resolved][0]!, via: 'mention' };
+  if (subjects.size === 1 && !vetoed) return { slug: [...subjects][0]!, via: 'mention' };
   const miss = (reason: InferMissReason): InferResult => ({ slug: null, reason, resolved: [...resolved] });
   if (resolved.size > 0 || misses.includes('ambiguous')) return miss('ambiguous');
   if (misses.includes('unverified')) return miss('unverified_match');
@@ -174,6 +177,32 @@ function shedOpener<T extends { query: string }>(c: T): T {
 function isNonName(query: string): boolean {
   if (/\s/.test(query)) return false;
   return isCommonCapitalizedWord(query) || ROLE_AND_TERM_TOKENS.has(query.toLowerCase());
+}
+
+/** Whole references, including repeated uses: an ordinary use must still compete. */
+function referenceUses(fact: string, query: string): RegExpMatchArray[] {
+  const literal = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return [...fact.matchAll(new RegExp(`(?<![\\p{L}\\p{N}_/-])${literal}(?![\\p{L}\\p{N}_/-])`, 'giu'))];
+}
+
+/** Resolve first: an actual entity named CHF, Invoice or Work always competes. */
+function isContextualLabel(fact: string, query: string): boolean {
+  const uses = referenceUses(fact, query);
+  return uses.length > 0 && uses.every(m => {
+    const after = fact.slice(m.index! + m[0].length);
+    if (/^(?:CHF|USD|EUR|GBP|JPY|CAD|AUD|CNY|INR)$/u.test(query) && /^\s+\d/u.test(after)) return true;
+    const before = fact.slice(0, m.index).trimEnd();
+    if (before && !/[.!?]\s*$/u.test(before)) return false;
+    return (/^invoice$/iu.test(query) && /^\s+total\b/iu.test(after))
+      || (/^work$/iu.test(query) && /^\s+session\b/iu.test(after));
+  });
+}
+
+/** An example in an inventory is identity evidence, but cannot establish its subject. */
+function onlyExampleMentions(fact: string, query: string): boolean {
+  const uses = referenceUses(fact, query);
+  return uses.length > 0 && uses.every(m =>
+    /\b(?:including|such as|for example)\s+[^.!?;]*$/iu.test(fact.slice(0, m.index)));
 }
 
 async function liveFactEntityPage(engine: BrainEngine, sourceId: string, slug: string, excludePrivate?: boolean): Promise<string | null> {
