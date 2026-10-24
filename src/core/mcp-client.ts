@@ -6,11 +6,16 @@
  *   - `gbrain remote ping`   — submits autopilot-cycle, polls get_job
  *   - `gbrain remote doctor` — calls run_doctor MCP op
  *
- * Token caching strategy: in-process Map keyed by mcp_url, value carries the
- * access_token + expires_at. CLI invocations are short-lived; the cache
- * amortizes when a single `gbrain remote ping` makes multiple calls (submit_job
- * + N × get_job). Persisting to disk would create a credential-on-disk
- * surface for marginal benefit — re-mint is a single sub-100ms /token call.
+ * Token caching strategy: in-process Map keyed by mcp_url + client_id, backed
+ * by a 0600 file beside config.json (`remote-mcp-token.json`) so separate CLI
+ * invocations reuse one token until it nears expiry. Every `gbrain call` is
+ * its own process, and per-prompt callers (agent recall hooks) would
+ * otherwise mint once per call and spend the host's /token budget (#2463,
+ * #5949). The file is used only when the secret in use comes from
+ * config.json, which outranks a short-lived bearer minted from it; a
+ * GBRAIN_REMOTE_CLIENT_SECRET secret (which `init` keeps out of config.json)
+ * keeps the token in memory only. The record is written atomically
+ * (tmp + rename) and ignored unless its mcp_url and client_id match.
  *
  * HTTP 401 handling: drop the cached token, mint fresh once, retry the call.
  * Application errors and other HTTP statuses are terminal. If the refreshed
@@ -18,12 +23,15 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync, writeFileSync, mkdirSync, chmodSync, renameSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { isPersistenceIpcMutation } from './persistence/ipc.ts';
 import { replayWhilePending } from './persistence/write-wait.ts';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { anySignal } from './abort-check.ts';
+import { configDir } from './config.ts';
 import type { GBrainConfig } from './config.ts';
 import { discoverOAuth, mintClientCredentialsToken } from './remote-mcp-probe.ts';
 import { isWriteErrorCode, isWriteReceipt, isWriteRequestId, publicWriteReceipt } from './persistence/types.ts';
@@ -45,15 +53,93 @@ interface CachedToken {
   expires_at_ms: number;
 }
 
+/** On-disk shape of the shared token record. */
+interface TokenFile extends CachedToken {
+  schema_version: 1;
+  mcp_url: string;
+  client_id: string;
+}
+
+const TOKEN_FILENAME = 'remote-mcp-token.json';
+
 const tokenCache = new Map<string, CachedToken>();
+
+function cacheKey(mcpUrl: string, clientId: string): string {
+  return `${mcpUrl}\n${clientId}`;
+}
+
+/** @internal Exported for test access (test/mcp-client.test.ts). */
+export function tokenFilePath(): string {
+  return join(configDir(), TOKEN_FILENAME);
+}
+
+/** Read the shared token record. Missing, unreadable, malformed or
+ *  mismatched records are a cache miss, never an error. */
+function readTokenFile(mcpUrl: string, clientId: string): CachedToken | null {
+  try {
+    const rec = JSON.parse(readFileSync(tokenFilePath(), 'utf-8')) as Partial<TokenFile>;
+    if (
+      rec?.schema_version !== 1 ||
+      rec.mcp_url !== mcpUrl ||
+      rec.client_id !== clientId ||
+      typeof rec.access_token !== 'string' ||
+      typeof rec.expires_at_ms !== 'number'
+    ) return null;
+    return { access_token: rec.access_token, expires_at_ms: rec.expires_at_ms };
+  } catch {
+    return null;
+  }
+}
+
+/** Write the shared token record atomically (process-unique tmp + rename)
+ *  at 0600. Best-effort: a failed write only costs a later re-mint. */
+function writeTokenFile(mcpUrl: string, clientId: string, token: CachedToken): void {
+  const finalPath = tokenFilePath();
+  const tmpPath = `${finalPath}.tmp.${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const rec: TokenFile = { schema_version: 1, mcp_url: mcpUrl, client_id: clientId, ...token };
+  try {
+    mkdirSync(configDir(), { recursive: true });
+    writeFileSync(tmpPath, JSON.stringify(rec) + '\n', { mode: 0o600 });
+    try { chmodSync(tmpPath, 0o600); } catch { /* platform-specific */ }
+    renameSync(tmpPath, finalPath);
+  } catch {
+    try { unlinkSync(tmpPath); } catch { /* ignore */ }
+  }
+}
+
+/** Drop the shared record only if it still holds `rejected`; another
+ *  process may already have replaced it with a fresh token. */
+function dropTokenFile(mcpUrl: string, clientId: string, rejected: string): void {
+  const onDisk = readTokenFile(mcpUrl, clientId);
+  if (onDisk && onDisk.access_token === rejected) {
+    try { unlinkSync(tokenFilePath()); } catch { /* already gone */ }
+  }
+}
+
+/** The token record is shared on disk only when the secret in use comes
+ *  from config.json. GBRAIN_REMOTE_CLIENT_SECRET wins wherever it is set
+ *  (resolveSecret, and loadConfig() copies it into remote_mcp), so its
+ *  presence means an env-provided secret and the bearer stays in memory. */
+function sharesTokenOnDisk(remote: NonNullable<GBrainConfig['remote_mcp']>): boolean {
+  return !process.env.GBRAIN_REMOTE_CLIENT_SECRET && Boolean(remote.oauth_client_secret);
+}
+
+/** Forget a token the server rejected: the in-process entry and, when it is
+ *  shared, the on-disk record (only if it still holds `rejected`). */
+function forgetToken(remote: NonNullable<GBrainConfig['remote_mcp']>, rejected: string): void {
+  tokenCache.delete(cacheKey(remote.mcp_url, remote.oauth_client_id));
+  if (sharesTokenOnDisk(remote)) dropTokenFile(remote.mcp_url, remote.oauth_client_id, rejected);
+}
 
 /**
  * Test-only escape hatch. Tests that mock the OAuth fixture across multiple
  * runs need to invalidate the cache between runs. Production callers should
- * never need this — the 401 path handles staleness automatically.
+ * never need this — the 401 path handles staleness automatically. Clears the
+ * in-process cache and the shared record under the active GBRAIN_HOME.
  */
 export function _clearMcpClientTokenCache(): void {
   tokenCache.clear();
+  try { unlinkSync(tokenFilePath()); } catch { /* absent */ }
 }
 
 /**
@@ -228,9 +314,16 @@ function resolveSecret(remote: NonNullable<GBrainConfig['remote_mcp']>): string 
 async function getAccessToken(config: GBrainConfig, force = false, signal?: AbortSignal): Promise<string> {
   signal?.throwIfAborted();
   const remote = requireRemoteMcp(config);
-  const cached = tokenCache.get(remote.mcp_url);
-  if (!force && cached && cached.expires_at_ms > Date.now()) {
-    return cached.access_token;
+  const key = cacheKey(remote.mcp_url, remote.oauth_client_id);
+  const shareOnDisk = sharesTokenOnDisk(remote);
+  if (!force) {
+    const cached = tokenCache.get(key);
+    if (cached && cached.expires_at_ms > Date.now()) return cached.access_token;
+    const shared = shareOnDisk ? readTokenFile(remote.mcp_url, remote.oauth_client_id) : null;
+    if (shared && shared.expires_at_ms > Date.now()) {
+      tokenCache.set(key, shared);
+      return shared.access_token;
+    }
   }
 
   const secret = resolveSecret(remote);
@@ -265,7 +358,8 @@ async function getAccessToken(config: GBrainConfig, force = false, signal?: Abor
   const ttlSec = tokenRes.token.expires_in ?? 3600;
   const expires_at_ms = Date.now() + Math.max(0, ttlSec * 1000 - 30_000);
   const token: CachedToken = { access_token: tokenRes.token.access_token, expires_at_ms };
-  tokenCache.set(remote.mcp_url, token);
+  tokenCache.set(key, token);
+  if (shareOnDisk) writeTokenFile(remote.mcp_url, remote.oauth_client_id, token);
   return token.access_token;
 }
 
@@ -449,8 +543,8 @@ export async function callRemoteTool(
       signal.throwIfAborted();
       if (!isStreamableHttpError(e) || e.code !== 401) throw e;
       submitted = false; // This attempt was explicitly refused, not accepted.
-      // Drop cached token and retry once with a fresh mint.
-      tokenCache.delete(remote.mcp_url);
+      // Drop cached token (here and on disk) and retry once with a fresh mint.
+      forgetToken(remote, initialToken);
       let freshToken: string;
       try {
         freshToken = await getAccessToken(config, true, signal);
@@ -471,7 +565,7 @@ export async function callRemoteTool(
         signal.throwIfAborted();
         if (isStreamableHttpError(e2) && e2.code === 401) {
           submitted = false;
-          tokenCache.delete(remote.mcp_url);
+          forgetToken(remote, freshToken);
           throw new RemoteMcpError(
             'auth_after_refresh',
             `Auth failed after token refresh. Verify oauth_client_id and secret are still valid; the host operator may need to re-run \`gbrain auth register-client\`.`,
@@ -520,13 +614,20 @@ export async function listRemoteTools(config: GBrainConfig, opts: CallRemoteTool
     }
   };
   try {
+    const token = await getAccessToken(config, false, signal);
     try {
-      return await list(await getAccessToken(config, false, signal));
+      return await list(token);
     } catch (e) {
       signal.throwIfAborted();
       if (!isStreamableHttpError(e) || e.code !== 401) throw e;
-      tokenCache.delete(remote.mcp_url);
-      return await list(await getAccessToken(config, true, signal));
+      forgetToken(remote, token);
+      const fresh = await getAccessToken(config, true, signal);
+      try {
+        return await list(fresh);
+      } catch (e2) {
+        if (isStreamableHttpError(e2) && e2.code === 401) forgetToken(remote, fresh);
+        throw e2;
+      }
     }
   } catch (e) {
     throw toRemoteMcpError(e, remote.mcp_url, signal);

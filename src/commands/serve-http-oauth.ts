@@ -18,7 +18,8 @@ import { GRANT_PROFILES } from '../core/grants/model.ts';
 import { publicHarnessMetadata } from '../core/harness/registry.ts';
 import { mcpAdministrationGuidance } from '../mcp/capabilities.ts';
 import { VERSION } from '../version.ts';
-import type { ServeHttpContext } from './serve-http.ts';
+import rateLimit from 'express-rate-limit';
+import type { OAuthTokenRateLimitConfig, ServeHttpContext } from './serve-http.ts';
 
 /**
  * Parse `GBRAIN_HTTP_CORS_ORIGIN` into a Set of allowed origins for OAuth
@@ -508,5 +509,22 @@ export function mountOAuthConsent(app: Express, provider: GBrainOAuthProvider, r
       res.json({ redirectUrl: await provider.grants.decide(id, body.decision === 'approve',
         body.source_id === undefined ? undefined : { sourceId: body.source_id }) });
     } catch (error) { handleError(res, error); }
+  });
+}
+
+/**
+ * The /token limiter is a brute-force guard, so only failed authentications
+ * count (`skipSuccessfulRequests`). A legitimate thin client that mints on
+ * every CLI call is never locked out by its own successful mints (#2463);
+ * a wrong client_secret still is.
+ */
+export function createOAuthTokenRateLimiter(config: OAuthTokenRateLimitConfig) {
+  return rateLimit({
+    windowMs: config.windowMs,
+    max: config.max,
+    skipSuccessfulRequests: true,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'too_many_requests', error_description: 'Rate limit exceeded. Try again later.' },
   });
 }

@@ -20,7 +20,6 @@ import express from 'express';
 import type { Socket } from 'net';
 import type { Request, RequestHandler, CookieOptions } from 'express';
 import cookieParser from 'cookie-parser';
-import rateLimit from 'express-rate-limit';
 import { randomBytes, createHash } from 'crypto';
 import { createMetricsCounters, metricsTrackingMiddleware, mountHealth, mountMetrics, type MetricsCounters } from './serve-http-metrics.ts';
 import { ADMIN_TOKEN_SHAPE } from '../core/serve-service.ts';
@@ -28,7 +27,7 @@ import { getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/
 import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import type { OAuthTokenVerifier } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import { createAdminLimiters } from './serve-http-admin-limits.ts';
-import { mountOAuth, mountOAuthConsent, mountOwnerLoginLinks } from './serve-http-oauth.ts';
+import { createOAuthTokenRateLimiter, mountOAuth, mountOAuthConsent, mountOwnerLoginLinks } from './serve-http-oauth.ts';
 import { createRequireAdmin, mountAdminApi, mountAdminLogin } from './serve-http-admin-api.ts';
 import { mountSpa } from './serve-http-spa.ts';
 import { mountMcp } from './serve-http-mcp.ts';
@@ -769,13 +768,7 @@ export async function buildServeHttpApp(app: express.Express, engine: BrainEngin
   app.use(metricsTrackingMiddleware(metricsCounters));
 
   const oauthTokenRateLimit = resolveOAuthTokenRateLimit();
-  const ccRateLimiter = rateLimit({
-    windowMs: oauthTokenRateLimit.windowMs,
-    max: oauthTokenRateLimit.max,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'too_many_requests', error_description: 'Rate limit exceeded. Try again later.' },
-  });
+  const ccRateLimiter = createOAuthTokenRateLimiter(oauthTokenRateLimit);
 
   const adminLimits = createAdminLimiters();
 
