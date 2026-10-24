@@ -45,12 +45,13 @@ export const collectStalledJobs: AdvisorCollector = {
       if (!isMissingSchemaObject(err, 'table', 'minion_jobs')) throw err;
     }
 
-    // Stale federated sources: synced sources that haven't advanced in a week.
+    // Stale federated sources: synced, non-archived sources that haven't advanced in a week.
     try {
       const rows = await ctx.engine.executeRaw<{ id: string }>(
         `SELECT id
            FROM sources
           WHERE last_sync_at IS NOT NULL
+            AND NOT archived
             AND last_sync_at < now() - interval '7 days'
           ORDER BY id`,
       );
