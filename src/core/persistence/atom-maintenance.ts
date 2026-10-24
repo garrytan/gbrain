@@ -148,7 +148,11 @@ export async function managedAtomSession(engine: BrainEngine, sourceId: string, 
     `No extraction was started for source ${sourceId}. Check its canonical owner: run atom extraction on the host that owns the checkout, or have the user claim the checkout on this host with gbrain sources writer claim.`,
     { fix: ownerStatusFix(sourceId) });
   if (writeThrough && binding) {
-    if (!await probeWorktreeWriter(binding, engine)) throw opError('writer_lock_unavailable', 'The canonical atom writer is busy; no extraction was started.',
+    // A committed atom's Git effect can still hold this lock. Wait within the
+    // existing maintenance budget instead of interrupting the next batch/item
+    // after the short interactive probe; native lock polling remains bounded.
+    if (!await probeWorktreeWriter(binding, engine, 0) &&
+        !await probeWorktreeWriter(binding, engine, wait.ms())) throw opError('writer_lock_unavailable', 'The canonical atom writer is busy; no extraction was started.',
       `Another write holds source ${sourceId}'s canonical writer. Nothing was started, so run the atom drain again once the owner status shows it idle.`,
       { fix: ownerStatusFix(sourceId) });
   }

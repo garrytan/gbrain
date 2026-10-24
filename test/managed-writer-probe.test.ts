@@ -5,7 +5,11 @@
  * write, after that receipt already reads committed. The facts preflight, the
  * atom-maintenance session and the connector-sync preflight all use it. A
  * holder that releases within the bound is waited out; one held past it is
- * still busy (the atom session refuses with writer_lock_unavailable).
+ * still busy. Atom sessions use their maintenance wait budget so Git effects
+ * lasting longer than a single probe do not interrupt drains or retirement.
+ * Regression: restoring the one-second atom probe rejects the delayed-release
+ * case below. Existing short-release coverage does not exercise that contention;
+ * these tests use real native locks and require no new production test seam.
  *
  * Synthetic data only. PGLite.
  */
@@ -16,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { managedAtomSession } from '../src/core/persistence/atom-maintenance.ts';
+import { MaintenanceWriteWait } from '../src/core/persistence/maintenance-wait.ts';
 import { acquireWorktree, claimWorktree, getWorktreeBinding, MANAGED_WRITER_PROBE_WAIT_MS, probeWorktreeWriter, type WorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -82,10 +87,25 @@ describe('managedAtomSession preflight', () => {
     await released;
   }), 30_000);
 
-  test('a holder kept past the bound still refuses with writer_lock_unavailable', () => run(async () => {
+  test('a holder kept past the maintenance deadline still refuses with writer_lock_unavailable', () => run(async () => {
     const binding = await managedSource();
     const { released } = await hold(binding, MANAGED_WRITER_PROBE_WAIT_MS + 1500);
-    await expect(managedAtomSession(engine, sourceId)).rejects.toMatchObject({ code: 'writer_lock_unavailable' });
+    const wait = new MaintenanceWriteWait(Date.now() + MANAGED_WRITER_PROBE_WAIT_MS);
+    await expect(managedAtomSession(engine, sourceId, undefined, wait)).rejects.toMatchObject({ code: 'writer_lock_unavailable' });
     await released;
+  }), 30_000);
+
+  test('waits through Git-effect contention beyond the short probe', () => run(async () => {
+    const binding = await managedSource();
+    const { released } = await hold(binding, MANAGED_WRITER_PROBE_WAIT_MS + 1500);
+    try {
+      const session = await managedAtomSession(engine, sourceId);
+      expect(session?.sourceId).toBe(sourceId);
+      const lock = await acquireWorktree(binding, 0, undefined, engine);
+      expect(lock).not.toBeNull();
+      await lock?.release();
+    } finally {
+      await released;
+    }
   }), 30_000);
 });
