@@ -413,6 +413,7 @@ test/think-embed-question-wiring.serial.test.ts	R2	R2: mock.module(../src/core/e
 test/think-extractive.serial.test.ts	global-state	global-state: process-wide test seams __setChatTransportForTests, __setEmbedTransportForTests, __setUsageLogPathForTests
 test/think-gather-adaptive-return.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process
 test/think-gather-autocut.serial.test.ts	R2	R2: mock.module(../src/core/search/hybrid.ts) replaces modules for every file in the process
+test/think-gather-structured-evidence-5241.serial.test.ts	R2	mock.module retrieval seams
 test/think-temporal-window.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests
 test/trust-smoke.serial.test.ts	global-state	global-state: the memory-trust smoke runs on the BrainBench trust brain, which sets process.env GBRAIN_HOME and BRAINBENCH_CONNECTOR_TOKEN for its run (src/eval/brainbench/trust-scenario.ts)
 test/unified-multimodal.serial.test.ts	global-state	global-state: configureGateway changes the process-wide AI gateway
