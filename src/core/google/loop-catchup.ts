@@ -165,10 +165,11 @@ export type GraceRefetch = (threadId: string) => Promise<'ok' | 'gone' | 'failed
  */
 export async function settleDueGraceHolds(ctx: {
   engine: BrainEngine; sourceId: string; state: GoogleSourceState; log: Log; signal?: AbortSignal;
-  processed: Set<string>; refetch: GraceRefetch; now?: number; exclusion?: LoopsExclusionPolicy;
+  processed: Set<string>; refetch: GraceRefetch; now?: number; exclusion?: LoopsExclusionPolicy; refetchLimit?: number;
 }): Promise<{ opened: number; refetched: number; deferred: number } | 'aborted'> {
   const holds = ctx.state.loop_grace_holds ?? {};
   const now = ctx.now ?? Date.now();
+  const refetchLimit = ctx.refetchLimit ?? GRACE_REFETCH_PER_SWEEP;
   const due = Object.entries(holds).filter(([tid, h]) => h.due_ms <= now && !ctx.processed.has(tid)).sort((a, b) => a[1].due_ms - b[1].due_ms);
   const result = { opened: 0, refetched: 0, deferred: 0 };
   for (const [tid, hold] of due) {
@@ -181,7 +182,7 @@ export async function settleDueGraceHolds(ctx: {
       delete holds[tid];
       continue;
     }
-    if (result.refetched >= GRACE_REFETCH_PER_SWEEP) { result.deferred++; continue; }
+    if (result.refetched >= refetchLimit) { result.deferred++; continue; }
     result.refetched++;
     const outcome = await ctx.refetch(tid);
     if (outcome === 'gone') delete holds[tid];

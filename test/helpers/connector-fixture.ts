@@ -129,9 +129,13 @@ export function createConnectorFixture() {
       } finally { clearTimeout(timer); if (child.exitCode === null) child.kill('SIGKILL'); await child.exited; }
     } finally {
       await engine.connect(database);
-      if (crash && childPid !== undefined) await engine.executeRaw(`UPDATE gbrain_cycle_locks
-        SET acquired_at=now()-interval '2 minutes',last_refreshed_at=now()-interval '1 hour',ttl_expires_at=now()-interval '1 hour'
-        WHERE id=$1 AND holder_pid=$2`, [syncLockId(f.id), childPid]);
+      if (crash && childPid !== undefined) {
+        await engine.executeRaw(`UPDATE gbrain_cycle_locks
+          SET acquired_at=now()-interval '2 minutes',last_refreshed_at=now()-interval '1 hour',ttl_expires_at=now()-interval '1 hour'
+          WHERE id=$1 AND holder_pid=$2`, [syncLockId(f.id), childPid]);
+        await engine.executeRaw(`UPDATE persistence_requests SET claim_expires_at=now()-interval '1 second'
+          WHERE source_id=$1 AND state='running' AND recovery IS NOT NULL`, [f.id]);
+      }
     }
   }
 
@@ -173,8 +177,10 @@ export async function settleConnectorWrites(engine: BrainEngine, sourceId: strin
 /** A run that expects `writer_pending` against a paused owner stops on a 1.5 s budget instead of the production 30 s. */
 export async function withPausedOwnerBudget<T>(run: () => Promise<T>): Promise<T> {
   const budget = connectorWaitBudget.ms;
+  const gmailBudget = connectorWaitBudget.gmailMs;
   connectorWaitBudget.ms = testWaitMs(1_500);
-  try { return await run(); } finally { connectorWaitBudget.ms = budget; }
+  connectorWaitBudget.gmailMs = testWaitMs(1_500);
+  try { return await run(); } finally { connectorWaitBudget.ms = budget; connectorWaitBudget.gmailMs = gmailBudget; }
 }
 
 /** #5600: the pending set a managed connector run ended with (connector state row). */

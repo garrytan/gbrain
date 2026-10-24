@@ -69,6 +69,8 @@ export interface DelegatedSyncOptions {
   /** User explicitly declined embeds — suppresses the deferred-embed drain. */
   noEmbed?: boolean;
   noExtract?: boolean;
+  /** Suppress Gmail loop catch-up and chat-model extraction enqueue for this run. */
+  noLoopsExtract?: boolean;
   noSchemaPack?: boolean;
   skipFailed?: boolean;
   retryFailed?: boolean;

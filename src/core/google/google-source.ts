@@ -1,4 +1,4 @@
-import { withConnectorSync, rethrowConnectorWriteError, pendingConnectorResult, type ManagedConnectorSync } from '../persistence/connector-sync.ts';
+import { ConnectorWaitBudgetStop, withConnectorSync, rethrowConnectorWriteError, pendingConnectorResult, type ManagedConnectorSync } from '../persistence/connector-sync.ts';
 import { resolveGoogleAccount } from '../persistence/connector-account.ts';
 import { googleApiProblem, googleUserinfo } from './api-access.ts';
 import { ConnectorHoldSession, connectorHoldsResult } from '../connectors/connector-hold-session.ts';
@@ -164,6 +164,11 @@ function loopRecoveryState(state: GoogleSourceState): Record<string, unknown> {
 // ── Gmail sweep ──────────────────────────────────────────────────────────────
 
 const BACKFILL_BATCH_THREADS = 25;
+// Reserve the rest of a managed pass for the historical window walk. The live trace
+// showed that a full delta batch can consume the hard deadline before backfill starts.
+const MANAGED_DELTA_BATCH_THREADS = 10;
+// During Gmail catch-up, leave time for the historical window instead of re-fetching up to 100 held threads.
+const MANAGED_GRACE_REFETCH_LIMIT_DURING_BACKFILL = 0;
 
 async function processThread(
   deps: GoogleSyncDeps,
@@ -183,8 +188,10 @@ async function processThread(
   // Pure noise renders no page AND skips detection — an all-noise thread
   // produces an empty verdict anyway, so nothing opens and nothing closes.
   if (!rendered) return thread;
-  const slug = await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs,
+  const imported = await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs,
     { thread_id: thread.threadId, message_ids: thread.messages.map((m) => m.id) });
+  if (imported.pending && deps.managed) throw new ConnectorWaitBudgetStop();
+  const slug = imported.slug;
   for (const message of thread.messages) {
     const state = message.attachmentInspection?.state ?? 'not_inspected';
     summary.attachmentInspection[state] = (summary.attachmentInspection[state] ?? 0) + 1;
@@ -259,7 +266,7 @@ interface GmailSweep {
   holds: ConnectorHoldSession;
 }
 
-type ThreadOutcome = { kind: 'landed'; newestMs: number } | { kind: 'gone' | 'skipped' | 'failed' | 'rate_limited' };
+type ThreadOutcome = { kind: 'landed'; newestMs: number; changed: boolean } | { kind: 'gone' | 'skipped' | 'failed' | 'rate_limited' };
 
 /**
  * One thread through the item holds: a held thread is skipped unless
@@ -272,6 +279,8 @@ async function attemptThread(g: GmailSweep, tid: string, version: string | null)
     g.deps.tick(`thread ${tid} held`);
     return { kind: 'skipped' };
   }
+  const addedBefore = g.summary.added;
+  const modifiedBefore = g.summary.modified;
   const seen: { thread?: GmailThreadData } = {};
   try {
     const thread = await processThread(g.deps, g.gmail, tid, g.activePack, g.summary, g.countedSlugs, seen);
@@ -279,8 +288,9 @@ async function attemptThread(g: GmailSweep, tid: string, version: string | null)
     const newestMs = thread?.messages[thread.messages.length - 1]?.internalDateMs ?? 0;
     if (newestMs > (g.state.gmail_newest_ms ?? 0)) g.state.gmail_newest_ms = newestMs;
     g.deps.tick(`thread ${tid}`);
-    return { kind: 'landed', newestMs };
+    return { kind: 'landed', newestMs, changed: g.summary.added !== addedBefore || g.summary.modified !== modifiedBefore };
   } catch (e) {
+    if (e instanceof ConnectorWaitBudgetStop) throw e;
     if (e instanceof GoogleCursorExpiredError && e.status === 404) {
       // Thread deleted between listing and fetch — gone is gone. Skipping
       // (not failing) keeps the cursor moving; --full reconcile removes any
@@ -306,7 +316,7 @@ async function attemptThread(g: GmailSweep, tid: string, version: string | null)
 
 /**
  * Drain `[lowerMs, state[floorKey])` newest→oldest, committing the floor per
- * fully-successful batch so a killed walk resumes where it stopped (F7a).
+ * landed thread on managed sources and per successful batch otherwise (F7a).
  * Shared by the historical backfill and the history-expired gap.
  */
 async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms' | 'gmail_gap_floor_ms', lowerMs: number): Promise<WalkOutcome> {
@@ -314,10 +324,12 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
   let floorMs = state[floorKey] ?? Date.now() + 60_000;
   while (floorMs > lowerMs) {
     if (deps.opts.signal?.aborted) return 'aborted';
-    const q = `after:${Math.floor(lowerMs / 1000)} before:${Math.ceil(floorMs / 1000)}`;
+    // Gmail's `before:` bound is exclusive at whole-second precision. Add one
+    // even for an exact-second floor so an unlanded thread tied at that instant replays.
+    const q = `after:${Math.floor(lowerMs / 1000)} before:${Math.floor(floorMs / 1000) + 1}`;
     // Page-BOUNDED listing (partialOk): a busy inbox can hold far more ids
     // than the client's 500-page safety cap; the floor cursor makes partial
-    // listings safe — each iteration takes the newest ~2,000 messages in the
+    // listings safe — each iteration takes up to ~10,000 messages in the
     // window, processes them, drops the floor, and re-queries.
     const ids = await gmail.listMessageIds(q, { maxPages: 20, partialOk: true, ...(deps.opts.signal ? { signal: deps.opts.signal } : {}) });
     if (ids.length === 0) break;
@@ -329,6 +341,13 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
     let processedAny = false;
     let batchFailed = false;
     let batchOldest = floorMs;
+    let checkpointedFloorMs = floorMs;
+    const checkpointFloor = async () => {
+      if (!processedAny || batchOldest >= checkpointedFloorMs) return;
+      state[floorKey] = batchOldest;
+      await saveGoogleState(deps, state);
+      checkpointedFloorMs = batchOldest;
+    };
     for (let i = 0; i < threadIds.length; i += BACKFILL_BATCH_THREADS) {
       if (deps.opts.signal?.aborted) break;
       for (const tid of threadIds.slice(i, i + BACKFILL_BATCH_THREADS)) {
@@ -337,6 +356,10 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
         if (outcome.kind === 'landed') {
           processedAny = true;
           if (outcome.newestMs > 0 && outcome.newestMs < batchOldest) batchOldest = outcome.newestMs;
+          if (deps.managed) {
+            // The historical cursor is the floor; unchanged threads still advance it.
+            await checkpointFloor();
+          }
         } else if (outcome.kind === 'failed' || outcome.kind === 'rate_limited') {
           // A failed thread NEWER than a committed floor would fall outside
           // the resume window (`before:floor`) forever, so the batch holds the
@@ -346,10 +369,7 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
         }
       }
       if (batchFailed || deps.managed && deps.opts.signal?.aborted) break;
-      if (processedAny && batchOldest < floorMs) {
-        state[floorKey] = batchOldest;
-        await saveGoogleState(deps, state);
-      }
+      if (!deps.managed) await checkpointFloor();
     }
     if (deps.opts.signal?.aborted) return 'aborted';
     if (batchFailed) return 'failed';
@@ -370,9 +390,9 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
  * drained, no history-expired gap remains, and the recent inbox is
  * imported (backfill done or its floor past GMAIL_RECENT_HORIZON_MS). Held
  * threads never block it; `gbrain waiting` reports them as partial coverage.
- * False = the caller must NOT stamp `last_sync_at`. The deep historical
- * backfill runs AFTER current mail and does not gate freshness; its failures
- * still mark the run partial.
+ * False = the caller must NOT stamp `last_sync_at`. By default, deep historical
+ * backfill runs after current-mail work; managed Gmail can opt into backfill-first
+ * catch-up with the process-local flag.
  */
 async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promise<boolean> {
   const { deps, gmail, state } = g;
@@ -399,6 +419,25 @@ async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promi
     await saveGoogleState(deps, state);
   }
   if (!state.gmail_history_id) return true;
+
+  // Catch-up-only mode: let the resumable historical window make durable progress
+  // before a slow current-delta receipt can consume the caller's deadline. It is
+  // process-local and opt-in; normal sync keeps freshness-first ordering.
+  const backfillFirst = deps.managed && process.env.GBRAIN_GMAIL_BACKFILL_FIRST === '1' &&
+    !state.gmail_backfill_done && state.gmail_gap_floor_ms == null;
+  if (backfillFirst) {
+    const backfill = await walkGmailWindow(g, 'gmail_backfill_floor_ms', cutoffMs);
+    if (backfill === 'aborted') return false;
+    if (backfill === 'done') {
+      state.gmail_backfill_done = true;
+      state.gmail_backfill_cutoff_ms = Math.min(cutoffMs, state.gmail_backfill_floor_ms ?? cutoffMs);
+      state.gmail_backfill_floor_ms = null;
+      await saveGoogleState(deps, state);
+    } else {
+      state.gmail_backfill_done = false;
+      g.summary.status = 'partial';
+    }
+  }
 
   // ── Current mail first: delta, then any history-expired gap ──
   const delta = await drainGmailDelta(g, cutoffMs);
@@ -432,7 +471,7 @@ async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promi
   if (!state.gmail_backfill_done && isCurrent()) await onCurrent?.();
 
   // ── Historical backfill (resumable, oldest mail last) ──
-  if (!state.gmail_backfill_done) {
+  if (!backfillFirst && !state.gmail_backfill_done) {
     const backfill = await walkGmailWindow(g, 'gmail_backfill_floor_ms', cutoffMs);
     if (backfill === 'done') {
       state.gmail_backfill_done = true;
@@ -451,6 +490,7 @@ async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promi
  */
 async function settleGraceHolds(g: GmailSweep, cutoffMs: number): Promise<'aborted' | void> {
   const { deps, state } = g;
+  const backfillInProgress = !state.gmail_backfill_done || state.gmail_gap_floor_ms != null;
   try {
     await seedGraceBackfill(deps.engine, deps.sourceId, state, deps.log);
     deps.graceBackfillSeeded = true;
@@ -463,6 +503,7 @@ async function settleGraceHolds(g: GmailSweep, cutoffMs: number): Promise<'abort
     deps.log(`[google] loop re-check seeding failed (retried next sweep): ${e instanceof Error ? e.message : String(e)}`);
   }
   const settled = await settleDueGraceHolds({ engine: deps.engine, sourceId: deps.sourceId, state, log: deps.log, signal: deps.opts.signal,
+    ...(deps.managed && backfillInProgress ? { refetchLimit: MANAGED_GRACE_REFETCH_LIMIT_DURING_BACKFILL } : {}),
     exclusion: deps.exclusion, processed: deps.processedThreads, refetch: async (tid) => {
       try {
         await processThread(deps, g.gmail, tid, g.activePack, g.summary, g.countedSlugs);
@@ -530,13 +571,16 @@ async function drainGmailDelta(g: GmailSweep, cutoffMs: number): Promise<WalkOut
     state.gmail_pending_thread_ids = [...unlanded];
     await saveGoogleState(deps, state);
   };
-  // A managed sweep cannot write once its signal aborts (the lease refuses),
-  // so it banks as soon as its first thread lands and then once per batch; an
-  // abort then repeats at most one batch. A run that lands nothing writes no
-  // checkpoint, so a failed drain leaves the cursor where it was.
+  // A managed sweep checkpoints its first landed thread and each committed
+  // changed page; unchanged threads batch at the normal interval. This keeps
+  // expensive imports from being replayed if the writer wait budget ends early.
   let failed = 0;
   let landedSinceCheckpoint = deps.managed ? BACKFILL_BATCH_THREADS - 1 : 0;
-  for (const tid of merged) {
+  // Keep managed delta work bounded so an old history backlog cannot starve
+  // the resumable historical window walk for the whole caller deadline.
+  const deltaThreads = deps.managed ? merged.slice(0, MANAGED_DELTA_BATCH_THREADS) : merged;
+  const yielded = deltaThreads.length < merged.length;
+  for (const tid of deltaThreads) {
     if (deps.opts.signal?.aborted) {
       if (!deps.managed) await checkpoint();
       return 'aborted';
@@ -552,7 +596,9 @@ async function drainGmailDelta(g: GmailSweep, cutoffMs: number): Promise<WalkOut
       continue;
     }
     unlanded.delete(tid);
-    if (outcome.kind === 'landed' && (failed === 0 || deps.managed) && ++landedSinceCheckpoint >= BACKFILL_BATCH_THREADS) {
+    const checkpointDue = outcome.kind === 'landed' && (deps.managed && outcome.changed ||
+      (failed === 0 || deps.managed) && ++landedSinceCheckpoint >= BACKFILL_BATCH_THREADS);
+    if (checkpointDue) {
       landedSinceCheckpoint = 0;
       await checkpoint();
     }
@@ -571,7 +617,7 @@ async function drainGmailDelta(g: GmailSweep, cutoffMs: number): Promise<WalkOut
   // failure keeps the cursor its checkpoints committed.
   if (deps.managed && failed === 0) await saveGoogleState(deps, state);
   // A bounded batch is not a drained delta: current mail is complete only once the listing is not truncated.
-  return failed !== 0 ? 'failed' : truncated ? 'more' : 'done';
+  return failed !== 0 ? 'failed' : truncated || yielded ? 'more' : 'done';
 }
 
 // ── Full reconcile (deletes) ─────────────────────────────────────────────────
@@ -890,7 +936,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
 
     // #5867 managed-only 30-day catch-up and the #5868 one-shot backfill marker; never on an aborted sweep.
     let catchup: LoopsEnqueueReport | null = null;
-    if (activeServices.includes('gmail') && !opts.signal?.aborted) {
+    if (activeServices.includes('gmail') && !opts.signal?.aborted && !opts.noLoopsExtract && !managed?.shouldSkipTail()) {
       if (deps.graceBackfillSeeded) state.loop_grace_backfill_done = true;
       if (managed) {
         try {
@@ -919,9 +965,13 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     // extract/embed/extraction tails — the deferred backfill machinery picks
     // them up on the next full run instead of overshooting the budget.
     let loopsEnqueue: LoopsEnqueueReport | undefined;
-    if (!opts.signal?.aborted) {
-      await runExtractAndEmbed(deps, summary);
-      const enqueued = await enqueueLoopsExtraction(deps);
+    if (!opts.signal?.aborted) await runExtractAndEmbed(deps, summary);
+    // A bounded continuation may skip the prior pass's catch-up, but newly
+    // materialized Gmail pages still need to reach the extraction queue.
+    if (!opts.signal?.aborted && (!managed?.shouldSkipTail() || activeServices.includes('gmail'))) {
+      const enqueued = opts.noLoopsExtract
+        ? { enqueued: 0, deferred: 0, skipped_reason: 'run_opt_out' }
+        : await enqueueLoopsExtraction(deps);
       loopsEnqueue = catchup ? { enqueued: enqueued.enqueued + catchup.enqueued, deferred: enqueued.deferred + catchup.deferred,
         skipped_reason: enqueued.skipped_reason } : enqueued;
       // Auditable per-reason counts (loopExtractionEligibility) — no
@@ -937,6 +987,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
         log(`[google] reply-owed loops withheld: ${Object.entries(summary.loopsWithheld).map(([k, v]) => `${k}=${v}`).join(' ')}`);
       }
     }
+    if (!opts.signal?.aborted && !managed?.shouldSkipTail()) managed?.markTailComplete();
 
     // Commitment-loop staleness pass (v1 close semantics): overdue >14d or
     // >90d inactive → 'stale'. Cheap indexed UPDATE, once per sweep.

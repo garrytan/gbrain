@@ -361,7 +361,7 @@ async function runSyncAll(
   input: { noEmbed: boolean; embeddingCredentialError: Error | undefined; resumeCommand: string },
 ): Promise<void> {
   const {
-    dryRun, full, noPull, noBulk, lanes, noExtract, skipFailed, retryFailed, noSchemaPack, includeGitignored,
+    dryRun, full, noPull, noBulk, lanes, noExtract, noLoopsExtract, skipFailed, retryFailed, noSchemaPack, includeGitignored,
     workingTree, missingPathMode, jsonOut, yesFlag, serialFlag, noAutoEmbed, maxSources, concurrency, timeoutSeconds,
   } = flags;
   const { noEmbed, embeddingCredentialError, resumeCommand } = input;
@@ -535,6 +535,7 @@ async function runSyncAll(
       // #6696: a planned or cost-gate deferral (not the user's --no-embed) survives cursor adoption.
       embedDeferred: effectiveNoEmbed && !noEmbed,
       noExtract,
+      noLoopsExtract,
       skipFailed, retryFailed, noSchemaPack,
       includeGitignored,
       workingTree,
@@ -808,7 +809,7 @@ async function runSingleSourceSync(
   input: { sourceId: string; companyPolicy: Awaited<ReturnType<typeof getCompanyBrainProfile>> | null; noEmbed: boolean; resumeCommand: string; args: string[] },
 ): Promise<void> {
   const {
-    repoPath, watch, interval, dryRun, full, noPull, noBulk, lanes, noExtract, skipFailed, retryFailed, resetCheckpoint, noSchemaPack,
+    repoPath, watch, interval, dryRun, full, noPull, noBulk, lanes, noExtract, noLoopsExtract, skipFailed, retryFailed, resetCheckpoint, noSchemaPack,
     includeGitignored, workingTree, jsonOut, redactPaths, yesFlag, noAutoEmbed, strategyArg, srcSubpath,
     excludePatterns, includeHiddenPatterns, concurrency, timeoutSeconds,
   } = flags;
@@ -829,7 +830,7 @@ async function runSingleSourceSync(
   const singleSourceInterrupt = new AbortController();
   const onSingleSourceSigint = () => { try { singleSourceInterrupt.abort(new Error('SIGINT')); } catch { /* */ } };
   const opts: SyncOpts = {
-    repoPath, dryRun, full, noPull, noEmbed, noExtract, skipFailed, retryFailed, resetCheckpoint, noSchemaPack, includeGitignored, workingTree, sourceId,
+    repoPath, dryRun, full, noPull, noEmbed, noExtract, noLoopsExtract, skipFailed, retryFailed, resetCheckpoint, noSchemaPack, includeGitignored, workingTree, sourceId,
     strategy: strategyArg, concurrency,
     srcSubpath,
     exclude: excludePatterns.length > 0 ? excludePatterns : undefined,

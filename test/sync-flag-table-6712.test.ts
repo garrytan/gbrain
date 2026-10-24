@@ -76,7 +76,7 @@ test('the serve ladder, its wire validator and the owner lane are views of the t
   expect(Object.keys(WIRE_BOOL_FLAGS).sort()).toEqual(syncFlagsRouted('serve', 'forward').filter(flag => flags[flag].arity === 'boolean' && flags[flag].sets === undefined).sort());
   expect([...VALUE_FLAGS].sort()).toEqual(['--hard-deadline', '--lanes', '--source', '--timeout']);
   expect([...IGNORED_FLAGS].sort()).toEqual(['--json', '--no-delegate', '--no-hard-deadline', '--yes']);
-  expect(Object.keys(syncWireFields('owner')).sort()).toEqual(['dryRun', 'exclude', 'full', 'includeGitignored', 'includeHidden', 'noBulk', 'noEmbed', 'noExtract',
+  expect(Object.keys(syncWireFields('owner')).sort()).toEqual(['dryRun', 'exclude', 'full', 'includeGitignored', 'includeHidden', 'noBulk', 'noEmbed', 'noExtract', 'noLoopsExtract',
     'noPull', 'noSchemaPack', 'repoPath', 'resetCheckpoint', 'retryFailed', 'skipFailed', 'sourceId', 'srcSubpath', 'strategy', 'workingTree']);
 });
 
