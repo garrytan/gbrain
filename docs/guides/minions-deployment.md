@@ -166,11 +166,12 @@ Sizing notes:
   real server backend while open. Budget the pooler-lane count against your
   pooler's client limit and the session-lane count against
   `max_connections`.
-- **Memory:** `--max-rss` covers the WORKER process only in this mode
-  (handler memory lives in the children; the worker prints a note when both
-  are set). There is no per-child RSS cap yet — a runaway child is contained
-  only by host/container limits. Size host memory for concurrency × handler
-  footprint.
+- **Memory:** `--max-rss` applies to the worker and, separately, to each
+  job child's process tree (RssAnon + RssShmem, measured every 5 s). A child
+  past the cap gets SIGTERM, then SIGKILL after the 25 s grace, and its
+  attempt fails with `ChildRssLimitError`, so a job that grows the same way
+  on every retry ends at its `max_attempts` instead of exhausting the host.
+  Size host memory for (concurrency + 1) × the cap.
 - **Spawn cost:** ~0.3–1s per job (engine connect included) — noise for
   long-running handlers, meaningful for sub-second ones (`lint`,
   `backlinks`). Keep those inline or on a separate inline worker.

@@ -60,6 +60,7 @@ import {
   killProcessGroup,
   observeTiniChildProcessGroups,
   captureChildCleanup,
+  childTreeRss,
   confirmChildCleanup,
   validateChildExecutable,
   type ChildCleanupSnapshot,
@@ -81,6 +82,21 @@ export class ChildWorkerShutdownError extends Error {
   constructor(message: string, readonly executionStopped = false) {
     super(message);
     this.name = 'ChildWorkerShutdownError';
+  }
+}
+
+/** How often the worker measures a job child's tree against --max-rss. */
+export const CHILD_RSS_CHECK_MS = 5_000;
+
+/**
+ * GBRA-133: the job child's process tree passed the worker's --max-rss, so the worker stopped it (group SIGTERM, then
+ * SIGKILL after the grace). The job's own memory ran away, so the attempt counts: the queue's backoff and max_attempts
+ * bound a job that grows the same way on every retry instead of letting it restart the host.
+ */
+export class ChildRssLimitError extends Error {
+  constructor(readonly rssMb: number, readonly maxRssMb: number) {
+    super(`job child used ${rssMb} MB (RssAnon+RssShmem over its process tree), past the worker's --max-rss ${maxRssMb} MB; the worker stopped it`);
+    this.name = 'ChildRssLimitError';
   }
 }
 
@@ -130,6 +146,12 @@ export interface RunJobInChildOpts {
   signalProcessGroup?: typeof killProcessGroup;
   onConfigurationError?: (error: LocalConfigurationError) => void;
   onExecutionStopped?: () => void;
+  /** GBRA-133: the worker's --max-rss in MB, applied to the child's process tree (0 or absent: no cap). */
+  maxRssMb?: number;
+  /** Injectable for tests. Default CHILD_RSS_CHECK_MS. */
+  rssCheckIntervalMs?: number;
+  /** Injectable for tests. Default childTreeRss (Linux /proc). */
+  readChildRss?: (pid: number, groups: Set<number>) => number | null;
 }
 
 interface ChildExit {
@@ -172,6 +194,27 @@ export async function runJobInChild(opts: RunJobInChildOpts): Promise<unknown> {
     }
     throw error;
   }
+}
+
+/**
+ * GBRA-133: measures the child's process tree every `rssCheckIntervalMs` and calls `stop` once it passes `maxRssMb`
+ * (no timer without a cap, a pid or a readable process table).
+ */
+function watchChildRss(opts: RunJobInChildOpts, pid: number | undefined, groups: Set<number>, stopping: () => boolean,
+  stop: (error: ChildRssLimitError) => void): ReturnType<typeof setInterval> | null {
+  const maxRssMb = opts.maxRssMb ?? 0;
+  if (maxRssMb <= 0 || pid == null) return null;
+  const timer = setInterval(() => {
+    if (stopping()) return;
+    const bytes = (opts.readChildRss ?? childTreeRss)(pid, groups);
+    if (bytes === null) return;
+    const rssMb = Math.round(bytes / (1024 * 1024));
+    if (rssMb <= maxRssMb) return;
+    console.warn(`[watchdog] job ${opts.jobId} (${opts.jobName}) child pid ${pid} rss=${rssMb}MB threshold=${maxRssMb}MB — stopping the child`);
+    stop(new ChildRssLimitError(rssMb, maxRssMb));
+  }, opts.rssCheckIntervalMs ?? CHILD_RSS_CHECK_MS);
+  timer.unref();
+  return timer;
 }
 
 async function runJobChildProcess(opts: RunJobInChildOpts): Promise<unknown> {
@@ -343,6 +386,8 @@ async function runJobChildProcess(opts: RunJobInChildOpts): Promise<unknown> {
   else opts.abortSignal.addEventListener('abort', onAbort, { once: true });
   if (opts.shutdownSignal.aborted) onShutdown();
   else opts.shutdownSignal.addEventListener('abort', onShutdown, { once: true });
+  let rssStop: ChildRssLimitError | null = null;
+  const rssTimer = watchChildRss(opts, child.pid, processGroups, () => termed, error => { rssStop = error; terminate(); });
 
   console.log(
     `[isolation] job ${opts.jobId} (${opts.jobName}) child pid ${child.pid ?? '?'} spawned`,
@@ -404,6 +449,7 @@ async function runJobChildProcess(opts: RunJobInChildOpts): Promise<unknown> {
       }
       // No usable outcome. Classify by WHY the child died.
       if (decodeErr instanceof UnrecoverableError) throw decodeErr; // oversize cap — dead on attempt 1
+      if (rssStop) throw rssStop;
       if (isShutdownClass) {
         throw new ChildWorkerShutdownError(
           `job child terminated by worker shutdown before reporting (exit code=${exit.code} signal=${exit.signal})`,
@@ -438,6 +484,7 @@ async function runJobChildProcess(opts: RunJobInChildOpts): Promise<unknown> {
     }
 
     if (outcome.outcome === 'success') return outcome.result;
+    if (rssStop) throw rssStop;
     const handlerError = reconstructHandlerError(outcome);
     if (isLocalConfigurationError(handlerError)) {
       opts.onConfigurationError?.(handlerError);
@@ -463,6 +510,7 @@ async function runJobChildProcess(opts: RunJobInChildOpts): Promise<unknown> {
     if (naturalCleanupConfirmed) publishExecutionStopped();
     if (killTimer != null) clearTimeout(killTimer);
     if (groupObserver != null) clearInterval(groupObserver);
+    if (rssTimer != null) clearInterval(rssTimer);
     opts.abortSignal.removeEventListener('abort', onAbort);
     opts.shutdownSignal.removeEventListener('abort', onShutdown);
     rmSync(dir, { recursive: true, force: true });

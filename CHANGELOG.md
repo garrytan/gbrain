@@ -10,6 +10,25 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.426.0] - 2026-10-24
+
+**With `--job-isolation process`, `--max-rss` now caps each job child as well as the worker. A child whose memory runs away is stopped before it can exhaust the host, and a job that grows the same way on every retry ends at its `max_attempts` instead of restarting the box over and over.**
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A job child (`gbrain jobs run-child`) grows past the worker's `--max-rss` | nothing measured it. The cap read only the worker's own memory, so the child grew until the host or container limit restarted every process, and the job came back after each restart and grew again | the worker measures the child's whole process tree (RssAnon + RssShmem, the metric the worker's own watchdog uses) every 5 s. Past the cap the child gets SIGTERM, then SIGKILL after the 25 s grace, and the attempt fails with `ChildRssLimitError` |
+| The `jobs work` startup note with isolation and `--max-rss` both set | "covers the WORKER process only … per-child caps are a filed follow-up" | names the cap and says it applies to the worker and to each child separately |
+
+The cap is the same `--max-rss` value. No limit was raised. A worker started without `--max-rss` (or with `--max-rss 0`) measures nothing, and a platform without a readable process table (non-Linux) applies no child cap.
+
+### What to watch for after you upgrade
+
+- A job that legitimately needs more memory than `--max-rss` now fails with `ChildRssLimitError` naming its peak. Raise the cap for that worker, or run the job on a worker sized for it.
+- Size host memory for (concurrency + 1) × the cap.
+- Nothing is rewritten on upgrade, and there is no schema migration.
+
 ## [0.60.425.0] - 2026-10-24
 
 **A darwin-x64 native-locks cell that wedges now leaves a record of what it was running: its last suite, how long it had run, and the machine's memory, swap, load and busiest processes. Two timing flakes in the test suite are fixed.**
