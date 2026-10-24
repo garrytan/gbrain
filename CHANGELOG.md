@@ -10,6 +10,48 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.440.0] - 2026-10-24
+
+**A question that names a page by an identifier ("What did the latest weekly digest (#412) say?") now returns the page holding `#412`, even when the question's other words keep it from matching every word and near-identical template pages tie with it on meaning. A handle such as `dan-example` now finds the page it names (`people/dan-example`) in keyword search, quoted or not. The coverage notice also stops blaming indexing for unrelated image pages.**
+
+### Identifiers in questions
+
+| Situation | Before | Now |
+|---|---|---|
+| No chunk holds every word of the question, and the any-word retry ranks the page holding `#412` first | the retry's rows are dropped before fusion whenever semantic search returns anything, so on a brain of near-identical template pages an older copy won | the keyword arm runs one more statement matching every identifier the question names, with the same scope, visibility and filters as the strict search; its rows vote like strict rows, and a title holding the identifier leads the title arm |
+| Long pages repeat the question's common words ("say", "report") | they outranked the short chunk holding the identifier once, so the page fell out of the keyword arm | the identifier match comes first, and the any-word retry ranks rare words first for questions of up to 12 words (it was 4) |
+| One unrelated chunk happens to hold every word, the number included | that chunk was the only keyword row; the page holding the identifier never entered the arm | the identifier rows follow the strict rows, so the page is a keyword candidate again |
+
+An identifier is a `#` number, a run of 6 or more digits, a code such as INV-2026-00417, an email, a URL or a phone number, asked together with other words. Queries without one, a quoted phrase or a `-` negation run exactly as before, and the any-word rows that don't hold an identifier are still dropped while semantic search is healthy.
+
+### Handles in keyword search
+
+| Situation | Before | Now |
+|---|---|---|
+| `gbrain search '"dan-example" OR "erin-example"' --match keyword`, where the person pages hold the handles only in their slugs | the pages that mention the handles came back, never the pages they name: a hyphenated handle only matches text holding the literal handle | the pages whose slug ends in each handle (`people/dan-example`, `people/erin-example`) are listed and counted first |
+| The same query with `--types '["person"]'` | no results | the two person pages |
+| The same query in hybrid search | quoted terms skip the any-word retry, so the title arm found nothing either | the named pages lead the keyword arm, as rows that count like strict keyword rows |
+
+A handle is a hyphenated token with a letter in it, bare or quoted on its own (`acme-example-2` counts, `2026-10-24` does not), and resolves only to a page whose slug ends in exactly that handle. A negated handle (`-dan-example`) or one inside a longer quoted phrase is not resolved. The named pages pass the same filters as any keyword match: `--types`, the caller's sources, and for remote callers no private or quarantined page.
+
+### Coverage notice
+
+| Situation | Before | Now |
+|---|---|---|
+| A pending image page's slug contains the query's digits (`412` in `frames/t004120`) | counted as able to match the query | a query word counts only as a whole word of the title or slug |
+| Pending image pages and a text-only search | counted, although text search never returns image pages | counted only when an image search arm ran |
+| The `projection_pending` part of `degraded_recall` | "recently written pages are not in the search index yet" for every page | text pages "are being indexed"; image pages "will not be indexed on their own" and wait for `gbrain projections drain` or a paid re-import, with doctor's `text_projection_readiness` check as the fix |
+
+**Say to your agent:** *"What did the latest weekly digest (#412) say?"*
+
+### What to watch for after you upgrade
+
+- A search naming an identifier costs one more keyword statement, served by the full-text index. Other searches run the same statements as before, except that an any-word retry of 5 to 12 words now also runs the bounded rare-word read and, when a rare word is found, one more retry statement (both already ran for retries of up to 4 words). The rare-word read skips stopwords, and on Postgres it skips words the column statistics already estimate as common, so its cost follows the question's rare words, not its length.
+- A query with a hyphenated token costs one more index lookup on page slugs: one more statement in hybrid search, and one more arm of the same statement with `--match keyword`. `keyword_total` and the `--match keyword` count include the named pages.
+- Pages that hold the identifier but not the other words can now rank above pages that match the question's meaning better. The page holding every word still comes first among keyword rows.
+- `_meta.retrieval.coverage.could_affect` can carry `pending_images`, and `could_affect.pending_projection` can drop for queries whose digits or short words used to match unrelated slugs.
+- Nothing is rewritten on upgrade, no setting changed, and there is no schema migration.
+
 ## [0.60.427.0] - 2026-10-24
 
 **A search for a full name that uses a short first name ("Matt Example") now finds the page titled "Matthew Example", keyword search finds the page holding a rare query word when no page holds every word, and agents triaging email or calendar can ask whether a sender is a known contact and get an exact answer with `gbrain whois <email or name>` (MCP tool `whois`).**

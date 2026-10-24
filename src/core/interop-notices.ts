@@ -54,7 +54,7 @@ export const DEGRADED_STAGE_GUIDANCE: Readonly<Record<RecallStage, StageGuidance
   safe_index_pending: { why: 'some pages in scope are still being safety-indexed for agent readers and are withheld until that finishes', fix: 'doctor' },
   vector_candidates_incomplete: { why: 'vector search hit its candidate limit or deadline, so some semantic matches can be missing', fix: null },
   keyword_candidates_incomplete: { why: 'keyword matching returned a bounded result on a large corpus (the CJK deadline or candidate cap, or common words ranked from a sample), so some keyword matches can be missing; add a rarer word or an exact phrase, narrow with source_id (the CLI source-id flag) or types, or for CJK text ask the user to raise search.cjk_keyword_deadline_ms (milliseconds, default 3000)', fix: null },
-  projection_pending: { why: 'recently written pages are not in the search index yet', fix: 'doctor' },
+  projection_pending: { why: 'some pages in scope are not in the search index yet: recently written pages are being indexed, and image pages wait for an operator (doctor\'s text_projection_readiness check names which)', fix: 'doctor' },
   projection_by_design: { why: 'some image pages in scope hold protected OCR content and stay out of the search index by design; nothing is pending', fix: null },
   projection_status_unknown: { why: 'whether recent writes are in the search index could not be checked', fix: 'doctor' },
   keyword_count_unavailable: { why: 'the keyword match count did not finish, so how many pages match the query is unknown', fix: null },
@@ -132,6 +132,27 @@ function keywordPlanFix(): Action {
   };
 }
 
+const PROJECTION_READINESS_VERIFY = { argv: ['gbrain', 'doctor', '--only', 'text_projection_readiness', '--json'] };
+/** #7492: pending image pages wait for an operator, not for indexing; doctor's readiness check names the fix per class. */
+function projectionReadinessFix(): Action {
+  return {
+    argv: PROJECTION_READINESS_VERIFY.argv, consent: [], actor: 'agent', requires_exclusive: false, verify: PROJECTION_READINESS_VERIFY,
+    why: "Read-only: doctor's text_projection_readiness counts the pending pages by class and names each fix: `gbrain projections drain` (it asks first) seals sealable images, and a paid re-import (`gbrain embed --stale --images`) seals the rest. Running either is the user's call.",
+  };
+}
+
+/**
+ * #7492: the counted `projection_pending` why, worded by class. Text pages are being indexed and need no action;
+ * image pages in the `sealable` or `reimport` class never index on their own.
+ */
+function projectionPendingWhy(coverage: RetrievalCoverage, could: number, total: number): string {
+  const counted = `(${could} of ${total}${coverage.capped ? '+' : ''} pending page(s) could match this query)`;
+  const images = coverage.could_affect.pending_images ?? 0;
+  if (images === 0) return `recently written pages are being indexed and are not in the search index yet ${counted}`;
+  const text = could - images;
+  return `${images} image page(s) that could match are not in the search index and will not be indexed on their own: sealable images wait for \`gbrain projections drain\` and the rest for a paid re-import (\`gbrain embed --stale --images\`), and doctor's text_projection_readiness check counts them by class${text > 0 ? `; ${text} recently written page(s) are being indexed` : ''} ${counted}`;
+}
+
 /** Doctor on the brain host; `run_doctor` where callable (renderAction drops it otherwise). */
 export function doctorFix(why: string): Action {
   return { argv: ['gbrain', 'doctor', '--json'], mcp: { tool: 'run_doctor', arguments: {} }, consent: [], actor: 'agent', why, requires_exclusive: false };
@@ -179,15 +200,16 @@ export function degradedRecallNotice(
   const whys = names.map(n => (n === 'rerank_failed'
     ? `reranking failed because ${RERANK_REASON_WHY[rerank!]}, so results keep their fused order (fallback: fused_order${opts.rerankDegradedCalls ? `; reranker-degraded calls this session: ${opts.rerankDegradedCalls}` : ''})`
     : n === 'keyword_arm_failed' && keywordSkipped ? KEYWORD_SKIPPED_WHY
-    : n === 'projection_pending' && pendingCounted ? `${DEGRADED_STAGE_GUIDANCE[n].why} (${pendingCould} of ${pendingTotal}${opts.coverage?.capped ? '+' : ''} pending page(s) could match this query)`
+    : n === 'projection_pending' && pendingCounted ? projectionPendingWhy(opts.coverage!, pendingCould, pendingTotal)
     : DEGRADED_STAGE_GUIDANCE[n].why));
   const guidance = names.map(n => DEGRADED_STAGE_GUIDANCE[n]);
   const fixKind: StageFix = guidance.some(g => g.fix === 'embeddings') ? 'embeddings' : guidance.some(g => g.fix === 'doctor') ? 'doctor' : null;
   const byChoice = opts.optedOut || entries.some(s => s.reason === 'embedding_disabled');
   const emb = fixKind === 'embeddings' ? (byChoice ? { byChoice: true } as { fix?: Action; byChoice: boolean } : embeddingsFix(opts.config, opts.transport)) : undefined;
   const onlyKeywordNeedsDoctor = keywordSkipped && names.every(n => n === 'keyword_arm_failed' || DEGRADED_STAGE_GUIDANCE[n].fix !== 'doctor');
+  const onlyImagesNeedDoctor = (opts.coverage?.could_affect?.pending_images ?? 0) > 0 && names.every(n => n === 'projection_pending' || DEGRADED_STAGE_GUIDANCE[n].fix !== 'doctor');
   const fix = emb ? emb.fix
-    : fixKind === 'doctor' ? (onlyKeywordNeedsDoctor ? keywordPlanFix() : doctorFix('Doctor names the failing retrieval dependency and its fix.'))
+    : fixKind === 'doctor' ? (onlyKeywordNeedsDoctor ? keywordPlanFix() : onlyImagesNeedDoctor ? projectionReadinessFix() : doctorFix('Doctor names the failing retrieval dependency and its fix.'))
     : rerank ? rerankFix(rerank, opts.retry) : undefined;
   const choice = emb?.byChoice ? ' This brain was set up keyword-only by the user\'s choice; mention it only if the user asks why something was not found. No query text was sent to an embedding provider. If the user wants semantic search, `gbrain doctor --json` names the enable command; turning it on needs their consent.' : '';
   return {

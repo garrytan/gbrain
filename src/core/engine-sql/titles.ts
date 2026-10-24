@@ -48,6 +48,7 @@ import { searchLimitCap } from '../search/eval-pool-depth.ts';
 import { boundWebsearchQuery, buildOrFallbackWebsearchQuery, orFallbackTokens } from '../search/sql-ranking.ts';
 import { buildSearchTitlesStatement, type SearchTitlesDialect } from '../search/title-statement.ts';
 import { RARITY_MAX_TERMS } from '../search/keyword-or-rarity.ts';
+import { holdsIdentifiers, identifierTokens } from '../search/keyword-identifier-probe.ts';
 import { rowToSearchResult } from '../utils.ts';
 import type { ScopedRead } from './brands.ts';
 import type { ScopedReadRunner } from './cjk-search.ts';
@@ -102,10 +103,14 @@ export async function searchTitles(
   const terms = orFallbackTokens(strictQuery);
   const rarity = terms.length <= RARITY_MAX_TERMS && !opts?.offset;
   const [orRows, ...wordLists] = await run([boundWebsearchQuery(orQuery), ...(rarity ? terms : [])], true);
-  const relaxedRows = rarity ? rankByRarity(orRows, wordLists, statement.params[2] as number) : orRows;
+  const relaxedRows = (rarity ? rankByRarity(orRows, wordLists, statement.params[2] as number) : orRows).map(rowToSearchResult);
   // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's fusion can
-  // demote them (SearchResult.keyword_relaxed).
-  return relaxedRows.map((r) => ({ ...rowToSearchResult(r), keyword_relaxed: true as const }));
+  // demote them (SearchResult.keyword_relaxed). #7491: a title holding every
+  // identifier the query names (search/keyword-identifier-probe.ts) is the
+  // identifier probe's match on the title, so it leads untagged.
+  const idents = identifierTokens(query);
+  const named = idents ? relaxedRows.filter(r => holdsIdentifiers(r.title, idents)) : [];
+  return [...named, ...relaxedRows.filter(r => !named.includes(r)).map(r => ({ ...r, keyword_relaxed: true as const }))];
 }
 
 

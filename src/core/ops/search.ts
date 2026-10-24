@@ -469,7 +469,7 @@ async function buildRetrievalResponseMeta(
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
   const excludeSlugPrefixes = resolveHardExcludes();
   const aliases = (opts.declarations ?? new DeclarationMemo()).scan(results as DeclarationRow[], queryText);
-  const relevance = coverageRelevance(results as SearchResult[], queryText, opts.types, FACT_MATCH_STOPWORDS);
+  const relevance = coverageRelevance(results as SearchResult[], queryText, opts.types, FACT_MATCH_STOPWORDS, m?.image_arm === true);
   const readinessScope = { ...scope, excludePrivate, types: opts.types, excludeSlugPrefixes };
   // #6721: these reads depend on nothing but the inputs above, so they run at once: on a pooled Postgres
   // the wall time is the slowest read's round trips, not their sum. The answer-feedback write still runs last.
@@ -503,7 +503,8 @@ async function buildRetrievalResponseMeta(
     ...(pending ? { pending_projection: pending.total } : {}),
     ...(heldTotal ? { held_files: heldTotal } : {}),
     ...(embedding ? { embedding_held: embedding.total } : {}),
-    could_affect: { ...(pending ? { pending_projection: pending.could_affect } : {}), ...(heldTotal && held.couldAffect !== null ? { held_files: held.couldAffect } : {}),
+    could_affect: { ...(pending ? { pending_projection: pending.could_affect } : {}), ...(pending?.could_affect && pending.could_affect_images ? { pending_images: pending.could_affect_images } : {}),
+      ...(heldTotal && held.couldAffect !== null ? { held_files: held.couldAffect } : {}),
       ...(embedding ? { embedding_held: embedding.could_affect } : {}) },
     ...(pending?.capped || embedding?.capped ? { capped: true as const } : {}),
     ...(topHitExact ? { top_hit_exact: true as const } : {}),

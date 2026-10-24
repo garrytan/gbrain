@@ -5,8 +5,8 @@
  * times outranks the few chunks holding a rare one, so "Acme Quokka" on a
  * brain of Acme notes returned every Acme note before the one Quokka page.
  *
- * For a retry of at most RARITY_MAX_TERMS words, one statement reads, per
- * word, the pages of up to RARE_TERM_CHUNK_CAP chunks that hold it (index
+ * For a retry of at most RARITY_MAX_KEYWORD_TERMS words, one statement reads,
+ * per word, the pages of up to RARE_TERM_CHUNK_CAP chunks that hold it (index
  * served, read-only, and only compared against rows the retry already
  * authorized). A word whose chunks all fit is rare and weighs 1 / its page
  * count. The engine runs its retry statement once more with the OR of the
@@ -15,22 +15,39 @@
  * scores. Rows sort by the summed weight of the
  * rare words their page holds, then in retry order. With no rare word, or
  * when the read fails, the retry's rows are returned unchanged.
+ *
+ * #7491: the keyword arm first ranked by rarity only for retries of at most
+ * RARITY_MAX_TERMS words, so a question ("What did the team say about the
+ * quokka?") ranked long chunks repeating its common words above the page
+ * holding its rare one. Each word's read is bounded on its own, so the arm
+ * now weighs up to RARITY_MAX_KEYWORD_TERMS words; the title arm, which runs
+ * one statement per word, keeps RARITY_MAX_TERMS.
  */
 import { chunkVisibleFilter } from './safe-chunks.ts';
 import { orFallbackTokens } from './sql-ranking.ts';
 
-/** OR retries of at most this many words rank rare words first (this module and the title arm's rankByRarity). */
+/** Title-arm OR retries of at most this many words rank rare words first (engine-sql/titles.ts rankByRarity). */
 export const RARITY_MAX_TERMS = 4;
+
+/** Keyword-arm OR retries of at most this many distinct words rank rare words first; longer ones keep the retry's order. */
+export const RARITY_MAX_KEYWORD_TERMS = 12;
 
 /** A word matching at most this many chunks is rare; the read stops one past it. */
 export const RARE_TERM_CHUNK_CAP = 400;
 
-/** Per word (`$1` text[]), the distinct pages of its first `$2` + 1 matching text chunks and that chunk count. */
+/**
+ * Per word (`$1` text[]), the distinct pages of its first `$2` + 1 matching text chunks and that chunk count.
+ * One bounded read per word, its tsquery built once; a word with no lexemes (a stopword) reads nothing: its
+ * empty query matches no row, but the scan visited every chunk (about 55 ms per stopword on a 3,200-chunk PGLite).
+ */
 export function rareTermPagesSql(ftsLang: string): string {
-  return `SELECT u.term,
-      (SELECT count(*) FROM (SELECT 1 FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE cc.search_vector @@ websearch_to_tsquery('${ftsLang}', u.term) AND cc.modality = 'text' AND ${chunkVisibleFilter('p', 'cc')} LIMIT $2::int + 1) m)::int AS chunks,
-      ARRAY(SELECT DISTINCT m.page_id FROM (SELECT cc.page_id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE cc.search_vector @@ websearch_to_tsquery('${ftsLang}', u.term) AND cc.modality = 'text' AND ${chunkVisibleFilter('p', 'cc')} LIMIT $2::int + 1) m) AS page_ids
+  return `SELECT u.term, m.chunks, COALESCE(m.page_ids, '{}') AS page_ids
     FROM unnest($1::text[]) WITH ORDINALITY AS u(term, ord)
+    CROSS JOIN LATERAL (SELECT websearch_to_tsquery('${ftsLang}', u.term) AS q) t
+    CROSS JOIN LATERAL (SELECT count(*)::int AS chunks, array_agg(DISTINCT x.page_id) AS page_ids FROM (
+      SELECT cc.page_id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE numnode(t.q) > 0 AND cc.search_vector @@ t.q AND cc.modality = 'text' AND ${chunkVisibleFilter('p', 'cc')}
+      LIMIT $2::int + 1) x) m
     ORDER BY u.ord`;
 }
 
@@ -45,7 +62,7 @@ export async function rankOrFallbackByRarity<R>(args: {
   runRare: (rareOrQuery: string) => Promise<R[]>;
 }): Promise<R[]> {
   const terms = orFallbackTokens(args.query);
-  if (terms.length < 2 || terms.length > RARITY_MAX_TERMS || args.offset > 0) return args.rows;
+  if (terms.length < 2 || terms.length > RARITY_MAX_KEYWORD_TERMS || args.offset > 0) return args.rows;
   const read = await args.readTermPages(terms).catch(() => null);
   const rare = (read ?? []).filter(t => Number(t.chunks) > 0 && Number(t.chunks) <= RARE_TERM_CHUNK_CAP && t.page_ids.length > 0);
   if (rare.length === 0) return args.rows;

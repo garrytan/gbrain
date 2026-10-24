@@ -2159,6 +2159,7 @@ export function affectsRecall(d: { stage?: string; reason?: string } | undefined
 export interface HybridSearchMeta {
   /** True iff vector search actually ran. False when OPENAI_API_KEY missing or embed failed. */
   vector_enabled: boolean;
+  /** #7492: an image-reading vector arm ran (cross-modal image or unified multimodal), so pending image pages could change the answer. */ image_arm?: true;
   /** System One: slot diagnostics (only when a slot ran visibly) and the reranker model version that answered. */
   decide?: import('./search/decide-stage.ts').DecideSearchMeta; rerank?: { model_resolved: string };
   /** System One S4 on the query op (diagnostic only): probability the top-k answer the query, threshold and verdict. */
