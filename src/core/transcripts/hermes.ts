@@ -38,12 +38,16 @@ export const HERMES_SPEC_TARGET: HostSpecTarget = {
     'installed hermes-agent v0.20.0 hermes_state_common.py SCHEMA_SQL (schema source of truth)',
     'hermes-agent hermes_state.py DEFAULT_DB_PATH = <hermes home>/state.db',
     'test/fixtures/transcripts/hermes-fixture-builder.ts (synthetic, schema-matched)',
+    'https://github.com/NousResearch/hermes-agent/blob/d76cce4f1161bdac895f7e373ce41cbd04e7c2f2/tools/clarify_tool.py (_result wire shape)',
   ],
   note:
     'SQLite store, WAL mode. sessions: id TEXT PK, source, display_name, ' +
     'title, started_at REAL (epoch seconds), ended_at, cwd, model. messages: ' +
     'session_id, role, content TEXT, timestamp REAL. The import keeps role ' +
-    "user/assistant rows with non-empty content; content that looks like a " +
+    'user/assistant rows with non-empty content and submitted, answered clarify ' +
+    'results linked to an earlier assistant tool call. Questions and tool/result ' +
+    'provenance remain separate from user speech in redacted raw metadata; ' +
+    'other tool output and unselected choices are omitted. Content that looks like a ' +
     'JSON block array (bare or json:-prefixed) is unwrapped to its text ' +
     'blocks, image blocks as an [image] placeholder. active/compacted ' +
     'flags are IGNORED (the archive wants full history, not the live ' +
@@ -104,9 +108,77 @@ interface SessionRow {
 }
 
 interface MessageRow {
+  id: number;
   role: string;
   content: string | null;
   timestamp: number | null;
+  tool_name: string | null;
+  tool_call_id: string | null;
+  tool_calls: string | null;
+}
+
+function parseJson(value: string | null): unknown {
+  try { return value ? JSON.parse(value) : null; } catch { return null; }
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown> : null;
+}
+
+/** Native tool calls are assistant rows even when their text content is empty. */
+function rememberClarifyCalls(m: MessageRow, calls: Set<string>): void {
+  const entries = parseJson(m.tool_calls);
+  if (!Array.isArray(entries)) return;
+  for (const entry of entries) {
+    const call = record(entry);
+    if (call && typeof call.id === 'string' && call.id.trim()) {
+      // A later reuse of an id by another tool must not inherit clarification attribution.
+      calls.delete(call.id);
+      if (record(call.function)?.name === 'clarify') calls.add(call.id);
+    }
+  }
+}
+
+/**
+ * Narrow native envelope, not arbitrary tool prose. Only a submitted form's
+ * answered values are speech; questions and original linkage stay separately
+ * in flat raw metadata (which the common renderer redacts before persistence).
+ * Wire shape: NousResearch/hermes-agent tools/clarify_tool.py::_result.
+ */
+function appendClarifyAnswers(
+  m: MessageRow, calls: Set<string>, messages: TranscriptMessage[], raw: Record<string, unknown>,
+  next: number,
+): number {
+  if (m.tool_name !== 'clarify' || !m.tool_call_id || !calls.has(m.tool_call_id)) return next;
+  calls.delete(m.tool_call_id);
+  const result = record(parseJson(m.content));
+  if (result?.outcome !== 'submitted' || !Array.isArray(result.responses)) return next;
+  for (const [index, value] of result.responses.entries()) {
+    const response = record(value);
+    if (response?.status !== 'answered' || typeof response.question !== 'string' || !response.question.trim()) continue;
+    const answer = response.user_response;
+    let text: string;
+    if (typeof answer === 'string' && answer.trim()) text = answer;
+    else if (Array.isArray(answer) && answer.length && answer.every(a => typeof a === 'string' && a.trim())) text = answer.join('\n');
+    else continue;
+    const prefix = `clarify_${next++}_`;
+    raw[`${prefix}message_id`] = m.id;
+    raw[`${prefix}tool_call_id`] = m.tool_call_id;
+    raw[`${prefix}tool_name`] = 'clarify';
+    raw[`${prefix}original_role`] = 'tool';
+    raw[`${prefix}question`] = response.question;
+    raw[`${prefix}response_index`] = index;
+    raw[`${prefix}message_index`] = messages.length;
+    raw[`${prefix}timestamp`] = epochToIso(m.timestamp);
+    // Preserve multi-select boundaries too: joining for display alone loses
+    // the distinction between a newline in one choice and two selected choices.
+    if (Array.isArray(answer)) {
+      for (const [selection, selected] of answer.entries()) raw[`${prefix}selection_${selection}`] = selected;
+    }
+    messages.push({ role: 'user', timestamp: epochToIso(m.timestamp), text });
+  }
+  return next;
 }
 
 export const hermesAdapter: TranscriptAdapter = {
@@ -169,14 +241,30 @@ export const hermesAdapter: TranscriptAdapter = {
           };
         }
 
+        // Older stores (and the original minimal fixture) have no tool columns.
+        // Only fixed, allowlisted names enter this SELECT; schema data is never SQL.
+        const columns = new Set(db.query<{ name: string }, []>('PRAGMA table_info(messages)').all().map(c => c.name));
+        const toolColumns = ['tool_name', 'tool_call_id', 'tool_calls']
+          .map(name => columns.has(name) ? name : `NULL AS ${name}`).join(', ');
+        const toolFilter = columns.has('tool_name') ? " OR (role = 'tool' AND tool_name = 'clarify')" : '';
         const msgQuery = db.query<MessageRow, [string]>(
-          "SELECT role, content, timestamp FROM messages WHERE session_id = ? " +
-            "AND role IN ('user','assistant') ORDER BY timestamp, id",
+          `SELECT id, role, content, timestamp, ${toolColumns} FROM messages WHERE session_id = ? ` +
+            `AND (role IN ('user','assistant')${toolFilter}) ORDER BY timestamp, id`,
         );
         for (const row of sessionRows) {
           if (typeof row.id !== 'string' || !row.id) continue;
           const messages: TranscriptMessage[] = [];
+          const raw: Record<string, unknown> = {
+            session_id: row.id, source: row.source ?? null, cwd: row.cwd ?? null, source_path: path,
+          };
+          const clarifyCalls = new Set<string>();
+          let clarificationCount = 0;
           for (const m of msgQuery.all(row.id)) {
+            if (m.role === 'assistant') rememberClarifyCalls(m, clarifyCalls);
+            if (m.role === 'tool') {
+              clarificationCount = appendClarifyAnswers(m, clarifyCalls, messages, raw, clarificationCount);
+              continue;
+            }
             const role = m.role === 'user' || m.role === 'assistant' ? m.role : null;
             if (!role) continue;
             const text = contentToText(m.content);
@@ -193,12 +281,7 @@ export const hermesAdapter: TranscriptAdapter = {
               cwd: row.cwd ?? undefined,
               model: row.model ?? undefined,
               startedAt: epochToIso(row.started_at) || messages[0].timestamp || undefined,
-              raw: {
-                session_id: row.id,
-                source: row.source ?? null,
-                cwd: row.cwd ?? null,
-                source_path: path,
-              },
+              raw,
             },
             messages,
           };
