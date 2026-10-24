@@ -27,6 +27,7 @@ import { verifyReconcileBackup } from './reconcile-backup.ts';
 import { assertAutoDecisions } from './reconcile-additive.ts';
 import { admissionAllows, readSyncAdmission } from './sync-admission.ts';
 import { bindOrigin } from './origin-guard.ts';
+import { keptFileText } from './reconcile-splice.ts';
 
 const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page ${slug} in source ${sourceId} as stored now, with its revision, read-only.`,
   { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] });
@@ -156,11 +157,11 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
   const prepared = await prepareReconcileResult(engine, state, artifact.decisions);
   if (!prepared.ready || digest(prepared.result) !== artifact.result_digest) staleReconcile('canonical policy result changed');
   // #6643: a request that asks to keep the file's bytes (repair file-drift --prefer file) leaves a file that already parses to the
-  // reviewed result as it is; any other difference (a protected key, a tag union, a kept private row) renders the result.
+  // reviewed result as it is, and splices any other difference (a protected key, a tag union, a kept private row) into it.
   // #6712 wave: a preview that observed the file absent recreates it from the page and expects no bytes there.
   const absent = state.pins.raw_file_hash === ABSENT_FILE_HASH;
-  const keep = !absent && row.intent.keep_file_bytes === true && digest(reconcileCanonical(state.file, state.file.tags)) === artifact.result_digest;
-  const content = keep ? state.raw.toString('utf8') : serializePageToMarkdown({ ...state.snapshot.page, ...prepared.result }, prepared.result.tags);
+  const kept = !absent && row.intent.keep_file_bytes === true ? keptFileText(state, prepared.result, artifact.result_digest) : null;
+  const content = kept ?? serializePageToMarkdown({ ...state.snapshot.page, ...prepared.result }, prepared.result.tags);
   const ready = prepared.ready;
   return {
     observedRevision: state.snapshot.revision, trust: await ownerImportTrust(engine, row, prepared.result.frontmatter, state.path),
