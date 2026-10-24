@@ -149,7 +149,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
 
   const receipt = readReceipt(home);
   // One reader for every push-status surface [D8]; per-root files [D13].
-  const { readPushStatuses, pushStatusFilesExist, pushStatusForWorkspace } = await import('../../core/workspace-push.ts');
+  const { readPushStatuses, pushStatusFilesExist, pushStatusForWorkspace, hasUnreadablePushStatuses } = await import('../../core/workspace-push.ts');
   const pushStatuses = readPushStatuses();
   const statusFilesOnDisk = pushStatusFilesExist();
   const heartbeatFile = join(home, 'integrations', 'hooks', 'heartbeat.jsonl');
@@ -405,9 +405,9 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
             : { name: 'bootstrap_push_health', status: 'ok', message: `last push ok (${staleIso})` });
         }
       }
-    } else if (statusFilesOnDisk) {
-      // Files exist but none parsed — the tolerant reader skips corrupt
-      // records; doctor must not let that read as "no news is good news".
+    } else if (statusFilesOnDisk && hasUnreadablePushStatuses()) {
+      // Deleted-root history is intentionally filtered; warn only when an
+      // authoritative record cannot be read or its root cannot be probed.
       checks.push({ name: 'bootstrap_push_health', status: 'warn', message: 'push status unreadable' });
     }
   } catch {
