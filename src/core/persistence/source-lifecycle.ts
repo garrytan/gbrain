@@ -63,7 +63,7 @@ function localRoot(path:string,create=false):{source:string;worktree:string}{
   return {source,worktree};
 }
 
-export async function installTopologyBinding(tx:BrainEngine,sourceId:string,incarnation:string,root:{source:string;worktree:string},bindings:WorktreeBinding[]):Promise<string>{
+export async function installTopologyBinding(tx:BrainEngine,sourceId:string,incarnation:string,root:{source:string;worktree:string},bindings:WorktreeBinding[],claimProtocol=false):Promise<string>{
   const others=await tx.executeRaw<{source_id:string;relative_path:string;local_path:string}>(`SELECT b.source_id,b.relative_path,h.local_path
     FROM persistence_source_bindings b JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid
     WHERE b.source_id<>$2`,[localHostId(),sourceId]);
@@ -82,7 +82,8 @@ export async function installTopologyBinding(tx:BrainEngine,sourceId:string,inca
     ...(compatible?{worktreeId:compatible.worktree_id,coordinationPath:compatible.coordination_path!}:{})});
   const id=physical.worktreeId;
   const [existing]=await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid',[id]);
-  if(!existing)await tx.executeRaw('INSERT INTO persistence_worktrees(id,owner_host_id,owner_epoch) VALUES($1::uuid,$2::uuid,1)',[id,localHostId()]);
+  const created=!existing;
+  if(created)await tx.executeRaw('INSERT INTO persistence_worktrees(id,owner_host_id,owner_epoch) VALUES($1::uuid,$2::uuid,1)',[id,localHostId()]);
   await tx.executeRaw(`INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path) VALUES($1::uuid,$2::uuid,$3,$4)
     ON CONFLICT(worktree_id,host_id) DO NOTHING`,[id,localHostId(),worktree,physical.coordinationPath]);
   const rel=relative(nativeFilesystemPath(worktree),nativeFilesystemPath(root.source)).split(sep).join('/');
@@ -90,6 +91,10 @@ export async function installTopologyBinding(tx:BrainEngine,sourceId:string,inca
     SELECT $1,$2::uuid,$3::uuid,$4,topology_generation FROM persistence_worktrees WHERE id=$3::uuid
     ON CONFLICT(source_id) DO UPDATE SET source_incarnation=EXCLUDED.source_incarnation,worktree_id=EXCLUDED.worktree_id,
       relative_path=EXCLUDED.relative_path,topology_generation=EXCLUDED.topology_generation`,[sourceId,incarnation,id,rel]);
+  if(created&&claimProtocol){
+    const [owned]=await tx.executeRaw<{owner_host_id:string;owner_epoch:string|number}>(`SELECT w.owner_host_id,w.owner_epoch FROM persistence_worktrees w JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=w.owner_host_id JOIN persistence_brain b ON b.singleton=1 AND b.skill_bundles_enabled WHERE w.id=$1::uuid AND w.owner_host_id=$2::uuid AND w.state='active' FOR UPDATE OF w`,[id,localHostId()]);
+    if(owned)await tx.executeRaw(`INSERT INTO persistence_writer_protocols(worktree_id,host_id,owner_epoch,protocol_version) VALUES($1::uuid,$2::uuid,$3,2) ON CONFLICT(worktree_id,host_id) DO NOTHING`,[id,owned.owner_host_id,owned.owner_epoch]);
+  }
   return id;
 }
 
@@ -253,7 +258,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
           [input.sourceId,root!.source,input.name??null,JSON.stringify({...source.config,...input.config})]);
         else await tx.executeRaw('INSERT INTO sources(id,name,local_path,config,incarnation) VALUES($1,$2,$3,$4::text::jsonb,$5::uuid)',
           [input.sourceId,input.name??input.sourceId,root?.source??null,JSON.stringify(input.config??{}),incarnation]);
-        if(root){const id=await installTopologyBinding(tx,input.sourceId,incarnation,root,bindings);if(!worktrees.includes(id))worktrees.push(id);}
+        if(root){const id=await installTopologyBinding(tx,input.sourceId,incarnation,root,bindings,input.operation==='claim');if(!worktrees.includes(id))worktrees.push(id);}
       }else if(input.operation==='archive') await tx.executeRaw(`UPDATE sources SET archived=true,archived_at=COALESCE(archived_at,now()),
         archive_expires_at=COALESCE(archive_expires_at,now()+interval '72 hours'),config=$2::text::jsonb WHERE id=$1`,[input.sourceId,JSON.stringify({...source?.config,federated:false})]);
       else if(input.operation==='restore') await tx.executeRaw(`UPDATE sources SET archived=false,archived_at=NULL,archive_expires_at=NULL,
