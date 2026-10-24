@@ -154,12 +154,14 @@ describe('#6333 shadow counter on a managed brain', () => {
           [ENTITY, 'committed', null], ['__managed_facts_complete__', 'committed', null],
           [ENTITY, 'committed', '1'], ['__managed_facts_complete__', 'committed', '1'],
         ]);
-        expect(calls).toBe(2);
+        // Two extractions plus one classifier call for the reworded band (cosine 0.9); the stub's
+        // reply is no verdict, so the rewording is kept.
+        expect(calls).toBe(3);
 
         const replay = await s.extract('Alice Example is the lead of the example company platform team', requestId);
         expect(replay.would_dedup_same_page).toBe(1);
         expect(replay.inserted).toBe(1);
-        expect(calls).toBe(2);
+        expect(calls).toBe(3);
         expect(await s.rows()).toEqual(rows);
         expect(await s.receipts()).toEqual(receipts);
         expect(warned.filter(line => line.includes('#6333 shadow'))).toHaveLength(1);
