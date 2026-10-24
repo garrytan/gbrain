@@ -16,7 +16,10 @@
  * e.g. the guardian auto-reviewer) receives its task only as such injected
  * context, so it has assistant turns and no user turn by design: it reports
  * `subagentRollout`, never `userTurnsMissing` drift (#6741). Assistant text comes from `response_item` payload.type='message'
- * role='assistant' output_text blocks. reasoning / tool calls / token_count
+ * role='assistant' output_text blocks, completed AgentMessage items, legacy
+ * agent_message events, or task_complete.last_agent_message. Both consumers
+ * share occurrence-aware deduplication across these encodings (#7208).
+ * reasoning / tool calls / token_count
  * and every other event kind are skipped — the archive records conversation
  * text only (lossy by design).
  */
@@ -32,6 +35,7 @@ import type {
   TranscriptMessage,
 } from './types.ts';
 import { TRANSCRIPT_JSONL_HARD_CAP, utcTimestamp } from './types.ts';
+import { CodexMessageFilter } from './codex-messages.ts';
 
 /**
  * Head window kept when a rollout exceeds the parse budget. Only needs to
@@ -49,6 +53,8 @@ export const CODEX_SPEC_TARGET: HostSpecTarget = {
     'codex-cli 0.154.0 and 0.159.3 rollout line shapes quoted in garrytan/gbrain#5163 (observed 2026-10-05)',
     'test/fixtures/transcripts/codex-rollout.jsonl',
     'test/fixtures/transcripts/codex-rollout-0154.jsonl',
+    'https://github.com/openai/codex/blob/e6ebdfe00b520e21ed50ac0362656f32dd64d2fc/codex-rs/protocol/src/items.rs',
+    'https://github.com/openai/codex/blob/e6ebdfe00b520e21ed50ac0362656f32dd64d2fc/codex-rs/protocol/src/protocol.rs',
   ],
   note:
     'One JSON object per line: {timestamp: ISO, type, payload}; 0.159 adds ' +
@@ -60,22 +66,26 @@ export const CODEX_SPEC_TARGET: HostSpecTarget = {
     "'user_message' (payload.message = typed text) through 0.152; from 0.153 " +
     "type 'event_msg' with payload.type 'item_completed' and " +
     "payload.item.{type:'UserMessage', content:[{type:'text', text}]} (other " +
-    'item types, AgentMessage included, skipped; non-text blocks skipped; ' +
+    'non-text blocks and non-message item types skipped; ' +
     'both shapes for one turn kept once). Assistant turns: type ' +
     "'response_item' with payload.{type:'message', role:'assistant', " +
-    "content:[{type:'output_text', text}]}. response_item rows with role " +
+    "content:[{type:'output_text', text}]}, item_completed AgentMessage " +
+    "content text blocks (historical 'text', protocol 'Text'), agent_message.message " +
+    'and task_complete/turn_complete.last_agent_message. Shared archive/hook ' +
+    'filter keeps overlapping encodings once, preserves repeated distinct items, ' +
+    'and treats terminal text as an echo. response_item rows with role ' +
     'user/developer are injected context and are skipped. reasoning, ' +
     'custom_tool_call*, function_call*, token_count, world_state, ' +
     'turn_context, compacted: all skipped. Unknown fields tolerated.',
 };
 
-function textFromBlocks(content: unknown, blockType: string): string {
+function textFromBlocks(content: unknown, blockType: string, alternateType?: string): string {
   if (!Array.isArray(content)) return '';
   const parts: string[] = [];
   for (const block of content) {
     if (typeof block !== 'object' || block === null) continue;
     const b = block as Record<string, unknown>;
-    if (b.type === blockType && typeof b.text === 'string' && b.text.trim()) parts.push(b.text);
+    if ((b.type === blockType || (alternateType !== undefined && b.type === alternateType)) && typeof b.text === 'string' && b.text.trim()) parts.push(b.text);
   }
   return parts.join('\n').trim();
 }
@@ -106,8 +116,9 @@ export function isRepeatedCodexUserTurn(previous: { role: string; text: string }
  */
 export type CodexLineResult =
   | { kind: 'session'; sessionId?: string; cwd?: string; startedAt?: string; cliVersion?: string; modelProvider?: string; subagent?: true }
-  | { kind: 'user'; message: TranscriptMessage }
-  | { kind: 'assistant'; message: TranscriptMessage }
+  | { kind: 'user'; message: TranscriptMessage; turnId?: string }
+  | { kind: 'assistant'; message: TranscriptMessage; encoding: 'response' | 'item' | 'agent' | 'terminal'; messageId?: string; turnId?: string }
+  | { kind: 'turn_start'; turnId?: string }
   | { kind: 'tool_call'; name: string; input: unknown }
   | { kind: 'boundary' }
   | { kind: 'skip' };
@@ -146,22 +157,34 @@ export function mapCodexLine(entry: unknown): CodexLineResult {
     };
   }
   if (e.type === 'compacted') return { kind: 'boundary' };
+  const turnId = typeof payload.turn_id === 'string' ? payload.turn_id : undefined;
+  if (e.type === 'event_msg' && (payload.type === 'task_started' || payload.type === 'turn_started')) {
+    return { kind: 'turn_start', turnId };
+  }
+  if (e.type === 'event_msg' && (payload.type === 'agent_message' || payload.type === 'task_complete' || payload.type === 'turn_complete')) {
+    const terminal = payload.type !== 'agent_message';
+    const value = terminal ? payload.last_agent_message : payload.message;
+    const text = typeof value === 'string' ? value.trim() : '';
+    return text ? { kind: 'assistant', message: { role: 'assistant', timestamp: lineTs, text }, encoding: terminal ? 'terminal' : 'agent', turnId } : { kind: 'skip' };
+  }
   if (e.type === 'event_msg' && payload.type === 'user_message') {
     const text = typeof payload.message === 'string' ? payload.message.trim() : '';
-    return text ? { kind: 'user', message: { role: 'user', timestamp: lineTs, text } } : { kind: 'skip' };
+    return text ? { kind: 'user', message: { role: 'user', timestamp: lineTs, text }, turnId } : { kind: 'skip' };
   }
   if (e.type === 'event_msg' && payload.type === 'item_completed') {
-    // #5163: codex >= 0.153 records the typed turn only as an item_completed
-    // UserMessage. Every other item type is skipped: AgentMessage duplicates
-    // the response_item output_text row, command/tool items are not text.
+    // Completed text items may be the ONLY persisted copy. The shared message
+    // filter reconciles them with response_item and legacy agent_message rows.
     const item = (typeof payload.item === 'object' && payload.item !== null ? payload.item : {}) as Record<string, unknown>;
-    if (item.type !== 'UserMessage') return { kind: 'skip' };
-    const text = textFromBlocks(item.content, 'text');
-    return text ? { kind: 'user', message: { role: 'user', timestamp: lineTs, text } } : { kind: 'skip' };
+    if (item.type !== 'UserMessage' && item.type !== 'AgentMessage') return { kind: 'skip' };
+    const text = textFromBlocks(item.content, 'text', item.type === 'AgentMessage' ? 'Text' : undefined);
+    if (!text) return { kind: 'skip' };
+    return item.type === 'UserMessage'
+      ? { kind: 'user', message: { role: 'user', timestamp: lineTs, text }, turnId }
+      : { kind: 'assistant', message: { role: 'assistant', timestamp: lineTs, text }, encoding: 'item', messageId: typeof item.id === 'string' ? item.id : undefined, turnId };
   }
   if (e.type === 'response_item' && payload.type === 'message' && payload.role === 'assistant') {
     const text = textFromBlocks(payload.content, 'output_text');
-    return text ? { kind: 'assistant', message: { role: 'assistant', timestamp: lineTs, text } } : { kind: 'skip' };
+    return text ? { kind: 'assistant', message: { role: 'assistant', timestamp: lineTs, text }, encoding: 'response', messageId: typeof payload.id === 'string' ? payload.id : undefined } : { kind: 'skip' };
   }
   if (e.type === 'response_item' && (payload.type === 'custom_tool_call' || payload.type === 'function_call')) {
     const name = typeof payload.name === 'string' && payload.name ? payload.name : null;
@@ -241,6 +264,7 @@ export const codexAdapter: TranscriptAdapter = {
     let startedAt = '';
     let subagent = false;
     const messages: TranscriptMessage[] = [];
+    const messageFilter = new CodexMessageFilter();
     let rawMeta: Record<string, unknown> | undefined;
 
     for (const line of raw.split('\n')) {
@@ -271,7 +295,7 @@ export const codexAdapter: TranscriptAdapter = {
         };
         continue;
       }
-      if (mapped.kind === 'user' && isRepeatedCodexUserTurn(messages.at(-1), mapped.message.text)) continue;
+      if (!messageFilter.accept(mapped)) continue;
       if (mapped.kind === 'user' || mapped.kind === 'assistant') {
         messages.push(mapped.message);
         continue;
