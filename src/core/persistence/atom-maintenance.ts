@@ -800,9 +800,13 @@ export function managedAtomCompletedSql(page: { sourceId: string; slug: string; 
 }
 
 /** #6325: discovery and the backlog skip a page whose current content completed or is held after repeated failures. */
-export const MANAGED_ATOM_DISCOVERY_SQL = `AND NOT EXISTS (SELECT 1 FROM op_checkpoints ac
+export function managedAtomDiscoverySql(inputCapParam?: string): string {
+  return `AND NOT EXISTS (SELECT 1 FROM op_checkpoints ac
   WHERE ${managedAtomIdentitySql({ sourceId: 'p.source_id', slug: 'p.slug', pageId: 'p.id', contentHash: 'p.content_hash' })}
-    AND (ac.completed_keys->0->>'failure' IS NULL OR ac.completed_keys->0->>'held'='true'))`;
+    AND (ac.completed_keys->0->>'failure' IS NULL OR ac.completed_keys->0->>'held'='true')${inputCapParam
+      ? ` AND NOT COALESCE((ac.completed_keys->0->>'partial')::integer < ${inputCapParam}, false)` : ''})`;
+}
+export const MANAGED_ATOM_DISCOVERY_SQL = managedAtomDiscoverySql();
 
 export interface HeldManagedAtom {
   source_id: string;
