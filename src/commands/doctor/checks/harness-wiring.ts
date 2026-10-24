@@ -34,6 +34,7 @@ import { verifiedStatusMarkers } from '../../../core/serve-http-status-marker.ts
 import { agentProcessMarker } from '../../../core/interaction.ts';
 import { resolveGbrainBin } from '../../../core/gbrain-bin.ts';
 import { enabledPluginLanes } from '../../../core/bootstrap/plugin-lanes.ts';
+import { readReceipt } from '../../../core/bootstrap/format.ts';
 import { claudeConfigDir } from '../../../core/bootstrap/host-specs.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import type { Check } from '../../doctor.ts';
@@ -354,12 +355,23 @@ export async function harnessWiringCheck(opts: { smoke: boolean }): Promise<Chec
   if (regs.length === 0) {
     const detected = detectedHarnesses();
     const plugins = enabledPluginLanes('gbrain').filter((lane) => detected.includes(lane.harness));
-    const harnesses = detected.filter((h) => !plugins.some((lane) => lane.harness === h));
+    let harnesses = detected.filter((h) => !plugins.some((lane) => lane.harness === h));
     if (detected.length > 0 && harnesses.length === 0) {
       return { name: NAME, status: 'ok',
         message: `${plugins.map((p) => `${HARNESS_LABEL[p.harness]} gets gbrain from the enabled '${p.plugin}' plugin`).join('; ')}. Enabled is a config signal: doctor does not smoke-test plugin lanes, so verify by starting a new session in that app and checking that gbrain's tools (recall, remember) are listed.`,
         details: { reason: 'plugin_lane_enabled', plugins: plugins.map((p) => p.plugin), harnesses: plugins.map((p) => p.harness),
           verify: 'start a new session in the harness and list its tools; gbrain\'s recall and remember should appear' } };
+    }
+    // A config read miss is not proof of absence: the owner process may not
+    // have access to the harness's registration store. Bootstrap records MCP
+    // separately from hooks; use that evidence without claiming a live probe.
+    const recorded = readReceipt(gbrainPath())?.registrations ?? [];
+    const unverified = harnesses.filter((h) => recorded.some((r) => r.host === h && (r.detail === 'mcp' || r.detail === 'mcp+hooks')));
+    harnesses = harnesses.filter((h) => !unverified.includes(h));
+    if (unverified.length > 0 && harnesses.length === 0) {
+      return infoCheck(NAME,
+        `${unverified.map((h) => HARNESS_LABEL[h]).join(', ')} MCP registration recorded by bootstrap; not verified from this process because the harness config is unavailable. Verify in a new harness session that gbrain's memory tools are listed.`,
+        'unknown', undefined, { reason: 'registration_unverified', harnesses: unverified });
     }
     const view = brainLock();
     const lock = view.kind === 'pglite' ? view.lock : null;
