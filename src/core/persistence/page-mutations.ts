@@ -42,6 +42,7 @@ import { liveSearchable } from './searchable.ts';
 import { cachedPreadmitBrain, dropPreadmitCache, preadmitReads, preadmitRecheckFailed } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
+import { isCanonicalImageRead } from './canonical-image-input.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
   // #5994: a failed-writes replay is admitted under the original writer.
@@ -396,6 +397,12 @@ export async function preparePageAdmission(ctx: OperationContext,
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
   const configuredWriteThrough = !/^(false|0|off|no)$/i.test(writeThroughSetting ?? 'true');
   const writeThrough = configuredWriteThrough && !sandbox && !input.databaseOnly;
+  // Keep the accepted owner binding for a read of unchanged canonical image
+  // bytes. Preparation omits its file effect while the disk sink is off.
+  const canonicalImageRead = !configuredWriteThrough && !sandbox && !input.databaseOnly
+    && input.managedFileImport === true && binding?.owner_host_id === localHostId()
+    && binding.state === 'active' && !!binding.local_path
+    && isCanonicalImageRead(intent, join(binding.local_path, binding.relative_path));
   const root = source.local_path || repoPath;
   if (sandbox) authority.databaseOnlyReason = 'subagent_sandbox';
   else if (input.databaseOnly) authority.databaseOnlyReason = input.databaseOnly;
@@ -438,5 +445,6 @@ export async function preparePageAdmission(ctx: OperationContext,
   return { typeWarning, slugAdvisory, admission: { origin: ctx.admissionOrigin, principal, operation: input.operation, sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, clientRequestId: input.batch ? undefined : clientRequestIdOf(params.request_id), callerIntent, intent, authority,
     ...(input.operation === 'edit_page' ? { terminalReservation: receiptReservation({ intent, authority }, (await import('./page-edit.ts')).EDIT_PAGE_RECEIPT_RESERVE) } : {}),
-    worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null } };
+    worktreeId: writeThrough || canonicalImageRead ? binding?.worktree_id : null,
+    topologyGeneration: writeThrough || canonicalImageRead ? binding?.topology_generation : null } };
 }

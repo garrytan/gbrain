@@ -25,6 +25,7 @@ import { FRONTMATTER_HEAD_MAX_BYTES, readPageBodyPolicy, type PageBodyPolicy } f
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { getWorktreeBinding } from './ownership.ts';
+import { isCanonicalImageRead } from './canonical-image-input.ts';
 import { localHostId } from './identity.ts';
 import { sha256 } from './digest.ts';
 import { screeningPath } from './screening-paths.ts';
@@ -210,6 +211,10 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
     `Source ${row.source_id}'s canonical owner changed or went away after import request ${row.request_id} was accepted, so it published nothing. Check the owner, then import ${p.sourcePath} again on the host that owns the source.`,
     { fix: ownerStatusFix(row.source_id) });
   const root = join(binding.local_path, binding.relative_path);
+  const readOnlyImage = row.authority.databaseOnlyReason === 'disabled_by_config' && isCanonicalImageRead(p as unknown as Record<string, unknown>, root);
+  if (row.authority.databaseOnlyReason === 'disabled_by_config' && !readOnlyImage) throw opError('invalid_params',
+    'With disk write-back disabled, image import must read its existing canonical file.',
+    'Place the image in its accepted source root and import that exact path; the importer will not copy or rewrite files while disk write-back is disabled.');
   const physicalPath = p.path ?? p.sourcePath;
   if (isAbsolute(physicalPath) || physicalPath.split(/[\\/]/).some(part => part === '..') || /(^|[\\/])skills([\\/]|$)/i.test(physicalPath)) {
     throw opError('invalid_params', 'The canonical import path must be source-relative knowledge, not a skill path.',
@@ -275,7 +280,7 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
   const mutation: PreparedMutation = { observedRevision: ready.observedRevision, noop: ready.noop && p.targetHash === sha256(rendered),
     trust: await ownerImportTrust(engine, row, ready.parsedPage?.frontmatter, p.sourcePath), deferEmbedding: image || p.noEmbed, validate: async tx => { await checkPaths(tx); await ready.validate(tx); },
     ...(ready.afterCommit ? { afterCommit: ready.afterCommit } : {}),
-    file: { root, path, content: rendered, expectedBeforeHash: p.targetHash },
+    ...(readOnlyImage ? {} : { file: { root, path, content: rendered, expectedBeforeHash: p.targetHash } }),
     apply: async tx => {
       const applied = await ready.apply(tx);
       await bindOrigin(tx, { sourceId: row.source_id, slug: row.slug, sourcePath: p.sourcePath });
