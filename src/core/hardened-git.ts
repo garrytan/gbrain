@@ -19,7 +19,7 @@ import { spawn, spawnSync } from './spawn.ts';
 import { lstatSync } from 'node:fs';
 import { once } from 'node:events';
 import type { Writable } from 'node:stream';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 export const HARDENED_GIT_ARGS: readonly string[] = ['--no-pager', '--no-optional-locks', '--no-replace-objects',
   '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.untrackedCache=false',
@@ -77,7 +77,8 @@ export function assertHardenedGitArgs(args: readonly string[]): void {
 /** Runs `git -C <root> <args>` synchronously under the hardening above, within `timeoutMs` and `maxBytes` of stdout. */
 export function hardenedGitSync(root: string, args: string[], limits: { timeoutMs: number; maxBytes: number }): HardenedGitResult {
   assertHardenedGitArgs(args);
-  const run = spawnSync('git', [...HARDENED_GIT_ARGS, '-C', root, ...args],
+  // Trust only this checkout's ownership; all execution and config hardening stays in force.
+  const run = spawnSync('git', [...HARDENED_GIT_ARGS, '-c', `safe.directory=${resolve(root)}`, '-C', root, ...args],
     { env: hardenedGitEnvironment(), stdio: ['ignore', 'pipe', 'ignore'], timeout: limits.timeoutMs, maxBuffer: limits.maxBytes, killSignal: 'SIGKILL' });
   const code = (run.error as NodeJS.ErrnoException | undefined)?.code;
   if (code === 'ETIMEDOUT') return { ok: false, reason: 'timeout' };
@@ -118,7 +119,7 @@ export function hardenedGitStream(root: string, args: string[],
   const { stdin, timeoutMs, maxBytes } = opts;
   let onChunk = opts.onChunk;
   return new Promise<HardenedGitStreamResult>((accept, reject) => {
-    const child = spawn('git', [...HARDENED_GIT_ARGS, '-C', root, ...args],
+    const child = spawn('git', [...HARDENED_GIT_ARGS, '-c', `safe.directory=${resolve(root)}`, '-C', root, ...args],
       { env: hardenedGitEnvironment(), stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'] });
     let bytes = 0;
     let last = -1;
