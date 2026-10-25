@@ -831,7 +831,8 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     segmentedOwner: { kind: row.operation === 'edit_page' ? 'edit' : 'put', principalKind: row.principal_kind, principalId: row.principal_id, baseRevision: observedRevision },
     ...(lean ? { existingSnapshot: snapshot } : {}),
     // #6259: only owner-tier intents keep gate-owned markers; an ordinary put_page, local or remote, has them stripped.
-    preserveGateMarkers: !row.authority.remote && (p.kind === 'managed_maintenance_page' || p.kind === 'managed_quarantine_clear'),
+    preserveGateMarkers: !row.authority.remote && (p.kind === 'managed_maintenance_page' || p.kind === 'managed_quarantine_clear' || p.kind === 'managed_quarantine_hide'),
+    clearOwnerExclusion: !row.authority.remote && p.kind === 'managed_quarantine_clear',
     forceRechunk: row.operation === 'restore_page' || row.operation === 'revert_version',
     allowEmptyOverwrite: p.allow_empty === true || row.operation === 'restore_page' || row.operation === 'revert_version',
     source_kind: typeof p.source_kind === 'string' ? p.source_kind : null,

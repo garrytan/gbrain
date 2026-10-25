@@ -444,3 +444,5 @@ test/chat-usage-phases.serial.test.ts	global-state	global-state: process-wide te
 test/doctor-only-sync-failures-7143.serial.test.ts	global-state	global-state: spawns the real gbrain CLI against a tmpdir PGLite brain and home (doctor --only sync_failures connects the brain)
 test/decide/triage-decide-recheck-7307.serial.test.ts	global-state	global-state: process-wide test seams __setDecideTransportForTests, __resetDecideStoreForTests; configureGateway changes the process-wide AI gateway
 test/sync-pass-phase-lines-7243.serial.test.ts	global-state	global-state: process-wide test seams __resetDelegatedSyncForTests (runs a resident pass through runnerStart)
+test/owner-quarantine.serial.test.ts	global-state	global-state: isolated PGLite engine and withEnv scopes owner CLI configuration
+

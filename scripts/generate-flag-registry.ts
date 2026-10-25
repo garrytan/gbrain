@@ -63,6 +63,7 @@ const EXTRA_FLAGS: Record<string, string[]> = {
  * evidence. Their own imports are not walked. Keep commented.
  */
 const DELEGATED_MODULES: Record<string, string[]> = {
+  quarantine: ['src/commands/quarantine-hide.ts'],
   // `auth local-writer list|register|revoke` passes its argv to
   // runPersistenceAdminCli (#5595), and `auth rescope-client|rescope-token` to
   // parseRescopeGrantArgs; both parse --dry-run themselves.

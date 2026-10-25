@@ -1,3 +1,4 @@
+import { QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
 // v0.41.2.1 — extract_atoms cycle phase, post-fix-wave rebuild.
 //
 // Sequencing per cycle:
@@ -421,6 +422,7 @@ export async function discoverExtractablePages(
       AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
       AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
       ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
+      AND ${QUARANTINE_FILTER_FRAGMENT}
       AND ${minCompiledTruthChars('$3')}
       ${MANAGED_ATOM_DISCOVERY_SQL}
       ${PAGE_SCAN_STATE_EXCLUSION_SQL}
@@ -509,6 +511,7 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
+      AND ${QUARANTINE_FILTER_FRAGMENT}
            AND ${minCompiledTruthChars('$3')}
            ${managedAtomDiscoverySql('$4::integer')}
            ${pageScanStateExclusionSql('$4::integer')}
@@ -527,6 +530,7 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
+      AND ${QUARANTINE_FILTER_FRAGMENT}
            AND ${minCompiledTruthChars('$2')}
            ${managedAtomDiscoverySql('$3::integer')}
            ${pageScanStateExclusionSql('$3::integer')}

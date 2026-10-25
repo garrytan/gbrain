@@ -48,8 +48,16 @@ export const QUARANTINE_KEY = 'quarantine';
  *  JSONB `?` existence, negated so we KEEP rows WITHOUT the marker.
  *  `pageAlias` is engine-supplied (never user input), so no escaping needed. */
 export function quarantineFilterFragment(pageAlias: string): string {
-  return `NOT (COALESCE(${pageAlias}.frontmatter, '{}'::jsonb) ? '${QUARANTINE_KEY}')`;
+  const origin = `${pageAlias}_quarantine_origin`;
+  return `NOT (COALESCE(${pageAlias}.frontmatter, '{}'::jsonb) ? '${QUARANTINE_KEY}')`
+    + ` AND (${pageAlias}.type <> 'atom' OR NOT EXISTS (SELECT 1 FROM pages ${origin}`
+    + ` WHERE ${origin}.source_id = ${pageAlias}.source_id`
+    + ` AND ${origin}.slug = ${pageAlias}.frontmatter->>'source_slug'`
+    + ` AND ${origin}.deleted_at IS NULL`
+    + ` AND COALESCE(${origin}.frontmatter, '{}'::jsonb) ? '${QUARANTINE_KEY}'))`;
 }
+
+/** Atoms inherit an excluded source page without mutating either archived record. */
 
 /** The `p`-aliased instance — the common case (all 6 search call sites alias
  *  pages as `p`). Kept as a constant for parity with `EMBED_SKIP_FILTER_FRAGMENT`
@@ -64,7 +72,7 @@ export function quarantinedProvenanceFilterFragment(factAlias: string): string {
 
 export interface QuarantineMarker {
   /** Why the page was quarantined: high-confidence junk, or (#5575) instruction-like content the write gate held. */
-  reason: 'junk_pattern' | 'literal_substring' | 'instruction_like';
+  reason: 'junk_pattern' | 'literal_substring' | 'instruction_like' | 'owner_excluded';
   /** Human-readable detail (which pattern/literal names fired). */
   detail: string;
   /** ISO 8601 timestamp at assessment time. */

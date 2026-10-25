@@ -10,7 +10,7 @@
  * Chunks carry no tier: a chunk's tier is its page's tier, read through the
  * pages join every search arm already has (pageTrustFloorSql on `p`).
  */
-import { QUARANTINE_KEY } from '../quarantine.ts';
+import { quarantineFilterFragment } from '../quarantine.ts';
 import { TRUST_TIER_RANK, tiersAtOrAbove, trustRankSql, type TrustTier } from '../trust/tier.ts';
 import type { ReadEligibility } from './policy.ts';
 
@@ -30,7 +30,7 @@ export function trustFloorSql(alias: string, floor: TrustTier | undefined): stri
   return tiers.length === 6 ? 'TRUE' : `${alias}.trust_tier IN (${tierListSql(tiers)})`;
 }
 
-const quarantined = (pageAlias: string) => `(COALESCE(${pageAlias}.frontmatter, '{}'::jsonb) ? '${QUARANTINE_KEY}')`;
+const quarantined = (pageAlias: string) => `NOT (${quarantineFilterFragment(pageAlias)})`;
 
 /**
  * ENG-8: a projection of a quarantined page is hidden while the page stays

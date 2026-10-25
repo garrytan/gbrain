@@ -630,7 +630,7 @@ async function assemblePack(
         if (res.found && res.card && !acc.cards.some((c) => keyOf(c) === keyOf(res.card!))) {
           // The card's OWN source decides activation: a same-slug page in another source never gates or admits it.
           const ref = { source_id: res.card.entity.source_id, slug: res.card.entity.slug };
-          const verdict = (await pageActivationVerdicts(engine, [ref], policy)).get(pageKey(ref));
+          const verdict = (await pageActivationVerdicts(engine, [ref], policy, { includeQuarantined: opts.includeQuarantined === true })).get(pageKey(ref));
           if (verdict?.suppressed) acc.withheld++;
           // Under trust.agent_activation=allow (the default) a flagged entity page stays, labeled unconfirmed.
           else if (verdict && !verdict.belowFloor) {

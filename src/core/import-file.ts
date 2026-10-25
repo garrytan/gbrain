@@ -332,6 +332,8 @@ export async function importFromContent(
      * (`stripGateOwnedMarkers`, import-screen.ts). Local put_page does not.
      */
     preserveGateMarkers?: boolean;
+    /** Owner quarantine clear alone may remove an explicit owner exclusion. */
+    clearOwnerExclusion?: boolean;
     /**
      * Threaded to `tx.putPage` as its empty-overwrite escape hatch (the
      * engine refuses to blank a non-empty body otherwise). Only two callers
@@ -399,8 +401,11 @@ export async function importFromContent(
     },
   });
 
+  const existingSnapshot = !opts.prepare ? null : await materializedSnapshot(engine, opts.coordinated && opts.existingSnapshot !== undefined ? opts.existingSnapshot : await engine.readPageSnapshot(slug, { sourceId: sourceId ?? 'default', includeDeleted: true }));
+  const existing = opts.prepare ? existingSnapshot?.page ?? null : await materializedPage(engine, await engine.getPage(slug, { sourceId: sourceId ?? 'default', includeDeleted: true }));
+
   // Content-sanity (#1699) and write-gate (#5575) disposition before the hash (import-screen.ts).
-  const disposition = await settleContentDisposition(engine, parsed, { slug, sourceId, stripped: opts.preserveGateMarkers !== true, ...(opts.writeGate ? { writeGate: opts.writeGate } : {}) });
+  const disposition = await settleContentDisposition(engine, parsed, { slug, sourceId, stripped: opts.preserveGateMarkers !== true, storedFrontmatter: existing?.frontmatter as Record<string, unknown> | undefined, clearOwnerExclusion: opts.clearOwnerExclusion === true, ...(opts.writeGate ? { writeGate: opts.writeGate } : {}) });
   const { quarantined: pageQuarantined, flagged: pageFlagged, flagReason: pageFlagReason } = disposition;
 
   // v0.39.3.0 CV8 — DB content_hash excludes timestamp-bearing frontmatter
@@ -433,8 +438,7 @@ export async function importFromContent(
   // engine.putPage defaults to 'default' when sourceId is unset, so the read
   // mirrors that default instead of matching the slug in ANY source (the
   // unscoped-check/scoped-write bug class).
-  const existingSnapshot = !opts.prepare ? null : await materializedSnapshot(engine, opts.coordinated && opts.existingSnapshot !== undefined ? opts.existingSnapshot : await engine.readPageSnapshot(slug, { sourceId: sourceId ?? 'default', includeDeleted: true }));
-  const existing = opts.prepare ? existingSnapshot?.page ?? null : await materializedPage(engine, await engine.getPage(slug, { sourceId: sourceId ?? 'default', includeDeleted: true }));
+
   if (existing) stabilizeSafetyAssessments(parsed.frontmatter, existing.frontmatter);
 
   const collisionOwner = collidingSlugOwner(existing, slug, opts.sourceRoot, opts.sourcePath);

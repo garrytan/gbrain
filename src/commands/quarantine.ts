@@ -279,7 +279,7 @@ async function runClear(engine: BrainEngine, args: string[]): Promise<void> {
     flagReason = getContentFlag(after)?.reason;
     flagged = !!flagReason;
   } else {
-    const result = await importFromContent(engine, slug, markdown, { sourceId: page.source_id, noEmbed, forceRechunk: true, preserveGateMarkers: true });
+    const result = await importFromContent(engine, slug, markdown, { sourceId: page.source_id, noEmbed, forceRechunk: true, preserveGateMarkers: true, clearOwnerExclusion: true });
     reQuarantined = result.quarantined === true;
     flagged = result.flagged ?? false;
     flagReason = result.flag_reason;
@@ -423,12 +423,15 @@ async function runScan(engine: BrainEngine, args: string[]): Promise<void> {
   }
 }
 
-export const QUARANTINE_HELP = `Usage: gbrain quarantine <list|clear|scan|release|drop> [options]
+export const QUARANTINE_HELP = `Usage: gbrain quarantine <list|hide|clear|scan|release|drop> [options]
 
   list [--json] [--include-flagged]
       Pages the content-quality gate hid as junk (quarantine), and with
       --include-flagged the searchable pages it flagged (content_flag).
       Also lists facts and takes the write gate held for review (h<id>).
+  hide <slug> --source-id <id> --expected-revision <revision> --request-id <uuid> [--json]
+      Reversibly exclude an exact page by the owner's instruction. Keeps
+      its body, history, facts and links. Restore with quarantine clear.
   clear <slug> [--source-id <id>] [--force] [--no-embed] [--json]
       Remove the markers and write the page again; the gate re-checks it.
       --force records that the page is not junk (quarantine_override, bound
@@ -452,6 +455,8 @@ export async function runQuarantine(engine: BrainEngine, args: string[]): Promis
   const sub = args[0];
   const rest = args.slice(1);
   switch (sub) {
+    case 'hide':
+      return (await import('./quarantine-hide.ts')).runHide(engine, rest);
     case 'list':
       return runList(engine, rest);
     case 'clear':

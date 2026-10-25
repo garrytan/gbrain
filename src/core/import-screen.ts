@@ -114,6 +114,9 @@ export interface ContentDispositionContext {
   sourceId?: string;
   /** The incoming gate-owned markers were stripped (no `preserveGateMarkers`): a stored quarantine override may be carried (quarantine-override.ts). */
   stripped: boolean;
+  /** Reuse the importer existing row; never add a read to ordinary writes. */
+  storedFrontmatter?: Record<string, unknown>;
+  clearOwnerExclusion?: boolean;
   /** #5575: tier and origin of this write; absent skips the write gate. */
   writeGate?: WriteGateInput;
   /** Wave B: the whole body's bytes when `parsed` holds only its head (a streamed page). */
@@ -283,8 +286,16 @@ export async function settleContentDisposition(engine: BrainEngine, parsed: Pars
       pageFlagReason = 'instruction_like';
     }
   }
+  // Only the explicit owner clear path can release this stored decision. A
+  // sync or ordinary write may strip markers or change the body, but cannot
+  // silently reverse the owner's exclusion. Preserve it after classifier gates.
+  const ownerMarker = ctx.storedFrontmatter?.[QUARANTINE_KEY] as { reason?: unknown } | undefined;
+  if (!ctx.clearOwnerExclusion && ownerMarker?.reason === 'owner_excluded') {
+    parsed.frontmatter[QUARANTINE_KEY] = ownerMarker;
+    pageQuarantined = true;
+  }
   return {
-    quarantined: pageQuarantined, flagged: pageFlagged, ...(pageFlagReason ? { flagReason: pageFlagReason } : {}), gate,
+    quarantined: pageQuarantined || (parsed.frontmatter[QUARANTINE_KEY] != null), flagged: pageFlagged, ...(pageFlagReason ? { flagReason: pageFlagReason } : {}), gate,
     persistReceipt: async (tx, page) => {
       // A page created by this write has a fresh id, so no receipt can name it yet (#6007: no delete on create).
       if (gate?.ran && page.existed) await clearStalePageGateReceipts(tx, { slug, sourceId: sourceId ?? 'default', contentHash: gate.contentHash });

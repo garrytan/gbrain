@@ -18,7 +18,8 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Notice } from '../agent-output.ts';
 import { admitsTrust, storedTrustTier, type TrustTier } from '../trust/tier.ts';
-import { activationSuppressedSql, type EligibilityTable } from './sql.ts';
+import { activationSuppressedSql, quarantinedProjectionHiddenSql, type EligibilityTable } from './sql.ts';
+import { quarantineFilterFragment } from '../quarantine.ts';
 import type { ReadEligibility } from './policy.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
@@ -50,8 +51,9 @@ export async function activationVerdicts(engine: Exec, refs: readonly Activation
   const byTable = new Map<EligibilityTable, number[]>();
   for (const r of refs) if (Number.isFinite(r.id)) byTable.set(r.table, [...(byTable.get(r.table) ?? []), r.id]);
   for (const [table, ids] of byTable) {
+    const visible = table === 'pages' ? `a.deleted_at IS NULL AND ${quarantineFilterFragment('a')}` : quarantinedProjectionHiddenSql(table, 'a');
     const rows = await engine.executeRaw<{ id: number | string; trust_tier: string; flagged: boolean }>(
-      `SELECT a.id, a.trust_tier, ${activationSuppressedSql(table, 'a')} AS flagged FROM ${TABLE_SQL[table]} a WHERE a.id = ANY($1::bigint[])`, [[...new Set(ids)]]);
+      `SELECT a.id, a.trust_tier, ${activationSuppressedSql(table, 'a')} AS flagged FROM ${TABLE_SQL[table]} a WHERE a.id = ANY($1::bigint[]) AND ${visible}`, [[...new Set(ids)]]);
     for (const row of rows) {
       const tier = storedTrustTier(row.trust_tier);
       const flagged = row.flagged === true;
@@ -125,13 +127,13 @@ export interface PageKey { source_id: string; slug: string }
  * (retrieval reflex pointers, volunteered pages): verdicts per live page
  * key, with the label fields. Missing pages are absent (callers drop them).
  */
-export async function pageActivationVerdicts(engine: Exec, keys: readonly PageKey[], policy: ReadEligibility):
+export async function pageActivationVerdicts(engine: Exec, keys: readonly PageKey[], policy: ReadEligibility, opts: { includeQuarantined?: boolean } = {}):
   Promise<Map<string, ActivationVerdict & { origin: unknown }>> {
   const out = new Map<string, ActivationVerdict & { origin: unknown }>();
   if (keys.length === 0) return out;
   const rows = await engine.executeRaw<{ source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean }>(
     `SELECT a.source_id, a.slug, a.trust_tier, a.write_origin, ${activationSuppressedSql('pages', 'a')} AS flagged FROM pages a
-      WHERE a.deleted_at IS NULL AND (a.source_id, a.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))`,
+      WHERE a.deleted_at IS NULL AND ${opts.includeQuarantined ? 'TRUE' : quarantineFilterFragment('a')} AND (a.source_id, a.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))`,
     [keys.map(k => k.source_id), keys.map(k => k.slug)]);
   for (const row of rows) {
     const tier = storedTrustTier(row.trust_tier);
