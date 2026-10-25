@@ -2,6 +2,7 @@ import type { BrainEngine } from '../engine.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
 import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
+import { CONTEXT_NOTE_SEPARATOR, PAGE_EXTRACTION_SOURCES } from '../facts/subject-infer.ts';
 
 /**
  * Record `old -> new` in slug_aliases when a page is renamed, inside the
@@ -54,7 +55,7 @@ export async function recordSlugLineAlias(tx: Pick<BrainEngine, 'transaction'>, 
 /**
  * Move the slug-keyed rows that belong to a renamed page (#5431): facts about
  * it (`entity_slug`), facts read from its `## Facts` fence
- * (`source_markdown_slug`), its free-text search aliases (`page_aliases`), and
+ * (`source_markdown_slug`), unfenced extraction provenance (`context`), its free-text search aliases (`page_aliases`), and
  * its fact withdrawals (a forgotten claim stays forgotten). Runs inside the
  * caller's rename transaction. The new slug is free (the page UPDATE
  * succeeded), so fence rows or aliases still keyed to it belong to a purged
@@ -80,6 +81,14 @@ export async function moveSlugBindings(
        AND EXISTS (SELECT 1 FROM facts o WHERE o.source_id = $1 AND o.source_markdown_slug = $2 AND o.row_num = f.row_num)`),
     savepoint => dropRekeyDuplicates(savepoint, sourceId, { where: 'f.source_markdown_slug = $2', entity: 'f.entity_slug', sms: '$3::text', params: [oldSlug, newSlug] }),
     sql(`UPDATE facts SET source_markdown_slug = $3 WHERE source_id = $1 AND source_markdown_slug = $2`),
+    // Only active, unattached extraction rows: a fenced context is canonical page content and cannot be edited here.
+    // Move the trusted context head while the rename still proves identity; following slug_aliases during relink
+    // instead could attach an old fact to a deleted/recreated target. Keep every appended provenance note verbatim.
+    savepoint => savepoint.executeRaw(`UPDATE facts SET context = $3::text || CASE WHEN strpos(context, $4) > 0
+        THEN substring(context from strpos(context, $4)) ELSE '' END
+      WHERE source_id = $1 AND source = ANY($5::text[]) AND btrim(split_part(context, $4, 1)) = $2
+        AND entity_slug IS NULL AND source_markdown_slug IS NULL AND row_num IS NULL AND expired_at IS NULL`,
+    [sourceId, oldSlug, newSlug, CONTEXT_NOTE_SEPARATOR, [...PAGE_EXTRACTION_SOURCES]]),
     sql(`DELETE FROM page_aliases a WHERE a.source_id = $1 AND a.slug = $3
        AND EXISTS (SELECT 1 FROM page_aliases o WHERE o.source_id = $1 AND o.slug = $2 AND o.alias_norm = a.alias_norm AND o.origin = a.origin)`),
     sql(`UPDATE page_aliases SET slug = $3 WHERE source_id = $1 AND slug = $2`),

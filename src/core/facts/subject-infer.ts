@@ -57,7 +57,7 @@ export function contextHead(context: string | null | undefined): string | null {
 }
 
 /** facts.source values written by page-extraction paths, whose context head is the source page slug. */
-const PAGE_EXTRACTION_SOURCES = new Set(['mcp:put_page', 'sync:import', 'file_upload', 'code_import']);
+export const PAGE_EXTRACTION_SOURCES: ReadonlySet<string> = new Set(['mcp:put_page', 'sync:import', 'file_upload', 'code_import']);
 
 /**
  * The page a stored fact was extracted from, when its row records one: a
