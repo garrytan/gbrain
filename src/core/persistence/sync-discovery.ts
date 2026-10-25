@@ -34,6 +34,7 @@ import { holdBasisMoved, holdRescreenDue, readGitHoldRetryPaths, readGitSourceHo
 import { readBlobContents, readTreeBlobs, SYNC_READ_BOUND } from './sync-blobs.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { readOriginEvidence } from './sync-origin-evidence.ts';
+import { isSourceDbOnlySlug } from './source-storage.ts';
 import { movedDriftHolds, prescreenSyncEntries, type SyncDriftSide } from './sync-prescreen.ts';
 import { sliceEntries, type SyncSliceCursor, type SyncSliceState } from './sync-slices.ts';
 
@@ -363,6 +364,21 @@ async function dropUncommittedDeletes(gitRoot: string, tips: Array<string | null
   return kept;
 }
 
+/** #7324: untracking a declared db_only origin is not withdrawal of its database copy. */
+async function dropDatabaseOnlyDeletes(engine: BrainEngine, scope: { sourceId: string; root: string; gitRoot: string; target: string },
+  entries: Map<string, SyncEntry>, renamed: ReadonlySet<string>): Promise<void> {
+  const deletes = [...entries].filter(([path, entry]) => entry.action === 'delete' && !renamed.has(path));
+  if (!deletes.length) return;
+  const pages = await engine.executeRaw<{ slug: string; source_path: string }>(
+    'SELECT slug,source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path=ANY($2::text[])',
+    [scope.sourceId, deletes.map(([, entry]) => entry.sourcePath)]);
+  const databaseOnly = new Set(pages.filter(page => isSourceDbOnlySlug(scope.root, page.slug, 'refuse')).map(page => page.source_path));
+  const protectedDeletes = deletes.filter(([, entry]) => databaseOnly.has(entry.sourcePath));
+  const tracked = readTreeBlobs(scope.gitRoot, scope.target, protectedDeletes.map(([path]) => path));
+  // A still-tracked target, such as a working-tree deletion, keeps normal safety.
+  for (const [path] of protectedDeletes) if (!tracked.has(path)) entries.delete(path);
+}
+
 export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, context?: ManagedSyncContext,
   stage?: { target: string; head: string; slice?: Pick<SyncSliceCursor, 'phase' | 'after'> }, walk = false): Promise<SyncDiscovery> {
   const { binding, root, gitRoot, sourceId, incarnation, source } = context ?? await resolveManagedSyncContext(engine, opts);
@@ -501,6 +517,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     }
   }
   const uncommittedKept = company ? undefined : await dropUncommittedDeletes(gitRoot, [target, source.last_commit], unproven, entries);
+  if (!company) await dropDatabaseOnlyDeletes(engine, { sourceId, root, gitRoot, target }, entries, new Set([...renamedFrom.values()].map(rename => rename.from)));
   if (company) {
     entries.clear();
     renamedFrom.clear();

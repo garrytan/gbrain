@@ -25,6 +25,7 @@ import { resolveSlugRootMode } from '../sync-anchor.ts';
 import { resolveSlugForPath } from '../sync.ts';
 import { join } from 'node:path';
 import { isKeepDbSlug, loadStorageConfig } from '../storage-config.ts';
+import { isSourceDbOnlySlug } from './source-storage.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { currentCompanyBrainSync, getCompanyBrainProfile } from '../company-brain/profile.ts';
 import { sha256 } from './digest.ts';
@@ -799,6 +800,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
         : input.full === true && live,
       fullObligation: input.pass ? !!input.pass.episodeFullId : input.full === true,
       keepDb: !mirror && keepDbPrefixes.length > 0 && row && isKeepDbSlug(pages.slug[at!]!, keepDbPrefixes),
+      databaseOnly: committed === null && live && isSourceDbOnlySlug(root, pages.slug[at!]!, 'refuse'),
       openWork: row && open.pageIds.has(Number(pages.id[at!])) || open.origins.has(origin),
     };
     return { state, ...(row ? { at } : {}), ...(legacyPageless ? { legacyPageless } : {}) };
@@ -817,7 +819,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
     }).then(found => { timings.legacy = t(); return found; })
     : new Map<string, string>();
 
-  const classifiedKey = JSON.stringify([treeKey, mode, input.pass?.episodeFullId ?? null, input.full === true, mirror, keepDbPrefixes, pack?.identity ?? null, baselineCommit, !!input.pass?.bootstrap, [...colonRefused].sort()]);
+  const classifiedKey = JSON.stringify([treeKey, mode, input.pass?.episodeFullId ?? null, input.full === true, mirror, keepDbPrefixes, loadStorageConfig(root)?.db_only, pack?.identity ?? null, baselineCommit, !!input.pass?.bootstrap, [...colonRefused].sort()]);
   const reuse = snapshot.changed && priorClassified?.key === classifiedKey ? reusableMatched(priorClassified.paths, matchedUnchanged({ pages, tree, byOrigin, claimants, holds: holdByGitPath, markers, open,
     changed: confirmChangedPaths(pages, snapshot.changed, (sourcePath, slug) => gitPathOf(pageOrigin(sourcePath, slug))), indexDelta, spelled: path => twins.has(path) || legacySpelling.has(path), originOf })) : null;
   // A round that reuses nothing lets the previous round's paths go before it builds its own: one level held, not two.
