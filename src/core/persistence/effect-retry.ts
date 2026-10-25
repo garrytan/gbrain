@@ -64,7 +64,7 @@ export function refusalEnvelope(error: OperationError): { code: string; message:
   return { code: error.code, message: error.message, ...(error.suggestion ? { suggestion: error.suggestion } : {}), ...(error.fix ? { fix: error.fix } : {}) };
 }
 
-/** #6697: the stored authority's refusal, or null while the original writer may still act. */
+/** #6697 / #7110: the stored authority's grant or visibility refusal, or null while it may still act. */
 async function storedAuthorityRefusal(tx: BrainEngine, request: WriteRequest, sourceId: string): Promise<OperationError | null> {
   try {
     await authorizeStoredRequest(tx, request, true);
@@ -73,7 +73,11 @@ async function storedAuthorityRefusal(tx: BrainEngine, request: WriteRequest, so
     await authorizeWrite(tx, authority, request.operation, request.slug, true);
     return null;
   } catch (error) {
-    if (error instanceof OperationError && error.code === 'permission_denied') return error;
+    // Visibility deliberately uses page_not_found rather than disclosing a
+    // private page to the original writer. It is still a request-local loss
+    // of authority: report it through the same reviewed owner-Git recovery,
+    // never retry it automatically or turn unrelated failures into approval.
+    if (error instanceof OperationError && ['permission_denied', 'page_not_found'].includes(error.code)) return error;
     throw error;
   }
 }

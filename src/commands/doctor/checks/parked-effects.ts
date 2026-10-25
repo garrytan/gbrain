@@ -25,13 +25,13 @@ const reclaimNote = (reclaims: NonNullable<ReturnType<typeof recentIndexLockRecl
   ` The canonical writer reclaimed ${reclaims.last_7_days} abandoned Git index lock(s) in the last 7 days (latest ${reclaims.latest.at} in ${reclaims.latest.checkout}); `
   + `each was left by a git process that was killed before it could remove its lock. Receipts: ${reclaims.receipts}.`;
 
-/** #6697: the stored authority's refusal message, or null while the original writer may still act. */
+/** #6697 / #7110: grant revocation and lost visibility both require reviewed owner-Git recovery. */
 async function revokedAuthority(engine: BrainEngine, request: WriteRequest): Promise<string | null> {
   try {
     await authorizeStoredRequest(engine, request);
     return null;
   } catch (error) {
-    if (error instanceof OperationError) return error.code === 'permission_denied' ? error.message : null;
+    if (error instanceof OperationError) return ['permission_denied', 'page_not_found'].includes(error.code) ? error.message : null;
     throw error;
   }
 }
