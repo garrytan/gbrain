@@ -34,7 +34,7 @@ import { writeCliError } from '../cli/cli-error.ts';
 export const TRUST_OWNER_USAGE = [
   'Usage: gbrain trust <review|confirm|release|drop|revert|explain|allow|disable|backfill|scan> [options]',
   '  review [--from <source>] [--kind <kind>] [--since <7d|date>] [--json]',
-  '      Everything waiting for you: trust proposals (tp<id>), pages an agent edit lowered, unconfirmed standing',
+  '      Everything waiting for you: trust proposals (tp<id>), lowered or instruction-flagged pages, unconfirmed standing',
   '      preferences (f<id>), held writes (h<id>) and your allow rules (a<id>), grouped by day and page, each with',
   '      its exact commands.',
   '  review --accept-all (--from <source> | --kind <kind> | --since <when>)...',
