@@ -108,6 +108,15 @@ rendered file).
 Run `gbrain bootstrap interview --init` first if the bank does not exist yet
 (a workspace that never ran bootstrap); it prints the full question list.
 
+## Hermes Agent
+
+Only when your system prompt identifies you as Hermes Agent (Nous Research):
+Hermes loads its identity from `$HERMES_HOME/SOUL.md` and nothing from a
+bootstrap workspace, so a render alone changes nothing it reads. Read
+[references/hermes.md](references/hermes.md) and follow it for where the bank
+lives, how to render, and how to apply the rendered files to `SOUL.md`. Every
+other agent: this section does not apply to you.
+
 ## Output Format
 
 Report exactly what changed: which keys were updated, which files re-rendered,
