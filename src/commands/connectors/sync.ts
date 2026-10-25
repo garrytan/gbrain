@@ -6,6 +6,7 @@
  * on PGLite (no worker daemon) it falls back to inline with a note.
  */
 
+import { reviewCommand } from '../../core/connectors/review.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import { setCliExitVerdict } from '../../core/cli-force-exit.ts';
 import { createProgress } from '../../core/progress.ts';
@@ -29,6 +30,7 @@ interface SyncFlags {
   background: boolean;
   json: boolean;
   all: boolean;
+  reviewArgv?: string[];
 }
 
 function parseFlags(args: string[]): { provider: string; providerIndex: number; flags: SyncFlags } {
@@ -37,7 +39,8 @@ function parseFlags(args: string[]): { provider: string; providerIndex: number; 
   let providerIndex = -1;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === '--all') flags.all = true;
+    if (a === '--review-command') flags.reviewArgv = reviewCommand(args[++i] ?? '');
+    else if (a === '--all') flags.all = true;
     else if (a === '--full') flags.full = true;
     else if (a === '--dry-run') flags.dryRun = true;
     else if (a === '--embed') flags.embed = true;
@@ -52,7 +55,7 @@ function parseFlags(args: string[]): { provider: string; providerIndex: number; 
   return { provider, providerIndex, flags };
 }
 
-const SYNC_USAGE = 'gbrain connectors sync <chatgpt|claude>|--all [--full] [--dry-run] [--limit N] [--window-days N] [--source id] [--embed] [--background] [--json]';
+const SYNC_USAGE = 'gbrain connectors sync <chatgpt|claude>|--all [--full] [--dry-run] [--limit N] [--window-days N] [--source id] [--embed] [--background] [--review-command JSON_ARGV] [--json]';
 
 /** Agent contract v1: usage errors are `invalid_params` (exit 2, one `--json` envelope) naming the usage and the fix. */
 function syncUsageError(message: string, fix: { argv: string[]; inputs: Array<{ name: string; how: string }> }) {
@@ -101,6 +104,7 @@ export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): 
   const results: ConnectorSyncResult[] = [];
 
   for (const p of providers) {
+    if (flags.reviewArgv && flags.background) throw new Error('connector_review_requires_inline');
     if (flags.background && !flags.dryRun) {
       const submitted = await submitBackground(engine, p, sourceId, flags);
       if (submitted) continue; // job queued (Postgres); else fell through to inline
@@ -110,6 +114,7 @@ export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): 
     try {
       const r = await runConnectorSync(engine, {
         provider: p,
+        reviewArgv: flags.reviewArgv,
         sourceId,
         full: flags.full,
         dryRun: flags.dryRun,

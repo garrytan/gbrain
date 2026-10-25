@@ -32,6 +32,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { reviewConnectorBatch, reviewCommand } from './review.ts';
 import { runTranscriptsIngest } from '../transcripts/ingest.ts';
 import type { TranscriptsIngestResult } from '../transcripts/ingest.ts';
 import { submitEmbedBackfill } from '../embed-backfill-submit.ts';
@@ -85,6 +86,9 @@ export type EmbedKickoffOutcome =
 
 export interface ConnectorSyncResult {
   status: ConnectorSyncStatus;
+  reviewHeld?: string[];
+  reviewNoise?: number;
+  reviewKept?: number;
   provider: ConnectorProviderName;
   listed: number;
   fetched: number;
@@ -169,6 +173,8 @@ export interface ConnectorSyncDeps {
 
 export interface ConnectorSyncOpts {
   provider: ConnectorProviderName;
+  /** Host-owned argv; Jev runs before transcript publication. */
+  reviewArgv?: string[];
   /** Target source; default 'default'. */
   sourceId?: string;
   /** Ignore the watermark (first backfill / repair). */
@@ -222,6 +228,12 @@ export async function runConnectorSync(
   engine: BrainEngine,
   opts: ConnectorSyncOpts,
 ): Promise<ConnectorSyncResult> {
+  const configuredReview = reviewCommand(await engine.getConfig('connectors.review.command') ?? undefined);
+  if (await engine.getConfig('connectors.review.required') === 'true' && !configuredReview)
+    throw new Error('connector_review_required');
+  if (configuredReview && opts.reviewArgv && JSON.stringify(configuredReview) !== JSON.stringify(opts.reviewArgv))
+    throw new Error('connector_review_command_mismatch');
+  opts = { ...opts, reviewArgv: configuredReview ?? opts.reviewArgv };
   const deps = opts.deps ?? {};
   const now = deps.now ?? Date.now;
   const runIngest = deps.runIngest ?? runTranscriptsIngest;
@@ -243,6 +255,7 @@ export async function runConnectorSync(
     gone: [],
     spoolPaths: [],
     embedKickoff: 'none',
+    ...(opts.reviewArgv ? { reviewHeld: [], reviewNoise: 0, reviewKept: 0 } : {}),
   };
 
   if (!provider) {
@@ -348,6 +361,8 @@ export async function runConnectorSync(
   let aborted = false;
   let consecutiveFetchFailures = 0;
 
+  const reviewHeld = new Set<string>();
+  let reviewNoise = 0, reviewKept = 0;
   const spoolFormat = provider.spoolFormat; // capture: nested closures lose narrowing
   const batches = chunk(toFetch, CONNECTOR_SPOOL_BATCH);
   for (let bi = 0; bi < batches.length && !aborted && !base.stopReason; bi++) {
@@ -403,9 +418,26 @@ export async function runConnectorSync(
       const stamp = `${new Date(now()).toISOString().replace(/[:.]/g, '-')}-b${bi}`;
       const spoolPath = writeSpool(opts.provider, convs, stamp);
       spoolPaths.push(spoolPath);
+      let ingestPath = spoolPath;
       try {
-        const r: TranscriptsIngestResult = await runIngest(engine, {
-          paths: [spoolPath],
+        let keepIds: Set<string> | undefined;
+        if (opts.reviewArgv) {
+          const verdicts = await reviewConnectorBatch(spoolPath, opts.provider, sourceId, opts.reviewArgv);
+          keepIds = new Set<string>();
+          for (const stub of convStubs) {
+            const verdict = verdicts.get(stub.id) ?? 'unsure';
+            if (verdict === 'keep') { keepIds.add(stub.id); reviewKept++; }
+            else if (verdict === 'noise') reviewNoise++;
+            else { reviewHeld.add(stub.id); if (!retryIds.has(stub.id)) blockingFailures++; }
+          }
+          const keep = convs.filter((_, i) => keepIds!.has(convStubs[i].id));
+          if (keep.length) ingestPath = writeSpool(opts.provider, keep, stamp + '-reviewed');
+        }
+        const r: TranscriptsIngestResult = keepIds?.size === 0 ? {
+          pages: { imported: 0, skipped: 0, errored: 0 }, redactions: 0, partsDeleted: 0,
+          cleanScan: true, driftFiles: 0, files: [],
+        } as unknown as TranscriptsIngestResult : await runIngest(engine, {
+          paths: [ingestPath],
           sourceId,
           format: spoolFormat,
           embed: opts.embed ?? false,
@@ -422,6 +454,12 @@ export async function runConnectorSync(
         const fileFailed = r.files.some(f => f.error || f.drift || f.truncated || f.skippedLines > 0);
         const sessions = new Map(r.files.flatMap(f => f.sessions).map(s => [s.sessionId, s]));
         for (const stub of convStubs) {
+          if (reviewHeld.has(stub.id)) continue;
+          if (keepIds && !keepIds.has(stub.id)) {
+            if (stub.updatedAt) synced[stub.id] = stub.updatedAt;
+            delete failed[stub.id];
+            continue;
+          }
           const session = sessions.get(stub.id);
           if (fileFailed || session?.error) {
             const attempts = recordFailure(stub, session?.code ?? null);
@@ -441,11 +479,13 @@ export async function runConnectorSync(
         if (r.driftFiles > 0) anyDrift = true;
         opts.onProgress?.({ phase: 'ingest', listed: stubs.length, fetched, imported: importedTotal });
       } finally {
+        if (ingestPath !== spoolPath) removeSpool(ingestPath);
         removeSpool(spoolPath); // §3A: unredacted spool never lingers
       }
     }
   }
 
+  if (opts.reviewArgv) { base.reviewHeld = [...reviewHeld]; base.reviewNoise = reviewNoise; base.reviewKept = reviewKept; }
   base.fetched = fetched;
   base.fetchErrors = fetchErrors;
   base.spoolPaths = spoolPaths;
@@ -461,7 +501,7 @@ export async function runConnectorSync(
 
   base.quarantined = quarantined;
   // Quarantined conversations no longer hold the watermark back.
-  const clean = !listErrored && blockingFailures === 0 && !capped && !opts.signal?.aborted && !base.stopReason;
+  const clean = !listErrored && reviewHeld.size === 0 && blockingFailures === 0 && !capped && !opts.signal?.aborted && !base.stopReason;
 
   // Advance the watermark ONLY on a clean run.
   if (clean && maxUpdatedAt && maxUpdatedAt !== watermark) {
@@ -501,7 +541,7 @@ export async function runConnectorSync(
   base.unresolved = Object.keys(failed).length;
   base.hint = unresolvedHint(base, opts.provider, sourceId) ?? base.hint;
   base.status =
-    fetchErrors > 0 || capped || !allBatchesClean || listErrored || aborted || base.stopReason || base.unresolved > 0 || base.pending.length > 0
+    reviewHeld.size > 0 || fetchErrors > 0 || capped || !allBatchesClean || listErrored || aborted || base.stopReason || base.unresolved > 0 || base.pending.length > 0
       ? 'partial'
       : importedTotal === 0
         ? 'nothing_new'
