@@ -20,7 +20,7 @@
 //      For T3/T4: deterministic stub narrative.
 //   6. Write concept-typed pages with the synthesis mode made explicit.
 
-import type { BrainEngine, LinkBatchInput } from '../engine.ts';
+import type { BrainEngine } from '../engine.ts';
 import { resolveModel } from '../model-config.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { ProgressReporter } from '../progress.ts';
@@ -46,6 +46,8 @@ import { derivedWriteThrough, reportFileHolds } from './derived-write-through.ts
 import { addSpellingRedirects, canonicalConceptStem, loadConceptRedirects, loadLiveConceptStems } from './concept-redirects.ts';
 import {
   replaceConceptProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, conceptPublicationHold, publishClassicConcept, publishManagedConcept, stripFenceSections,
+  conceptProvenanceLinks, repairConceptProvenance,
+
 } from './concept-publication.ts';
 import { readPhaseConfigNumber, SYNTHESIZE_CONCEPTS_BUDGET_KEY, SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD } from './phase-config-values.ts';
 import { ConceptRetryBound, MAX_CONCEPT_ATTEMPTS } from './concept-retry-bound.ts';
@@ -280,6 +282,8 @@ export async function runPhaseSynthesizeConcepts(
   // rollup halt_delta / round_completed_delta), which a missing edge is not —
   // the narrative was synthesized and persisted as-is. Warn-only.
   const linkWarnings: Array<{ concept: string; warning: string }> = [];
+  let provenanceRepaired = 0;
+  let provenanceLinksAdded = 0;
   // #3044 adoption: shared halt policy — auth/billing halt on the first
   // hit, a rate_limit streak halts after 3 consecutive failures, a
   // successful chat call resets the streak.
@@ -316,12 +320,7 @@ export async function runPhaseSynthesizeConcepts(
   // Honour the documented per-task routing. Without an explicit model this
   // call inherits models.chat, so models.dream.synthesize (advertised in the
   // routing table as tier.reasoning) had no effect on this path.
-  const synthModel = await resolveModel(engine, {
-    configKey: 'models.dream.synthesize',
-    tier: 'reasoning',
-    fallback: 'sonnet',
-  });
-  const synthMaxOutputTokens = resolveSynthMaxOutputTokens(synthModel);
+  const { model: synthModel, maxOutputTokens: synthMaxOutputTokens } = await resolveConceptModel(engine);
   // #5484: a managed brain refuses the legacy importFromContent writer. Claim
   // maintenance authority before any model spend so a missing canonical owner
   // fails fast; null on an unmanaged brain.
@@ -371,6 +370,22 @@ export async function runPhaseSynthesizeConcepts(
     const priorMode = existing?.frontmatter?.synthesis_mode;
     const realNarrative = priorMode === 'llm' || priorMode === 'deterministic_tier';
     if (existing?.frontmatter?.member_hash === memberHash && realNarrative) {
+      if (!opts.dryRun) {
+        // An earlier publication may have committed its narrative and stopped
+        // before its edges. Reuse the narrative, but finish that source-bound
+        // graph work before calling the cached concept complete.
+        if (await driftSkips.skip(conceptSlug, existingSnapshot)) continue;
+        try {
+          const repaired = await repairConceptProvenance(engine, opts.sourceId ?? 'default', conceptSlug, group.atomSlugs, !!maintenance, existingSnapshot!.revision);
+          provenanceLinksAdded += repaired.added;
+          if (!repaired.complete) linkWarnings.push({ concept: group.conceptSlug, warning: 'unchanged concept provenance remains incomplete' });
+          else if (repaired.added > 0) provenanceRepaired++;
+        } catch (err) {
+          // Never serialize arbitrary storage-error prose into phase output.
+          if ((err as { code?: unknown }).code === 'revision_conflict') publicationDeferred.push({ concept: group.conceptSlug, reason: 'revision_conflict' });
+          else linkWarnings.push({ concept: group.conceptSlug, warning: 'unchanged concept provenance repair failed' });
+        }
+      }
       skippedUnchanged.push(conceptSlug);
       continue;
     }
@@ -379,6 +394,22 @@ export async function runPhaseSynthesizeConcepts(
     const priorVisibility: Visibility = existing?.frontmatter?.visibility === 'private' ? 'private' : 'world';
     if (hashModel === '' && priorMode === 'deterministic_tier' && strictestVisibility([group.visibility, priorVisibility]) === priorVisibility
       && stripFenceSections(existing!.compiled_truth).trim() === deterministicNarrative(group).trim()) {
+      if (!opts.dryRun) {
+        // An earlier publication may have committed its narrative and stopped
+        // before its edges. Reuse the narrative, but finish that source-bound
+        // graph work before calling the cached concept complete.
+        if (await driftSkips.skip(conceptSlug, existingSnapshot)) continue;
+        try {
+          const repaired = await repairConceptProvenance(engine, opts.sourceId ?? 'default', conceptSlug, group.atomSlugs, !!maintenance, existingSnapshot!.revision);
+          provenanceLinksAdded += repaired.added;
+          if (!repaired.complete) linkWarnings.push({ concept: group.conceptSlug, warning: 'unchanged concept provenance remains incomplete' });
+          else if (repaired.added > 0) provenanceRepaired++;
+        } catch (err) {
+          // Never serialize arbitrary storage-error prose into phase output.
+          if ((err as { code?: unknown }).code === 'revision_conflict') publicationDeferred.push({ concept: group.conceptSlug, reason: 'revision_conflict' });
+          else linkWarnings.push({ concept: group.conceptSlug, warning: 'unchanged concept provenance repair failed' });
+        }
+      }
       skippedUnchanged.push(conceptSlug);
       continue;
     }
@@ -545,10 +576,7 @@ export async function runPhaseSynthesizeConcepts(
       // ON CONFLICT DO NOTHING makes re-runs idempotent, so a failure here is
       // best-effort: recorded as a warn, the page write stands. Mirrors #3961.
       const src = opts.sourceId ?? 'default';
-      const provenanceLinks: LinkBatchInput[] = [...new Set(group.atomSlugs)].flatMap((atomSlug) => [
-        { from_slug: conceptSlug, to_slug: atomSlug, link_type: 'synthesized_from', link_source: 'concept-provenance', context: 'member atom', from_source_id: src, to_source_id: src },
-        { from_slug: atomSlug, to_slug: conceptSlug, link_type: 'synthesizes', link_source: 'concept-provenance', context: 'concept synthesized from this atom', from_source_id: src, to_source_id: src },
-      ]);
+      const provenanceLinks = conceptProvenanceLinks(src, conceptSlug, group.atomSlugs);
       try {
         const written = await replaceConceptProvenanceLinks(engine, src, conceptSlug, provenanceLinks, { expectedRevision: maintenance ? conceptRevision : null, managed: !!maintenance });
         // Zero rows back with edges requested means every member atom fell
@@ -598,26 +626,10 @@ export async function runPhaseSynthesizeConcepts(
   // Managed brains skip the receipt page (a legacy putPage), like extract_atoms;
   // the rollup row below still records the run for doctor.
   if (!opts.dryRun && !maintenance && conceptsWritten > 0) {
-    const runId = `concepts-${Date.now().toString(36)}`;
-    try {
-      await writeReceipt(engine, {
-        kind: 'concepts',
-        source_id: opts.sourceId ?? 'default',
-        run_id: runId,
-        round: 'single',
-        extracted_at: new Date().toISOString(),
-        total_rows: conceptsWritten,
-        cost_usd: estimatedSpendUsd,
-        summary:
-          `Synthesized ${conceptsWritten} concepts ` +
-          `(T1=${tierCounts.T1} T2=${tierCounts.T2} T3=${tierCounts.T3}) ` +
-          `(llm=${synthesisModeCounts.llm} deterministic=${synthesisModeCounts.deterministic_tier} ` +
-          `budget_fallback=${synthesisModeCounts.budget_fallback} error_fallback=${synthesisModeCounts.error_fallback}) ` +
-          `from ${atomGroups.length} groups across ${atoms.length} atoms.`,
-      });
-    } catch (err) {
-      console.error(`[synthesize_concepts] receipt write failed: ${(err as Error).message}`);
-    }
+    await recordConceptReceipt(engine, {
+      sourceId: opts.sourceId ?? 'default', conceptsWritten, estimatedSpendUsd,
+      tierCounts, synthesisModeCounts, groups: atomGroups.length, atoms: atoms.length,
+    });
   }
   if (!opts.dryRun) {
     await upsertExtractRollup(engine, {
@@ -649,6 +661,10 @@ export async function runPhaseSynthesizeConcepts(
       (skippedFileDrift.length > 0 ? ` (${skippedFileDrift.length} skipped before synthesis: canonical file differs from the database; ${driftActions.join('; ')})` : ''),
     details: {
       concepts_written: conceptsWritten,
+      unchanged_concepts: skippedUnchanged.length,
+      provenance_repaired: provenanceRepaired,
+      provenance_links_added: provenanceLinksAdded,
+
       tier_counts: tierCounts,
       synthesis_mode_counts: synthesisModeCounts,
       groups_found: atomGroups.length,
@@ -674,6 +690,35 @@ export async function runPhaseSynthesizeConcepts(
       dry_run: opts.dryRun ?? false,
     },
   }, conceptFiles?.held, 'concept');
+}
+
+
+/** Resolve the documented task model and its shared thinking-token cap. */
+async function resolveConceptModel(engine: BrainEngine): Promise<{ model: string; maxOutputTokens: number }> {
+  const model = await resolveModel(engine, { configKey: 'models.dream.synthesize', tier: 'reasoning', fallback: 'sonnet' });
+  return { model, maxOutputTokens: resolveSynthMaxOutputTokens(model) };
+}
+
+/** Best-effort receipt for a completed unmanaged synthesis batch. */
+async function recordConceptReceipt(engine: BrainEngine, data: {
+  sourceId: string; conceptsWritten: number; estimatedSpendUsd: number;
+  tierCounts: Record<string, number>; synthesisModeCounts: Record<ConceptSynthesisMode, number>;
+  groups: number; atoms: number;
+}): Promise<void> {
+  try {
+    await writeReceipt(engine, {
+      kind: 'concepts', source_id: data.sourceId, run_id: `concepts-${Date.now().toString(36)}`,
+      round: 'single', extracted_at: new Date().toISOString(),
+      total_rows: data.conceptsWritten, cost_usd: data.estimatedSpendUsd,
+      summary: `Synthesized ${data.conceptsWritten} concepts ` +
+        `(T1=${data.tierCounts.T1} T2=${data.tierCounts.T2} T3=${data.tierCounts.T3}) ` +
+        `(llm=${data.synthesisModeCounts.llm} deterministic=${data.synthesisModeCounts.deterministic_tier} ` +
+        `budget_fallback=${data.synthesisModeCounts.budget_fallback} error_fallback=${data.synthesisModeCounts.error_fallback}) ` +
+        `from ${data.groups} groups across ${data.atoms} atoms.`,
+    });
+  } catch (err) {
+    console.error(`[synthesize_concepts] receipt write failed: ${(err as Error).message}`);
+  }
 }
 
 /**

@@ -268,3 +268,34 @@ export async function publishClassicConcept(engine: BrainEngine, slug: string, s
     await lock.release();
   }
 }
+
+export function conceptProvenanceLinks(sourceId: string, conceptSlug: string, members: readonly string[]): LinkBatchInput[] {
+  return [...new Set(members)].flatMap(atomSlug => [
+    { from_slug: conceptSlug, to_slug: atomSlug, link_type: 'synthesized_from', link_source: 'concept-provenance', context: 'member atom', from_source_id: sourceId, to_source_id: sourceId },
+    { from_slug: atomSlug, to_slug: conceptSlug, link_type: 'synthesizes', link_source: 'concept-provenance', context: 'concept synthesized from this atom', from_source_id: sourceId, to_source_id: sourceId },
+  ]);
+}
+
+/** Complete a cached generation with the native revision-fenced provenance writer. */
+export async function repairConceptProvenance(engine: BrainEngine, sourceId: string, conceptSlug: string,
+  members: readonly string[], managed: boolean, expectedRevision: string): Promise<{ added: number; complete: boolean }> {
+  const links = conceptProvenanceLinks(sourceId, conceptSlug, members);
+  const key = (l: Pick<LinkBatchInput, 'from_source_id' | 'from_slug' | 'to_source_id' | 'to_slug' | 'link_type'>) =>
+    JSON.stringify([l.from_source_id, l.from_slug, l.to_source_id, l.to_slug, l.link_type]);
+  const complete = async () => {
+    const rows = (await Promise.all([engine.getLinks(conceptSlug, { sourceId }), engine.getBacklinks(conceptSlug, { sourceId })])).flat();
+    const banked = new Set(rows.filter(l => l.link_source === 'concept-provenance').map(key));
+    return links.every(l => banked.has(key(l)));
+  };
+  if (await complete()) return { added: 0, complete: true };
+  const lock = await acquirePageLock(conceptSlug, { timeoutMs: 5_000 });
+  if (!lock) throw Object.assign(new Error('The concept is locked by another writer.'), { code: 'revision_conflict' });
+  try {
+    const resolved = await derivedFileTarget(engine, conceptSlug, sourceId);
+    if (resolved.ok && !(await replaceableFile(engine, sourceId, conceptSlug, resolved.target.filePath)).ok)
+      throw Object.assign(new Error('The concept file differs from its indexed generation.'), { code: 'revision_conflict' });
+    const result = await replaceConceptProvenanceLinks(engine, sourceId, conceptSlug, links, { expectedRevision, managed });
+    if (result === 'moved') throw Object.assign(new Error('The cached concept changed.'), { code: 'revision_conflict' });
+    return { added: result.inserted, complete: await complete() };
+  } finally { await lock.release(); }
+}
