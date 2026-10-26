@@ -257,6 +257,21 @@ async function ownedBinding(engine: BrainEngine, sourceId: string): Promise<Work
 /** The verb. `params` are the raw admin params; the caller has already checked the key set. */
 export async function runGitDurabilityAdministration(engine: BrainEngine, params: Record<string, unknown>): Promise<Record<string, unknown>> {
   const input = parseGitDurabilityParams(params);
+  // Refuse missing/stale approval before reading a token or touching the checkout.
+  const expectedState = await requireWriterAdminIntent(engine, 'writer_git_durability', params);
+  if (input.dryRun) return gitDurabilityAdministration(engine, input);
+  return engine.transaction(async tx => {
+    await tx.executeRaw("SELECT set_config('lock_timeout','2000ms',true),set_config('synchronous_commit','on',true)");
+    // Keep topology stable through credential wiring, parked-push retries and the
+    // instruction-file rewrite, not just the final binding UPDATE. In particular,
+    // a change between preflight and transaction entry must leave no side effects.
+    await assertWriterAdminState(tx, expectedState);
+    return gitDurabilityAdministration(tx, input);
+  });
+}
+
+/** Preview uses the engine directly; apply uses the topology-locked transaction. */
+async function gitDurabilityAdministration(engine: BrainEngine, input: GitDurabilityInput): Promise<Record<string, unknown>> {
   const binding = await ownedBinding(engine, input.sourceId);
   const root = binding.local_path;
   const token = input.patFile === undefined ? undefined : readPatFile(input.patFile);
@@ -295,7 +310,7 @@ export async function runGitDurabilityAdministration(engine: BrainEngine, params
   // on this managed root it is replaced with the managed variant (a non-page file: the operator commits it).
   if (checkout) {
     const agents = patchManagedDurabilityBlock(root, input.sourceId, input.dryRun);
-    report.agents = { ...agents, ...(agents.status === 'fixed' && !input.dryRun ? { commit: 'The durability block is a non-page file: review it and commit it with plain git; it rides the owner\'s next push.' } : {}) };
+    report.agents = { ...agents, ...(agents.status === 'fixed' && !input.dryRun ? { commit: 'The durability block is a non-page file: review it and publish it with gbrain git commit-push -- <paths>.' } : {}) };
   }
   if (input.dryRun) {
     const state = await writerAdminState(engine);
@@ -306,16 +321,11 @@ export async function runGitDurabilityAdministration(engine: BrainEngine, params
         consent: token ? ['credentials'] : [], actor: 'agent', requires_exclusive: false, why: 'Applies the previewed Git durability change on the owner host.',
         verify: { argv: ['gbrain', 'sources', 'writer', 'status', input.sourceId, '--json'] } } };
   }
-  const expectedState = await requireWriterAdminIntent(engine, 'writer_git_durability', params);
-  const queued = await engine.transaction(async tx => {
-    await tx.executeRaw("SELECT set_config('lock_timeout','2000ms',true),set_config('synchronous_commit','on',true)");
-    await assertWriterAdminState(tx, expectedState);
-    const [updated] = await tx.executeRaw<{ git_durability: GitDurabilitySetting }>(`UPDATE persistence_host_bindings SET git_durability=$3
-      WHERE worktree_id=$1::uuid AND host_id=$2::uuid RETURNING git_durability`, [binding.worktree_id, binding.owner_host_id, target]);
-    if (!updated) throw opError('source_changed', 'The host binding disappeared while the setting was being recorded.',
-      `Source ${input.sourceId}'s host binding was removed by another topology change, so nothing was recorded. Inspect writer status before trying again.`, { fix: statusFix(input.sourceId) });
-    return target === 'enabled' ? await requeueGitDurabilityCatchUp(tx, binding, plan.map(effect => effect.id)) : [];
-  });
+  const [updated] = await engine.executeRaw<{ git_durability: GitDurabilitySetting }>(`UPDATE persistence_host_bindings SET git_durability=$3
+    WHERE worktree_id=$1::uuid AND host_id=$2::uuid RETURNING git_durability`, [binding.worktree_id, binding.owner_host_id, target]);
+  if (!updated) throw opError('source_changed', 'The host binding disappeared while the setting was being recorded.',
+    `Source ${input.sourceId}'s host binding was removed by another topology change, so nothing was recorded. Inspect writer status before trying again.`, { fix: statusFix(input.sourceId) });
+  const queued = target === 'enabled' ? await requeueGitDurabilityCatchUp(engine, binding, plan.map(effect => effect.id)) : [];
   return { ...report, applied: true, queued_catch_up: queued.length, fix: statusFix(input.sourceId),
     why: target === 'enabled' ? `Page writes to ${input.sourceId} now commit (and push to ${checkout?.remote ?? 'no tracking remote: commits stay local'}) through the persistence owner's Git effect; ${queued.length} earlier skipped effect(s) were re-queued.`
       : target === 'disabled' ? `Git effects for ${input.sourceId} now complete as skipped (durability_not_enabled) even where a legacy hook exists; database writes are unaffected. Re-enable with --enable; the skipped effects are caught up then.`

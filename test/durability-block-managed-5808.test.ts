@@ -105,7 +105,7 @@ describe('the managed durability block (#5808)', () => {
 
       const applied = await runPersistenceAdministration(engine, 'writer_git_durability', { source_id: sourceId, enable: true, ...await reviewedWriterIntent(engine, 'writer_git_durability') });
       expect(applied).toMatchObject({ applied: true, git_durability: { before: null, after: 'enabled' },
-        agents: { status: 'fixed', detail: expect.stringContaining('durability rules written'), commit: expect.stringContaining('plain git') } });
+        agents: { status: 'fixed', detail: expect.stringContaining('durability rules written'), commit: expect.stringContaining('gbrain git commit-push') } });
       const after = readFileSync(agents, 'utf8');
       for (const marker of CLASSIC) expect(block(after)).not.toContain(marker);
       expect(block(after)).toContain(`gbrain sources writer git-durability ${sourceId} --enable`);
