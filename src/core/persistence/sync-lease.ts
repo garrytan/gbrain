@@ -36,7 +36,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from '../engine.ts';
 import type { SyncResult } from '../../commands/sync.ts';
 import type { Action } from '../agent-output.ts';
-import { fenceLockRow, inspectLock, LockStolenError, LockUnavailableError, syncLockId, withRefreshingLock } from '../db-lock.ts';
+import { fenceLockRow, inspectLock, isLockHolderLive, type LockSnapshot, LockStolenError, LockUnavailableError, syncLockId, withRefreshingLock } from '../db-lock.ts';
 import { currentRunDeadline, lastForwardProgressAt, noteCommittedProgress, noteForwardProgress } from '../forward-progress.ts';
 import { faultPoint } from './fault-points.ts';
 import { MANAGED_SYNC_PASS_OP } from './sync-pass-row.ts';
@@ -120,17 +120,29 @@ export async function inFencedSlices<T>(engine: BrainEngine, sourceId: string, i
 
 const iso = (value: Date | null | undefined) => value ? value.toISOString() : null;
 
-/** The live holder of a source's drain lease (kind and id from the row this module writes beside the lock), or null. */
+/** The holder of a source's drain lease (kind and id from the row this module writes beside the lock), live or not (`readDrainLease` says which), or null. */
 export async function readDrainHolder(engine: BrainEngine, sourceId: string): Promise<DrainHolder | null> {
+  return (await readDrainLease(engine, sourceId))?.holder ?? null;
+}
+
+/**
+ * #7596: the holder of the source's drain lease and whether it still renews it, by `isLockHolderLive` at the drain TTL (the
+ * rule doctor's `managed_sync_blocked` reads too). A killed holder's lock row stays until a takeover breaks it, but its renewals stop.
+ */
+export async function readDrainLease(engine: BrainEngine, sourceId: string): Promise<{ holder: DrainHolder; live: boolean } | null> {
   const snap = await inspectLock(engine, syncLockId(sourceId));
   if (!snap) return null;
   const [row] = await engine.executeRaw<{ meta: { kind?: DrainHolderKind; id?: string | null; version?: string } | string | null }>(
     "SELECT data->'drain_lease_beacon' AS meta FROM minion_jobs WHERE queue=$1 AND lock_token=$2", [LEASE_BEACON_QUEUE, snap.acquisition_token]).catch(() => []);
   const meta = typeof row?.meta === 'string' ? JSON.parse(row.meta) : row?.meta ?? null;
-  return { kind: meta?.kind ?? 'unknown', id: meta?.id ?? null, host: snap.holder_host, pid: snap.holder_pid,
+  const holder: DrainHolder = { kind: meta?.kind ?? 'unknown', id: meta?.id ?? null, host: snap.holder_host, pid: snap.holder_pid,
     started_at: iso(snap.acquired_at), last_heartbeat_at: iso(snap.last_refreshed_at), version: meta?.version ?? null,
     progress: await holderProgress(engine, sourceId, snap.acquired_at).catch(() => null) };
+  return { holder, live: drainLeaseLive(snap) };
 }
+
+/** #7596: whether the drain lease's holder still renews it: `isLockHolderLive` at the drain TTL, the one rule status and doctor read. */
+export const drainLeaseLive = (snap: LockSnapshot): boolean => isLockHolderLive(snap, DRAIN_LEASE_TTL_MINUTES);
 
 /**
  * The source's managed-sync commits since `since`, and its last commit, cursor save, (#6712 PR 4b, design v3.2 §3.7)

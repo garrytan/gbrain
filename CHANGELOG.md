@@ -10,6 +10,116 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.465.0] - 2026-10-26
+
+**On a managed brain, releasing a held fact (`gbrain trust release h<id>`) now writes it into its entity page's `## Facts` table through the page-write door, so the released fact lives in Git and a re-import keeps it, instead of a database-only row the file never had.**
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| The owner releases a held fact whose entity page exists, on a managed brain | the fact was inserted as a database-only row; the page's file never held it, so the fact had no Git home | a new `trust_release` page write appends the fact as a row of the page's `## Facts` fence (the shared `prepareFenceFactAppend` door) and flips the hold in the same publication; the row is stamped `user_confirmed` with origin `trust_release`, the belief ledger records the hold as its cause, and the page keeps its trust tier |
+| The hold names an existing fence row (a fence-guard hold) | the release inserted a second, database-only twin next to the file's own row | the release indexes the existing row: one row, and the file is unchanged |
+| The hold is decided after the release was accepted | — | the release fails `preview_changed` and writes nothing; running the release again asks for the confirmation and then refuses, because the hold was decided meanwhile |
+| A release ends without committing (for example its page was deleted while it ran) | — | once the cause is fixed, running the release again admits a new attempt; a release that committed is replayed, never written twice |
+| A release runs through a resident `gbrain serve` (PGLite) and the owner's write queue is slow | — | the CLI waits 90 seconds for the owner instead of 30, past the release's own 60-second wait, so a release slowed by the write queue ends with its pending write receipt rather than a lost acknowledgment; `gbrain trust review --accept-all` lists such a release as pending with its poll command (exit 10; `--accept-pending` exits 0; a failed item still exits 1) instead of "not applied" |
+| The owner confirms a release | — | the confirmation names the fact's entity page (`<source>/<slug>`) |
+| The claim was forgotten (`gbrain forget`) or purged (`gbrain forget --purge`) before the owner releases its hold | — | the release refuses `fact_withdrawn` (or `purged_content` for a purged claim) and the fact stays held; a forgotten or purged claim is never written back into the page's `## Facts` table, including when it is forgotten while the release runs |
+| The hold's fence row was edited after it was held (its context or source changed) | — | the release refuses `fence_row_changed` and names `held_row_edited` in its message, so the older approval never indexes content the owner did not review; the fact stays held, and releasing it again refuses the same way: drop it (`gbrain trust drop h<id>`), and an edit that was itself held is listed separately in `gbrain trust review` |
+| The entity page is deleted or private, or the request is remote | — | the release refuses (remote: `confirmation_required`) and the fact stays held |
+
+### What to watch for after you upgrade
+
+- A hold with no entity slug, or whose entity page does not exist, still releases database-only as before; unmanaged brains are unchanged.
+- Facts released by an earlier version are not moved into fences on upgrade; nothing is rewritten and there is no schema migration.
+
+## [0.60.464.0] - 2026-10-26
+
+**A sync pass killed by an out-of-memory guard or a timeout now shows up in `gbrain sync status` and `gbrain doctor` instead of looking healthy. A read-only stdio serve no longer holds session-lane connections or runs the long-lived processes' write duties, so per-session serves can't starve them.**
+
+A killed pass used to read `resumable` / `pass_unfinished`, the same as one that stopped cleanly at its deadline, and `live` still named the dead PID because its lock row outlives it. Now an open pass that no process is still renewing reads `pass_interrupted`, a second killed pass reads `pass_abandoned` at once, and doctor's `managed_sync_blocked` lists both. This is the visibility half of #7596; the memory growth itself is still being traced on real data. `gbrain sync status` also stays interactive after such a pass: it read the freshness of tens of thousands of receipts one at a time (#7604).
+
+Harnesses run one `gbrain serve --access read-only` per session. Each one opened the 3-connection resident direct pool, started a persistence consumer, took the on-commit notifier lease and ran sweeps, so a few sessions could exhaust the session lane (`EMAXCONNSESSION`). On Postgres a read-only serve now holds 0 session-lane connections and runs none of those duties. On PGLite it keeps them, because the CLI's reads and writes go through the one process that owns the database file. Search latency is unchanged: warm p50 about 0.8 s on both lanes at 50 ms RTT, on 3,000 synthetic pages.
+
+Security: `gbrain serve --access=read-only`, the `=` form, passed flag validation but started the serve with full write access, because only the bare `--access read-only` form was read. A harness configured that way had every mutating tool. Both forms now set the read-only ceiling, a repeated flag never widens a read-only value, and an invalid value in either form refuses. `--surface=verbs` had the same gap (an HTTP or stdio serve kept the full surface): both forms now set the surface, and a repeated `--surface` takes the narrowest value. Because the `=` forms are now read, `gbrain serve --http --access=read-only` (the flag used to be ignored there) refuses to start like the bare form, and an invalid `--surface=<value>` refuses instead of being ignored: remove the flag from an HTTP service unit and narrow HTTP access per token with `gbrain auth rescope-token`.
+
+### Itemized changes
+
+- `src/core/persistence/sync-lease.ts`, `sync-pass-status.ts`, `sync-status.ts`, `sync-blocked.ts`, `src/commands/sync/operator.ts`, `src/commands/doctor/checks/managed-sync-blocked.ts`: `readDrainLease` and `drainLeaseLive` (one liveness rule for status, doctor and the autopilot's live-job check), the `pass_interrupted` reason and `interrupted` block, and the doctor listing. Test: `test/sync-pass-interrupted-7596.test.ts`.
+- `src/core/direct-pool-profile.ts`, `src/commands/serve.ts`, `src/mcp/server.ts`, `src/mcp/resolve-ipc-binding.ts`: a read-only stdio serve takes the one-shot profile and, on Postgres, skips the consumer, the delegated sync, nudge and sweep kinds, the resident tickers and the sweeps. Tests: `test/direct-pool-profile.test.ts` and `test/e2e/serve-read-only-session-lane-postgres.test.ts` (3 direct connections on the previous release, 0 now), `test/serve-read-only-pglite-owner-7599.test.ts` (CLI writes beside a read-only PGLite serve).
+- `src/core/direct-pool-profile.ts` (`flagValues`), `src/mcp/surface.ts` (`parseAccessFlag`, `parseSurfaceFlag`): one parse for both forms of `--access` and `--surface`, behind the MCP access and surface ceilings and the pool profile. Tests: `test/serve-stdio-read-only.test.ts` (real stdio sessions: `--access=read-only` lists only read-only tools and refuses `put_page`; `--surface=verbs` lists the verbs surface), `test/direct-pool-profile.test.ts`.
+- `src/core/persistence/sync-freshness.ts`: the freshness check reads the newest committed revision per page once (a materialized join) instead of one correlated subquery per sampled receipt, so `gbrain sync status` stays interactive after a killed pass leaves tens of thousands of receipts (#7604; 5 min to 1.9 s on a 30,000-page repro). Test: `test/sync-freshness-6858.test.ts`.
+- `scripts/generate-flag-registry.ts`: the scan skips `direct-pool-profile.ts`, whose `sync --watch` literal had made `gbrain serve --watch` pass validation once serve imported it. Test: `test/cli-flag-validation.test.ts`.
+
+## [0.60.463.0] - 2026-10-26
+
+**On Postgres, every gbrain table now has row-level security, including on brains upgraded with `gbrain apply-migrations --yes`. Before, the four incremental-derivation tables added in v273 and some older tables could be left with RLS off, which on Supabase with the Data API on made them reachable with the anon key.**
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A Postgres brain upgraded with `gbrain apply-migrations --yes` (migrations only, no full schema replay) | `page_segment_derivations`, `page_derivation_spend` and the two derivation purge tables got RLS only from a full schema replay, so they stayed RLS-off; tables whose RLS came only from the auto-RLS event trigger stayed off on brains without it (it needs a superuser) | migration v275 enables RLS on every gbrain table still without it, one table per transaction with bounded lock waits; tables already protected and tables carrying a `GBRAIN:RLS_EXEMPT reason=...` comment are left alone, and no row is read or written |
+| The migration runs under a role that does not bypass RLS or does not own a table | — | that table is left as it was and named on stderr; `gbrain doctor` (rls) keeps naming it with the fix |
+| Another session holds a lock on a table v275 must change | — | the upgrade stops with `schema_lock_blocked` naming the table instead of hanging; rerunning after the lock is released finishes |
+| `gbrain repair missing-tables` recreates a cache table | the recreated table had RLS off | it is recreated with RLS on |
+| A fresh install's schema replay | `page_derivation_spend` was missing from the segmented tables' RLS list | it is included |
+
+### What to watch for after you upgrade
+
+- A role that neither owns gbrain's tables nor bypasses RLS (a read-only reporting role, a scoped write role) reads no rows from a table once RLS is on, and cannot write it. Give that role policies before upgrading (the source-scope recipe in `docs/ENGINES.md` now covers all ten segmented tables), or keep a table open to it on purpose with the `GBRAIN:RLS_EXEMPT reason=...` comment.
+- The default connection (the owner, with RLS bypass) is unaffected.
+
+### Itemized changes
+
+- `src/core/schema-migrations/v275-rls-backfill-unguarded-tables.ts`: the backfill migration; PGLite is a no-op.
+- `src/core/page-body/schema.ts`, `src/schema.sql`: `page_derivation_spend` joins the segmented tables' RLS list.
+- `src/core/schema-missing-tables.ts`: recreated caches get RLS.
+- `test/e2e/rls-every-table-postgres.test.ts`: every public table has RLS after a fresh install, after the migrations-only upgrade from v272, and after an upgrade with every table's RLS turned off; exempt and unprotectable tables, a shadowing search path, a held lock, and the repair path are covered.
+- `docs/ENGINES.md`: the source-scope recipe gives policies on all ten segmented tables. `docs/guides/rls-and-you.md`: describes the v275 backfill and why a new table needs its own RLS in its migration. `docs/architecture/key-files/`: `recreateStep` enables RLS.
+
+## [0.60.462.0] - 2026-10-26
+
+**Automatic fact extraction no longer loses facts when two of your notes mention the same person or company at the same moment.**
+
+When two notes are saved close together and both mention the same entity (say `people/alice-example`), gbrain extracts facts from each and writes them onto that entity's page. Whichever write lands second used to be refused because the page had moved under it. Every retry then replayed the same stored refusal until the job gave up, and that note's facts were silently dropped. It hit hardest on the pages you mention most.
+
+Now the losing write is re-admitted at the page's current revision with the facts it already extracted, in the same run and without a second model call. A refusal that can't be recovered stops after one attempt instead of five, and `gbrain repair failed-writes` tells you the command that actually brings the facts back.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| Two extractions write facts to the same entity page at once | the second batch was refused, every retry replayed the refusal, the facts were dropped | the second batch is re-admitted at the page's current revision and commits, with no extra model call |
+| An extraction whose own facts moved its source page before its entity follow-up | n/a | the follow-up still passes the source-page check |
+| A refusal that still stands after the follow-ups (for example a deleted entity page) | five facts-absorb attempts, each replaying the same refusal | the job goes dead on its first attempt with a not-retryable `revision_conflict` refusal |
+| `gbrain repair failed-writes` on a refused fact extraction | `extract --stale`, which doesn't extract facts | `recover:`, `pending:`, `re-extract:` or `not recoverable:`, each with its command |
+
+### How to recover facts an earlier version dropped
+
+```bash
+gbrain repair failed-writes            # preview; fact rows now name their recovery
+gbrain facts retry-dead --reset 'facts-absorb:write:<id>'   # for a row marked recover:
+```
+
+A `recover:` row re-admits the retained facts at the entity page's current revision with no model call. A `re-extract:` row prints the `extract_facts` call to make (one model call). Refusals stored before this release are listed too.
+
+### Things to watch
+
+- An explicit fact write (such as `remember`) or any call that passes its own `request_id` keeps its recorded outcome. Only automatic extraction is re-admitted.
+- A deleted or replaced entity page keeps the refusal; the follow-ups are capped at 3 per batch, and historical receipts are never rewritten.
+
+### Itemized changes
+
+- `src/core/persistence/facts-maintenance.ts`: a third follow-up walk after the file-check and withdrawal walks re-admits entity requests refused because the entity page moved (`isEntityMovedRefusal`), under `digest([batchKey, 'entity-moved-retry', n])`, bounded by `MAX_FILE_REFUSAL_RETRIES`; a refusal still standing after the walks is reported `retryable: false`.
+- `src/core/persistence/facts-prepare.ts`: the source-page check also accepts a committed request with the same principal and inputs at the page's current revision.
+- `src/core/persistence/verb-errors.ts`: `FACTS_ENTITY_MOVED_MESSAGES` and `isEntityMovedRefusal`; the stored refusal texts are frozen because receipts are matched by them. `PAGE_CHANGED_AFTER_READ_MESSAGE` (`src/core/page-state/types.ts`) and `PAGE_CHANGED_DURING_PREPARATION_MESSAGE` are shared constants.
+- `src/core/facts/backstop.ts`: only automatic extraction without a caller `request_id` turns on the entity-moved follow-up walk. A not-retryable refusal ends the facts-absorb job dead on its first attempt.
+- `src/core/facts/dead-absorb-retry.ts`, `src/core/persistence/effect-facts.ts`: `factsAbsorbWriteKey` names the facts-absorb job key.
+- `src/core/repair/failed-writes.ts`: fact rows get `recover:`, `pending:`, `re-extract:` or `not recoverable:` advice; a request a later request of the same extraction committed is not listed; every case the job's own page check would skip is listed `re-extract:`.
+- Docs: `docs/guides/repair.md`, key-files entries.
+- Tests: `test/facts-entity-moved-7602.test.ts` (PGLite and Postgres), `test/pathological/a-36-facts-batch-partial-refusal.test.ts`, `test/facts-absorb-stalled-receipt-7439.test.ts`.
+
 ## [0.60.461.0] - 2026-10-25
 
 **Test-only CI stability: three flaky tests are fixed at their cause, a test held as a todo now runs, and the shard weights are refreshed. Product behaviour is unchanged.**

@@ -15,7 +15,7 @@ Under contract v1 an `error` value never changes. Where a surface sends a legacy
 
 | `error` (frozen) | `code` (canonical) | Meaning |
 |---|---|---|
-| `invalid_params` | `fact_withdrawn` | `remember` refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved. |
+| `invalid_params` | `fact_withdrawn` | `remember`, or an owner `gbrain trust release` that writes a held fact into its entity page's `## Facts` table (a managed brain), refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved, and a refused release leaves the fact held. |
 | `permission_denied` | `insufficient_scope` | The connection lacks the OAuth scope the operation requires. |
 | `invalid_params` | `invalid_fence` | A facts or takes fence in the page cannot be imported without dropping or guessing rows, so the page (or the file) was not written. |
 | `invalid_params` | `link_cursor_invalid` | A get_links / get_backlinks cursor was not one this listing returned: it belongs to another slug, direction, source scope or filter set, or is not a cursor. |
@@ -1371,7 +1371,7 @@ More: [docs/guides/repair.md#rename-identity](../../docs/guides/repair.md#rename
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `remember` refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved. | A forgotten claim stays withdrawn: remembering the same normalized text does not restore it, and a claim forgotten without an entity is withdrawn for every entity. The additive `withdrawn` object (`at`, `subject`: an entity slug or `all_entities`, `visibility`) says when and how widely the exact claim was forgotten; it covers that exact claim only, and its absence carries no meaning. | Do not retry the same text. Tell the user the claim was forgotten (withdrawn.at, withdrawn.subject); if it is still true, remember it in new words. To link a fact saved without an entity, remember it with entity and replaces set to its fact id instead of forgetting it. | agent | `repeat the read that failed` | 1 | no |
+| `remember`, or an owner `gbrain trust release` that writes a held fact into its entity page's `## Facts` table (a managed brain), refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved, and a refused release leaves the fact held. | A forgotten claim stays withdrawn: remembering the same normalized text does not restore it, and a claim forgotten without an entity is withdrawn for every entity. The additive `withdrawn` object (`at`, `subject`: an entity slug or `all_entities`, `visibility`) says when and how widely the exact claim was forgotten; it covers that exact claim only, and its absence carries no meaning. | Do not retry the same text. Tell the user the claim was forgotten (withdrawn.at, withdrawn.subject); if it is still true, remember it in new words. To link a fact saved without an entity, remember it with entity and replaces set to its fact id instead of forgetting it. For a refused release, do not retry it: drop the hold (gbrain trust drop h<id>) unless the user wants the claim back in new words. | agent | `repeat the read that failed` | 1 | no |
 
 ### facts_absorb_write_refused
 
@@ -1451,9 +1451,9 @@ More: [docs/guides/retrieval-feedback.md#feedback_not_authorized](../../docs/gui
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A fact was not indexed from the facts fence row its request names because that row no longer reads back as the fact (removed, struck, emptied, another visibility or other text); nothing was written. | A facts row derives from its fence row, which Git holds. Indexing a fact at a row that now says something else would make the database disagree with the file, so the write stops and the file stays as it is. | Read the page (gbrain get <slug>) to see the row as it stands; if the fact is still wanted, remember it again, which writes it as a new row. | agent | `repeat the read that failed` | 1 | no |
+| A fact was not indexed from the facts fence row its request names because that row no longer reads back as the fact (removed, struck, emptied, another visibility or other text), or, for an owner release of a held row, because its context or source was edited after the hold (`held_row_edited`, named in the message); nothing was written, and a refused release leaves the fact held. | A facts row derives from its fence row, which Git holds. Indexing a fact at a row that now says something else would make the database disagree with the file, so the write stops and the file stays as it is. For `held_row_edited` the row still reads back, but the owner approved the older context or source, so indexing it would publish content the owner did not review. | Read the page (gbrain get <slug>) to see the row as it stands; if the fact is still wanted, remember it again, which writes it as a new row. For a refused gbrain trust release, do not remember it and do not release the same hold again (it refuses the same way): drop it (gbrain trust drop h<id>). If the edit was itself held, gbrain trust review lists it separately. | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `row_missing`, `struck`, `empty`, `visibility`, `text`.
+Reasons: `row_missing`, `struck`, `empty`, `visibility`, `text`, `held_row_edited`.
 
 ### fence_unrenderable
 

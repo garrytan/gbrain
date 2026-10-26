@@ -68,6 +68,10 @@ gbrain config set trust.agent_activation suppress       # keep flagged agent-wri
 
 With quarantine, an instruction-like external write is held: it is not
 searchable and not injected until you release it (`gbrain trust release`).
+On a managed brain, a released fact whose entity page exists is written as a
+row of that page's `## Facts` table, so the page's file holds it; a fact with
+no entity page, and any fact on an unmanaged brain, is saved to the database
+only.
 With suppress, flagged items are still returned by explicit search, recall
 and `get_page`, labeled, but hook context, the context engine,
 `context_pack` and volunteer leave them out until you confirm them in

@@ -143,6 +143,8 @@ export async function bindResolveIpcForServe(
   persistenceProvider?: PersistenceIpcProvider,
   opts: {
     rememberCallable?: boolean | (() => boolean);
+    /** #7599: a lean serve (a read-only stdio serve on Postgres, `readOnlyServeSkipsResidentDuties`) registers no delegated sync, nudge or sweep kind (clients get the polite refusal); PGLite keeps them. */
+    lean?: boolean;
     /** Delay before each re-bind attempt of a socket this serve does not hold; tests inject a short one. */
     rebindDelayMs?: () => number;
   } = {},
@@ -191,8 +193,9 @@ export async function bindResolveIpcForServe(
     // catch would otherwise swallow the error and start NO listener).
     // Kill switch: GBRAIN_SERVE_SYNC_IPC=0 → the kinds are simply not
     // registered and clients get 'unsupported_kind' (the polite refusal).
+    const delegation = process.env.GBRAIN_SERVE_SYNC_IPC !== '0' && !opts.lean;
     let syncHandlers: Pick<IpcHandlers, 'sync_start' | 'sync_status' | 'sync_abort' | 'sync_nudge'> = {};
-    if (process.env.GBRAIN_SERVE_SYNC_IPC !== '0') {
+    if (delegation) {
       try {
         const runner = await import('../core/serve-sync-runner.ts');
         syncHandlers = {
@@ -217,7 +220,7 @@ export async function bindResolveIpcForServe(
     // try/catch so a runner failure never takes the other kinds down.
     // Shares the GBRAIN_SERVE_SYNC_IPC kill switch (one delegation family).
     let sweepHandlers: Pick<IpcHandlers, 'sweep_start' | 'sweep_status'> = {};
-    if (process.env.GBRAIN_SERVE_SYNC_IPC !== '0') {
+    if (delegation) {
       try {
         const sweepRunner = await import('../core/serve-sweep-runner.ts');
         sweepHandlers = {

@@ -49,7 +49,7 @@ import { SYNC_ADMISSION_SETTING_PARAMS, syncAdmissionEffectParams, syncAdmission
 import type { DeletesWithheld } from './sync-markers.ts';
 import { listIdentityDowngrades, withIdentityRemedies } from '../sync-identity-downgrades.ts';
 import { GIT_PUSH_CODES, readGitPushHolds, type GitPushHold } from './git-push-holds.ts';
-import { holderStalled, readDrainHolder, type DrainHolder } from './sync-lease.ts';
+import { holderStalled, readDrainLease, type DrainHolder } from './sync-lease.ts';
 import { syncLockId } from '../db-lock.ts';
 
 export interface SyncStatusHold extends SyncFaultVerdict {
@@ -113,7 +113,7 @@ export function supersedingAttempt(phase: ManagedSyncFailure['phase'], failureAt
   return passed[0] ? { at: new Date(passed[0][1]).toISOString(), by: passed[0][0] } : null;
 }
 
-/** #7243: the process holding the source's drain lease (`readDrainHolder`), with the Minions job id when it is a sync job and whether it stalled. */
+/** #7243: the process holding the source's drain lease while it still renews it (`readDrainLease` with `live`, #7596), with the Minions job id when it is a sync job and whether it stalled. */
 export type SyncStatusLive = DrainHolder & { job_id: number | null; stalled: boolean };
 
 export interface SyncStatus {
@@ -130,9 +130,15 @@ export interface SyncStatus {
   /**
    * #7243: the job doing the work now: the holder of the source's drain lease (a serve pass, a sync job, a CLI sync, the
    * cycle), its heartbeat and progress, `job_id` when it is a Minions sync job, and `stalled` once it has made no commit
-   * or save for the stall window. Null when nothing holds the lease.
+   * or save for the stall window. Null when nothing holds the lease, or (#7596) its holder stopped renewing it.
    */
   live: SyncStatusLive | null;
+  /**
+   * #7596: the newest pass is open but no process holds the drain lease: its process was killed or crashed before it ended
+   * the pass. `since` is the pass row's last write; `holder` is the process whose lock row outlived it (a SIGKILL leaves
+   * one until a takeover), with the pages it committed, or null when the lock was released. Null otherwise.
+   */
+  interrupted: { pass_id: string; since: string; holder: DrainHolder | null } | null;
   run_id: string | null;
   cursor: { index: number; total: number; pinned_target: string | null; last_advance_at: string | null; done: boolean } | null;
   /** Managed sync page requests of the source committed in the last ten minutes (waived entries are not requests). */
@@ -223,7 +229,9 @@ export const SYNC_STATUS_REASONS = ['nothing_pending', 'held_by_design', 'held_n
   // #6712 PR 4b (design v3.2 §9): the live pass's reasons.
   'pass_unfinished', 'not_converged', 'settle_mismatch', 'deletes_withheld', 'selection_scoped', 'admission_paused', 'writeback_failed',
   // #7355: passes keep stopping before they end.
-  'pass_abandoned'] as const;
+  'pass_abandoned',
+  // #7596: the newest pass's process stopped (killed or crashed) without ending it.
+  'pass_interrupted'] as const;
 export type SyncStatusReason = typeof SYNC_STATUS_REASONS[number];
 export type SyncStatusRead = { status: 'read' } | { status: 'not_read'; fix: Action };
 /** The bound of each default probe (the oldest blocker, the recovery records). */
@@ -390,7 +398,13 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
   // #6712 PR 4b (design §9): the pass row (one primary-key read) and the withheld-delete record make the live `convergence` block.
   const passRow: PassRow | null = source.pass_value && source.pass_updated_at ? { value: source.pass_value, updated_at: new Date(source.pass_updated_at).toISOString() } : null;
   const withheld = passRow ? source.withheld : null;
-  const passState = passRow ? passStatusState(passRow, withheld, source.writeback_failed) : null;
+  // #7243: whoever holds the drain lease is the job doing the work, a serve-owned pass included (one primary-key probe rode the source read).
+  // #7596: a holder that stopped renewing it was killed; an open pass with no live holder was interrupted, not running.
+  // A lease that could not be read decides nothing (undefined): the pass keeps the quiet-window rule.
+  const lease = source.drain_lock ? await readDrainLease(engine, sourceId).catch(() => undefined) : null;
+  const holder = lease?.live ? lease.holder : null;
+  const interrupted = lease === undefined || passRow?.value.telemetry.outcome !== 'open' ? undefined : !holder;
+  const passState = passRow ? passStatusState(passRow, withheld, source.writeback_failed, Date.now(), interrupted) : null;
   const resume = !header && passRow ? passResumeArgs(sourceId, passRow) : managedSyncResumeArgs({ sourceId, processingOptions: header?.processingOptions, syncOptions: header?.syncOptions });
   const human = holds.find(hold => hold.needs_human) ?? (liveError?.needs_human ? liveError : undefined);
   // #6643: a knock-on or a superseded run is not a failure of its page: the resume re-freezes the entry.
@@ -398,10 +412,8 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
   const actionable = holds.filter(hold => !hold.needs_human && hold.safe_actions[0] !== 'none');
   const verify = { argv: ['gbrain', 'sync', 'status', '--source', sourceId, '--json'] };
   // #6706: a live sync job already drains this cursor; the agent watches it instead of starting a second drainer beside it.
-  // #7243: whoever holds the drain lease is the job doing the work, a serve-owned pass included (one primary-key probe rode the source read).
-  const holder = source.drain_lock ? await readDrainHolder(engine, sourceId).catch(() => null) : null;
   const holderJob = holder?.kind === 'job' && holder.id && /^\d+$/.test(holder.id) ? Number(holder.id) : null;
-  const liveJob = unfinished && !human ? holderJob ?? await (await import('./sync-movement.ts')).liveSyncJob(engine, sourceId) : null;
+  const liveJob = unfinished && !human ? holderJob ?? await (await import('./sync-movement.ts')).liveSyncJob(engine, sourceId, lease === undefined ? undefined : holder) : null;
   const next: Action | null = liveJob !== null
     ? { argv: ['gbrain', 'jobs', 'get', String(liveJob), '--json'], consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `Sync job #${liveJob} is draining this cursor (${header!.index}/${header!.total}); it resumes the frozen manifest on its own, so watch it rather than running a second sync beside it.` }
@@ -433,8 +445,9 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
   const [state, stateReason] = statusState({ human: !!(liveError?.needs_human), heldForHuman: holds.some(hold => hold.needs_human), oldest, recovery, liveJob: liveJob !== null, unfinished, lastError: !!liveError, actionable: actionable.length > 0, holds: holds.length > 0, pass: passState });
   const admission = await syncAdmissionStatus(engine, sourceId, source.incarnation,
     { stored: source.admission_stored, row_value: source.admission_row_value, set_at: source.admission_set_at, pinned: source.admission_pinned, destructive: source.admission_destructive });
-  const passNext = passRow && passState && passState[1] === stateReason ? passStatusNext(sourceId, passState[1], passRow, resume, source.writeback_failed) : null;
-  return { source_id: sourceId, last_commit: source.last_commit, last_sync_at: iso(source.last_sync_at), last_committed_at: iso(committed?.last_committed_at), live: holder ? { ...holder, job_id: holderJob, stalled: holderStalled(holder) } : null, run_id: header?.runId ?? null,
+  const passNext = passRow && passState && passState[1] === stateReason ? passStatusNext(sourceId, passState[1], passRow, resume, source.writeback_failed, interrupted) : null;
+  return { source_id: sourceId, last_commit: source.last_commit, last_sync_at: iso(source.last_sync_at), last_committed_at: iso(committed?.last_committed_at), live: holder ? { ...holder, job_id: holderJob, stalled: holderStalled(holder) } : null,
+    interrupted: interrupted && passRow ? { pass_id: passRow.value.telemetry.pass_id, since: passRow.updated_at, holder: lease?.holder ?? null } : null, run_id: header?.runId ?? null,
     cursor: header ? { index: Number(header.index), total: Number(header.total), pinned_target: header.target ?? null, last_advance_at: p ? new Date(p.lastAt).toISOString() : null, done: !!header.done } : null,
     committed_last_10m: Number(committed?.n ?? 0), ...estimate, live_job_id: liveJob ?? holderJob, holds, identity_downgrades: await withIdentityRemedies(engine, await listIdentityDowngrades(engine, [sourceId])), last_error: lastError, needs_human: !!human, ...(human ? { human_reason: human.human_reason } : {}),
     needs_human_from: !human ? null : 'path' in human && 'held_since' in human ? { kind: 'hold', path: human.path, slug: human.slug, code: human.code } : { kind: 'last_error', code: human.code },

@@ -5738,8 +5738,10 @@ keeps its text in `page_segment_texts`, its layout and headings in
 `page_body_manifest`, uploads in progress in `page_body_stagings` /
 `page_body_staging_parts` (with the segment texts each one holds in
 `page_body_staging_texts`), view sizes in `page_view_digests`, and per-segment
-derivation results (link candidates, window anchors) in `page_segment_derivations`.
-gbrain enables RLS on all seven on every schema replay, as it does on `pages` and
+derivation results (link candidates, window anchors) in `page_segment_derivations`,
+with each page's derivation spend in `page_derivation_spend` and derivation purges
+in progress in `page_segment_derivation_purges` / `page_segment_derivation_purge_pages`.
+gbrain enables RLS on all ten on every schema replay, as it does on `pages` and
 `content_chunks`, so with no policy a role that does not bypass RLS reads no row
 of them. Title search, the source-scoped vector scan, the chunk windows search
 reads around its hits, `get_chunks` and get_page check a chunk of a page stored
@@ -5788,6 +5790,17 @@ CREATE POLICY page_segment_derivations_scope_filter ON page_segment_derivations
 CREATE POLICY content_chunks_scope_filter ON content_chunks
   USING (current_setting('app.scopes', true) = '*'
          OR EXISTS (SELECT 1 FROM pages p WHERE p.id = page_id));
+-- A write role books segmented derivation spend and records derivation purges
+-- here; without a policy those writes are refused.
+CREATE POLICY page_derivation_spend_scope_filter ON page_derivation_spend
+  USING (current_setting('app.scopes', true) = '*'
+         OR EXISTS (SELECT 1 FROM pages p WHERE p.id = page_id));
+CREATE POLICY page_segment_derivation_purges_scope_filter ON page_segment_derivation_purges
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+CREATE POLICY page_segment_derivation_purge_pages_scope_filter ON page_segment_derivation_purge_pages
+  USING (current_setting('app.scopes', true) = '*'
+         OR EXISTS (SELECT 1 FROM page_segment_derivation_purges r WHERE r.request_id = page_segment_derivation_purge_pages.request_id));
 
 -- A read role that searches and reads pages. The other tables it reads
 -- (config, timeline_entries, facts, ...) need policies of their own.
@@ -5802,6 +5815,9 @@ ALTER TABLE page_body_staging_parts FORCE ROW LEVEL SECURITY;
 ALTER TABLE page_body_staging_texts FORCE ROW LEVEL SECURITY;
 ALTER TABLE page_view_digests FORCE ROW LEVEL SECURITY;
 ALTER TABLE page_segment_derivations FORCE ROW LEVEL SECURITY;
+ALTER TABLE page_derivation_spend FORCE ROW LEVEL SECURITY;
+ALTER TABLE page_segment_derivation_purges FORCE ROW LEVEL SECURITY;
+ALTER TABLE page_segment_derivation_purge_pages FORCE ROW LEVEL SECURITY;
 ALTER TABLE content_chunks FORCE ROW LEVEL SECURITY;
 ```
 <!-- gbrain:segmented-rls-recipe:end -->
@@ -5811,7 +5827,7 @@ default (`ALTER ROLE <reader-role> SET app.scopes = 'source-a,source-b'`). The
 policies read `app.scopes` only; the app-layer source filters stay layer 1.
 
 A write role that does not own the tables needs `SELECT, INSERT, UPDATE, DELETE`
-on all six, as on any table a migration adds, even while no page is segmented:
+on all ten, as on any table a migration adds, even while no page is segmented:
 purging soft-deleted pages, fact withdrawal (`forget_fact`, `purge_fact`), the
 maintenance sweep's facts pass, doctor's credential check and the segment
 storage sweep name them. Its ordinary writes (`put_page`, `remember`, sync
@@ -10308,7 +10324,7 @@ Turning the `preparation_deadlines` switch off (`gbrain config set persistence.p
 
 <a id="session-timeouts-not-applied"></a>**Doctor warns `persistence_session_timeouts` with `session_timeouts_not_applied`?** gbrain sets `statement_timeout` (`GBRAIN_STATEMENT_TIMEOUT`, default 5min) and `idle_in_transaction_session_timeout` as connection startup parameters, and a transaction-mode pooler (PgBouncer with `ignore_startup_parameters`, Supavisor) drops them: `SHOW statement_timeout` through the configured URL reads `0`, so a statement outside a transaction has no server-side bound and a relation lock held in another session (a migration's `ALTER TABLE pages` queued behind a long transaction, for example) holds it for as long as the lock lasts. Managed write *preparation* reads are not affected since v0.60.108: they run under a transaction-local `statement_timeout` of the write's remaining preparation budget, so a lock-blocked read ends at the budget and the member is released `preparation_deadline` with no statement left on the server (#6278). For every other autocommit statement, set the default on the role instead of the connection: `ALTER ROLE <gbrain role> SET statement_timeout = '5min'` (read-only to check: `gbrain doctor --only persistence_session_timeouts --json`). Setting `GBRAIN_STATEMENT_TIMEOUT` has no effect through such a pooler.
 
-<a id="managed-sync-blocked"></a>**A managed sync run is blocked (doctor `managed_sync_blocked`, a freshness `sync` job ended `dead`, or get_brain_health reports `sync_blocked`)?** The source's unfinished run stopped on a page request that did not commit and recorded the stop, so it resumes nothing by itself while the other sources keep syncing (#6858: one source stopped for 21 hours while every freshness job reported `completed`). Such a job now ends `dead`: its error names the stop and the run's `next` command, and `gbrain jobs get <id> --json` carries `outcome`, `drain` and `next` in its progress. Doctor warns as soon as a run is blocked and fails once it has been blocked for more than an hour; get_brain_health turns to `attention` past the same hour, with a count band and no source names. A sync pass that stopped before it finished (in discovery, path `<discovery>`, or on one file) counts as blocked too, until a later sync of the source succeeds. Run `gbrain sync status --source <id> --json` (read-only): it names the page, its fault class and its exit. Clear the cause it names and run the step it prints; the next freshness job resumes the run once the cause is gone. A page publication that `gbrain repair stuck-recovery --keep disk` abandoned is not a blocker: the next plain sync retries that page after the rest of its run, imports it when the kept file is committed, and holds it `worktree_dirty` otherwise.
+<a id="managed-sync-blocked"></a>**A managed sync run is blocked (doctor `managed_sync_blocked`, a freshness `sync` job ended `dead`, or get_brain_health reports `sync_blocked`)?** The source's unfinished run stopped on a page request that did not commit and recorded the stop, so it resumes nothing by itself while the other sources keep syncing (#6858: one source stopped for 21 hours while every freshness job reported `completed`). Such a job now ends `dead`: its error names the stop and the run's `next` command, and `gbrain jobs get <id> --json` carries `outcome`, `drain` and `next` in its progress. Doctor warns as soon as a run is blocked and fails once it has been blocked for more than an hour; get_brain_health turns to `attention` past the same hour, with a count band and no source names. A sync pass that stopped before it finished (in discovery, path `<discovery>`, or on one file) counts as blocked too, until a later sync of the source succeeds. So does an open pass whose process was killed or crashed with no process left holding its drain lease (code `pass_interrupted`, aged from the pass row's last write), and passes that keep stopping that way (`pass_abandoned`). Run `gbrain sync status --source <id> --json` (read-only): it names the page, its fault class and its exit. Clear the cause it names and run the step it prints; the next freshness job resumes the run once the cause is gone. A page publication that `gbrain repair stuck-recovery --keep disk` abandoned is not a blocker: the next plain sync retries that page after the rest of its run, imports it when the kept file is committed, and holds it `worktree_dirty` otherwise.
 
 <a id="managed-sync-not-moving"></a>**The catch-up is parked (`sources status --json` says `data_moving: false`, doctor warns `managed_sync_not_moving`, `gbrain sources writer movement` exited 1), or the drain stopped `drain_stalled` with `cause: owner_wedged_here`?** Liveness is not movement: `/health` can be ok, the pid alive and `sync_running: true` while no page has committed for weeks. A managed source is *not moving* when an unfinished `managed-sync` cursor has had neither a committed `managed_sync_*` receipt nor a head step advance for longer than `persistence.preparation_ceiling_ms` (600 s) while a drain or a full consumer is live on the owner host; with nothing live it is `movement_state: parked` (a cursor left between cron runs; informational, not scored). A parked cursor whose write queue still holds admitted requests while no consumer runs and nothing has moved for longer than that ceiling is stranded: nothing will ever drain it, so doctor `managed_sync_not_moving` fails (#6552, #6712 PR 2) and its fix is the resume sync with the cursor's stored options (`gbrain sync --source <id> …`), which consumes the queue itself; `details.stranded` counts such sources. When the sync backlog itself cannot be read, every surface says `movement_state: unknown` (`unknown.reason: backlog_read_failed`) instead of `nothing_pending`: doctor warns with `details.health: unknown`, `sources status` prints a `movement UNKNOWN` line, and `gbrain sources writer movement` exits 1 with code `movement_unknown` (`--warn-only` exits 0); rerun the movement command, and run `gbrain doctor --json` if the read keeps failing. Every surface routes to the same two read-only calls, so the agent reaches the owner, the step and the next action without SQL:
 

@@ -81,6 +81,7 @@ import { importGroupReads, type ImportGroupReads } from './import-reads.ts';
 import { withScreeningPaths } from './screening-paths.ts';
 import { publicationBeliefOptions, withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
+import { PAGE_CHANGED_DURING_PREPARATION_MESSAGE } from './verb-errors.ts';
 
 /** A `put_pages` or managed import group publishes at most this many pages per transaction, so one commit stays a few seconds long. */
 export const PAGE_BATCH_GROUP_MAX = 8;
@@ -377,7 +378,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
                 await authorizePageVisibility(tx, row.authority, row.slug);
                 if ((snapshot?.page.id ?? null) !== row.page_id) throw new OperationError('page_identity_changed', 'The accepted page was deleted or recreated.', 'Read the page again and submit a new intent with a new request_id.');
                 await assertUnboundPublication(tx, row, snapshot?.page.source_path);
-                if ((snapshot?.revision ?? null) !== member.observedRevision) throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
+                if ((snapshot?.revision ?? null) !== member.observedRevision) throw new OperationError('revision_conflict', PAGE_CHANGED_DURING_PREPARATION_MESSAGE, 'Read its current revision and submit the updated intent with a new request_id.');
                 return snapshot;
               },
               async () => { if (sync) await member.validate?.(tx); },

@@ -2399,7 +2399,7 @@
           "5 reserved_at timestamp with time zone/timestamptz NULL",
           "6 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "page_embedding_budget": {
         "columns": [
