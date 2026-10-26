@@ -1,0 +1,161 @@
+# harness-check (GBRA-108, GBRA-156): the keyless check of this pull request's gbrain commit against harness-evals' harness
+# machinery (garrytan/harness-evals, scripts/gbrain-check.ts; docs/gbrain-arm.md, "Checking a gbrain commit"). The job clones
+# harness-evals at HARNESS_EVALS_PIN, builds the gbrain sidecar image for the pull request's head commit with
+# scripts/build-gbrain-image.sh (keyword target: four keyword brains and the install bundle, no key), runs the keyless rungs of
+# gbrain-check.ts against that image (the fake harness through the real runner and the world's gbrain tap: one trial per
+# surface, one gbrain-docs mount, one company-brain trial under scope "sources" with two members, plus the direct source_ids
+# probe of the company brain), and fails only when the cross-scope page count is not zero: a page or row returned to a member
+# whose grant does not hold its source. Every other failed assertion (tool counts, a missing search tool, a retrieval miss,
+# a bundle digest, the Hermes context, the installer files) is written to the job summary as a warning, so a pull request
+# that changes gbrain's tool list or install output is told and not blocked. A non-required check: no branch protection rule
+# names it. No model key, no paid trial: the metering proxy runs with placeholder keys the fake harness never uses, and the
+# only secret read is HARNESS_EVALS_READ_TOKEN, a read-only token for the private harness-evals repository (Settings >
+# Secrets and variables > Actions; a fine-grained token with Contents: read on garrytan/harness-evals). Nothing here embeds
+# a key. Without that secret the job skips: a ::notice:: and a job-summary line say why, and it succeeds.
+#
+# The image is built from the commit on github.com/garrytan/gbrain, which the Dockerfile fetches by sha, so the check covers
+# branches of this repository; a pull request from a fork has no such commit, and the first step refuses it before the
+# secret check (a fork run gets no secrets either way).
+#
+# Bumping the pin: HARNESS_EVALS_PIN is a commit on harness-evals main. Pick the new main head
+# (git ls-remote https://github.com/garrytan/harness-evals refs/heads/main), set it below, and run the same steps once by hand
+# (docs/ci-event-parity.md#harness-check) against master before merging the bump, so a change on the harness-evals side
+# shows up in a sample run and not in every gbrain pull request. Actions are pinned to commit SHAs; Bun to the version
+# harness-evals' own ci.yml pins.
+name: harness-check
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+# Event parity: docs/ci-event-parity.md#classification (harness-check.yml): pull requests only, advisory.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  HARNESS_EVALS_PIN: 2c45a247f67285e693ed6d63cb16710272927a19
+
+jobs:
+  # Event parity: docs/ci-event-parity.md#classification (harness-check.yml): a fork head is refused, a missing token skips.
+  keyless:
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    timeout-minutes: 45
+    steps:
+      - name: Refuse a fork head; skip without HARNESS_EVALS_READ_TOKEN
+        id: gate
+        env:
+          TOKEN: ${{ secrets.HARNESS_EVALS_READ_TOKEN }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$HEAD_REPO" != "$REPO" ]; then
+            echo "::error::harness-check builds the commit from github.com/$REPO; a pull request from a fork ($HEAD_REPO) has no fetchable commit there"
+            exit 1
+          fi
+          if [ -z "$TOKEN" ]; then
+            reason="HARNESS_EVALS_READ_TOKEN is not set for this repository, so the private harness-evals repository cannot be cloned"
+            echo "::notice::harness-check skipped: $reason"
+            { echo "## harness-check: skipped"; echo; echo "$reason. Add the secret (Settings > Secrets and variables > Actions) to run the keyless check."; } >> "$GITHUB_STEP_SUMMARY"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+      - name: Check out this pull request's gbrain
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+      - name: Clone harness-evals at the pin
+        if: steps.gate.outputs.run == 'true'
+        env:
+          TOKEN: ${{ secrets.HARNESS_EVALS_READ_TOKEN }}
+          PIN: ${{ env.HARNESS_EVALS_PIN }}
+        run: |
+          set -euo pipefail
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)" \
+            clone -q --filter=blob:none https://github.com/garrytan/harness-evals "$RUNNER_TEMP/harness-evals"
+          git -C "$RUNNER_TEMP/harness-evals" checkout -q --detach "$PIN"
+          echo "harness-evals at $(git -C "$RUNNER_TEMP/harness-evals" rev-parse HEAD) (VERSION $(cat "$RUNNER_TEMP/harness-evals/VERSION"))"
+      - if: steps.gate.outputs.run == 'true'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.3
+      - name: Install harness-evals (frozen lockfile; bounded, retried once)
+        if: steps.gate.outputs.run == 'true'
+        timeout-minutes: 8
+        working-directory: ${{ runner.temp }}/harness-evals
+        run: bun "$GITHUB_WORKSPACE/scripts/ci-bun-install.ts" --frozen-lockfile
+      - name: Build the gbrain sidecar image for this commit
+        if: steps.gate.outputs.run == 'true'
+        working-directory: ${{ runner.temp }}/harness-evals
+        env:
+          GBRAIN_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          scripts/build-gbrain-image.sh --gbrain "$GBRAIN_SHA" --tag "harness-eval/gbrain:check-${GBRAIN_SHA::12}" --out /tmp/gbrain-build
+      - name: Keyless check (gbrain-check.ts, no key, no paid trial)
+        id: check
+        if: steps.gate.outputs.run == 'true'
+        working-directory: ${{ runner.temp }}/harness-evals
+        continue-on-error: true
+        env:
+          GBRAIN_SHA: ${{ github.event.pull_request.head.sha }}
+          GBRAIN_CHECK_DIR: /tmp/gbrain-check
+        run: bun scripts/gbrain-check.ts --gbrain "$GBRAIN_SHA" --image "harness-eval/gbrain:check-${GBRAIN_SHA::12}" --no-build
+      - name: Job summary
+        if: always() && steps.gate.outputs.run == 'true'
+        env:
+          OUTCOME: ${{ steps.check.outcome }}
+        run: |
+          { echo "## harness-check (gbrain-check keyless; exit $OUTCOME)"; echo; cat /tmp/gbrain-check/summary.md 2>/dev/null || echo "no summary.md: the image build or the check did not finish"; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Gate on the cross-scope page count
+        if: always() && steps.gate.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          # Gate: the job fails only when the cross-scope page count is not zero (or cannot be read); every other failed assertion is a warning.
+          check=/tmp/gbrain-check/keyless/check.json
+          if [ ! -s "$check" ]; then
+            echo "::error::harness-check: no check.json was written (the image build or the check itself did not finish); the cross-scope count cannot be read"
+            exit 1
+          fi
+          cross=$(jq '
+            (.evidence.scoped.grants // {}) as $g
+            | ((.evidence.scoped.probe.outside // []) | length)
+              + ([ (.evidence.scoped.trial.calls // [])[]
+                   | select((.source_ids_requested == null) and (.outcome == "ok") and (.tool == "gbrain.search" or .tool == "gbrain.query"))
+                   | ((.sources // []) - ($g[.grant // ""] // [])) | length ] | add // 0)' "$check")
+          scoped=$(jq -r 'if .evidence.scoped == null then "absent" elif .evidence.scoped.probe == null then "probe missing" else "present" end' "$check")
+          fails=$(jq -r '.failures | length' "$check")
+          passed=$(jq -r '.passed | length' "$check")
+          diffs=$(jq -r '.pin_diffs | length' "$check")
+          echo "harness-check: cross-scope pages $cross (scoped evidence $scoped); $passed assertion(s) passed, $fails failed (warnings), $diffs pin diff(s)"
+          jq -r '.failures[]' "$check" | while IFS= read -r line; do echo "::warning::$line"; done
+          jq -r '.pin_diffs[]' "$check" | while IFS= read -r line; do echo "::notice::PIN DIFF: $line"; done
+          if [ "$scoped" != present ]; then
+            echo "::error::harness-check: the scoped probe did not run, so the cross-scope count is not a measurement"
+            exit 1
+          fi
+          if [ "$cross" != 0 ]; then
+            echo "::error::harness-check: $cross page(s) returned outside the requester's grant (cross-scope); see check.json evidence.scoped"
+            exit 1
+          fi
+          echo "harness-check: gate passed (cross-scope pages 0)"
+      - name: Build log tail (on failure)
+        if: failure() && steps.gate.outputs.run == 'true'
+        run: tail -60 /tmp/gbrain-build/build.log || true
+      # Only the summary and the assertion record: never a trial's state or a token file.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && steps.gate.outputs.run == 'true'
+        with:
+          name: harness-check-keyless
+          path: |
+            /tmp/gbrain-check/summary.md
+            /tmp/gbrain-check/keyless/check.json
+            /tmp/gbrain-check/keyless/trials.jsonl
+          if-no-files-found: ignore

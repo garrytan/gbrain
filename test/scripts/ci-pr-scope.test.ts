@@ -179,7 +179,7 @@ esac
     const conditional = /github\.event_name|github\.event\.(?:pull_request|merge_group|action)|inputs\.scope|"\$EVENT"|\$EVENT\b/;
     const dispatchMode = /github\.event_name\s*(?:!=|==)\s*'workflow_dispatch'/g;
     const unclassified: string[] = [];
-    for (const name of ['test', 'stress', 'persistence-validation', 'convergence-nightly', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep']) {
+    for (const name of ['test', 'stress', 'persistence-validation', 'convergence-nightly', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep', 'harness-check']) {
       const lines = readFileSync(join(root, '.github/workflows', `${name}.yml`), 'utf8').split('\n');
       // Blocks: each job (from the comments directly above its key to the next job) and the top-level preamble.
       const starts = lines.flatMap((line, i) => (/^  [\w-]+:\s*$/.test(line) && lines.slice(0, i).some(l => l === 'jobs:') ? [i] : []));
@@ -202,7 +202,7 @@ esac
     expect(readFileSync(join(root, 'docs/TESTING.md'), 'utf8')).toContain('### Event parity');
     const docs = readFileSync(join(root, 'docs/ci-event-parity.md'), 'utf8');
     const section = docs.slice(docs.indexOf('## Classification'), docs.indexOf('## Dependency-audit rule'));
-    for (const name of ['test', 'stress', 'persistence-validation', 'convergence-nightly', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep', 'osv-scanner', 'nightly-watch']) {
+    for (const name of ['test', 'stress', 'persistence-validation', 'convergence-nightly', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep', 'osv-scanner', 'nightly-watch', 'harness-check']) {
       expect(section, name).toContain(`${name}.yml`);
     }
     expect(docs).toContain('## Dependency-audit rule');

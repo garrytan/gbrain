@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Pull requests now get an advisory `harness-check`: a keyless run of harness-evals' gbrain check against the pull request's commit that fails only when a member is shown a page outside their grant.**
+
+### What changed
+
+- New workflow `.github/workflows/harness-check.yml` (not a required check). It builds harness-evals' gbrain sidecar image for the pull request's head commit, runs `scripts/gbrain-check.ts` without a key, and gates on the cross-scope page count being zero. Every other failed assertion (tool counts, retrieval, install bundle, installer files) is a warning in the job log and summary.
+- The job reads one secret, `HARNESS_EVALS_READ_TOKEN` (read-only, harness-evals Contents). Without it the job skips with a notice and succeeds; a pull request from a fork is refused. No model key and no paid trial.
+- Docs: `docs/ci-event-parity.md#harness-check` (what it runs, the gate, the skip, a sample run and how to bump the harness-evals pin).
+
 ## [0.60.465.0] - 2026-10-26
 
 **On a managed brain, releasing a held fact (`gbrain trust release h<id>`) now writes it into its entity page's `## Facts` table through the page-write door, so the released fact lives in Git and a re-import keeps it, instead of a database-only row the file never had.**
