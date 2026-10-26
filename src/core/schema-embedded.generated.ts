@@ -2313,7 +2313,7 @@ DO \$rls\$
 DECLARE target TEXT;
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    FOREACH target IN ARRAY ARRAY['page_segment_texts','page_body_manifest','page_body_stagings','page_body_staging_parts','page_view_digests','page_body_staging_texts','page_segment_derivations','page_segment_derivation_purges','page_segment_derivation_purge_pages'] LOOP
+    FOREACH target IN ARRAY ARRAY['page_segment_texts','page_body_manifest','page_body_stagings','page_body_staging_parts','page_view_digests','page_body_staging_texts','page_segment_derivations','page_derivation_spend','page_segment_derivation_purges','page_segment_derivation_purge_pages'] LOOP
       IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                  WHERE n.nspname = current_schema() AND c.relname = target AND c.relkind = 'r' AND NOT c.relrowsecurity) THEN
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', target);

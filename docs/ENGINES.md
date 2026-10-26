@@ -292,8 +292,10 @@ keeps its text in `page_segment_texts`, its layout and headings in
 `page_body_manifest`, uploads in progress in `page_body_stagings` /
 `page_body_staging_parts` (with the segment texts each one holds in
 `page_body_staging_texts`), view sizes in `page_view_digests`, and per-segment
-derivation results (link candidates, window anchors) in `page_segment_derivations`.
-gbrain enables RLS on all seven on every schema replay, as it does on `pages` and
+derivation results (link candidates, window anchors) in `page_segment_derivations`,
+with each page's derivation spend in `page_derivation_spend` and derivation purges
+in progress in `page_segment_derivation_purges` / `page_segment_derivation_purge_pages`.
+gbrain enables RLS on all ten on every schema replay, as it does on `pages` and
 `content_chunks`, so with no policy a role that does not bypass RLS reads no row
 of them. Title search, the source-scoped vector scan, the chunk windows search
 reads around its hits, `get_chunks` and get_page check a chunk of a page stored
@@ -342,6 +344,17 @@ CREATE POLICY page_segment_derivations_scope_filter ON page_segment_derivations
 CREATE POLICY content_chunks_scope_filter ON content_chunks
   USING (current_setting('app.scopes', true) = '*'
          OR EXISTS (SELECT 1 FROM pages p WHERE p.id = page_id));
+-- A write role books segmented derivation spend and records derivation purges
+-- here; without a policy those writes are refused.
+CREATE POLICY page_derivation_spend_scope_filter ON page_derivation_spend
+  USING (current_setting('app.scopes', true) = '*'
+         OR EXISTS (SELECT 1 FROM pages p WHERE p.id = page_id));
+CREATE POLICY page_segment_derivation_purges_scope_filter ON page_segment_derivation_purges
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+CREATE POLICY page_segment_derivation_purge_pages_scope_filter ON page_segment_derivation_purge_pages
+  USING (current_setting('app.scopes', true) = '*'
+         OR EXISTS (SELECT 1 FROM page_segment_derivation_purges r WHERE r.request_id = page_segment_derivation_purge_pages.request_id));
 
 -- A read role that searches and reads pages. The other tables it reads
 -- (config, timeline_entries, facts, ...) need policies of their own.
@@ -356,6 +369,9 @@ ALTER TABLE page_body_staging_parts FORCE ROW LEVEL SECURITY;
 ALTER TABLE page_body_staging_texts FORCE ROW LEVEL SECURITY;
 ALTER TABLE page_view_digests FORCE ROW LEVEL SECURITY;
 ALTER TABLE page_segment_derivations FORCE ROW LEVEL SECURITY;
+ALTER TABLE page_derivation_spend FORCE ROW LEVEL SECURITY;
+ALTER TABLE page_segment_derivation_purges FORCE ROW LEVEL SECURITY;
+ALTER TABLE page_segment_derivation_purge_pages FORCE ROW LEVEL SECURITY;
 ALTER TABLE content_chunks FORCE ROW LEVEL SECURITY;
 ```
 <!-- gbrain:segmented-rls-recipe:end -->
@@ -365,7 +381,7 @@ default (`ALTER ROLE <reader-role> SET app.scopes = 'source-a,source-b'`). The
 policies read `app.scopes` only; the app-layer source filters stay layer 1.
 
 A write role that does not own the tables needs `SELECT, INSERT, UPDATE, DELETE`
-on all six, as on any table a migration adds, even while no page is segmented:
+on all ten, as on any table a migration adds, even while no page is segmented:
 purging soft-deleted pages, fact withdrawal (`forget_fact`, `purge_fact`), the
 maintenance sweep's facts pass, doctor's credential check and the segment
 storage sweep name them. Its ordinary writes (`put_page`, `remember`, sync

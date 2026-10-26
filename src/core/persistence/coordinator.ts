@@ -38,6 +38,7 @@ import { assertRecoveryStagingAbsent, cleanupRecoveryStaging, recoveryStagingFil
 import { assertManagedFilesystemWrite } from './filesystem-guard.ts';
 import { beforeStagePath, fileContentBytes, fileContentHash, hashDescriptor, hashFile, isStreamedContent, LARGE_FILE_MIN_BYTES, stageBeforeCopy, stageStreamedContent, type StreamedFileContent } from './large-file.ts';
 import { declarePublication, publicationTransaction } from './publication-deadline.ts';
+import { PAGE_CHANGED_DURING_PREPARATION_MESSAGE } from './verb-errors.ts';
 import { assertMutationProtocol, assertSharedSkillPersistence, declareDurablePersistence, isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, publishStagedBundleFile, stageBundleFile, type MutationFile } from './bundle-files.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
@@ -561,7 +562,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         // uncoordinated edit.
         const current = await engine.readPageSnapshot(page.slug, { sourceId: row.source_id, includeDeleted: true });
         if ((current?.revision ?? null) !== page.observedRevision) {
-          throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
+          throw new OperationError('revision_conflict', PAGE_CHANGED_DURING_PREPARATION_MESSAGE, 'Read its current revision and submit the updated intent with a new request_id.');
         }
         throw localEditRefusal('The canonical file changed after preparation.', row, skill, 'after the write was prepared, at an unchanged page revision');
       }
@@ -610,7 +611,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         await authorizePageVisibility(tx, row.authority, row.slug);
         if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted page was deleted or recreated.');
         await assertUnboundPublication(tx, row, snapshot?.page.source_path);
-        if ((snapshot?.revision ?? null) !== prepared.observedRevision) throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
+        if ((snapshot?.revision ?? null) !== prepared.observedRevision) throw new OperationError('revision_conflict', PAGE_CHANGED_DURING_PREPARATION_MESSAGE, 'Read its current revision and submit the updated intent with a new request_id.');
         for (const companion of companions) {
           const current = await tx.readPageSnapshot(companion.slug, { sourceId: row.source_id, includeDeleted: true });
           if ((current?.page.id ?? null) !== companion.pageId) throw pageIdentityError(current != null || companion.pageId === null, 'A page this write also changes was deleted or recreated.');

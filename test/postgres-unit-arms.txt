@@ -72,6 +72,7 @@ test/fact-embedding-oversized-7211.test.ts
 test/fact-fence-adoption-exits.test.ts
 test/fact-purge-lookup-timeout-6511.test.ts
 test/facts-absorb-stalled-receipt-7439.test.ts
+test/facts-entity-moved-7602.test.ts
 test/facts-insert-guards-7105.test.ts
 test/facts-publication-large-fence-6898.test.ts
 test/facts-subject-infer-7405.test.ts
