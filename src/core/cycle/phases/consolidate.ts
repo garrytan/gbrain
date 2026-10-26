@@ -23,6 +23,7 @@
  * extractTotals (cycle.ts) — facts_consolidated + takes_written.
  */
 
+import { scanConsolidationBuckets, resumeConsolidationBuckets } from './consolidate-resume.ts';
 import type { Action } from '../../agent-output.ts';
 import type { BrainEngine, FactRow } from '../../engine.ts';
 import type { PhaseResult } from '../../cycle.ts';
@@ -43,6 +44,10 @@ import type { TaintInput, WriteTrust } from '../../trust/tier.ts';
 
 export interface ConsolidatePhaseOpts {
   dryRun?: boolean;
+  /** Opt-in cooperative budget. Also enables usable-vector filtering and source cursors. */
+  maxMs?: number;
+  /** Budget clock (test seam); coordinator waits keep their real clock. */
+  now?: () => number;
   /** In-phase keepalive callback. Awaited between buckets. */
   yieldDuringPhase?: () => Promise<void>;
   /**
@@ -143,6 +148,10 @@ export async function runPhaseConsolidate(
   engine: BrainEngine,
   opts: ConsolidatePhaseOpts = {},
 ): Promise<PhaseResult> {
+  const clock = opts.now ?? Date.now;
+  const startedAt = clock();
+  const bounded = opts.maxMs !== undefined;
+  const budgetSpent = () => bounded && clock() - startedAt >= opts.maxMs!;
   const disabled = await disabledSkip(engine, opts);
   if (disabled) return disabled;
   const dryRun = opts.dryRun === true;
@@ -169,42 +178,23 @@ export async function runPhaseConsolidate(
 
   // Pull every (source_id, entity_slug) bucket of unconsolidated facts.
   // Uses the partial idx_facts_unconsolidated index.
-  let buckets: Array<{ source_id: string; entity_slug: string; count: number }>;
-  try {
-    buckets = await engine.executeRaw<{
-      source_id: string; entity_slug: string; count: number;
-    }>(`
-      SELECT source_id, entity_slug, COUNT(*)::int AS count
-      FROM facts
-      WHERE consolidated_at IS NULL
-        AND expired_at IS NULL
-        AND (valid_until IS NULL OR valid_until > now())
-        AND entity_slug IS NOT NULL
-        AND (attributed_to IS NULL OR attributed_to = 'user')
-        AND ($2::boolean=false OR visibility='world')
-        AND ($1::text IS NULL OR source_id=$1)
-      GROUP BY source_id, entity_slug
-      HAVING COUNT(*) >= $3
-    `, [opts.sourceId ?? null, managed, minPerBucket]);
-  } catch (err) {
-    return {
-      phase: 'consolidate',
-      status: 'fail',
-      duration_ms: 0,
-      summary: 'failed to scan unconsolidated facts',
-      details: { error: err instanceof Error ? err.message : String(err) },
-      error: {
-        class: 'ConsolidateScanFailed',
-        code: 'consolidate_scan_failed',
-        message: err instanceof Error ? err.message : String(err),
-      },
-    };
-  }
+  const scanned = await scanConsolidationBuckets(engine, opts.sourceId, managed, minPerBucket, bounded);
+  if (scanned.failure) return scanned.failure;
+  let buckets = scanned.buckets;
 
+  const cursorKey = opts.sourceId === undefined ? 'dream.consolidate.cursor'
+    : `dream.consolidate.cursor.${opts.sourceId}`;
+  const resumed = bounded ? await resumeConsolidationBuckets(engine, buckets, cursorKey, opts.sourceId) : { buckets, resumedFrom: null };
+  buckets = resumed.buckets;
+  const { resumedFrom } = resumed;
+  let visited = 0;
+  let budgetExhausted = false;
   const run = new ItemRun('consolidate.buckets');
   let bucketsFailed = 0;
   const bucketFailures: Array<{ source_id: string; entity_slug: string; code: string; message: string; fix: Action }> = [];
-  for (const b of buckets) {
+  bucketLoop: for (; visited < buckets.length; visited++) {
+    const b = buckets[visited];
+    if (budgetSpent()) { budgetExhausted = true; break; }
     // #1972: bail at the top of the bucket loop on abort. Each prior bucket's
     // per-row INSERT/consolidate is already committed, so breaking returns a
     // valid partial envelope (the inner cluster loop is bounded at limit 100,
@@ -269,6 +259,9 @@ export async function runPhaseConsolidate(
 
       for (const cluster of clusters) {
         if (cluster.length < 2) continue;
+        // Finish in-flight publication, then stop before admitting another cluster.
+        if (budgetSpent()) { budgetExhausted = true; break bucketLoop; }
+        if (bounded && isAborted(opts.signal)) break bucketLoop;
         const tie = clusterTie(cluster, claims);
         if (tie) { clustersHeldSameInstant += 1; if (sameInstantClusters.length < SAME_INSTANT_SAMPLES) sameInstantClusters.push(heldCluster(b, tie)); if (recordsTies) await recordTie(engine, b, cluster, tie); continue; }
         if (await consolidationRestored(engine, b.source_id, b.entity_slug, cluster.map(f => f.id))) continue; // the operator reopened this chain
@@ -405,11 +398,19 @@ export async function runPhaseConsolidate(
     }
   }
 
+  if (bounded && !dryRun) {
+    const next = buckets[visited];
+    await engine.setConfig(cursorKey, next
+      ? JSON.stringify({ source_id: next.source_id, entity_slug: next.entity_slug }) : '');
+  }
+
   return {
     phase: 'consolidate',
-    status: bucketsFailed > 0 || clustersHeldSameInstant > 0 ? 'warn' : factsConsolidated === 0 && clustersSkippedRetired > 0 ? 'skipped' : 'ok',
+    status: budgetExhausted || bucketsFailed > 0 || clustersHeldSameInstant > 0 ? 'warn' : factsConsolidated === 0 && clustersSkippedRetired > 0 ? 'skipped' : 'ok',
     duration_ms: 0,
-    summary: (dryRun
+    summary: (budgetExhausted
+      ? `stopped at the time budget after ${visited} of ${buckets.length} buckets; continues next run`
+      : dryRun
       ? `(dry-run) would promote ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} buckets`
       : `promoted ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} buckets` +
         (clustersSkippedRetired ? `; skipped ${clustersSkippedRetired} clusters with retired takes` : '') +
@@ -419,6 +420,8 @@ export async function runPhaseConsolidate(
       (clustersHeldSameInstant ? `; held ${clustersHeldSameInstant} cluster(s) whose typed claims state one metric for the same effective time (details.same_instant_clusters)` : ''),
     details: {
       dryRun,
+      ...(bounded ? { buckets_total: buckets.length, buckets_remaining: buckets.length - visited,
+        budget_exhausted: budgetExhausted, resumed_from: resumedFrom, max_seconds: opts.maxMs! / 1000 } : {}),
       cluster_threshold: threshold,
       untyped_cluster_threshold: untypedClusterThreshold(threshold),
       ...(thresholdInvalid !== undefined ? { cluster_threshold_invalid: thresholdInvalid } : {}),

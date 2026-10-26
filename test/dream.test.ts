@@ -606,35 +606,27 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     errSpy.mockRestore();
   });
 
-  // ─── Happy path: --source writes last_full_cycle_at (the bug fix) ───
+  // Explicit phase subsets preserve the last full-cycle stamp.
 
-  test('--source <existing> writes last_full_cycle_at on success (PR #1559 regression)', async () => {
+  test('--source <existing> with a phase subset does not refresh last_full_cycle_at', async () => {
     await seedSource('media-corpus');
     const before = await readLastFullCycleAt('media-corpus');
     expect(before).toBeNull();
 
-    const t0 = Date.now();
     const report = await runDream(engine, ['--dir', repo, '--source', 'media-corpus', '--phase', 'lint', '--json']);
     expect(report).toBeTruthy();
     if (report) expect(['ok', 'clean']).toContain(report.status);
 
     const after = await readLastFullCycleAt('media-corpus');
-    expect(after).not.toBeNull();
-    const writtenMs = new Date(after!).getTime();
-    expect(writtenMs).toBeGreaterThanOrEqual(t0);
-    expect(writtenMs).toBeLessThanOrEqual(Date.now() + 1000);
+    expect(after).toBeNull();
+    expect(report?.freshness_stamp).toBe('skipped_phase_subset');
   }, 300_000);
 
   // ─── Back-compat: bare `gbrain dream` does NOT write per-source stamp ─
 
-  test('gbrain dream (no --source) stamps only the source whose local_path matches --dir (#1869)', async () => {
-    // Pre-#1869 this asserted NO source was ever stamped without an explicit
-    // --source — which is exactly the bug: a path-scoped `gbrain dream --dir`
-    // run never landed a freshness stamp and doctor's cycle_freshness stayed
-    // stale forever. New truth: the source whose local_path matches the
-    // resolved brain dir is derived and stamped; unrelated sources stay
-    // untouched (cross-source isolation).
-    await seedSource('alpha'); // local_path = repo → derived + stamped
+  test('gbrain dream --dir resolves the source but a phase subset does not stamp it', async () => {
+    // The subset resolves alpha but cannot certify a full cycle.
+    await seedSource('alpha');
     await engine.executeRaw(
       `INSERT INTO sources (id, name, local_path, config, archived, created_at)
        VALUES ($1, $2, $3, '{}'::jsonb, false, NOW())`,
@@ -642,7 +634,8 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     );
     const report = await runDream(engine, ['--dir', repo, '--phase', 'lint', '--json']);
     expect(report).toBeTruthy();
-    expect(await readLastFullCycleAt('alpha')).not.toBeNull();
+    expect(report?.freshness_stamp).toBe('skipped_phase_subset');
+    expect(await readLastFullCycleAt('alpha')).toBeNull();
     expect(await readLastFullCycleAt('beta')).toBeNull();
   }, 300_000);
 
@@ -742,7 +735,7 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
 
   // ─── --source-id alias equivalence (D3) ─────────────────────────────
 
-  test('--source-id <existing> is equivalent to --source (writes timestamp)', async () => {
+  test('--source-id <existing> is equivalent to --source (phase subset skips timestamp)', async () => {
     await seedSource('beta');
     const before = await readLastFullCycleAt('beta');
     expect(before).toBeNull();
@@ -752,7 +745,8 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     if (report) expect(['ok', 'clean']).toContain(report.status);
 
     const after = await readLastFullCycleAt('beta');
-    expect(after).not.toBeNull();
+    expect(after).toBeNull();
+    expect(report?.freshness_stamp).toBe('skipped_phase_subset');
   }, 300_000);
 
   // ─── T3: TypeError MUST propagate (not swallowed by predicate-gated catch) ─
@@ -780,7 +774,7 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
         return original.call(this, sql, params);
       };
       await expect(
-        runDream(engine, ['--dir', repo, '--source', 'gamma', '--phase', 'lint', '--json'])
+        runDream(engine, ['--dir', repo, '--source', 'gamma', ...SOURCE_FRESHNESS_PHASES.flatMap(phase => ['--phase', phase]), '--json'])
       ).rejects.toThrow(/synthetic-test-bug/);
     } finally {
       (engine as any).executeRaw = original;
@@ -953,7 +947,7 @@ describe('runDream → checkCycleFreshness end-to-end (D5)', () => {
     expect(beforeCheck.status).not.toBe('ok');
 
     // Run dream against the stale source.
-    const report = await runDream(engine, ['--dir', repo, '--source', 'gamma', '--phase', 'lint', '--json']);
+    const report = await runDream(engine, ['--dir', repo, '--source', 'gamma', ...SOURCE_FRESHNESS_PHASES.flatMap(phase => ['--phase', phase]), '--json']);
     expect(report).toBeTruthy();
     if (report) expect(['ok', 'clean']).toContain(report.status);
 

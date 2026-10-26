@@ -50,6 +50,7 @@
  * reconciliation.
  */
 
+import { selectResumableFactPages, resumeFactPages, reconcileFactPages } from './extract-facts-resume.ts';
 import { withUnmanagedBeliefs } from '../belief/projection-point.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { existsSync, readFileSync } from 'node:fs';
@@ -100,6 +101,7 @@ import {
 } from './phantom-redirect.ts';
 import { embed, getEmbeddingDimensions, getEmbeddingModel, isAvailable } from '../ai/gateway.ts';
 import { isAborted } from '../abort-check.ts';
+import { capExtractFactsConcurrency, resolveExtractFactsConcurrency } from './extract-facts-concurrency.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { urlCloneReadOnly } from '../url-clone.ts';
@@ -664,6 +666,9 @@ async function expireDeletedPageFacts(tx: BrainEngine, sourceId: string, slug: s
 export interface ExtractFactsOpts {
   /** Subset of slugs to reconcile. undefined = walk every page in the brain. */
   slugs?: string[];
+  /** Opt-in cooperative budget and changed/unprocessed candidate walk. */
+  maxMs?: number;
+  now?: () => number;
   /** Dry-run: parse + count, no DB writes. */
   dryRun?: boolean;
   /** Optional source_id override for multi-source brains. Default 'default'. */
@@ -695,7 +700,12 @@ export interface ExtractFactsOpts {
 }
 
 export interface ExtractFactsResult {
+  concurrency: number;
   pagesScanned: number;
+  pages_total?: number;
+  pages_remaining?: number;
+  budget_exhausted?: boolean;
+  resumed_from?: string | null;
   pagesWithFacts: number;
   factsInserted: number;
   /** Fence-owned rows whose cells were updated in place (ids kept). */
@@ -774,7 +784,14 @@ export async function runExtractFacts(
   engine: BrainEngine,
   opts: ExtractFactsOpts = {},
 ): Promise<ExtractFactsResult> {
+  const clock = opts.now ?? Date.now;
+  const startedAt = clock();
+  const bounded = opts.maxMs !== undefined;
   const sourceId = opts.sourceId ?? 'default';
+  const completedKey = `dream.extract_facts.completed_at.${sourceId}`;
+  const walkStartedAt = bounded
+    ? (await engine.executeRaw<{ at: string }>('SELECT clock_timestamp()::text AS at'))[0]!.at
+    : undefined;
   // Managed brains reconcile the same way, but each page's writes publish as
   // a receipted database-only maintenance request. The authority is
   // preflighted on the first page that needs a write, so a run with nothing
@@ -783,6 +800,7 @@ export async function runExtractFacts(
   let authority: Promise<MaintenanceAuthority | null> | undefined;
   const managedAuthority = () => managed ? authority ??= maintenancePreflight(engine, sourceId) : Promise.resolve(null);
   const result: ExtractFactsResult = {
+    concurrency: bounded && !opts.dryRun ? capExtractFactsConcurrency(resolveExtractFactsConcurrency(), engine) : 1,
     pagesScanned: 0,
     pagesWithFacts: 0,
     factsInserted: 0,
@@ -952,7 +970,9 @@ export async function runExtractFacts(
   if (opts.slugs !== undefined) {
     // Caller explicitly passed a list (possibly empty). Empty array is a
     // real incremental no-op; don't escalate to full-brain walk.
-    slugs = opts.slugs;
+    slugs = bounded ? [...new Set(opts.slugs)] : opts.slugs;
+  } else if (bounded) {
+    slugs = await selectResumableFactPages(engine, sourceId, completedKey);
   } else {
     // Full walk: every page of this source; pages reconcile under `sourceId`,
     // so another source's slugs are never this run's work (#6803).
@@ -969,7 +989,7 @@ export async function runExtractFacts(
   }
   const watermark = !managed && !opts.dryRun;
   const explicit = new Set(slugs);
-  if (watermark && opts.drain && opts.slugs !== undefined) {
+  if (!bounded && watermark && opts.drain && opts.slugs !== undefined) {
     slugs = Array.from(new Set([...slugs, ...await selectFactsReconcileDrain(engine, sourceId, opts.drain)]));
   }
   const drainDeadline = Date.now() + (opts.drain?.budgetMs ?? FACTS_DRAIN_BUDGET_MS);
@@ -977,21 +997,26 @@ export async function runExtractFacts(
   // index as it is; reconciling it would classify those rows as stale.
   slugs = slugs.filter(slug => !legacySlugs.has(slug));
 
+  const cursorKey = `dream.extract_facts.cursor.${sourceId}`;
+  let visited = 0;
+  let incomplete = result.guardTriggered || result.phantomsMorePending || result.phantomsLockBusy;
+  if (bounded) slugs = await resumeFactPages(engine, slugs, cursorKey, result);
+
   // ── Reconcile each page ───────────────────────────────────────
   // Each page reconciles independently: 'stop' ends the walk (cancellation),
   // every other outcome moves on. A thrown error is isolated to its page
   // below. For the watermark, 'unchanged' is a complete no-op still to be
   // stamped and 'complete' was stamped inside the write transaction.
   type PageOutcome = FactsReconcileOutcome | 'unchanged' | 'skipped' | 'stop';
-  let revision: string | null | undefined;
-  const reconcilePage = async (slug: string): Promise<PageOutcome> => {
+  type PageState = { revision?: string | null };
+  const reconcilePage = async (slug: string, state: PageState): Promise<PageOutcome> => {
     const page = await engine.getPage(slug, { sourceId });
     if (!page) {
       // Slug listed but not in DB — skip silently. The next cycle
       // will pick it up if it exists.
       return 'skipped';
     }
-    revision = page.knowledge_revision ?? null;
+    state.revision = page.knowledge_revision ?? null;
     // #6259: a quarantined page projects no fence facts; its existing index is left as it is.
     if (isQuarantined(page.frontmatter as Record<string, unknown> | null)) return 'skipped';
     const plan = await planFenceReconcile(engine, page, slug, sourceId, result.warnings);
@@ -1085,34 +1110,19 @@ export async function runExtractFacts(
     return (outcome.deferred ?? deferInserts) ? 'deferred' : 'complete';
   };
 
-  for (const slug of slugs) {
-    // #1972: bail at the top of the per-page loop on abort. Each page is an
-    // independent delete-then-insert commit, so breaking leaves a consistent
-    // partial state; the receipt/rollup below still runs with partial counts.
-    if (isAborted(opts.signal)) break;
-    // Drained pages follow the explicit ones, so the drain budget ends the walk.
-    if (!explicit.has(slug) && Date.now() > drainDeadline) break;
-    result.pagesScanned += 1;
-    revision = undefined;
-    let outcome: PageOutcome;
-    try {
-      outcome = await reconcilePage(slug);
-    } catch (error) {
-      if (isAborted(opts.signal)) throw error;
-      // One page the database rejects (CHECK/FK violation, malformed input the
-      // parser tolerated) must not abort reconciliation for every later page.
-      // Its transaction rolled back, so the existing index is preserved.
-      result.pagesFailed += 1;
-      result.warnings.push(`${slug}: FACTS_RECONCILE_FAILED: ${(error instanceof Error ? error.message : String(error)).slice(0, 300)}`);
-      outcome = 'deferred';
+  const walked = await reconcileFactPages({ engine, sourceId, result, opts, slugs, clock, startedAt,
+    explicit, drainDeadline, watermark, managed, reconcilePage, bounded });
+  visited = walked.visited;
+  incomplete ||= walked.incomplete;
+
+  if (bounded) {
+    result.pages_remaining = slugs.length - visited;
+    if (!opts.dryRun) {
+      await engine.setConfig(cursorKey, slugs[visited] ?? '');
+      if (walkStartedAt && opts.slugs === undefined && visited === slugs.length && !incomplete && !isAborted(opts.signal)) {
+        await engine.setConfig(completedKey, walkStartedAt);
+      }
     }
-    if (watermark && outcome !== 'complete' && outcome !== 'skipped') {
-      const settled = outcome === 'unchanged' ? 'complete' : outcome === 'stop' ? 'cancelled' : outcome;
-      await settleFactsReconcile(engine, sourceId, slug, settled, revision).catch((error: unknown) => {
-        result.warnings.push(`${slug}: facts reconcile watermark not recorded: ${error instanceof Error ? error.message : String(error)}`);
-      });
-    }
-    if (outcome === 'stop') break;
   }
 
   // v0.42 Wave B3: receipt + rollup. extract_facts is deterministic
@@ -1145,7 +1155,8 @@ export async function runExtractFacts(
       kind: 'facts.fence',
       source_id: sourceId,
       cost_delta: 0,
-      ...classifyRunStop({ error: result.pagesFailed > 0 ? 'item_error' : false }),
+      ...classifyRunStop({ error: result.pagesFailed > 0 ? 'item_error' : false,
+        budget_exhausted: result.budget_exhausted }),
     });
   }
 

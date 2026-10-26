@@ -1,6 +1,7 @@
 /**
- * #1869 — `gbrain dream --dir <path>` stamps cycle freshness when the path
- * matches a registered source's local_path.
+ * #1869 — `gbrain dream --dir <path>` resolves the source whose local_path
+ * matches. Explicit phase subsets report skipped_phase_subset and do not
+ * stamp freshness; complete source cycles are covered in dream.test.ts.
  *
  * Pre-fix, only `--source <id>` runs wrote last_source_cycle_at /
  * last_full_cycle_at (runCycle's stamp gate reads opts.sourceId, and dream
@@ -69,7 +70,7 @@ async function readLastFullCycleAt(sourceId: string): Promise<string | null> {
 }
 
 describe('gbrain dream --dir <path> freshness stamp (#1869)', () => {
-  test('--dir matching a source local_path stamps last_full_cycle_at', async () => {
+  test('--dir resolves its source but a phase subset does not stamp freshness', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       await seedSource('path-scoped');
       expect(await readLastFullCycleAt('path-scoped')).toBeNull();
@@ -78,9 +79,9 @@ describe('gbrain dream --dir <path> freshness stamp (#1869)', () => {
       expect(report).toBeTruthy();
       if (report) expect(['ok', 'clean']).toContain(report.status);
 
-      // Pre-fix this stays null forever: dream never passed a sourceId, so
-      // runCycle's stamp gate skipped the write.
-      expect(await readLastFullCycleAt('path-scoped')).not.toBeNull();
+      // A subset does not stamp, but its report confirms source resolution.
+      expect(report?.freshness_stamp).toBe('skipped_phase_subset');
+      expect(await readLastFullCycleAt('path-scoped')).toBeNull();
     });
   }, 60_000);
 
@@ -112,9 +113,10 @@ describe('gbrain dream --dir <path> freshness stamp (#1869)', () => {
       // Pre-fix, resolveSourceForDir's exact match had no `archived = false`
       // filter and no ORDER BY, so the archived twin won the lookup; dream's
       // archived guard then (correctly) refused to stamp it — and the ACTIVE
-      // source silently never got its stamp, leaving doctor's cycle_freshness
-      // permanently stale on a healthy install.
-      expect(await readLastFullCycleAt('active-twin')).not.toBeNull();
+      // source was never resolved. A subset report must identify the active
+      // source as eligible except for its incomplete phase selection.
+      expect(report?.freshness_stamp).toBe('skipped_phase_subset');
+      expect(await readLastFullCycleAt('active-twin')).toBeNull();
       expect(await readLastFullCycleAt('retired-twin')).toBeNull();
     });
   }, 60_000);
@@ -140,7 +142,7 @@ describe('gbrain dream --dir <path> freshness stamp (#1869)', () => {
  * Linux CI alike.
  */
 describe('gbrain dream --dir <path> freshness stamp across a symlink (#2540)', () => {
-  test('local_path stored as the REAL path, --dir given the SYMLINKED path still stamps', async () => {
+  test('local_path stored as the REAL path, --dir via a symlink still resolves the source', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       const realTarget = mkdtempSync(join(tmpdir(), 'gbrain-2540-real-'));
       const linkParent = mkdtempSync(join(tmpdir(), 'gbrain-2540-link-'));
@@ -156,14 +158,15 @@ describe('gbrain dream --dir <path> freshness stamp across a symlink (#2540)', (
 
       const report = await runDream(engine, ['--dir', symlinkedDir, '--phase', 'lint', '--json']);
       expect(report).toBeTruthy();
-      expect(await readLastFullCycleAt('vault-real')).not.toBeNull();
+      expect(report?.freshness_stamp).toBe('skipped_phase_subset');
+      expect(await readLastFullCycleAt('vault-real')).toBeNull();
 
       rmSync(realTarget, { recursive: true, force: true });
       rmSync(linkParent, { recursive: true, force: true });
     });
   }, 60_000);
 
-  test('local_path stored as the SYMLINKED path, --dir given the REAL path still stamps', async () => {
+  test('local_path stored as the SYMLINKED path, --dir via the real path still resolves the source', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       const realTarget = mkdtempSync(join(tmpdir(), 'gbrain-2540-real2-'));
       const linkParent = mkdtempSync(join(tmpdir(), 'gbrain-2540-link2-'));
@@ -178,7 +181,8 @@ describe('gbrain dream --dir <path> freshness stamp across a symlink (#2540)', (
 
       const report = await runDream(engine, ['--dir', realpathSync(symlinkedDir), '--phase', 'lint', '--json']);
       expect(report).toBeTruthy();
-      expect(await readLastFullCycleAt('vault-link')).not.toBeNull();
+      expect(report?.freshness_stamp).toBe('skipped_phase_subset');
+      expect(await readLastFullCycleAt('vault-link')).toBeNull();
 
       rmSync(realTarget, { recursive: true, force: true });
       rmSync(linkParent, { recursive: true, force: true });

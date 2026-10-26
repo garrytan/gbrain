@@ -94,7 +94,7 @@ async function runExpectingExit1(args: string[]): Promise<string[]> {
 }
 
 describe('gbrain dream honors GBRAIN_SOURCE like --source (#4778)', () => {
-  test('two-source brain: GBRAIN_SOURCE=source-a stamps source-a only', async () => {
+  test('two-source brain: a GBRAIN_SOURCE phase subset does not stamp freshness', async () => {
     await seedSource('source-a', dirA);
     await seedSource('source-b', dirB);
     await withEnv({ GBRAIN_HOME: gbrainHome, GBRAIN_SOURCE: 'source-a' }, async () => {
@@ -104,7 +104,8 @@ describe('gbrain dream honors GBRAIN_SOURCE like --source (#4778)', () => {
       // Pre-fix: two non-default sources defeat sole-non-default routing, no
       // sync.repo_path means no dir derivation, so resolvedSourceId stayed
       // undefined and runCycle's stamp gate skipped the write.
-      expect(await readLastFullCycleAt('source-a')).not.toBeNull();
+      expect(report?.freshness_stamp).toBe('skipped_phase_subset');
+      expect(await readLastFullCycleAt('source-a')).toBeNull();
       expect(await readLastFullCycleAt('source-b')).toBeNull();
     });
   }, 60_000);

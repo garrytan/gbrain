@@ -45,6 +45,7 @@ import { resolve } from 'node:path';
 interface DreamArgs {
   json: boolean;
   dryRun: boolean;
+  phaseBudgetSeconds?: number;
   pull: boolean;
   /**
    * #4493: every explicitly-named (or --input/--drain-implied) phase, order
@@ -146,6 +147,14 @@ function parseArgs(args: string[]): DreamArgs {
   // value is validated, order is preserved, repeats of the same value
   // collapse (same contract as the repeated --source handling below).
   const json = jsonRequested(args);
+  const budgets = collectFlagValues(args, '--max-seconds');
+  if (budgets === null || budgets.some(v => !/^[0-9]+$/.test(v) ||
+      !Number.isSafeInteger(Number(v) * 1000) || Number(v) <= 0) || new Set(budgets).size > 1) {
+    dreamExit(usageError('--max-seconds <n>: expected a positive integer number of seconds.',
+      'Example: gbrain dream --phase consolidate --max-seconds 60'), json);
+  }
+  const phaseBudgetSeconds = budgets.length > 0 ? Number(budgets[0]) : undefined;
+
   const phaseValues = collectFlagValues(args, '--phase');
   if (phaseValues === null) {
     dreamExit(usageError('--phase <name>: missing value. Usage: gbrain dream --phase <name>', 'Example: gbrain dream --phase lint'), json);
@@ -298,6 +307,7 @@ function parseArgs(args: string[]): DreamArgs {
   return {
     json,
     dryRun: args.includes('--dry-run'),
+    phaseBudgetSeconds,
     pull: args.includes('--pull'),
     phases,
     dir,
@@ -399,6 +409,8 @@ Options:
                       but skips the synthesis subagents; propose_takes,
                       grade_takes and calibration_profile are skipped.
                       "--dry-run" does NOT mean "zero LLM calls."
+  --max-seconds N     Cooperative per-phase budget for consolidate and extract_facts;
+                      resumes source cursors and selects changed/unprocessed pages.
   --json              Emit the CycleReport as JSON (agent-readable)
   --phase <name>      Run only the named phase(s). Repeatable — every named
                       phase runs, in canonical cycle order (#4493).
@@ -890,13 +902,14 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     // #6023: the local CLI sees private fact text in the consolidate dry-run preview.
     remote: false,
     dryRun: opts.dryRun,
+    phaseBudgetSeconds: opts.phaseBudgetSeconds,
     pull: opts.pull,
     phases,
     directPhases: phases !== undefined,
     // Undefined for legacy unscoped runs; set for explicit source cycles,
     // path-derived cycles, and bare default-like non-default source cycles.
     sourceId: resolvedSourceId,
-    fullImplicitSourceCycle,
+    fullImplicitSourceCycle: fullImplicitSourceCycle && phases === undefined,
     synthInputFile: opts.inputFile ?? undefined,
     synthDate: opts.date ?? undefined,
     synthFrom: opts.from ?? undefined,

@@ -21,10 +21,11 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { runCycle } from '../src/core/cycle.ts';
+import { runCycle, SOURCE_FRESHNESS_PHASES } from '../src/core/cycle.ts';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { makeGitFixture } from './helpers/git-fixture.ts';
 
 let engine: PGLiteEngine;
 let brainDir: string;
@@ -50,10 +51,11 @@ beforeEach(async () => {
   await resetPgliteState(engine);
   brainDir = mkdtempSync(join(tmpdir(), 'gbrain-stamp-brain-'));
   gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-stamp-home-'));
+  await makeGitFixture(brainDir);
   await engine.executeRaw(
-    `INSERT INTO sources (id, name, config) VALUES ($1, $2, $3::text::jsonb)
+    `INSERT INTO sources (id, name, config, local_path) VALUES ($1, $2, $3::text::jsonb, $4)
      ON CONFLICT (id) DO NOTHING`,
-    [SOURCE, 'Stamp Fail Source', '{}'],
+    [SOURCE, 'Stamp Fail Source', '{}', brainDir],
   );
 });
 
@@ -67,7 +69,7 @@ async function runWithFailingStamp(message: string) {
   };
   try {
     const report = await withEnv({ GBRAIN_HOME: gbrainHome }, () =>
-      runCycle(engine, { brainDir, sourceId: SOURCE, phases: ['lint'] }),
+      runCycle(engine, { brainDir, sourceId: SOURCE, phases: SOURCE_FRESHNESS_PHASES }),
     );
     return { report, calls };
   } finally {
@@ -101,7 +103,7 @@ describe('#3504 stamp-write failure is surfaced on the report', () => {
 describe('#3504 no false positives', () => {
   test('a healthy per-source cycle has no stamp_write_failed and keeps a success status', async () => {
     const report = await withEnv({ GBRAIN_HOME: gbrainHome }, () =>
-      runCycle(engine, { brainDir, sourceId: SOURCE, phases: ['lint'] }),
+      runCycle(engine, { brainDir, sourceId: SOURCE, phases: SOURCE_FRESHNESS_PHASES }),
     );
     expect(report.stamp_write_failed).toBeUndefined();
     expect(report.reason).toBeUndefined();
@@ -113,7 +115,7 @@ describe('#3504 no false positives', () => {
     // deliberately ignores 'skipped' phases, so omitting optional phases is not
     // a failure. Only a real write error may degrade the status.
     const report = await withEnv({ GBRAIN_HOME: gbrainHome }, () =>
-      runCycle(engine, { brainDir, sourceId: SOURCE, phases: ['lint'] }),
+      runCycle(engine, { brainDir, sourceId: SOURCE, phases: SOURCE_FRESHNESS_PHASES }),
     );
     const skipped = report.phases.filter((p) => p.status === 'skipped');
     // Whether or not any phase skipped in this environment, the invariant holds:
@@ -133,7 +135,7 @@ describe('#3504 no false positives', () => {
     };
     try {
       const report = await withEnv({ GBRAIN_HOME: gbrainHome }, () =>
-        runCycle(engine, { brainDir, sourceId: SOURCE, phases: ['lint'], dryRun: true }),
+        runCycle(engine, { brainDir, sourceId: SOURCE, phases: SOURCE_FRESHNESS_PHASES, dryRun: true }),
       );
       expect(called).toBe(false);
       expect(report.stamp_write_failed).toBeUndefined();
@@ -149,7 +151,7 @@ describe('#3504 no false positives', () => {
     };
     try {
       const report = await withEnv({ GBRAIN_HOME: gbrainHome }, () =>
-        runCycle(engine, { brainDir, phases: ['lint'] }),
+        runCycle(engine, { brainDir, phases: SOURCE_FRESHNESS_PHASES }),
       );
       expect(report.stamp_write_failed).toBeUndefined();
     } finally {

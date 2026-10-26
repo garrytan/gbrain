@@ -43,6 +43,7 @@
  * trigger lock acquisition.
  */
 
+import { stampSourceCycle } from './cycle/source-freshness.ts';
 import { withAdmissionOrigin } from './persistence/admission-origin.ts';
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, statSync, realpathSync } from 'fs';
 import { join } from 'path';
@@ -60,7 +61,7 @@ import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/p
 import { acquireLeaseSet, maintenanceLockBusySkip, MAINTENANCE_LEASE_ID } from './cycle/lock-set.ts';
 import { assertEmbedNotStalled } from './embed-stall.ts'; import { embedBackfillFix } from './embed-consent.ts';
 import { anyAbortSignal } from './abort-signals.ts'; import { urlClonePullBlock, urlClonePullBlockSummary } from './url-clone.ts';
-import { maybeRefreshPlannerStats } from './planner-stats.ts'; import { listSourceChangedPages, sourceCycleWindowStamp, unionSlugSets, type SourceCycleWindow } from './cycle/source-window.ts';
+import { maybeRefreshPlannerStats } from './planner-stats.ts'; import { listSourceChangedPages, unionSlugSets, type SourceCycleWindow } from './cycle/source-window.ts';
 
 export { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
 export { anyAbortSignal } from './abort-signals.ts';
@@ -409,6 +410,7 @@ export type CycleStatus = 'ok' | 'clean' | 'partial' | 'skipped' | 'failed';
 export interface CycleReport {
   /** Additive schema. Bumped on breaking changes. */
   schema_version: '1';
+  freshness_stamp?: 'written' | 'skipped_phase_subset' | 'skipped_incomplete' | 'skipped';
   timestamp: string;
   duration_ms: number;
   /**
@@ -500,6 +502,8 @@ export interface CycleReport {
 export interface CycleOpts {
   /** If true, no writes to filesystem or DB. All phases honor this. */
   dryRun?: boolean;
+  /** Opt-in per-phase cooperative budget for consolidate and extract_facts. */
+  phaseBudgetSeconds?: number;
   /**
    * #6023: caller trust for the consolidate dry-run preview. Only the local
    * CLI (`remote: false`) sees private fact text in `details.clusters`;
@@ -1497,11 +1501,13 @@ async function runPhaseExtractFacts(
   dryRun: boolean,
   changedSlugs?: string[],
   signal?: AbortSignal,
+  maxMs?: number,
 ): Promise<PhaseResult> {
   try {
     const { runExtractFacts } = await import('./cycle/extract-facts.ts');
     const result = await runExtractFacts(engine, {
       slugs: changedSlugs,
+      maxMs,
       drain: {},
       dryRun,
       sourceId,
@@ -1545,12 +1551,16 @@ async function runPhaseExtractFacts(
     const decideConflict = dryRun ? undefined : await (await import('./ai/decide/sweep.ts')).conflictSweepTail(engine, sourceId, signal);
     return {
       phase: 'extract_facts',
-      status: result.warnings.length > 0 ? 'warn' : 'ok',
+      status: result.budget_exhausted || result.warnings.length > 0 ? 'warn' : 'ok',
       duration_ms: 0,
-      summary: `${result.factsInserted} fact(s) reconciled across ${result.pagesScanned} page(s)${phantomSummary}` + guardSummary +
+      summary: result.budget_exhausted
+        ? `stopped at the time budget after ${result.pagesScanned} of ${result.pages_total} pages; continues next run`
+        : `${result.factsInserted} fact(s) reconciled across ${result.pagesScanned} page(s)${phantomSummary}` + guardSummary +
         (result.warnings.length > 0 ? ` (${result.warnings.length} warning(s))` : ''),
       details: {
-        pagesScanned: result.pagesScanned,
+        ...(maxMs !== undefined ? { pages_total: result.pages_total, pages_remaining: result.pages_remaining,
+          budget_exhausted: result.budget_exhausted, resumed_from: result.resumed_from, max_seconds: maxMs / 1000 } : {}),
+        concurrency: result.concurrency, pagesScanned: result.pagesScanned,
         pagesWithFacts: result.pagesWithFacts,
         factsInserted: result.factsInserted,
         factsDeleted: result.factsDeleted,
@@ -1923,7 +1933,8 @@ export async function runCycle(
   opts: CycleOpts,
 ): Promise<CycleReport> {
   // #6696 (A5): every cycle phase is background work, even under an operator's command.
-  const report = await withAdmissionOrigin('background', () => runCycleUnscoped(engine, opts));
+  const report: CycleReport = { freshness_stamp: 'skipped',
+    ...await withAdmissionOrigin('background', () => runCycleUnscoped(engine, opts)) };
   if (!engine || report.status === 'skipped' || opts.dryRun) return report;
   const notices = await (await import('./persistence/capacity-snapshot.ts')).capacityNotices(engine, { throttle: false }).catch(() => []);
   return notices.length ? { ...report, notices } : report;
@@ -2433,9 +2444,11 @@ async function runCycleUnscoped(
         // (#1928, codex: keying off phases.includes('sync') wrongly suppressed
         // the skipped-sync full reconcile).
         const syncRanButFailed = syncAttempted && syncPagesAffected === undefined;
-        const xfSlugs = syncRanButFailed ? [] : (sourceWindow?.slugs ?? syncPagesAffected);
+        const xfSlugs = syncRanButFailed ? [] : opts.phaseBudgetSeconds !== undefined ? undefined
+          : (sourceWindow?.slugs ?? syncPagesAffected);
         const { result, duration_ms } = await timePhase(() =>
-          runPhaseExtractFacts(engine, brainDir, xfSourceId, dryRun, xfSlugs, cycleSignal), 'extract_facts');
+          runPhaseExtractFacts(engine, brainDir, xfSourceId, dryRun, xfSlugs, cycleSignal,
+            opts.phaseBudgetSeconds === undefined ? undefined : opts.phaseBudgetSeconds * 1000), 'extract_facts');
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -2689,6 +2702,7 @@ async function runCycleUnscoped(
         const { runPhaseConsolidate } = await import('./cycle/phases/consolidate.ts');
         const { result, duration_ms } = await racedTimePhase(() => runPhaseConsolidate(engine, {
           dryRun, once: opts.onceForPhase === 'consolidate',
+          maxMs: opts.phaseBudgetSeconds === undefined ? undefined : opts.phaseBudgetSeconds * 1000,
           remote: opts.remote,
           sourceId: cycleSourceId,
           // W0 (Tier-1 #1): wrap the caller hook so this phase ALSO refreshes
@@ -3160,32 +3174,10 @@ async function runCycleUnscoped(
   // degrades `status` away from success, so a cycle that could not persist its
   // "done" stamp stops claiming it finished. The cost of writing the wrong
   // timestamp post-failure is still higher than missing a successful write, so
-  // the stamp itself is unchanged — only the reporting is.
-  let stampWriteFailed: { source_id: string; error: string } | undefined;
-  if (opts.sourceId && phases.length > 0 && engine && !dryRun && !aborted && (status === 'ok' || status === 'clean' || status === 'partial')) {
-    try {
-      const nowIso = new Date().toISOString();
-      // #2194 fix #3 (the cycle split): `last_source_cycle_at` is the NEW gate
-      // for per-source dispatch (source-scoped phases done). We ALSO keep
-      // `last_full_cycle_at` current so doctor's cycle-freshness check and any
-      // legacy reader stay valid — it's no longer a *gate* for the brain-wide
-      // phases (those gate on autopilot.last_global_at), so writing it on a
-      // source-only cycle does not re-introduce the freshness poisoning codex
-      // flagged in the rejected skip-based design.
-      await engine.updateSourceConfig(opts.sourceId, {
-        last_source_cycle_at: nowIso,
-        last_full_cycle_at: nowIso,
-        ...sourceCycleWindowStamp(phaseResults, opts.sourceChangedSince, sourceWindow),
-      });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      // Record it so `--json` consumers and the autopilot runner can see it.
-      // stderr alone does not survive a cron run, which is how #2251 stayed
-      // invisible while every stamp write failed for weeks.
-      stampWriteFailed = { source_id: opts.sourceId, error: message };
-      console.warn(`[cycle] failed to write last_source_cycle_at for source ${opts.sourceId}: ${message}`);
-    }
-  }
+  // a partial or skipped phase set must never claim a completed source cycle.
+  const { stampWriteFailed, freshnessStamp } = await stampSourceCycle(engine, {
+    opts, phases, phaseResults, status, dryRun, aborted, sourceWindow, freshnessPhases: SOURCE_FRESHNESS_PHASES,
+  });
 
   // #3504: a stamp-write failure degrades a successful run to 'partial'. It
   // cannot upgrade or downgrade anything else: 'partial' is already non-success,
@@ -3199,6 +3191,7 @@ async function runCycleUnscoped(
     timestamp,
     duration_ms,
     status: effectiveStatus,
+    freshness_stamp: freshnessStamp,
     ...(lockStolenAbort ? { reason: 'lock_stolen' } : aborted ? { reason: 'aborted' } : stampWriteFailed ? { reason: 'stamp_write_failed' } : {}),
     ...(stampWriteFailed ? { stamp_write_failed: stampWriteFailed } : {}),
     ...(reapedLocks ? { reaped_dead_holder_locks: reapedLocks } : {}),

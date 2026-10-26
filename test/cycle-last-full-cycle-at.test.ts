@@ -6,7 +6,7 @@
  * Conditions for write:
  *   - opts.sourceId is set (legacy callers without sourceId skip the write)
  *   - engine is non-null (no-DB path skips)
- *   - status is 'ok' | 'clean' | 'partial' (failed/skipped don't mark fresh)
+ *   - all freshness phases were selected and completed without skips or warnings
  *   - dryRun is false
  *
  * Best-effort in that it never throws out of runCycle. As of #3504 a write
@@ -17,10 +17,11 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { runCycle } from '../src/core/cycle.ts';
+import { runCycle, SOURCE_FRESHNESS_PHASES } from '../src/core/cycle.ts';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { makeGitFixture } from './helpers/git-fixture.ts';
 
 let engine: PGLiteEngine;
 let brainDir: string;
@@ -48,6 +49,7 @@ beforeEach(async () => {
   await resetPgliteState(engine);
   brainDir = mkdtempSync(join(tmpdir(), 'gbrain-cycle-lfca-'));
   gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-cycle-lfca-home-'));
+  await makeGitFixture(brainDir);
 });
 
 async function seedSource(id: string): Promise<void> {
@@ -68,14 +70,13 @@ async function readLastFullCycleAt(sourceId: string): Promise<string | null> {
 }
 
 describe('runCycle last_full_cycle_at exit hook', () => {
-  test('per-source cycle with status=ok writes timestamp', async () => {
+  test('per-source phase subset does not write the full-cycle timestamp', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       await seedSource('alpha');
       const before = await readLastFullCycleAt('alpha');
       expect(before).toBeNull();
 
       // Run a minimal cycle: just lint (filesystem, no DB writes, always returns 'ok')
-      const t0 = Date.now();
       const report = await runCycle(engine, {
         brainDir,
         sourceId: 'alpha',
@@ -84,11 +85,8 @@ describe('runCycle last_full_cycle_at exit hook', () => {
       // lint on an empty dir returns ok+clean+0 fixes
       expect(['ok', 'clean']).toContain(report.status);
 
-      const after = await readLastFullCycleAt('alpha');
-      expect(after).not.toBeNull();
-      const writtenMs = new Date(after!).getTime();
-      expect(writtenMs).toBeGreaterThanOrEqual(t0);
-      expect(writtenMs).toBeLessThanOrEqual(Date.now() + 1000);
+      expect(report.freshness_stamp).toBe('skipped_phase_subset');
+      expect(await readLastFullCycleAt('alpha')).toBeNull();
     });
   });
 
@@ -147,12 +145,12 @@ describe('runCycle last_full_cycle_at exit hook', () => {
   test('two consecutive per-source cycles update the timestamp on each run', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       await seedSource('delta');
-      await runCycle(engine, { brainDir, sourceId: 'delta', phases: ['lint'] });
+      await runCycle(engine, { brainDir, sourceId: 'delta', phases: SOURCE_FRESHNESS_PHASES });
       const first = await readLastFullCycleAt('delta');
       expect(first).not.toBeNull();
       // Wait 10ms so the timestamp can advance
       await new Promise(r => setTimeout(r, 10));
-      await runCycle(engine, { brainDir, sourceId: 'delta', phases: ['lint'] });
+      await runCycle(engine, { brainDir, sourceId: 'delta', phases: SOURCE_FRESHNESS_PHASES });
       const second = await readLastFullCycleAt('delta');
       expect(second).not.toBeNull();
       expect(new Date(second!).getTime()).toBeGreaterThan(new Date(first!).getTime());
