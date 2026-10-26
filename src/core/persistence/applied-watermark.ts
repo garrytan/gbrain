@@ -133,7 +133,7 @@ export async function readAppliedWatermark(engine: BrainEngine, sourceId: string
       : { state: 'complete', commit, before: null, unembedded_pages: 0, held_pages: 0 };
   }
 
-  const holder = await readDrainHolder(engine, sourceId).catch(() => null);
+  const holder = await readDrainHolder(engine, sourceId, { liveOnly: true }).catch(() => null);
   const shown = opts.remote ? publicDrainHolder(holder) : holder;
   const lastProgress = holder?.progress?.last_progress_at ?? null;
   return {
