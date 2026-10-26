@@ -435,6 +435,40 @@ The overrides are `gbrain sources retry-held <id>` and
 
 ## Other ways to reach Google (no gbrain OAuth)
 
+### Composio-managed Gmail or Calendar
+
+When OpenClaw already has a Composio Gmail or Google Calendar connection,
+a single-service source can use Composio Proxy Execute without copying Google's
+access or refresh token into gbrain:
+
+```bash
+gbrain sources add gmail-personal --kind google --account you@example.com \
+  --services gmail --history-days 30 --access composio \
+  --composio-account-ref composio-personal --no-federated
+gbrain sync --source gmail-personal --no-embed
+
+gbrain sources add calendar-personal --kind google --account you@example.com \
+  --services calendar --calendar-id primary --history-days 1 --future-days 7 \
+  --access composio --composio-account-ref composio-personal --no-federated
+gbrain sync --source calendar-personal --no-embed
+```
+
+The account ref selects an exact entry in
+`~/.openclaw/composio/accounts.json` (or `OPENCLAW_COMPOSIO_REGISTRY`).
+The selected toolkit's profile must match `--account`; the local project key
+file must be mode 0600 and match that entry's project. Only GETs to the
+selected Gmail or Calendar API are proxied. Use one calendar-only source per
+selected calendar; Contacts still require a separate transport. A bare
+`gbrain sync` still syncs the default repo source;
+target this connector with `--source` or use `--all`. `gbrain google
+status` reports vault OAuth accounts, so use `gbrain sources status
+gmail-personal` and `gbrain waiting` for this external-credential source.
+
+The source materializes Gmail thread text in its private managed directory and
+the brain database. `--no-embed` prevents embedding-provider transfer during
+the first sync; set `loops.extraction_enabled=false` before syncing when
+provider-backed commitment extraction is not approved.
+
 If your stack already holds Google access another way — a Google CLI with its
 own auth store, `gcloud`, or a credential gateway that can mint short-lived
 access tokens — the source can use it directly and skip gbrain's OAuth flow

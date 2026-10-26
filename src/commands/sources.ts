@@ -59,6 +59,7 @@ import {
 import { isValidRepoName } from '../core/github-source.ts';
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
 import { defaultGoogleAddTuning, parseGoogleAddFlag } from './sources-google-flags.ts';
+import { validateComposioGoogleSource } from './sources-google-composio.ts';
 import {
   resolveSourceWithTier,
   SOURCE_TIER_NAMES,
@@ -154,7 +155,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         '[--app-id <n> --app-pem <path>] [--app-install <n>]\n' +
         '       google kind: --account <email> [--services gmail,calendar,contacts] ' +
         '[--history-days <n>] [--future-days <n>] [--loops-exclude-labels <a,b>] [--contacts-dir <dir>] [--calendar-id <id>] [--dir <path>]   (connect first: gbrain google connect)\n' +
-        '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)',
+        '                    [--access vault|command|env|composio] [--token-command "<cmd>"] [--token-env <VAR>]\n' +
+        '                    [--composio-account-ref <registry-alias>]   (Composio proxy: Gmail-only)',
     );
     process.exit(2);
   }
@@ -182,6 +184,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let gAccess: string | undefined;
   let gTokenCommand: string | undefined;
   let gTokenEnv: string | undefined;
+  let gComposioAccountRef: string | undefined;
   let gServices: string[] = ['gmail', 'calendar', 'contacts'];
   const gTuning = defaultGoogleAddTuning();
 
@@ -211,6 +214,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     if (a === '--account') { gAccount = args[++i]?.trim().toLowerCase(); continue; }
     if (a === '--access') { gAccess = args[++i]?.trim().toLowerCase(); continue; }
     if (a === '--token-command') { gTokenCommand = args[++i]; continue; }
+    if (a === '--composio-account-ref') { gComposioAccountRef = args[++i]?.trim(); continue; }
     if (a === '--token-env') {
       // Shared by BOTH kinds: github reads its API token from this env var;
       // google's env access mode reads an access token from it. Parsed once
@@ -334,8 +338,15 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     // already holds Google access (gog, gcloud, a credential gateway) drive
     // this source without gbrain's OAuth flow; --account stays required as
     // the IDENTITY (From/To matching, deep-link authuser).
-    if (gAccess !== undefined && !['vault', 'command', 'env'].includes(gAccess)) {
-      console.error(`Error: unknown --access "${gAccess}". Valid: vault, command, env.`);
+    if (gAccess !== undefined && !['vault', 'command', 'env', 'composio'].includes(gAccess)) {
+      console.error(`Error: unknown --access "${gAccess}". Valid: vault, command, env, composio.`);
+      process.exit(2);
+    }
+    if (gAccess === 'composio') {
+      const error = validateComposioGoogleSource(gAccount!, gServices, gComposioAccountRef);
+      if (error) { console.error(`Error: ${error}`); process.exit(2); }
+    } else if (gComposioAccountRef) {
+      console.error('Error: --composio-account-ref requires --access composio.');
       process.exit(2);
     }
     if (gAccess === 'command' && !gTokenCommand?.trim()) {
@@ -346,7 +357,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
       console.error('Error: --access env requires --token-env <ENV_VAR_NAME>.');
       process.exit(2);
     }
-    if ((gTokenCommand || gTokenEnv) && (gAccess === undefined || gAccess === 'vault')) {
+    if ((gTokenCommand || gTokenEnv) && (gAccess === undefined || gAccess === 'vault' || gAccess === 'composio')) {
       console.error('Error: --token-command/--token-env require --access command or --access env.');
       process.exit(2);
     }
@@ -426,9 +437,10 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
             services: gServices,
             ...gTuning,
             dir: ghDir ?? defaultCloneDir(`${id}-google`),
-            access: (gAccess ?? 'vault') as 'vault' | 'command' | 'env',
+            access: (gAccess ?? 'vault') as 'vault' | 'command' | 'env' | 'composio',
             tokenCommand: gTokenCommand,
             tokenEnv: gTokenEnv,
+            composioAccountRef: gComposioAccountRef,
           },
         }
       : {}),

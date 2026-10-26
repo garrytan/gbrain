@@ -281,6 +281,11 @@ describe('chat touchpoint — gateway config plumbing', () => {
     configureGateway({ chat_model: 'voyage:voyage-3', env: { VOYAGE_API_KEY: 'fake' } });
     expect(isAvailable('chat')).toBe(false);
   });
+
+  test('isAvailable("chat") accepts the OpenClaw bridge without direct provider keys', () => {
+    configureGateway({ chat_model: 'openclaw:default', env: {} });
+    expect(isAvailable('chat')).toBe(true);
+  });
 });
 
 describe('chat touchpoint — config alias resolution', () => {

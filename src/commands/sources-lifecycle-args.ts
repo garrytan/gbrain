@@ -12,6 +12,7 @@ import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.t
 import { CALENDAR_FUTURE_DAYS_MAX, CALENDAR_HORIZON_DAYS } from '../core/google/calendar-window.ts';
 import { parseExcludeLabelTokens } from '../core/google/loops-exclusion.ts';
 import { parseContactsDir } from '../core/google/source-config.ts';
+import { validateComposioGoogleSource } from './sources-google-composio.ts';
 
 export const SOURCE_LIFECYCLE_COMMANDS = ['add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'] as const;
 export function isSourceLifecycleCommand(value: string): boolean {
@@ -40,7 +41,7 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
   const booleans = new Set(['json', 'dry-run', 'yes', 'confirm-destructive', 'keep-storage', 'force',
     'federated', 'no-federated', 'no-federate', 'refederate', 'no-harden']);
   const valued = new Set(['request-id', 'expected-incarnation', 'brain', 'path', 'url', 'name', 'clone-dir',
-    'pat-file', 'kind', 'account', 'access', 'token-command', 'token-env', 'services', 'history-days',
+    'pat-file', 'kind', 'account', 'access', 'token-command', 'token-env', 'composio-account-ref', 'services', 'history-days',
     'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id', 'scope', 'repos', 'dir', 'app-id', 'app-pem', 'app-install']);
   for (let i = 0; i < rest.length; i++) {
     const token = rest[i];
@@ -106,7 +107,7 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     'Pass --kind github or --kind google; a directory or Git remote source uses --path or --url instead of --kind.');
   if ([values.has('path'), values.has('url'), kind !== undefined].filter(Boolean).length > 1) throw invalid('--path, --url and --kind are mutually exclusive.',
     'Give exactly one of --path (a local directory), --url (an https Git remote) or --kind (github or google).');
-  const googleOnly = ['account', 'access', 'token-command', 'services', 'history-days', 'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id'];
+  const googleOnly = ['account', 'access', 'token-command', 'composio-account-ref', 'services', 'history-days', 'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id'];
   const githubOnly = ['scope', 'repos', 'app-id', 'app-pem', 'app-install'];
   const kindOptions = [...googleOnly, ...githubOnly, 'dir', 'token-env'];
   for (const key of kindOptions) if (values.has(key) && !kind) throw invalid(`--${key} requires --kind github or google.`,
@@ -148,10 +149,15 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     const access = values.get('access') ?? 'vault';
     if (!account || !services.length || services.some(service => !(ALL_GOOGLE_SERVICES as readonly string[]).includes(service))) throw invalid('Google requires --account and valid --services.',
       `Pass --account with the Google account email and --services as a comma-separated subset of ${ALL_GOOGLE_SERVICES.join(',')}.`);
-    if (!['vault', 'command', 'env'].includes(access) || access === 'command' && !values.has('token-command')
-      || access === 'env' && !values.has('token-env') || access === 'vault' && (values.has('token-command') || values.has('token-env'))) {
-      throw invalid('Google access must be vault, command with --token-command, or env with --token-env.',
-        'Use --access vault (the default, with no token flags), --access command with --token-command, or --access env with --token-env.');
+    if (!['vault', 'command', 'env', 'composio'].includes(access) || access === 'command' && !values.has('token-command')
+      || access === 'env' && !values.has('token-env') || ['vault', 'composio'].includes(access) && (values.has('token-command') || values.has('token-env'))
+      || access !== 'composio' && values.has('composio-account-ref')) {
+      throw invalid('Google access must be vault, command, env, or composio with its account ref.',
+        'Use --access composio --composio-account-ref <alias> for one Gmail or Calendar service, or choose vault, command or env with its corresponding token option.');
+    }
+    if (access === 'composio') {
+      const problem = validateComposioGoogleSource(account, services, values.get('composio-account-ref'));
+      if (problem) throw invalid(problem, 'Pass a connected Gmail or Calendar registry alias matching --account and select its single service.');
     }
     const futureDays = number('future-days');
     if (futureDays !== undefined && futureDays > CALENDAR_FUTURE_DAYS_MAX) throw invalid(`--future-days must be at most ${CALENDAR_FUTURE_DAYS_MAX}.`,
@@ -165,8 +171,8 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     opts.google = { account, services, historyDays: number('history-days', 90)!, calendarId: values.get('calendar-id') ?? DEFAULT_CALENDAR_ID,
       ...(contactsDir ? { contactsDir } : {}),
       ...(futureDays !== undefined ? { futureDays } : {}), ...(loopsExcludeLabels.length > 0 ? { loopsExcludeLabels } : {}),
-      dir: absolute(values.get('dir') ?? defaultCloneDir(`${id}-google`)), access: access as 'vault' | 'command' | 'env',
-      tokenCommand: values.get('token-command'), tokenEnv: values.get('token-env') };
+      dir: absolute(values.get('dir') ?? defaultCloneDir(`${id}-google`)), access: access as 'vault' | 'command' | 'env' | 'composio',
+      tokenCommand: values.get('token-command'), tokenEnv: values.get('token-env'), composioAccountRef: values.get('composio-account-ref') };
   }
   return { operation: 'source_add', params: { options: opts, request_id: requestId, ...(dryRun ? { dry_run: true } : {}) },
     brain: values.get('brain'), legacyOnly: values.has('pat-file'), json: flags.has('json') };

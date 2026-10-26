@@ -26,7 +26,9 @@ export function connectorAccountChanged(sourceId: string, kind: ConnectorKind, c
   if (kind === 'google') {
     const google = config as GoogleSourceConfig;
     const where = google.access === 'command' ? `the command configured as g_token_command (${google.tokenCommand ?? 'unset'})`
-      : google.access === 'env' ? `the environment variable configured as g_token_env (${google.tokenEnv ?? 'unset'})` : `the vault credential (gbrain google connect --account ${google.account})`;
+      : google.access === 'env' ? `the environment variable configured as g_token_env (${google.tokenEnv ?? 'unset'})`
+      : google.access === 'composio' ? `the Composio Gmail account ref (${google.composioAccountRef ?? 'unset'})`
+      : `the vault credential (gbrain google connect --account ${google.account})`;
     restore = `restore ${where} so it yields a token for ${show(recorded)}, then retry: gbrain sync --source ${sourceId}`;
     replace = `add a new source for the new account (gbrain google setup --account ${typeof resolved === 'object' && resolved?.kind === 'google' ? resolved.email : '<email>'}), `
       + `then archive this one: gbrain sources archive ${sourceId}`;

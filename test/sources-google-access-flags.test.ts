@@ -195,6 +195,33 @@ describe('sources add --kind google command mode', () => {
   });
 });
 
+describe('sources add --kind google Composio mode', () => {
+  test('registers a Gmail-only source with an account alias and no provider token', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-composio-source-'));
+    const secret = join(home, 'secret.json');
+    const registry = join(home, 'accounts.json');
+    writeFileSync(secret, JSON.stringify({ project_id: 'project-1', project_api_key: 'private-key' }), { mode: 0o600 });
+    writeFileSync(registry, JSON.stringify({ accounts: [{
+      id: 'reader', projectId: 'project-1', userId: 'user-1', projectApiKeySecretPath: secret,
+      toolkits: { gmail: { connectedAccountId: 'connected-1', profile: { email: 'alice@example.com' } } },
+    }] }));
+    const r = await withEnv({ GBRAIN_HOME: home, OPENCLAW_COMPOSIO_REGISTRY: registry }, () =>
+      captured(() => runSources(engine, [
+        'add', 'gcomposio', '--kind', 'google', '--account', 'alice@example.com',
+        '--services', 'gmail', '--history-days', '30', '--access', 'composio',
+        '--composio-account-ref', 'reader', '--no-federated',
+      ])));
+    expect(r.exitCalled).toBeUndefined();
+    const cfg = (await sourceConfig('gcomposio'))!;
+    expect(cfg.g_access).toBe('composio');
+    expect(cfg.g_composio_account_ref).toBe('reader');
+    expect(cfg.g_services).toBe('gmail');
+    expect(cfg.g_history_days).toBe(30);
+    expect(cfg.federated).toBe(false);
+    expect(JSON.stringify(cfg)).not.toContain('private-key');
+  });
+});
+
 describe('sources add --kind google env mode', () => {
   test('registers with g_access + g_token_env; a set var raises no warning', async () => {
     const r = await addGoogle('genv', ['--access', 'env', '--token-env', 'GBRAIN_TEST_GFLAGS_TOKEN'], {

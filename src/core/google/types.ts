@@ -80,9 +80,11 @@ export interface GoogleSourceConfig {
    *  - 'env'     — read a live token from the env var named `tokenEnv`
    *                (refreshed by something outside gbrain).
    */
-  access: 'vault' | 'command' | 'env';
+  access: 'vault' | 'command' | 'env' | 'composio';
   tokenCommand?: string;
   tokenEnv?: string;
+  /** OpenClaw Composio registry alias; only the alias is stored, never credentials. */
+  composioAccountRef?: string;
 }
 
 /** Cursor state persisted at <dir>/.google-source.json. */

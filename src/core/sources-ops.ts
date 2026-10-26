@@ -210,9 +210,10 @@ export interface AddSourceOpts {
     /** Managed dir where pages are materialized. */
     dir: string;
     /** Token acquisition: gbrain vault (default), a token-printing command, or an env var. */
-    access?: 'vault' | 'command' | 'env';
+    access?: 'vault' | 'command' | 'env' | 'composio';
     tokenCommand?: string;
     tokenEnv?: string;
+    composioAccountRef?: string;
   };
 }
 
@@ -645,6 +646,7 @@ export async function addSource(
         : {}),
       ...(opts.google.tokenCommand ? { g_token_command: opts.google.tokenCommand } : {}),
       ...(opts.google.tokenEnv ? { g_token_env: opts.google.tokenEnv } : {}),
+      ...(opts.google.composioAccountRef ? { g_composio_account_ref: opts.google.composioAccountRef } : {}),
       g_managed: finalPath === defaultCloneDir(`${opts.id}-google`),
       // Same default as github mirrors: a fresh google source participates
       // in unqualified reads unless --no-federated opts out.

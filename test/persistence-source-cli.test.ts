@@ -49,6 +49,8 @@ describe('source lifecycle CLI', () => {
     expect(() => parseSourceLifecycleArgs(['add', 'example', '--kind', 'google', '--account', 'account@example.invalid', '--future-days', '4000'])).toThrow('3650');
     expect(() => parseSourceLifecycleArgs(['add', 'example', '--kind', 'github', '--scope', 'repos'])).toThrow('valid owner/name');
     expect(() => parseSourceLifecycleArgs(['add', 'example', '--kind', 'google', '--account', 'account@example.invalid', '--access', 'command'])).toThrow('access');
+    expect(() => parseSourceLifecycleArgs(['add', 'example', '--kind', 'google', '--account', 'account@example.invalid', '--access', 'composio', '--services', 'gmail'])).toThrow('composio-account-ref');
+    expect(() => parseSourceLifecycleArgs(['add', 'example', '--kind', 'google', '--account', 'account@example.invalid', '--access', 'composio', '--composio-account-ref', 'reader', '--services', 'contacts'])).toThrow('gmail or --services calendar');
   });
 
   test('usage refusals name their own next step and offer the verb help', async () => {
