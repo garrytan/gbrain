@@ -149,7 +149,7 @@ export function runnerStart(engine: BrainEngine): Pick<CommitNotifierOptions, 's
     syncRunning: async () => (await load()).isDelegatedSyncRunning(),
     drainHeld: async (sourceId) => {
       const { holderStalled, readDrainHolder } = await import('../persistence/sync-lease.ts');
-      const holder = await readDrainHolder(engine, sourceId);
+      const holder = await readDrainHolder(engine, sourceId, { liveOnly: true });
       return holder === null ? false : holderStalled(holder) ? 'stalled' : true;
     },
   };
