@@ -102,6 +102,17 @@
             "lane": "pool",
             "params": [
               "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "SELECT p.id, p.body_storage, p.body_generation, p.knowledge_revision::text AS revision, p.text_projection_revision::text AS projection, p.chunker_version FROM pages p WHERE p.slug = $1 AND p.source_id = $2 AND (SELECT true FROM content_chunks cc WHERE cc.page_id = p.id AND p.slug = $3 AND p.source_id = $4 AND ((p.text_projection_revision = p.knowledge_revision) IS TRUE AND (cc.body_generation IS NULL OR cc.body_generation <= p.body_generation)) LIMIT 1)",
+            "textSha256": "e3eb8adbcf3651d3d7fb0f34abfae3ce59918693dd80ebf3b4ff6388c8787df6"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
               "string"
             ],
             "sql": "SELECT COALESCE(sum(t.n), 0) AS total, max(t.max_index) AS max_index, bool_or(t.segmented) AS segmented, max(t.n) AS max_page_chunks FROM ( SELECT count(*) AS n, max(cc.chunk_index) AS max_index, bool_or(cc.body_generation IS NOT NULL) AS segmented FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = $2 AND ((p.text_projection_revision = p.knowledge_revision) IS TRUE AND (cc.body_generation IS NULL OR cc.body_generation <= p.body_generation)) GROUP BY cc.page_id ) t",
@@ -131,6 +142,17 @@
             "params": [],
             "sql": "-- chunk-visibility-ok: whether any chunk row of a segmented body exists, no row is returned SELECT has_table_privilege('page_body_manifest', 'SELECT') AS readable, NOT has_table_privilege('page_body_manifest', 'SELECT') AND (EXISTS (SELECT 1 FROM content_chunks WHERE body_generation IS NOT NULL) OR EXISTS (SELECT 1 FROM content_chunks WHERE occurrence_id IS NOT NULL)) AS segmented",
             "textSha256": "75ecb41b752625a4285cb1565fca93fb129e937f20a857bd5cea5c49e9df970b"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "string",
+              "array<string>"
+            ],
+            "sql": "SELECT p.id, p.body_storage, p.body_generation, p.knowledge_revision::text AS revision, p.text_projection_revision::text AS projection, p.chunker_version FROM pages p WHERE p.slug = $1 AND p.source_id = ANY($2::text[]) AND (SELECT true FROM content_chunks cc WHERE cc.page_id = p.id AND p.slug = $3 AND p.source_id = ANY($4::text[]) AND ((COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type IN ('atom', 'question') OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT COALESCE(p.frontmatter ? 'pinned_question', false) AND NOT (p.frontmatter->>'visibility' IS NULL AND (COALESCE(lower(btrim(p.frontmatter->>'access')) IN ('private','restricted','confidential'), false) OR COALESCE(lower(btrim(p.frontmatter->>'confidentiality')) IN ('confidential','secret','private','restricted'), false)))) AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type IN ('atom', 'question') OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) WHEN p.type = 'event' AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%' THEN NOT EXISTS (SELECT 1 FROM pages chronicle_origin WHERE chronicle_origin.source_id = p.source_id AND chronicle_origin.slug = p.frontmatter->'event'->>'depth' AND (COALESCE(chronicle_origin.frontmatter->>'visibility', CASE WHEN (chronicle_origin.type IN ('atom', 'question') OR (chronicle_origin.type = 'concept' AND chronicle_origin.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT COALESCE(chronicle_origin.frontmatter ? 'pinned_question', false) AND NOT (chronicle_origin.frontmatter->>'visibility' IS NULL AND (COALESCE(lower(btrim(chronicle_origin.frontmatter->>'access')) IN ('private','restricted','confidential'), false) OR COALESCE(lower(btrim(chronicle_origin.frontmatter->>'confidentiality')) IN ('confidential','secret','private','restricted'), false)))) AND NOT (CASE WHEN jsonb_typeof(chronicle_origin.frontmatter->'derived_from') IN ('array', 'string') THEN EXISTS ( SELECT 1 FROM pages declared_origin WHERE declared_origin.source_id = chronicle_origin.source_id AND declared_origin.frontmatter->>'visibility' = 'private' AND declared_origin.slug = ANY(ARRAY( SELECT regexp_replace(declared.slug, '\\.md$', '') FROM jsonb_array_elements_text( CASE WHEN jsonb_typeof(chronicle_origin.frontmatter->'derived_from') = 'array' THEN chronicle_origin.frontmatter->'derived_from' ELSE jsonb_build_array(chronicle_origin.frontmatter->'derived_from') END) AS declared(slug)))) ELSE false END)) ELSE false END) AND NOT (CASE WHEN jsonb_typeof(p.frontmatter->'derived_from') IN ('array', 'string') THEN EXISTS ( SELECT 1 FROM pages declared_origin WHERE declared_origin.source_id = p.source_id AND declared_origin.frontmatter->>'visibility' = 'private' AND declared_origin.slug = ANY(ARRAY( SELECT regexp_replace(declared.slug, '\\.md$', '') FROM jsonb_array_elements_text( CASE WHEN jsonb_typeof(p.frontmatter->'derived_from') = 'array' THEN p.frontmatter->'derived_from' ELSE jsonb_build_array(p.frontmatter->'derived_from') END) AS declared(slug)))) ELSE false END)) AND ((p.text_projection_revision = p.knowledge_revision) IS TRUE AND (cc.body_generation IS NULL OR cc.body_generation <= p.body_generation)) AND p.chunker_version >= 4 LIMIT 1)",
+            "textSha256": "be07aeecb4afdef0a596efc6793bb2d64e1525cc8a8140ac4ec97195efac92e1"
           },
           {
             "lane": "pool",

@@ -45,6 +45,7 @@ import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead, ScopedRead } from './brands.ts';
 import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { pipelined } from '../page-state/transactions.ts';
+import { opError } from '../ops/contract.ts';
 import { compileRowNormalizer } from './normalize.ts';
 
 /** The engine's page-state guards, run on the same (transaction) engine. */
@@ -391,19 +392,44 @@ async function moveDisplacedChunksAndPrune(exec: SqlExecutor, pageId: number, ch
   await exec.run(sqlFragment`UPDATE content_chunks SET chunk_index = -1 - chunk_index WHERE page_id = ${pageId} AND chunk_index < 0`);
 }
 
+/** The source scope of a by-slug page read (alias `p`). */
+function pageScopeSql(scope: { sourceIds?: string[]; sourceId: string }): SqlFragment {
+  return scope.sourceIds ? sqlFragment`p.source_id = ANY(${scope.sourceIds}::text[])` : sqlFragment`p.source_id = ${scope.sourceId}`;
+}
+
 /** The by-slug chunk read predicate shared by getChunks and getChunkPage: scope, privacy, sealed text and live body generation, safe chunks. */
 function chunkReadWhere(
   slug: string,
   scope: { sourceIds?: string[]; sourceId: string },
   opts?: { excludePrivate?: boolean; requireSafeChunks?: boolean; includeUnsealed?: boolean; chunkManifest?: boolean },
 ): SqlFragment {
-  const scopeSql = scope.sourceIds
-    ? sqlFragment`p.source_id = ANY(${scope.sourceIds}::text[])`
-    : sqlFragment`p.source_id = ${scope.sourceId}`;
+  const scopeSql = pageScopeSql(scope);
   return sqlFragment`p.slug = ${slug} AND ${scopeSql}
           ${opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterFragment('p')}`) : sqlFragment``}
           AND ${trustedSql(opts?.includeUnsealed ? chunkGenerationFilter('p', 'cc', opts.chunkManifest ?? true) : chunkVisibleFilter('p', 'cc'))}
           ${requiresSafeChunks(opts) ? trustedSql(`AND ${safeChunksFilter('p')}`) : sqlFragment``}`;
+}
+
+/**
+ * The chunk columns getChunks and getChunkPage select. #2544: an explicit
+ * non-vector list, since most callers discard embeddings and `cc.*` shipped
+ * every vector over the wire only to be thrown away. `includeEmbedding` adds
+ * the registry-ACTIVE column back (aliased AS embedding) for the callers that
+ * consume it (embed-reuse.ts), so a reused vector always matches the column
+ * upsertChunks writes. embedding_is_null is the boolean truth of the stored
+ * vector in the registry-ACTIVE column (a schema rebuild NULLs vectors without
+ * touching embedded_at; `embed <page>` filters on it).
+ */
+function chunkColumns(column: string, includeEmbedding: boolean): SqlFragment {
+  const colId = trustedSql(quoteIdentifier(column));
+  const embedCol = includeEmbedding ? sqlFragment`, cc.${colId} AS embedding` : sqlFragment``;
+  return sqlFragment`cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+               cc.model, cc.token_count, cc.embedded_at, cc.language,
+               cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line,
+               cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality,
+               cc.projected_byte_start, cc.projected_byte_end,
+               (cc.${colId} IS NULL) AS embedding_is_null
+               ${embedCol}`;
 }
 
 export async function getChunks(
@@ -413,25 +439,8 @@ export async function getChunks(
   scope: { sourceIds?: string[]; sourceId: string },
   opts?: { includeEmbedding?: boolean; excludePrivate?: boolean; requireSafeChunks?: boolean; includeUnsealed?: boolean; chunkManifest?: boolean; indexRange?: { from: number; to: number; ordinal?: boolean } },
 ): Promise<Chunk[]> {
-      const colId = trustedSql(quoteIdentifier(column));
       const includeEmbedding = opts?.includeEmbedding === true;
-      // #2544: explicit non-vector column list — most callers discard
-      // embeddings, so `cc.*` shipped every vector over the wire only to be
-      // thrown away. `includeEmbedding` adds it back for the callers that
-      // consume it (embed-reuse.ts); it selects the registry-ACTIVE column
-      // (aliased AS embedding) so a reused vector always matches the column
-      // upsertChunks writes.
-      // embedding_is_null: boolean truth of the stored vector (a schema
-      // rebuild NULLs vectors without touching embedded_at). S2: it reports
-      // the registry-ACTIVE column's truth — `embed <page>` filters on it.
-      const embedCol = includeEmbedding ? sqlFragment`, cc.${colId} AS embedding` : sqlFragment``;
-      const columns = sqlFragment`cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-               cc.model, cc.token_count, cc.embedded_at, cc.language,
-               cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line,
-               cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality,
-               cc.projected_byte_start, cc.projected_byte_end,
-               (cc.${colId} IS NULL) AS embedding_is_null
-               ${embedCol}`;
+      const columns = chunkColumns(column, includeEmbedding);
       const from = sqlFragment`FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         ${trustedSql(chunkManifestJoin('p', 'cc', 'm', opts?.chunkManifest ?? true))}
@@ -460,6 +469,10 @@ export async function getChunks(
       return rows.map((r) => rowToChunk(r, includeEmbedding));
   }
 
+/** Per engine: admitted chunk counts of segmented pages, keyed by page, body generation, revision, seal and predicate. */
+const segmentedChunkCounts = new WeakMap<object, Map<string, number>>();
+const SEGMENTED_CHUNK_COUNTS_MAX = 256;
+
 /**
  * One page of a page's chunks for get_chunks: the chunks whose chunk_index
  * falls in [fromIndex, fromIndex + limit) under the same predicate getChunks
@@ -469,14 +482,114 @@ export async function getChunks(
  * sources never splits a chunk_index between two calls. A segmented page's
  * chunk_index is an insertion sequence, so its range is over positions in
  * document order instead (`fromIndex` and `max_chunk_index` are positions).
+ *
+ * A slug that names one segmented page is walked by keyset instead: document
+ * order is (live manifest byte_start, local_ordinal, chunk_index), read a few
+ * occurrences at a time (page_body_manifest_live_bytes, then each occurrence's
+ * rows) until `limit` chunks, so a call reads O(limit) rows plus one
+ * occurrence. `next_cursor` (`gch1.`) carries the page id, the body generation
+ * and the last key; a call with it continues there and reports `from_index`,
+ * and refuses with revision_changed once the generation moved, so a walk never
+ * skips or repeats a chunk. `fromIndex` without a cursor skips that many keys
+ * first (O(fromIndex), no chunk text). The total is counted once per
+ * (engine `cacheOwner`, page, generation, revision, seal, predicate).
  */
 export async function getChunkPage(
   exec: ScopedRead,
   column: string,
   slug: string,
   scope: { sourceIds?: string[]; sourceId: string },
-  opts: { fromIndex: number; limit: number; excludePrivate?: boolean; requireSafeChunks?: boolean; chunkManifest?: boolean },
-): Promise<{ chunks: Chunk[]; total_chunks: number; max_chunk_index: number | null }> {
+  opts: { fromIndex: number; limit: number; cursor?: string; excludePrivate?: boolean; requireSafeChunks?: boolean; chunkManifest?: boolean },
+  cacheOwner: object = exec,
+): Promise<{ chunks: Chunk[]; total_chunks: number; max_chunk_index: number | null; from_index?: number; next_cursor?: string }> {
+      const { rows: pages } = await exec.run<{ id: number; body_storage: string; body_generation: number | string | null; revision: string | null; projection: string | null; chunker_version: number | null }>(sqlFragment`
+        SELECT p.id, p.body_storage, p.body_generation, p.knowledge_revision::text AS revision, p.text_projection_revision::text AS projection, p.chunker_version
+        FROM pages p WHERE p.slug = ${slug} AND ${pageScopeSql(scope)}
+          AND (SELECT true FROM content_chunks cc WHERE cc.page_id = p.id AND ${chunkReadWhere(slug, scope, opts)} LIMIT 1)
+      `);
+      const page = pages.length === 1 && pages[0]!.body_storage === 'segmented' && opts.chunkManifest !== false ? pages[0]! : undefined;
+      const generation = Number(page?.body_generation);
+      let cursor: { p: number; g: number; b: number; o: number | null; i: number | null; n: number } | undefined;
+      if (opts.cursor !== undefined) {
+        try { cursor = JSON.parse(Buffer.from(opts.cursor.slice(5), 'base64url').toString('utf8')); } catch { cursor = undefined; }
+        const valid = opts.cursor.startsWith('gch1.') && cursor && [cursor.p, cursor.g, cursor.b, cursor.n].every(Number.isSafeInteger)
+          && (cursor.o === null ? cursor.i === null : Number.isSafeInteger(cursor.o) && Number.isSafeInteger(cursor.i));
+        if (!valid || pages.length !== 1 || Number(pages[0]!.id) !== cursor!.p) {
+          throw opError('invalid_params', `get_chunks: cursor is not a chunk cursor for page ${slug}.`,
+            'Pass the next_cursor value from the previous get_chunks call on this page unchanged, or drop the cursor to start from the first chunk.');
+        }
+        if (!page || generation !== cursor!.g) {
+          throw opError('revision_changed', `Page ${slug} changed since this cursor was issued (body generation ${cursor!.g}, now ${page ? generation : 'not segmented'}); no chunk was returned.`,
+            'Chunk positions belong to one body generation: start the walk again without a cursor.',
+            { legacy_error: 'invalid_params', fix: { mcp: { tool: 'get_chunks', arguments: { slug, limit: opts.limit } }, consent: [], actor: 'agent', requires_exclusive: false,
+              why: 'Reads the chunks again from the first one at the current body generation.' } });
+        }
+      }
+      if (page) {
+        const where = chunkReadWhere(slug, scope, opts);
+        const key = [page.id, generation, page.revision, page.projection, page.chunker_version, opts.excludePrivate === true, requiresSafeChunks(opts)].join(':');
+        const counts = segmentedChunkCounts.get(cacheOwner) ?? new Map<string, number>();
+        segmentedChunkCounts.set(cacheOwner, counts);
+        let total = counts.get(key);
+        if (total === undefined) {
+          const { rows } = await exec.run<{ n: number | string }>(sqlFragment`
+            SELECT count(*) AS n FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+            WHERE p.id = ${page.id} AND p.body_generation = ${generation}::bigint AND ${where}
+          `);
+          total = Number(rows[0]?.n ?? 0);
+          if (counts.size >= SEGMENTED_CHUNK_COUNTS_MAX) counts.delete(counts.keys().next().value!);
+          counts.set(key, total);
+        }
+        const from = cursor?.n ?? opts.fromIndex;
+        const result = { chunks: [] as Chunk[], total_chunks: total, max_chunk_index: total > 0 ? total - 1 : null, from_index: from };
+        if (from >= total) return result;
+        let after = cursor ? { b: cursor.b, o: cursor.o, i: cursor.i } : null;
+        if (!cursor && from > 0) {
+          const { rows } = await exec.run<{ byte_start: number | string; local_ordinal: number; chunk_index: number }>(sqlFragment`
+            SELECT m.byte_start, cc.local_ordinal, cc.chunk_index FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+              JOIN page_body_manifest m ON m.page_id = cc.page_id AND m.occurrence_id = cc.occurrence_id
+                AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.gen_from <= p.body_generation
+            WHERE p.id = ${page.id} AND p.body_generation = ${generation}::bigint AND ${where}
+            ORDER BY m.byte_start, cc.local_ordinal, cc.chunk_index OFFSET ${from - 1} LIMIT 1
+          `);
+          if (rows.length === 0) return result;
+          after = { b: Number(rows[0]!.byte_start), o: Number(rows[0]!.local_ordinal), i: Number(rows[0]!.chunk_index) };
+        }
+        for (let occurrences = 4; result.chunks.length < opts.limit; occurrences = Math.min(occurrences * 2, opts.limit)) {
+          const remaining = opts.limit - result.chunks.length;
+          const { rows } = await exec.run<Record<string, unknown>>(sqlFragment`
+            SELECT w.byte_start AS walk_byte_start, c.*
+            FROM pages p
+            LEFT JOIN LATERAL (
+              SELECT m.occurrence_id, m.byte_start FROM page_body_manifest m
+              WHERE m.page_id = p.id AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.gen_from <= p.body_generation
+                AND ${after === null ? sqlFragment`true` : after.o === null ? sqlFragment`m.byte_start > ${after.b}` : sqlFragment`m.byte_start >= ${after.b}`}
+              ORDER BY m.byte_start LIMIT ${occurrences}
+            ) w ON true
+            LEFT JOIN LATERAL (
+              SELECT ${chunkColumns(column, false)}, cc.local_ordinal FROM content_chunks cc
+              WHERE cc.page_id = p.id AND cc.occurrence_id = w.occurrence_id AND ${where}
+                AND ${after?.o == null ? sqlFragment`true` : sqlFragment`(w.byte_start > ${after.b} OR (cc.local_ordinal, cc.chunk_index) > (${after.o}, ${after.i}))`}
+            ) c ON true
+            WHERE p.id = ${page.id} AND p.body_generation = ${generation}::bigint
+            ORDER BY w.byte_start, c.local_ordinal, c.chunk_index
+            LIMIT ${remaining}
+          `);
+          if (rows.length === 0) {
+            throw opError('revision_changed', `Page ${slug} moved past body generation ${generation} during this read; no chunk was returned.`,
+              'Read the chunks again from the first one.', { legacy_error: 'invalid_params' });
+          }
+          for (const row of rows) if (row.id != null) result.chunks.push(rowToChunk(row));
+          const tail = rows[rows.length - 1]!;
+          if (tail.walk_byte_start == null) break;
+          after = rows.length < remaining || tail.id == null
+            ? { b: Number(tail.walk_byte_start), o: null, i: null }
+            : { b: Number(tail.walk_byte_start), o: Number(tail.local_ordinal), i: Number(tail.chunk_index) };
+        }
+        const next = from + result.chunks.length;
+        if (result.chunks.length < opts.limit || next >= total || !after) return result;
+        return { ...result, next_cursor: `gch1.${Buffer.from(JSON.stringify({ p: Number(page.id), g: generation, ...after, n: next })).toString('base64url')}` };
+      }
       const { rows } = await exec.run<{ total: number | string; max_index: number | null; segmented: boolean | null; max_page_chunks: number | string | null }>(sqlFragment`
         SELECT COALESCE(sum(t.n), 0) AS total, max(t.max_index) AS max_index, bool_or(t.segmented) AS segmented, max(t.n) AS max_page_chunks
         FROM (

@@ -596,7 +596,10 @@ describe('#2555 get_chunks federated scope', () => {
       const end = src.indexOf('\n  }\n', start + 10);
       return src.slice(start, end).replace(/\/\/[^\n]*/g, '');
     };
-    const body = bodyOf(surfaceFileSource('postgres-engine', 'src/core/engine-sql/chunks.ts'), 'export async function getChunks(');
+    // chunkColumns (the column list getChunks and getChunkPage select) sits right above getChunks, so this body is both.
+    const body = bodyOf(surfaceFileSource('postgres-engine', 'src/core/engine-sql/chunks.ts'), 'function chunkColumns(');
+    expect(body).toContain('export async function getChunks(');
+    expect(body).toContain('const columns = chunkColumns(column, includeEmbedding);');
     for (const [surface, enginePath] of [['postgres-engine', 'src/core/postgres-engine.ts'], ['pglite-engine', 'src/core/pglite-engine.ts']] as const) {
       const engineBody = bodyOf(surfaceFileSource(surface, enginePath), 'async getChunks(slug');
       expect(engineBody, `${enginePath} getChunks must delegate to engine-sql/chunks.ts`).toContain('chunksImpl.getChunks(');

@@ -285,6 +285,13 @@
       "page_purges.page_purges_pkey": "p PRIMARY KEY (source_id, content_hash)",
       "page_purges.page_purges_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "page_purges.trust_generation_insert": "t TRIGGER DEFERRABLE INITIALLY DEFERRED",
+      "page_read_pins.page_read_pins_audience_check": "c CHECK ((audience = ANY (ARRAY['trusted'::text, 'remote'::text])))",
+      "page_read_pins.page_read_pins_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
+      "page_read_pins.page_read_pins_pkey": "p PRIMARY KEY (token)",
+      "page_read_pins.page_read_pins_purpose_check": "c CHECK ((purpose = ANY (ARRAY['read'::text, 'export'::text])))",
+      "page_read_pins.page_read_pins_total_bytes_check": "c CHECK ((total_bytes >= 0))",
+      "page_read_pins.page_read_pins_total_lines_check": "c CHECK ((total_lines >= 0))",
+      "page_read_pins.page_read_pins_view_check": "c CHECK ((view = ANY (ARRAY['read'::text, 'markdown'::text])))",
       "page_retrievals.page_retrievals_pkey": "p PRIMARY KEY (page_id)",
       "page_segment_derivation_purge_pages.page_segment_derivation_purge_pages_pkey": "p PRIMARY KEY (request_id, page_id)",
       "page_segment_derivation_purges.page_segment_derivation_purges_batch_rows_check": "c CHECK ((batch_rows >= 1))",
@@ -862,6 +869,9 @@
       "page_purges": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "page_read_pins": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "page_retrievals": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1363,6 +1373,7 @@
       "page_aliases_origin_uniq": "CREATE UNIQUE INDEX page_aliases_origin_uniq ON public.page_aliases USING btree (source_id, alias_norm, slug, origin)",
       "page_aliases_pkey": "CREATE UNIQUE INDEX page_aliases_pkey ON public.page_aliases USING btree (id)",
       "page_aliases_slug_idx": "CREATE INDEX page_aliases_slug_idx ON public.page_aliases USING btree (source_id, slug)",
+      "page_body_manifest_closed": "CREATE INDEX page_body_manifest_closed ON public.page_body_manifest USING btree (page_id, gen_to) WHERE (gen_to IS NOT NULL)",
       "page_body_manifest_live_bytes": "CREATE INDEX page_body_manifest_live_bytes ON public.page_body_manifest USING btree (page_id, byte_start) WHERE (gen_to IS NULL)",
       "page_body_manifest_live_seq": "CREATE UNIQUE INDEX page_body_manifest_live_seq ON public.page_body_manifest USING btree (page_id, seq) WHERE ((gen_to IS NULL) AND (staging_id IS NULL))",
       "page_body_manifest_pkey": "CREATE UNIQUE INDEX page_body_manifest_pkey ON public.page_body_manifest USING btree (page_id, occurrence_id, gen_from, staging_key)",
@@ -1385,6 +1396,8 @@
       "page_mention_state_source_idx": "CREATE INDEX page_mention_state_source_idx ON public.page_mention_state USING btree (source_id, mention_version)",
       "page_projection_jobs_pkey": "CREATE UNIQUE INDEX page_projection_jobs_pkey ON public.page_projection_jobs USING btree (source_incarnation, slug)",
       "page_purges_pkey": "CREATE UNIQUE INDEX page_purges_pkey ON public.page_purges USING btree (source_id, content_hash)",
+      "page_read_pins_generation": "CREATE INDEX page_read_pins_generation ON public.page_read_pins USING btree (page_id, body_generation)",
+      "page_read_pins_pkey": "CREATE UNIQUE INDEX page_read_pins_pkey ON public.page_read_pins USING btree (token)",
       "page_retrievals_pkey": "CREATE UNIQUE INDEX page_retrievals_pkey ON public.page_retrievals USING btree (page_id)",
       "page_segment_derivation_purge_pages_pkey": "CREATE UNIQUE INDEX page_segment_derivation_purge_pages_pkey ON public.page_segment_derivation_purge_pages USING btree (request_id, page_id)",
       "page_segment_derivation_purges_pkey": "CREATE UNIQUE INDEX page_segment_derivation_purges_pkey ON public.page_segment_derivation_purges USING btree (request_id)",
@@ -3132,6 +3145,25 @@
           "3 slug text/text NOT NULL",
           "4 request_id uuid/uuid NULL",
           "5 purged_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "page_read_pins": {
+        "columns": [
+          "1 token text/text NOT NULL",
+          "2 page_id integer/int4 NOT NULL",
+          "3 body_generation bigint/int8 NOT NULL",
+          "4 purpose text/text NOT NULL",
+          "5 audience text/text NOT NULL",
+          "6 view text/text NULL",
+          "7 view_key text/text NULL",
+          "8 principal text/text NULL",
+          "9 revision text/text NOT NULL",
+          "10 total_bytes bigint/int8 NULL",
+          "11 total_lines bigint/int8 NULL",
+          "12 sha256 text/text NULL",
+          "13 expires_at timestamp with time zone/timestamptz NOT NULL",
+          "14 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

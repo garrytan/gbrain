@@ -7,13 +7,37 @@ import { loadStorageConfig, isDbOnly } from '../core/storage-config.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
 import { ALL_SOURCES, assertValidSourceId } from '../core/source-id.ts';
 import { resolveRestoreTarget, restoreFilePath } from '../core/restore-target.ts';
-import { ExportPathCollision, ExportStage, EXPORT_PAYLOAD_LIMIT, EXPORT_SNAPSHOT_MS, EXPORT_STREAM_BYTES_PER_MS, exportPagePath, exportPayloadLimit } from '../core/export-stage.ts';
+import { ExportPathCollision, ExportStage, EXPORT_PAYLOAD_LIMIT, EXPORT_SNAPSHOT_MS, exportPagePath, exportPayloadLimit } from '../core/export-stage.ts';
 import { slugPortabilityProblem } from '../core/portable-slug.ts';
 import { publishExport } from '../core/export-publish.ts';
 import { nativeFileTarget } from '../core/persistence/native-file-target.ts';
 import { exportBodyLedger, inlineExportMarkdown, readExportPage, readExportWithdrawals, segmentedExportHead, segmentedExportMarkdown } from '../core/export-snapshot.ts';
 import { segmentedPageCeiling } from '../core/page-body/limits.ts';
 import { isSegmentedPage } from '../core/page-body/page-shape.ts';
+import { createReadPin, READ_PIN_TTL_MS, releaseReadPin, renewReadPin } from '../core/page-body/read-pins.ts';
+import type { ExportWithdrawal } from '../core/export-snapshot.ts';
+import type { Page } from '../core/types.ts';
+
+/** @internal Test seam: runs before each streamed page's body is read, after every export read pin is taken (the export pin tests). */
+export const exportProbe: { beforeStream?: (pageId: number) => Promise<void> } = {};
+
+/** A segmented page planned in the snapshot and streamed after it commits, on the generation the snapshot read. */
+interface DeferredStream { name: string; bytes: number; page: Pick<Page, 'id' | 'slug' | 'source_id' | 'body_bytes'>; generation: number; head: string }
+
+/**
+ * `pieces`, renewing every live export pin each third of their TTL, so a long stream keeps its own generation and the
+ * generations of the pages still waiting pinned. A pin that can no longer be renewed (expired, removed) refuses the
+ * export: its generation may already be collected.
+ */
+async function* renewing(engine: BrainEngine, pins: string[], clock: { renewed: number }, pieces: AsyncIterable<Uint8Array | string>): AsyncIterable<Uint8Array | string> {
+  for await (const piece of pieces) {
+    if (pins.length && Date.now() - clock.renewed > READ_PIN_TTL_MS / 3) {
+      for (const pin of pins) if (!await renewReadPin(engine, pin)) throw new Error('An export read pin expired before its page was streamed; nothing was published. Retry the export.');
+      clock.renewed = Date.now();
+    }
+    yield piece;
+  }
+}
 
 function option(args: string[], name: string): string | undefined {
   const indices = args.flatMap((arg, i) => arg === name || arg.startsWith(name + '=') ? [i] : []);
@@ -104,9 +128,12 @@ a fresh directory. See docs/storage-tiering.md#safe-export.`);
     const collisions: ExportCollision[] = [];
     const owners = new Map<string, { source_id: string; label: string }>();
     const started = Date.now();
-    let streamedBytes = 0;
+    const deferred: DeferredStream[] = [];
+    /** Withdrawal ledgers of the sources whose segmented pages stream after the snapshot; other sources' go with their batch. */
+    const ledgers = new Map<string, ExportWithdrawal[]>();
+    let segmentedLimit = 0;
     const checkDeadline = () => {
-      if (Date.now() - started > EXPORT_SNAPSHOT_MS + streamedBytes / EXPORT_STREAM_BYTES_PER_MS) throw new Error('Export snapshot time limit reached. Select a smaller scope with --source, --type or --slug-prefix.');
+      if (Date.now() - started > EXPORT_SNAPSHOT_MS) throw new Error('Export snapshot time limit reached. Select a smaller scope with --source, --type or --slug-prefix.');
     };
     await engine.transaction(async tx => {
       await tx.executeRaw('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
@@ -116,7 +143,7 @@ a fresh directory. See docs/storage-tiering.md#safe-export.`);
       if (restoreOnly) ({ source, repo } = await resolveRestoreTarget(tx, source, repo));
       const storage = restoreOnly && repo ? loadStorageConfig(repo) : null;
       if (restoreOnly && !storage) throw new Error('--restore-only requires a storage tiering config (gbrain.yml with a storage section).');
-      const segmentedLimit = exportPayloadLimit(segmentedPageCeiling(tx.kind));
+      segmentedLimit = exportPayloadLimit(segmentedPageCeiling(tx.kind));
       let cursor = '0';
       for (;;) {
         checkDeadline();
@@ -135,7 +162,7 @@ a fresh directory. See docs/storage-tiering.md#safe-export.`);
         if (!batch.length) break;
         for (const batchSource of new Set(batch.map(key => key.source_id))) {
           checkDeadline();
-          const withdrawals = await readExportWithdrawals(tx, batchSource);
+          const withdrawals = ledgers.get(batchSource) ?? await readExportWithdrawals(tx, batchSource);
           for (const key of batch.filter(key => key.source_id === batchSource)) {
             checkDeadline();
             assertValidSourceId(key.source_id);
@@ -151,9 +178,10 @@ a fresh directory. See docs/storage-tiering.md#safe-export.`);
             const raw = Number(key.raw_count) ? await tx.getRawData(page.slug, undefined, { sourceId: page.source_id, includeDeleted: true }) : [];
             try {
               if (isSegmentedPage(page)) {
-                streamedBytes += Number(key.bytes);
-                await staged.addStream(target.path, Number(key.bytes), segmentedLimit,
-                  segmentedExportMarkdown(tx, page, exportBodyLedger(page.slug, withdrawals), segmentedExportHead(snapshot, target.escaped)));
+                deferred.push({ name: staged.planStream(target.path, Number(key.bytes), segmentedLimit), bytes: Number(key.bytes),
+                  page: { id: page.id, slug: page.slug, source_id: page.source_id, body_bytes: page.body_bytes }, generation: snapshot.generation!,
+                  head: segmentedExportHead(snapshot, target.escaped) });
+                ledgers.set(batchSource, withdrawals);
               } else staged.add(target.path, 'file', inlineExportMarkdown(snapshot, target.escaped));
               owners.set(target.path, { source_id: page.source_id, label });
               if (raw.length) {
@@ -178,6 +206,25 @@ a fresh directory. See docs/storage-tiering.md#safe-export.`);
       checkDeadline();
       if (collisions.length) throw collisionRefusal(collisions, owners, outDir);
     });
+    // Segmented pages stream after the snapshot commits, so no snapshot stays open while a large body is read. Every one
+    // takes its read pin on the generation the snapshot read (a GC root, as a retained version is) as soon as the
+    // snapshot commits, before the first stream, and its rows must still tile the snapshot's body_bytes, so the file is
+    // the snapshot's page or the export refuses (a generation collected in the moment before its pin, or a page whose
+    // pin could not be written: a read-only database or the per-page pin cap, streams unpinned under the same check).
+    const pins: string[] = [];
+    try {
+      for (const d of deferred) {
+        const pin = await createReadPin(engine, { pageId: Number(d.page.id), generation: d.generation, purpose: 'export', audience: 'trusted', view: null, viewKey: null,
+          principal: null, revision: `export:${d.generation}`, totalBytes: Number(d.page.body_bytes ?? 0), totalLines: null, sha256: null });
+        if (pin) pins.push(pin);
+      }
+      const clock = { renewed: Date.now() };
+      for (const d of deferred) {
+        await exportProbe.beforeStream?.(Number(d.page.id));
+        await staged.writeStream(d.name, d.bytes, segmentedLimit, renewing(engine, pins, clock,
+          segmentedExportMarkdown(engine, d.page, exportBodyLedger(d.page.slug, ledgers.get(d.page.source_id) ?? []), d.head, d.generation)));
+      }
+    } finally { for (const pin of pins) await releaseReadPin(engine, pin); }
     console.log(`${restoreOnly ? 'Restoring' : 'Exporting'} ${stage.pages}${restoreOnly ? ' db_only' : ''} pages to ${outDir}/`);
     const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
     progress.start('export.pages', stage.pages);

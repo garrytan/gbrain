@@ -3469,7 +3469,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "explicit chunk read by slug, the page-read twin of get_page (CEO-17 raw-read exception)"
     },
-    "description": "Return a page's indexed content chunks (the units search ranks), in chunk_index order, 50 at a time by default. Use when debugging why search did or did not match a page. A large page has more chunks than one call returns: the last chunk of a cut list carries truncated: true and next_from_index, _meta.pagination carries total_chunks and next_from_index, and a listing_truncated notice names the next call (from_index). Needs read scope. On page_not_found: resolve the slug with resolve_slugs.",
+    "description": "Return a page's indexed content chunks (the units search ranks), in chunk_index order (document order for a page stored in segments), 50 at a time by default. Use when debugging why search did or did not match a page. A large page has more chunks than one call returns: the last chunk of a cut list carries truncated: true and next_from_index (and next_cursor on a page stored in segments), _meta.pagination carries total_chunks and the same fields, and a listing_truncated notice names the next call. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.",
     "params": {
       "slug": {
         "type": "string",
@@ -3491,7 +3491,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "from_index": {
         "type": "number",
-        "description": "Return chunks from this chunk_index on (a non-negative integer). Default 0."
+        "description": "Return chunks from this chunk_index on (a non-negative integer; a position in document order on a page stored in segments). Default 0."
+      },
+      "cursor": {
+        "type": "string",
+        "description": "next_cursor from the previous call on the same page (instead of from_index): continues the walk in constant time per call; refused with revision_changed once the page body changed."
       },
       "limit": {
         "type": "number",

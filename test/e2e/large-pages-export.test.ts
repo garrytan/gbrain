@@ -14,8 +14,9 @@
  *   F's body (above 24 MiB the import stamps content-sanity keys into the
  *   frontmatter, so only the body round-trips byte for byte).
  * - Abort semantics: a segmented page over the payload limit refuses the whole
- *   export (its estimate is `body_bytes`, not NULL); a streamed page extends the
- *   snapshot deadline by its bytes.
+ *   export (its estimate is `body_bytes`, not NULL); a snapshot past its deadline
+ *   refuses, while a segmented page streams after the snapshot, so its stream time
+ *   never counts against that deadline.
  * - Backup: a PGLite backup restores a segmented page that exports the same bytes.
  * - 128 MiB (GBRAIN_TEST_LARGE_EXPORT=1, PGLite): the export of a 128 MiB page
  *   has F's body and its peak memory (VmHWM) stays under 80 MiB above exporting a
@@ -38,7 +39,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { importFromFile } from '../../src/core/import-file.ts';
-import { runExport } from '../../src/commands/export.ts';
+import { exportProbe, runExport } from '../../src/commands/export.ts';
 import { serializeMarkdown, serializePageToMarkdown } from '../../src/core/markdown.ts';
 import { EXPORT_SNAPSHOT_MS, exportStreamWork } from '../../src/core/export-stage.ts';
 import { PAGE_MAX_BYTES } from '../../src/core/page-size-policy.ts';
@@ -149,7 +150,7 @@ for (const backend of testBackends()) describe(`large-page export: ${backend}`, 
     } finally { await engine.executeRaw("DELETE FROM fact_withdrawals WHERE source_id='default'"); }
   }, 600_000);
 
-  test('a segmented page over the payload limit refuses the whole export; a streamed page extends the snapshot deadline', async () => {
+  test('a segmented page over the payload limit refuses the whole export; a streamed page streams after the snapshot deadline is checked', async () => {
     const file = join(dir, `${backend}-limit.md`);
     writeFileSync(file, pageFile(2 * MiB, 3));
     expect(await importAs(engine, 'on', file)).toBe('segmented');
@@ -168,10 +169,18 @@ for (const backend of testBackends()) describe(`large-page export: ${backend}`, 
       return query.call(this, sql, params, options) as never;
     };
     try {
-      const extended = await exportPage(engine);
-      expectStreamed(extended);
-      expect(extended.length).toBeGreaterThan(2 * MiB);
+      await expect(exportPage(engine)).rejects.toThrow('Export snapshot time limit reached');
     } finally { engine.executeRaw = query; Date.now = now; }
+
+    exportProbe.beforeStream = async () => {
+      const late = now() + EXPORT_SNAPSHOT_MS + 1000;
+      Date.now = () => late;
+    };
+    try {
+      const streamed = await exportPage(engine);
+      expectStreamed(streamed);
+      expect(streamed.length).toBeGreaterThan(2 * MiB);
+    } finally { exportProbe.beforeStream = undefined; Date.now = now; }
   }, 300_000);
 
   test.skipIf(backend !== 'pglite')('streamed ingest drops leading and trailing body whitespace like parseMarkdown, so export(import(F + whitespace)) has the body of F', async () => {

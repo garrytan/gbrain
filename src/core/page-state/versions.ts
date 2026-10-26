@@ -60,12 +60,19 @@ async function insertSegmentedVersion(tx: BrainEngine, snapshot: PageSnapshot): 
 /**
  * Segmented retention (spec 5): keep the newest `versions.segmented_max_per_page`
  * segmented versions of the page, and prune oldest-first while the bytes they
- * pin beyond the live generation (manifest rows a kept version's generation
- * references that are closed, each counted once) exceed
- * max(`versions.segmented_max_pinned_bytes`, the page's body_bytes). A row's
- * bytes count from the newest version that references it, so the pinned bytes
- * of the newest k versions are a running sum and the kept set is a prefix.
- * Inline snapshots of the page are never touched here. Returns the versions deleted.
+ * pin beyond the live generation exceed
+ * max(`versions.segmented_max_pinned_bytes`, the page's body_bytes). The pinned
+ * bytes are those of distinct texts (source_id, sha256) of closed manifest rows a
+ * kept version's generation references, less the texts the live generation
+ * holds (a moved row's text is stored once). Versions reference generations in
+ * id order, so a closed row is pinned by the newest kept generation below its
+ * gen_to (when that is at or above its gen_from): the rows closed after the
+ * oldest kept generation (page_body_manifest_closed) and the live rows are
+ * sorted once with the kept generations and grouped by text, never joined to
+ * the versions or to each other, so the work does not depend on statistics. A text's bytes count from
+ * the newest version that pins it, so the pinned bytes of the newest k versions
+ * are a running sum and the kept set is a prefix. Inline snapshots of the page
+ * are never touched here. Returns the versions deleted.
  */
 export async function pruneSegmentedVersions(tx: BrainEngine, pageId: number): Promise<number> {
   const policy = await readPageBodyPolicy(tx);
@@ -73,10 +80,20 @@ export async function pruneSegmentedVersions(tx: BrainEngine, pageId: number): P
       SELECT id, body_generation AS g, row_number() OVER (ORDER BY id DESC) AS rk
         FROM page_versions WHERE page_id = $1 AND body_storage = 'segmented'),
     pinned AS (
-      SELECT min(v.rk) AS rk, m.byte_len
-        FROM page_body_manifest m JOIN v ON m.gen_from <= v.g AND v.g < m.gen_to
-       WHERE m.page_id = $1 AND m.gen_to IS NOT NULL AND m.staging_id IS NULL
-       GROUP BY m.occurrence_id, m.gen_from, m.byte_len),
+      SELECT min(e.pin_rk) FILTER (WHERE e.kind = 0 AND e.gen_from <= e.pin_g) AS rk, max(e.byte_len) AS byte_len
+        FROM (SELECT e.*, max(e.version_g) OVER w AS pin_g, min(e.version_rk) OVER w AS pin_rk
+                FROM (SELECT g AS at, 1 AS kind, g AS version_g, min(rk) AS version_rk, NULL::bigint AS gen_from, NULL::text AS source_id, NULL::bytea AS sha256, NULL::int AS byte_len
+                        FROM v GROUP BY g
+                      UNION ALL
+                      SELECT m.gen_to, 0, NULL, NULL, m.gen_from, m.source_id, m.sha256, m.byte_len FROM page_body_manifest m
+                       WHERE m.page_id = $1 AND m.gen_to > (SELECT min(g) FROM v) AND m.staging_id IS NULL
+                      UNION ALL
+                      SELECT NULL, 2, NULL, NULL, NULL, m.source_id, m.sha256, 0 FROM page_body_manifest m
+                       WHERE m.page_id = $1 AND m.gen_to IS NULL AND m.staging_id IS NULL) e
+              WINDOW w AS (ORDER BY e.at, e.kind ROWS UNBOUNDED PRECEDING)) e
+       WHERE e.kind <> 1
+       GROUP BY e.source_id, e.sha256
+      HAVING NOT bool_or(e.kind = 2)),
     per_rank AS (SELECT rk, sum(byte_len) AS bytes FROM pinned GROUP BY rk),
     kept AS (
       SELECT v.id, v.rk, sum(COALESCE(per_rank.bytes, 0)) OVER (ORDER BY v.rk) AS bytes

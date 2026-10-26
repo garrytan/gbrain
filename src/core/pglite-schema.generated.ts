@@ -1377,6 +1377,23 @@ CREATE TABLE IF NOT EXISTS page_view_digests (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (page_id, revision, view, audience)
 );
+CREATE TABLE IF NOT EXISTS page_read_pins (
+  token TEXT PRIMARY KEY,
+  page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  body_generation BIGINT NOT NULL,
+  purpose TEXT NOT NULL CHECK (purpose IN ('read','export')),
+  audience TEXT NOT NULL CHECK (audience IN ('trusted','remote')),
+  view TEXT CHECK (view IN ('read','markdown')),
+  view_key TEXT,
+  principal TEXT,
+  revision TEXT NOT NULL,
+  total_bytes BIGINT CHECK (total_bytes >= 0),
+  total_lines BIGINT CHECK (total_lines >= 0),
+  sha256 TEXT,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS page_read_pins_generation ON page_read_pins (page_id, body_generation);
 -- Wave B segmented page storage (migration v248): segment texts, the
 -- generation-ranged body manifest and body stagings (src/core/page-body/).
 -- Before the persistence region so the managed-writer guard covers them.

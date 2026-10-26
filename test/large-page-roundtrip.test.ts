@@ -6,8 +6,8 @@
  *     (page_shrink_refused); force cannot stand in for expected_revision.
  *   - the local `gbrain get` prints the page byte-for-byte as it was written.
  *   - the thin client, refused a whole page, pages the round-trip markdown to
- *     its end and checks size + sha256; a page edited mid-read restarts, a
- *     mismatch fails without printing.
+ *     its end in the host's windows and checks size + sha256; a page edited
+ *     mid-read restarts, a mismatch fails without printing.
  *
  * Hermetic in-memory PGLite.
  */
@@ -20,7 +20,7 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { serializeMarkdown } from '../src/core/markdown.ts';
 import { importFromContent } from '../src/core/import-file.ts';
-import { formatGetPage, readWholePageMarkdown, wantsWholePage } from '../src/cli/page-render.ts';
+import { formatGetPage, readWholePageMarkdown, REMOTE_PAGE_WINDOW_BYTES, wantsWholePage } from '../src/cli/page-render.ts';
 
 let engine: PGLiteEngine;
 const noopLogger = { info: () => {}, warn: () => {}, error: () => {} };
@@ -123,6 +123,13 @@ describe('put_page after a windowed read', () => {
 
 describe('thin client', () => {
   const thin = () => remoteCtx({ thinClient: true });
+  /**
+   * The thin client asks for REMOTE_PAGE_WINDOW_BYTES (4 MiB), more than this 2 MB page, and pages by whatever window
+   * the host sends. These cases need several windows, so the host here sends 512 KiB windows (a host whose cap is
+   * below the paged-read ceiling): the client's first request is clamped, and every cursor carries the clamp.
+   */
+  const SMALL_WINDOW = 512 * 1024;
+  const smallWindows = (p: Record<string, unknown>) => get(thin(), p.max_bytes === REMOTE_PAGE_WINDOW_BYTES ? { ...p, max_bytes: SMALL_WINDOW } : p);
 
   test('naming no mode, the whole page is refused over HTTP, never sent partial', async () => {
     expect(wantsWholePage({ slug: 'logs/big-example' })).toBe(true);
@@ -132,9 +139,12 @@ describe('thin client', () => {
 
   test('pages the round-trip markdown to its end and it equals include_content', async () => {
     const whole = (await get(localCtx(), { slug: 'logs/big-example', include_content: true })).content as string;
-    const paged = await readWholePageMarkdown(p => get(thin(), p), { slug: 'logs/big-example' });
-    expect(paged.windows).toBeGreaterThan(3);
+    const paged = await readWholePageMarkdown(smallWindows, { slug: 'logs/big-example' });
+    expect(paged.windows).toBe(Math.ceil(Buffer.byteLength(whole) / SMALL_WINDOW));
     expect(paged.markdown === whole).toBe(true);
+    const unclamped = await readWholePageMarkdown(p => get(thin(), p), { slug: 'logs/big-example' });
+    expect(unclamped.windows).toBe(Math.ceil(Buffer.byteLength(whole) / REMOTE_PAGE_WINDOW_BYTES));
+    expect(unclamped.markdown === whole).toBe(true);
   }, 60_000);
 
   test('a page edited mid-read restarts and returns the new page whole', async () => {
@@ -145,7 +155,7 @@ describe('thin client', () => {
         const cur = await get(localCtx(), { slug: 'logs/moving-example', include_content: true });
         await putPage.handler(localCtx(), { slug: 'logs/moving-example', content: cur.content.replace('v1 line 3 ', 'v2 line 3 '), expected_revision: cur.revision });
       }
-      return get(thin(), p);
+      return smallWindows(p);
     }, { slug: 'logs/moving-example' });
     expect(paged.markdown).toContain('v2 line 3 ');
     expect(paged.markdown).toBe((await get(localCtx(), { slug: 'logs/moving-example', include_content: true })).content);
@@ -154,7 +164,7 @@ describe('thin client', () => {
   test('a copy that does not match the reported sha256 fails without returning text', async () => {
     let calls = 0;
     await expect(readWholePageMarkdown(async p => {
-      const r = await get(thin(), p);
+      const r = await smallWindows(p);
       if (++calls === 2) r.window.text = r.window.text.replace('line', 'LINE');
       return r;
     }, { slug: 'logs/big-example' })).rejects.toThrow(/does not match/);

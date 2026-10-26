@@ -48,27 +48,32 @@ function emitTruncated(ctx: OperationContext, why: string, fix: Notice['fix']): 
   ctx.emitNotice?.({ code: 'listing_truncated', kind: 'info', why, ...(fix ? { fix } : {}) });
 }
 
-/** get_chunks: meta, notice and local stderr for one page of chunks; returns next_from_index when more chunks remain. */
+/**
+ * get_chunks: meta, notice and local stderr for one page of chunks; returns next_from_index when more chunks remain.
+ * A segmented page's `nextCursor` rides along, and the notice's next call uses it instead of from_index.
+ */
 export function reportChunkPage(ctx: OperationContext, p: Record<string, unknown>, page: {
-  fromIndex: number; limit: number; clampedFrom?: number; returned: number; totalChunks: number; maxChunkIndex: number | null;
+  fromIndex: number; limit: number; clampedFrom?: number; returned: number; totalChunks: number; maxChunkIndex: number | null; nextCursor?: string;
 }): number | undefined {
   const more = page.maxChunkIndex !== null && page.maxChunkIndex >= page.fromIndex + page.limit;
   const next = more ? page.fromIndex + page.limit : undefined;
+  const cursor = next !== undefined ? page.nextCursor : undefined;
   ctx.emitResponseMeta?.('pagination', {
     from_index: page.fromIndex, limit: page.limit, returned: page.returned, total_chunks: page.totalChunks,
     ...(page.clampedFrom !== undefined ? { clamped_from: page.clampedFrom } : {}),
     ...(next !== undefined ? { next_from_index: next } : {}),
+    ...(cursor !== undefined ? { next_cursor: cursor } : {}),
   });
   if (next === undefined) return undefined;
   if (ctx.remote === false) {
     if (p.limit === undefined || p.limit === null) {
-      console.error(`[get_chunks] output truncated at ${page.limit} chunks (default ${GET_CHUNKS_DEFAULT_LIMIT}) of ${page.totalChunks}. Pass --limit <n>, or continue with --from-index ${next}.`);
+      console.error(`[get_chunks] output truncated at ${page.limit} chunks (default ${GET_CHUNKS_DEFAULT_LIMIT}) of ${page.totalChunks}. Pass --limit <n>, or continue with ${cursor !== undefined ? `--cursor ${cursor}` : `--from-index ${next}`}.`);
     }
     return next;
   }
   const clamp = page.clampedFrom !== undefined ? ` (limit ${page.clampedFrom} was capped at ${page.limit})` : '';
   emitTruncated(ctx, `The page has ${page.totalChunks} chunks; chunks from chunk_index ${page.fromIndex} below ${next} were returned${clamp}, so this list is not complete.`, {
-    mcp: { tool: 'get_chunks', arguments: { slug: p.slug, ...(p.min_trust !== undefined ? { min_trust: p.min_trust } : {}), from_index: next, limit: page.limit } },
+    mcp: { tool: 'get_chunks', arguments: { slug: p.slug, ...(p.min_trust !== undefined ? { min_trust: p.min_trust } : {}), ...(cursor !== undefined ? { cursor } : { from_index: next }), limit: page.limit } },
     consent: [], actor: 'agent', requires_exclusive: false,
     why: 'Fetches the next chunks; every other parameter stays the same. Keep paging until no listing_truncated notice comes back.',
   });

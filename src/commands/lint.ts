@@ -21,6 +21,7 @@ import { readSourceFileSync, writeSourceFileSync, hasSourceFilesystemLock, withS
 import { readdirSync, statSync, lstatSync, existsSync } from 'fs';
 import { join, relative, dirname } from 'path';
 import { isAborted } from '../core/abort-check.ts';
+import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
 import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
 import { parseDateLoose } from '../core/effective-date.ts';
 import {
@@ -56,8 +57,8 @@ export interface LintIssue {
   rule: string;
   message: string;
   fixable: boolean;
-  /** The stable machine code: a repair that was not applied (`managed_write_pending` from a managed brain's coordinator, `fix_not_writable` when the file refused the write), or a listed file removed before lint read it (`file_removed_during_scan`). */
-  code?: 'managed_write_pending' | 'fix_not_writable' | 'file_removed_during_scan';
+  /** The stable machine code: a repair that was not applied (`managed_write_pending` from a managed brain's coordinator, `fix_not_writable` when the file refused the write), a listed file removed before lint read it (`file_removed_during_scan`), or a file over PAGE_MAX_BYTES lint did not read (`oversize_canonical_file`). */
+  code?: 'managed_write_pending' | 'fix_not_writable' | 'file_removed_during_scan' | 'oversize_canonical_file';
   /** Why: the coordinator refusal's reason (`file_database_drift`, `held_file`, `canonical_file_missing`, ...), `revision_changed`, `not_indexed`, or the lowercased errno (`eacces`, `eperm`, `erofs`). */
   reason?: string;
   /** The next step, rendered for the CLI: the coordinator refusal's own fix, or the owner's permission fix. */
@@ -843,6 +844,15 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
     const relPath = isSingleFile ? page : relative(opts.target, page);
+    const bytes = statSync(page, { throwIfNoEntry: false })?.size;
+    if (bytes !== undefined && bytes > PAGE_MAX_BYTES) {
+      opts.onPageScanned?.();
+      pagesWithIssues++;
+      totalIssues++;
+      opts.onPageIssues?.(relPath, [{ file: relPath, line: 1, rule: 'oversize-canonical-file', fixable: false, code: 'oversize_canonical_file',
+        message: `${relPath} is ${bytes} bytes, over the ${PAGE_MAX_BYTES}-byte single-file page limit, so lint did not read it. A page this large is stored in segments when it is synced; split it, or check it with gbrain doctor after sync.` }], 0);
+      continue;
+    }
     let content: string;
     try {
       content = readSourceFileSync(page, 'utf-8');

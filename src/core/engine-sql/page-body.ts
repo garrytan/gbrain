@@ -376,8 +376,9 @@ export async function setBodyStagingState(exec: SqlExecutor, id: string, state: 
 
 /**
  * Garbage collection (spec 3.5). Roots: each segmented page's live generation,
- * every generation a page_versions row references, and staged rows of live
- * stagings (`liveStagingIds`). Deletes staged chunk rows (above the page's
+ * every generation a page_versions row references, every generation a live
+ * read pin holds (page-body/read-pins.ts; expired pins in scope are deleted),
+ * and staged rows of live stagings (`liveStagingIds`). Deletes staged chunk rows (above the page's
  * generation) no live staging owns, manifest rows outside every root, and
  * unreferenced texts older than the grace window and older than every live
  * staging of their source, that no live staging recorded
@@ -442,7 +443,10 @@ export async function sweepSegments(exec: SqlExecutor, opts: SegmentSweepOptions
     WHERE m.page_id = p.id AND ${pageScope} AND m.staging_id IS NULL
       AND NOT (p.body_storage = 'segmented' AND m.gen_from <= p.body_generation AND (m.gen_to IS NULL OR m.gen_to > p.body_generation))
       AND NOT EXISTS (SELECT 1 FROM page_versions v WHERE v.page_id = m.page_id AND v.body_generation >= m.gen_from
-                       AND (m.gen_to IS NULL OR v.body_generation < m.gen_to)) ${returning}`);
+                       AND (m.gen_to IS NULL OR v.body_generation < m.gen_to))
+      AND NOT EXISTS (SELECT 1 FROM page_read_pins r WHERE r.page_id = m.page_id AND r.expires_at > ${now} AND r.body_generation >= m.gen_from
+                       AND (m.gen_to IS NULL OR r.body_generation < m.gen_to)) ${returning}`);
+  await exec.run(sqlFragment`DELETE FROM page_read_pins r USING pages p WHERE r.page_id = p.id AND ${pageScope} AND r.expires_at <= ${now}`);
   for (const row of [...stagedRows, ...closedRows]) released.add(row.sha);
   const graceMs = opts.graceMs ?? SEGMENT_TEXT_GC_GRACE_MS;
   const textScope = opts.pageId !== undefined

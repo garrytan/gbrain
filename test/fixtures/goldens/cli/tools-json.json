@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 264473,
-    "stdoutSha256": "f5647f0a0d45a36ed8685afa000792cef233379d012eeceec6fa2f9366d1b0ee",
+    "stdoutBytes": 264907,
+    "stdoutSha256": "fa2f6c329a1dbb83b8f0eaea187b7dd0e00169a779f52486687d1610518d6a3d",
     "toolNames": [
       "remember",
       "entity",
@@ -4036,12 +4036,13 @@
         "scope": "read"
       },
       {
-        "description": "Return a page's indexed content chunks (the units search ranks), in chunk_index order, 50 at a time by default. Use when debugging why search did or did not match a page. A large page has more chunks than one call returns: the last chunk of a cut list carries truncated: true and next_from_index, _meta.pagination carries total_chunks and next_from_index, and a listing_truncated notice names the next call (from_index). Needs read scope. On page_not_found: resolve the slug with resolve_slugs.",
+        "description": "Return a page's indexed content chunks (the units search ranks), in chunk_index order (document order for a page stored in segments), 50 at a time by default. Use when debugging why search did or did not match a page. A large page has more chunks than one call returns: the last chunk of a cut list carries truncated: true and next_from_index (and next_cursor on a page stored in segments), _meta.pagination carries total_chunks and the same fields, and a listing_truncated notice names the next call. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "get_chunks",
         "parameters": {
+          "cursor": "string?",
           "from_index": "number?",
           "limit": "number?",
           "min_trust": "string?",
@@ -4050,8 +4051,12 @@
         "required_scopes": [],
         "schema": {
           "properties": {
+            "cursor": {
+              "description": "next_cursor from the previous call on the same page (instead of from_index): continues the walk in constant time per call; refused with revision_changed once the page body changed.",
+              "type": "string"
+            },
             "from_index": {
-              "description": "Return chunks from this chunk_index on (a non-negative integer). Default 0.",
+              "description": "Return chunks from this chunk_index on (a non-negative integer; a position in document order on a page stored in segments). Default 0.",
               "type": "number"
             },
             "limit": {

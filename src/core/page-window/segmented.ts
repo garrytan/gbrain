@@ -23,9 +23,12 @@
  * document edge, so each cut equals the whole-document cut.
  *
  * {total_bytes, total_lines, sha256} of a markdown view stream the view once
- * per (page, revision, audience), cached in page_view_digests with the read
- * view's line count, so paging a page to its end is linear. A cached row is
- * used only while its byte total matches the stored sums.
+ * per rendered view, cached in page_view_digests with the read view's line
+ * count, so paging a page to its end is linear. The cache key is the exact
+ * rendered view (page-body/read-pins.ts digestKey: the head, so metadata and
+ * tags, the withdrawal overlay, audience and body generation), not the page
+ * revision: a withdrawal moves the overlay without moving the revision. A
+ * cached row is used only while its byte total matches the stored sums.
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
@@ -279,27 +282,31 @@ export async function segmentedMarkdownDocument(engine: BrainEngine, body: Segme
 
 interface Digest { total_bytes: number; total_lines: number; sha256: string | null }
 
-async function readDigest(doc: SegmentedDocument, revision: string, view: 'read' | 'markdown', audience: ViewAudience): Promise<Digest | null> {
+async function readDigest(doc: SegmentedDocument, key: string, view: 'read' | 'markdown', audience: ViewAudience): Promise<Digest | null> {
   const [row] = await doc.engine.executeRaw<{ total_bytes: unknown; total_lines: unknown; sha256: string | null }>(
     `SELECT total_bytes, total_lines, sha256 FROM page_view_digests WHERE page_id=$1 AND revision=$2 AND view=$3 AND audience=$4`,
-    [doc.body.pageId, revision, view, audience]);
+    [doc.body.pageId, key, view, audience]);
   if (!row || Number(row.total_bytes) !== doc.total) return null;
   return { total_bytes: Number(row.total_bytes), total_lines: Number(row.total_lines), sha256: row.sha256 };
 }
 
-/** Best effort: a reader that cannot write the cache recomputes next time. Rows of older revisions go. */
-async function writeDigest(doc: SegmentedDocument, revision: string, view: 'read' | 'markdown', audience: ViewAudience, d: Digest): Promise<void> {
+/**
+ * Best effort: a reader that cannot write the cache recomputes next time. Older rows of the same view and audience go
+ * (one row each, so trusted and remote readers of one page never evict each other's digest). The `revision` column
+ * holds the digest key (read-pins.ts digestKey), so rows written by an older binary under a page revision never match.
+ */
+async function writeDigest(doc: SegmentedDocument, key: string, view: 'read' | 'markdown', audience: ViewAudience, d: Digest): Promise<void> {
   try {
-    await doc.engine.executeRaw('DELETE FROM page_view_digests WHERE page_id=$1 AND revision<>$2', [doc.body.pageId, revision]);
+    await doc.engine.executeRaw('DELETE FROM page_view_digests WHERE page_id=$1 AND view=$3 AND audience=$4 AND revision<>$2', [doc.body.pageId, key, view, audience]);
     await doc.engine.executeRaw(`INSERT INTO page_view_digests (page_id, revision, view, audience, total_bytes, total_lines, sha256) VALUES ($1, $2, $3, $4, $5, $6, $7)
       ON CONFLICT (page_id, revision, view, audience) DO UPDATE SET total_bytes=EXCLUDED.total_bytes, total_lines=EXCLUDED.total_lines, sha256=EXCLUDED.sha256, created_at=now()`,
-    [doc.body.pageId, revision, view, audience, d.total_bytes, d.total_lines, d.sha256]);
+    [doc.body.pageId, key, view, audience, d.total_bytes, d.total_lines, d.sha256]);
   } catch { /* cache only */ }
 }
 
-/** {total_bytes, total_lines, sha256} of a markdown view: one streamed pass per (page, revision, audience). */
-export async function markdownDigest(doc: SegmentedDocument, revision: string, audience: ViewAudience): Promise<{ total_bytes: number; total_lines: number; sha256: string }> {
-  const cached = await readDigest(doc, revision, 'markdown', audience);
+/** {total_bytes, total_lines, sha256} of a markdown view: one streamed pass per rendered view (`key`, read-pins.ts digestKey). */
+export async function markdownDigest(doc: SegmentedDocument, key: string, audience: ViewAudience): Promise<{ total_bytes: number; total_lines: number; sha256: string }> {
+  const cached = await readDigest(doc, key, 'markdown', audience);
   if (cached?.sha256) return { total_bytes: cached.total_bytes, total_lines: cached.total_lines, sha256: cached.sha256 };
   const hash = createHash('sha256');
   let bytes = 0, lines = 0, last = -1;
@@ -310,16 +317,16 @@ export async function markdownDigest(doc: SegmentedDocument, revision: string, a
     last = b[b.length - 1]!;
   }
   const digest = { total_bytes: bytes, total_lines: bytes === 0 ? 0 : lines + (last === NL ? 0 : 1), sha256: hash.digest('hex') };
-  await writeDigest(doc, revision, 'markdown', audience, digest);
+  await writeDigest(doc, key, 'markdown', audience, digest);
   return digest;
 }
 
-/** The read view's line count, cached so a window does not read the last segment each call. */
-export async function readViewLines(doc: SegmentedDocument, revision: string): Promise<number> {
-  const cached = await readDigest(doc, revision, 'read', 'remote');
+/** The read view's line count, cached per rendered view (`key`) so a window does not read the last segment each call. */
+export async function readViewLines(doc: SegmentedDocument, key: string): Promise<number> {
+  const cached = await readDigest(doc, key, 'read', 'remote');
   if (cached) return cached.total_lines;
   const total_lines = await doc.totalLines();
-  await writeDigest(doc, revision, 'read', 'remote', { total_bytes: doc.total, total_lines, sha256: null });
+  await writeDigest(doc, key, 'read', 'remote', { total_bytes: doc.total, total_lines, sha256: null });
   return total_lines;
 }
 

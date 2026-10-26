@@ -16,6 +16,8 @@ import { createHash } from 'node:crypto';
 export const DEFAULT_WINDOW_BYTES = 40_000;
 /** Largest window one call may ask for; the connection's egress cap may lower it. */
 export const MAX_WINDOW_BYTES = 1024 * 1024;
+/** Largest window of gbrain's thin client paging the round-trip markdown (egress-budget.ts isPagedRead, PAGED_READ_CAP_BYTES). */
+export const MAX_PAGED_WINDOW_BYTES = 4 * 1024 * 1024;
 export const DEFAULT_CONTEXT_LINES = 20;
 export const MAX_CONTEXT_LINES = 2000;
 export const DEFAULT_OUTLINE_LIMIT = 100;
@@ -339,26 +341,39 @@ export interface WindowCursor {
   view: WindowView;
   offset: number;
   max_bytes: number;
+  /**
+   * A segmented page's read pin (page-body/read-pins.ts): the read continues on the pinned body generation and
+   * rendered view after the page moves on (an append), while get_page still authorizes every window.
+   */
+  pin?: string;
 }
 
 const CURSOR_PREFIX = 'gpw1.';
+const PINNED_CURSOR_PREFIX = 'gpw2.';
 
-/** Opaque, revision-bound continuation token. Not a credential: it names a position and grants nothing. */
+/**
+ * Opaque, revision-bound continuation token. Not a credential: it names a position and grants nothing; a pinned
+ * cursor names a pin its holder may continue only while get_page still lets it read the page.
+ */
 export function encodeCursor(c: WindowCursor): string {
-  return CURSOR_PREFIX + Buffer.from(JSON.stringify([c.page_id, c.revision, c.view, c.offset, c.max_bytes]), 'utf8').toString('base64url');
+  const fields = [c.page_id, c.revision, c.view, c.offset, c.max_bytes, ...(c.pin ? [c.pin] : [])];
+  return (c.pin ? PINNED_CURSOR_PREFIX : CURSOR_PREFIX) + Buffer.from(JSON.stringify(fields), 'utf8').toString('base64url');
 }
 
 export function decodeCursor(raw: string): WindowCursor | null {
-  if (typeof raw !== 'string' || !raw.startsWith(CURSOR_PREFIX)) return null;
+  if (typeof raw !== 'string') return null;
+  const pinned = raw.startsWith(PINNED_CURSOR_PREFIX);
+  if (!pinned && !raw.startsWith(CURSOR_PREFIX)) return null;
   const payload = raw.slice(CURSOR_PREFIX.length);
   if (!/^[A-Za-z0-9_-]+$/.test(payload)) return null;
   try {
     const v: unknown = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    if (!Array.isArray(v) || v.length !== 5) return null;
-    const [page_id, revision, view, offset, max_bytes] = v;
+    if (!Array.isArray(v) || v.length !== (pinned ? 6 : 5)) return null;
+    const [page_id, revision, view, offset, max_bytes, pin] = v;
     if (!Number.isSafeInteger(page_id) || typeof revision !== 'string' || (view !== 'read' && view !== 'markdown')
       || !Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(max_bytes) || max_bytes <= 0) return null;
-    return { page_id, revision, view, offset, max_bytes };
+    if (pinned && (typeof pin !== 'string' || !/^[0-9a-f]{32}$/.test(pin))) return null;
+    return { page_id, revision, view, offset, max_bytes, ...(pinned ? { pin: pin as string } : {}) };
   } catch {
     return null;
   }

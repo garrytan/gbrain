@@ -21,6 +21,7 @@ import { operations, type OperationContext } from '../../src/core/operations.ts'
 import { OperationError } from '../../src/core/ops/contract.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { SEGMENT_MAX_BYTES } from '../../src/core/page-body/limits.ts';
+import { MAX_PAGED_WINDOW_BYTES } from '../../src/core/page-window/window.ts';
 import { formatGetPage, printPagedPage, streamSegmentedGet } from '../../src/cli/page-render.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -130,7 +131,8 @@ for (const kind of testBackends()) {
       expect((e as any).canonical ?? e.code).toBe('page_too_large_for_inline');
       const writes: string[] = [];
       await printPagedPage(p => get(p, true, true), { slug: SLUG }, async t => { writes.push(t); });
-      expect(writes.length).toBeGreaterThan(3);
+      expect(writes.length).toBeGreaterThan(1);
+      expect(Math.max(...writes.map(w => Buffer.byteLength(w)))).toBeLessThanOrEqual(MAX_PAGED_WINDOW_BYTES);
       expect(writes.join('') === formatGetPage(await get({ slug: TWIN }))).toBe(true);
       let calls = 0;
       const bad: string[] = [];

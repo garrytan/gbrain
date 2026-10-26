@@ -12,7 +12,11 @@
  * round-trip markdown (view: 'markdown') to its end, checks the total size and
  * sha256 the host reported, and prints it window by window, or fails without
  * printing. The windows wait in a 0600 temp file until the copy verifies, so
- * a page of any size prints with one window in memory.
+ * a page of any size prints with one window in memory. A segmented page's
+ * windows carry a read pin, so an append mid-read does not restart the copy:
+ * the host keeps answering the pinned revision until the read ends, or stops
+ * it when the page is deleted or the caller loses access. Any other edit
+ * mid-read restarts it (revision_changed), as for an inline page.
  *
  * A segmented page (Wave B) is never returned whole by get_page. Locally the
  * refusal is page_body_segmented and `gbrain get` streams the page instead:
@@ -31,9 +35,10 @@ import { opError } from '../core/ops/contract.ts';
 import { readFix } from '../core/ops/op-fix.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
 import { isSegmentedPage } from '../core/page-body/page-shape.ts';
+import { MAX_PAGED_WINDOW_BYTES } from '../core/page-window/window.ts';
 
-/** Window size the thin client asks for while paging a whole page. */
-export const REMOTE_PAGE_WINDOW_BYTES = 512 * 1024;
+/** Window size the thin client asks for while paging a whole page: a paged read's ceiling (the host may send less). */
+export const REMOTE_PAGE_WINDOW_BYTES = MAX_PAGED_WINDOW_BYTES;
 const MAX_RESTARTS = 3;
 
 type GetPageResult = Record<string, any>;

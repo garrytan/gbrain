@@ -182,7 +182,8 @@ function manifestRows(engine: BrainEngine, pageId: number, generation: number | 
 
 /**
  * Open a segmented body. With `pin` the read is the authorized one: the page must still be at the pinned revision (and
- * generation), the caller's admission is re-run, and the rows read are that generation's.
+ * generation), the caller's admission is re-run, and the rows read are that generation's, or `generation`'s when the
+ * caller names an older one (a paged read continued under a read pin, page-body/read-pins.ts).
  *
  * The page row, the manifest rows and (given `expect`, the slug and source the caller already holds) the ledger are
  * read at once: rows read for another generation than the page row names (a body published between the statements)
@@ -190,7 +191,7 @@ function manifestRows(engine: BrainEngine, pageId: number, generation: number | 
  */
 export async function openSegmentedBody(engine: BrainEngine, opts: { pageId: number; generation?: number; ledger?: BodyLedger; pin?: BodyPin;
   expect?: { slug: string; sourceId: string } }): Promise<SegmentedBody> {
-  const requested = opts.pin?.generation ?? opts.generation ?? null;
+  const requested = opts.generation ?? opts.pin?.generation ?? null;
   const [[page], read, expected] = await Promise.all([
     engine.executeRaw<Record<string, unknown>>(`SELECT id, source_id, slug, body_storage, body_generation, body_bytes, body_lines, truth_bytes,
       body_flags, segmenter_version, knowledge_revision::text AS revision FROM pages WHERE id=$1`, [opts.pageId]),

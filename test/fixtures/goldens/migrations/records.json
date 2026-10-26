@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 270,
+    "count": 272,
     "gaps": [
       17,
       18,
@@ -33,6 +33,7 @@
       "PAGES_SEGMENTED_BODY_BYTES_INDEX": "c904a4f68cf190cce6bc68c03219c7b62d05b77eeb557db946a4f58a4f965e57",
       "PAGES_SOURCE_CREATED_INDEX": "33411b4d6fc2287ee8fa37b1ebf2cc36a076101dbd3f3f6ac492aed06288513a",
       "PAGES_TITLE_SEARCH_INDEX": "27e8e1a6c9a2069ee6c6af6fa99b9a7e9e9c118c7a933ffa80ba1864bf68baa3",
+      "PAGE_BODY_MANIFEST_CLOSED_INDEX": "9171c60029e77caf50967f6084047837b04c616ce46a89890fe9a462e8ad6dd6",
       "PAGE_TIMELINE_FTS_MAX_CHARS": "f7d29264f4144976bbe2e1ded0251095b638175f8e1d711c36f1e80d2263e172",
       "PERSISTENCE_COMMITTED_WATERMARK_INDEX": "f472fa0acb542c1caebaaa3bc69fb2da1647e5e201239429fc02ccef0d669533",
       "PERSISTENCE_COMPACTABLE_INDEX": "25ee657878efb41ba9ea3a7624464ddcf66407d861659456c230366e57f230a0",
@@ -87,7 +88,7 @@
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 275,
+    "latest": 277,
     "records": [
       {
         "handler": {
@@ -4445,6 +4446,48 @@
         "transaction": false,
         "verify": "absent",
         "version": 275
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "page_read_pins",
+        "sql": {
+          "length": 1017,
+          "sha256": "a5d26264c4369dbff0551e9a79f4a61c8cfdbe51a71568c2fcf750f38013c617"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 276
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "PAGE_BODY_MANIFEST_CLOSED_INDEX",
+            "PLANNER_REPAIR_TABLES",
+            "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
+            "migrationNotice",
+            "quietMigrationNotices",
+            "tableRows"
+          ],
+          "sha256": "fd5bbe36bb4ba629e27c384c1633317c8f0bbcc2f85e044bc3c7236881294ed0"
+        },
+        "idempotent": true,
+        "name": "page_body_manifest_closed_index",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 277
       }
     ],
     "versions": [
@@ -4717,7 +4760,9 @@
       272,
       273,
       274,
-      275
+      275,
+      276,
+      277
     ]
   },
   "normalizer": "migrations-record-v1"

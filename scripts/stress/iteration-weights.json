@@ -109,6 +109,7 @@
   "test/e2e/fix-wave-5-integration.test.ts": 21700,
   "test/e2e/fold-hook-noop-6712-postgres.test.ts": 3500,
   "test/e2e/keep-db-pass-admission-postgres.test.ts": 2400,
+  "test/e2e/large-pages-export.test.ts": 291600,
   "test/e2e/managed-import-statement-budget.test.ts": 14500,
   "test/e2e/managed-sync-failures.test.ts": 29600,
   "test/e2e/managed-sync-shared-origin-6517.test.ts": 4000,

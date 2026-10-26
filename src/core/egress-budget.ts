@@ -29,12 +29,25 @@ export const EGRESS_CAP_MIN = 256 * 1024;
 export const EGRESS_CAP_MAX = 9 * 1024 * 1024;
 /** Bytes a frame spends outside the measured result: the request id and the transport's own framing (SSE `data:` lines). */
 export const FRAME_RESERVE_BYTES = 1024;
+/**
+ * The cap of a paged read: gbrain's thin client downloading a page's round-trip markdown (get_page view 'markdown').
+ * Its windows feed a spool file, not a model's context, so they may be as large as the stdio reader allows instead of
+ * the HTTP default, and a 1 GiB page pages in about 256 round trips instead of 2,048.
+ */
+export const PAGED_READ_CAP_BYTES = EGRESS_CAP_MAX;
 
 export interface EgressCaller {
   remote: boolean;
   transport?: EgressTransport;
   engine?: Pick<BrainEngine, 'getConfig'>;
   config?: GBrainConfig | null;
+  /** The call is a paged read (isPagedRead): its cap is at least PAGED_READ_CAP_BYTES. */
+  pagedRead?: boolean;
+}
+
+/** gbrain's thin client paging the round-trip markdown. The client header selects shape only; a larger frame grants nothing. */
+export function isPagedRead(op: string, params: Record<string, unknown>, thinClient: boolean | undefined): boolean {
+  return thinClient === true && op === 'get_page' && params.view === 'markdown';
 }
 
 /** The transport a caller's results travel over; null for the trusted local CLI. */
@@ -57,6 +70,7 @@ function parseCap(raw: unknown): number | null {
 export async function resultByteCap(caller: EgressCaller): Promise<number> {
   const transport = egressTransport(caller);
   if (transport === null) return Number.POSITIVE_INFINITY;
+  if (caller.pagedRead) return Math.max(PAGED_READ_CAP_BYTES, await resultByteCap({ ...caller, pagedRead: false }));
   const key = EGRESS_CAP_CONFIG_KEYS[transport];
   try {
     const db = parseCap(await caller.engine?.getConfig(key));

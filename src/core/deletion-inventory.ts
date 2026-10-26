@@ -124,6 +124,7 @@ const ROWS: readonly Row[] = [
   ['page_mention_state', 'out_of_scope', 'no_memory_text', 'source_id'],
   ['page_projection_jobs', 'out_of_scope', 'no_memory_text', 'slug reason'],
   ['page_purges', 'out_of_scope', 'text_free_ledger', 'source_id content_hash slug'],
+  ['page_read_pins', 'out_of_scope', 'no_memory_text', 'token purpose audience view view_key principal revision sha256'],
   ['page_segment_derivations', 'swept', 'segment_derivations', 'pipeline segment_sha256 context_hash state output receipt', 'output receipt'],
   ['page_segment_derivation_purges', 'swept', 'segment_derivations', 'source_id needles patterns page_ids phase recheck cursor_pipeline stalled_reason pending_reason'],
   ['page_segment_texts', 'swept', 'segment_texts', 'source_id sha256 body', 'body'],

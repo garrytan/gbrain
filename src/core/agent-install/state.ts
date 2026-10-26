@@ -1,6 +1,6 @@
 /** Filesystem-only contracts shared by the in-agent installer and recovery. */
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import type { GBrainConfig } from '../config.ts';
 import { flushDirectory } from '../fs-durable.ts';
@@ -114,6 +114,26 @@ export function privateWrite(path: string, contents: string | Uint8Array, mode =
   try {
     fd = openSync(tmp, 'wx', mode);
     writeFileSync(fd, contents);
+    fsyncSync(fd);
+    closeSync(fd); fd = undefined;
+    renameSync(tmp, path);
+    flushDirectory(dirname(path));
+  } catch (error) {
+    if (fd !== undefined) closeSync(fd);
+    try { unlinkSync(tmp); } catch { /* no temporary file after a failed write */ }
+    throw error;
+  }
+}
+
+/** privateWrite for contents that arrive in pieces (a PGLite dump's Blob.stream()), so they are never joined into one buffer. */
+export async function privateWriteStream(path: string, pieces: AsyncIterable<Uint8Array>, mode = 0o600): Promise<void> {
+  assertNoSymlinks(path);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const tmp = `${path}.tmp-${randomUUID()}`;
+  let fd: number | undefined;
+  try {
+    fd = openSync(tmp, 'wx', mode);
+    for await (const piece of pieces) for (let at = 0; at < piece.length;) at += writeSync(fd, piece, at, piece.length - at);
     fsyncSync(fd);
     closeSync(fd); fd = undefined;
     renameSync(tmp, path);

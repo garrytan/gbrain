@@ -2116,6 +2116,25 @@ CREATE TABLE IF NOT EXISTS page_view_digests (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (page_id, revision, view, audience)
 );
+-- Wave C large pages (migration v276): short-lived read pins of segmented pages,
+-- a GC root for the pinned body generation (src/core/page-body/read-pins.ts).
+CREATE TABLE IF NOT EXISTS page_read_pins (
+  token TEXT PRIMARY KEY,
+  page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  body_generation BIGINT NOT NULL,
+  purpose TEXT NOT NULL CHECK (purpose IN ('read','export')),
+  audience TEXT NOT NULL CHECK (audience IN ('trusted','remote')),
+  view TEXT CHECK (view IN ('read','markdown')),
+  view_key TEXT,
+  principal TEXT,
+  revision TEXT NOT NULL,
+  total_bytes BIGINT CHECK (total_bytes >= 0),
+  total_lines BIGINT CHECK (total_lines >= 0),
+  sha256 TEXT,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS page_read_pins_generation ON page_read_pins (page_id, body_generation);
 -- Wave B segmented page storage (migration v248): segment texts, the
 -- generation-ranged body manifest and body stagings (src/core/page-body/).
 -- Before the persistence region so the managed-writer guard covers them.
@@ -2309,7 +2328,7 @@ DO $rls$
 DECLARE target TEXT;
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    FOREACH target IN ARRAY ARRAY['page_segment_texts','page_body_manifest','page_body_stagings','page_body_staging_parts','page_view_digests','page_body_staging_texts','page_segment_derivations','page_derivation_spend','page_segment_derivation_purges','page_segment_derivation_purge_pages'] LOOP
+    FOREACH target IN ARRAY ARRAY['page_segment_texts','page_body_manifest','page_body_stagings','page_body_staging_parts','page_view_digests','page_read_pins','page_body_staging_texts','page_segment_derivations','page_derivation_spend','page_segment_derivation_purges','page_segment_derivation_purge_pages'] LOOP
       IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                  WHERE n.nspname = current_schema() AND c.relname = target AND c.relkind = 'r' AND NOT c.relrowsecurity) THEN
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', target);
