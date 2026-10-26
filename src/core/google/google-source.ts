@@ -693,6 +693,29 @@ export async function runGoogleSync(
     (managed, options) => runGoogleSyncInner(engine, sourceId, cfg, options, managed, fetchImpl, vaultOverride), pendingConnectorResult);
 }
 
+function resolveComposioSourceAccess(cfg: GoogleSourceConfig): {
+  entry: CredentialEntry; tokens: GoogleAccessProvider; effectiveFetch: FetchImpl;
+} {
+  if (cfg.services.length !== 1 || !['gmail', 'calendar'].includes(cfg.services[0]!) || !cfg.composioAccountRef) {
+    throw new Error('Composio Google sources require one Gmail or Calendar service and an account ref');
+  }
+  const effectiveFetch = cfg.services[0] === 'gmail'
+    ? createComposioGmailFetch(cfg.account, cfg.composioAccountRef)
+    : createComposioCalendarFetch(cfg.account, cfg.composioAccountRef);
+  // The proxy signs requests server-side. This inert marker is never sent
+  // to Google or Composio; effectiveFetch discards the Authorization header.
+  const tokens = { getAccessToken: async () => 'composio-proxy', forceRefresh: async () => 'composio-proxy' };
+  const entry: CredentialEntry = {
+    id: credentialId(GOOGLE_PROVIDER, cfg.account),
+    provider: GOOGLE_PROVIDER,
+    kind: 'bearer',
+    client_ref: 'byo',
+    secret: {},
+    meta: { account: cfg.account, connected_at: new Date().toISOString() },
+  };
+  return { entry, tokens, effectiveFetch };
+}
+
 async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: GoogleSourceConfig, opts: SyncOpts,
   managed: ManagedConnectorSync | null, fetchImpl?: FetchImpl, vaultOverride?: CredentialVault): Promise<SyncResult> {
   if (!cfg.account) {
@@ -713,23 +736,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
   let tokens: GoogleAccessProvider;
   let effectiveFetch = fetchImpl ?? fetch;
   if (cfg.access === 'composio') {
-    if (cfg.services.length !== 1 || !['gmail', 'calendar'].includes(cfg.services[0]!) || !cfg.composioAccountRef) {
-      throw new Error('Composio Google sources require one Gmail or Calendar service and an account ref');
-    }
-    effectiveFetch = cfg.services[0] === 'gmail'
-      ? createComposioGmailFetch(cfg.account, cfg.composioAccountRef)
-      : createComposioCalendarFetch(cfg.account, cfg.composioAccountRef);
-    // The proxy signs requests server-side. This inert marker is never sent
-    // to Google or Composio; effectiveFetch discards the Authorization header.
-    tokens = { getAccessToken: async () => 'composio-proxy', forceRefresh: async () => 'composio-proxy' };
-    entry = {
-      id: credentialId(GOOGLE_PROVIDER, cfg.account),
-      provider: GOOGLE_PROVIDER,
-      kind: 'bearer',
-      client_ref: 'byo',
-      secret: {},
-      meta: { account: cfg.account, connected_at: new Date().toISOString() },
-    };
+    ({ entry, tokens, effectiveFetch } = resolveComposioSourceAccess(cfg));
   } else if (cfg.access === 'command' || cfg.access === 'env') {
     tokens =
       cfg.access === 'command'

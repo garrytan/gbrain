@@ -84,7 +84,7 @@ link it here rather than raising the cap.
 | [Schema packs: mutation surface](key-files/schema-mutation.md) | Cross-file contract |
 | [Agent bootstrap cluster (paste-in install)](key-files/agent-bootstrap.md) | Cross-file contract |
 | [Agent Bootstrap (continued)](key-files/agent-bootstrap-continued.md) | Remaining entries |
-| [Google connector + open-loop engine](key-files/google-and-loops.md) | Cross-file contract; [more](key-files/google-and-loops-continued.md), [API](key-files/google-api-access.md) |
+| [Google](key-files/google-and-loops.md) | [Auth](key-files/google-auth.md), [more](key-files/google-and-loops-continued.md), [API](key-files/google-api-access.md) |
 | [Open loops](key-files/open-loops-engine.md) | detect, extract, store |
 | [Always-loaded core memory](key-files/core-memory.md) | Core tier, write-path guard and lock order, delivery lanes, pressure notice |
 | [Workspace push and backup coverage](key-files/workspace-push-and-backup.md) | Workspace push, hook push backstops, backup verdicts, git writer |

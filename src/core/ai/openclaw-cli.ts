@@ -1,4 +1,4 @@
-import { execFile as execFileCb } from 'node:child_process';
+import { execFile as execFileCb } from '../spawn.ts';
 import { promisify } from 'node:util';
 import type { ChatOpts, ChatResult } from './gateway.ts';
 import { AIConfigError, AITransientError } from './errors.ts';
