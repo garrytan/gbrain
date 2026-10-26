@@ -19,9 +19,11 @@ export async function readParkedGroups(engine: Pick<BrainEngine, 'executeRaw'>, 
   return rows.map(({ rule, ...row }) => {
     const push = (GIT_PUSH_CODES as readonly string[]).includes(row.code);
     const command = ['gbrain', 'sources', 'writer', 'retry-effects', row.source_id, ...(push ? ['--parked-pushes'] : ['--parked-code', row.code]), '--dry-run'];
+    const askFirst = row.code === 'git_push_secret_found' || row.code === 'git_push_pack_too_large';
     const next = row.code === 'git_target_ignored'
       ? `Git ignores these files${rule ? ` (${rule})` : ''}, so a retry parks them again while the rule stands. Change the rule and commit it, then preview ${command.join(' ')} and rerun it without --dry-run; or keep the files out of Git and leave them parked (their pages are committed in the database).`
-      : `Fix the cause, then preview ${command.join(' ')} and rerun it without --dry-run to authorize one more attempt per target.`;
-    return { ...row, ...(rule ? { rule } : {}), command, next };
+      : askFirst ? `A retry holds again until the user acts: gbrain sync status --source ${row.source_id} --json names the commit and the fix in git_push_holds (rotate and allowlist a secret, or raise git.push_max_pack_bytes). Then preview ${command.join(' ')} and rerun it without --dry-run.`
+        : `Fix the cause, then preview ${command.join(' ')} and rerun it without --dry-run to authorize one more attempt per target.`;
+    return { ...row, ...(rule && !askFirst ? { rule } : {}), command, next };
   });
 }

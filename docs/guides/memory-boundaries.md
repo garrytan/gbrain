@@ -278,7 +278,8 @@ wrong with the page.
 | `put_pages` batch | 8 MiB per batch | send large pages one per `put_page`, or by file |
 | Persistence journal | 64 MiB of outstanding JSON-escaped write intent per principal (was 32 MiB), 256 MiB per brain | nothing: a second large write waits for the first |
 | Local persistence socket (IPC) | 32 MiB per frame, JSON-escaped | nothing for ordinary text; only a pathological page (mostly quotes or backslashes) reaches it below the ceiling |
-| Pre-push secret scan | 512 MiB per staged file: up to 25 MiB a file is scanned whole, above it in bounded windows streamed from git; gbrain still never writes a canonical file over 25 MiB | split the file, or `git rm --cached` it |
+| Pre-push secret scan (`gbrain sources push`) | 512 MiB per staged file: up to 25 MiB a file is scanned whole, above it in bounded windows streamed from git | split the file, or `git rm --cached` it |
+| Secret scan at the door and before the brain's own pushes | none: files over 24 MiB and split parts are scanned in windows, only the bytes new to Git ([pushing large pages](#pushing-large-pages)) | — |
 | GitHub | warns at 50 MB, rejects at 100 MB | — |
 | Export | streams a page stored in segments, up to the page ceiling; aborts on an inline page whose payload is over 32 MiB, which the 24 MiB ceiling makes unreachable | — |
 | Company-brain inspection | 5 MB per file | unchanged |
@@ -404,6 +405,71 @@ database backups as sensitive. See the [system-of-record contract](../architectu
 and [isolated local backup guide](in-agent-setup.md#6-back-up-the-complete-local-database).
 
 <a id="purge"></a>
+### Pushing large pages
+
+**Say to your agent:** *"My brain's Git backup is stuck after a big page. Find out why and tell me what to do."*
+
+The brain's Git backup (its Git effect, and `gbrain git commit-push`) pushes
+page writes to the checkout's remote. Large pages change four things:
+
+- **The push deadline scales.** A push gets 20 seconds plus 1 second per MiB
+  of what it sends, up to 60 minutes. The first push after a 1 GiB page sends
+  about 0.3-0.5 GB and no longer fails at a fixed 20 seconds. One push runs per
+  checkout at a time; another waits (`git_push_in_progress`), and a push over
+  256 MiB lets page writes continue while it runs.
+- **Big pushes go in batches.** When the unpushed commits add more than
+  `git.push_max_pack_bytes` (default 1.5 GiB, never over 2 GiB toward
+  GitHub, which refuses larger pushes), gbrain pushes them in order, in
+  batches of whole commits under the cap. When the remote moved, the batches
+  go to `refs/gbrain/push-staging/<branch>` first and the merge last; the
+  staging ref is deleted afterwards. A push stopped between batches resumes
+  after the last batch that landed. A single commit over the cap is held
+  `git_push_pack_too_large`: the host owner raises the cap (`gbrain config set
+  git.push_max_pack_bytes 1.8GiB`, kept in this host's `~/.gbrain/config.json`
+  and read by both the Git effect and `gbrain git commit-push`), then `gbrain sources writer retry-effects
+  <source> --parked-pushes` pushes it.
+- **Secrets are refused before the commit.** On a strict source
+  (`canonical: git`) the door scans every file over 24 MiB and every split
+  page (its head and parts) before it commits, and `gbrain git commit-push` does the same before
+  `git commit`. Only bytes new to Git are scanned, so an append never trips
+  over text an earlier commit already holds. A hit refuses the write with
+  `secret_found`, naming the rule and fingerprint, never the text. Such a
+  file is committed byte for byte, so a `.gitattributes` filter, `text` or
+  `eol` rule on it refuses `git_clean_filter_refused`.
+- **Commits gbrain did not write are scanned before they leave.** Before
+  pushing, gbrain scans every file over 24 MiB and every split part that the
+  unpushed commits add, not only the newest commit. A hit holds every push
+  from the checkout with `git_push_secret_found`, naming the commit, path,
+  rule and fingerprint, until the user acts. gbrain never rewrites history.
+  Rotate the credential, add its fingerprint line to `.gbrain-scan-allow` at
+  the checkout root, commit it with `gbrain git commit-push -m "allow rotated
+  credential" -- .gbrain-scan-allow`, then retry the parked pushes and check
+  with `gbrain sources writer status --source <id> --json`. Fingerprint lines
+  are preferred over path globs. `gbrain git commit-push --allow-secret` skips
+  both scans for one run, on the user's say-so.
+
+Files the door or a push already scanned are remembered by blob id (in the
+checkout's Git directory, per scanner rule set), so a later push scans only
+blobs nothing cleared.
+
+**Repository size.**
+
+| What | Size |
+| --- | --- |
+| A 1 GiB page in Git, packed | about 0.3-0.5 GB (real prose and chat compress 2.5-4x) |
+| Each later append to it, after packing | about 100 KB |
+| A full clone of it | the packed size; about 15-20 seconds per GiB of page at 25 MB/s |
+| GitHub | warns from about 1 GB, advises staying under 5 GB, refuses a push over 2 GiB and a file over 100 MB |
+
+So a GitHub-hosted brain fits a few 1 GiB pages, not dozens, and GitHub
+refuses to take any single page file over 100 MB.
+
+```bash
+gbrain sources writer status --source <id> --json      # held pushes with their codes and fixes
+gbrain config set git.push_max_pack_bytes 1.8GiB       # raise the batch cap (host owner's call)
+gbrain sources writer retry-effects <id> --parked-pushes # push again after the fix
+```
+
 ## Expire versus purge
 
 `forget` **expires**: the fact stops being recalled, cannot be saved again in

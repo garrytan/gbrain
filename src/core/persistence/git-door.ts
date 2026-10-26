@@ -39,6 +39,7 @@ import type { FileRecoveryRecord, SqlEngine } from './model.ts';
 import { nativeFileTarget } from './native-file-target.ts';
 import type { NativeLockHandle } from './native-lock.ts';
 import { committedBlob, headBlob, headCommit } from './pending-import.ts';
+import { cleanFilterRefused, scanDoorFiles } from './push-scan.ts';
 
 /** Whether `sourceId` is a strict (git-canonical) source; `lock` reads its row FOR SHARE inside a publication. */
 export async function sourceCanonicalGit(engine: SqlEngine, sourceId: string, lock = false): Promise<boolean> {
@@ -63,7 +64,7 @@ export const doorSeams: { beforeUpdateRef?: (root: string, attempt: number) => P
 
 const doorTurns = new Map<string, Promise<void>>();
 /** Refusals that keep their own code: the checkout's state, not the commit, stopped the write. */
-const TYPED = new Set(['git_detached_head', 'git_branch_unborn', 'git_index_locked', 'git_index_stale']);
+const TYPED = new Set(['git_detached_head', 'git_branch_unborn', 'git_index_locked', 'git_index_stale', 'secret_found', 'git_clean_filter_refused']);
 const landedFailures = new WeakSet<object>();
 
 /**
@@ -186,11 +187,18 @@ async function doorCommit(session: GitSession, root: string, files: { path: stri
     targets.set(rel, target);
   }
   const present = [...targets.values()].filter(target => existsSync(join(root, target.rel)));
+  // Wave C 1A: split parts and files over 24 MiB are secret-scanned before the commit (push-scan.ts), and the blob Git
+  // stores must be the bytes scanned.
+  const scanned = await scanDoorFiles(root, present.map(target => ({ rel: target.rel, abs: join(root, target.rel), repoPath: `${prefix}${target.rel}` })), algorithm);
   if (present.length) {
     const hashed = await git(session, ['hash-object', '-w', '--', ...present.map(target => target.rel)]);
     const oids = hashed.stdout.split('\n').filter(Boolean);
     if (hashed.code !== 0 || oids.length !== present.length) throw gitFailure('Cannot hash the canonical Git target.', `git hash-object failed for ${present.length} file(s).`);
     present.forEach((target, i) => { target.oid = oids[i]; target.mode = lstatSync(join(root, target.rel)).mode & 0o111 ? '100755' : '100644'; });
+  }
+  for (const target of present) {
+    const expected = scanned.get(target.rel);
+    if (expected && expected !== target.oid) await refuseUnscannedStage(session, target.rel, expected);
   }
   let fileModeTrusted: boolean | undefined;
 
@@ -298,6 +306,18 @@ async function doorCommit(session: GitSession, root: string, files: { path: stri
         'Another commit landed in the checkout during the write; nothing of this write is in Git.');
     }
   } finally { rmSync(scratch, { recursive: true, force: true }); }
+}
+
+/**
+ * §17 eng-r3-outside-6: the blob Git stored for a covered file is not the bytes the scan read. Either a clean filter (a
+ * .gitattributes filter or line-ending rule) transformed them, which refuses until the path is exempted, or the file
+ * changed after the scan, which refuses so the write can be retried.
+ */
+async function refuseUnscannedStage(session: GitSession, rel: string, scanned: string): Promise<never> {
+  const [raw, filtered] = [await git(session, ['hash-object', '--no-filters', '--', rel]), await git(session, ['hash-object', '--', rel])];
+  if (raw.code === 0 && filtered.code === 0 && raw.stdout.trim() === scanned && filtered.stdout.trim() !== scanned) throw cleanFilterRefused(rel);
+  throw opError('git_unavailable', `${rel} changed while it was being scanned and committed, so nothing was published.`,
+    'Another process wrote the file during the publication. Retry the write with a new request_id once it is done.');
 }
 
 /** The new targets a .gitignore rule excludes (a negated rule matching last un-ignores) refuse as `git_target_ignored`. */

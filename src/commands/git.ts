@@ -58,6 +58,9 @@ Flags:
                       ledger doctor's dirty_age reports), then push.
   --allow-outside-source-root  Commit and publish files outside the checkout's source root(s)
                       (git config gbrain.sourceRoot); only after the user agrees.
+  --allow-secret      Commit and push past the secret scan of split parts and files over 24 MiB (the
+                      scan before the commit and the pre-push backstop) for this run only; only after the
+                      user agrees. A false positive belongs in .gbrain-scan-allow instead.
   --dry-run           Print the paths, branch and lock that would be used; take no lock, write nothing.
   --json              One JSON result (or the error envelope) on stdout.
 
@@ -76,12 +79,12 @@ is installed.`;
 interface Parsed {
   sub?: string; path?: string; message?: string; branch?: string; expectRemote?: string; json: boolean; pushOnly: boolean; pull: boolean;
   requireClean: boolean; dryRun: boolean; help: boolean; keepCheckout: boolean; paths: string[]; resolve: string[];
-  pending: boolean; allowOutside: boolean; install: boolean; uninstall: boolean;
+  pending: boolean; allowOutside: boolean; allowSecret: boolean; install: boolean; uninstall: boolean;
 }
 
 function parse(args: string[]): Parsed {
   const p: Parsed = { json: false, pushOnly: false, pull: false, requireClean: false, dryRun: false, help: false, keepCheckout: false, paths: [], resolve: [],
-    pending: false, allowOutside: false, install: false, uninstall: false };
+    pending: false, allowOutside: false, allowSecret: false, install: false, uninstall: false };
   let rest = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -103,6 +106,7 @@ function parse(args: string[]): Parsed {
     else if (a === '--dry-run') p.dryRun = true;
     else if (a === '--pending') p.pending = true;
     else if (a === '--allow-outside-source-root') p.allowOutside = true;
+    else if (a === '--allow-secret') p.allowSecret = true;
     else if (a === '--install') p.install = true;
     else if (a === '--uninstall') p.uninstall = true;
     else if (a === '--path' || a.startsWith('--path=') || a === '--repo' || a.startsWith('--repo=')) p.path = take('--path');
@@ -149,7 +153,7 @@ export async function runGit(args: string[]): Promise<number> {
     const cwd = p.path ? realpathSync(p.path) : process.cwd();
     if ((p.pull && p.pushOnly) || (p.pull && (p.message || p.paths.length || p.resolve.length || p.branch))
       || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout) && !p.pushOnly)
-      || (p.pending && (p.pull || p.pushOnly || p.paths.length)) || (p.allowOutside && p.pull)) {
+      || (p.pending && (p.pull || p.pushOnly || p.paths.length)) || ((p.allowOutside || p.allowSecret) && p.pull)) {
       throw opError('commit_paths_invalid', 'These flags do not combine.',
         'Use one mode: -m <msg> -- <paths> (commit + push), --pending [-m <msg>], --push-only [--keep-checkout] [--branch <b>] [--expect-remote <sha> --resolve ...], or --pull [--require-clean].');
     }
@@ -180,6 +184,7 @@ export async function runGit(args: string[]): Promise<number> {
       message: p.pending ? p.message ?? 'gbrain: commit pending write-through files' : p.message,
       ...(p.pending ? { pending: true } : {}),
       ...(p.allowOutside ? { allowOutsideSourceRoot: true } : {}),
+      ...(p.allowSecret ? { allowSecret: true } : {}),
       ...(p.keepCheckout ? { keepCheckout: true } : {}),
       ...(p.branch ? { branch: p.branch } : {}),
       ...(p.resolve.length ? { resolutions: parseResolutions(p.resolve), expectRemote: p.expectRemote } : {}),

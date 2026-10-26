@@ -49,16 +49,15 @@ export const STREAM_SCAN_OVERLAP_CHARS = 64 * 1024;
 export const streamScanWork = { windows: 0, bytes: 0, chars: 0, largestWindow: 0 };
 
 /**
- * Scan `chunks` as one UTF-8 text; the findings `scanText` would report on
- * the whole text, plus any a seam adds (header). `windowChars` is a test
- * seam; it must be at least twice the overlap.
+ * The windowed scan as a push-driven scanner: `push` each chunk in order, then `finish` for the findings. Shared by
+ * the async stream ({@link scanTextStream}) and synchronous callers that read a file in chunks (the door scan inside
+ * `gbrain git commit-push`, persistence/push-scan.ts). `windowChars` is a test seam; it must be at least twice the overlap.
  */
-export async function scanTextStream(
-  chunks: AsyncIterable<Uint8Array>, opts: ScanOpts = {}, windowChars = STREAM_SCAN_WINDOW_CHARS,
-): Promise<SecretFinding[]> {
+export function createStreamScanner(opts: ScanOpts = {}, windowChars = STREAM_SCAN_WINDOW_CHARS): { push(chunk: Uint8Array): void; finish(): SecretFinding[]; readonly suppressed: number } {
   if (windowChars < 2 * STREAM_SCAN_OVERLAP_CHARS) throw new RangeError(`a scan window must be at least ${2 * STREAM_SCAN_OVERLAP_CHARS} chars`);
   const decoder = new TextDecoder('utf-8', { ignoreBOM: true });
   const findings: SecretFinding[] = [];
+  let suppressed = 0;
   let carried: Array<{ start: number; end: number }> = [];
   let pending = '';
   let base = 0;
@@ -84,6 +83,7 @@ export async function scanTextStream(
         if (carried.some((c) => c.start <= start && end <= c.end)) continue;
         kept.push({ start, end });
         if (claim.finding) findings.push({ ...claim.finding, line: baseLine + claim.finding.line - 1 });
+        else suppressed++;
       }
       if (last) {
         pending = '';
@@ -95,12 +95,31 @@ export async function scanTextStream(
       pending = pending.slice(next);
     }
   };
-  for await (const chunk of chunks) {
-    streamScanWork.bytes += chunk.length;
-    pending += decoder.decode(chunk, { stream: true });
-    drain(false);
-  }
-  pending += decoder.decode();
-  drain(true);
-  return findings;
+  return {
+    push(chunk) {
+      streamScanWork.bytes += chunk.length;
+      pending += decoder.decode(chunk, { stream: true });
+      drain(false);
+    },
+    finish() {
+      pending += decoder.decode();
+      drain(true);
+      return findings;
+    },
+    /** Claims the allowlist dropped: a scan that suppressed any is not a clean result. */
+    get suppressed() { return suppressed; },
+  };
+}
+
+/**
+ * Scan `chunks` as one UTF-8 text; the findings `scanText` would report on
+ * the whole text, plus any a seam adds (header). `windowChars` is a test
+ * seam; it must be at least twice the overlap.
+ */
+export async function scanTextStream(
+  chunks: AsyncIterable<Uint8Array>, opts: ScanOpts = {}, windowChars = STREAM_SCAN_WINDOW_CHARS,
+): Promise<SecretFinding[]> {
+  const scanner = createStreamScanner(opts, windowChars);
+  for await (const chunk of chunks) scanner.push(chunk);
+  return scanner.finish();
 }

@@ -1081,6 +1081,9 @@ const PATTERN_SINCE: ReadonlyMap<string, string> = new Map([
   ['private_key_pem', SECURITY_WAVE_SINCE],
 ]);
 
+/** The rule set's identity (each core rule's name, source, flags and since): a clean result recorded under another id is stale. */
+export const SCAN_RULESET_ID = sha256Hex(JSON.stringify(CORE_PATTERNS.map(p => [p.name, p.source, p.flags ?? 'g', p.since ?? '']))).slice(0, 16);
+
 /** The gbrain version that added or last changed `pattern`'s rule, if tracked. */
 export function patternSince(pattern: string): string | undefined {
   return PATTERN_SINCE.get(pattern);

@@ -1679,6 +1679,16 @@ More: [docs/guides/repair.md#ghost-pages](../../docs/guides/repair.md#ghost-page
 |---|---|---|---|---|---|---|
 | The canonical root is not inside a Git checkout, so its Git effects have nothing to commit to. | Only the operator of the brain host can change what blocks this. | Initialize the root as a Git repository with a first commit and a remote on the brain host, then rerun; a database-only source needs no Git durability. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### git_clean_filter_refused
+
+<a id="git_clean_filter_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A .gitattributes filter, text or eol rule changes a large or split file on its way into Git, so the secret-scanned bytes would not be the committed blob; nothing was committed. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#secret-scan-refusals-and-redaction](../../docs/guides/write-refusals.md#secret-scan-refusals-and-redaction)
+
 ### git_conversion_blocked
 
 <a id="git_conversion_blocked"></a>
@@ -1800,6 +1810,36 @@ More: [docs/guides/write-refusals.md#git_private_commit_refused](../../docs/guid
 | A write reached a git-canonical source from a process that does not declare the git-canonical protocol (an older gbrain, or gbrain.write_sources set by hand); nothing was written. | Only the operator of the brain host can change what blocks this. | Upgrade or stop the gbrain process that wrote it (gbrain upgrade on its host), then retry with a new request_id. | host_admin | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/write-refusals.md#git_protocol_required](../../docs/guides/write-refusals.md#git_protocol_required)
+
+### git_push_in_progress
+
+<a id="git_push_in_progress"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another push from the same checkout holds its publish lock, so this push waits; nothing is lost. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/memory-boundaries.md#pushing-large-pages](../../docs/guides/memory-boundaries.md#pushing-large-pages)
+
+### git_push_pack_too_large
+
+<a id="git_push_pack_too_large"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| One commit adds more objects than git.push_max_pack_bytes allows in one push, so the push is held and parked; the commit stays local. | Pushes over the cap go in batches of whole commits, and one commit cannot be split; GitHub refuses packs over 2 GiB. | Stop and ask the user; re-run only with the authorization the message names. | host_admin | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/memory-boundaries.md#pushing-large-pages](../../docs/guides/memory-boundaries.md#pushing-large-pages)
+
+### git_push_secret_found
+
+<a id="git_push_secret_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An unpushed commit gbrain did not scan adds a large or split file with a credential-shaped value, so nothing from the checkout is pushed; the push is parked. | Git keeps every commit and gbrain rewrites no history, so the user rotates the credential and allowlists its fingerprint (or rewrites their own unpushed commit). | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#secret-scan-refusals-and-redaction](../../docs/guides/write-refusals.md#secret-scan-refusals-and-redaction)
 
 ### git_push_unavailable
 
@@ -3816,6 +3856,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A search offset was over the 10,000 limit. | The request itself was wrong or no longer matches the brain; nothing was changed. | Page with match: "keyword" and the next object each response returns; a cursor has no depth limit. | agent | `repeat the read that failed` | 1 | no |
+
+### secret_found
+
+<a id="secret_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write to a strict (canonical: git) source, or a gbrain git commit-push, adds a large or split file holding a credential-shaped value, so nothing was committed. | Git keeps every commit and gbrain rewrites no history, so a secret is refused before its commit; the refusal names the rule and fingerprint, never the text. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#secret-scan-refusals-and-redaction](../../docs/guides/write-refusals.md#secret-scan-refusals-and-redaction)
 
 ### segmented_mirror_writer_gate
 
