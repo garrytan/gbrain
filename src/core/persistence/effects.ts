@@ -809,6 +809,25 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
   }
 }
 
+/**
+ * The effect-side twin of the consumer's #6712 release: a pass whose claim loop lost its database connection (a pooler
+ * drop, a failover) gives back the git effects it claimed and set aside for their root, as soon as the database answers
+ * again, so the next pass claims them at once instead of waiting out their 2-minute lease. Fenced on each claim's token,
+ * so an effect another worker took over is untouched. Gives up after 30 s, leaving the lease to lapse as before.
+ */
+async function releaseAfterConnectionLoss(engine: BrainEngine, effects: PersistenceEffect[], signal?: AbortSignal): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  for (let attempt = 0; effects.length && !signal?.aborted; attempt++) {
+    try {
+      for (const effect of effects) await retryEffect(engine, effect, 'database_contention', 0);
+      return;
+    } catch (error) {
+      if (!transientDatabaseFailure(error) || Date.now() >= deadline) return;
+    }
+    await new Promise(resolve => setTimeout(resolve, Math.min(2000, 250 * 2 ** attempt)));
+  }
+}
+
 async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: EffectWorkerOptions, touched: Set<string>, derived: DerivedFailures,
   waited: Set<string>): Promise<number> {
   const limit = Math.max(1, Math.min(opts.limit ?? 2, 20));
@@ -1021,24 +1040,32 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
   // A deferred effect that requeues itself (a page walk advancing its cursor,
   // or work unblocked by an earlier effect) is claimable again after the flush.
   for (;;) {
-    while (attempted < limit && !opts.signal?.aborted) {
-      const effect = await claimPersistenceEffect(engine, opts.hostId, opts.deadOwners);
-      if (!effect) break;
-      attempted++;
-      touched.add(effect.request_id);
-      let binding: WorktreeBinding | null = null;
-      try {
-        if (effect.worktree_id && !['embedding', 'facts-backstop', 'links'].includes(effect.kind)) binding = await getWorktreeBinding(engine, effect.source_id, opts.hostId);
-      } catch (error) { await recordFailure(engine, effect, error, opts.signal); continue; }
-      if (effect.kind === 'git' && binding?.local_path) {
-        const root = binding.local_path;
-        // #5182: the binding's recorded setting decides; the legacy hook probe only when nothing is recorded (fail-closed).
-        if (!probes.has(root)) probes.set(root, gitDurabilityPolicy(binding, root).then(policy => ({ durable: policy.durable }), error => ({ error })));
-        const group = singleFileGitEffect(effect) && effect.worktree_id
-          ? [effect, ...await claimCoalescedGitEffects(engine, opts.hostId, effect.worktree_id, GIT_GROUP_SIZE - 1, opts.deadOwners)] : [effect];
-        for (const member of group) touched.add(member.request_id);
-        deferred.push({ effects: group, binding, hardened: probes.get(root)! });
-      } else await run(effect, binding);
+    let setAside: PersistenceEffect | null = null;
+    try {
+      while (attempted < limit && !opts.signal?.aborted) {
+        const effect = await claimPersistenceEffect(engine, opts.hostId, opts.deadOwners);
+        if (!effect) break;
+        attempted++;
+        touched.add(effect.request_id);
+        let binding: WorktreeBinding | null = null;
+        try {
+          if (effect.worktree_id && !['embedding', 'facts-backstop', 'links'].includes(effect.kind)) binding = await getWorktreeBinding(engine, effect.source_id, opts.hostId);
+        } catch (error) { await recordFailure(engine, effect, error, opts.signal); continue; }
+        if (effect.kind === 'git' && binding?.local_path) {
+          const root = binding.local_path;
+          // #5182: the binding's recorded setting decides; the legacy hook probe only when nothing is recorded (fail-closed).
+          if (!probes.has(root)) probes.set(root, gitDurabilityPolicy(binding, root).then(policy => ({ durable: policy.durable }), error => ({ error })));
+          setAside = effect;
+          const group = singleFileGitEffect(effect) && effect.worktree_id
+            ? [effect, ...await claimCoalescedGitEffects(engine, opts.hostId, effect.worktree_id, GIT_GROUP_SIZE - 1, opts.deadOwners)] : [effect];
+          for (const member of group) touched.add(member.request_id);
+          deferred.push({ effects: group, binding, hardened: probes.get(root)! });
+          setAside = null;
+        } else await run(effect, binding);
+      }
+    } catch (error) {
+      if (transientDatabaseFailure(error)) await releaseAfterConnectionLoss(engine, [...(setAside ? [setAside] : []), ...deferred.flatMap(d => d.effects)], opts.signal);
+      throw error;
     }
     if (!deferred.length) break;
     for (const { effects, binding, hardened } of deferred.splice(0)) {

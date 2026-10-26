@@ -351,15 +351,17 @@ describe('superseded remote blobs: a stale clone brings back a version this chec
     expect(git(bare, 'show', `main:${P}`)).toBe('B');
   });
 
-  test('deletions: the remote deleting the path stays a conflict; a restored blob counts only when this checkout replaced it before deleting', () => {
+  test('deletions: the remote deleting the path stays a conflict', () => {
     const deleted = staleMerge([{ [P]: 'B\n' }, { [P]: 'C\n' }], { [P]: null });
     expect(conflictOf(() => commitAndPush({ repo: deleted.a, pushOnly: true, cwd: deleted.a })).paths).toEqual([P]);
-    rmSync(root, { recursive: true, force: true }); root = mkdtempSync(join(tmpdir(), 'cp6530-'));
+  });
 
+  test('deletions: a restored blob this checkout held and then deleted, without replacing it, stays a conflict', () => {
     const heldThenDeleted = staleMerge([{ [P]: 'B\n' }, { [P]: null }], { [P]: 'B\n' });
     expect(conflictOf(() => commitAndPush({ repo: heldThenDeleted.a, pushOnly: true, cwd: heldThenDeleted.a })).paths).toEqual([P]);
-    rmSync(root, { recursive: true, force: true }); root = mkdtempSync(join(tmpdir(), 'cp6530-'));
+  });
 
+  test('deletions: a restored blob counts as superseded when this checkout replaced it before deleting', () => {
     const replacedThenDeleted = staleMerge([{ [P]: 'B\n' }, { [P]: 'C\n' }, { [P]: null }], { [P]: 'B\n' });
     const r = commitAndPush({ repo: replacedThenDeleted.a, pushOnly: true, cwd: replacedThenDeleted.a });
     expect(r.superseded_remote_paths).toEqual([P]);

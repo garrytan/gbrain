@@ -34,6 +34,7 @@ test/backup-cli.serial.test.ts	runBackupCli — PGLite lock fallback	3	readFileS
 test/backup-invalidation.serial.test.ts	bootstrap repo — recordRepoInReceipt contract (source-text pin)	2	readFileSync
 test/backup-private-path-text-5312.test.ts	(file-level)	3	readFileSync
 test/behavior-change-notice-6712-block.test.ts	#6712 PR 4b BEHAVIOR_CHANGES block	4	readFileSync
+test/behavior-change-table-split.test.ts	BEHAVIOR_CHANGES table split	3	readFileSync
 test/book-mirror.test.ts	gbrain book-mirror — source file invariants	2	readFileSync
 test/bootstrap-codex-door.test.ts	Codex door — rendered AGENTS.md pull protocol (Gate 3)	2	readFileSync
 test/bootstrap-contract.test.ts	bootstrap same-turn write-back contract	6	readFileSync

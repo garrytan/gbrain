@@ -221,11 +221,11 @@ cmd_usage() {
   done < <(vm_rows)
   wait
   cat "$tmp"/* 2>/dev/null | awk -v me="$OWNER" '
-    { n = $2; sub(/^.*-/, "", n); o = $1 == "-" ? "(untagged)" : $1 == "." ? "(other)" : $1
+    { n = $2; sub(/^.*-/, "", n); o = ($1 == "-") ? "(untagged)" : ($1 == ".") ? "(other)" : $1
       vms[o]++; cpu[o] += n; total += n; count++ }
     END {
       printf "%-14s %4s %6s\n", "OWNER", "VMS", "VCPUS"
-      for (o in cpu) printf "%-14s %4d %6d%s\n", o, vms[o], cpu[o], o == me ? "  (you)" : "" | "sort -k3,3nr"
+      for (o in cpu) printf("%-14s %4d %6d%s\n", o, vms[o], cpu[o], (o == me) ? "  (you)" : "") | "sort -k3,3nr"
       close("sort -k3,3nr")
       printf "%-14s %4d %6d\n", "total", count, total
     }'

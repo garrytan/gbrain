@@ -219,6 +219,25 @@ describe("stale sweep and ownership", () => {
     expect(usage).toMatch(/^\(other\)\s+1\s+2$/m);
     expect(usage).toMatch(/^total\s+5\s+46$/m);
   });
+
+  // macOS runs the one-true-awk, which rejected usage's vCPU loop (a comparison in an unparenthesized printf list).
+  it("usage prints the same table under every awk on PATH, the one-true-awk included where installed", async () => {
+    const awks = [["original-awk"], ["mawk"], ["gawk"], ["busybox", "awk"]].filter(([bin]) => Bun.which(bin!));
+    expect(awks.length).toBeGreaterThan(0);
+    const tables: string[] = [];
+    for (const awk of awks) {
+      serve({ seed });
+      const shim = join(dir, `awk-${awk[0]}`);
+      execFileSync("mkdir", ["-p", shim]);
+      writeFileSync(join(shim, "awk"), `#!/bin/sh\nexec ${awk.map((a) => Bun.which(a) ?? a).join(" ")} "$@"\n`, { mode: 0o755 });
+      const usage = await run(["usage"], { UBI_OWNER: "t1", PATH: `${shim}:${process.env.PATH ?? "/usr/bin:/bin"}` });
+      expect({ awk: awk.join(" "), code: usage.code, stderr: usage.stderr }).toEqual({ awk: awk.join(" "), code: 0, stderr: "" });
+      tables.push(usage.stdout);
+      mock?.stop();
+    }
+    expect(tables[0]).toMatch(/^t1\s+2\s+24\s+\(you\)$/m);
+    expect(new Set(tables).size).toBe(1);
+  });
 });
 
 // `pack` from a checkout on a branch named like `git init`'s default branch
