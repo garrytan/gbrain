@@ -37,6 +37,7 @@ import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
 import { CredentialError, isCredentialError } from '../creds/errors.ts';
 import { GOOGLE_PROVIDER, GoogleTokenProvider, fetchSendAsAliases } from '../creds/providers/google.ts';
 import { CommandAccessProvider, EnvAccessProvider, type GoogleAccessProvider } from './access.ts';
+import { createComposioCalendarFetch, createComposioGmailFetch } from './composio-proxy.ts';
 import { credentialId, openVault, type CredentialEntry, type CredentialVault } from '../creds/vault.ts';
 import { createProgress, startHeartbeat } from '../progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../cli-options.ts';
@@ -692,6 +693,29 @@ export async function runGoogleSync(
     (managed, options) => runGoogleSyncInner(engine, sourceId, cfg, options, managed, fetchImpl, vaultOverride), pendingConnectorResult);
 }
 
+function resolveComposioSourceAccess(cfg: GoogleSourceConfig): {
+  entry: CredentialEntry; tokens: GoogleAccessProvider; effectiveFetch: FetchImpl;
+} {
+  if (cfg.services.length !== 1 || !['gmail', 'calendar'].includes(cfg.services[0]!) || !cfg.composioAccountRef) {
+    throw new Error('Composio Google sources require one Gmail or Calendar service and an account ref');
+  }
+  const effectiveFetch = cfg.services[0] === 'gmail'
+    ? createComposioGmailFetch(cfg.account, cfg.composioAccountRef)
+    : createComposioCalendarFetch(cfg.account, cfg.composioAccountRef);
+  // The proxy signs requests server-side. This inert marker is never sent
+  // to Google or Composio; effectiveFetch discards the Authorization header.
+  const tokens = { getAccessToken: async () => 'composio-proxy', forceRefresh: async () => 'composio-proxy' };
+  const entry: CredentialEntry = {
+    id: credentialId(GOOGLE_PROVIDER, cfg.account),
+    provider: GOOGLE_PROVIDER,
+    kind: 'bearer',
+    client_ref: 'byo',
+    secret: {},
+    meta: { account: cfg.account, connected_at: new Date().toISOString() },
+  };
+  return { entry, tokens, effectiveFetch };
+}
+
 async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: GoogleSourceConfig, opts: SyncOpts,
   managed: ManagedConnectorSync | null, fetchImpl?: FetchImpl, vaultOverride?: CredentialVault): Promise<SyncResult> {
   if (!cfg.account) {
@@ -710,7 +734,10 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
   // live fetch below), account from the source config.
   let entry: CredentialEntry;
   let tokens: GoogleAccessProvider;
-  if (cfg.access === 'command' || cfg.access === 'env') {
+  let effectiveFetch = fetchImpl ?? fetch;
+  if (cfg.access === 'composio') {
+    ({ entry, tokens, effectiveFetch } = resolveComposioSourceAccess(cfg));
+  } else if (cfg.access === 'command' || cfg.access === 'env') {
     tokens =
       cfg.access === 'command'
         ? new CommandAccessProvider(cfg.tokenCommand ?? '')
@@ -726,7 +753,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     try {
       // sendAs aliases sharpen "is this message mine" (loop direction). The
       // token may not carry the settings scope — degrade to account-only.
-      const aliases = await fetchSendAsAliases(await tokens.getAccessToken(), fetchImpl ?? fetch);
+      const aliases = await fetchSendAsAliases(await tokens.getAccessToken(), effectiveFetch);
       if (aliases.length > 0) entry.meta.sendas_aliases = aliases;
     } catch { /* account-only identity */ }
   } else {
@@ -736,9 +763,9 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
       throw new CredentialError('not_connected', ` for ${cfg.account} — run: gbrain google connect --account ${cfg.account}`);
     }
     entry = vaultEntry;
-    tokens = new GoogleTokenProvider(vault, entry.id, fetchImpl ?? fetch);
+    tokens = new GoogleTokenProvider(vault, entry.id, effectiveFetch);
   }
-  const clientArgs = [tokens, fetchImpl ?? fetch, log, entry.meta.client_id] as const;
+  const clientArgs = [tokens, effectiveFetch, log, entry.meta.client_id] as const;
   const gmail = new GmailClient(...clientArgs);
   const calendar = new CalendarClient(...clientArgs);
   const people = new PeopleClient(...clientArgs);

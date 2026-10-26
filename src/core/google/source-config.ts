@@ -38,7 +38,7 @@ export function parseGoogleSourceConfig(
   const dir =
     typeof config.g_dir === 'string' && config.g_dir.length > 0 ? config.g_dir : fallbackDir;
   const access =
-    config.g_access === 'command' || config.g_access === 'env' ? config.g_access : 'vault';
+    config.g_access === 'command' || config.g_access === 'env' || config.g_access === 'composio' ? config.g_access : 'vault';
   return {
     account,
     services: services.length > 0 ? services : [...ALL_GOOGLE_SERVICES],
@@ -54,6 +54,9 @@ export function parseGoogleSourceConfig(
       : {}),
     ...(typeof config.g_token_env === 'string' && config.g_token_env.trim()
       ? { tokenEnv: config.g_token_env }
+      : {}),
+    ...(typeof config.g_composio_account_ref === 'string' && config.g_composio_account_ref.trim()
+      ? { composioAccountRef: config.g_composio_account_ref.trim() }
       : {}),
   };
 }

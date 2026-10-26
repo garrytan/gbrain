@@ -80,6 +80,7 @@ import { invokeAI, sdkInvocationUsage, responseInvocationUsage, hasAIInvocationG
 import { installAICallLogFromEnv } from './call-log.ts';
 import { cachedQueryEmbedding, clearQueryEmbedCache, queryEmbedCacheKey, queryEmbedGeneration, storeQueryEmbedding } from './query-embed-cache.ts';
 import { createGuardedGeneration, chatInvocation } from './guarded-generation.ts';
+import { chatViaOpenClaw } from './openclaw-cli.ts';
 installAiSdkWarningWriter();
 const guardedGeneration = createGuardedGeneration(() => DEFAULT_MAX_OUTPUT_TOKENS);
 const guardedExpansion = createGuardedGeneration(() => DEFAULT_MAX_OUTPUT_TOKENS, 'gateway.expand');
@@ -3620,6 +3621,12 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
   }
 
   const modelStr = modelStrEarly;
+  if (/^openclaw:/i.test(modelStr)) {
+    if (tracker?.cap !== undefined && Number.isFinite(tracker.cap)) {
+      throw new AIConfigError('OpenClaw raw inference cannot enforce a finite cost ceiling: output limits and measured usage are unavailable.');
+    }
+    return chatViaOpenClaw(modelStr, opts);
+  }
   const { model, recipe, modelId } = await resolveChatProvider(modelStr);
   const cfg = requireConfig();
 

@@ -43,7 +43,9 @@ export function managedSourceAddInput(opts:AddSourceOpts):SourceLifecycleInput{
     config={kind:'google',g_account:google.account,g_services:google.services.join(','),g_history_days:google.historyDays,
       ...googleTuningConfig(google),
       ...(google.access&&google.access!=='vault'?{g_access:google.access}:{}),...(google.tokenCommand?{g_token_command:google.tokenCommand}:{}),
-      ...(google.tokenEnv?{g_token_env:google.tokenEnv}:{}),g_managed:path===defaultCloneDir(`${opts.id}-google`),federated:opts.federated??true};
+      ...(google.tokenEnv?{g_token_env:google.tokenEnv}:{}),
+      ...(google.composioAccountRef?{g_composio_account_ref:google.composioAccountRef}:{}),
+      g_managed:path===defaultCloneDir(`${opts.id}-google`),federated:opts.federated??true};
   }
   return {operation:'add',sourceId:opts.id,path,name:opts.name,config,remoteUrl:opts.remoteUrl,
     createDirectory:!!(opts.github||opts.google),requireGitContent:!!(path&&!opts.remoteUrl&&!opts.github&&!opts.google&&!opts.force),requestId:opts.requestId,expectedIncarnation:opts.expectedIncarnation};

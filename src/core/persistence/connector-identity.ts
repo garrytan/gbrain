@@ -48,7 +48,7 @@ export const CONNECTOR_LEAF_RULES: { google: Record<string, LeafClass | ElidedLe
   google: {
     account: 'identity', services: 'identity', historyDays: 'identity', futureDays: 'identity', calendarId: 'identity', dir: 'identity',
     contactsDir: { elideWhen: DEFAULT_CONTACTS_DIR },
-    access: 'excluded', tokenCommand: 'excluded', tokenEnv: 'excluded', loopsExcludeLabels: 'excluded',
+    access: 'excluded', tokenCommand: 'excluded', tokenEnv: 'excluded', composioAccountRef: 'excluded', loopsExcludeLabels: 'excluded',
   },
   github: {
     scope: 'identity', repos: 'identity', dir: 'identity',
