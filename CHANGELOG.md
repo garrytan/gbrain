@@ -10,6 +10,25 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.466.0] - 2026-10-26
+
+**Open loops now show every withheld sender, page through large lists, and close what a mute should close.**
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| Senders withheld as noise | `open_loops` listed a sample | every withheld sender is returned in JSON; `waiting --noise` prints the full view |
+| No Google source in the caller's scope | read as "no Google source connected" | the response names the out-of-scope sources by id and says so |
+| `mute` on a sender | closed only reply-owed loops | closes every loop type for that sender; `--type` narrows it |
+| Old loops | closed one by one | `loops drop --older-than <N>d` (with `--dry-run` and `--undo-age-drop`); `loops.reply_owed_stale_days` sets a stale horizon for reply-owed loops |
+| Same promise extracted twice with different wording | two loops | one loop, keyed on the verbatim quote |
+| Long lists | cut at a fixed size | `--limit`, `--offset`, `--all`, a true `total`, and an accurate `truncated` |
+
+### What to watch for after you upgrade
+
+- A sender mute now closes commitments and decisions for that sender, not only reply-owed loops. Use `--type` to keep the old narrower behavior.
+
 ## [0.60.465.0] - 2026-10-26
 
 **On a managed brain, releasing a held fact (`gbrain trust release h<id>`) now writes it into its entity page's `## Facts` table through the page-write door, so the released fact lives in Git and a re-import keeps it, instead of a database-only row the file never had.**

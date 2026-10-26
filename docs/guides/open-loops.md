@@ -248,17 +248,23 @@ gbrain waiting [--top N] [--json] [--stale-ok]
     command (gbrain sources retry-held <id>); an empty partial answer says
     coverage is partial instead of "You are clean".
 
-gbrain loops list|show <id>          inspect
+gbrain loops list|show <id>          inspect (list: --limit N --offset N --all;
+                                     the JSON carries the true `total`)
 gbrain loops done <id> | drop <id>   close (a closed commitment retires its
                                      projected fact too; see Close semantics)
 gbrain loops mute sender <email>     never open loops for this sender again
 gbrain loops mute thread <id>        ...or this thread; both also close its
-                                     open reply-owed loops (--dry-run lists them)
+                                     open loops of every type (--type narrows;
+                                     --dry-run lists them)
 gbrain loops unmute sender <email>   undo a mute: new loops can open again, and
 gbrain loops unmute thread <id>      the loops it closed are re-checked on the
                                      next sync (--dry-run lists them)
 gbrain loops drop sender <email>     close every open reply-owed loop from one
                                      sender (--dry-run first; cannot be undone)
+gbrain loops drop --older-than 30d   close every open loop idle for 30+ days
+                                     (--type, --source, --dry-run; reversible)
+gbrain loops drop --undo-age-drop    reopen what an --older-than drop closed
+gbrain waiting --noise               list every automated sender, not the top 10
 ```
 
 **Say to your agent:** *"Who is waiting on me?"* / *"open loops"* — routes to
@@ -277,9 +283,11 @@ its source the same way, so an unmute cannot aim at a different source than
 the mute it reverses.
 
 **Mute closes; unmute re-checks (#5012).** A mute also closes the muted
-sender's or thread's open reply-owed (`unanswered_inbound`) loops as
-`dropped` with `closed_by: muted`, and prints how many it closed plus the
-exact unmute command. Commitment and decision loops keep their state. A
+sender's or thread's open loops of every type (reply-owed, extracted
+commitments, pending decisions; `--type` narrows it) as `dropped` with
+`closed_by: muted`, and prints how many it closed plus the exact unmute
+command. A closed commitment loop retires its projected fact, as `loops done`
+does. The extractor already skips a muted sender or thread. A
 sweep never reopens a muted loop for the same counterparty, even on newer
 activity. `--dry-run` lists the loops a mute would close and changes nothing.
 
@@ -292,7 +300,8 @@ mute_recheck`): the next Gmail sync re-fetches each thread and reopens a loop
 only when nothing answered the thread since. A thread you answered during the
 mute stays closed. A loop another remaining mute still covers is left alone,
 a manual `done`/`drop` is never touched, and a loop with no thread to re-check
-stays closed (`unverifiable`, `closed_by: unmuted`). When the source has not
+stays closed (`unverifiable`, `closed_by: unmuted`); so do extracted
+commitment and decision loops, which a Gmail re-fetch cannot re-check. When the source has not
 synced in 24 hours, unmute says so and prints the sync that runs the
 re-check. A repeated unmute
 is a no-op that reports `removed: false` and exits 0, so a script may call it
@@ -422,3 +431,33 @@ count). Deterministic — same data and same reference time, same order. Due
 dates and ages are relative to the reference time, which defaults to now;
 pin it with `gbrain waiting --as-of <iso>` (MCP: `open_loops` `as_of`) to
 reproduce a ranking. The result echoes it as `as_of`.
+
+**Closing loops by age (#7288).** Reply-owed loops never go stale on their own.
+`gbrain loops drop --older-than 30d [--type <loop_type>] [--source <id>]
+--dry-run` lists every open loop with no activity for that long; without
+`--dry-run` it drops them (`closed_by: age_drop`, one `loops_close` each, so a
+commitment loop's fact retires with it) and prints the reverse command.
+`gbrain loops drop --undo-age-drop` reopens them; loops that carried a
+commitment fact stay closed and are counted. For a standing horizon set
+`gbrain config set loops.reply_owed_stale_days 90`: each Google sync marks open
+reply-owed loops idle that long `stale` (default off), and a newer message
+reopens one.
+
+**Paging and noise (#7285, #7291).** `gbrain loops list` shows the 200 most
+recently active loops; `--limit`, `--offset` and `--all` reach the rest, and the
+JSON carries the true `total`, `truncated` and `next_offset`. The `open_loops`
+op takes `offset` in its flat view. `withheld_noise` lists every sender whose
+open reply-owed loops the detector would now withhold, not the top 10;
+`gbrain waiting --noise` prints them all. It also finds senders the address
+rule flags when the connector's withheld-sender record is missing (for example
+after the source's connector state was re-created).
+
+**Out-of-scope Google sources (#7286).** An `open_loops` caller whose scope
+holds no Google source, in a brain that has some, gets
+`google_sources_out_of_scope: [<source ids>]` (ids only, no counts) beside
+`no_google_sources: true`. Pass `source_id` for one of them with a grant that
+covers it, or read it from the trusted local CLI.
+
+**One quote, one loop (#7289).** The extractor's dedup key hashes the thread,
+direction and the verbatim quote, not the model's paraphrase, and a loop
+written under the old text key is reused when the same quote comes back.

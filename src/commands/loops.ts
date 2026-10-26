@@ -8,10 +8,12 @@
  *     within 24h — stale-but-confident output on a trust-critical surface is
  *     worse than none (outside-voice F2). --stale-ok bypasses.
  *
- *   gbrain loops list [--status s] [--type t] [--json]
+ *   gbrain loops list [--status s] [--type t] [--limit N] [--offset N] [--all] [--json]
  *   gbrain loops show <id> [--json]
  *   gbrain loops done <id> / drop <id>
  *   gbrain loops drop sender <email> [--source <id>] [--note <text>] [--dry-run]
+ *   gbrain loops drop --older-than <N>d [--type t] [--source <id>] [--note <text>] [--dry-run]
+ *   gbrain loops drop --undo-age-drop [--type t] [--source <id>] [--dry-run]
  *   gbrain loops mute <sender|thread> <value> [--source <id>] [--dry-run]
  *   gbrain loops unmute <sender|thread> <value> [--source <id>] [--dry-run]
  *
@@ -36,20 +38,41 @@ export function printUsage(): void {
   process.stdout.write(
     [
       'gbrain loops — inspect and manage open loops',
-      '  list  [--status open|done|dropped|stale] [--type <loop_type>] [--source <id>] [--json]',
+      '  list  [--status open|done|dropped|stale] [--type <loop_type>] [--source <id>] [--limit N] [--offset N] [--all] [--json]',
+      '        default: the 200 most recently active; --all pages through every match',
       '  show  <id> [--json]',
       '  done  <id> [--note <text>]   mark handled',
       '  drop  <id> [--note <text>]   not going to do it',
       '  drop  sender <email> [--source <id>] [--note <text>] [--dry-run]',
       '        close every open reply-owed loop from one sender (preview with --dry-run; cannot be undone)',
-      '  mute  sender <email> | thread <thread-id>   [--source <id>] [--dry-run]',
-      '        stop new loops and close its open reply-owed loops',
+      '  drop  --older-than <N>d [--type <loop_type>] [--source <id>] [--note <text>] [--dry-run]',
+      '        close every open loop idle for N days or more (preview with --dry-run)',
+      '  drop  --undo-age-drop [--type <loop_type>] [--source <id>] [--dry-run]',
+      '        reopen loops an --older-than drop closed (loops that carried a commitment fact stay closed)',
+      '  mute  sender <email> | thread <thread-id>   [--source <id>] [--type <loop_type>] [--dry-run]',
+      '        stop new loops and close its open loops (every type unless --type narrows it)',
       '  unmute sender <email> | thread <thread-id>  [--source <id>] [--dry-run]',
       '        undo a mute; loops it closed are re-checked on the next sync',
       '',
       'The ranked digest lives at: gbrain waiting',
     ].join('\n') + '\n',
   );
+}
+
+const LIST_DEFAULT = 200;
+/** The most loops one open_loops call returns. */
+const LIST_PAGE = 500;
+
+/** A whole-number flag value; absent returns `fallback`, malformed exits with a usage error. */
+function intFlag(args: string[], flag: string, json: boolean, fallback?: number): number | undefined {
+  const i = args.indexOf(flag);
+  if (i === -1) return fallback;
+  const n = Number(args[i + 1]);
+  if (!Number.isSafeInteger(n) || n < (flag === '--offset' ? 0 : 1)) {
+    exitCliError(usageError(`gbrain loops list: ${flag} needs a whole number${flag === '--offset' ? ' of 0 or more' : ' of 1 or more'}.`,
+      'Usage: gbrain loops list [--limit N] [--offset N] [--all] [--json].'), 'loops', { json });
+  }
+  return n;
 }
 
 function sourceFlag(args: string[]): string | undefined {
@@ -94,6 +117,7 @@ interface WaitingResult {
   no_counterparty?: { loop_count: number } | null;
   /** #5012: open reply-owed loops the automated-mail rule would not have opened; null when none. */
   withheld_noise?: { loop_count: number; sender_count: number; senders: Array<{ email: string; open_loops: number; preview_command: string }> } | null;
+  google_sources_out_of_scope?: string[];
   count: number;
   stale: boolean;
   sources: Array<{ id: string; last_sync_at: string | null; stale: boolean }>;
@@ -103,6 +127,8 @@ interface WaitingResult {
   text?: string;
 }
 
+const WAITING_NOISE_SHOWN = 10;
+
 export async function runWaiting(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     process.stdout.write(
@@ -111,6 +137,7 @@ export async function runWaiting(engine: BrainEngine, args: string[]): Promise<v
         '  --top N        max counterparties (default 3)',
         '  --source <id>  scope to one source (default: every source in the brain)',
         '  --json         agent envelope (groups, staleness, completeness, held items, sources)',
+        '  --noise        list every sender whose open reply-owed loops the detector would now withhold',
         '  --stale-ok     show possibly-outdated loops even when google sources have not synced in 24h',
         '  --as-of <iso>  rank and age loops as of this time (default: now), to reproduce an order',
         '',
@@ -163,10 +190,12 @@ export async function runWaiting(engine: BrainEngine, args: string[]): Promise<v
   process.stdout.write((result.text ?? 'No open loops.') + '\n');
   const noise = result.withheld_noise;
   if (noise) {
+    // The JSON carries every sender; the digest shows the top few unless --noise asks for all of them (#7285).
+    const shown = args.includes('--noise') ? noise.senders : noise.senders.slice(0, WAITING_NOISE_SHOWN);
     process.stdout.write(`\n${noise.loop_count} open reply-owed loop(s) come from ${noise.sender_count} sender(s) whose mail is automated; `
       + `the detector would not open them now. Preview closing them, sender by sender:\n`
-      + noise.senders.map((x) => `  ${x.preview_command}   (${x.open_loops})`).join('\n') + '\n'
-      + (noise.sender_count > noise.senders.length ? `  … and ${noise.sender_count - noise.senders.length} more sender(s)\n` : ''));
+      + shown.map((x) => `  ${x.preview_command}   (${x.open_loops})`).join('\n') + '\n'
+      + (noise.sender_count > shown.length ? `  … and ${noise.sender_count - shown.length} more sender(s): gbrain waiting --noise\n` : ''));
   }
   if (result.groups.length > 0 || result.no_counterparty) {
     process.stdout.write(
@@ -281,6 +310,93 @@ async function dropSender(engine: BrainEngine, rest: string[], json: boolean): P
   if (failed.length > 0) setCliExitVerdict(1);
 }
 
+/** `--older-than 30d` or `--older-than 30`: whole days, 1 or more. */
+function parseOlderThanDays(raw: string | undefined): number | null {
+  const m = /^(\d+)d?$/.exec(raw ?? '');
+  const n = m ? Number(m[1]) : NaN;
+  return Number.isSafeInteger(n) && n >= 1 ? n : null;
+}
+
+const LOOP_TYPES = ['commitment_owed_by_me', 'commitment_owed_to_me', 'unanswered_inbound', 'unanswered_outbound', 'decision_pending'];
+
+/**
+ * #7288: `gbrain loops drop --older-than <N>d` closes every open loop idle for
+ * N days or more as `dropped` (closed_by `age_drop`), one `loops_close` per loop
+ * so a commitment loop's fact retires with it. `--dry-run` is the consent step.
+ * `--undo-age-drop` reopens what an age drop closed.
+ */
+async function dropByAge(engine: BrainEngine, rest: string[], json: boolean): Promise<void> {
+  const typeIdx = rest.indexOf('--type');
+  const loopType = typeIdx !== -1 ? rest[typeIdx + 1] : undefined;
+  if (loopType !== undefined && !LOOP_TYPES.includes(loopType)) {
+    exitCliError(usageError(`gbrain loops drop: --type must be one of ${LOOP_TYPES.join(', ')}.`,
+      'Usage: gbrain loops drop --older-than <N>d [--type <loop_type>] [--source <id>] [--note <text>] [--dry-run].'), 'loops', { json });
+  }
+  const source = sourceFlag(rest);
+  const dryRun = rest.includes('--dry-run');
+  const { listLoopsByAge, undoAgeDrop } = await import('../core/loops/loops-store.ts');
+  const filterArgs = `${loopType ? ` --type ${loopType}` : ''}${source ? ` --source ${source}` : ''}`;
+  if (rest.includes('--undo-age-drop')) {
+    const undone = await undoAgeDrop(engine, { sourceIds: source ? [source] : null, ...(loopType ? { loopType: loopType as never } : {}) }, !dryRun);
+    if (json) {
+      process.stdout.write(JSON.stringify({ ok: true, status: dryRun ? 'dry_run' : 'reopened', [dryRun ? 'would_reopen' : 'reopened']: undone.reopened,
+        count: undone.reopened.length, skipped_with_fact: undone.skipped_with_fact }, null, 2) + '\n');
+    } else {
+      process.stdout.write(`${dryRun ? 'Dry run: would reopen' : 'Reopened'} ${undone.reopened.length} loop(s) an age drop closed${idList(undone.reopened)}.`
+        + `${dryRun ? ' Nothing changed.' : ''}`
+        + `${undone.skipped_with_fact > 0 ? ` ${undone.skipped_with_fact} that carried a commitment fact stay closed.` : ''}\n`);
+    }
+    return;
+  }
+  const days = parseOlderThanDays(rest[rest.indexOf('--older-than') + 1]);
+  if (days === null) {
+    exitCliError(usageError('gbrain loops drop --older-than needs a whole number of days, 1 or more.',
+      'Usage: gbrain loops drop --older-than <N>d [--type <loop_type>] [--source <id>] [--note <text>] [--dry-run]. Example: --older-than 30d.'), 'loops', { json });
+  }
+  const noteIdx = rest.indexOf('--note');
+  const note = noteIdx !== -1 ? rest[noteIdx + 1] : undefined;
+  const loops = await listLoopsByAge(engine, { olderThanDays: days!, sourceIds: source ? [source] : null, ...(loopType ? { loopType: loopType as never } : {}) });
+  const ids = loops.map((l) => l.id);
+  const apply = `gbrain loops drop --older-than ${days}d${filterArgs}${note !== undefined ? ` --note ${JSON.stringify(note)}` : ''}`;
+  const undo = `gbrain loops drop --undo-age-drop${filterArgs}`;
+  if (dryRun) {
+    if (json) {
+      process.stdout.write(JSON.stringify({ ok: true, status: 'dry_run', older_than_days: days, would_close: ids, count: ids.length,
+        ...(ids.length > 0 ? { apply_command: apply, undo_command: undo } : {}) }, null, 2) + '\n');
+    } else if (ids.length === 0) {
+      process.stdout.write(`No open loops idle for ${days} day(s) or more. Nothing to drop.\n`);
+    } else {
+      process.stdout.write(`Dry run: ${ids.length} open loop(s) idle for ${days} day(s) or more would be dropped${idList(ids)}. Nothing changed.\n`
+        + `To drop them: ${apply}\nTo reverse it afterwards: ${undo}\n`);
+    }
+    return;
+  }
+  const closed: number[] = [];
+  const failed: Array<{ id: number; reason: string }> = [];
+  for (const loop of loops) {
+    try {
+      const result = (await handleToolCall(engine, 'loops_close', { id: loop.id, status: 'dropped', source_id: loop.source_id,
+        note: AGE_DROP_NOTE })) as { closed: boolean; reason?: string };
+      if (result.closed) closed.push(loop.id);
+      else failed.push({ id: loop.id, reason: result.reason ?? 'not_closed' });
+    } catch (e) {
+      failed.push({ id: loop.id, reason: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  if (json) {
+    process.stdout.write(JSON.stringify({ ok: failed.length === 0, status: failed.length === 0 ? 'dropped' : 'partial', older_than_days: days,
+      closed, failed, count: closed.length, undo_command: undo }, null, 2) + '\n');
+  } else {
+    process.stdout.write(`Dropped ${closed.length} open loop(s) idle for ${days} day(s) or more${idList(closed)}.\n`
+      + (failed.length > 0 ? `${failed.length} could not be dropped: ${failed.slice(0, 10).map((f) => `${f.id} (${f.reason})`).join(', ')}\n` : '')
+      + (closed.length > 0 ? `Undo: ${undo}\n` : ''));
+  }
+  if (failed.length > 0) setCliExitVerdict(1);
+}
+
+/** `closed_by` stamped by `dropByAge`; matches AGE_DROP in loops-store (undo reads it). */
+const AGE_DROP_NOTE = 'age_drop';
+
 export async function runLoops(engine: BrainEngine, args: string[]): Promise<void> {
   const [first, ...rest] = args;
   const sub = first as (typeof LOOPS_SUBCOMMANDS)[number] | undefined;
@@ -304,14 +420,27 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
       await showLoop(engine, rest, narrowing, readScope, json);
       return;
     }
-    const result = (await handleToolCall(
-      engine,
-      'open_loops',
-      { group_by: 'none', limit: 200, ...narrowing },
-      readScope,
-    )) as { loops: Array<Record<string, unknown>>; count: number };
+    const limit = intFlag(rest, '--limit', json);
+    const offset = intFlag(rest, '--offset', json, 0);
+    type ListPage = { loops: Array<Record<string, unknown>>; count: number; total: number; offset: number; truncated: boolean };
+    const fetchPage = (pageLimit: number, pageOffset: number) => handleToolCall(
+      engine, 'open_loops', { group_by: 'none', limit: pageLimit, offset: pageOffset, ...narrowing }, readScope) as Promise<ListPage>;
+    let result: ListPage;
+    if (rest.includes('--all')) {
+      // Page through every match; the op serves at most LIST_PAGE per call.
+      result = await fetchPage(LIST_PAGE, offset ?? 0);
+      const all = [...result.loops];
+      while (result.truncated && result.loops.length > 0) {
+        result = await fetchPage(LIST_PAGE, (offset ?? 0) + all.length);
+        all.push(...result.loops);
+      }
+      result = { ...result, loops: all, offset: offset ?? 0, truncated: false };
+    } else {
+      result = await fetchPage(Math.min(limit ?? LIST_DEFAULT, LIST_PAGE), offset ?? 0);
+    }
     if (json) {
-      process.stdout.write(JSON.stringify({ ok: true, status: 'ok', ...result }, null, 2) + '\n');
+      process.stdout.write(JSON.stringify({ ok: true, status: 'ok', ...result, returned: result.loops.length,
+        ...(result.truncated ? { next_offset: result.offset + result.loops.length } : {}) }, null, 2) + '\n');
       return;
     }
     if (result.loops.length === 0) {
@@ -322,11 +451,19 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
       const due = l.due_at ? `  due ${String(l.due_at).slice(0, 10)}` : '';
       process.stdout.write(`#${String(l.id).padEnd(5)} [${String(l.loop_type)}]${due}  ${String(l.summary)}\n`);
     }
+    if (result.truncated) {
+      process.stdout.write(`Showing ${result.loops.length} of ${result.total}. More: gbrain loops list --offset ${result.offset + result.loops.length} (or --all).\n`);
+    }
     return;
   }
 
   if (sub === 'drop' && rest[0] === 'sender') {
     await dropSender(engine, rest, json);
+    return;
+  }
+
+  if (sub === 'drop' && (rest.includes('--older-than') || rest.includes('--undo-age-drop'))) {
+    await dropByAge(engine, rest, json);
     return;
   }
 
@@ -397,23 +534,29 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
     }
     const dryRun = rest.includes('--dry-run');
     if (sub === 'mute') {
+      const muteType = rest.indexOf('--type') !== -1 ? rest[rest.indexOf('--type') + 1] : undefined;
+      if (muteType !== undefined && !LOOP_TYPES.includes(muteType)) {
+        console.error(`Usage: gbrain loops mute ... --type <${LOOP_TYPES.join('|')}>`);
+        process.exit(2);
+      }
       const result = (await handleToolCall(engine, 'loops_mute', {
         kind,
         value,
         source_id: sourceId,
+        ...(muteType ? { loop_type: muteType } : {}),
         ...(dryRun ? { dry_run: true } : {}),
       })) as { muted?: boolean; reason?: string; closed?: number[]; would_close?: number[]; undo_command: string };
       if (dryRun) {
         const ids = result.would_close ?? [];
         if (json) process.stdout.write(JSON.stringify({ ok: true, status: 'dry_run', ...result }, null, 2) + '\n');
-        else process.stdout.write(`Dry run: muting ${kind} ${value} would close ${ids.length} open reply-owed loop(s)${idList(ids)}. Nothing changed.\n`);
+        else process.stdout.write(`Dry run: muting ${kind} ${value} would close ${ids.length} open loop(s)${idList(ids)}. Nothing changed.\n`);
         return;
       }
       if (json) {
         process.stdout.write(JSON.stringify({ ok: result.muted, status: result.muted ? 'muted' : 'not_muted', ...result }, null, 2) + '\n');
       } else if (result.muted) {
         const closed = result.closed ?? [];
-        process.stdout.write(`Muted ${kind} ${value}. New loops won't open for it; closed ${closed.length} open reply-owed loop(s)${idList(closed)}.\n`
+        process.stdout.write(`Muted ${kind} ${value}. New loops won't open for it; closed ${closed.length} open loop(s)${idList(closed)}.\n`
           + `Undo: ${result.undo_command} (re-checks the closed loops on the next sync)\n`);
       } else {
         process.stdout.write(`Not muted: ${result.reason}\n`);

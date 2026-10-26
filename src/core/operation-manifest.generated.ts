@@ -6738,7 +6738,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "The open-loop engine's killer output: who is waiting on you, what you promised, and the context needed to respond. Grouped by counterparty (default, ranked; each group shows at most 5 loops, the rest counted in loops_omitted) or flat. Loops that name no counterparty are never ranked as a person: they come back in no_counterparty (null when none). Loops come from the deterministic Gmail thread-state detector and the LLM commitment extractor. Remote callers get redacted evidence (no verbatim quotes); trusted local callers also get quotes, Gmail deep links, entity-card context, and a pre-rendered text digest. Carries google-source freshness (stale flag) and completeness: when it is \"partial\", some mail in the window is held after repeated import failures; present the answer as partial and name the held items and their retry command. The grouped view also returns withheld_noise (null when none): open reply-owed loops from senders whose mail the detector now treats as automated, with a per-sender preview_command for closing them.",
+    "description": "The open-loop engine's killer output: who is waiting on you, what you promised, and the context needed to respond. Grouped by counterparty (default, ranked; each group shows at most 5 loops, the rest counted in loops_omitted) or flat. Loops that name no counterparty are never ranked as a person: they come back in no_counterparty (null when none). Loops come from the deterministic Gmail thread-state detector and the LLM commitment extractor. Remote callers get redacted evidence (no verbatim quotes); trusted local callers also get quotes, Gmail deep links, entity-card context, and a pre-rendered text digest. Carries google-source freshness (stale flag) and completeness: when it is \"partial\", some mail in the window is held after repeated import failures; present the answer as partial and name the held items and their retry command. The grouped view also returns withheld_noise (null when none): open reply-owed loops from senders whose mail the detector now treats as automated, with a per-sender preview_command for closing them (every sender is listed, most loops first). When the caller's scope holds no google source but the brain has some, `google_sources_out_of_scope` names them (ids only) and `no_google_sources` stays true.",
     "params": {
       "group_by": {
         "type": "string",
@@ -6779,7 +6779,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
-        "description": "Grouped: max groups (default 3). Flat: max loops (default 50). The internal fetch is capped at 500 rows; `truncated: true` marks a hit."
+        "description": "Grouped: max groups (default 3). Flat: max loops per page (default 50, at most 500). `truncated: true` means more matching loops exist beyond the ones returned."
+      },
+      "offset": {
+        "type": "number",
+        "description": "Flat view only: skip this many loops in the recency order, to page past `limit`. Pair with `total` and `truncated`."
       },
       "include_context": {
         "type": "boolean",
@@ -6841,7 +6845,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "loops_mute",
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Suppress a sender (email address) or thread id from opening NEW loops — the detector feedback primitive behind \"never track this sender\". It also closes that sender's (or thread's) open reply-owed (unanswered_inbound) loops as dropped with closed_by \"muted\" and lists their ids in `closed`; other loop types keep their state. dry_run lists `would_close` and changes nothing. loops_unmute re-checks the closed loops.",
+    "description": "Suppress a sender (email address) or thread id from opening NEW loops — the detector feedback primitive behind \"never track this sender\". It also closes that sender's (or thread's) open loops of every type (reply-owed, extracted commitments, pending decisions) as dropped with closed_by \"muted\" and lists their ids in `closed`; `loop_type` narrows it to one type. A closed commitment loop retires its fact. dry_run lists `would_close` and changes nothing. loops_unmute re-checks the reply-owed loops it closed.",
     "params": {
       "kind": {
         "type": "string",
@@ -6860,6 +6864,17 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "source_id": {
         "type": "string",
         "description": "Google source to scope the mute to (default: routed source)."
+      },
+      "loop_type": {
+        "type": "string",
+        "enum": [
+          "commitment_owed_by_me",
+          "commitment_owed_to_me",
+          "unanswered_inbound",
+          "unanswered_outbound",
+          "decision_pending"
+        ],
+        "description": "Close only open loops of this type (default: every type). The suppression itself is unchanged."
       }
     },
     "mutating": true,

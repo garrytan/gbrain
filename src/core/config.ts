@@ -1497,6 +1497,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // W14 P4.6b: USD per UTC day that loops_extract jobs may spend, brain-wide
   // (default 2.00; 0 = no paid loop extraction). Validated in google/loops-spend.ts.
   'loops.extraction_max_usd_per_day',
+  // #7288: whole days, default unset (off). Open reply-owed (unanswered_inbound) loops with no activity for this long go
+  // stale on each google sync; a newer message reopens one. `gbrain config set loops.reply_owed_stale_days 90`.
+  'loops.reply_owed_stale_days',
   // #5012: boolean, default false (off). On, Gmail Updates mail opens a reply-owed loop only for a sender the owner wrote to.
   'loops.updates_require_reciprocity',
   // #2113: output-token cap for the per-turn facts extractor (default 4000).

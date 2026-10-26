@@ -942,7 +942,8 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     // >90d inactive → 'stale'. Cheap indexed UPDATE, once per sweep.
     try {
       const { markStaleLoops } = await import('../loops/loops-store.ts');
-      await markStaleLoops(engine, sourceId);
+      const staleDays = Number((await engine.getConfig('loops.reply_owed_stale_days'))?.trim() ?? '');
+      await markStaleLoops(engine, sourceId, { replyOwedStaleDays: Number.isFinite(staleDays) && staleDays > 0 ? staleDays : null });
     } catch { /* best-effort */ }
 
     // last_sync_at feeds the trust-critical staleness gate (`gbrain waiting`

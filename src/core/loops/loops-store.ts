@@ -252,6 +252,27 @@ export interface ListLoopsOpts {
    */
   loopId?: number;
   limit?: number;
+  /** Rows to skip in the recency order (paging with `limit`). */
+  offset?: number;
+}
+
+const LIST_WHERE = `WHERE ($1::text IS NULL OR source_id = ANY(string_to_array($1, ',')))
+       AND ($2::text IS NULL OR status = $2)
+       AND ($3::text IS NULL OR loop_type = $3)
+       AND ($4::text IS NULL
+            OR (counterparty_slug = $4 AND ($6::text IS NULL OR COALESCE(counterparty_source_id, source_id) = $6))
+            OR counterparty_email = $4)
+       AND ($5::bigint IS NULL OR id = $5::bigint)`;
+
+function listParams(opts: ListLoopsOpts): unknown[] {
+  return [
+    opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds.join(',') : null,
+    opts.status ?? null,
+    opts.loopType ?? null,
+    opts.counterparty ?? null,
+    opts.loopId === undefined ? null : opts.loopId,
+    opts.counterpartySourceId ?? null,
+  ];
 }
 
 export async function listOpenLoops(
@@ -259,34 +280,56 @@ export async function listOpenLoops(
   opts: ListLoopsOpts = {},
 ): Promise<OpenLoopRow[]> {
   const limit = Math.min(Math.max(opts.limit ?? 200, 1), 1000);
+  const offset = Math.max(Math.floor(opts.offset ?? 0), 0);
   const rows = await engine.executeRaw<Record<string, unknown>>(
     `SELECT * FROM open_loops
-     WHERE ($1::text IS NULL OR source_id = ANY(string_to_array($1, ',')))
-       AND ($2::text IS NULL OR status = $2)
-       AND ($3::text IS NULL OR loop_type = $3)
-       AND ($4::text IS NULL
-            OR (counterparty_slug = $4 AND ($6::text IS NULL OR COALESCE(counterparty_source_id, source_id) = $6))
-            OR counterparty_email = $4)
-       AND ($5::bigint IS NULL OR id = $5::bigint)
+     ${LIST_WHERE}
      ORDER BY last_activity_at DESC, id DESC
-     LIMIT ${limit}`,
-    [
-      opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds.join(',') : null,
-      opts.status ?? null,
-      opts.loopType ?? null,
-      opts.counterparty ?? null,
-      opts.loopId === undefined ? null : opts.loopId,
-      opts.counterpartySourceId ?? null,
-    ],
+     LIMIT ${limit} OFFSET ${offset}`,
+    listParams(opts),
   );
   return rows.map(normalizeRow);
+}
+
+/** The true number of loops `listOpenLoops` would match with no limit/offset. */
+export async function countOpenLoops(engine: BrainEngine, opts: ListLoopsOpts = {}): Promise<number> {
+  const rows = await engine.executeRaw<{ n: number }>(
+    `SELECT count(*)::int AS n FROM open_loops ${LIST_WHERE}`,
+    listParams(opts),
+  );
+  return Number(rows[0]?.n ?? 0);
 }
 
 /**
  * Staleness pass (v1 close semantics for commitment loops): overdue by >14d,
  * or >90 days without activity — aligned with HALFLIFE_DAYS.commitment.
+ * `replyOwedStaleDays` (default off) adds a per-type horizon: open
+ * `unanswered_inbound` loops with no activity for that many days go stale too
+ * (config `loops.reply_owed_stale_days`). A reply landing reopens one through
+ * the normal newer-activity upsert, so this never loses a live thread.
  */
-export async function markStaleLoops(engine: BrainEngine, sourceId: string): Promise<number> {
+export async function markStaleLoops(
+  engine: BrainEngine,
+  sourceId: string,
+  opts: { replyOwedStaleDays?: number | null } = {},
+): Promise<number> {
+  let n = await markStaleCommitmentLoops(engine, sourceId);
+  const days = opts.replyOwedStaleDays;
+  if (days && Number.isFinite(days) && days > 0) {
+    const rows = await engine.executeRaw<{ id: number }>(
+      `UPDATE open_loops
+         SET status = 'stale', closed_at = now(), closed_by = 'staleness', updated_at = now()
+       WHERE source_id = $1 AND status = 'open' AND loop_type = 'unanswered_inbound'
+         AND last_activity_at < now() - ($2::int * interval '1 day')
+       RETURNING id`,
+      [sourceId, Math.floor(days)],
+    );
+    n += rows.length;
+  }
+  return n;
+}
+
+async function markStaleCommitmentLoops(engine: BrainEngine, sourceId: string): Promise<number> {
   const rows = await engine.executeRaw<{ id: number }>(
     `UPDATE open_loops
        SET status = 'stale', closed_at = now(), closed_by = 'staleness', updated_at = now()
@@ -319,9 +362,12 @@ function suppressionMatch(kind: 'sender' | 'thread', param: string, alias = ''):
 }
 
 /**
- * #5012: the reply-owed loops a sender or thread mute covers: open
- * `unanswered_inbound` loops (and ones still queued from an earlier unmute).
- * `apply` closes them as `dropped` / `muted`; otherwise they are only listed.
+ * #5012: the loops a sender or thread mute covers: open loops (and ones still
+ * queued from an earlier unmute). A sender mute means "never track this
+ * sender", so it covers every loop type, extracted commitments and pending
+ * decisions included (#7287); `loopTypes` narrows it. `apply` closes them as
+ * `dropped` / `muted`; otherwise they are only listed. Manual closes are
+ * already terminal and never match.
  */
 export async function closeMutedLoops(
   engine: BrainEngine,
@@ -329,14 +375,17 @@ export async function closeMutedLoops(
   kind: 'sender' | 'thread',
   value: string,
   apply: boolean,
+  loopTypes?: LoopType[],
 ): Promise<number[]> {
-  const where = `source_id = $1 AND loop_type = 'unanswered_inbound' AND ${suppressionMatch(kind, '$2')}
+  const where = `source_id = $1 AND ${suppressionMatch(kind, '$2')}
+       AND ($3::text IS NULL OR loop_type = ANY(string_to_array($3, ',')))
        AND (status = 'open' OR closed_by = '${MUTE_RECHECK}')`;
+  const params = [sourceId, value.toLowerCase(), loopTypes && loopTypes.length > 0 ? loopTypes.join(',') : null];
   const rows = apply
     ? await engine.executeRaw<{ id: number }>(
       `UPDATE open_loops SET status = 'dropped', closed_at = now(), closed_by = '${MUTED}', updated_at = now()
-        WHERE ${where} RETURNING id`, [sourceId, value.toLowerCase()])
-    : await engine.executeRaw<{ id: number }>(`SELECT id FROM open_loops WHERE ${where} ORDER BY id`, [sourceId, value.toLowerCase()]);
+        WHERE ${where} RETURNING id`, params)
+    : await engine.executeRaw<{ id: number }>(`SELECT id FROM open_loops WHERE ${where} ORDER BY id`, params);
   return rows.map((r) => Number(r.id)).sort((a, b) => a - b);
 }
 
@@ -355,20 +404,24 @@ export async function requeueMutedLoops(
   value: string,
   apply: boolean,
 ): Promise<{ requeued: number[]; unverifiable: number[] }> {
-  const rows = await engine.executeRaw<{ id: number; thread_id: string | null }>(
-    `${apply ? `UPDATE open_loops l SET closed_by = CASE WHEN l.thread_id IS NULL THEN '${UNMUTED}' ELSE '${MUTE_RECHECK}' END, updated_at = now()`
-      : 'SELECT l.id, l.thread_id FROM open_loops l'}
+  // Only deterministic thread loops can be re-checked by a Gmail re-fetch; an
+  // extracted commitment or decision (#7287) stays closed and can reopen only
+  // through a later extraction of newer mail.
+  const recheckable = `(l.thread_id IS NOT NULL AND l.detector = 'deterministic_thread')`;
+  const rows = await engine.executeRaw<{ id: number; thread_id: string | null; recheck: boolean }>(
+    `${apply ? `UPDATE open_loops l SET closed_by = CASE WHEN ${recheckable} THEN '${MUTE_RECHECK}' ELSE '${UNMUTED}' END, updated_at = now()`
+      : `SELECT l.id, l.thread_id, ${recheckable} AS recheck FROM open_loops l`}
       WHERE l.source_id = $1 AND l.closed_by = '${MUTED}' AND ${suppressionMatch(kind, '$3', 'l.')}
         AND NOT EXISTS (SELECT 1 FROM loop_suppressions s
                          WHERE s.source_id = l.source_id AND NOT (s.kind = $2 AND s.value = $3)
                            AND ((s.kind = 'thread' AND s.value = lower(l.thread_id))
                              OR (s.kind = 'sender' AND s.value = l.counterparty_email)))
-      ${apply ? 'RETURNING l.id, l.thread_id' : ''}`,
+      ${apply ? `RETURNING l.id, l.thread_id, ${recheckable} AS recheck` : ''}`,
     [sourceId, kind, value.toLowerCase()],
   );
-  const ids = (pick: (r: { thread_id: string | null }) => boolean) =>
+  const ids = (pick: (r: { recheck: boolean }) => boolean) =>
     rows.filter(pick).map((r) => Number(r.id)).sort((a, b) => a - b);
-  return { requeued: ids((r) => r.thread_id !== null), unverifiable: ids((r) => r.thread_id === null) };
+  return { requeued: ids((r) => r.recheck === true), unverifiable: ids((r) => r.recheck !== true) };
 }
 
 /** #5012: every open reply-owed loop from one sender (`gbrain loops drop sender`), oldest id first. */
@@ -385,6 +438,59 @@ export async function listSenderInboundLoops(
     [email.toLowerCase(), sourceIds && sourceIds.length > 0 ? sourceIds.join(',') : null],
   );
   return rows.map((r) => ({ id: Number(r.id), source_id: r.source_id }));
+}
+
+/** `closed_by` of a loop `gbrain loops drop --older-than` closed; `undoAgeDrop` reverses exactly these. */
+export const AGE_DROP = 'age_drop';
+
+export interface AgeDropOpts {
+  /** Only loops with no activity for at least this many days. */
+  olderThanDays: number;
+  sourceIds?: string[] | null;
+  loopType?: LoopType;
+}
+
+/**
+ * #7288: open loops idle for `olderThanDays`, oldest first. Read-only: the CLI
+ * closes each through `loops_close` (note `age_drop`) so a commitment loop's
+ * fact retires with it.
+ */
+export async function listLoopsByAge(
+  engine: BrainEngine,
+  opts: AgeDropOpts,
+): Promise<Array<{ id: number; source_id: string }>> {
+  const rows = await engine.executeRaw<{ id: number; source_id: string }>(
+    `SELECT id, source_id FROM open_loops
+      WHERE status = 'open' AND last_activity_at < now() - ($1::int * interval '1 day')
+        AND ($2::text IS NULL OR source_id = ANY(string_to_array($2, ',')))
+        AND ($3::text IS NULL OR loop_type = $3)
+      ORDER BY last_activity_at, id`,
+    [Math.floor(opts.olderThanDays), opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds.join(',') : null, opts.loopType ?? null],
+  );
+  return rows.map((r) => ({ id: Number(r.id), source_id: r.source_id }));
+}
+
+/**
+ * #7288: reopen loops an age drop closed. Only loops with no projected fact
+ * come back (a closed commitment loop's fact was retired with it); those are
+ * counted in `skipped_with_fact`. Other closes are never touched.
+ */
+export async function undoAgeDrop(
+  engine: BrainEngine,
+  opts: { sourceIds?: string[] | null; loopType?: LoopType },
+  apply: boolean,
+): Promise<{ reopened: number[]; skipped_with_fact: number }> {
+  const base = `status = 'dropped' AND closed_by = '${AGE_DROP}'
+        AND ($1::text IS NULL OR source_id = ANY(string_to_array($1, ',')))
+        AND ($2::text IS NULL OR loop_type = $2)`;
+  const params = [opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds.join(',') : null, opts.loopType ?? null];
+  const [skipped] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM open_loops WHERE ${base} AND fact_id IS NOT NULL`, params);
+  const rows = apply
+    ? await engine.executeRaw<{ id: number }>(
+      `UPDATE open_loops SET status = 'open', closed_at = NULL, closed_by = NULL, updated_at = now()
+        WHERE ${base} AND fact_id IS NULL RETURNING id`, params)
+    : await engine.executeRaw<{ id: number }>(`SELECT id FROM open_loops WHERE ${base} AND fact_id IS NULL ORDER BY id`, params);
+  return { reopened: rows.map((r) => Number(r.id)).sort((x, y) => x - y), skipped_with_fact: Number(skipped?.n ?? 0) };
 }
 
 /** #5012: a re-checked thread whose verdict neither reopened nor answered its queued loops: they stay closed. */
