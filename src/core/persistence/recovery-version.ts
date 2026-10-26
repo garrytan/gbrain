@@ -11,8 +11,8 @@ import type { Action } from '../agent-output.ts';
 
 /** `persistence_effects.recovery` (effect-model.ts `EffectRecovery`): 1 embeds the file, 2 names a streamed stage. */
 export const EFFECT_RECOVERY_VERSIONS: readonly number[] = [1, 2];
-/** `persistence_requests.recovery` (model.ts `RecoveryRecord`): 1 one file, 2 a shared-skill bundle. */
-export const REQUEST_RECOVERY_VERSIONS: readonly number[] = [1, 2];
+/** `persistence_requests.recovery` (model.ts `RecoveryRecord`): 1 one file, 2 a shared-skill bundle, 3 several page files (GBRA-190). */
+export const REQUEST_RECOVERY_VERSIONS: readonly number[] = [1, 2, 3];
 
 export type RecoveryTable = 'persistence_requests' | 'persistence_effects';
 const KNOWN: Record<RecoveryTable, readonly number[]> = { persistence_requests: REQUEST_RECOVERY_VERSIONS, persistence_effects: EFFECT_RECOVERY_VERSIONS };

@@ -97,7 +97,8 @@ export function singleWrite(row: Pick<WriteRequest, 'operation' | 'intent'>): bo
 
 /** Whether a prepared member can share a group transaction. */
 export function groupable(row: WriteRequest, prepared: PreparedMutation): boolean {
-  if ((row.target_kind ?? 'page') !== 'page' || prepared.target === 'skill_bundle' || prepared.sourceExclusive || prepared.exclusiveSources?.length || prepared.afterEffects) return false;
+  if ((row.target_kind ?? 'page') !== 'page' || prepared.target === 'skill_bundle' || prepared.sourceExclusive || prepared.exclusiveSources?.length || prepared.afterEffects
+    || prepared.companions?.length) return false;
   if (syncMember(row)) return !prepared.file && typeof prepared.validate === 'function';
   // A streamed file (large-file.ts) is staged before its publication transaction, which only publishMutation does.
   if (isStreamedContent(prepared.file?.content)) return false;

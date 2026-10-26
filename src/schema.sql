@@ -2824,7 +2824,8 @@ CREATE OR REPLACE FUNCTION gbrain_guard_request_protocol() RETURNS trigger LANGU
       RAISE EXCEPTION 'unsupported_mutation_protocol: invalid page target' USING ERRCODE='42501';
     END IF;
     record:=NEW.recovery;
-    IF record IS NOT NULL AND ((target='page' AND record->>'version' IS DISTINCT FROM '1')
+    IF record IS NOT NULL AND ((target='page' AND record->>'version' IS DISTINCT FROM '1'
+        AND NOT (record->>'version'='3' AND record->>'target'='pages' AND jsonb_typeof(record->'files')='array'))
       OR (target='skill_bundle' AND (record->>'version' IS DISTINCT FROM '2' OR record->>'target' IS DISTINCT FROM 'skill_bundle'
         OR jsonb_typeof(record->'files') IS DISTINCT FROM 'array'))) THEN
       RAISE EXCEPTION 'unsupported_mutation_protocol: recovery target mismatch' USING ERRCODE='42501';

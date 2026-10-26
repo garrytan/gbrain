@@ -10,6 +10,7 @@ import { readSupersessionThreshold } from './supersession-threshold.ts';
 import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
 import { pageNotVisibleError } from '../persistence/page-visibility.ts';
 import { slugUnderBoundPrefixes } from '../ops/context.ts';
+import { UNATTRIBUTED_MEMORY_SLUG } from './extract-from-fence.ts';
 
 export type FactCandidate = FactRow & { source_markdown_slug: string | null; row_num: number | null };
 export interface FactDecision { status: 'inserted' | 'duplicate' | 'superseded'; candidate: FactCandidate | null; }
@@ -193,7 +194,9 @@ export async function decideReplacement(engine: BrainEngine, sourceId: string, i
     throw verbError('invalid_params', `replaces_entity_mismatch: fact #${targetId} is about ${target.entity_slug ?? 'no entity'}, not ${input.entity_slug ?? 'no entity'}.`,
       'Pass the same entity as the fact being replaced, or forget the old fact and remember the new one separately.');
   }
-  if (candidate.source_markdown_slug && candidate.source_markdown_slug !== opts.pageSlug) {
+  // GBRA-190 G4: a fact saved without an entity is a row of memory/unattributed; linking it strikes that row in the same write.
+  const linking = target.entity_slug == null && input.entity_slug != null && candidate.source_markdown_slug === UNATTRIBUTED_MEMORY_SLUG;
+  if (candidate.source_markdown_slug && candidate.source_markdown_slug !== opts.pageSlug && !linking) {
     const derived = String(candidate.source ?? '').startsWith('cli:extract-conversation-facts');
     throw verbError('invalid_params', `replaces_cross_page: fact #${targetId} lives on page ${candidate.source_markdown_slug}${derived ? ', extracted from that conversation page' : ''}.`,
       derived ? replacesDerivedSuggestion(sourceId, candidate.source_markdown_slug) : 'Forget the old fact, then remember the new one.');

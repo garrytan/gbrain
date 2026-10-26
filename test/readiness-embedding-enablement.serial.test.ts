@@ -57,7 +57,7 @@ async function cli(args: string[], home: string, extra: Record<string, string> =
   }
 }
 
-/** A keyless brain at `home` (or `--path`), with two imported pages and one DB-only remembered fact. */
+/** A keyless brain at `home` (or `--path`), with two imported pages and one fact remembered without an entity (a row of memory/unattributed). */
 async function seed(home: string, initArgs: string[], extra: Record<string, string> = {}): Promise<void> {
   const notes = join(home, 'notes');
   mkdirSync(notes, { recursive: true });
@@ -106,7 +106,7 @@ async function enableAndVerify(home: string, dbPath: string, keys: Record<string
   const model = fix.argv![fix.argv!.indexOf('--embedding-model') + 1];
   const dims = Number(fix.argv![fix.argv!.indexOf('--embedding-dimensions') + 1]);
   const before = await inspect(dbPath, model, dims);
-  expect(before.pages).toBe(2);
+  expect(before.pages).toBe(3);
   expect(before.facts).toContain(FACT);
   const run = await cli(fix.argv!.slice(1), home, keys);
   expect(run.exitCode).toBe(0);

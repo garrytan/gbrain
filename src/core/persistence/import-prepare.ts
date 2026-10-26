@@ -271,7 +271,8 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
   const rendered = imageBytes ?? (code ? content : serializePageToMarkdown({
     ...(snapshot ? withoutBody(snapshot.page) : { id: 0, slug: row.slug, source_id: row.source_id, created_at: new Date(), updated_at: new Date() }), ...ready.parsedPage,
   } as Page, tags));
-  const project = code || image ? undefined : await prepareCanonicalProjections(engine, ready.parsedPage!, row.slug, row.source_id, snapshot, 'file');
+  const project = code || image ? undefined : await prepareCanonicalProjections(engine, ready.parsedPage!, row.slug, row.source_id, snapshot, 'file', undefined,
+    { deriveWithdrawals: true });
   const mutation: PreparedMutation = { observedRevision: ready.observedRevision, noop: ready.noop && p.targetHash === sha256(rendered),
     trust: await ownerImportTrust(engine, row, ready.parsedPage?.frontmatter, p.sourcePath), deferEmbedding: image || p.noEmbed, validate: async tx => { await checkPaths(tx); await ready.validate(tx); },
     ...(ready.afterCommit ? { afterCommit: ready.afterCommit } : {}),

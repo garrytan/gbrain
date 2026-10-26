@@ -16,7 +16,7 @@ import { disposePersistenceConsumer, startPersistenceConsumer } from '../src/cor
 import { claimNextWrite, getWriteRequestById } from '../src/core/persistence/journal.ts';
 import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { localHostId, revokeLocalWriter } from '../src/core/persistence/identity.ts';
-import { submitForgetMutation } from '../src/core/persistence/memory-mutations.ts';
+import { legacyForget } from './helpers/legacy-forget.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { readJournalLimits } from '../src/core/persistence/limits.ts';
@@ -420,8 +420,10 @@ for (const failure of ['commit', 'withdrawal'] as const) {
       const prepared = await prepareMaintenanceMutation(engine, row, { engine: engine.kind, embedding_disabled: true });
       if (failure === 'withdrawal') {
         const [fact] = await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 ORDER BY id LIMIT 1', [sourceId]);
-        await submitForgetMutation({ engine, sourceId, remote: false, config: { engine: engine.kind }, dryRun: false,
-          logger: { info() {}, warn() {}, error() {} } }, 'forget', { id: Number(fact.id), request_id: randomUUID() });
+        // A current forget queues behind the claimed request on its root; a gbrain before G4 sharing the brain still commits
+        // its withdrawal database-first, at any moment (test/helpers/legacy-forget.ts).
+        await legacyForget({ engine, sourceId, remote: false, config: { engine: engine.kind }, dryRun: false,
+          logger: { info() {}, warn() {}, error() {} } }, Number(fact.id));
       }
       const outcome = await publishMutation(engine, row, prepared, localHostId(), { boundary: async name => {
         if (failure === 'commit' && name === 'before_commit') throw new Error('Injected fixture commit failure');

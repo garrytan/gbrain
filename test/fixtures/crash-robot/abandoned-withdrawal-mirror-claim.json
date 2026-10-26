@@ -1,5 +1,5 @@
 {
-  "description": "A PGLite owner SIGKILLed inside a withdrawal-mirror effect (after its side effect, before completion) left the effect claimed for its 2-minute lease; the restarted owner neither ran the effect nor published writes to the withdrawn page until the lease expired. Fixed by releaseAbandonedClaims (src/core/persistence/effect-journal.ts).",
+  "description": "A PGLite owner SIGKILLed inside a withdrawal's publication effect (after its side effect, before completion) left the effect claimed for its 2-minute lease; the restarted owner neither ran the effect nor published writes to the withdrawn page until the lease expired. Fixed by releaseAbandonedClaims (src/core/persistence/effect-journal.ts). Found at effect:withdrawal-mirror:mid; since G4 wave 2 a forget publishes through Git, so the kill lands at the forget's Git effect (effect:git:mid #3: put, remember, forget). Re-proved 3/3 (wedge) with releaseAbandonedClaims removed.",
   "engine": "pglite",
   "shrunk_from": 8,
   "reproduced_before_fix": "3/3",
@@ -9,8 +9,8 @@
       "seed": 5105,
       "length": 8,
       "fault": {
-        "point": "effect:withdrawal-mirror:mid",
-        "nth": 1
+        "point": "effect:git:mid",
+        "nth": 3
       },
       "crashed": true,
       "violations": [],

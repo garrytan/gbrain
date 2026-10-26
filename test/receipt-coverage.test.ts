@@ -28,9 +28,8 @@ type Coverage =
   | { sites: number; tables: GuardedTable[]; other: string };
 
 const RECEIPT_COVERAGE: Record<string, Coverage> = {
-  'src/core/persistence/coordinator.ts': { sites: 2, receipted: 'the publication of an admitted request: every maintenance intent (conversation facts, fence reconcile, deleted-page expiry, takes reextract, take reprojection) applies here; a writeback import\'s folded pass stamp (afterEffects, #6712 PR 4b) runs inside that same receipted publication' },
+  'src/core/persistence/coordinator.ts': { sites: 2, receipted: 'the publication of an admitted request: every maintenance intent and forget/forget_fact (one door commit across every page carrying the fact; conversation facts, fence reconcile, deleted-page expiry, takes reextract, take reprojection) applies here; a writeback import\'s folded pass stamp (afterEffects, #6712 PR 4b) runs inside that same receipted publication' },
   'src/core/persistence/group-publish.ts': { sites: 1, receipted: 'the grouped publication of admitted requests; each member is the attributed actor' },
-  'src/core/persistence/memory-mutations.ts': { sites: 1, receipted: 'forget/withdraw: admitWriteInTransaction admits the request in the same transaction' },
   'src/core/repair/segmented-mirror.ts': { sites: 1, receipted: 'repair segmented-mirror: admitWriteInTransaction admits each page\'s repair request and completeWrite records its terminal receipt in the same transaction' },
   'src/core/facts/purge.ts': { sites: 1, receipted: 'purge_fact: admitWriteInTransaction admits the request and completeWrite records its terminal receipt in the same transaction' },
   'src/core/shared-skills/publication.ts': { sites: 1, receipted: 'shared-skill revision pruning inside an admitted skill publication' },

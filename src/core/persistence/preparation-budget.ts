@@ -125,7 +125,7 @@ export type PreparationKind = 'foreground' | 'sync' | 'maintenance';
 /** Which budget a request takes: the foreground 30 s, the sync member budget, or the maintenance budget for everything else. */
 export function preparationKind(row: Pick<WriteRequest, 'operation' | 'intent'>): PreparationKind {
   const kind = row.intent?.kind;
-  if (row.operation === 'remember' || (row.operation === 'put_page' || row.operation === 'edit_page') && !kind) return 'foreground';
+  if (row.operation === 'remember' || row.operation === 'forget' || row.operation === 'forget_fact' || (row.operation === 'put_page' || row.operation === 'edit_page') && !kind) return 'foreground';
   return String(kind ?? '').startsWith('managed_sync_') ? 'sync' : 'maintenance';
 }
 export function preparationBudgetMs(row: Pick<WriteRequest, 'operation' | 'intent'>, policy: PreparationPolicy, foregroundMs: number): number {

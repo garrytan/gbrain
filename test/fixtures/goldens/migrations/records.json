@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 269,
+    "count": 270,
     "gaps": [
       17,
       18,
@@ -79,7 +79,7 @@
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 274,
+    "latest": 275,
     "records": [
       {
         "handler": {
@@ -2460,8 +2460,8 @@
         "idempotent": true,
         "name": "shared_brain_skills_and_membership",
         "sql": {
-          "length": 15917,
-          "sha256": "6d54ba001944603fd35abe6d6f355f106322a4e0dda206cfd93622fc1493e4aa"
+          "length": 16030,
+          "sha256": "c91c1b08707affacc430d29e352aa9ef702ff9c3431c7116e0920a0cbc9ce2e7"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -4410,6 +4410,19 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 274
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "multi_page_recovery_record",
+        "sql": {
+          "length": 2734,
+          "sha256": "46b9f85e67976c9dd9e5f11e678cb88613869a9bd25f9d4360044649034fed7b"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 275
       }
     ],
     "versions": [
@@ -4681,7 +4694,8 @@
       271,
       272,
       273,
-      274
+      274,
+      275
     ]
   },
   "normalizer": "migrations-record-v1"

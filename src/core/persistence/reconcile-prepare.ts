@@ -114,7 +114,7 @@ export async function prepareReconcileResult(engine: BrainEngine, state: Reconci
     { fix: pageFix(state.pins.source_id, state.pins.slug) });
   if (ready.observedRevision !== state.snapshot.revision) staleReconcile('revision changed during policy assessment');
   const resolved = reconcileCanonical(ready.parsedPage, [...new Set([...state.snapshot.tags, ...ready.parsedPage.tags])]);
-  const project = await prepareCanonicalProjections(engine, resolved, state.pins.slug, state.pins.source_id, state.snapshot, writer);
+  const project = await prepareCanonicalProjections(engine, resolved, state.pins.slug, state.pins.source_id, state.snapshot, writer, undefined, { deriveWithdrawals: true });
   return { ...merged, result: resolved, ready, project };
 }
 

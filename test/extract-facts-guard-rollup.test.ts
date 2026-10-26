@@ -6,8 +6,10 @@
  * to reconcile).
  *
  * Stub-engine repro from the issue: no database, no filesystem. The guard
- * path must book exactly one rollup UPSERT with halt_delta=1 /
- * round_completed_delta=0; the healthy path books completed=1 / halt=0.
+ * path must book exactly one rollup UPSERT. Since GBRA-190 G4 a held page no
+ * longer halts the phase (the other pages reconcile), so both the guard path
+ * and the healthy path book completed=1 / halt=0; doctor fence_integrity
+ * names the held rows.
  */
 
 import { describe, test, expect } from 'bun:test';
@@ -43,7 +45,9 @@ function rollupCalls(calls: CapturedCall[]): CapturedCall[] {
 }
 
 describe('extract_facts rollup telemetry (#3683)', () => {
-  test('guard-triggered run books halt_delta=1 for facts.fence', async () => {
+  // GBRA-190 G4: a page the empty-fence guard holds is skipped while every other page reconciles, so the run still
+  // books its one rollup (the #3683 fix) as a completed round, not an integrity_guard halt.
+  test('guard-triggered run books one completed-round rollup for facts.fence', async () => {
     const { calls, engine } = mkEngine(3);
     const r = await runExtractFacts(engine, { slugs: [], sourceId: 'default' });
     expect(r.guardTriggered).toBe(true);
@@ -54,8 +58,8 @@ describe('extract_facts rollup telemetry (#3683)', () => {
     const p = rollups[0]!.params;
     expect(p[0]).toBe('facts.fence');
     expect(p[1]).toBe('default');
-    expect(p[4]).toBe(1); // halt_delta
-    expect(p[7]).toBe(0); // round_completed_delta
+    expect(p[4]).toBe(0); // halt_delta
+    expect(p[7]).toBe(1); // round_completed_delta
   });
 
   test('healthy run books round_completed_delta=1, halt_delta=0', async () => {

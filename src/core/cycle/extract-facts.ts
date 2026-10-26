@@ -41,8 +41,9 @@
  * (`source_id = sourceId`, the source-isolation invariant): a row counts when
  * `row_num IS NULL`, its `entity_slug` resolves to a live page in this
  * source, it is not soft-expired (`expired_at IS NULL`; `forget_fact` drains
- * rows that way) and the source has a `local_path`. `legacyRowsPending`,
- * `guardTriggered` and the halt rollup still report the run; status returns
+ * rows that way) and the source has a `local_path`. `legacyRowsPending`
+ * and `guardTriggered` still report the run (its rollup is a completed round,
+ * since the other pages reconcile); status returns
  * `warn` naming each failed page. Rows with no backing page or checkout
  * (slugify-floor / stub-guard-blocked slugs from the inline writer) are
  * structurally unfenceable and never gate, and neither are the rows of a
@@ -849,19 +850,6 @@ export async function runExtractFacts(
           'a row the fence codec cannot render stays active and searchable (doctor fence_integrity lists it); the phantom-redirect pass holds only the phantoms that own such rows. ' +
           'Individual rows can instead be drained via `forget_fact`.'),
     );
-    // #3683: a guard-triggered run books its halt here for doctor
-    // extract_health's halt_rate (the completion rollup below is skipped for
-    // it). upsertExtractRollup is best-effort internally (never throws).
-    if (!opts.dryRun) {
-      await upsertExtractRollup(engine, {
-        kind: 'facts.fence',
-        source_id: sourceId,
-        cost_delta: 0,
-        round_completed_delta: 0,
-        halt_delta: 1,
-        halt_reason: 'integrity_guard',
-      });
-    }
   }
 
   // ── v0.35.5: phantom-redirect pre-pass ──────────────────────────
@@ -1138,9 +1126,9 @@ export async function runExtractFacts(
       console.error(`[extract_facts] receipt write failed: ${(err as Error).message}`);
     }
   }
-  if (!opts.dryRun && !result.guardTriggered) {
-    // #3683: a guard-triggered run booked its halt above (one rollup per
-    // run), so this path is always a completed round.
+  if (!opts.dryRun) {
+    // GBRA-190 G4: a page held by the empty-fence guard is skipped while every other page reconciles, so the run is a
+    // completed round, not an `integrity_guard` halt; doctor fence_integrity names the held rows. One rollup per run.
     await upsertExtractRollup(engine, {
       kind: 'facts.fence',
       source_id: sourceId,

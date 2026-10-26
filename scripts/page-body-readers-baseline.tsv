@@ -226,6 +226,8 @@ src/core/facts/drain.ts	estimateBacklogUsd	sql	META
 src/core/facts/eligibility.ts	isFactsBackstopEligible	field	LEAD	
 src/core/facts/fence-fact-append.ts	prepareFenceFactAppend	call:serializePageToMarkdown	SEGW	assertInlineBody first
 src/core/facts/fence-fact-append.ts	prepareFenceFactAppend	field	SEGW	assertInlineBody before the fence write
+src/core/facts/fence-fact-append.ts	prepareFenceRowRetirement	field	SEGW	the body materializedPage read back within PAGE_MAX_BYTES; a segmented page over the ceiling refuses (segmentedOverCeiling) first
+src/core/facts/fence-fact-append.ts	prepareFenceRowRetirement	call:serializePageToMarkdown	SEGW	materializedPage within PAGE_MAX_BYTES; a segmented page over the ceiling refuses (segmentedOverCeiling) before rendering, as prepareFenceFactAppend's remember write does
 src/core/facts/file-body-guard.ts	fileBodyMatchesStored	field	SEGW	a segmented page reads NULL inline columns, never matches, and the caller holds it (nothing written)
 src/core/facts/file-body-guard.ts	mirroredBody	field	NONE	the parsed checkout file body, not a page row
 src/core/facts/file-body-guard.ts	readStoredBody	sql	SEGW	reads the inline columns only; a segmented page reads NULL and every caller holds it
@@ -435,6 +437,8 @@ src/core/persistence/facts-maintenance.ts	prepareManagedFactsSession	field	META
 src/core/persistence/facts-prepare.ts	prepareManagedFactsMutation	call:serializePageToMarkdown	SEGW	assertInlineBody first
 src/core/persistence/facts-prepare.ts	prepareManagedFactsMutation	field	SEGW	assertInlineBody on the entity snapshot before the fence write
 src/core/persistence/file-repair.ts	canonicalRepairFields	field	META	
+src/core/persistence/forget-prepare.ts	prepareForgetMutation	call:serializePageToMarkdown	INLINE	a segmented page's struck file streams through unreadPageFile (its segments under the ledger plus the withdrawal) and returns before this render
+src/core/persistence/forget-prepare.ts	prepareForgetMutation	field	INLINE	the inline body materializedPage returns; a segmented page streams through unreadPageFile and returns before this read
 src/core/persistence/grandfather.ts	prepareGrandfatherMutation	call:contentHash	META	
 src/core/persistence/grandfather.ts	prepareGrandfatherMutation	call:serializePageToMarkdown	SEGW	
 src/core/persistence/import-prepare.ts	prepareManagedImportMutation	call:serializePageToMarkdown	SEGW	

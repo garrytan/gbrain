@@ -218,6 +218,8 @@ export async function declareStrictPublication(tx: BrainEngine, row: WriteReques
   before: PageSnapshot | null, final: PageSnapshot | null, binding: Pick<WorktreeBinding, 'canonical_git' | 'local_path' | 'relative_path'> | null | undefined): Promise<void> {
   if (binding?.canonical_git !== true || !binding.local_path || !row.worktree_id || prepared.noop || !final || final.page.deleted_at) return;
   if (syncRow(row)) return;
+  // GBRA-190 G4: a withdrawal writes no page content of its own; the files it strikes are its Git home (forget-prepare.ts).
+  if ((row.operation === 'forget' || row.operation === 'forget_fact') && !prepared.file) return;
   const [stored] = await tx.executeRaw<{ reason: string | null }>('SELECT database_only_reason AS reason FROM pages WHERE id=$1', [final.page.id]);
   const reason = stored?.reason ?? null;
   const root = join(binding.local_path, binding.relative_path ?? '');

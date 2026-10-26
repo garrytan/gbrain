@@ -1,7 +1,8 @@
 /**
  * GBRA-130 C-1 / A-16: a withdrawal-mirror effect stuck in recovery after a hand edit.
  *
- * Protects: a `forget` whose mirror crashed after writing the file, followed by a hand edit of that file (it matches
+ * Protects: a `forget` queued by a gbrain before GBRA-190 G4 (test/helpers/legacy-forget.ts; a current forget publishes
+ * its files itself and the mirror only drains such rows) whose mirror crashed after writing the file, followed by a hand edit of that file (it matches
  * neither the pre-withdrawal nor the withdrawn bytes), blocks every write on the worktree. `gbrain repair
  * stuck-recovery` resolves it with `--keep withdrawn` only: the preview lists the file, both fingerprints and the
  * request; the apply is bound to the preview hash, backs the edited bytes up first, writes the recorded withdrawn
@@ -21,7 +22,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { operations } from '../../src/core/operations.ts';
+import { legacyForget } from '../helpers/legacy-forget.ts';
 import { performSync } from '../../src/commands/sync/perform.ts';
 import { parseFactsFence } from '../../src/core/facts-fence.ts';
 import { sha256 } from '../../src/core/persistence/digest.ts';
@@ -79,7 +80,7 @@ async function stuckEffect(databaseUrl: string | undefined, run: (s: StuckEffect
     const [fact] = await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 AND fact=$2 AND expired_at IS NULL', [SOURCE, CLAIM]);
     let killed = 0;
     installFaultHook(async point => { if (point === 'effect_recovery:before_clear' && killed++ === 0) throw new Error('process ended before the mirror commit'); });
-    await operations.find(o => o.name === 'forget')!.handler(ctx, { id: Number(fact!.id) });
+    await legacyForget(ctx, Number(fact!.id));
     await waitFor(async () => killed > 0, { timeoutMs: 30_000, intervalMs: 50, label: 'mirror killed before commit' });
     installFaultHook(undefined);
     const file = join(root, 'affected.md');
@@ -197,7 +198,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
 
     test('C-1 stale: a later withdrawal on the same page makes the stuck record stale; no interruption of --keep withdrawn publishes a withdrawn fact, and the same apply resumes to resolved', () => stuckEffect(databaseUrl, async s => {
       const [second] = await s.engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 AND fact=$2 AND expired_at IS NULL', [SOURCE, CLAIM_B]);
-      await operations.find(o => o.name === 'forget')!.handler(s.b.ctx, { id: Number(second!.id) });
+      await legacyForget(s.b.ctx, Number(second!.id));
       const active = async () => (await s.engine.executeRaw<{ fact: string }>('SELECT fact FROM facts WHERE source_id=$1 AND fact = ANY($2::text[]) AND expired_at IS NULL',
         [SOURCE, [CLAIM, CLAIM_B]])).map(row => row.fact);
       expect(await active()).toEqual([]);

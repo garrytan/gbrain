@@ -21,7 +21,6 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
-import { writeSingleFact } from '../../src/core/facts/write-single.ts';
 import { configureGateway, resetGateway, __setDecideTransportForTests, __setEmbedTransportForTests } from '../../src/core/ai/gateway.ts';
 import { flushDecideWrites, insertCalibration, __resetDecideStoreForTests } from '../../src/core/ai/decide/store.ts';
 import { packShape } from '../../src/core/ai/decide/pack.ts';
@@ -81,10 +80,12 @@ async function qualify(lb = 0.95) {
   await engine.executeRaw('UPDATE decide_calibrations SET action_precision_lb = $2 WHERE id = $1', [id, lb]);
 }
 
+/** Through the remember verb: forget claims the source's canonical worktree (GBRA-190 G4), so a legacy direct write would be refused after it. */
 async function remember(fact: string, entity: string | null = SLUG, visibility: 'world' | 'private' = 'world'): Promise<number> {
-  const r = await writeSingleFact(engine, 'default', { fact, provenance: 'test', entity, kind: 'fact', visibility });
-  expect(r.status).toBe('inserted');
-  return r.id;
+  const r = await operationsByName.remember!.handler({ engine, config: { engine: 'pglite' }, remote: false, dryRun: false, sourceId: 'default',
+    logger: { info: () => {}, warn: () => {}, error: () => {} } } as never, { fact, provenance: 'test', ...(entity ? { entity } : { infer_entity: false }), kind: 'fact', visibility }) as Record<string, any>;
+  expect(r.state).toBe('committed');
+  return Number(r.id);
 }
 
 async function forget(id: number, extra: Record<string, unknown> = {}): Promise<Record<string, any>> {

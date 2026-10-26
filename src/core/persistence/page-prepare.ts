@@ -641,9 +641,8 @@ async function prepareUnreadRestore(engine: BrainEngine, row: WriteRequest, snap
  * A withdrawal mirror of a segmented page (effects.ts, effect-recovery.ts) renders its file the same way, with
  * `between` (its claim renewal) run after each piece each time the file is produced.
  */
-export async function unreadPageFile(engine: BrainEngine, snapshot: PageSnapshot, between?: () => Promise<void>): Promise<StreamedFileContent> {
+export async function unreadPageFile(engine: BrainEngine, snapshot: PageSnapshot, between?: () => Promise<void>, ledger: BodyLedger = snapshotLedger(snapshot)): Promise<StreamedFileContent> {
   const head = serializePageToMarkdown({ ...withoutBody(snapshot.page), compiled_truth: '', timeline: '' }, snapshot.tags).slice(0, -1);
-  const ledger = snapshotLedger(snapshot);
   const produce = (exec: BrainEngine) => segmentedExportMarkdown(exec, snapshot.page, ledger, head);
   return StreamedFileContent.measure(engine, !between ? produce : async function* (exec) { for await (const piece of produce(exec)) { yield piece; await between(); } });
 }
@@ -926,7 +925,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   // Projections, advisories, link resolution (links-preparation.ts), the file target and the core guard go out together.
   enterClaimStep(clock, 'link_resolution', undefined, 'db');
   const [project, advisories, links, target, core] = await pipelined(together, [
-    async () => projected ? prepareCanonicalProjections(engine,ready.parsedPage,row.slug,row.source_id,snapshot,writer,timelinePolicy) : undefined,
+    async () => projected ? prepareCanonicalProjections(engine,ready.parsedPage,row.slug,row.source_id,snapshot,writer,timelinePolicy,{ deriveWithdrawals: row.authority.remote === false }) : undefined,
     async () => noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : preparePageAdvisories(engine,row,ready.parsedPage,snapshot),
     async () => !noop && !targetDeleted && autoLinkedPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
       ? prepareAutomaticLinks(engine,row.slug,ready.parsedPage,row.source_id,options.coordinated === true) : undefined,

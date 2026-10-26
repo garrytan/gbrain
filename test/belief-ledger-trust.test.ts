@@ -36,7 +36,6 @@ import { lifetimeRef, pageKey } from '../src/core/belief/keys.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { waitForValue } from './helpers/wait-for.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { beliefBrain, beliefEngineCase, beliefPage, readEvents, shape, type BeliefEvent } from './helpers/belief-ledger.ts';
@@ -115,7 +114,7 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
     }
     const withHome = (fn: () => Promise<void>) => () => withEnv({ GBRAIN_HOME: home }, fn);
 
-    test('forget: fact.withdrawn and page.view_changed with the pre-withdrawal body kept as a version; materialization is a second view change', withHome(async () => {
+    test('forget: fact.withdrawn and page.view_changed with the pre-withdrawal body kept as a version; the struck body publishes with them', withHome(async () => {
       const b = await brain();
       const slug = 'companies/acme-example';
       await run(b.local, 'put_page', { slug, content: beliefPage({ facts: ['Acme raised a seed round', 'Acme has ten staff'] }) });
@@ -137,14 +136,16 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       const forget = check(await readEvents(b.engine, b.sourceId, mark), before);
       const after = String(forget[0]!.value!.revision_after);
       expect(after).not.toBe(before);
-      // The effect worker materializes the body at the withdrawal's revision: one more view change, and its preimage version.
-      const materialized = await waitForValue(async () => (await readEvents(b.engine, b.sourceId, mark)).find(e => e.cause.op === 'withdrawal_materialize'),
-        { timeoutMs: 30_000, label: 'withdrawal materialization' });
-      expect(materialized).toMatchObject({ event_type: 'page.view_changed', subject_key: pageKey(lifetime), value: { materialized: true, revision_before: after, revision_after: after } });
       const versions = await b.engine.executeRaw<{ knowledge_revision: string; compiled_truth: string }>(
         'SELECT knowledge_revision::text AS knowledge_revision, compiled_truth FROM page_versions WHERE page_id=$1 ORDER BY id', [await pageId(b, slug)]);
-      expect(versions.map(v => v.knowledge_revision)).toEqual([before, after]);
-      expect(versions[0]!.compiled_truth).toContain('Acme has ten staff');
+      // GBRA-190 G4: the withdrawal publishes the struck body itself, so the page at its revision is already struck and
+      // nothing materializes later; the pre-withdrawal body is the one version kept.
+      expect(versions.map(v => v.knowledge_revision)).toEqual([before]);
+      expect(versions[0]!.compiled_truth).toContain('| Acme has ten staff |');
+      const struck = await content(b, slug);
+      expect(String(struck.revision)).toBe(after);
+      expect(String(struck.compiled_truth)).toContain('~~Acme has ten staff~~');
+      expect((await readEvents(b.engine, b.sourceId, mark)).filter(e => e.cause.op === 'withdrawal_materialize')).toEqual([]);
       // Forced probe: an emitter that records the withdrawal as a plain retraction is caught.
       fault(retype('fact.withdrawn', 'fact.retracted'));
       const seed = await factId(b, 'Acme raised a seed round');
@@ -153,15 +154,14 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       expect(() => check(forced, current)).toThrow();
     }), 120_000);
 
-    test('review #25: the withdrawal, its materialization and an unmanaged forget each leave a commit mark', withHome(async () => {
+    test('review #25: the withdrawal and an unmanaged forget each leave a commit mark', withHome(async () => {
       const b = await brain();
       const slug = 'companies/acme-example';
       await run(b.local, 'put_page', { slug, content: beliefPage({ facts: ['Acme raised a seed round', 'Acme has ten staff'] }) });
       const mark = await lastId(b);
       await run(b.local, 'forget', { id: String(await factId(b, 'Acme has ten staff')) });
-      await waitForValue(async () => (await readEvents(b.engine, b.sourceId, mark)).find(e => e.cause.op === 'withdrawal_materialize'), { timeoutMs: 30_000, label: 'withdrawal materialization' });
       const ops = new Set((await readEvents(b.engine, b.sourceId, mark)).map(e => e.cause.op));
-      expect([...ops].sort()).toEqual(['forget', 'withdrawal_materialize']);
+      expect([...ops].sort()).toEqual(['forget']);
       expect(await unmarkedPublications(b.engine, b.sourceId)).toEqual([]);
       await beliefBrain(async u => {
         const remembered = await operationsByName.remember!.handler(u.ctx, { fact: 'Dana example likes tea', provenance: 'notes', entity: 'people/dana-example', request_id: randomUUID() }) as Record<string, any>;

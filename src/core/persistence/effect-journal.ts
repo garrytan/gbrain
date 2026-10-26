@@ -26,7 +26,9 @@ import { EFFECT_FAULT_POINTS, faultPoint } from './fault-points.ts';
 export async function queuePublicationEffects(tx: BrainEngine, row: EffectRequest & Partial<Pick<WriteRequest, 'operation' | 'intent' | 'authority' | 'principal_kind' | 'principal_id'>>, snapshot: PageSnapshot | null,
   outcome: Record<string, unknown>, prepared?: PreparedMutation,
   /** A grouped publication completes its members after queueing all of them, then calls `reconcileFinishedBatch` itself. */
-  opts: { deferBatchReconcile?: boolean; /** G2 (git-door.ts): the file is already committed; its Git effect only pushes. */ pushOnly?: boolean } = {}): Promise<void> {
+  opts: { deferBatchReconcile?: boolean; /** G2 (git-door.ts): the file is already committed; its Git effect only pushes. */ pushOnly?: boolean;
+    /** GBRA-190 G4 (D2): every page a multi-page publication wrote, sorted by slug; its Git and embedding effects walk them (effect-targets.ts). */
+    pageTargets?: readonly { slug: string; page_id: number; revision: string }[] } = {}): Promise<void> {
   if (prepared?.noop || prepared?.target === 'skill_bundle') return;
   await declarePersistenceProtocol(tx);
   const revision = snapshot?.revision;
@@ -34,7 +36,11 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
   // #6007: the effects are inserted together, in queue order, by one statement at the end.
   const queued: { kind: EffectKind; data: Record<string, unknown>; gated?: boolean }[] = [];
   const queue = (kind: EffectKind, extra: Record<string, unknown> = {}) => { queued.push({ kind, data: { ...data, ...extra } }); };
-  if (prepared?.file && row.worktree_id) {
+  const companionFiles = (prepared?.companions ?? []).some(companion => companion.file);
+  if (opts.pageTargets && (prepared?.file || companionFiles) && row.worktree_id) {
+    queue('git', { version: 2, targets: opts.pageTargets, ...(opts.pushOnly ? { push_only: true } : {}) });
+    if (!opts.pushOnly && outcome.persistence && typeof outcome.persistence === 'object') Object.assign(outcome.persistence, { git_state: 'queued' });
+  } else if (prepared?.file && row.worktree_id) {
     const [binding] = await tx.executeRaw<{ local_path: string }>(`SELECT h.local_path FROM persistence_host_bindings h
       JOIN persistence_worktrees w ON w.id=h.worktree_id AND w.owner_host_id=h.host_id WHERE w.id=$1::uuid`, [row.worktree_id]);
     if (!binding?.local_path) throw opError('owner_unavailable', 'Cannot record the canonical Git target without its owner binding.',
@@ -47,7 +53,7 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
     if (!opts.pushOnly && outcome.persistence && typeof outcome.persistence === 'object') Object.assign(outcome.persistence, { git_state: 'queued' });
   }
   if (snapshot && !snapshot.page.deleted_at) {
-    if (!prepared?.deferEmbedding) queue('embedding');
+    if (!prepared?.deferEmbedding) queue('embedding', opts.pageTargets ? { version: 2, targets: opts.pageTargets } : {});
     outcome.embedding_state = await embeddingDisabled(tx) ? 'disabled' : prepared?.deferEmbedding ? 'deferred' : 'queued';
     if ((outcome.facts_backstop as { queued?: boolean } | undefined)?.queued) {
       if (!(await isFactsExtractionEnabled(tx))) outcome.facts_backstop = { skipped: 'extraction_disabled' };
@@ -57,7 +63,7 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
     if (queuesMentionLinks(row, prepared)) queued.push({ kind: 'links', data: { ...data, ...(prepared?.mentionRange ? { range: prepared.mentionRange } : {}) }, gated: true });
     // #5876: the Life Chronicle decision is a ledger row, not an effect; the `chronicle` cycle phase executes it.
     await recordChronicleDecision(tx, row, snapshot, outcome);
-  }
+  } else if (opts.pageTargets?.length && !prepared?.deferEmbedding) queue('embedding', { version: 2, targets: opts.pageTargets });
   const inserted = queued.length ? await tx.executeRaw<{ kind: string }>(`INSERT INTO persistence_effects (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
     SELECT $1::uuid,t.e->>'kind',$2::uuid,t.e->'data',$3,$4::uuid,$5::uuid FROM jsonb_array_elements($6::text::jsonb) WITH ORDINALITY AS t(e,n)
     WHERE NOT (COALESCE((t.e->>'gated')::boolean,false) AND EXISTS (SELECT 1 FROM config

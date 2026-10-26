@@ -18,9 +18,10 @@ import { writeGateRejectedError } from '../write-gate.ts';
 import { lexicalContestCandidate, recordContestedFact, supersessionGuarded } from '../trust/supersede-handlers.ts';
 import { storedTrustTier } from '../trust/tier.ts';
 import { fenceAppendPendingTier } from '../eligibility/fence-overlay.ts';
-import { prepareFenceFactAppend, requestReceiptFix, type FenceFactAppend } from '../facts/fence-fact-append.ts';
+import { prepareFenceFactAppend, prepareFenceRowRetirement, requestReceiptFix, type FenceFactAppend } from '../facts/fence-fact-append.ts';
 import { privateProvenanceFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { tightenToPage } from '../facts/visibility.ts';
+import { UNATTRIBUTED_MEMORY_SLUG } from '../facts/extract-from-fence.ts';
 import { noteBelief } from '../belief/ledger.ts';
 
 function conflict(row: WriteRequest): never {
@@ -135,16 +136,21 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const retiredUntil = status === 'superseded' ? supersededValidUntil(decision.candidate!, validFrom) : null;
   // The fact is published as a row of its entity page's facts fence, file before facts row (facts/fence-fact-append.ts).
   let fence: FenceFactAppend | undefined;
-  if (p.fence === true && snapshot) {
+  if (p.fence === true && (snapshot || row.slug === UNATTRIBUTED_MEMORY_SLUG)) {
     const old = decision.candidate;
     fence = await prepareFenceFactAppend(engine, row, config, snapshot, { fact, pendingTier: fenceAppendPendingTier(writerTier),
       supersede: status === 'superseded' && old?.source_markdown_slug === row.slug && old.row_num != null ? { rowNum: Number(old.row_num), validUntil: retiredUntil } : undefined }, signal);
   }
+  // GBRA-190 G4: linking a fact saved without an entity retires its memory/unattributed row in the same publication.
+  const old = status === 'superseded' ? decision.candidate! : null;
+  const linkedRow = old && old.source_markdown_slug === UNATTRIBUTED_MEMORY_SLUG && row.slug !== UNATTRIBUTED_MEMORY_SLUG && old.row_num != null
+    ? await prepareFenceRowRetirement(engine, row, config, UNATTRIBUTED_MEMORY_SLUG, { rowNum: Number(old.row_num), note: `linked to ${input.entity_slug}`, validUntil: retiredUntil }, signal) : null;
   // The belief ledger records the superseded fact in its own stream, so that stream's page key is held too.
   const supersededStream = status === 'superseded' ? decision.candidate!.source_markdown_slug ?? decision.candidate!.entity_slug ?? null : null;
-  const additionalPageKeys = supersededStream && supersededStream !== row.slug ? [{ sourceId: row.source_id, slug: supersededStream }] : undefined;
+  const additionalPageKeys = supersededStream && supersededStream !== row.slug && !linkedRow ? [{ sourceId: row.source_id, slug: supersededStream }] : undefined;
   const page = fence?.prepared ?? undefined;
-  return { observedRevision, file: page?.file, ...(page?.exclusiveSources ? { exclusiveSources: page.exclusiveSources } : {}), ...(additionalPageKeys ? { additionalPageKeys } : {}), validate: async tx => { await validate(tx); await page?.validate?.(tx); }, apply: async tx => {
+  return { observedRevision, file: page?.file, ...(page?.exclusiveSources ? { exclusiveSources: page.exclusiveSources } : {}), ...(additionalPageKeys ? { additionalPageKeys } : {}),
+    ...(linkedRow ? { companions: [linkedRow] } : {}), validate: async tx => { await validate(tx); await page?.validate?.(tx); }, apply: async tx => {
     let id: number;
     let pageReceipt: { size_state?: unknown } | undefined;
     if (fence) {

@@ -898,7 +898,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
   const writeback = canonicalWritebackNeeded(row, p, p.content, canonicalFile);
   // A rename projects against the moved page (same id), so its pinned timeline rows carry over.
   enterClaimStep(clock, 'canonical_projections', undefined, 'db');
-  const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, base, p.companyApproval ? 'immutable' : 'file');
+  const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, base, p.companyApproval ? 'immutable' : 'file', undefined, { deriveWithdrawals: row.authority.remote !== true });
   const importProvenance: SyncImportProvenanceBase = { source_id: row.source_id, incarnation: row.source_incarnation, origin: p.sourcePath!, raw_sha256: sha256(p.content!),
     ...(p.blobOid ? { blob_oid: p.blobOid } : {}), working: p.working === true, gbrain_version: VERSION, ...(recovery?.length ? { recovery } : {}), parser: syncImportParser(pack?.identity ?? null),
     ...(p.fullEpisode ? { full_episode: p.fullEpisode } : {}) };

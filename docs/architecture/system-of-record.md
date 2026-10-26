@@ -283,7 +283,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/grandfather.ts` (2): request preparer.
 - `src/core/persistence/links-maintenance.ts` (1): coordinated maintenance.
 - `src/core/persistence/loop-fact-retirement.ts` (1): request preparer.
-- `src/core/persistence/memory-mutations.ts` (1): `forget` inside its request's coordinated write.
+- `src/core/persistence/forget-prepare.ts` (1): `forget` / `forget_fact` request preparer; the struck page files publish first, then the withdrawal's rows in the same publication.
 - `src/core/persistence/memory-prepare.ts` (2): `remember` request preparer; the fence row and its facts row go through `prepareFenceFactAppend`.
 - `src/core/persistence/page-append.ts` (1): segmented `append_page` / `edit_page` request preparer; the splice versions the page inside its request's publication.
 - `src/core/persistence/page-prepare.ts` (12): page request preparer (including the restore of a segmented page over 24 MiB, which flips `deleted_at` without re-serializing, and the tag flip of a segmented page, which versions it and changes its tag rows and `content_hash` without re-serializing).
@@ -296,7 +296,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/repair/atoms-restore.ts` (3): the unmanaged `gbrain repair atoms-restore` apply archives the retired atom's version, restores it and drops its `retired_by`/`retired_at` stamp in one `maintenanceTransaction`; managed brains publish a `managed_maintenance_restore_reextract_atom` request instead.
 - `src/core/repair/captured-facts.ts` (1): a request on managed brains; the unmanaged captured-facts expiry runs in `maintenanceTransaction`.
 - `src/core/repair/consolidate-ties.ts` (1): `gbrain repair consolidate-ties` reopens facts inside `coordinatedDatabaseWrite` on managed brains (the `relink_facts` operation) and in one `maintenanceTransaction` per fact on unmanaged brains.
-- `src/core/repair/duplicate-facts.ts` (2): `gbrain repair duplicate-facts` supersedes duplicate fact copies inside `coordinatedDatabaseWrite` on managed brains (the `relink_facts` operation) and in one `maintenanceTransaction` per group on unmanaged brains; a fenced copy is struck through a revision-bound `put_page` first.
+- `src/core/repair/duplicate-facts.ts` (2): `gbrain repair duplicate-facts` supersedes duplicate fact copies onto the kept row (the fenced copy, else the oldest) inside `coordinatedDatabaseWrite` on managed brains (the `relink_facts` operation) and in one `maintenanceTransaction` per group on unmanaged brains; a fenced copy is struck through a revision-bound `put_page` first.
 - `src/core/repair/conversation-labels.ts` (4): a request on managed brains; the unmanaged label retirement runs in `maintenanceTransaction`.
 - `src/core/repair/extractor-facts.ts` (1): a request on managed brains; the unmanaged extractor-facts restore runs in `maintenanceTransaction`.
 - `src/core/repair/fact-claim-dates.ts` (1): `gbrain repair fact-claim-dates` updates database-only facts' `valid_from` in one `maintenanceTransaction` on unmanaged brains only; fence rows move through revision-bound `put_page`, and a managed brain never takes the direct update.

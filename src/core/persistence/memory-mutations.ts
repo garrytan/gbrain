@@ -2,13 +2,11 @@ import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import { guardRemoteForget, remoteForgetRaced, supersessionGuarded } from '../trust/supersede-handlers.ts';
 import { randomUUID } from 'node:crypto';
 import type { OperationContext } from '../ops/contract.ts';
-import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError, verbError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, validatePageSlug } from '../ops/context.ts';
 import { isNullLikeEntity } from '../facts/write-single.ts';
-import { isFactWithdrawn, recordFactWithdrawal, type WithdrawalCommit } from '../facts/withdrawal.ts';
-import { rebuildPendingPageProjections } from '../page-state/projections.ts';
+import { isFactWithdrawn } from '../facts/withdrawal.ts';
 import { inferFactSubject, isEntityInferenceEnabled, type InferredVia } from '../facts/subject-infer.ts';
 import { parseFactsFence } from '../facts-fence.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
@@ -17,19 +15,16 @@ import { materializedPage, segmentedOverCeiling } from './segmented-apply.ts';
 import { excludesPrivateWrites } from './page-visibility.ts';
 import { emitFenceNotice, initializeLocalPersistence, requestPrincipalForContext } from './page-mutations.ts';
 import { authorizeStoredRequest, submissionAuthority } from './authority.ts';
-import { admitWrite, admitWriteInTransaction, assertPageRequestIdentity, assertReplayIntent, completeWrite, getWriteRequest, intentDigest } from './journal.ts';
+import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest } from './journal.ts';
 import { assertPersistenceAccepting, registerMutationPreparer, waitForWrite, writeResponse } from './service.ts';
 import { claimWorktree } from './ownership.ts';
-import { declareDurablePersistence } from './protocol.ts';
 import { resolveFactWriteTarget } from './fact-write-target.ts';
 import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
-import { withCoordinatedWrite } from './context.ts';
-import { requestAttribution } from './attribution.ts';
-import { isTerminal, type WriteRequest } from './model.ts';
+import type { WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
-import { retryWriteAdmission } from './admission-retry.ts';
-import { privateProvenanceFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
-import { markBeliefCommits } from '../belief/append.ts';
+import { readForgetTarget, refuseForgetReachingOtherCopies } from './forget-prepare.ts';
+import { UNATTRIBUTED_MEMORY_SLUG } from '../facts/extract-from-fence.ts';
+import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 
 export { prepareMemoryMutation } from './memory-prepare.ts';
 /** Only semantic appends without an explicit caller revision can be recomputed. */
@@ -99,8 +94,10 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
   if (inferred && (await isFactWithdrawn(ctx.engine, sourceId, inferred.visibility, inferred.fact, slug)
     || parseFactsFence(whole!.compiled_truth).warnings.length)) throw new InferredTargetRejected('ENTITY_LINK_FAILED');
   // Preserve the stub guard: a fallback name remains DB-only until a real
-  // entity page exists. No placeholder page is created by remember.
-  const fence = entitySlug !== null && snapshot !== null;
+  // entity page exists. No placeholder entity page is created by remember; a
+  // fact without an entity is a row of memory/unattributed, created on first use (GBRA-190 G4).
+  const unattributed = entitySlug === null;
+  let fence = unattributed || snapshot !== null;
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
   const configuredWriteThrough = !/^(false|0|off|no)$/i.test(await ctx.engine.getConfig('sync.write_through') ?? 'true');
   const writeThrough = configuredWriteThrough && !sandbox;
@@ -108,10 +105,13 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
   else if (!configuredWriteThrough) authority.databaseOnlyReason = 'disabled_by_config';
   // An inferred link never designates an owner or reports a missing one.
   const target = fence ? await resolveFactWriteTarget(ctx.engine, sourceId, source,
-    { sandbox, fileBacked: Boolean(snapshot!.page.source_path), remote: ctx.remote !== false }).catch((error: unknown) => {
+    { sandbox, fileBacked: snapshot ? Boolean(snapshot.page.source_path) : true, remote: ctx.remote !== false }).catch((error: unknown) => {
     if (inferred && error instanceof OperationError) throw new InferredTargetRejected('ENTITY_LINK_FAILED');
+    // A source that refuses a new canonical file keeps the subjectless fact database-only, as before memory/unattributed had a page.
+    if (unattributed && !snapshot && error instanceof OperationError) return null;
     throw error;
   }) : null;
+  if (unattributed && !snapshot && !target) fence = false;
   let binding = target?.kind === 'publish' ? target.binding : null;
   if (target?.kind === 'publish' && target.databaseOnlyReason) authority.databaseOnlyReason = target.databaseOnlyReason;
   if (target?.kind === 'unbound') {
@@ -274,116 +274,51 @@ async function resolveRememberEntity(ctx: OperationContext, sourceId: string, en
   throw error;
 }
 
-interface WithdrawalTarget { id: number; entity_slug: string | null; source_markdown_slug: string | null; expired_at: Date | null; trust_tier?: string | null; }
-
 /**
- * A fact saved without an entity says nothing about whom it concerns, so its
- * withdrawal reaches the claim under every entity. When that claim is active
- * on entity-linked facts, forgetting the unlinked copy would silently withdraw
- * them too, and a withdrawn claim cannot be remembered again; refuse and name them.
- * A caller that cannot read private pages never withdraws an active copy it
- * cannot see: the refusal is then one fixed text that names no fact.
+ * GBRA-190 G4: a withdrawal is a coordinated page publication (forget-prepare.ts): the files that carry the claim are
+ * struck and committed first, then the ledger row, expiries and chunk invalidation commit in its transaction. The
+ * checks here fail fast before admission; preparation and publication repeat them under their locks.
  */
-async function refuseForgetReachingOtherCopies(tx: BrainEngine, sourceId: string, fact: WithdrawalTarget, remote: boolean, excludePrivate: boolean): Promise<void> {
-  const id = fact.id;
-  if (fact.entity_slug === null) {
-    const linked = await tx.executeRaw<{ id: number; entity_slug: string }>(`SELECT l.id,l.entity_slug FROM facts u
-      JOIN facts l ON l.source_id=u.source_id AND l.visibility=u.visibility AND l.entity_slug IS NOT NULL AND l.id<>u.id
-        AND l.expired_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
-        AND gbrain_fact_fingerprint(l.fact)=gbrain_fact_fingerprint(u.fact)
-      WHERE u.id=$1 AND u.source_id=$2 AND ($3::boolean=false OR l.visibility='world')${excludePrivate ? ` AND ${privateProvenanceFilterFragment('l')}` : ''}
-      ORDER BY l.id LIMIT 5`, [id, sourceId, remote]);
-    if (linked.length) {
-      const named = linked.map(row => `#${row.id} (${row.entity_slug})`).join(', ');
-      throw verbError('invalid_params',
-        `claim_linked: fact #${id} was saved without an entity, and the same claim is active as ${named}. Forgetting #${id} would withdraw those facts too, so nothing was forgotten.`,
-        `Keep the linked ${linked.length === 1 ? 'fact' : 'facts'}: the copy without an entity needs no cleanup (remember the claim with entity and replaces: "${id}" retires it). To withdraw the claim everywhere, forget ${linked.map(row => `#${row.id}`).join(', ')} first, then #${id}.`);
-    }
-  }
-  if (!excludePrivate) return;
-  const hidden = await tx.executeRaw(`SELECT 1 FROM facts u
-    JOIN facts l ON l.source_id=u.source_id AND l.visibility=u.visibility AND l.id<>u.id
-      AND (u.entity_slug IS NULL OR l.entity_slug=u.entity_slug)
-      AND l.expired_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
-      AND gbrain_fact_fingerprint(l.fact)=gbrain_fact_fingerprint(u.fact)
-    WHERE u.id=$1 AND u.source_id=$2 AND NOT (${privateProvenanceFilterFragment('l')}) LIMIT 1`, [id, sourceId]);
-  if (!hidden.length) return;
-  throw verbError('invalid_params',
-    `claim_linked: the same claim as fact #${id} is active elsewhere in this brain. Forgetting #${id} would withdraw it there too, so nothing was forgotten.`,
-    'Keep the fact. To withdraw the claim everywhere, ask the user to forget it on the brain host.');
-}
-
-/** Withdrawal commits independently of filesystem ownership and request FIFO. */
-export async function submitForgetMutation(ctx: OperationContext, operation: 'forget' | 'forget_fact', params: Record<string, unknown>): Promise<Record<string, unknown>> {
+export async function submitForgetMutation(ctx: OperationContext, operation: 'forget' | 'forget_fact', params: Record<string, unknown>, waitMs?: number): Promise<Record<string, unknown>> {
   const sub = await submission(ctx, operation, params);
-  if (sub.prior) return withSimilarActive(ctx, operation, sub.sourceId, sub.p, writeResponse(sub.prior));
+  if (sub.prior) return withSimilarActive(ctx, operation, sub.sourceId, sub.p, writeResponse(await waitForWrite(ctx.engine, sub.prior, ctx.config, waitMs ?? ctx.writeWaitMs)));
   const { p, sourceId, principal, callerIntent, requestId, clientRequestId } = sub;
-  const semanticReview = p.semantic_review !== false;
   const id = Number(p.id);
   const rawId = String(p.id).trim();
   const reason = typeof p.reason === 'string' && p.reason.trim() ? p.reason.trim() : null;
+  const missing = () => verbError(operation === 'forget' ? 'not_found' : 'fact_not_found',
+    `No fact with id "${rawId}".`, 'Ids come from remember/recall. Recall the entity first to find the right fact.');
   if (!Number.isSafeInteger(id) || id <= 0) throw verbError(operation === 'forget' ? 'not_found' : 'fact_not_found',
     `No fact with id "${rawId}".`, 'Pass the fact id returned by remember or recall.');
+  const remote = ctx.remote !== false;
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
   // #5575 I3: a remote caller cannot forget a fact more trusted than its own writes; the owner is asked instead.
-  if (ctx.remote !== false && Number.isSafeInteger(id) && id > 0) await guardRemoteForget(ctx.engine, { sourceId, factId: id, principal, reason, excludePrivate });
-  // Retry the whole withdrawal, so source/principal guards and the connection
-  // are released before backoff. Admission must not retry a nested savepoint.
-  let withdrawn: WithdrawalCommit['pages'] = [];
-  const beliefReport = { appended: 0 };
-  const done = await retryWriteAdmission(requestId, remaining => ctx.engine.transaction(async tx => {
-    withdrawn = [];
-    beliefReport.appended = 0;
-    await declareDurablePersistence(tx, `${Math.min(1000, remaining)}ms`, `${remaining}ms`);
-    // Brain row -> source -> current grant -> counters/request -> sorted page keys -> facts.
-    // Do not acquire a shared source lock first and upgrade it after admission.
-    const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>(
-      'SELECT incarnation,archived FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
-    if (!source || source.archived) throw sourceInactive(sourceId);
-    // Another same-ID caller may have completed while we waited for the source.
-    const prior = await getWriteRequest(tx, principal, requestId);
-    if (prior) {
-      await submissionAuthority({ ...ctx, engine: tx }, operation, sourceId, source.incarnation, prior.slug);
-      await authorizeStoredRequest(tx, prior, true);
-      assertReplayIntent(prior, intentDigest({ operation, sourceId, slug: prior.slug, callerIntent }));
-      return prior;
-    }
-    const [fact] = await tx.executeRaw<WithdrawalTarget>(`SELECT id,entity_slug,source_markdown_slug,expired_at,trust_tier FROM facts
-      WHERE id=$1 AND source_id=$2 AND ($3::boolean=false OR visibility='world')${excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''} FOR UPDATE`, [id, sourceId, ctx.remote !== false]);
-    if (!fact) throw verbError(operation === 'forget' ? 'not_found' : 'fact_not_found',
-      `No fact with id "${rawId}".`, 'Ids come from remember/recall. Recall the entity first to find the right fact.');
-    if (ctx.remote !== false && supersessionGuarded('agent_written', fact.trust_tier)) throw remoteForgetRaced(id);
-    await refuseForgetReachingOtherCopies(tx, sourceId, fact, ctx.remote !== false, excludePrivate);
-    const slug = fact.source_markdown_slug ?? fact.entity_slug ?? 'memory/unattributed';
-    enforceClientSlugFence(ctx, slug, operation); enforceSubagentSlugFence(ctx, slug, operation);
-    const authority = await submissionAuthority({ ...ctx, engine: tx }, operation, sourceId, source.incarnation, slug);
-    const row = await admitWriteInTransaction(tx, { origin: ctx.admissionOrigin, principal, operation, sourceId, sourceIncarnation: source.incarnation,
-      slug, requestId, clientRequestId, callerIntent, intent: { ...callerIntent, reason }, authority });
-    if (isTerminal(row)) return row;
-    return withCoordinatedWrite(tx, [sourceId], async () => {
-      // Even an expired legacy fact acquires a ledger so a stale import cannot
-      // reactivate it. Internal affected-page identities never enter the receipt.
-      withdrawn = (await recordFactWithdrawal(tx, id, sourceId, ctx.remote !== false, { requestId: row.id, semanticReview, excludePrivate, beliefReport })).pages;
-      if (reason) await tx.executeRaw(`UPDATE facts SET context=concat_ws(' | ',NULLIF(context,''),$3::text)
-        WHERE id=$1 AND source_id=$2`, [id, sourceId, `forgotten: ${reason}`]);
-      if (operation === 'forget_fact' && fact.expired_at !== null) {
-        return completeWrite(tx, row, 'failed', {}, { code: 'fact_already_expired', message: `Fact id ${id} already expired.` });
-      }
-      const outcome = operation === 'forget'
-        ? { id: rawId, expired: fact.expired_at === null, reason, protocol_version: 1 }
-        : { id, expired: true, path: 'legacy_db', reason: reason ?? 'forgotten' };
-      return completeWrite(tx, row, 'committed', { ...outcome, persistence: { mode: 'database' } });
-    }, requestAttribution(row));
-  }), undefined, error => ctx.engine.reconnect({ error }));
-  if (beliefReport.appended && done.state === 'committed') await markBeliefCommits(ctx.engine, [done.id]).catch(() => undefined);
-  // The commit removed the withdrawn pages' chunks. Rebuild them before
-  // acknowledging: a CLI process exits without a resident projection worker.
-  // A failed rebuild stays queued as durable projection work.
-  const slugs = withdrawn.map(page => page.slug);
-  for (let start = 0; start < slugs.length; start += 100) {
-    await rebuildPendingPageProjections(ctx.engine, 100, { pages: { sourceId, slugs: slugs.slice(start, start + 100) } }).catch(() => undefined);
-  }
-  return withSimilarActive(ctx, operation, sourceId, p, writeResponse(done));
+  if (remote) await guardRemoteForget(ctx.engine, { sourceId, factId: id, principal, reason, excludePrivate });
+  const [source] = await ctx.engine.executeRaw<RememberSource>(
+    "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
+  if (!source || source.archived) throw sourceInactive(sourceId);
+  const fact = await readForgetTarget(ctx.engine, id, sourceId, remote, excludePrivate);
+  if (!fact) throw missing();
+  if (remote && supersessionGuarded('agent_written', fact.trust_tier)) throw remoteForgetRaced(id);
+  await refuseForgetReachingOtherCopies(ctx.engine, sourceId, fact, remote, excludePrivate);
+  const slug = fact.source_markdown_slug ?? fact.entity_slug ?? UNATTRIBUTED_MEMORY_SLUG;
+  enforceClientSlugFence(ctx, slug, operation); enforceSubagentSlugFence(ctx, slug, operation);
+  const authority = await submissionAuthority(ctx, operation, sourceId, source.incarnation, slug);
+  const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
+  const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
+  // The pages a withdrawal strikes publish through the source's canonical worktree, as remember's do; a source whose
+  // root has no owner and refuses a claim publishes database-only, as its writes do.
+  const target = await resolveFactWriteTarget(ctx.engine, sourceId, source, { sandbox, fileBacked: true, remote })
+    .catch((error: unknown) => { if (error instanceof OperationError) return null; throw error; });
+  if (target?.kind === 'publish' && target.databaseOnlyReason) authority.databaseOnlyReason = target.databaseOnlyReason;
+  const binding = target?.kind === 'unbound' ? await claimWorktree(ctx.engine, sourceId, target.root, undefined, undefined, { automatic: true })
+    : target?.binding ?? null;
+  const row = await admitWrite(ctx.engine, { origin: ctx.admissionOrigin, principal, operation, sourceId, sourceIncarnation: source.incarnation,
+    slug, pageId: snapshot?.page.id ?? null, requestId, clientRequestId, callerIntent,
+    intent: { ...callerIntent, reason, semantic_review: p.semantic_review !== false }, authority,
+    worktreeId: binding?.worktree_id ?? null, topologyGeneration: binding?.topology_generation ?? null });
+  const written = await waitForWrite(ctx.engine, row, ctx.config, waitMs ?? ctx.writeWaitMs);
+  return withSimilarActive(ctx, operation, sourceId, p, writeResponse(written));
 }
 
 /** `forget` responses carry `similar_active` (ids and scores only, zero model calls); best-effort, never fails the forget. */

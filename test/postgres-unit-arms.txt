@@ -80,6 +80,7 @@ test/fence-repair-receipts.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
 test/forecast-journal.test.ts
 test/frontmatter-reserved-keys-6454.test.ts
+test/g4-forget-fence-edit.test.ts
 test/get-chunks-paging.test.ts
 test/git-canonical-conversion-g8a.test.ts
 test/git-canonical-declared-g7a.test.ts

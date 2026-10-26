@@ -19,7 +19,7 @@ import { PREPARATION_BUDGET_KEYS, preparationKind } from './preparation-budget.t
 import { chargeTransientInterruption, chargedInterruptionDetail, transientInterruption, type TransientInterruption } from './transient-retry.ts';
 import { readWriteSwitchSnapshot } from './switches.ts';
 import { isSharedReadFailure } from './bounded-reads.ts';
-import { isTerminal, principalKey, requestPrincipal, recoveryFiles, type FileRecoveryRecord, type RecoveryRecord, type WriteRequest } from './model.ts';
+import { isBundleRecovery, isTerminal, PAGES_RECOVERY_MAX_FILES, principalKey, requestPrincipal, recoveryFiles, type FileRecoveryRecord, type RecoveryRecord, type WriteRequest } from './model.ts';
 import { isLockOpenFailure, noteLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { lockCoreSources } from './core-guard.ts';
@@ -103,8 +103,23 @@ interface PreparedMutationBase {
  * `commit` (trusted local preparers only) rides the Git effect into the commit message.
  */
 export type PageMutationFile = MutationFile & { publishMode?: number; commit?: GitCommitNote };
+/**
+ * GBRA-190 G4 (D2): another page a page publication writes in the same transaction, under the same recovery record and
+ * in the same Git commit as the request's own page (a withdrawal's other pages, or the memory/unattributed row a
+ * remember links). Its key is locked with the request's, its revision and identity are checked under that lock, its
+ * file (when the source has one) is published with the request's, and `validate` and `apply` run in the publication
+ * transaction after the request's own. A request without companions publishes exactly as before.
+ */
+export interface CompanionPage {
+  slug: string;
+  pageId: number | null;
+  observedRevision: string | null;
+  file?: PageMutationFile;
+  validate?(tx: BrainEngine): Promise<void>;
+  apply(tx: BrainEngine, preimage: PageSnapshot | null): Promise<unknown>;
+}
 export type PreparedMutation = PreparedMutationBase & (
-  | { target?: 'page'; file?: PageMutationFile; files?: never }
+  | { target?: 'page'; file?: PageMutationFile; files?: never; companions?: readonly CompanionPage[] }
   | { target: 'skill_bundle'; file?: never; files: MutationFile[]; validate(tx: BrainEngine): Promise<void> }
 );
 export interface PublicationHooks {
@@ -461,11 +476,14 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
   let afterCommitDue: WriteRequest | null = null;
   let createdPage = false;
   const skill = prepared.target === 'skill_bundle';
-  const files = skill ? prepared.files ?? [] : prepared.file ? [prepared.file] : [];
+  const companions = prepared.target === 'skill_bundle' ? [] : prepared.companions ?? [];
+  // GBRA-190 G4 (D2): the request's own page file first, then each companion's, in one recovery record and one commit.
+  const files = skill ? prepared.files ?? [] : [...(prepared.file ? [prepared.file] : []), ...companions.flatMap(companion => companion.file ? [companion.file] : [])];
   const beliefReport = { appended: 0 };
   try {
     assertMutationProtocol(row);
-    if ((row.target_kind ?? 'page') !== (prepared.target ?? 'page') || (skill ? !!prepared.file || !files.length : prepared.files !== undefined)) {
+    if ((row.target_kind ?? 'page') !== (prepared.target ?? 'page') || (skill ? !!prepared.file || !files.length : prepared.files !== undefined)
+      || companions.some(companion => companion.slug === row.slug) || new Set(companions.map(companion => companion.slug)).size !== companions.length) {
       throw opError('unsupported_mutation_protocol', 'Prepared mutation does not match its accepted target.',
         `Request ${row.request_id} in source ${row.source_id} was prepared for a different target than it was accepted for, so nothing was published. This is an internal mismatch, not a caller error: inspect the request and report it to the user; do not resubmit it unchanged.`,
         { fix: requestFix(row) });
@@ -523,26 +541,41 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
           }
         }
       });
-    } else if (prepared.file && !prepared.noop) {
-      if (!binding || !lock || !isWriteTargetContained(prepared.file.path, prepared.file.root)) throw opError('storage_error', 'Filesystem publication requires a confined canonical owner.',
+    } else if (files.length && !prepared.noop) {
+      if (!binding || !lock || files.some(file => !isWriteTargetContained(file.path, file.root))) throw opError('storage_error', 'Filesystem publication requires a confined canonical owner.',
         `This host does not hold source ${row.source_id}'s canonical worktree, or the file of ${row.slug} resolves outside it, so request ${row.request_id} wrote no file. Inspect the owner; the write publishes only on the host that owns the source.`,
         { fix: ownerStatusFix(row.source_id) });
-      const { record, bytes } = pageRecoveryRecord(row, prepared.file, binding);
-      if (binding.canonical_git === true) record.door = await doorMarker(binding.local_path!);
-      // G2: a strict write replayed after its door commit landed finds its own bytes, committed (git-door.ts).
-      if (prepared.file.expectedBeforeHash !== undefined && record.beforeHash !== prepared.file.expectedBeforeHash && !await replayAfterDoorCommit(record)) {
+      const pages = [...(prepared.file ? [{ slug: row.slug, observedRevision: prepared.observedRevision }] : []),
+        ...companions.flatMap(companion => companion.file ? [{ slug: companion.slug, observedRevision: companion.observedRevision }] : [])];
+      const marker = binding.canonical_git === true ? await doorMarker(binding.local_path!) : undefined;
+      const built = files.map((file, index) => {
+        const page = pageRecoveryRecord(row, file, binding!);
+        if (marker) page.record.door = marker;
+        return { ...page, file, page: pages[index]! };
+      });
+      for (const { record, file, page } of built) {
+        // G2: a strict write replayed after its door commit landed finds its own bytes, committed (git-door.ts).
+        if (file.expectedBeforeHash === undefined || record.beforeHash === file.expectedBeforeHash || await replayAfterDoorCommit(record)) continue;
         // A coordinated writer (a withdrawal mirror) also advanced the page:
         // reprepare against it. Bytes changed at an unchanged revision are an
         // uncoordinated edit.
-        const current = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
-        if ((current?.revision ?? null) !== prepared.observedRevision) {
+        const current = await engine.readPageSnapshot(page.slug, { sourceId: row.source_id, includeDeleted: true });
+        if ((current?.revision ?? null) !== page.observedRevision) {
           throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
         }
         throw localEditRefusal('The canonical file changed after preparation.', row, skill, 'after the write was prepared, at an unchanged page revision');
       }
-      await prepareRecovery(engine, row, record, bytes);
+      if (built.length > 1 && (built.length > PAGES_RECOVERY_MAX_FILES || built.some(({ record }) => record.root !== built[0]!.record.root))) {
+        throw opError('storage_error', 'A multi-page publication must stay under one canonical root.',
+          `Request ${row.request_id} in source ${row.source_id} writes ${built.length} page files that do not share one canonical root (or more than ${PAGES_RECOVERY_MAX_FILES}), so nothing was written. Inspect the request; if it repeats, run gbrain doctor --json and report it to the user.`,
+          { fix: requestFix(row) });
+      }
+      // One file keeps its version 1 record; several page files share one version 3 record (model.ts PagesRecoveryRecord).
+      const record: RecoveryRecord = built.length === 1 ? built[0]!.record
+        : { version: 3, target: 'pages', root: built[0]!.record.root, ownerEpoch: String(binding.owner_epoch), attempt: row.execution_token!, files: built.map(entry => entry.record) };
+      await prepareRecovery(engine, row, record, built.reduce((sum, entry) => sum + entry.bytes, 0));
       recovery = record;
-      await stageLargeFiles(engine, row, prepared.file, record);
+      for (const entry of built) await stageLargeFiles(engine, row, entry.file, entry.record);
       await hooks.boundary?.('prepared', row);
     }
     const done = await publicationTransaction(engine, async tx => {
@@ -565,10 +598,12 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         `Another worker took over request ${row.request_id} (its execution claim expired or was reassigned) before this attempt published, so this attempt wrote nothing and the current holder decides the outcome. Inspect the request rather than resubmitting it.`,
         { fix: requestFix(row) });
       let snapshot: PageSnapshot | null = null;
+      const companionSnapshots = new Map<string, PageSnapshot | null>();
       if (skill) await assertSharedSkillPersistence(tx, row.source_id);
       else {
         await assertKnowledgePublicationAllowed(tx, row, prepared.file);
-        await tx.lockPageKeys([{ sourceId: row.source_id, slug: row.slug },...(prepared.additionalPageKeys??[])]);
+        await tx.lockPageKeys([{ sourceId: row.source_id, slug: row.slug },...(prepared.additionalPageKeys??[]),
+          ...companions.map(companion => ({ sourceId: row.source_id, slug: companion.slug }))]);
         snapshot = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
         // A rename moves an existing page (its old slug is an additional key): not a new page.
         createdPage = snapshot === null && !prepared.additionalPageKeys?.length;
@@ -576,16 +611,25 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted page was deleted or recreated.');
         await assertUnboundPublication(tx, row, snapshot?.page.source_path);
         if ((snapshot?.revision ?? null) !== prepared.observedRevision) throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
+        for (const companion of companions) {
+          const current = await tx.readPageSnapshot(companion.slug, { sourceId: row.source_id, includeDeleted: true });
+          if ((current?.page.id ?? null) !== companion.pageId) throw pageIdentityError(current != null || companion.pageId === null, 'A page this write also changes was deleted or recreated.');
+          if ((current?.revision ?? null) !== companion.observedRevision) throw new OperationError('revision_conflict', 'A page this write also changes changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
+          companionSnapshots.set(companion.slug, current);
+        }
       }
       await prepared.validate?.(tx);
+      for (const companion of companions) await companion.validate?.(tx);
       // #5409: a file target prepared before the source became a read-only mirror is never published.
       if (!skill && prepared.file && await sourceMirrorReadOnly(tx, row.source_id, true)) {
         throw new OperationError('source_changed', 'The source became a read-only mirror after this write was prepared; nothing was written to its checkout.',
           'Retry the write with a new request_id; it is now stored database-only.');
       }
-      const door = recovery?.version === 1 ? recovery : null;
+      // G2: a strict publication's page files (one, or every file of a multi-page publication) carry the door marker.
+      const doorFiles = recovery && !isBundleRecovery(recovery) ? recoveryFiles(recovery) : [];
+      const door = doorFiles[0]?.door ?? null;
       // A write prepared strict rechecks its flag under the source lock; one prepared without it publishes as before (only conversion sets the flag).
-      if (door?.door && !await sourceCanonicalGit(tx, row.source_id, true)) throw strictChanged(row.source_id);
+      if (door && !await sourceCanonicalGit(tx, row.source_id, true)) throw strictChanged(row.source_id);
       // G7a (git-declared.ts): a strict publication never writes or commits a private page's bytes.
       if (!skill) await assertNoPrivateCommit(tx, row, prepared, snapshot, binding);
       if (recovery) {
@@ -613,9 +657,14 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       }
       prepared.postimage = undefined;
       // W1 finalization contract (docs/designs/BELIEF_LEDGER.md 5.1): the ledger append is the last canonical write before the receipt.
-      const apply = () => timePublicationStep('apply', row.slug, () => prepared.apply(tx, snapshot));
+      const apply = () => timePublicationStep('apply', row.slug, async () => {
+        const result = await prepared.apply(tx, snapshot);
+        for (const companion of companions) await companion.apply(tx, companionSnapshots.get(companion.slug) ?? null);
+        return result;
+      });
+      const beliefKeys = companions.length ? [...(prepared.additionalPageKeys ?? []), ...companions.map(companion => ({ sourceId: row.source_id, slug: companion.slug }))] : prepared.additionalPageKeys;
       const outcome = await withCoordinatedWrite(tx, [row.source_id], skill ? apply
-        : () => withBeliefBatch(tx, publicationBeliefOptions(row, prepared.additionalPageKeys, beliefReport), apply), publicationAttribution(row, prepared.trust));
+        : () => withBeliefBatch(tx, publicationBeliefOptions(row, beliefKeys, beliefReport), apply), publicationAttribution(row, prepared.trust));
       if (!skill) await classifyUnboundPage(tx, row);
       if (prepared.databaseOnlyReason === 'mirror_read_only') await classifyMirrorPage(tx, row);
       const final = skill ? null : await publicationPostimage(tx, row, prepared);
@@ -624,8 +673,19 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       decoratePublicationOutcome(row, prepared, outcome, final, files.length, skill);
       await recordPublicationFenceTrend(tx, row, outcome);
       // G2: a strict source's file is committed before its row; its Git effect only pushes.
-      if (door?.door) Object.assign(outcome.persistence as object, { git_state: 'committed', git_commit: await commitThroughDoor(door.door.root, [{ path: door.path, note: prepared.file?.commit }], lock ?? undefined) });
-      await timePublicationStep('effects', row.slug, () => queuePublicationEffects(tx, row, final, outcome, prepared, { pushOnly: !!door?.door }));
+      if (door) Object.assign(outcome.persistence as object, { git_state: 'committed', git_commit: await commitThroughDoor(door.root,
+        doorFiles.map((record, index) => ({ path: record.path, note: (files[index] as PageMutationFile | undefined)?.commit })), lock ?? undefined) });
+      // D2: a multi-page publication's Git and embedding effects walk every page it wrote (effect-targets.ts targets).
+      let pageTargets: { slug: string; page_id: number; revision: string }[] | undefined;
+      if (companions.length) {
+        pageTargets = [];
+        for (const slug of [row.slug, ...companions.map(companion => companion.slug)]) {
+          const page = slug === row.slug ? final : await tx.readPageSnapshot(slug, { sourceId: row.source_id, includeDeleted: true });
+          if (page && !page.page.deleted_at) pageTargets.push({ slug, page_id: Number(page.page.id), revision: page.revision });
+        }
+        pageTargets.sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
+      }
+      await timePublicationStep('effects', row.slug, () => queuePublicationEffects(tx, row, final, outcome, prepared, { pushOnly: !!door, ...(pageTargets ? { pageTargets } : {}) }));
       if (prepared.afterEffects) await withCoordinatedWrite(tx, [row.source_id], () => prepared.afterEffects!(tx, outcome), publicationAttribution(row, prepared.trust));
       await hooks.boundary?.('before_commit', row);
       const committed = await completeWrite(tx, current, 'committed', outcome, undefined, current);
@@ -635,9 +695,9 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
     await hooks.boundary?.('after_commit', done);
     if (beliefReport.appended && done.state === 'committed') await markBeliefCommits(engine, [row.id]).catch(() => undefined);
     if (recovery) {
-      // A version 3 record's prior-file copy is removed once the outcome is durable, before its record is cleared.
+      // A large prior file's copy (staging.before) is removed once the outcome is durable, before its record is cleared.
       const staged = recovery;
-      if (staged.version === 1 && staged.staging?.before) await withFilesystemPublication([staged.root], async () => cleanupRecoveryStaging(staged));
+      if (!isBundleRecovery(staged)) for (const file of recoveryFiles(staged)) if (file.staging?.before) await withFilesystemPublication([file.root], async () => cleanupRecoveryStaging(file));
       await clearResolvedRecovery(engine, row.id, done);
     }
     if (done.state === 'committed') afterCommitDue = done;
@@ -709,7 +769,7 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       if (!current.recovery) return current;
       const records = recoveryFiles(current.recovery);
       let landed: string | null = null;
-      if (current.recovery.version === 2) {
+      if (isBundleRecovery(current.recovery)) {
         const owner = await guardOwnership(tx, current, hostId);
         if (!owner) throw opError('owner_unavailable', 'Skill recovery requires its canonical owner.',
           `This host no longer holds source ${current.source_id}'s current owner epoch, so shared-skill request ${current.request_id} stays recovering until its owner finishes it. Inspect the owner; its resident writer finishes the recovery.`,
@@ -721,7 +781,7 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
         { fix: ownerStatusFix(current.source_id) });
       try {
         if (!isTerminal(current)) for (const record of records) {
-          const actual = current.recovery.version === 2 ? bundleFileHash(record) : fileHash(record.path);
+          const actual = isBundleRecovery(current.recovery) ? bundleFileHash(record) : fileHash(record.path);
           if (actual !== record.beforeHash && actual !== record.afterHash) throw unexpectedRecoveryBytes('Canonical recovery bytes changed outside publication.', current, 'was edited outside gbrain and');
         }
         // A terminal outcome's prior-file copy is dropped unread when its canonical file still holds the prior bytes.
@@ -733,10 +793,10 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
         if (!isTerminal(current)) for (let index = 0; index < records.length; index++) {
           const record = records[index];
           hooks.fileBoundary?.('before_restore', current, index);
-          const actual = current.recovery.version === 2 ? bundleFileHash(record) : fileHash(record.path);
+          const actual = isBundleRecovery(current.recovery) ? bundleFileHash(record) : fileHash(record.path);
           if (actual !== record.beforeHash && actual !== record.afterHash) throw unexpectedRecoveryBytes('Canonical recovery bytes changed during restoration.', current, 'changed while recovery was restoring it and');
           // G2: a strict publication whose commit landed keeps the committed file; Git holds it.
-          if (current.recovery.version === 1 && await doorCommitLanded(record)) {
+          if (!isBundleRecovery(current.recovery) && await doorCommitLanded(record)) {
             landed = await landedCommit(record.door!.root, record.door!.head, record.path);
             if (record.staging?.before) await withFilesystemPublication([record.root], async () => cleanupRecoveryStaging(record, { priorIntact: true }));
           } else if (record.staging?.before) {
@@ -747,7 +807,7 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
           } else if (actual === record.afterHash && actual !== record.beforeHash) {
             await withFilesystemPublication([record.root], async () => {
               const file = { path: record.path, root: record.root, content: record.before === null ? null : Buffer.from(record.before, 'base64') };
-              if (current.recovery!.version === 2) {
+              if (isBundleRecovery(current.recovery!)) {
                 const restored = { ...record, beforeHash: record.afterHash, afterHash: record.beforeHash,
                   mode: record.afterHash === null ? null : record.afterMode ?? record.mode, afterMode: record.mode ?? undefined,
                   staging: { publication: record.staging?.restoration } };

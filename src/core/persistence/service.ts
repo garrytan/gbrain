@@ -101,6 +101,7 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   if (row.operation === 'put_page' && row.intent?.kind === 'managed_file_import') return (await import('./import-prepare.ts')).prepareManagedImportMutation(e, row, cfg);
   if (row.operation === 'put_page' && row.intent?.kind === 'managed_file_repair') return (await import('./file-repair.ts')).prepareManagedFileRepairMutation(e, row, cfg);
   if (row.operation === 'remember') return (await import('./memory-mutations.ts')).prepareMemoryMutation(e, row, cfg, signal);
+  if (row.operation === 'forget' || row.operation === 'forget_fact') return (await import('./forget-prepare.ts')).prepareForgetMutation(e, row, cfg, signal);
   if (row.operation === 'loops_close' && row.intent?.kind === 'retire_loop_fact') return (await import('./loop-fact-retirement.ts')).prepareLoopFactRetirement(e, row, cfg);
   if (row.operation === 'decide_proposal') return (await import('../facts/proposal-supersede.ts')).prepareProposalMutation(e, row, cfg);
   if (row.operation === 'trust_owner_page') return (await import('../trust/page-handlers.ts')).prepareTrustOwnerPageMutation(e, row, cfg);

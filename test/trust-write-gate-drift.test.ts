@@ -51,7 +51,7 @@ const EXEMPT: Record<string, string> = {
   'src/core/page-body/segment-rewrite.ts': 'forget, withdrawal and fact purge strike or drop existing fence rows of a segmented body (lifecycle); no new text',
   'src/core/persistence/links-maintenance.ts': 'link extraction from stored page text',
   'src/core/persistence/loop-fact-retirement.ts': 'expires a loop fact (lifecycle)',
-  'src/core/persistence/memory-mutations.ts': 'forget (lifecycle); remember is gated in memory-prepare.ts',
+  'src/core/persistence/forget-prepare.ts': 'forget (lifecycle): strikes withdrawn rows and records the withdrawal; it writes no new claim',
   'src/core/repair/captured-facts.ts': 'owner repair of existing rows',
   'src/core/repair/consolidate-ties.ts': 'owner repair reopening the validity of existing facts (lifecycle)',
   'src/core/repair/duplicate-facts.ts': 'owner repair behind a preview hash: supersedes exact copies of an existing fact with its oldest row (expired_at, superseded_by; lifecycle, no new text); fenced copies are struck through put_page, which runs the gate',

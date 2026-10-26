@@ -250,7 +250,8 @@ describe('H1a keyless MCP journey (stdio)', () => {
     expect(text0.startsWith(NOTICE_PREFIX)).toBe(false);
     const result = body(recalled);
     expect(JSON.stringify(result)).toContain(MARKER);
-    expect(result.results.length).toBe(PAGES);
+    // The imported pages, plus memory/unattributed: a fact remembered without an entity is a row of its fence (GBRA-190 G4).
+    expect(result.results.length).toBe(PAGES + 1);
     // The degraded notice is its own prefixed block (the model sees it) and mirrored in _meta.
     // A recall that passes only `query` also carries the recall_hint (TC7) naming `question`.
     const blocks = noticeBlocks(recalled);

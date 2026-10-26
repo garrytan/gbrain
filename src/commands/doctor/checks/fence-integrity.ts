@@ -24,7 +24,10 @@
  * claim), from the planner's read-only result: pages, fact ids and reason
  * classes, never the claim. Those rows stay active and searchable and
  * nothing is lost, so the finding has no command (`next: report`) and never
- * suggests `forget_fact`; its verify re-counts the rows.
+ * suggests `forget_fact`; its verify re-counts the rows. A `duplicate_claim`
+ * row (its page's fence already carries the claim) is the exception: the fix
+ * is the read-only `gbrain repair duplicate-facts --source <id>` preview,
+ * which keeps the fence row and supersedes the copy onto it (GBRA-190).
  *
  * #6610: it also lists `unbound_legacy_facts`, the unfenced rows of a classic
  * database-only page that stay unfenced because the source has a checkout but
@@ -134,11 +137,21 @@ async function unrenderableLegacyFacts(engine: BrainEngine, sourceIds: string[] 
   return { total: pages.reduce((sum, page) => sum + page.rows.length, 0), complete, pages, unbound };
 }
 
+/** The sources of the unadopted rows that copy a claim their page's fence already carries, in page order. */
+function duplicateClaimSources(found: Omit<UnrenderableLegacyFacts, 'unbound'>): string[] {
+  return [...new Set(found.pages.filter(page => page.rows.some(row => row.reason === 'duplicate_claim')).map(page => page.source_id))];
+}
+
 function unrenderableSentence(found: Omit<UnrenderableLegacyFacts, 'unbound'>): string {
   const pages = found.pages.slice(0, 5).map(page => `${page.slug} (${page.source_id}): ${[...new Set(page.rows.map(row => row.class))].sort().join(', ')}`).join('; ');
+  const duplicates = found.pages.reduce((sum, page) => sum + page.rows.filter(row => row.reason === 'duplicate_claim').length, 0);
+  const sources = duplicateClaimSources(found);
   return `${found.total} legacy fact row(s) on ${found.pages.length} page(s) cannot be adopted into their facts fence: ${pages}${found.pages.length > 5 ? '; …' : ''}. `
     + 'They stay active and searchable and nothing is lost: the fence codec would change their text (or the page already carries the claim), so gbrain leaves them as legacy rows '
-    + 'and those pages skip destructive fact reconciliation. There is no safe automatic fix; report the pages and reason classes with the gbrain version. Do not forget or expire a row to clear this count.'
+    + 'and those pages skip destructive fact reconciliation. '
+    + (duplicates ? `${duplicates} of them copy a claim their page's facts table already carries (duplicate_claim): ${sources.map(id => `gbrain repair duplicate-facts --source ${id}`).join('; ')} previews retiring each copy onto its fence row (read-only; applying it needs the user's agreement), and the page then reconciles again. ` : '')
+    + (duplicates < found.total ? 'For the other rows there is no safe automatic fix; report the pages and reason classes with the gbrain version. ' : '')
+    + 'Do not forget or expire a row to clear this count.'
     + (found.complete ? '' : ' The scan did not finish within its time budget, so more rows may be affected; run gbrain doctor --only fence_integrity again.');
 }
 
@@ -219,6 +232,9 @@ export async function fenceIntegrityResult(engine: BrainEngine, opts: { timeoutM
         'fence_integrity', { docs: DOCS })
         : uncommitted.length ? agentFix(['gbrain', 'sources', 'status', uncommitted[0]!.source_id], 'Lists the uncommitted fence repairs of this legacy source with the exact gbrain git commit-push step for each file.',
           'fence_integrity', { docs: DOCS })
+          : duplicateClaimSources(unrenderable).length ? agentFix(['gbrain', 'repair', 'duplicate-facts', '--source', duplicateClaimSources(unrenderable)[0]!, '--json'],
+            `Previews, read-only, the groups of active copies of one fact in ${duplicateClaimSources(unrenderable)[0]} and the row each keeps: a legacy copy of a claim its page's facts table carries keeps the fence row and is superseded onto it. Show the preview to the user; it prints the apply command with --expect <hash>, which runs only with their agreement.`,
+            'fence_integrity', { docs: 'docs/guides/repair.md#duplicate-facts' })
           : unbound.length && !unrenderable.total ? agentFix(['gbrain', 'config', 'set', UNBOUND_WRITE_KEY, 'database_only'],
             `Allows database-only writes to sources with a checkout but no canonical owner, so the next extract_facts run fences these rows into their database pages. It is brain-wide (every database-only page of such a source stays database-only after binding), so ask the user first.`,
             'fence_integrity', { ask_user: true, docs: UNBOUND_SOURCE_DOCS,

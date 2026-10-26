@@ -44,6 +44,12 @@ import type { ParsedFact } from '../facts-fence.ts';
 import { computeEffectiveDate } from '../effective-date.ts';
 
 /** #7247: the page dates that say when its content happened. A page's creation or import time is not one. */
+/**
+ * The page a fact saved without an entity is a row of (GBRA-190 G4, D3). Its fence rows belong to no entity: they
+ * project with `entity_slug` NULL, so their withdrawal is source-wide ('*'), as a subjectless fact's always was.
+ */
+export const UNATTRIBUTED_MEMORY_SLUG = 'memory/unattributed';
+
 export const FACT_DATE_SOURCES: ReadonlySet<string> = new Set(['event_date', 'date', 'published', 'filename']);
 
 /** #7247: the fallback valid_from for a page's fence rows without a cell, or null when the page states no such date. */
@@ -265,7 +271,7 @@ export function extractFactsFromFenceText(
     const row: FenceExtractedFact = {
       fact: f.claim,
       kind: f.kind as FactKind,
-      entity_slug: slug,
+      entity_slug: slug === UNATTRIBUTED_MEMORY_SLUG ? null : slug,
       visibility: f.visibility as FactVisibility,
       notability: f.notability,
       context: f.context ?? null,

@@ -311,7 +311,9 @@ A claim that was forgotten is refused with `invalid_params` and the message
 prefix `fact_withdrawn`: remembering the same text again does not restore it,
 and a claim forgotten without an entity is withdrawn for every entity. To link
 a fact saved without an entity, do not forget it; remember it with `entity`
-and `replaces` set to its id.
+and `replaces` set to its id. In gbrain, a fact saved without an entity is a
+row of the `memory/unattributed` page's `## Facts` table, created on first
+use; linking it strikes that row in the same write.
 
 #### remember withdrawn refusal detail (additive)
 
@@ -715,6 +717,16 @@ forgetting the unlinked fact is refused with `invalid_params`, message prefix
 says to keep them, or to forget them first to withdraw the claim everywhere.
 A forget never withdraws an active fact the caller cannot read; when one
 would be reached, the refusal keeps the `claim_linked:` prefix and names no fact.
+
+#### forget publishes like a page write (additive note)
+
+In gbrain, a forget is a write of the pages that carry the claim: each row is
+struck (`~~claim~~`, a `valid_until` date and `forgotten: <reason>`) and every
+such file is published, in one commit, before the withdrawal commits. It is
+admitted and published like `remember`, so when the source's writer cannot
+publish yet the call returns the pending-write error with a receipt, and the
+fact stays recallable until the withdrawal publishes. The response shape is
+unchanged.
 
 #### forget and purge (additive note)
 
