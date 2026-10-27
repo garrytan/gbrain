@@ -39,6 +39,7 @@ import {
 import { htmlToText, trimQuotedReply } from './google-render.ts';
 import { truncateUtf8 } from '../text-safe.ts';
 import { GMAIL_MIME_LIMITS, gmailPartHeader, inspectGmailAttachments, walkGmailMime, type GmailMimePart } from './attachment-receipts.ts';
+import { fetchTextOriginals, ORIGINAL_LIMITS } from './attachment-originals.ts';
 
 export type FetchImpl = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -550,6 +551,14 @@ export class GmailClient extends GoogleApiClient {
         attachmentInspection,
       };
     });
+    if (!opts.metadataOnly) {
+      const budget = { bytes: ORIGINAL_LIMITS.threadBytes as number, count: 0 };
+      for (const [index, message] of messages.entries()) {
+        await fetchTextOriginals(message, raw.messages?.[index]?.payload, account,
+          (id, handle) => this.fetchJSON(`${GMAIL_BASE}/users/me/messages/${encodeURIComponent(id)}/attachments/${encodeURIComponent(handle)}`, 'gmail',
+            { ...opts, maxResponseBytes: ORIGINAL_LIMITS.bytes * 2 }), budget);
+      }
+    }
     messages.sort((a, b) => a.internalDateMs - b.internalDateMs);
     return { threadId: normalizedThreadId, account, messages };
   }

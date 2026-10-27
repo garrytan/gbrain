@@ -294,6 +294,7 @@ export interface GmailMessageMeta {
   /** Extracted, HTML-stripped, quote-trimmed, capped body text. */
   bodyText: string;
   attachmentInspection?: GmailAttachmentInspection;
+  attachmentOriginals?: Array<{ receiptId: string; text: string; sha256: string }>;
 }
 
 export interface GmailAttachmentReceipt {
@@ -306,8 +307,10 @@ export interface GmailAttachmentReceipt {
   size: number | null;
   attachmentId: string | null;
   kind: 'document' | 'inline' | 'calendar';
-  fetched: false;
-  indexed: false;
+  fetched: boolean;
+  indexed: boolean;
+  sha256?: string;
+  unavailable?: 'size_limit' | 'download_or_decode_failed';
 }
 
 export interface GmailAttachmentInspection {

@@ -43,3 +43,27 @@ test('normal managed Gmail sync persists attachment receipts without marking his
     expect(await engine.executeRaw('SELECT id FROM pages WHERE source_id=$1', [f.id])).toHaveLength(1);
   }
 }), 120_000);
+
+test('managed sync indexes the complete inline text original alongside its stable receipt', async () => withEnv(env, async () => {
+  const original = 'Fictional original: 2 teaspoons at 18:30 America/Los_Angeles. '.padEnd(818, 'x');
+  for (const engine of engines) {
+    const f = await source(engine, config);
+    const fetchText = async (url: string) => {
+      const response = await gmailFetch(url);
+      if (!url.includes('/threads/abc123?')) return response;
+      const body = await response.json() as any;
+      body.messages[0].payload.parts[1] = { partId: '1', mimeType: 'text/plain', filename: 'care.txt',
+        body: { data: Buffer.from(original).toString('base64url'), size: 818 } };
+      return json(body);
+    };
+    const result = await runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), options, withGoogleAccount(fetchText));
+    expect(result.added).toBe(1);
+    const [page] = await engine.executeRaw<{ id: number; frontmatter: Record<string, any>; compiled_truth: string }>(
+      'SELECT id,frontmatter,compiled_truth FROM pages WHERE source_id=$1', [f.id]);
+    expect(page.compiled_truth).toContain(original);
+    expect(page.frontmatter.gmail_attachment_receipts.messages[0].inspection.attachments[0]).toMatchObject({ fetched: true, indexed: true, size: 818, attachmentId: null });
+    const chunks = await engine.executeRaw<{ chunk_text: string }>('SELECT chunk_text FROM content_chunks WHERE page_id=$1', [page.id]);
+    expect(chunks.some(c => c.chunk_text.includes('2 teaspoons at 18:30 America/Los_Angeles'))).toBe(true);
+    await disposePersistenceConsumer(engine);
+  }
+}), 120_000);

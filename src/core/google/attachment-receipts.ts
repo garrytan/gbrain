@@ -111,9 +111,14 @@ export function renderAttachmentInspection(inspection?: GmailAttachmentInspectio
   const heading = state === 'not_inspected' ? 'Attachments: not inspected.'
     : state === 'incomplete' ? 'Attachments: inspection incomplete; absence is not established.'
     : state === 'none' ? 'Attachments: inspected; none found.'
-    : 'Attachments: present; not downloaded; not indexed.';
+    : inspection?.attachments.every(a => a.fetched && a.indexed)
+      ? 'Attachments: present; downloaded; indexed in this page.'
+      : inspection?.attachments.some(a => a.fetched)
+        ? 'Attachments: present; some originals not downloaded or not indexed.'
+        : 'Attachments: present; not downloaded; not indexed.';
   return [heading, ...(inspection?.attachments ?? []).map(a =>
-    `- ${escaped(a.filename || '(unnamed)')} — ${escaped(a.mimeType)}; ${a.size === null ? 'size unavailable' : `${a.size} bytes`}; ${a.kind}; not downloaded; not indexed. Receipt: ${a.id}.`
+    `- ${escaped(a.filename || '(unnamed)')} — ${escaped(a.mimeType)}; ${a.size === null ? 'size unavailable' : `${a.size} bytes`}; ${a.kind}; ${a.fetched ? 'downloaded' : 'not downloaded'}; ${a.indexed ? 'indexed in this page' : 'not indexed'}. Receipt: ${a.id}.${a.unavailable ? ` Original unavailable: ${a.unavailable}.` : ''}`
+
   )].join('\n');
 }
 

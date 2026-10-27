@@ -12,6 +12,7 @@
 
 import { createHash } from 'node:crypto';
 import { renderAttachmentInspection, threadAttachmentReceipts } from './attachment-receipts.ts';
+import { renderTextOriginals } from './attachment-originals.ts';
 
 import { emailCitation } from '../output/scaffold.ts';
 import { DEFAULT_CONTACTS_DIR, type CalendarEventData, type ContactData, type GmailMessageMeta, type GmailThreadData } from './types.ts';
@@ -244,6 +245,8 @@ export interface RenderedPage {
  * message from a noise sender) — those threads never materialize.
  */
 export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
+  // Compute before the receipt frontmatter, so indexed means included in this page.
+  const originals = new Map(thread.messages.map(m => [m.id, renderTextOriginals(m)]));
   if (thread.messages.length === 0) return null;
   const nonNoise = thread.messages.filter((m) => !isNoiseSender(m.fromAddress));
   if (nonNoise.length === 0) return null;
@@ -301,6 +304,7 @@ export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
     );
     if (m.to.length > 0) body.push(`To: ${m.to.join(', ')}${m.cc.length > 0 ? ` · Cc: ${m.cc.join(', ')}` : ''}`, '');
     body.push(m.bodyText || '_empty message_', '', renderAttachmentInspection(m.attachmentInspection), '');
+    if (originals.get(m.id)) body.push(originals.get(m.id)!, '');
   }
 
   return { relPath: threadRelPath(thread), markdown: fm.join('\n') + body.join('\n') + '\n' };
