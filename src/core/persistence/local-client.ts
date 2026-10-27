@@ -181,12 +181,13 @@ export async function maybeDelegateLocalOperation(
   if (!isPersistenceIpcMutation(operation)) return { handled: true, result: await requestPersistenceOperation(socketPath, request, options.timeoutMs) };
   // #5232: the owner waits the caller's wait within one transport deadline; an
   // owner without `write_wait` waits its own bound and the replay keeps the rest.
-  const waitMs = options.writeWaitMs ?? currentCliWriteWait().waitMs;
+  const cliWait = currentCliWriteWait();
+  const waitMs = options.writeWaitMs ?? cliWait.waitMs;
   const deadline = Date.now() + waitMs;
   const result = await replayWhilePending(() => {
     const budget = writeExchangeBudget(Math.max(0, deadline - Date.now()), options.timeoutMs);
     return requestPersistenceOperation(socketPath,
       capability.write_wait ? { ...request, write_wait_ms: budget.waitMs } : request, budget.timeoutMs);
-  }, waitMs);
+  }, waitMs, undefined, cliWait.waitIndexedMs);
   return { handled: true, result };
 }

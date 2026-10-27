@@ -1,6 +1,7 @@
 /** Names the queued, running or recovering work that keeps a brain from quiescing (#5629). Read-only. */
 import { OperationError } from '../ops/contract.ts';
 import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
+import { INDEX_SPLIT_PAGE_EFFECT } from './git-first-gate.ts';
 import type { SqlEngine } from './model.ts';
 
 export interface BlockingEffect {
@@ -14,7 +15,8 @@ const inspect = (sourceId: string) => `gbrain sources writer status ${sourceId} 
 export async function listBlockingEffects(engine: SqlEngine, opts: { sourceId?: string; limit?: number; recoveringOnly?: boolean } = {}): Promise<BlockingEffect[]> {
   const limit = Math.max(1, Math.min(opts.limit ?? 20, 1000));
   const rows = await engine.executeRaw<Omit<BlockingEffect, 'inspect'>>(`SELECT e.id::text AS effect_id,e.kind,e.state,(e.recovery IS NOT NULL) AS recovering,
-    COALESCE(e.source_id,r.source_id) AS source_id,r.slug,r.request_id::text AS request_id,e.attempts,e.next_attempt_at
+    COALESCE(e.source_id,r.source_id) AS source_id,r.slug,r.request_id::text AS request_id,e.attempts,
+    CASE WHEN e.kind='${INDEX_SPLIT_PAGE_EFFECT}' THEN (e.data->>'due_at')::timestamptz ELSE e.next_attempt_at END AS next_attempt_at
     FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
     WHERE (e.recovery IS NOT NULL OR (NOT $3::boolean AND e.state IN ('queued','running')))
       AND ($1::text IS NULL OR COALESCE(e.source_id,r.source_id)=$1)

@@ -48,6 +48,7 @@ src/commands/lint.ts	lintContent	field	STREAM
 src/commands/migrate-engine.ts	copyPageToTarget	call:putPage	SEGW	
 src/commands/migrate-engine.ts	copyPageToTarget	field	STREAM	
 src/commands/migrations/v0_32_2.ts	phaseCVerify	call:serializePageToMarkdown	SEGW	
+src/commands/pages-from-git.ts	unsplitSegmentedEqual	field	NONE	not the page body: parsed fields of a committed file and of the page's streamed export (unsplit, at most PAGE_MAX_BYTES)
 src/commands/quarantine.ts	runClear	call:serializeMarkdown	SEGW	
 src/commands/quarantine.ts	runClear	field	SEGW	
 src/commands/quarantine.ts	runScan	call:serializePageToMarkdown	SEGW	
@@ -457,6 +458,7 @@ src/core/persistence/page-advisories.ts	preparePageAdvisories	field	STREAM
 src/core/persistence/page-append.ts	prepareAppendMutation	call:serializePageToMarkdown	SEGW	inline append, or a segmented page the splice declined within PAGE_MAX_BYTES (materializedSnapshot); over it the append refuses page_body_segmented
 src/core/persistence/page-append.ts	prepareAppendMutation	field	SEGW	inline append, or a segmented page the splice declined within PAGE_MAX_BYTES (materializedSnapshot); over it the append refuses page_body_segmented
 src/core/persistence/page-append.ts	prepareAppendMutation	sql	META	body_bytes, else octet_length of an inline page's regions, after the write
+src/core/persistence/page-append.ts	prepareAppendOverPendingHead	field	NONE	not the page body: the regions of the committed file of an unsplit pending head (at most PAGE_MAX_BYTES)
 src/core/persistence/page-append.ts	regionTail	field	INLINE	inline branch; a segmented page reads its tail segments (segmentedRegionTail)
 src/core/persistence/page-append.ts	splicedPageFile	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body; the body streams from the segments
 src/core/persistence/page-edit.ts	applyPageEdits	call:serializePageToMarkdown	SEGW	within's stored-offset mapping on the materialized snapshot, as pageSegments; a segmented page takes prepareSegmentedEditMutation first

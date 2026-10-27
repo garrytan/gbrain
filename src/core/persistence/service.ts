@@ -229,7 +229,7 @@ export type WriteWait =
  * The waiter never owns a provider, database connection, or kernel lock.
  */
 export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config: GBrainConfig,
-  opts: { waitMs?: number; signal?: AbortSignal; whileHeldMs?: number } = {}): Promise<WriteWait> {
+  opts: { waitMs?: number; signal?: AbortSignal; whileHeldMs?: number; whileIndexingMs?: number } = {}): Promise<WriteWait> {
   if (isTerminal(row)) return { kind: 'terminal', row };
   const consumer = startPersistenceConsumer(engine, config);
   const service = services.get(engine)!;
@@ -257,6 +257,11 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
       if (remaining <= 0) {
         if (opts.whileHeldMs && opts.whileHeldMs > waitMs && deadline === started + waitMs
           && (consumer.holds(id) || row.state === 'queued' && !row.blocked_reason)) { deadline = started + opts.whileHeldMs; continue; }
+        // `whileIndexingMs` (--wait-indexed): Git holds the write and its index step runs after the door, so a caller that
+        // asked keeps waiting for the flip, polling at most once a second.
+        if (opts.whileIndexingMs && row.state === 'indexing' && started + opts.whileIndexingMs > deadline) {
+          deadline = started + opts.whileIndexingMs; delay = Math.max(delay, 1000); continue;
+        }
         break;
       }
       await new Promise<void>(resolve => {
@@ -265,7 +270,7 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
         wake = done; opts.signal?.addEventListener('abort', done, { once: true });
       });
       if (handed || service.stopping || opts.signal?.aborted || performance.now() >= deadline) continue;
-      delay = delay === firstPoll ? 50 : Math.min(250, delay * 2);
+      delay = delay === firstPoll ? 50 : Math.min(row.state === 'indexing' && opts.whileIndexingMs ? 1000 : 250, delay * 2);
       if (consumer.holds(id)) continue;
       const read = await readProgress(engine, id, deadline - performance.now());
       if ('cancelled' in read) continue;
@@ -338,16 +343,16 @@ async function readProgress(engine: BrainEngine, id: string, remaining: number):
   })]).finally(() => { if (timer) clearTimeout(timer); });
 }
 /** Compatibility form of `awaitWrite`: the latest row, terminal or still pending. */
-export async function waitForWrite(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, waitMs = 5000): Promise<WriteRequest> {
-  return (await awaitWrite(engine, row, config, { waitMs })).row;
+export async function waitForWrite(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, waitMs = 5000, whileIndexingMs?: number): Promise<WriteRequest> {
+  return (await awaitWrite(engine, row, config, { waitMs, ...(whileIndexingMs ? { whileIndexingMs } : {}) })).row;
 }
 /**
  * #6007: wait for several admitted writes against one deadline. Every row waits at once, so each one's consumer handoff is registered
  * before a grouped publication settles them together; waiting one after
  * another left all but the first to the progress polls.
  */
-export async function waitForWrites(engine: BrainEngine, rows: readonly WriteRequest[], config: GBrainConfig, waitMs = 5000): Promise<WriteRequest[]> {
-  return Promise.all(rows.map(row => waitForWrite(engine, row, config, waitMs)));
+export async function waitForWrites(engine: BrainEngine, rows: readonly WriteRequest[], config: GBrainConfig, waitMs = 5000, whileIndexingMs?: number): Promise<WriteRequest[]> {
+  return Promise.all(rows.map(row => waitForWrite(engine, row, config, waitMs, whileIndexingMs)));
 }
 /** B4: what a terminal receipt means for the caller, without guessing a mutation. */
 function terminalReceiptHint(row: WriteRequest, reason: string): string {
@@ -356,10 +361,30 @@ function terminalReceiptHint(row: WriteRequest, reason: string): string {
     ? `${what} Submit again only if the change is still wanted, with a new request_id.`
     : `${what} Read the receipt and the current state before deciding to submit again; a new attempt needs a new request_id.`;
 }
+/**
+ * Wave C 1I-a: the write committed in Git, but its index step held on a content cause (index-split-page.ts), so the
+ * database still shows the generation before it. The caller must not resend (the bytes are in Git): exit 1 with
+ * index_held, the hold code, and the repair from the committed head.
+ */
+function indexHeldError(row: WriteRequest, receipt: WriteReceipt): OperationError {
+  const index = (receipt as { index?: { hold_code?: string; commit?: string } }).index ?? {};
+  const where = row.slug ? `page ${row.slug}` : 'the page';
+  const error = new OperationError('index_held',
+    `The write (request_id ${row.request_id}) is committed in Git${index.commit ? ` (commit ${index.commit.slice(0, 12)})` : ''}, but indexing ${where} from the committed file held on ${index.hold_code ?? 'a content cause'}; the database still shows the previous generation.`,
+    `Do not resend the write. Preview the rebuild with gbrain pages reindex ${row.slug || '<slug>'} --from-git --source ${row.source_id} --dry-run, then apply it with --apply --expect <hash>.`,
+    'docs/guides/write-refusals.md#index_held');
+  if (index.hold_code) error.detail = index.hold_code;
+  if (row.slug) error.fix = { argv: ['gbrain', 'pages', 'reindex', row.slug, '--from-git', '--source', row.source_id, '--dry-run', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+    why: 'Read-only: compares the database with the committed head and prints the --expect hash the rebuild binds to.' };
+  error.receiptFields = { operation: row.operation, source_id: row.source_id, slug: row.slug || null, principal_kind: row.principal_kind, principal_id: row.principal_id };
+  error.writeRequest = receipt;
+  return error;
+}
 export function writeResponse(row: WriteRequest, hints: { retryAfterMs?: number | null; waiterOnlyOwner?: ElectedOwner | null } = {}): Record<string, unknown> {
   const receipt = receiptFor(row);
   // #6007: an in-process estimate beats the fixed fallback, never an owner-inspection hold.
   if (!isTerminal(row) && hints.retryAfterMs != null && receipt.diagnostic?.next_action !== 'inspect_owner') receipt.retry_after_ms = hints.retryAfterMs;
+  if (row.state === 'committed' && (receipt as { index?: { state?: unknown } }).index?.state === 'held') throw indexHeldError(row, receipt as WriteReceipt);
   if (row.state === 'committed') return { ...receipt, write_request: receipt };
   const reason = !isTerminal(row) ? 'write_pending' : row.error_code ?? (row.state === 'cancelled' ? 'cancelled' : 'storage_error');
   const delivered = isTerminal(row) ? receiptDeliveredHint(row) : null;

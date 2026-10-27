@@ -48,6 +48,8 @@ export interface CliOptions {
    * the flag is absent.
    */
   writeWaitMs?: number | null;
+  /** Wave C 1I-a: `--wait-indexed <seconds>` (0 to 3600): how long a write whose receipt reads `indexing` keeps waiting for its index step. Unset = GBRAIN_WAIT_INDEXED_MS / persistence.wait_indexed_ms / off. */
+  waitIndexedMs?: number | null;
   /** #5232: `--accept-pending` (true) / `--no-accept-pending` (false); unset = GBRAIN_ACCEPT_PENDING. */
   acceptPending?: boolean | null;
 }
@@ -68,6 +70,17 @@ function parseWaitSeconds(val: string | undefined): number {
     throw opError('invalid_params',
       `--wait requires a number of seconds from 0 to 600, no units (got ${val === undefined ? 'nothing' : JSON.stringify(val)}).`,
       'Give --wait seconds with no unit, for example --wait 45 or --wait 300 for five minutes.');
+  }
+  return Math.round(seconds * 1000);
+}
+
+/** `--wait-indexed` takes seconds, 0 to 3600 (one hour). A malformed value is a usage error (exit 2). */
+function parseWaitIndexedSeconds(val: string | undefined): number {
+  const seconds = val !== undefined && /^\d+(?:\.\d+)?$/.test(val) ? Number(val) : NaN;
+  if (!Number.isFinite(seconds) || seconds > 3600) {
+    throw opError('invalid_params',
+      `--wait-indexed requires a number of seconds from 0 to 3600, no units (got ${val === undefined ? 'nothing' : JSON.stringify(val)}).`,
+      'Give --wait-indexed seconds with no unit, for example --wait-indexed 900 for fifteen minutes.');
   }
   return Math.round(seconds * 1000);
 }
@@ -233,6 +246,15 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
     // #5232 write wait + pending opt-in. Global like --timeout so every write
     // lane (generated ops, call, capture, remember, takes) reads one value.
     // #6625: slotted like --timeout, since `sources writer movement` owns its own --wait.
+    if (a === '--wait-indexed') {
+      cliOpts.waitIndexedMs = parseWaitIndexedSeconds(argv[i + 1]);
+      i++;
+      continue;
+    }
+    if (a.startsWith('--wait-indexed=')) {
+      cliOpts.waitIndexedMs = parseWaitIndexedSeconds(a.slice('--wait-indexed='.length));
+      continue;
+    }
     if (a === '--wait') {
       slots.push({ waitValue: argv[i + 1] });
       i++;

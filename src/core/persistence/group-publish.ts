@@ -58,8 +58,9 @@ import { assertUnboundPublication, classifyUnboundPage } from './unbound-source.
 import { boundPublication, declarePublication, publicationLeaseMs, publicationTransaction, type PublicationBound } from './publication-deadline.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { commitThroughDoor, doorMarker, prehashDoorFile, sourceCanonicalGit, strictChanged, type PrehashedBlob } from './git-door.ts';
-import { assertNoPrivateCommit, declareStrictPublication, strictTargetRefuses } from './git-declared.ts';
+import { assertNoPrivateCommit, assertStrictFileTarget, declareStrictPublication, strictTargetRefuses } from './git-declared.ts';
 import { gitFirstStrictActive } from './git-first-gate.ts';
+import { assertNoPendingIndex, clearPublishedPendingHeads } from './git-first.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
 import { withFilesystemPublication } from './filesystem-guard.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
@@ -67,7 +68,7 @@ import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-gu
 import { isStreamedContent } from './large-file.ts';
 import { sharedReadFailure } from './bounded-reads.ts';
 import { chargedInterruption, decoratePublicationOutcome, finishPreparationStalled, finishUnpublishedFailure, pageRecoveryRecord, persistenceFileHash, preparationAbortReason,
-  publicationPostimage, publishMutation, publishPersistenceFile, recoverPublication, releaseChargedInterruption, runDoorProbe, type PreparedMutation, type PublicationHooks } from './coordinator.ts';
+  publicationDoorDeadline, publicationPostimage, publishMutation, publishPersistenceFile, recoverPublication, releaseChargedInterruption, runDoorProbe, type PreparedMutation, type PublicationHooks } from './coordinator.ts';
 import { withAttempt } from './publication-failure.ts';
 import { chargedInterruptionDetail, transientInterruption, type TransientInterruption } from './transient-retry.ts';
 import { pipelined } from '../page-state/transactions.ts';
@@ -287,7 +288,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
   if (lane) lane.coordinationPath ??= binding.coordination_path;
   let releaseCapacity: (() => void) | null = null;
   const recorded = new Map<number, { row: WriteRequest; record: FileRecoveryRecord; bytes: number }>();
-  let committed = false, strict = false;
+  let committed = false, strict = false, gitFirst = false;
   const timed: { apply: ReturnType<typeof laneApplyBegin> | null } = { apply: null };
   try {
     // The recovery check and the journal limits the recovery record is sized against go out together.
@@ -316,9 +317,13 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
     }
     // G2 (git-door.ts): a strict source's members are committed together before the transaction commits.
     strict = files.size > 0 && binding.canonical_git === true;
-    // Wave C (eng-r3-outside-1): with the git-first path on, a strict file member commits through the door before its rows,
-    // which only the single path does (publishMutation); the group hands its members there.
-    if (strict && await gitFirstStrictActive(engine, head.source_id, { strict: true })) return none;
+    // Wave C (eng-r3-outside-1): with the git-first path on, a group whose every member writes file content commits its
+    // files through the door before any member's rows; a member deferred to the index step (git-first.ts) publishes on the
+    // single path. A group with a removal or a database-only member (a generation's activation and retirements, whose
+    // checks need the members before them applied) keeps G2's order, as the single path does for a removal.
+    const active = strict && await gitFirstStrictActive(engine, head.source_id, { strict: true });
+    if (active && prepared.some(member => member.indexFromGit)) return none;
+    gitFirst = active && files.size === rows.length && [...files.keys()].every(i => prepared[i]!.file!.content !== null);
     if (strict) { const door = await doorMarker(binding.local_path); for (const member of files.values()) member.record.door = door; }
     if (files.size) {
       await prepareRecoveries(engine, [...files.values()], transaction, limits);
@@ -327,6 +332,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
     }
     const markBegun = lane ? await awaitLaneBegin(lane, rows) : null;
     const done = await transaction(async opened => {
+      const doorBy = publicationDoorDeadline(Date.now());
       markBegun?.();
       hooks.began?.();
       timed.apply?.end(rows.length);
@@ -373,8 +379,31 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
       const first = lead(0);
       first.catch(() => undefined);
       // One coordinated write for the group; each member is the attributed actor of what it writes.
+      let doorCommit: string | null | undefined;
+      let indexRestored: string[] | undefined;
       await withCoordinatedWrite(tx, [head.source_id], async () => {
         await ready;
+        if (gitFirst && recorded.size) {
+          for (const [i, file] of recorded) {
+            const row = rows[i]!, member = prepared[i]!;
+            try {
+              const [, , snapshot] = await (i === 0 ? first : lead(i));
+              await authorizePageVisibility(tx, row.authority, row.slug);
+              if ((snapshot?.revision ?? null) !== member.observedRevision) throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
+              await member.validate?.(tx);
+              await assertNoPendingIndex(tx, row);
+              await assertNoPrivateCommit(tx, row, member, snapshot, binding);
+              await assertStrictFileTarget(tx, row, member, snapshot, binding);
+              if (persistenceFileHash(file.record.path) !== file.record.beforeHash) throw new OperationError('unexpected_file_bytes', 'The canonical file changed during preparation.', 'The members publish one at a time.');
+              await seam('before_publication', row);
+              await withFilesystemPublication([file.record.root], async () => publishPersistenceFile(member.file!, file.record.staging?.publication?.path));
+              await seam('after_publication', row);
+            } catch (error) { throw tag(error, i); }
+          }
+          for (const member of recorded.values()) await runDoorProbe(tx, member.row);
+          doorCommit = await commitThroughDoor(binding.local_path!, [...recorded].map(([i, member]) => ({ path: member.record.path, planned: member.record.afterHash, note: prepared[i]!.file?.commit, prehashed: prehashed[i] })), lane || joined ? undefined : lock,
+            paths => { indexRestored = paths; }, doorBy);
+        }
         // The previous member's effects (rows no attribution or page check depends on) go out with the next member's checks.
         let effects: (() => Promise<void>) | null = null;
         for (let i = 0; i < rows.length; i++) {
@@ -394,23 +423,27 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
                 if ((snapshot?.revision ?? null) !== member.observedRevision) throw new OperationError('revision_conflict', PAGE_CHANGED_DURING_PREPARATION_MESSAGE, 'Read its current revision and submit the updated intent with a new request_id.');
                 return snapshot;
               },
-              async () => { if (sync) await member.validate?.(tx); },
+              async () => { if (sync && !(gitFirst && file)) await member.validate?.(tx); },
               async () => { if (!file && attribute) await setMemberAttribution(tx, publicationAttribution(row, member.trust)); },
             ]) as [unknown, Awaited<ReturnType<BrainEngine['readPageSnapshot']>>];
-            if (!sync) await member.validate?.(tx);
+            if (!sync && !(gitFirst && file)) await member.validate?.(tx);
             // G7a (git-declared.ts): a strict member never writes or commits a private page's bytes; one refusal rolls the group back.
             await assertNoPrivateCommit(tx, row, member, snapshot, binding);
+            if (strict) await assertNoPendingIndex(tx, row);
             if (file) {
-              if (persistenceFileHash(file.record.path) !== file.record.beforeHash) throw new OperationError('unexpected_file_bytes', 'The canonical file changed during preparation.', 'The members publish one at a time.');
-              await seam('before_publication', row);
-              await withFilesystemPublication([file.record.root], async () => publishPersistenceFile(member.file!, file.record.staging?.publication?.path));
-              await seam('after_publication', row);
+              if (!gitFirst) {
+                if (persistenceFileHash(file.record.path) !== file.record.beforeHash) throw new OperationError('unexpected_file_bytes', 'The canonical file changed during preparation.', 'The members publish one at a time.');
+                await seam('before_publication', row);
+                await withFilesystemPublication([file.record.root], async () => publishPersistenceFile(member.file!, file.record.staging?.publication?.path));
+                await seam('after_publication', row);
+              }
               if (attribute) await setMemberAttribution(tx, publicationAttribution(row, member.trust));
             }
             member.postimage = undefined;
             const outcome = await withBeliefBatch(tx, publicationBeliefOptions(row, member.additionalPageKeys, beliefReport),
               () => timePublicationStep('apply', row.slug, () => member.apply(tx, snapshot)));
             await classifyUnboundPage(tx, row);
+            if (strict) await clearPublishedPendingHeads(tx, row, member.additionalPageKeys);
             if (member.databaseOnlyReason === 'mirror_read_only') await classifyMirrorPage(tx, row);
             const final = await publicationPostimage(tx, row, member);
             await declareStrictPublication(tx, row, member, snapshot, final, binding);
@@ -428,15 +461,14 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
       if (lane) { timed.apply?.turn(); await faultPoint('lane:applied', { requestId: head.request_id, sourceId: head.source_id, operation: head.operation }); await awaitLaneTurn(tx, lane, rows); timed.apply?.turned(); }
       // G2: one path-only commit for every member's file, in commit order, before the rows commit; a shared lease never reclaims an index lock.
       if (strict && recorded.size) {
-        for (const member of recorded.values()) await runDoorProbe(tx, member.row);
-        const commit = await commitThroughDoor(binding.local_path!, [...recorded].map(([i, member]) => ({ path: member.record.path, planned: member.record.afterHash, note: prepared[i]!.file?.commit, prehashed: prehashed[i] })), lane || joined ? undefined : lock,
-          paths => {
-            for (const [i, member] of recorded) {
-              const rel = relative(binding.local_path!, member.record.path).split(sep).join('/');
-              if (paths.includes(rel)) Object.assign(outcomes[i]!.persistence as object, { git_index_restored: [rel] });
-            }
-          });
+        if (!gitFirst) for (const member of recorded.values()) await runDoorProbe(tx, member.row);
+        const commit = gitFirst ? doorCommit! : await commitThroughDoor(binding.local_path!, [...recorded].map(([i, member]) => ({ path: member.record.path, planned: member.record.afterHash, note: prepared[i]!.file?.commit, prehashed: prehashed[i] })), lane || joined ? undefined : lock,
+          paths => { indexRestored = paths; }, doorBy);
         for (const i of recorded.keys()) Object.assign(outcomes[i]!.persistence as object, { git_state: 'committed', git_commit: commit });
+        if (indexRestored) for (const [i, member] of recorded) {
+          const rel = relative(binding.local_path!, member.record.path).split(sep).join('/');
+          if (indexRestored.includes(rel)) Object.assign(outcomes[i]!.persistence as object, { git_index_restored: [rel] });
+        }
       }
       const done = await completeGroup(tx, rows, outcomes);
       // Every member is complete in this transaction: the batch's last page re-arms the batch's mention links once.
@@ -475,7 +507,10 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
       try {
         const charged = await chargedInterruption(engine, row, error);
         if (charged) await faultPoint('persistence:recovery_interruption_charged', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation, ...chargedInterruptionDetail(transientInterruption(error), error) });
-        const failure = charged?.failure ? withAttempt(charged.failure, 'publication') : undefined;
+        // A door past the transaction's bound (git-door.ts) committed nothing: every member ends with that typed refusal, as on the single path.
+        const timedOut = error instanceof OperationError && error.code === 'git_door_timeout' && !memberOf.has(error);
+        const failure = charged?.failure ? withAttempt(charged.failure, 'publication')
+          : timedOut ? withAttempt({ code: error.code, message: error.message }, 'publication') : undefined;
         await markRecovering(engine, row, failure ? 'publication_failed' : 'publication_not_started', failure);
         const recovered = await recoverPublication(engine, row.id, hostId, true, failure, true);
         if (!charged && recovered.state === 'queued' && !recovered.recovery) requeued.push(row.id);

@@ -334,6 +334,8 @@ export interface CallRemoteToolOptions {
    * pending. `timeoutMs` still bounds each exchange.
    */
   writeWaitMs?: number;
+  /** Wave C 1I-a: `--wait-indexed`; a receipt reading `indexing` keeps waiting to this total (persistence/write-wait.ts). */
+  waitIndexedMs?: number;
 }
 
 /**
@@ -401,7 +403,7 @@ export async function callRemoteTool(
   if (isPersistenceIpcMutation(toolName) && args.request_id === undefined && args.dry_run !== true) args.request_id = randomUUID();
   if (opts.writeWaitMs !== undefined && isPersistenceIpcMutation(toolName) && args.dry_run !== true) {
     const { writeWaitMs, ...exchange } = opts;
-    return replayWhilePending(() => callRemoteTool(config, toolName, args, exchange), writeWaitMs);
+    return replayWhilePending(() => callRemoteTool(config, toolName, args, exchange), writeWaitMs, undefined, opts.waitIndexedMs);
   }
   const requestId = isPersistenceIpcMutation(toolName) && isWriteRequestId(args.request_id) ? args.request_id : undefined;
   let submitted = false;

@@ -28,6 +28,7 @@ import { estimatedRetryAfterMs, waitForWrite, waitForWrites, writeResponse } fro
 import { emitFenceNotice, initializeLocalPersistence, pageMutationSource, pendingAwareResponse, preparePageAdmission, requestPrincipalForContext, withBatchAdmission,
   withLiveSearchable } from './page-mutations.ts';
 import { throwIfHeld } from '../trust/gate-outcomes.ts';
+import { INDEXING_REQUEST_STATE, PENDING_REQUEST_STATES } from './request-states.ts';
 import type { PageTypeWarning } from './page-input.ts';
 import { clientRequestIdOf, parseWriteRequestId } from './preconditions.ts';
 import { parseWireWriteWaitMs } from './write-wait.ts';
@@ -35,6 +36,8 @@ import { parseWireWriteWaitMs } from './write-wait.ts';
 export const PAGE_BATCH_MAX_PAGES = 50;
 export const PAGE_BATCH_MAX_BYTES = 8 * 1024 * 1024;
 export const PAGE_BATCH_DEFAULT_WAIT_MS = 25_000;
+/** A page still in flight to its caller: admitted and unpublished, or committed in Git and waiting for its index step. */
+const IN_FLIGHT_STATES: readonly string[] = [...PENDING_REQUEST_STATES, INDEXING_REQUEST_STATE];
 /** Page preparation reads run this many pages at a time. */
 const PREPARE_CONCURRENCY = 8;
 /** Batch admission is one transaction over every page; it gets more than a single write's budget. */
@@ -154,7 +157,7 @@ async function batchLinks(ctx: OperationContext, sourceId: string, results: Page
 function batchReceipt(ctx: OperationContext, batchId: string, sourceId: string, results: PageResult[], links: Record<string, unknown>, clientRequestId?: string): Record<string, unknown> {
   const pages = results.map(pageEntry);
   const committed = pages.filter(page => page.state === 'committed').length;
-  const pending = pages.filter(page => ['queued', 'running', 'recovering'].includes(String(page.state))).length;
+  const pending = pages.filter(page => IN_FLIGHT_STATES.includes(String(page.state))).length;
   const failed = pages.length - committed - pending;
   const state = pending ? 'pending' : !failed ? 'committed' : committed ? 'partial' : 'failed';
   const retryAfterMs = pending ? estimatedRetryAfterMs(ctx.engine, pending) ?? 1000 : null;
@@ -247,7 +250,7 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
       throw opError('not_found', 'No accessible put_pages batch has that request_id.',
         'Check the request_id. A batch whose every page was refused before admission has no receipt: resubmit its pages.');
     }
-    const settled = await waitForWrites(ctx.engine, rows, ctx.config, remaining());
+    const settled = await waitForWrites(ctx.engine, rows, ctx.config, remaining(), ctx.waitIndexedMs);
     const size = markerOf(rows[0]!)!.size;
     const byIndex = new Map(settled.map(row => [markerOf(row)!.index, row]));
     const results: PageResult[] = Array.from({ length: size }, (_, index) => {
@@ -300,7 +303,7 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
   }
   for (const [index, refusal] of repeats.refusals) results[index]!.refusal = refusal;
   const journaled = results.filter(result => result.row);
-  const settled = await waitForWrites(ctx.engine, journaled.map(result => result.row!), ctx.config, remaining());
+  const settled = await waitForWrites(ctx.engine, journaled.map(result => result.row!), ctx.config, remaining(), ctx.waitIndexedMs);
   journaled.forEach((result, position) => { result.row = settled[position]!; });
   repeats.repeatOf.forEach((firstIndex, index) => {
     if (firstIndex === undefined) return;
@@ -338,7 +341,7 @@ export async function submitPageMutations(ctx: OperationContext, inputs: Array<{
   return Promise.all(prepared.map(async (entry, index) => {
     if ('error' in entry) return { error: entry.error };
     try {
-      const row = await waitForWrite(ctx.engine, rows[index]!, ctx.config, ctx.writeWaitMs);
+      const row = await waitForWrite(ctx.engine, rows[index]!, ctx.config, ctx.writeWaitMs, ctx.waitIndexedMs);
       const response = await withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, row), false));
       emitFenceNotice(ctx, response, row.slug);
       return { response };

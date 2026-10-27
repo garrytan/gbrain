@@ -1,5 +1,5 @@
 import type { Migration } from './types.ts';
-import { GIT_FIRST_SCHEMA_SQL } from '../persistence/git-first-schema.ts';
+import { GIT_FIRST_SCHEMA_SQL, INDEX_EFFECT_BARRIER_SQL } from '../persistence/git-first-schema.ts';
 import { runMigrationStatement } from './helpers.ts';
 
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
@@ -12,6 +12,8 @@ import { runMigrationStatement } from './helpers.ts';
 // - persistence_requests.state takes 'indexing' (request-states.ts): Git holds the write and the database has not
 //   derived it yet. The constraint is replaced NOT VALID and validated in its own statement, so no scan of the
 //   journal runs under the ALTER's lock.
+// - persistence_effects_index_barrier (git-first-schema.ts INDEX_EFFECT_BARRIER_SQL): an index-split-page effect keeps
+//   next_attempt_at at 'infinity', so a released binary's claim never selects it (eng-r3-outside-4).
 // Additive: no row is read or rewritten. Provisional number: renumbered at the merge slot.
 export const v278: Migration = {
   version: 278,
@@ -20,6 +22,7 @@ export const v278: Migration = {
   transaction: false,
   sql: `
     ${GIT_FIRST_SCHEMA_SQL}
+    ${INDEX_EFFECT_BARRIER_SQL}
     ALTER TABLE pages ADD COLUMN IF NOT EXISTS indexed_commit TEXT;
     DO $do$ BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'persistence_requests_state_check' AND conrelid = 'persistence_requests'::regclass

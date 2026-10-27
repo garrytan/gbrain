@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { reportFailure } from '../../src/cli/commands/append.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { OperationError } from '../../src/core/ops/contract.ts';
-import { _resetGitFirstGateForTests, _unregisterIndexSplitPageConsumerForTests, registerIndexSplitPageConsumer } from '../../src/core/persistence/git-first-gate.ts';
+import { _resetGitFirstGateForTests, _resetIndexSplitPageConsumerForTests, _unregisterIndexSplitPageConsumerForTests, registerIndexSplitPageConsumer } from '../../src/core/persistence/git-first-gate.ts';
 import { writeHealth } from '../../src/core/persistence/health.ts';
 import { admittedPendingReceipt, isTerminalWriteState } from '../../src/core/persistence/types.ts';
 import { PENDING_WRITE_EXIT_CODE } from '../../src/core/exit-codes.ts';
@@ -58,7 +58,7 @@ test('the upload client never suggests resending a write whose receipt is indexi
 for (const backend of testBackends()) describe(`[${backend}] the indexing receipt`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
   beforeEach(() => { _resetGitFirstGateForTests(); registerIndexSplitPageConsumer({ run: async () => undefined }); });
-  afterEach(() => { _unregisterIndexSplitPageConsumerForTests(); _resetGitFirstGateForTests(); });
+  afterEach(() => { _resetIndexSplitPageConsumerForTests(); _resetGitFirstGateForTests(); });
 
   test('a 2 MiB strict put answers write_pending with an indexing receipt carrying the index object; the CLI exits 10', () => managedBrain(async ({ engine, ctx }) => {
     await strict(engine);

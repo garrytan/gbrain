@@ -17,7 +17,7 @@ import { claimOwner, EXPIRED_PREPARING_CHARGE_SQL } from './claim-phase.ts';
 import { refreshFenceClear } from './worktree-refresh-schema.ts';
 import { pageBatchChildRequestIds } from './page-batch-id.ts';
 import { EFFECT_FAULT_POINTS, faultPoint } from './fault-points.ts';
-import { claimableEffectKinds } from './git-first-gate.ts';
+import { claimableEffectKinds, INDEX_SPLIT_PAGE_EFFECT } from './git-first-gate.ts';
 
 /**
  * `snapshot` is the publication's final read of the page, including deleted rows, in this transaction.
@@ -141,29 +141,58 @@ const DEAD_OWNER_EFFECT_SQL = (e: string, param: string) => `${e}.state='running
 export const effectClaimStamp = (token: string) => JSON.stringify({ token, owner: claimOwner() });
 
 /**
+ * Wave C 1I-a: the per-page index lease. An `index-split-page` effect is claimable only while no other index effect of
+ * the same page holds a live claim (running, unexpired), so two jobs never stage one page; the holder renews its claim
+ * while it runs (index-split-page.ts).
+ */
+const INDEX_LEASE_FREE_SQL = (e: string) => `(${e}.kind<>'${INDEX_SPLIT_PAGE_EFFECT}' OR NOT EXISTS (SELECT 1 FROM persistence_effects lease
+  WHERE lease.kind='${INDEX_SPLIT_PAGE_EFFECT}' AND lease.id<>${e}.id AND lease.source_id=${e}.source_id AND lease.data->>'slug'=${e}.data->>'slug'
+    AND lease.state='running' AND lease.claim_expires_at>=now()))`;
+
+/** Test seam: runs after a claim serialized on an index candidate's page, before it reads the lease again. */
+export const indexLeaseClaimSeam: { beforeRecheck?: (tx: BrainEngine, candidate: PersistenceEffect) => Promise<void> } = {};
+
+/**
  * Claims release their database connection before waiting for a filesystem lock/provider. Nothing on a refresh-fenced worktree is claimed.
  * `deadOwners` (GBRA-133): owner keys the consumer proved dead, whose running effects are claimable before their lease lapses.
  */
 export async function claimPersistenceEffect(engine: BrainEngine, hostId: string, deadOwners: readonly string[] = []): Promise<PersistenceEffect | null> {
   return engine.transactionDirect(async tx => {
     await declarePersistenceProtocol(tx);
-    const [candidate] = await tx.executeRaw<PersistenceEffect>(`SELECT e.* FROM persistence_effects e
-      LEFT JOIN persistence_worktrees w ON w.id=e.worktree_id
-      WHERE (e.state='queued' OR e.state='running' AND e.claim_expires_at<now() OR ${DEAD_OWNER_EFFECT_SQL('e', '$2')}) AND e.next_attempt_at<=now()
-      AND (e.worktree_id IS NULL OR w.owner_host_id=$1::uuid) AND (e.worktree_id IS NULL OR ${refreshFenceClear('e')})
-      AND e.recovery IS NULL AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked
-        WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
-      AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked
-        WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
-      AND (e.kind='withdrawal-mirror' OR NOT EXISTS (SELECT 1 FROM persistence_effects mirror
-        WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running')))
-      AND e.kind=ANY($3::text[])
-      ORDER BY e.next_attempt_at,e.id LIMIT 1 FOR UPDATE OF e SKIP LOCKED`, [hostId, [...deadOwners], claimableEffectKinds(BUILT_IN_EFFECT_KINDS)]);
-    if (!candidate) return null;
-    const token = randomUUID();
-    const [claimed] = await tx.executeRaw<PersistenceEffect>(`UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,
-      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 RETURNING *`, [candidate.id, token, effectClaimStamp(token)]);
-    return claimed;
+    const kinds = claimableEffectKinds(BUILT_IN_EFFECT_KINDS);
+    // eng-r3-outside-4: an index effect keeps next_attempt_at at 'infinity' and its due time in data.due_at
+    // (git-first-schema.ts), so a released binary's claim never selects it; only a claim that knows the kind reads due_at.
+    const due = kinds.includes(INDEX_SPLIT_PAGE_EFFECT)
+      ? `(CASE WHEN e.kind='${INDEX_SPLIT_PAGE_EFFECT}' THEN COALESCE((e.data->>'due_at')::timestamptz,'-infinity'::timestamptz) ELSE e.next_attempt_at END)`
+      : 'e.next_attempt_at';
+    // A candidate whose page lease a concurrent claim took is passed over; the next claimable effect is claimed instead.
+    const passed: string[] = [];
+    for (;;) {
+      const [candidate] = await tx.executeRaw<PersistenceEffect>(`SELECT e.* FROM persistence_effects e
+        LEFT JOIN persistence_worktrees w ON w.id=e.worktree_id
+        WHERE (e.state='queued' OR e.state='running' AND e.claim_expires_at<now() OR ${DEAD_OWNER_EFFECT_SQL('e', '$2')}) AND ${due}<=now()
+        AND (e.worktree_id IS NULL OR w.owner_host_id=$1::uuid) AND (e.worktree_id IS NULL OR ${refreshFenceClear('e')})
+        AND e.recovery IS NULL AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked
+          WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked
+          WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+        AND (e.kind='withdrawal-mirror' OR NOT EXISTS (SELECT 1 FROM persistence_effects mirror
+          WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running')))
+        AND e.kind=ANY($3::text[]) AND ${INDEX_LEASE_FREE_SQL('e')} AND NOT (e.id::text=ANY($4::text[]))
+        ORDER BY ${due},e.id LIMIT 1 FOR UPDATE OF e SKIP LOCKED`, [hostId, [...deadOwners], kinds, passed]);
+      if (!candidate) return null;
+      if (candidate.kind === INDEX_SPLIT_PAGE_EFFECT) {
+        // Two claimers can pick two queued jobs of one page at once: serialize them on the page and read the lease again.
+        await tx.executeRaw('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`gbrain:index-lease:${JSON.stringify([candidate.source_id, candidate.data.slug])}`]);
+        await indexLeaseClaimSeam.beforeRecheck?.(tx, candidate);
+        const [free] = await tx.executeRaw<{ free: boolean }>(`SELECT ${INDEX_LEASE_FREE_SQL('e')} AS free FROM persistence_effects e WHERE e.id=$1`, [candidate.id]);
+        if (!free?.free) { passed.push(String(candidate.id)); continue; }
+      }
+      const token = randomUUID();
+      const [claimed] = await tx.executeRaw<PersistenceEffect>(`UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,
+        claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 RETURNING *`, [candidate.id, token, effectClaimStamp(token)]);
+      return claimed;
+    }
   }, { pipelineFirst: isPersistenceDeclaration });
 }
 

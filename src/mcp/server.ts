@@ -638,7 +638,7 @@ export async function handleToolCall(
   engine: BrainEngine,
   tool: string,
   params: Record<string, unknown>,
-  opts?: { sourceId?: string; localFederatedSourceIds?: string[]; writeWaitMs?: number },
+  opts?: { sourceId?: string; localFederatedSourceIds?: string[]; writeWaitMs?: number; waitIndexedMs?: number },
 ): Promise<unknown> {
   const [{ operations }, { buildOperationContext }] = await Promise.all([import('../core/operations.ts'), loadDispatch()]);
   const op = operations.find(o => o.name === tool);
@@ -653,6 +653,7 @@ export async function handleToolCall(
     logger: { info: console.log, warn: console.warn, error: console.error },
     ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
     ...(opts?.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
+    ...(opts?.waitIndexedMs ? { waitIndexedMs: opts.waitIndexedMs } : {}),
     ...(opts?.localFederatedSourceIds
       ? { localFederatedSourceIds: opts.localFederatedSourceIds }
       : {}),

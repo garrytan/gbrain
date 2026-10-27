@@ -95,7 +95,7 @@ for (const backend of testBackends()) describe('[' + backend + '] admission read
     expect(shrunk?.code).toBe('page_shrink_refused');
   }, { databaseUrl, setup }), 180_000);
 
-  test('an edit refuses index_pending, and an append to a never-indexed create refuses index_pending, not page_not_found', () => managedBrain(async ({ engine, ctx, root }) => {
+  test('an edit refuses index_pending; an append to a never-indexed create reads the committed head and reaches Git first (ceo-r3-outside-3)', () => managedBrain(async ({ engine, ctx, root }) => {
     await strict(engine);
     const slug = 'notes/pending-edit';
     const large = await write(engine, ctx, slug, pageBody(2 * MiB, 'MARKEREDITHEAD'), 'put');
@@ -104,8 +104,35 @@ for (const backend of testBackends()) describe('[' + backend + '] admission read
     const edit = await refusal(op('edit_page').handler(ctx, { slug, expected_revision: large.outcome?.index?.revision,
       edits: [{ old_text: 'MARKEREDITHEAD', new_text: 'MARKEREDITED' }], request_id: randomUUID() }));
     expect(edit?.code).toBe('index_pending');
-    const append = await refusal(op('append_page').handler(ctx, { slug, text: '\nMARKERAPPENDED line.\n', request_id: randomUUID(), wait_ms: 3_000 }));
-    expect(append?.code).toBe('index_pending');
     expect(git(root, 'rev-parse', 'HEAD').trim()).toBe(head);
+    const appendId = randomUUID();
+    const append = await refusal(op('append_page').handler(ctx, { slug, text: '\nMARKERAPPENDED line.\n', request_id: appendId, wait_ms: 3_000 }));
+    expect([null, 'write_pending']).toContain(append?.code ?? null);
+    const [appended] = await engine.executeRaw<{ id: string; state: string }>("SELECT id::text AS id, state FROM persistence_requests WHERE request_id = $1", [appendId]);
+    expect(appended?.state).toBe('indexing');
+    expect(git(root, 'rev-parse', 'HEAD').trim()).not.toBe(head);
+    const file = committed(root, slug);
+    expect(file).toContain('MARKEREDITHEAD');
+    expect(file.endsWith('MARKERAPPENDED line.\n')).toBe(true);
+    expect(await pendingRequest(engine, slug)).toBe(appended!.id);
+    expect(await engine.executeRaw('SELECT 1 FROM pages WHERE slug = $1', [slug])).toEqual([]);
+  }, { databaseUrl, setup }), 180_000);
+
+  test('ceo-r3-outside-3: during the lag an append lands at the timeline\'s end; a truth append ahead of a timeline refuses index_pending', () => managedBrain(async ({ engine, ctx, root }) => {
+    await strict(engine);
+    const slug = 'notes/pending-timeline';
+    const large = await write(engine, ctx, slug, pageBody(2 * MiB, 'MARKERTIMELINEHEAD') + '\n<!-- timeline -->\n\n- 2026-01-01: first event\n', 'put');
+    expect(large.state).toBe('indexing');
+    const head = git(root, 'rev-parse', 'HEAD').trim();
+    const truth = await refusal(op('append_page').handler(ctx, { slug, text: 'MARKERTRUTHAPPEND\n', region: 'truth', request_id: randomUUID(), wait_ms: 3_000 }));
+    expect(truth?.code).toBe('index_pending');
+    expect(git(root, 'rev-parse', 'HEAD').trim()).toBe(head);
+    const stale = await refusal(op('append_page').handler(ctx, { slug, text: '- 2026-01-02: stale\n', expected_revision: (await engine.executeRaw<{ r: string }>(
+      "SELECT gen_random_uuid()::text AS r"))[0]!.r, request_id: randomUUID(), wait_ms: 3_000 }));
+    expect(['revision_changed', 'conflict', 'revision_required']).toContain(stale?.code ?? 'none');
+    await refusal(op('append_page').handler(ctx, { slug, text: '- 2026-01-02: second event\n', expected_revision: large.outcome?.index?.revision, request_id: randomUUID(), wait_ms: 3_000 }));
+    const file = committed(root, slug);
+    expect(file.indexOf('first event')).toBeLessThan(file.indexOf('second event'));
+    expect(file.endsWith('- 2026-01-02: second event\n')).toBe(true);
   }, { databaseUrl, setup }), 180_000);
 });

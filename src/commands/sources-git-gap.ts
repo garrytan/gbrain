@@ -121,7 +121,7 @@ interface Checkout { root: string; head: HeadTree; mode: Awaited<ReturnType<type
 
 const refuse = (message: string, suggestion: string) => new OperationError('storage_error', message, suggestion, GIT_GAP_DOCS);
 
-export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: { sample: number; deadlineAt?: number; collect?: (page: GitGapPage) => void }): Promise<GitGapCensus> {
+export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: { sample: number; deadlineAt?: number; collect?: (page: GitGapPage) => void; slugs?: string[] }): Promise<GitGapCensus> {
   await resolveSourceId(engine, sourceId, undefined, { skipLocalSignals: true });
   const [source] = await engine.executeRaw<{ local_path: string | null; incarnation: string }>('SELECT local_path, incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
   const root = source?.local_path && existsSync(source.local_path) ? source.local_path : null;
@@ -145,7 +145,8 @@ export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: 
       await tx.executeRaw('SET TRANSACTION READ ONLY');
       const batch = await tx.executeRaw<Key>(`SELECT id::text, slug, source_id, source_path, octet_length(source_path) AS source_path_bytes, source_uri, withheld_source_path, type, frontmatter,
           database_only_reason, body_storage='segmented' AS segmented, knowledge_revision::text AS revision, NOT ${privatePagesFilterFragment('pages')} AS lineage_private
-        FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND pages.id > $2::bigint ORDER BY pages.id LIMIT ${BATCH}`, [sourceId, cursor]);
+        FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND pages.id > $2::bigint${opts.slugs ? ' AND slug = ANY($3::text[])' : ''} ORDER BY pages.id LIMIT ${BATCH}`,
+        opts.slugs ? [sourceId, cursor, opts.slugs] : [sourceId, cursor]);
       if (batch.length) { await censusBatch(tx, batch, census, { checkout, policy, incarnation: source!.incarnation, sample: opts.sample, collect: opts.collect }); cursor = batch[batch.length - 1]!.id; }
       return batch.length < BATCH;
     });

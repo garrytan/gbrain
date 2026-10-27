@@ -571,6 +571,11 @@ export interface OperationContext {
    */
   writeWaitMs?: number;
   /**
+   * Wave C 1I-a: `--wait-indexed`. A page write whose request reads `indexing` when `writeWaitMs` ends keeps waiting
+   * to this total for its index step. CLI entry points set it; agents poll get_write_request instead.
+   */
+  waitIndexedMs?: number;
+  /**
    * Row shape for `search`/`query` results in content[0]. Set by the MCP
    * transports: 'full' for gbrain's own thin client (X-Gbrain-Client header)
    * and for hosts with `mcp.result_rows: full`, otherwise 'lean'. Unset means

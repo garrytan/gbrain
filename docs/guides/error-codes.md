@@ -1719,6 +1719,16 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#conversion](../../docs/designs/GIT_C
 |---|---|---|---|---|---|---|
 | The canonical checkout is on a detached HEAD, so a push would target the wrong ref. | Only the operator of the brain host can change what blocks this. | Check out the branch the remote should track (git switch <branch>) on the brain host, then rerun. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### git_door_timeout
+
+<a id="git_door_timeout"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A strict (canonical: git) write's door commit did not reach its ref update within the publication transaction's door bound, so nothing was committed and the write was not published. | A publication transaction holds its page locks while the door commits its files. A door that stalls (a slow disk, a held index lock, a hung Git step) is refused once `PUBLICATION_DOOR_BOUND_MS` (120 s; `GBRAIN_PUBLICATION_DOOR_BOUND_MS`) has passed since the transaction opened, checked before the door starts and again before it moves the branch, so the rows roll back, recovery restores the prior bytes and the locks are released. The request ends failed; HEAD is where it was. | Check the checkout on the brain host (git status, disk latency, a held .git/index.lock), then submit the write again with a new request_id; the failed request stays failed. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/write-refusals.md#git_door_timeout](../../docs/guides/write-refusals.md#git_door_timeout)
+
 ### git_durability_not_enabled
 
 <a id="git_durability_not_enabled"></a>

@@ -23,20 +23,25 @@ export const WRITE_ADMISSION_HEADROOM_MS = 15_000;
 export const WRITE_WAIT_ENV = 'GBRAIN_WRITE_WAIT_MS';
 export const WRITE_WAIT_CONFIG_KEY = 'persistence.write_wait_ms';
 export const ACCEPT_PENDING_ENV = 'GBRAIN_ACCEPT_PENDING';
+/** Wave C 1I-a: how long a write whose receipt reads `indexing` keeps waiting for its index step (`--wait-indexed`). */
+export const MAX_WAIT_INDEXED_MS = 3_600_000;
+export const WAIT_INDEXED_ENV = 'GBRAIN_WAIT_INDEXED_MS';
+export const WAIT_INDEXED_CONFIG_KEY = 'persistence.wait_indexed_ms';
 
 export const WRITE_EXIT_DOCS = 'docs/protocol/MEMORY_VERBS_v1.md#cli-exit-status-for-writes';
 
-function invalidWriteWait(where: string, value: unknown): OperationError {
+function invalidWriteWait(where: string, value: unknown, max = MAX_WRITE_WAIT_MS): OperationError {
+  const example = max === MAX_WRITE_WAIT_MS ? 30000 : 600000;
   return new OperationError('invalid_write_wait',
-    `${where} must be a whole number of milliseconds from 0 to ${MAX_WRITE_WAIT_MS} (got ${JSON.stringify(value)}).`,
-    where === WRITE_WAIT_ENV ? `unset ${WRITE_WAIT_ENV}, or set it to e.g. 30000` : `gbrain config set ${WRITE_WAIT_CONFIG_KEY} 30000`,
+    `${where} must be a whole number of milliseconds from 0 to ${max} (got ${JSON.stringify(value)}).`,
+    where.startsWith('GBRAIN_') ? `unset ${where}, or set it to e.g. ${example}` : `gbrain config set ${where} ${example}`,
     'docs/guides/write-refusals.md#invalid_write_wait');
 }
 
-function parseMs(value: unknown, where: string): number | null {
+function parseMs(value: unknown, where: string, max = MAX_WRITE_WAIT_MS): number | null {
   if (value === undefined || value === null || value === '') return null;
   const n = typeof value === 'number' ? value : typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value) : NaN;
-  if (!Number.isSafeInteger(n) || n < 0 || n > MAX_WRITE_WAIT_MS) throw invalidWriteWait(where, value);
+  if (!Number.isSafeInteger(n) || n < 0 || n > max) throw invalidWriteWait(where, value, max);
   return n;
 }
 
@@ -67,6 +72,17 @@ export function resolveCliWriteWaitMs(opts: {
     ?? CLI_WRITE_WAIT_MS;
 }
 
+/** `--wait-indexed <s>` > GBRAIN_WAIT_INDEXED_MS > persistence.wait_indexed_ms (file plane) > 0 (off). */
+export function resolveCliWaitIndexedMs(opts: {
+  flagMs?: number | null; env?: NodeJS.ProcessEnv; config?: GBrainConfig | null;
+} = {}): number {
+  if (opts.flagMs !== undefined && opts.flagMs !== null) return opts.flagMs;
+  const env = opts.env ?? process.env;
+  return parseMs(env[WAIT_INDEXED_ENV], WAIT_INDEXED_ENV, MAX_WAIT_INDEXED_MS)
+    ?? parseMs(opts.config?.persistence?.wait_indexed_ms, WAIT_INDEXED_CONFIG_KEY, MAX_WAIT_INDEXED_MS)
+    ?? 0;
+}
+
 /** An explicitly configured wait (`--wait`, GBRAIN_WRITE_WAIT_MS, persistence.write_wait_ms), else `fallbackMs`. */
 export function configuredWriteWaitMs(fallbackMs: number): number {
   const flagMs = getCliOptions().writeWaitMs;
@@ -77,9 +93,11 @@ export function configuredWriteWaitMs(fallbackMs: number): number {
 }
 
 /** The wait and pending opt-in this CLI invocation resolved. */
-export function currentCliWriteWait(): { waitMs: number; acceptPending: boolean } {
+export function currentCliWriteWait(): { waitMs: number; waitIndexedMs: number; acceptPending: boolean } {
   const cli = getCliOptions();
-  return { waitMs: resolveCliWriteWaitMs({ flagMs: cli.writeWaitMs, config: loadConfig() }), acceptPending: acceptPendingRequested(cli.acceptPending) };
+  const config = loadConfig();
+  return { waitMs: resolveCliWriteWaitMs({ flagMs: cli.writeWaitMs, config }),
+    waitIndexedMs: resolveCliWaitIndexedMs({ flagMs: cli.waitIndexedMs, config }), acceptPending: acceptPendingRequested(cli.acceptPending) };
 }
 
 /** A wire-requested wait is honored only within the documented bound. */
@@ -139,16 +157,18 @@ export function pollCommand(requestId: string, fix?: { argv?: readonly string[] 
  * Keep the caller's wait across transports that wait less than it (an older
  * owner, or a remote server's own bounded wait): replay the identical request
  * (same request_id, so nothing new is admitted) until it settles or the wait
- * is spent. Only an admitted pending receipt is replayed.
+ * is spent. Only an admitted pending receipt is replayed. `waitIndexedMs` (`--wait-indexed`) keeps a receipt that reads
+ * `indexing` (Git holds the write, its index step has not flipped the database) waiting to that total, at the receipt's
+ * own poll delay, until it ends `committed` (or held: index_held) or the indexed wait is spent.
  */
 export async function replayWhilePending<T>(send: () => Promise<T>, waitMs: number,
-  sleep: (ms: number) => Promise<void> = ms => new Promise(resolve => setTimeout(resolve, ms))): Promise<T> {
-  const deadline = Date.now() + waitMs;
+  sleep: (ms: number) => Promise<void> = ms => new Promise(resolve => setTimeout(resolve, ms)), waitIndexedMs = 0): Promise<T> {
+  const started = Date.now();
   for (;;) {
     try { return await send(); }
     catch (error) {
       const receipt = pendingReceiptOf(error);
-      const remaining = deadline - Date.now();
+      const remaining = started + (receipt?.state === 'indexing' ? Math.max(waitMs, waitIndexedMs) : waitMs) - Date.now();
       if (!receipt || remaining <= 0) throw error;
       await sleep(Math.min(Math.max(receipt.retry_after_ms ?? 1000, 50), remaining));
     }

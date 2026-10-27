@@ -12,6 +12,13 @@
  *   offset, length and sha256, never its bytes (page-upload-spool.ts). `removed_at` is set once the file is gone; a
  *   session's quota is released only then.
  *
+ * - `persistence_effects_index_barrier` (eng-r3-outside-4, INDEX_EFFECT_BARRIER_SQL, migration-only: the blobs create
+ *   persistence_effects before effect-schema.ts adds next_attempt_at): an `index-split-page` effect always stores
+ *   `next_attempt_at = 'infinity'` and keeps the time it is due in `data.due_at`. A released binary's claim selects only
+ *   effects with `next_attempt_at <= now()` and sends a kind it does not know to its embedding step, so it never selects
+ *   index work, even when it releases an abandoned claim, requeues the effect or starts after activation. Only a claim
+ *   that knows the kind reads `due_at` (effect-journal.ts claimPersistenceEffect).
+ *
  * RLS is enabled on each table as on every public table (doctor `rls`), only when the role bypasses it (the page-body pattern).
  */
 export const GIT_FIRST_SCHEMA_SQL = `
@@ -64,4 +71,19 @@ BEGIN
     END LOOP;
   END IF;
 END $rls$;
+`;
+
+export const INDEX_EFFECT_BARRIER_SQL = `
+CREATE OR REPLACE FUNCTION gbrain_index_effect_barrier() RETURNS trigger
+  LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+  BEGIN
+    IF NEW.next_attempt_at IS DISTINCT FROM 'infinity'::timestamptz THEN
+      NEW.data := jsonb_set(COALESCE(NEW.data, '{}'::jsonb), '{due_at}', to_jsonb(COALESCE(NEW.next_attempt_at, now())));
+      NEW.next_attempt_at := 'infinity'::timestamptz;
+    END IF;
+    RETURN NEW;
+  END $fn$;
+DROP TRIGGER IF EXISTS persistence_effects_index_barrier ON persistence_effects;
+CREATE TRIGGER persistence_effects_index_barrier BEFORE INSERT OR UPDATE OF next_attempt_at ON persistence_effects
+  FOR EACH ROW WHEN (NEW.kind = 'index-split-page') EXECUTE FUNCTION gbrain_index_effect_barrier();
 `;

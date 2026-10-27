@@ -76,7 +76,7 @@ export const doorSeams: { beforeUpdateRef?: (root: string, attempt: number) => P
 
 const doorTurns = new Map<string, Promise<void>>();
 /** Refusals that keep their own code: the checkout's state, not the commit, stopped the write. */
-const TYPED = new Set(['git_detached_head', 'git_branch_unborn', 'git_index_locked', 'git_index_stale', 'git_target_changed', 'git_index_conflict']);
+const TYPED = new Set(['git_door_timeout', 'git_detached_head', 'git_branch_unborn', 'git_index_locked', 'git_index_stale', 'git_target_changed', 'git_index_conflict']);
 const landedFailures = new WeakSet<object>();
 
 /** One published file of a door commit and the state the commit must give its path. */
@@ -90,12 +90,24 @@ export interface DoorFile {
 }
 
 /**
+ * A publication transaction's door bound passed before the branch moved: nothing was committed, so the transaction rolls
+ * back and recovery restores the prior bytes.
+ */
+function doorTimeout(root: string, files: DoorFile[]): OperationError {
+  const paths = files.map(file => relative(root, file.path).split(sep).join('/'));
+  return opError('git_door_timeout', `The strict source's commit of ${paths.join(', ')} did not reach its ref update within the publication's door bound, so nothing was published.`,
+    'The publication transaction holds its page locks while the door commits, so a door that stalls is refused instead of holding them. Check the checkout on the brain host (git status, a slow disk, a held index lock), then retry the write with a new request_id.');
+}
+
+/**
  * Commits the published files of one publication under the caller's writer lock and returns the commit HEAD then
  * names (the commit that holds these bytes, also when every path was already committed). Each path is committed in
  * its planned state or not at all. A target Git refuses, a file that no longer holds its plan, or a target with a
- * staged change throws, so the publication rolls back.
+ * staged change throws, so the publication rolls back. `deadline` (epoch ms) bounds a door called inside a publication
+ * transaction: past it the door refuses with `git_door_timeout` before it starts and before it moves the branch, so a stalled door
+ * holds the transaction's locks for at most the bound plus one Git step (each step has its own timeout).
  */
-export async function commitThroughDoor(root: string, files: DoorFile[], writerLock?: NativeLockHandle, onIndexRestored?: (paths: string[]) => void): Promise<string | null> {
+export async function commitThroughDoor(root: string, files: DoorFile[], writerLock?: NativeLockHandle, onIndexRestored?: (paths: string[]) => void, deadline?: number): Promise<string | null> {
   let key = resolve(root);
   try { key = realpathSync(root); } catch { /* the session reports a missing checkout */ }
   const prior = doorTurns.get(key) ?? Promise.resolve();
@@ -104,7 +116,8 @@ export async function commitThroughDoor(root: string, files: DoorFile[], writerL
   doorTurns.set(key, turn);
   await prior;
   try {
-    return await withSession(root, undefined, writerLock ? { writerLock } : undefined, false, session => doorCommit(session, root, files, onIndexRestored));
+    if (deadline !== undefined && Date.now() >= deadline) throw doorTimeout(root, files);
+    return await withSession(root, undefined, writerLock ? { writerLock } : undefined, false, session => doorCommit(session, root, files, onIndexRestored, deadline));
   } catch (error) {
     if (!(error instanceof OperationError) || TYPED.has(error.code) || landedFailures.has(error)) throw error;
     const paths = files.map(file => relative(root, file.path).split(sep).join('/'));
@@ -191,7 +204,7 @@ function stripspace(paragraph: string): string {
   return lines.join('\n');
 }
 
-async function doorCommit(session: GitSession, root: string, files: DoorFile[], onIndexRestored?: (paths: string[]) => void): Promise<string> {
+async function doorCommit(session: GitSession, root: string, files: DoorFile[], onIndexRestored?: (paths: string[]) => void, deadline?: number): Promise<string> {
   const symbolic = await git(session, ['symbolic-ref', '-q', 'HEAD']);
   if (symbolic.code !== 0) throw opError('git_detached_head', `${root} is on a detached HEAD, so the strict source's write has no branch to commit to; nothing was published.`,
     'Check out the branch the source tracks (git switch <branch>) on the brain host, then retry the write with a new request_id.');
@@ -348,6 +361,7 @@ async function doorCommit(session: GitSession, root: string, files: DoorFile[], 
         `git commit-tree failed for ${changed.length} file(s); a missing Git identity (user.name, user.email) in that checkout is one cause to check.`);
       const created = commit.stdout.trim();
       await doorSeams.beforeUpdateRef?.(root, attempt);
+      if (deadline !== undefined && Date.now() >= deadline) throw doorTimeout(root, files);
       const moved = await git(session, ['update-ref', '-m', `commit: ${message[0]!.split('\n')[0]}`, branch, created, head]);
       if (moved.code === 0) {
         await syncIndex(session, root, prefix, index, [...targets.values()], created, indexed);

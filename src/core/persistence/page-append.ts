@@ -21,6 +21,8 @@
  * PR 4's incremental derivation.
  */
 import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { OperationContext } from '../operations.ts';
@@ -61,7 +63,8 @@ import { isWriteRequestId } from './types.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 import type { ClaimPhaseClock } from './claim-phase.ts';
-import { indexPendingError, readPendingHead } from './git-first.ts';
+import { indexPendingError, readPendingHead, type PendingHead } from './git-first.ts';
+import { getWorktreeBinding } from './ownership.ts';
 import { gitFirstStrictActive } from './git-first-gate.ts';
 
 /** The most text one append_page call carries; a larger append goes through an upload session (mode 'append'). */
@@ -368,6 +371,34 @@ export async function prepareSegmentedSpliceMutation(engine: BrainEngine, row: W
   }
 }
 
+/**
+ * Wave C (ceo-r3-outside-3, unsplit pages): during the index lag the page is its committed head, not its rows. An append
+ * reads its tail from the committed file (the working tree, which must still be that head) and composes the whole file,
+ * which takes put_page's deferred path against the head's revision, so it supersedes the head and reaches Git first. An
+ * append into the truth while a timeline follows it would land mid-page, so it refuses index_pending until the flip, as
+ * does a head whose file moved or a source no longer on the git-first path.
+ */
+async function prepareAppendOverPendingHead(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, intent: AppendIntent, pending: PendingHead,
+  stored: PageSnapshot | null, signal?: AbortSignal, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
+  if ((stored && !stored.page.deleted_at ? stored.page.id ?? null : null) !== row.page_id) throw pageIdentityError(true, 'The accepted page was deleted or recreated.');
+  const expected = intent.preconditions?.expected_revision;
+  if (expected && expected !== pending.revision) throw revisionRefusal(row, pending.revision);
+  const binding = await getWorktreeBinding(engine, row.source_id);
+  const file = binding?.local_path ? join(binding.local_path, pending.path) : null;
+  const raw = file && existsSync(file) && await gitFirstStrictActive(engine, row.source_id) ? readFileSync(file) : null;
+  if (!raw || raw.length !== Number(pending.body_bytes) || sha256Hex(raw) !== pending.body_sha256) throw indexPendingError(row.slug, pending);
+  const content = raw.toString('utf8');
+  const parsed = parseMarkdown(content, row.slug);
+  const region = targetRegion(intent.region, !!parsed.timeline);
+  if (region === 'truth' && parsed.timeline) throw indexPendingError(row.slug, pending);
+  const tail = inlineRegionTail(region === 'timeline' ? parsed.timeline : parsed.compiled_truth, region);
+  const expectedTail = intent.preconditions?.expected_tail_sha256;
+  if (expectedTail && ((row.authority.remote && tail.guarded) || sha256Hex(tail.bytes) !== expectedTail)) throw tailRefusal(row, region);
+  const text = await appendedText(engine, intent);
+  const separator = intent.separator === 'auto' && raw.length > 0 && raw[raw.length - 1] !== 0x0a ? '\n' : '';
+  return preparePageMutation(engine, row, config, { content: content + separator + text, expectedRevision: pending.revision }, signal, { clock });
+}
+
 /** The preparer of an append_page request (service.ts dispatch). */
 export async function prepareAppendMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, signal?: AbortSignal, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
   signal?.throwIfAborted();
@@ -375,7 +406,7 @@ export async function prepareAppendMutation(engine: BrainEngine, row: WriteReque
   const stored = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
   // Wave C (ceo-r3-outside-1): a committed head whose index is pending is the page's tail; its rows are the generation before it.
   const pending = await readPendingHead(engine, row.source_id, row.slug);
-  if (pending && pending.request_id !== row.id) throw indexPendingError(row.slug, pending.request_id);
+  if (pending && pending.request_id !== row.id) return prepareAppendOverPendingHead(engine, row, config, intent, pending, stored, signal, clock);
   if (!stored || stored.page.deleted_at) throw pageRefusal('page_not_found', 'Page not found.', row,
     `Page ${row.slug} does not exist in source ${row.source_id} or is deleted, so nothing was appended. Create it with put_page; restore a deleted page with restore_page.`,
     pageFix(row.source_id, row.slug));
@@ -393,8 +424,15 @@ export async function prepareAppendMutation(engine: BrainEngine, row: WriteReque
   // Wave C (eng-r3-outside-1): on a strict git-first source an append to an unsplit segmented page composes the whole
   // file and takes put_page's deferred path below, so its bytes reach Git before any row; the splice would stage the
   // appended segments in the publication transaction, before the door.
-  const gitFirst = isSegmentedPage(stored.page) && Number((stored.page as { body_bytes?: number | null }).body_bytes ?? 0) + Buffer.byteLength(text, 'utf8') + 1 <= PAGE_MAX_BYTES
-    && await gitFirstStrictActive(engine, row.source_id);
+  const strictGitFirst = isSegmentedPage(stored.page) && await gitFirstStrictActive(engine, row.source_id);
+  const composedBytes = Number((stored.page as { body_bytes?: number | null }).body_bytes ?? 0) + Buffer.byteLength(text, 'utf8') + 1;
+  const gitFirst = strictGitFirst && composedBytes <= PAGE_MAX_BYTES;
+  // Over the unsplit ceiling a strict source keeps refusing (split pages are PR 5's), as begin_page_upload does (spec §2.1).
+  if (strictGitFirst && !gitFirst) {
+    throw opError('file_too_large', `Page ${row.slug} would be about ${composedBytes} bytes after this append, over the ${PAGE_MAX_BYTES}-byte page limit of a git-canonical source, so nothing was appended.`,
+      'Append to a new page under the limit, or write to a source that is not git-canonical; then submit again with a new request_id.',
+      { legacy_error: 'request_too_large', reason: 'switch_off', fix: pageFix(row.source_id, row.slug) });
+  }
   if (isSegmentedPage(stored.page) && !gitFirst) {
     let mentionRange: PreparedMutation['mentionRange'];
     const prepared = await prepareSegmentedSpliceMutation(engine, row, stored, { full: appendProbe.fullRewrite, replacements: async page => {

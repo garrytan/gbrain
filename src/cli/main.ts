@@ -820,7 +820,7 @@ async function runThinClientRouted(
     const raw = await timeCliPhase('remote', () => callRemoteTool(cfg, op.name, params, {
       timeoutMs,
       signal: sigintController.signal,
-      ...(op.mutating ? { writeWaitMs: currentCliWriteWait().waitMs } : {}),
+      ...(op.mutating ? { writeWaitMs: currentCliWriteWait().waitMs, waitIndexedMs: currentCliWriteWait().waitIndexedMs } : {}),
     }).catch(async (e: unknown) => { // large pages: a page too big for one response is paged to its end, verified, then printed
       if (op.name !== 'get_page') throw e;
       const { printPagedPage, remoteErrorCode, wantsWholePage } = await import('./page-render.ts');
@@ -1536,6 +1536,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
     remote: false, admissionOrigin: 'interactive', // #6696 (A5): the user's own CLI writes
     cliOpts: getCliOptions(),
     writeWaitMs: currentCliWriteWait().waitMs, // #5232
+    waitIndexedMs: currentCliWriteWait().waitIndexedMs, // Wave C 1I-a: --wait-indexed
     // v0.34 D4: sourceId is REQUIRED at the type level. Fall back to 'default'
     // when resolveSourceId returned undefined (fresh pre-init brain, no sources
     // table). Matches dispatch.ts's auto-fill so the contract holds across

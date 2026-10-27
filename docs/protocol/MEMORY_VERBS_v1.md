@@ -836,6 +836,21 @@ unknown submission. `--timeout` bounds one exchange: with a shorter
 receipt, but a remote server's own 5 s wait cannot be shortened, so keep
 `--timeout` above it.
 
+On a git-canonical source a page over 1 MiB is committed to Git first and
+indexed afterwards: its receipt reads `indexing` (exit 10) until the index
+step flips the database, then `committed`. `--wait` keeps its 600 s cap.
+`--wait-indexed <seconds>` (0 to 3600) keeps a write whose receipt reads
+`indexing` waiting past `--wait`, polling at the receipt's delay, and stops at
+`committed` (exit 0) or at a content hold: exit 1 with `index_held`, the hold
+code and the rebuild preview (`gbrain pages reindex <slug> --from-git
+--dry-run`); do not resend, the bytes are in Git. Precedence:
+`--wait-indexed` > `GBRAIN_WAIT_INDEXED_MS` > the file-plane
+`persistence.wait_indexed_ms` > off. `--accept-pending` exits 0 on `indexing`.
+Agents poll `get_write_request` instead. A strict write whose door commit
+does not reach its ref update within the publication transaction's door bound
+(120 s; `GBRAIN_PUBLICATION_DOOR_BOUND_MS`) fails with `git_door_timeout`
+(exit 1): nothing was committed, so submit it again with a new request_id.
+
 ```bash
 gbrain put notes/example --request-id 7f3c0e9a-0000-4000-8000-000000000001 < page.md
 echo $?   # 10: accepted, not yet committed

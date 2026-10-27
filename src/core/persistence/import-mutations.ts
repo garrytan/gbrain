@@ -76,7 +76,7 @@ type PendingImport = ManagedImportIntent & { request_id: string; source_id: stri
 type StoredImport = Omit<PendingImport, 'content'> & { content?: string };
 
 export async function importManagedFile(engine: BrainEngine, filePath: string, sourcePath: string,
-  opts: { sourceId?: string; noEmbed?: boolean; activePack?: ImportPack; signal?: AbortSignal; slugRoot?: string } = {}): Promise<ImportResult> {
+  opts: { sourceId?: string; noEmbed?: boolean; activePack?: ImportPack; signal?: AbortSignal; slugRoot?: string; expectInputHash?: string } = {}): Promise<ImportResult> {
   const [settled] = await importManagedFiles(engine, [{ filePath, sourcePath }], opts);
   if (settled!.status === 'rejected') throw settled!.reason;
   return settled!.value;
@@ -91,7 +91,7 @@ export async function importManagedFile(engine: BrainEngine, filePath: string, s
  * there; that file and the rest import after it, as they would one by one.
  */
 export async function importManagedFiles(engine: BrainEngine, files: readonly ManagedImportFile[],
-  opts: { sourceId?: string; noEmbed?: boolean; activePack?: ImportPack; signal?: AbortSignal; slugRoot?: string } = {}): Promise<PromiseSettledResult<ImportResult>[]> {
+  opts: { sourceId?: string; noEmbed?: boolean; activePack?: ImportPack; signal?: AbortSignal; slugRoot?: string; expectInputHash?: string } = {}): Promise<PromiseSettledResult<ImportResult>[]> {
   const caller = currentSubmissionAuthority();
   if (caller && caller.kind !== 'application' || currentVerifiedLocalWriter()?.remote) {
     throw trustedCliRequired('Managed filesystem import requires the trusted local CLI.');
@@ -132,8 +132,13 @@ export async function importManagedFiles(engine: BrainEngine, files: readonly Ma
       const { slug, content } = streamed ? { slug: streamed.slug, content: undefined } : managedImportContent(sourcePath, bytes!, opts.activePack);
       if (slugs.has(slug)) { rest = i; break; }
       slugs.add(slug);
-      planned.push({ i, slug, content, ...(streamed ? { bodyRef: streamed.bodyRef } : {}), sourcePath, path, inputPath,
-        inputHash: streamed ? streamed.bodyRef.sha256 : sha256(bytes!), target });
+      const inputHash = streamed ? streamed.bodyRef.sha256 : sha256(bytes!);
+      // Wave C 1I-a: the index step imports the committed file it hashed; a file that changed since is not that file.
+      if (opts.expectInputHash && inputHash !== opts.expectInputHash) {
+        throw opError('source_changed', `The file of page ${slug} changed after it was checked against its committed head, so it was not imported.`,
+          'The index step retries and checks the file again; nothing was written.');
+      }
+      planned.push({ i, slug, content, ...(streamed ? { bodyRef: streamed.bodyRef } : {}), sourcePath, path, inputPath, inputHash, target });
     } catch (error) { fail(i, error); }
   } });
   if (planned.length) await importPlanned(ctx, binding!, planned, opts, fail, (i, value) => { settled[i] = { status: 'fulfilled', value }; });

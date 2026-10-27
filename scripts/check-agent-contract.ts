@@ -278,6 +278,8 @@ const READ_ONLY_SUBCOMMANDS = new Set(['config get', 'sources list', 'sources st
   'extract --stale --dry-run',
   // #7179: per-page search state; reads page, chunk, budget and hold rows plus Git objects, writes nothing.
   'pages status',
+  // Wave C 1I-a: compares a page's export view with its committed blob; reads rows and Git objects, writes nothing.
+  'pages verify',
   // G1/G7a: the git-gap census reads pages and Git objects in read-only transactions and writes nothing.
   'sources git-gap']);
 

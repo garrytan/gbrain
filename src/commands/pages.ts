@@ -132,6 +132,13 @@ Subcommands:
                                     chunks, any large-page embedding hold or sync hold on its
                                     file, whether the file is in the synced commit, why, and
                                     the fix. A page that is not searchable still exits 0.
+  verify <slug> [--source <id>] [--json]
+                                    Read-only: whether the page's database view equals its
+                                    committed file at HEAD (strict sources). Exit 0 with ok:true,
+                                    or 1 with the state, differing fields and the fix.
+  reindex <slug> --from-git [--source <id>] [--dry-run | --apply --expect <hash>] [--no-embed] [--json]
+                                    Re-derive one page of a strict source from the file HEAD
+                                    commits. Preview by default; --apply needs the preview hash.
 
 Notes:
   Soft-delete a page via \`gbrain delete <slug> --force\`; restore via \`gbrain restore <slug> --force\`
@@ -151,6 +158,8 @@ export async function runPages(engine: BrainEngine, args: string[]): Promise<voi
     case 'unsearchable': return (await import('./pages-unsearchable.ts')).runPagesUnsearchable(engine, args.slice(1));
     case 'ghosts': return (await import('./pages-ghosts.ts')).runPagesGhosts(engine, args.slice(1));
     case 'status': return (await import('./pages-status.ts')).runPagesStatus(engine, args.slice(1));
+    case 'verify': return (await import('./pages-from-git.ts')).runPagesVerify(engine, args.slice(1));
+    case 'reindex': return (await import('./pages-from-git.ts')).runPagesReindex(engine, args.slice(1));
     case undefined:
       printUsage();
       return;

@@ -115,6 +115,11 @@ export async function landedCommit(root: string, from: string | null, path: stri
   return quiet(gitRead(root, ['rev-list', '-1', from ? `${from}..HEAD` : 'HEAD', '--', `:(literal)${relative(root, path).split(sep).join('/')}`]));
 }
 
+/** Whether `commit` is HEAD or an ancestor of it in `root`; false when it is not, or Git cannot tell. */
+export async function isAncestor(root: string, commit: string): Promise<boolean> {
+  return gitRead(root, ['merge-base', '--is-ancestor', commit, 'HEAD']).then(() => true, () => false);
+}
+
 /** The commit HEAD names in `root`, or null on an unborn branch or when Git cannot read it. */
 export async function headCommit(root: string, signal?: AbortSignal): Promise<string | null> {
   return quiet(gitRead(root, ['rev-parse', '--verify', '--quiet', 'HEAD'], signal), signal);

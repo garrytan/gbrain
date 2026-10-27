@@ -1188,8 +1188,9 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       const lane = laneOf(row);
       if (await claimedHeadOrder(this.engine, row, lane !== null) === 'wait') { await releaseUnpublishedClaim(this.statements, row, 'group_member_waiting'); return false; }
       const group = publicationGroupKey(row);
-      // A managed import batch also groups on PGLite: its members share one transaction's guards there too.
-      if (!group || this.engine.kind !== 'postgres' && !group.startsWith('import:')) return this.execute(row, root);
+      // A managed import batch and an atom generation also group on PGLite: an import's members share one transaction's
+      // guards there too, and a generation (creates, activation, retirements) publishes whole or not at all, as on Postgres.
+      if (!group || this.engine.kind !== 'postgres' && !group.startsWith('import:') && !group.startsWith('generation:')) return this.execute(row, root);
       // #6007: a put_pages or import batch publishes in groups of at most PAGE_BATCH_GROUP_MAX pages.
       const charged = (row.transient_interruptions ?? 0) > 0;
       const followers = charged ? [] : await claimGroupFollowers(this.engine, row, group, syncGroup(group) ? 63 : PAGE_BATCH_GROUP_MAX - 1);

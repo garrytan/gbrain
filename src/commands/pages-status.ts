@@ -30,7 +30,8 @@ export const PAGES_STATUS_USAGE = 'Usage: gbrain pages status <slug...> [--sourc
 /** Slugs one call reads. */
 export const PAGES_STATUS_MAX = 200;
 
-export type PageStatusState = 'searchable' | 'pending_embedding' | 'chunkless' | 'keyword_only' | 'quarantined' | 'empty' | 'missing' | 'page_deleted';
+export type PageStatusState = 'searchable' | 'pending_embedding' | 'chunkless' | 'keyword_only' | 'quarantined' | 'empty' | 'missing' | 'page_deleted'
+  | 'indexing' | 'index_held';
 
 export interface PageStatus {
   slug: string;
@@ -44,6 +45,11 @@ export interface PageStatus {
   source_path: string | null;
   /** The file is in the source's synced commit (`sources.last_commit`); null without a Git checkout here or a recorded file. */
   in_synced_commit: boolean | null;
+  /**
+   * Wave C (spec §3.6): a strict git-first write committed this page's file and its index step has not flipped the rows
+   * yet (`pending`), or held it (`held`, with the hold code); null otherwise. The rows still show the generation before it.
+   */
+  index: { state: 'pending' | 'held'; request_id: string; commit: string; hold_code: string | null; queued_at: string } | null;
   why: string;
   fix: Action | null;
 }
@@ -64,7 +70,7 @@ const STATE_ORDER: EmbeddingState[] = ['quarantined', 'chunkless_healable', 'pen
 const PAGE_STATE: Record<Exclude<EmbeddingState, 'deleted_page_chunks'>, PageStatusState> = { embedded: 'searchable', pending: 'pending_embedding',
   keyword_only: 'keyword_only', quarantined: 'quarantined', empty: 'empty', chunkless_healable: 'chunkless' };
 const SEARCHABLE: Record<PageStatusState, PageStatus['searchable']> = { searchable: true, pending_embedding: 'keyword', keyword_only: 'keyword',
-  quarantined: false, chunkless: false, empty: false, missing: false, page_deleted: false };
+  quarantined: false, chunkless: false, empty: false, missing: false, page_deleted: false, indexing: false, index_held: false };
 
 /** Positional slugs plus `--source <id>` (or `--source=<id>`) and `--json`; anything else is `invalid_params`. */
 export function parsePagesStatusArgs(args: readonly string[]): PagesStatusArgs {
@@ -168,7 +174,33 @@ function stateWhy(slug: string, state: PageStatusState, ctx: { row?: EmbeddingSt
     case 'empty': return `Page ${slug} has no body text, so there is nothing to search.`;
     case 'page_deleted': return `Page ${slug} is soft-deleted, so search never returns it. If it should come back, restore it with gbrain restore ${slug} --force.`;
     case 'missing': return `No page with slug ${slug} exists in this source, live or deleted.`;
+    case 'indexing': case 'index_held': return `Page ${slug} has a committed head in Git that its index step has not flipped into the database.`;
   }
+}
+
+type PendingIndex = NonNullable<PageStatus['index']>;
+
+/** Wave C: the pages of `slugs` whose committed head waits for (or was held by) its index step. */
+async function readPendingIndexes(engine: BrainEngine, sourceId: string, slugs: string[]): Promise<Map<string, PendingIndex>> {
+  const rows = await engine.executeRaw<{ slug: string; request_id: string; commit_oid: string; hold_code: string | null; queued_at: Date | string }>(
+    'SELECT slug, request_id::text AS request_id, commit_oid, hold_code, queued_at FROM page_pending_heads WHERE source_id = $1 AND slug = ANY($2::text[])', [sourceId, slugs]);
+  return new Map(rows.map(row => [row.slug, { state: row.hold_code ? 'held' : 'pending', request_id: row.request_id, commit: row.commit_oid, hold_code: row.hold_code,
+    queued_at: new Date(row.queued_at).toISOString() }]));
+}
+
+/** Wave C: the state, reason and fix of a page whose committed head waits for its index step, over what its rows say. */
+function pendingIndexStatus(status: PageStatus, index: PendingIndex): PageStatus {
+  const { slug, source_id: sourceId } = status;
+  const before = status.page ? `its rows still show the generation before it (${status.state}: ${status.why})` : 'the database has no row for it yet';
+  const verify = { argv: ['gbrain', 'pages', 'status', slug, '--source', sourceId, '--json'] };
+  if (index.state === 'held') return { ...status, state: 'index_held', index,
+    why: `Git holds commit ${index.commit.slice(0, 12)} of page ${slug} (request ${index.request_id}), but its index step held it (${index.hold_code}), so ${before}. Nothing is lost: the bytes are in Git.`,
+    fix: { argv: ['gbrain', 'pages', 'reindex', slug, '--source', sourceId, '--from-git', '--dry-run'], consent: [], actor: 'agent', requires_exclusive: false, verify,
+      why: 'Read-only preview of re-indexing the page from its committed file; apply it with the --expect hash it prints.' } };
+  return { ...status, state: 'indexing', index,
+    why: `Git has commit ${index.commit.slice(0, 12)} of page ${slug} (request ${index.request_id}) and its index step has not run yet, so ${before}.`,
+    fix: { argv: ['gbrain', 'write-request', '--', index.request_id], consent: [], actor: 'agent', requires_exclusive: false, verify,
+      why: "Read-only: the write's receipt says when its index step has flipped the page." } };
 }
 
 /** Resolves each slug of one source to its search state, reason and fix. Read-only. */
@@ -177,6 +209,7 @@ export async function readPagesStatus(engine: BrainEngine, sourceId: string, slu
     'SELECT local_path, last_commit, config, incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
   const disabled = await embeddingsDisabled(engine);
   const pages = await readPages(engine, sourceId, slugs);
+  const pending = await readPendingIndexes(engine, sourceId, slugs);
   const states = await readEmbeddingStates(engine, sourceId, [...pages.values()].filter(page => !page.deleted).map(page => page.slug));
   const sourcePaths = [...new Set([...pages.values()].flatMap(page => page.source_path ? [page.source_path] : []))];
   const git = source ? await readGitView(engine, sourceId, source, sourcePaths) : null;
@@ -188,8 +221,9 @@ export async function readPagesStatus(engine: BrainEngine, sourceId: string, slu
   for (const slug of slugs) {
     const page = pages.get(slug);
     if (!page) {
-      out.push({ slug, source_id: sourceId, state: 'missing', searchable: false, page: null, embedding_hold: null, hold: null, source_path: null, in_synced_commit: null,
-        why: stateWhy(slug, 'missing', { unembedded: 0, disabled, embeddingHold: null }), fix: null });
+      const missing: PageStatus = { slug, source_id: sourceId, state: 'missing', searchable: false, page: null, embedding_hold: null, hold: null, source_path: null,
+        in_synced_commit: null, index: null, why: stateWhy(slug, 'missing', { unembedded: 0, disabled, embeddingHold: null }), fix: null };
+      out.push(pending.has(slug) ? pendingIndexStatus(missing, pending.get(slug)!) : missing);
       continue;
     }
     const file = page.source_path ? git?.files.get(page.source_path) : undefined;
@@ -213,10 +247,11 @@ export async function readPagesStatus(engine: BrainEngine, sourceId: string, slu
       fix = embeddingStateFix(classifier, { sourceId, slug, markerBytes: row?.marker_bytes ?? null, blockBytes, embeddingsEnabled: !disabled,
         verify: { argv: ['gbrain', 'pages', 'status', slug, '--source', sourceId, '--json'] } });
     }
-    out.push({ slug, source_id: sourceId, state, searchable: SEARCHABLE[state],
+    const status: PageStatus = { slug, source_id: sourceId, state, searchable: SEARCHABLE[state],
       page: { id: Number(page.id), slug: page.slug, deleted: page.deleted, chunks: Number(page.chunks), unembedded },
       embedding_hold: embeddingHold, hold: record ? { code: record.code, message: record.message } : null, source_path: page.source_path,
-      in_synced_commit: file?.inSynced ?? null, why, fix });
+      in_synced_commit: file?.inSynced ?? null, index: null, why, fix };
+    out.push(pending.has(slug) ? pendingIndexStatus(status, pending.get(slug)!) : status);
   }
   return { source_id: sourceId, last_commit: lastCommit, head, at_head: head && lastCommit ? head === lastCommit : null, embeddings_enabled: !disabled, pages: out };
 }

@@ -11,6 +11,7 @@ import type { GBrainConfig } from '../config.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { INDEX_SPLIT_PAGE_EFFECT, indexSplitPageConsumer } from './git-first-gate.ts';
+import './index-split-page.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { serializePageToMarkdown } from '../markdown.ts';

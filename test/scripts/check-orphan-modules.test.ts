@@ -119,6 +119,15 @@ describe('check-orphan-modules permitted test-only set', () => {
     expect(r.stderr).toContain('every permitted test-only module needs one');
   });
 
+  test('a module reached only by a bare side-effect import is runtime-reachable', () => {
+    const r = runGuard(makeTree({
+      'src/entry.ts': "import './registers.ts';\nimport { used } from './used.ts';\nconsole.log(used);\n",
+      'src/registers.ts': "globalThis.registered = true;\n",
+    }));
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+  });
+
   test('a module imported by nothing is a hard orphan', () => {
     const r = runGuard(makeTree({ 'src/orphan.ts': "export const o = 1;\n" }));
     expect(r.status).toBe(1);

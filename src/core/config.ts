@@ -75,7 +75,7 @@ export interface GBrainConfig {
   /** Monthly backup-coverage check. File-plane for engine-free hook children. */
   backup?: { check_enabled?: boolean | string; check_interval_days?: number | string };
   /** #5232: CLI write wait in ms (file plane; persistence/write-wait.ts). */
-  persistence?: { write_wait_ms?: number | string };
+  persistence?: { write_wait_ms?: number | string; wait_indexed_ms?: number | string };
   migrate?: { graduation?: boolean }; // `migrate.graduation false`: legacy copier instead of graduation (file plane, read pre-connect)
   doctor?: { default_budget_ms?: number | string }; // #6803: non-interactive CLI doctor --json check-run cap (file plane, read pre-connect; 0 off)
   /** A4 user preapprovals (file plane only; set by the trusted local CLI; read by core/consent.ts). */
@@ -1812,6 +1812,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // shared-skills migration inventory bounds (src/core/shared-skills/inventory-limits.ts)
   'shared_skills.inventory.max_files', 'shared_skills.inventory.max_total_bytes', 'shared_skills.inventory.max_file_bytes', 'shared_skills.inventory.max_entries', 'shared_skills.migration.enabled', // #6466: false declines the 0.53.0 migration (commands/migrations/opt-out.ts)
   'persistence.write_wait_ms', // #5232: file plane, persistence/write-wait.ts
+  'persistence.wait_indexed_ms', // Wave C 1I-a: file plane, persistence/write-wait.ts (--wait-indexed)
   'migrate.graduation', // file plane, src/commands/migrate-graduation.ts (engine graduation opt-out)
   'doctor.default_budget_ms', 'doctor.entry_budget_ms', 'doctor.orphan_ratio.full_scan_max_pages', 'doctor.background_refresh', // #6803: file plane (commands/doctor/default-budget.ts); DB plane (doctor/budget.ts, checks/orphan-estimate.ts)
   'consent.preapprove.paid.max_usd_per_run', 'consent.preapprove.persistent_install', // A4: file plane, core/consent.ts
