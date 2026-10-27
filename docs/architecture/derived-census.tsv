@@ -12,7 +12,6 @@ src/core/generations/adapters/chronicle-events.ts	1	primitive	the Life Chronicle
 src/core/generations/adapters/single-page.ts	1	primitive	the single-item page adapter (dream_summary, think_synthesis, drift_report) retires only through retireDerivedPagesInTransaction inside the generation activation (publish.ts); a publish replaces its one page in place and never retires it (GBRA-161 PR 5)
 src/core/generations/adapters/synthesis.ts	1	primitive	the synthesis adapter retires matched earlier outputs of a re-synthesized transcript (synthesis-resynthesis) and operator-approved cleanup retirements (synthesis-cleanup) through retireDerivedPagesInTransaction inside the generation activation (publish.ts; GBRA-161 PR 4, #7065)
 src/core/minions/handlers/ingest-capture.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
-src/core/ops/extraction.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
 src/core/page-body/segment-rewrite.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
 src/core/persistence/connector-sync.ts	1	canonical	connector sync applies an upstream deletion of a connected item
 src/core/persistence/derived-retirement-hold.ts	4	primitive	retireDerivedPagesInTransaction: versions, soft-deletes and stamps retired_by; the helper every generation adapter retires through

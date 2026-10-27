@@ -190,8 +190,11 @@ to Alice" only works if Alice's page links back to every mention.
    whose name is one edit, or one acronym letter, away from another entity's
    name or alias, whoever wrote them. It only flags: link the pair with
    `entity-identity-link` (owner, manual), or add the name to the other
-   page's `aliases` frontmatter, which silences the pair. A page whose
-   `distinct_from` frontmatter lists the other slug is never flagged. The
+   page's `aliases` frontmatter, which silences the pair. If they are
+   different entities, `gbrain extraction-review distinct --slugs <new>
+   --of <existing>` (owner, on the brain host) records it in the new page's
+   `distinct_from` frontmatter, committed to Git on a repository source, and
+   the pair is never flagged again. The
    same command lists facts saved without an entity (`unattributed`); relink
    one with `remember` plus `entity` and `replaces`, never by forgetting it
    first.

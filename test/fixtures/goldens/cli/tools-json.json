@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 265643,
-    "stdoutSha256": "a3193f5bf16f3f06caa9c6a96be44a89434f470729fbb1ca70230d83803cc63c",
+    "stdoutBytes": 266092,
+    "stdoutSha256": "2c3bfc071a1de8087f8d53fe42d76b52bf26cd5f40cfdfdec034997461f63366",
     "toolNames": [
       "remember",
       "entity",
@@ -6456,24 +6456,29 @@
         "scope": "read"
       },
       {
-        "description": "Promote or reject unverified auto-extracted entity stubs (batch). Promote flips `status` to verified (provenance kept for audit); reject soft-deletes the stub. Owner-only: this op is refused for any non-local caller. (The markers are ordinary frontmatter — the boundary against rewriting them wholesale is put_page write authz, same as for any page.)",
+        "description": "Decide on review rows (batch). promote flips an unverified auto-extracted stub's `status` to verified (provenance kept for audit); reject soft-deletes the stub; distinct records that each of slugs is a different entity from of (`distinct_from` frontmatter), so possible_duplicates stops pairing them. Every decision writes through the page door: Git first on a source with a repository, the database on a repo-less source. Owner-only: this op is refused for any non-local caller. (The markers are ordinary frontmatter — the boundary against rewriting them wholesale is put_page write authz, same as for any page.)",
         "idempotent": false,
         "local_only": true,
         "mutating": true,
         "name": "extraction_review",
         "parameters": {
           "action": "string",
+          "of": "string?",
           "slugs": "array"
         },
         "required_scopes": [],
         "schema": {
           "properties": {
             "action": {
-              "description": "'promote' or 'reject'.",
+              "description": "'promote', 'reject' or 'distinct'.",
+              "type": "string"
+            },
+            "of": {
+              "description": "distinct only: the existing entity page each of slugs is not the same as.",
               "type": "string"
             },
             "slugs": {
-              "description": "Stub slugs to act on (batch).",
+              "description": "Slugs to act on (batch).",
               "items": {
                 "type": "string"
               },

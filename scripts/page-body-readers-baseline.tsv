@@ -341,6 +341,7 @@ src/core/minions/handlers/subagent-oneshot.ts	planOneshotWrites	call:serializeMa
 src/core/ops/admin.ts	get_versions	field	SEGW	lane 1e: segmented versions return metadata only
 src/core/ops/attribution.ts	get_write_attribution	field	NONE	not the page body: timeline entry id param
 src/core/ops/attribution.ts	rowTarget	field	NONE	not the page body: timeline entry id param
+src/core/ops/extraction.ts	reviewDecision	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body (withoutBody) for an edit_page head edit; the body is never read
 src/core/ops/get-page-body.ts	bodyBytes	field	META	
 src/core/ops/get-page-body.ts	editTarget	field	INLINE	inline branch only (a segmented page maps through the window's segment units); regions read whole within the segmented threshold
 src/core/ops/get-page-body.ts	readPartialBody	call:serializePageToMarkdown	SEGW	

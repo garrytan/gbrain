@@ -5502,12 +5502,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "extraction_review",
     "idempotent": false,
     "outputRedaction": "no_stored_text",
-    "description": "Promote or reject unverified auto-extracted entity stubs (batch). Promote flips `status` to verified (provenance kept for audit); reject soft-deletes the stub. Owner-only: this op is refused for any non-local caller. (The markers are ordinary frontmatter — the boundary against rewriting them wholesale is put_page write authz, same as for any page.)",
+    "description": "Decide on review rows (batch). promote flips an unverified auto-extracted stub's `status` to verified (provenance kept for audit); reject soft-deletes the stub; distinct records that each of slugs is a different entity from of (`distinct_from` frontmatter), so possible_duplicates stops pairing them. Every decision writes through the page door: Git first on a source with a repository, the database on a repo-less source. Owner-only: this op is refused for any non-local caller. (The markers are ordinary frontmatter — the boundary against rewriting them wholesale is put_page write authz, same as for any page.)",
     "params": {
       "action": {
         "type": "string",
         "required": true,
-        "description": "'promote' or 'reject'."
+        "description": "'promote', 'reject' or 'distinct'."
       },
       "slugs": {
         "type": "array",
@@ -5515,7 +5515,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "items": {
           "type": "string"
         },
-        "description": "Stub slugs to act on (batch)."
+        "description": "Slugs to act on (batch)."
+      },
+      "of": {
+        "type": "string",
+        "required": false,
+        "description": "distinct only: the existing entity page each of slugs is not the same as."
       }
     },
     "mutating": true,

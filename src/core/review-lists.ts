@@ -110,6 +110,8 @@ export async function listPossibleDuplicates(engine: BrainEngine, ctx: Operation
           { kind: 'add_alias', run_by: 'caller', argv: ['gbrain', 'get', first.slug],
             mcp: { tool: 'edit_page', arguments: { slug: first.slug, expected_revision: '<from get_page>', edits: [] } },
             why: `If "${own[0]!.name}" is another name for ${first.slug}, add it to that page's aliases frontmatter; the pair is then no longer flagged.` },
+          { kind: 'mark_distinct', run_by: local ? 'caller' : 'owner', argv: ['gbrain', 'extraction-review', 'distinct', '--slugs', slug, '--of', first.slug],
+            why: `If ${slug} and ${first.slug} are different entities, records it in ${slug}'s distinct_from frontmatter (through the page door); the pair is then no longer flagged.` },
         ],
       });
     }
