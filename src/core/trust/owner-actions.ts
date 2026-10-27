@@ -144,7 +144,7 @@ export interface HoldStoreAdapter {
   get(engine: BrainEngine, id: number): Promise<HoldRow | null>;
   list(engine: BrainEngine, opts: { sourceId?: string; since?: Date }): Promise<HoldRow[]>;
   /** Marks the hold released and publishes its payload at user_confirmed in `tx`; false when it was no longer held. */
-  release(tx: BrainEngine, id: number, by: string): Promise<boolean>;
+  release(tx: BrainEngine, id: number, by: string, approved?: string): Promise<boolean>;
   drop(tx: BrainEngine, id: number, by: string): Promise<boolean>;
   /** A managed release published through the page-mutation door (trust/release-publish.ts); null when the hold takes `release`. */
   publish?(engine: BrainEngine, id: number, by: string, config?: GBrainConfig, approved?: string): Promise<boolean | null>;
@@ -174,7 +174,11 @@ const defaultHoldStore: HoldStoreAdapter = {
          AND ($2::timestamptz IS NULL OR last_seen_at >= $2) ORDER BY id LIMIT 1000`, [opts.sourceId ?? null, opts.since?.toISOString() ?? null]);
     return rows.map(holdRow);
   },
-  async release(tx, id, by) {
+  async release(tx, id, by, approved) {
+    // Serialize approval validation with re-gating and keep that lock through publication.
+    const [row] = await tx.executeRaw<Record<string, unknown>>(
+      `SELECT ${holdColumns} FROM write_gate_holds WHERE id = $1 FOR UPDATE`, [id]);
+    if (!row || (approved !== undefined && holdBinding(holdRow(row)) !== approved)) return false;
     const held = await getWriteGateHold(tx, id);
     if (held?.kind === 'take') {
       throw opError('unavailable', `h${id} is a held take; releasing takes is not supported yet, so nothing was changed.`,
@@ -477,7 +481,7 @@ export async function applyOwnerAction(engine: BrainEngine, input: OwnerActionIn
       if (ref?.kind === 'proposal') return fromDecision('confirm', await decideTrustProposal(engine, ref.id, 'accept', decision));
       if (ref?.kind === 'hold') {
         const released = await holdStore.publish?.(engine, ref.id, principalLabel(by), opts.config, opts.binding)
-          ?? await engine.transaction(tx => holdStore.release(tx, ref.id, principalLabel(by)));
+          ?? await engine.transaction(tx => holdStore.release(tx, ref.id, principalLabel(by), opts.binding));
         if (!released) throw opError('preview_changed', `h${ref.id} was decided meanwhile; nothing was changed.`, 'Run gbrain trust review.');
         return { action: 'release', ref: preview.ref, status: 'released', tier: 'user_confirmed', prior_tier: preview.tier };
       }
