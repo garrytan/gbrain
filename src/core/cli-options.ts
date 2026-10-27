@@ -50,6 +50,8 @@ export interface CliOptions {
   writeWaitMs?: number | null;
   /** #5232: `--accept-pending` (true) / `--no-accept-pending` (false); unset = GBRAIN_ACCEPT_PENDING. */
   acceptPending?: boolean | null;
+  /** `--db-proxy <http://host:port>`: tunnel every Postgres connection through this HTTP CONNECT proxy (db-proxy.ts). */
+  dbProxy?: URL | null;
 }
 
 export const DEFAULT_CLI_OPTIONS: CliOptions = {
@@ -90,6 +92,23 @@ function parseBrainValue(val: string | undefined): string {
     );
   }
   return val;
+}
+
+/** `--db-proxy` takes `http://[user:pass@]host:port` and nothing else; anything else is a usage error (exit 2). */
+function parseDbProxy(val: string | undefined): URL {
+  const invalid = () => opError('invalid_params',
+    `--db-proxy requires an http:// proxy URL with a host and port (got ${val === undefined ? 'nothing' : JSON.stringify(val)}).`,
+    'Pass an HTTP proxy that allows CONNECT, for example --db-proxy http://proxy.example:8080.');
+  if (val === undefined || val.startsWith('-')) throw invalid();
+  let url: URL;
+  try { url = new URL(val); } catch { throw invalid(); }
+  if (url.protocol !== 'http:' || !url.hostname || !url.port || url.pathname !== '/' || url.search || url.hash) throw invalid();
+  // childGlobalFlags splices the value into execSync command strings.
+  if (!/^[\w.~%:@/[\]-]+$/.test(url.href)) {
+    throw opError('invalid_params', '--db-proxy credentials may only contain letters, digits and . _ ~ - characters.',
+      'Percent-encode any other character in the proxy user or password, for example $ as %24.');
+  }
+  return url;
 }
 
 /**
@@ -240,6 +259,15 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
     }
     if (a.startsWith('--wait=')) {
       slots.push({ waitValue: a.slice('--wait='.length) });
+      continue;
+    }
+    if (a === '--db-proxy') {
+      cliOpts.dbProxy = parseDbProxy(argv[i + 1]);
+      i++;
+      continue;
+    }
+    if (a.startsWith('--db-proxy=')) {
+      cliOpts.dbProxy = parseDbProxy(a.slice('--db-proxy='.length));
       continue;
     }
     if (a === '--accept-pending' || a === '--no-accept-pending') {
@@ -438,6 +466,8 @@ export function childGlobalFlags(cliOpts?: CliOptions): string {
   // BRAIN_ID_RE-validated at parse time, so splicing it into an exec string
   // is safe.
   if (opts.brain) parts.push(`--brain=${opts.brain}`);
+  // A child on the same network needs the same tunnel; parseDbProxy admits no shell metacharacters.
+  if (opts.dbProxy) parts.push(`--db-proxy=${opts.dbProxy.href}`);
   return parts.length > 0 ? ' ' + parts.join(' ') : '';
 }
 
