@@ -220,7 +220,9 @@ export interface PageBatchMember { id: string; index: number; size: number; requ
 export async function submitPageMutation(ctx: OperationContext,
   input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true; timelineSection?: TimelineSection; databaseOnly?: 'overwrite_restore' | 'detached';
     /** commit_page_upload: `params.body_ref` names the caller's sealed upload session (persistence/page-upload.ts). */
-    stagedBody?: true }): Promise<Record<string, unknown>> {
+    stagedBody?: true;
+    /** GBRA-215: an ingest attempt writing its own report page (ingest/<attempt_id>); never set from params. */
+    internalIngestReport?: true }): Promise<Record<string, unknown>> {
   assertPersistenceAccepting(ctx.engine);
   // #6007: wait_ms is a reply deadline from arrival, never part of the write's identity.
   const arrived = performance.now();
@@ -258,7 +260,7 @@ export async function submitPageMutation(ctx: OperationContext,
 export async function preparePageAdmission(ctx: OperationContext,
   input: { operation: string; params: Record<string, unknown>; managedFileImport?: true; batch?: PageBatchMember; timelineSection?: TimelineSection;
     /** #6712 `repair overwritten-edits`: publish to the database only, so the restore never rewrites the committed file. */
-    databaseOnly?: 'overwrite_restore' | 'detached'; stagedBody?: true }
+    databaseOnly?: 'overwrite_restore' | 'detached'; stagedBody?: true; internalIngestReport?: true }
 ): Promise<{ prior: WriteRequest; admission?: undefined; typeWarning?: undefined; slugAdvisory?: undefined } | { prior?: undefined; admission: WriteAdmission; typeWarning: PageTypeWarning | null; slugAdvisory: string | null }> {
   if (input.operation === 'put_page' && ['kind', 'preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
     if (ctx.remote !== false || input.managedFileImport !== true || !OWNER_FILE_INTENTS.has(String(input.params.kind)) ||
@@ -363,6 +365,8 @@ export async function preparePageAdmission(ctx: OperationContext,
   await validateMutationSlug(ctx, input.operation, slug, sourceId);
   enforceClientSlugFence(ctx, slug, input.operation);
   enforceSubagentSlugFence(ctx, slug, input.operation);
+  // GBRA-215: an attempt's own report page (ingest/<attempt_id>) passes the reserved-namespace check; every grant still applies.
+  const ingestReport = input.internalIngestReport === true && input.operation === 'put_page' && slug.startsWith('ingest/');
   // Preserve same-source diagnostics for new timeline writes without making
   // terminal replay depend on a page that may have since been purged.
   if (input.operation === 'add_timeline_entry') await requireWritablePage({ ...ctx, sourceId }, slug, input.operation, 'page');
@@ -376,6 +380,9 @@ export async function preparePageAdmission(ctx: OperationContext,
     () => ctx.engine.getConfig('sync.write_through'),
     async () => !source.local_path && sourceId === 'default' ? ctx.engine.getConfig('sync.repo_path') : null,
   ]) as [Awaited<ReturnType<typeof submissionAuthority>>, unknown, Awaited<ReturnType<BrainEngine['readPageSnapshot']>>, Awaited<ReturnType<typeof getWorktreeBinding>>, string | null, string | null];
+  if (!ingestReport && input.managedFileImport !== true) {
+    await (await import('../ingest/namespace.ts')).assertIngestNamespaceWritable(ctx.engine, { operation: input.operation, slug, existing: snapshot, params: p });
+  }
   if (typeof intent.content === 'string' && (typeof p.expected_revision !== 'string' || p.expected_revision === snapshot?.revision)) {
     await assertTimelineNotOmitted(ctx.engine, { intent, remote: ctx.remote !== false, writer: typeof p.expected_revision === 'string' ? 'editing' : 'preserving',
       slug, sourceId, content: intent.content, prior: snapshot });

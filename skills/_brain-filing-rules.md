@@ -12,6 +12,9 @@ not the source, not the skill that's running.
 3. Cross-link from related directories
 4. When in doubt: what would you search for to find this page again?
 
+A pasted document saved with `ingest` already files each new entity page in its schema-pack type's directory
+and keeps the document itself as the source page; don't refile those pages by hand.
+
 ## Common Misfiling Patterns -- DO NOT DO THESE
 
 | Wrong | Right | Why |

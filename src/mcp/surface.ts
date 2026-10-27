@@ -104,6 +104,8 @@ export const STARTER_OPS: ReadonlySet<string> = new Set([
   // #5616: the small-change companion of put_page (a direct literal, like
   // capture, so subagents do not gain a new write tool).
   'edit_page',
+  // GBRA-215 (D5): save a pasted document and undo it, for tool-capped harnesses (direct literals, like capture).
+  'ingest', 'ingest_undo',
   'get_write_request', 'list_write_requests', 'cancel_write_request',
   'list_skills', 'get_skill', 'list_brain_skillpack', 'get_skill_asset',
   'join_brain', 'sync_brain_skills', 'leave_brain', 'put_skill', 'delete_skill',

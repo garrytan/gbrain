@@ -5544,6 +5544,115 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "area": "entities"
   },
   {
+    "name": "ingest",
+    "description": "Save a pasted document: the whole text read in windows, every page and fact planned and checked before any write, then the source page, proposed pages for new entities and each fact on the entities it names. Returns an ingest report with a status per item, coverage, spend, and approve or undo actions. attempt_id alone reads a report (read-only); with resume: true it continues an incomplete attempt.",
+    "params": {
+      "content": {
+        "type": "string",
+        "description": "The document text (at most 200,000 characters)."
+      },
+      "attempt_id": {
+        "type": "string",
+        "description": "An attempt id from a report: alone, read that report; with resume, continue it."
+      },
+      "resume": {
+        "type": "boolean",
+        "description": "Continue an incomplete attempt from its stored windows (pass the same content)."
+      },
+      "type": {
+        "type": "string",
+        "description": "Page type of the source page (default note)."
+      },
+      "title": {
+        "type": "string",
+        "description": "Title of the source page."
+      },
+      "slug": {
+        "type": "string",
+        "description": "Slug of the source page (default inbox/ingest-<hash>).",
+        "fullSurfaceOnly": true
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source to write (default: your source).",
+        "fullSurfaceOnly": true
+      },
+      "valid_from": {
+        "type": "string",
+        "description": "When the document's facts became true (ISO date).",
+        "fullSurfaceOnly": true
+      },
+      "visibility": {
+        "type": "string",
+        "enum": [
+          "world",
+          "private"
+        ],
+        "description": "world (default) or private (local CLI).",
+        "fullSurfaceOnly": true
+      },
+      "no_facts": {
+        "type": "boolean",
+        "description": "Save the document and its entity pages without facts.",
+        "fullSurfaceOnly": true
+      },
+      "trusted_extraction": {
+        "type": "boolean",
+        "description": "Local owner only: create model-typed new entities as real pages instead of proposed.",
+        "fullSurfaceOnly": true
+      },
+      "max_usd": {
+        "type": "number",
+        "description": "Spend cap for this ingest in USD (default ingest.max_usd, 0.50).",
+        "fullSurfaceOnly": true
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Idempotency key: a repeat with the same key returns the same attempt.",
+        "fullSurfaceOnly": true
+      },
+      "dry_run": {
+        "type": "boolean",
+        "description": "Preview the keyless candidate plan, window count and estimated cost; no provider call, nothing written."
+      }
+    },
+    "outputRedaction": "retrieval",
+    "writeInference": "explicit_llm",
+    "mutating": true,
+    "scope": "write",
+    "cliHints": {
+      "name": "ingest",
+      "hidden": true
+    }
+  },
+  {
+    "name": "ingest_undo",
+    "description": "Undo one ingest attempt: without yes it previews what would be retracted and returns plan_hash (writes nothing); with yes and expect: <plan_hash> it strikes the facts the attempt wrote and soft-deletes the pages it created, skipping anything edited, promoted, referenced or supported since.",
+    "params": {
+      "attempt_id": {
+        "type": "string",
+        "required": true,
+        "description": "The attempt id from the ingest report."
+      },
+      "yes": {
+        "type": "boolean",
+        "description": "Apply the undo (needs expect)."
+      },
+      "expect": {
+        "type": "string",
+        "description": "The plan_hash from the preview you are applying."
+      }
+    },
+    "outputRedaction": "no_stored_text",
+    "writeInference": "none",
+    "mutating": true,
+    "scope": "write",
+    "cliHints": {
+      "name": "ingest-undo",
+      "hidden": true
+    }
+  },
+  {
     "name": "entity_identity_link",
     "idempotent": false,
     "outputRedaction": "no_stored_text",

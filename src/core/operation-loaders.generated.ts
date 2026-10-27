@@ -24,6 +24,7 @@ const load_files = () => import('./ops/files.ts') as Promise<Record<string, unkn
 const load_graph_rank = () => import('./ops/graph-rank.ts') as Promise<Record<string, unknown>>;
 const load_image = () => import('./ops/image.ts') as Promise<Record<string, unknown>>;
 const load_ingest_log = () => import('./ops/ingest-log.ts') as Promise<Record<string, unknown>>;
+const load_ingest = () => import('./ops/ingest.ts') as Promise<Record<string, unknown>>;
 const load_insights = () => import('./ops/insights.ts') as Promise<Record<string, unknown>>;
 const load_jobs = () => import('./ops/jobs.ts') as Promise<Record<string, unknown>>;
 const load_links = () => import('./ops/links.ts') as Promise<Record<string, unknown>>;
@@ -198,6 +199,8 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "extract_entities": [load_extraction, "extractionOperations"],
   "extraction_pending": [load_extraction, "extractionOperations"],
   "extraction_review": [load_extraction, "extractionOperations"],
+  "ingest": [load_ingest, "ingestOperations"],
+  "ingest_undo": [load_ingest, "ingestOperations"],
   "entity_identity_link": [load_entity_identity, "entityIdentityOperations"],
   "entity_identity_unlink": [load_entity_identity, "entityIdentityOperations"],
   "entity_identity_list": [load_entity_identity, "entityIdentityOperations"],

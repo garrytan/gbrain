@@ -6,6 +6,8 @@ triggers:
   - "save this to brain"
   - "process this meeting"
 tools:
+  - ingest
+  - ingest_undo
   - search
   - get_page
   - put_page
@@ -45,6 +47,16 @@ Ingest meetings, articles, media, documents, and conversations into the brain.
 Every mention of a person or company with a brain page MUST create a back-link
 FROM that entity's page TO the page mentioning them. An unlinked mention is a
 broken brain. See `skills/_brain-filing-rules.md` for format.
+
+## Pasted documents: call `ingest`
+
+When the user asks you to save, file or remember a document they pasted (a transcript, meeting notes, a memo), call
+the `ingest` tool with the text (CLI: `gbrain ingest --file <path>`). It reads the whole document, files the source
+page, proposes pages for new entities, saves each fact on the entities it names and returns one report. Relay the
+report's `summary`, then its actions: approving proposed pages is the owner's (`tell_user_to_run`), and undo is
+preview first (`gbrain ingest-undo <attempt_id>`, then `--yes --expect <plan_hash>` only after the user agrees).
+An incomplete report (`complete: false`) resumes only with `resume: true`; `ingest` with `attempt_id` alone is a
+read-only status call. Don't save a pasted document the user did not ask to save. Details: `docs/guides/ingest.md`.
 
 ## Citation Requirements (MANDATORY)
 

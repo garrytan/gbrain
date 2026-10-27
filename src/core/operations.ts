@@ -120,6 +120,7 @@ import { loopsOperations } from './ops/loops.ts';
 import { questionsOperations } from './ops/questions.ts';
 import { chronicleOperations } from './ops/chronicle.ts';
 import { extractionOperations } from './ops/extraction.ts';
+import { ingestOperations } from './ops/ingest.ts';
 import { entityIdentityOperations } from './ops/entity-identity.ts';
 import { requestToolsOperations } from './ops/request-tools.ts';
 import { noticesOperations } from './ops/notices.ts';
@@ -207,6 +208,7 @@ export const operations: Operation[] = [
   // Extraction quarantine lane (#160): gated entity extraction + review
   // queue — ops/extraction.ts
   ...extractionOperations,
+  ...ingestOperations,
   // #4224: cross-source entity identity groups (v1 manual-only) —
   // ops/entity-identity.ts
   ...entityIdentityOperations,

@@ -163,6 +163,13 @@ brain/people/alice-example.md:
 Without back-links, you can't traverse the graph. "Show me everything related
 to Alice" only works if Alice's page links back to every mention.
 
+### Ingest
+
+`gbrain ingest` (MCP `ingest`) applies these rules in code to a pasted document: every name resolves by exact and
+alias identity first, a never-seen name one edit or one acronym letter away from an existing name is flagged in
+`near_names` and proposed, and new entity pages are proposed for the owner to approve unless the local owner passes
+`--trusted-extraction`. See [ingest](ingest.md).
+
 ## Tricky Spots
 
 1. **Don't block the conversation.** Entity detection runs async. The user

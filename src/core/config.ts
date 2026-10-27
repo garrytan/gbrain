@@ -1487,6 +1487,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // `gbrain config set facts.extraction_enabled false` — which was rejected
   // as an unknown key until this registration.
   'facts.extraction_enabled',
+  'ingest.max_usd', 'ingest.reserve_namespace', // GBRA-215: per-ingest spend cap in USD (default 0.50) and the opt-in reservation of ingest/
   // Open-loop engine kill switch: LLM commitment/decision extraction over
   // google-source email pages (default ON for google sources; deterministic
   // thread detection is unaffected). `gbrain config set loops.extraction_enabled false`.

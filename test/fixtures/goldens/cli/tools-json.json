@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 266092,
-    "stdoutSha256": "2c3bfc071a1de8087f8d53fe42d76b52bf26cd5f40cfdfdec034997461f63366",
+    "stdoutBytes": 270443,
+    "stdoutSha256": "c45149ba6cdbf4c460b0cf8d795dcf9ebd7e4c2fa4c758f006f446804f1bef34",
     "toolNames": [
       "remember",
       "entity",
@@ -145,6 +145,8 @@
       "extract_entities",
       "extraction_pending",
       "extraction_review",
+      "ingest",
+      "ingest_undo",
       "entity_identity_link",
       "entity_identity_unlink",
       "entity_identity_list",
@@ -6488,6 +6490,131 @@
           "required": [
             "action",
             "slugs"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Save a pasted document: the whole text read in windows, every page and fact planned and checked before any write, then the source page, proposed pages for new entities and each fact on the entities it names. Returns an ingest report with a status per item, coverage, spend, and approve or undo actions. attempt_id alone reads a report (read-only); with resume: true it continues an incomplete attempt.",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": true,
+        "name": "ingest",
+        "parameters": {
+          "attempt_id": "string?",
+          "content": "string?",
+          "dry_run": "boolean?",
+          "max_usd": "number?",
+          "no_facts": "boolean?",
+          "request_id": "string?",
+          "resume": "boolean?",
+          "slug": "string?",
+          "source_id": "string?",
+          "title": "string?",
+          "trusted_extraction": "boolean?",
+          "type": "string?",
+          "valid_from": "string?",
+          "visibility": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "attempt_id": {
+              "description": "An attempt id from a report: alone, read that report; with resume, continue it.",
+              "type": "string"
+            },
+            "content": {
+              "description": "The document text (at most 200,000 characters).",
+              "type": "string"
+            },
+            "dry_run": {
+              "description": "Preview the keyless candidate plan, window count and estimated cost; no provider call, nothing written.",
+              "type": "boolean"
+            },
+            "max_usd": {
+              "description": "Spend cap for this ingest in USD (default ingest.max_usd, 0.50).",
+              "type": "number"
+            },
+            "no_facts": {
+              "description": "Save the document and its entity pages without facts.",
+              "type": "boolean"
+            },
+            "request_id": {
+              "description": "Idempotency key: a repeat with the same key returns the same attempt.",
+              "type": "string"
+            },
+            "resume": {
+              "description": "Continue an incomplete attempt from its stored windows (pass the same content).",
+              "type": "boolean"
+            },
+            "slug": {
+              "description": "Slug of the source page (default inbox/ingest-<hash>).",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Source to write (default: your source).",
+              "type": "string"
+            },
+            "title": {
+              "description": "Title of the source page.",
+              "type": "string"
+            },
+            "trusted_extraction": {
+              "description": "Local owner only: create model-typed new entities as real pages instead of proposed.",
+              "type": "boolean"
+            },
+            "type": {
+              "description": "Page type of the source page (default note).",
+              "type": "string"
+            },
+            "valid_from": {
+              "description": "When the document's facts became true (ISO date).",
+              "type": "string"
+            },
+            "visibility": {
+              "description": "world (default) or private (local CLI).",
+              "enum": [
+                "world",
+                "private"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Undo one ingest attempt: without yes it previews what would be retracted and returns plan_hash (writes nothing); with yes and expect: <plan_hash> it strikes the facts the attempt wrote and soft-deletes the pages it created, skipping anything edited, promoted, referenced or supported since.",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": true,
+        "name": "ingest_undo",
+        "parameters": {
+          "attempt_id": "string",
+          "expect": "string?",
+          "yes": "boolean?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "attempt_id": {
+              "description": "The attempt id from the ingest report.",
+              "type": "string"
+            },
+            "expect": {
+              "description": "The plan_hash from the preview you are applying.",
+              "type": "string"
+            },
+            "yes": {
+              "description": "Apply the undo (needs expect).",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "attempt_id"
           ],
           "type": "object"
         },

@@ -2147,6 +2147,92 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes](../../docs
 |---|---|---|---|---|---|---|
 | This local CLI principal already owns another source/destination for this harness. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
 
+### ingest_attempt_not_found
+
+<a id="ingest_attempt_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No ingest attempt with that id is visible to this caller; nothing was read or written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/ingest.md#status-and-resume](../../docs/guides/ingest.md#status-and-resume)
+
+### ingest_commit_failed
+
+<a id="ingest_commit_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An ingest stopped while committing: the report lists what committed and what did not. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/ingest.md#report](../../docs/guides/ingest.md#report)
+
+### ingest_document_mismatch
+
+<a id="ingest_document_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A resume passed a document whose hash differs from the one the attempt read; nothing was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/ingest.md#status-and-resume](../../docs/guides/ingest.md#status-and-resume)
+
+### ingest_input_invalid
+
+<a id="ingest_input_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The document passed to ingest is missing, conflicting, unreadable, binary, empty or over 200,000 characters; nothing was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 2 | no |
+
+Reasons: `missing`, `conflicting`, `unreadable`, `binary`, `empty`, `too_large`.
+
+More: [docs/guides/ingest.md#errors](../../docs/guides/ingest.md#errors)
+
+### ingest_namespace_reserved
+
+<a id="ingest_namespace_reserved"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A generic page write named an ingest report page (type ingest-report, or a slug ingest/<attempt_id>); only the ingest attempt that owns a report writes it, so nothing was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/ingest.md#reserved-namespace](../../docs/guides/ingest.md#reserved-namespace)
+
+### ingest_option_invalid
+
+<a id="ingest_option_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An ingest option is invalid (unknown page type, bad date or visibility, bad spend cap, an owner-only option from a remote caller); nothing was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 2 | no |
+
+Reasons: `unknown_type`, `valid_from`, `visibility`, `max_usd`, `trusted_extraction`, `slug`.
+
+More: [docs/guides/ingest.md#errors](../../docs/guides/ingest.md#errors)
+
+### ingest_storage_unavailable
+
+<a id="ingest_storage_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A repository-backed source cannot take Git writes right now (or its storage changed mid-attempt), and ingest never writes such a source to the database first; nothing was written. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+Reasons: `disabled_by_config`, `subagent_sandbox`, `owner_unavailable`, `topology_changed`.
+
+More: [docs/guides/ingest.md#storage](../../docs/guides/ingest.md#storage)
+
+### ingest_undo_unverifiable
+
+<a id="ingest_undo_unverifiable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Undo cannot prove what the attempt created (its record or report page is gone, or a rebuild renumbered its facts); nothing was retracted. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/ingest.md#undo](../../docs/guides/ingest.md#undo)
+
 ### insufficient_scope
 
 <a id="insufficient_scope"></a>
