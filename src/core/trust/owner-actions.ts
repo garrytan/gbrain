@@ -36,6 +36,9 @@ import {
 import { formatTrustRef, pageRef, parseTrustRef, resolvePageRef, type TrustRef } from './refs.ts';
 import { storedTrustTier, trustLabel, type TrustTier } from './tier.ts';
 import { isQuarantined } from '../quarantine.ts';
+import { factsFenceView } from '../facts-fence.ts';
+import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
+import { segmentedFactsFenceView } from '../page-body/segment-facts.ts';
 import { getWriteGateHold, releaseWriteGateHold, type WriteGateHold } from '../write-gate-store.ts';
 import { withCoordinatedWrite, withTrustPromotion, withWriteAttribution, withWriteTrust } from '../persistence/context.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
@@ -190,7 +193,7 @@ const defaultHoldStore: HoldStoreAdapter = {
     return (await import('./release-publish.ts')).submitTrustRelease(engine, id, by, config,
       approved === undefined ? undefined : async hold => {
         const row = await defaultHoldStore.get(engine, hold.id);
-        return !!row && holdBinding(row) === approved;
+        return !!row && (await previewHold(engine, hold.id, 'release')).binding === approved;
       });
   },
 };
@@ -321,17 +324,32 @@ async function previewConfirm(engine: BrainEngine, ref: TrustRef, input: OwnerAc
   throw unsupported('confirm', ref);
 }
 
+/** Index-existing releases confirm the whole derived row: show it without truncation and bind its page revision. */
+async function heldFenceApproval(engine: BrainEngine, hold: HoldRow) {
+  const rowNum = hold.payload.row_num;
+  if (hold.kind !== 'fact' || !Number.isSafeInteger(rowNum) || !hold.slug || !(await managedPersistenceEnabled(engine))) return null;
+  const snapshot = await engine.readPageSnapshot(hold.slug, { sourceId: hold.source_id, includeDeleted: true });
+  if (!snapshot) return null; // The missing-page lane releases the held payload, not an existing fence cell.
+  const view = snapshot.page.body_storage === 'segmented'
+    ? await segmentedFactsFenceView(engine, snapshot.page) : factsFenceView(snapshot.page);
+  const cell = [...view.body.facts, ...view.timeline.facts].find(f => f.rowNum === rowNum);
+  const fact = cell ? extractFactsFromFenceText([cell], hold.slug, hold.source_id)[0] : null;
+  return { page_id: snapshot.page.id, revision: snapshot.revision, fact };
+}
+
 async function previewHold(engine: BrainEngine, id: number, action: 'release' | 'drop'): Promise<OwnerActionPreview> {
   const label = `h${id}`;
   const hold = await holdStore.get(engine, id);
   if (!hold) throw notFound(label, 'held write');
+  const fence = action === 'release' ? await heldFenceApproval(engine, hold) : null;
   const text = hold.payload.fact ?? hold.payload.claim ?? '';
   const entity = hold.kind === 'fact' && typeof hold.payload.entity_slug === 'string' && hold.payload.entity_slug ? ` for ${hold.source_id}/${hold.payload.entity_slug}` : '';
   return { action, ref: label, token: label, command: trustCommand(action, label), raises: action === 'release',
-    binding: holdBinding(hold), tier: hold.tier,
+    binding: fence ? bindingOf({ hold: holdBinding(hold), fence }) : holdBinding(hold), tier: hold.tier,
     ...(action === 'release' ? { target_tier: 'user_confirmed' as TrustTier } : {}),
     summary: action === 'release'
       ? `Release held ${hold.kind} ${label} ("${snippet(text)}", ${hold.reason_families.join(', ') || 'detector error'})${entity} into memory as "confirmed by you"`
+        + (fence ? `\nThis confirms the entire existing fence row, including all fields below:\n${JSON.stringify(fence.fact, null, 2)}` : '')
       : `Drop held ${hold.kind} ${label} ("${snippet(text)}"); it stays out of memory` };
 }
 

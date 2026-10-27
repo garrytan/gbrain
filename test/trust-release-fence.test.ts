@@ -144,7 +144,83 @@ for (const backend of testBackends()) {
       expect(await holdStatus(engine, `h${hold!.id}`)).toBe('released');
     }, { setup, databaseUrl }), 180_000);
 
-    test('a fence-guard hold whose row was edited after it was held refuses fence_row_changed: the edit is never indexed under the older approval', () => managedBrain(async ({ engine, ctx, root }) => {
+    test('an index-existing release previews every field it confirms and binds changes outside the held payload (#7656)', () => managedBrain(async ({ engine, ctx, root }) => {
+      await seedPage(engine, ctx);
+      await enableTrustProtections(engine);
+      const row = { rowNum: 1, claim: CLAIM, kind: 'fact' as const, confidence: 0.7, visibility: 'world' as const, notability: 'high' as const,
+        validFrom: '2026-01-01', validUntil: '2026-12-31', source: 'email', context: 'Context not shown by the old preview.',
+        claimMetric: 'monthly recurring revenue', claimValue: 12345, claimUnit: 'USD', claimPeriod: '2026-Q1', attributedTo: 'other' as const, active: true };
+      const write = async (value: number) => {
+        const snapshot = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+        await submitPageMutation(ctx, { operation: 'put_page', params: { slug, request_id: randomUUID(), content_origin: 'tool_output', expected_revision: snapshot!.revision,
+          content: `---\ntype: person\ntitle: Alice Example\n---\n\n# Alice Example\n\nBody.\n\n## Facts\n\n${renderFactsTable([{ ...row, claimValue: value }])}\n` } });
+        await settleManagedGitEffects(engine);
+      };
+      await write(12345);
+      const [hold] = await engine.executeRaw<{ id: number; last_seen_at: string }>("SELECT id, last_seen_at::text FROM write_gate_holds WHERE source_id='default' AND slug=$1 AND status='held'", [slug]);
+      expect(hold).toBeDefined();
+      const ref = `h${hold!.id}`;
+      const preview = await previewOwnerAction(engine, { action: 'release', ref });
+      // Row-level trust means the owner must see the full indexed record, not an 80-character claim snippet.
+      for (const text of [CLAIM, row.context, 'mrr', '12345', 'USD', '2026-Q1', 'other', '0.7', 'high', '2026-01-01', '2026-12-31', 'email', 'world']) {
+        expect(preview.summary).toContain(text);
+      }
+      await write(99999);
+      // Re-approval must describe the current complete cell, not the previous value.
+      const changed = await previewOwnerAction(engine, { action: 'release', ref });
+      expect(changed.binding).not.toBe(preview.binding);
+      const before = readFileSync(file(root), 'utf8');
+      await expect(applyOwnerAction(engine, { action: 'release', ref }, { binding: preview.binding, confirmation: { via: 'tty' }, by: owner }))
+        .rejects.toMatchObject({ code: 'preview_changed' });
+      expect(await holdStatus(engine, ref)).toBe('held');
+      expect(await factRows(engine)).toEqual([]);
+      expect(await currentHoldStore().publish!(engine, hold!.id, 'owner-example', undefined, preview.binding).then(() => null, (e: { code?: string }) => e))
+        .toMatchObject({ code: 'preview_changed' });
+      expect(await release(engine, ref)).toMatchObject({ status: 'released' });
+      const [indexed] = await engine.executeRaw<Record<string, unknown>>("SELECT trust_tier, claim_metric, claim_value, claim_unit, claim_period, attributed_to, context FROM facts WHERE source_id='default' AND fact=$1", [CLAIM]);
+      expect(indexed).toMatchObject({ trust_tier: 'user_confirmed', claim_metric: 'mrr', claim_value: 99999, claim_unit: 'USD', claim_period: '2026-Q1', attributed_to: 'other', context: row.context });
+      await settleManagedGitEffects(engine);
+      expect(readFileSync(file(root), 'utf8')).toBe(before);
+    }, { setup, databaseUrl }), 240_000);
+
+    test('an index-existing cell edited after admission, or a legacy unbound intent, cannot confirm unseen fields (#7656)', async () => {
+      for (const shape of ['edited', 'legacy'] as const) await managedBrain(async ({ engine, ctx, root }) => {
+        await seedPage(engine, ctx);
+        await enableTrustProtections(engine);
+        const snapshot = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+        const row = { rowNum: 1, claim: CLAIM, kind: 'fact' as const, confidence: 1, visibility: 'world' as const, notability: 'medium' as const,
+          validFrom: '2026-01-01', source: 'email', claimMetric: 'mrr', claimValue: 12345, active: true };
+        await submitPageMutation(ctx, { operation: 'put_page', params: { slug, request_id: randomUUID(), content_origin: 'tool_output', expected_revision: snapshot!.revision,
+          content: `---\ntype: person\ntitle: Alice Example\n---\n\n# Alice Example\n\nBody.\n\n## Facts\n\n${renderFactsTable([row])}\n` } });
+        await settleManagedGitEffects(engine);
+        const [hold] = await engine.executeRaw<{ id: number; last_seen_at: string }>("SELECT id, last_seen_at::text FROM write_gate_holds WHERE source_id='default' AND slug=$1 AND status='held'", [slug]);
+        const ref = `h${hold!.id}`;
+        const before = readFileSync(file(root), 'utf8');
+        // A concurrent canonical write after approval but before preparation; do not re-gate the held payload.
+        // The legacy arm models a retained pre-upgrade request whose intent never bound the previewed page.
+        await engine.executeRaw(`CREATE FUNCTION test_unseen_field() RETURNS trigger LANGUAGE plpgsql AS $$
+          DECLARE ws text := current_setting('gbrain.write_sources', true); gp text := current_setting('gbrain.git_protocol', true); BEGIN
+          IF TG_ARGV[0]='legacy' THEN NEW.intent := NEW.intent - 'expected_revision';
+          ELSE
+            PERFORM set_config('gbrain.write_sources', '["default"]', true); PERFORM set_config('gbrain.git_protocol', '1', true);
+            UPDATE pages SET compiled_truth=replace(compiled_truth,'12345','99999'),knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug=NEW.slug;
+            PERFORM set_config('gbrain.write_sources', COALESCE(ws, ''), true); PERFORM set_config('gbrain.git_protocol', COALESCE(gp, ''), true);
+          END IF; RETURN NEW; END $$`);
+        await engine.executeRaw(`CREATE TRIGGER test_unseen_field BEFORE INSERT ON persistence_requests FOR EACH ROW
+          WHEN (NEW.operation='trust_release') EXECUTE FUNCTION test_unseen_field('${shape}')`);
+        await expect(release(engine, ref)).rejects.toMatchObject({ code: 'preview_changed' });
+        expect(await factRows(engine)).toEqual([]);
+        expect(await holdStatus(engine, ref)).toBe('held');
+        const [sameHold] = await engine.executeRaw<{ last_seen_at: string }>('SELECT last_seen_at::text FROM write_gate_holds WHERE id=$1', [hold!.id]);
+        expect(sameHold!.last_seen_at).toBe(hold!.last_seen_at);
+        const [receipt] = await engine.executeRaw<{ state: string; error_code: string }>("SELECT state,error_code FROM persistence_requests WHERE operation='trust_release'");
+        expect(receipt).toMatchObject({ state: 'failed', error_code: 'preview_changed' });
+        await settleManagedGitEffects(engine);
+        expect(readFileSync(file(root), 'utf8')).toBe(before);
+      }, { setup, databaseUrl });
+    }, 300_000);
+
+    test('a fence-guard hold whose row was edited after it was held refuses preview_changed before admission', () => managedBrain(async ({ engine, ctx, root }) => {
       await seedPage(engine, ctx);
       await enableTrustProtections(engine);
       const row = { rowNum: 1, claim: CLAIM, kind: 'fact' as const, confidence: 1, visibility: 'world' as const, notability: 'medium' as const,
@@ -164,17 +240,15 @@ for (const backend of testBackends()) {
 
       const error = await applyOwnerAction(engine, { action: 'release', ref: `h${first!.id}` }, { binding: preview.binding, confirmation: { via: 'tty' }, by: owner })
         .then(() => null, (e: { code?: string }) => e);
-      expect(error?.code).toBe('fence_row_changed');
-      expect((error as { message?: string } | null)?.message).toContain('(held_row_edited)');
+      expect(error?.code).toBe('preview_changed');
       expect(await holdStatus(engine, `h${first!.id}`)).toBe('held');
       expect(await factRows(engine)).toEqual([]);
 
       const again = await applyOwnerAction(engine, { action: 'release', ref: `h${first!.id}` }, { binding: preview.binding, confirmation: { via: 'tty' }, by: owner })
         .then(() => null, (e: { code?: string }) => e);
-      expect(again?.code).toBe('fence_row_changed');
+      expect(again?.code).toBe('preview_changed');
       const requests = await engine.executeRaw<{ id: string; state: string }>("SELECT id, state FROM persistence_requests WHERE operation='trust_release' ORDER BY created_at, id");
-      expect(requests.map(r => r.state)).toEqual(['failed', 'failed']);
-      expect(new Set(requests.map(r => r.id)).size).toBe(2);
+      expect(requests).toEqual([]); // Stale cell approvals now refuse before admission.
       expect(await holdStatus(engine, `h${first!.id}`)).toBe('held');
       expect(await factRows(engine)).toEqual([]);
     }, { setup, databaseUrl }), 180_000);

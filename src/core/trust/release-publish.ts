@@ -43,7 +43,7 @@ export const DOOR_WAIT_MS = 60_000;
 /** The CLI's wait for trust_apply over the owner socket: the door's own wait plus room for the owner's work before admission. */
 export const OWNER_APPLY_TIMEOUT_MS = DOOR_WAIT_MS + 30_000;
 
-interface ReleaseIntent { hold_id: number; last_seen_at: string; by: string; mode: 'append' | 'index-existing'; row_num?: number }
+interface ReleaseIntent { hold_id: number; last_seen_at: string; by: string; mode: 'append' | 'index-existing'; row_num?: number; expected_revision?: string }
 
 const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
 
@@ -122,7 +122,8 @@ export async function submitTrustRelease(engine: BrainEngine, holdId: number, by
       binding = await claimWorktree(engine, hold.source_id, write.root, undefined, undefined, { automatic: true });
     }
   }
-  const intent: ReleaseIntent = { hold_id: hold.id, last_seen_at: hold.last_seen_at, by, mode: target.mode, ...(target.rowNum !== undefined ? { row_num: target.rowNum } : {}) };
+  const intent: ReleaseIntent = { hold_id: hold.id, last_seen_at: hold.last_seen_at, by, mode: target.mode,
+    ...(target.rowNum !== undefined ? { row_num: target.rowNum, expected_revision: snapshot.revision } : {}) };
   const row = await admitWrite(engine, {
     principal, operation: TRUST_RELEASE_OPERATION, sourceId: hold.source_id, sourceIncarnation: source.incarnation, slug: target.slug,
     pageId: snapshot.page.id, requestId, callerIntent: { ...intent }, intent: { ...intent }, authority,
@@ -148,6 +149,9 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
   if (!snapshot || snapshot.page.deleted_at || snapshot.page.id !== row.page_id) {
     throw pageIdentityError(Boolean(snapshot && !snapshot.page.deleted_at), `The page h${hold.id} is released into was deleted or recreated; the fact stays held.`);
   }
+  // The owner saw every field of this cell at admission, not merely the held text. A later edit needs a new preview.
+  // Pre-upgrade pending intents without this binding must also be re-approved instead of confirming unseen fields.
+  if (intent.mode === 'index-existing' && snapshot.revision !== intent.expected_revision) throw decidedMeanwhile(intent.hold_id);
   const p = hold.payload;
   const fact: NewFact & { valid_from: Date } = {
     fact: String(p.fact ?? ''), kind: (str(p.kind) ?? 'fact') as NewFact['kind'], entity_slug: str(p.entity_slug) ?? row.slug,
