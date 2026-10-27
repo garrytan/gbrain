@@ -96,7 +96,9 @@ test('free, then paid, then by hand: once the page was re-extracted on its conte
   const done = await doctor();
   expect(done.conversation).toMatchObject({ fix: 'manual', slugs: [MEETING] });
   expect(done.verdict.fix).toBeUndefined();
-  expect(done.verdict.message).toContain('remember it again with --entity');
+  expect(done.verdict.message).toContain('link each by hand with remember --entity <slug>');
+  // GBRA-215: forgetting first withdraws the claim for good, so the by-hand advice never says to.
+  expect(done.verdict.message).not.toContain('forget it and remember');
   expect(JSON.stringify(done.verdict)).not.toContain('extract-conversation-facts --source-id');
   const calls = chatCalls;
   expect(await runConversationRelink(engine, config, { sourceId: 'default' })).toMatchObject({ pages: [] });

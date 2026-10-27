@@ -6,7 +6,7 @@
  */
 export const RELINK_REASONS = {
   no_subject: { memoized: true, fix: 'The model found no single person, company or project in the fact. Nothing to fix; rerun with --retry-model to ask again.' },
-  ambiguous: { memoized: true, fix: 'The fact names more than one entity, or a name competes with the match. Link it by hand: forget it and remember it again with --entity.' },
+  ambiguous: { memoized: true, fix: 'The fact names more than one entity, or a name competes with the match. Link it by hand: remember the same claim with --entity <slug> --replaces <fact-id>, which links the saved fact without withdrawing it. Do not forget it first: a forgotten claim stays withdrawn and the same text cannot be saved again.' },
   unverified_match: { memoized: true, fix: 'The only match is a bare first name or a name that is not in the fact. Add an alias to the right entity page, then rerun.' },
   no_mention: { memoized: false, fix: 'The fact names no entity. Rerun with the model tier (drop --no-llm), or link it by hand with remember --entity.' },
   no_page: { memoized: false, fix: 'The fact names an entity that has no page. Create the entity page, then rerun.' },
@@ -17,7 +17,7 @@ export const RELINK_REASONS = {
   page_file_missing: { memoized: false, fix: 'The entity page exists in the database but its file is missing from the source tree. Restore the file or run gbrain sync, then rerun.' },
   unfenceable: { memoized: false, fix: 'The source writes through to files but has no canonical owner. Bind the source (gbrain sources writer status <source> --json, then gbrain sources writer claim <source> --path <checkout> --admin-intent writer_claim --expected-state <admin_state>), then rerun.' },
   fence_malformed: { memoized: false, fix: 'The entity page has a ## Facts fence that cannot be normalized. Preview the fence repair of that page (`repair fences --slug <entity-slug>` on the brain host; read-only, and it names the exact edit for anything it will not repair), apply it, then rerun.' },
-  claim_unfenceable: { memoized: false, fix: 'The claim text cannot be written to a fence row unchanged (for example it is wrapped in ~~). Forget it and remember a cleaned-up claim with --entity.' },
+  claim_unfenceable: { memoized: false, fix: 'The claim text cannot be written to a fence row unchanged (for example it is wrapped in ~~). Remember a cleaned-up claim with --entity <slug> --replaces <fact-id>; it replaces the old fact without withdrawing it.' },
   visibility_conflict: { memoized: false, fix: 'The entity already has the same claim from the same source with the other visibility, and a page indexes only one. Forget the copy you do not want, then rerun.' },
   fence_owned: { memoized: false, fix: 'The fact lives in another page fence or is a conversation page\'s extracted fact. Relink does not move fence-owned facts; conversation facts are linked by relink with --conversation (free, preview with --dry-run).' },
   budget_exhausted: { memoized: false, fix: 'The model tier reached --max-usd. Raise --max-usd (or pass off) and rerun with the printed continuation command.' },
