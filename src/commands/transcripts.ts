@@ -395,6 +395,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
       ? ['--all-discovery', hostname(), ...harnessRoots().map((r) => r.root).sort()]
       : [...parsed.paths].map((p) => resolve(p)).sort();
 
+  const discoveredFormats = new Map<string, TranscriptFormat>();
   // No paths: discovery. Without the all flag, show what WOULD be imported
   // and stop (a safe default for a command that can touch five harness
   // histories); with it, import the discovered set.
@@ -423,6 +424,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
       return;
     }
     parsed.paths = discovered.map((d) => d.path);
+    for (const file of discovered) discoveredFormats.set(resolve(file.path), file.format);
   }
 
   // Source: the canonical 6-tier chain (capture.ts pattern) — one resolved
@@ -502,6 +504,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
     result = await runTranscriptsIngest(engine, {
       paths,
       format: parsed.format,
+      discoveredFormats,
       dryRun: parsed.dryRun,
       limit: parsed.limit,
       sinceIso,

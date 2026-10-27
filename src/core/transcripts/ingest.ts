@@ -41,6 +41,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
 import { importFromContent } from '../import-file.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
@@ -82,6 +83,8 @@ export interface TranscriptsIngestOpts {
   paths: string[];
   /** Explicit format wins over detection. */
   format?: TranscriptFormat;
+  /** Native discovery's per-file formats, keyed by absolute path. The CLI override still wins. */
+  discoveredFormats?: ReadonlyMap<string, TranscriptFormat>;
   /** Parse + redact + render + report; ZERO engine writes. */
   dryRun?: boolean;
   /** Max sessions imported this run (session granularity; truncation ⇒ not a clean scan). */
@@ -265,7 +268,10 @@ export async function runTranscriptsIngest(
     result.files.push(fileOutcome);
 
     const detected = detectAdapter(path, {
-      explicitFormat: opts.format,
+      // Native roots already identify the format. Re-sniffing a bounded head
+      // loses that knowledge when bookkeeping fills the entire sample (#7700).
+      // Keep detectAdapter's filesystem admission even for known formats.
+      explicitFormat: opts.format ?? opts.discoveredFormats?.get(resolve(path)),
       adapters: opts.adapters,
     });
     if (!detected.ok) {
