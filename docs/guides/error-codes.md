@@ -15,7 +15,7 @@ Under contract v1 an `error` value never changes. Where a surface sends a legacy
 
 | `error` (frozen) | `code` (canonical) | Meaning |
 |---|---|---|
-| `invalid_params` | `fact_withdrawn` | `remember` refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved. |
+| `invalid_params` | `fact_withdrawn` | `remember`, or an owner `gbrain trust release` that writes a held fact into its entity page's `## Facts` table (a managed brain), refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved, and a refused release leaves the fact held. |
 | `permission_denied` | `insufficient_scope` | The connection lacks the OAuth scope the operation requires. |
 | `invalid_params` | `invalid_fence` | A facts or takes fence in the page cannot be imported without dropping or guessing rows, so the page (or the file) was not written. |
 | `invalid_params` | `link_cursor_invalid` | A get_links / get_backlinks cursor was not one this listing returned: it belongs to another slug, direction, source scope or filter set, or is not a cursor. |
@@ -1371,7 +1371,7 @@ More: [docs/guides/repair.md#rename-identity](../../docs/guides/repair.md#rename
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `remember` refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved. | A forgotten claim stays withdrawn: remembering the same normalized text does not restore it, and a claim forgotten without an entity is withdrawn for every entity. The additive `withdrawn` object (`at`, `subject`: an entity slug or `all_entities`, `visibility`) says when and how widely the exact claim was forgotten; it covers that exact claim only, and its absence carries no meaning. | Do not retry the same text. Tell the user the claim was forgotten (withdrawn.at, withdrawn.subject); if it is still true, remember it in new words. To link a fact saved without an entity, remember it with entity and replaces set to its fact id instead of forgetting it. | agent | `repeat the read that failed` | 1 | no |
+| `remember`, or an owner `gbrain trust release` that writes a held fact into its entity page's `## Facts` table (a managed brain), refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved, and a refused release leaves the fact held. | A forgotten claim stays withdrawn: remembering the same normalized text does not restore it, and a claim forgotten without an entity is withdrawn for every entity. The additive `withdrawn` object (`at`, `subject`: an entity slug or `all_entities`, `visibility`) says when and how widely the exact claim was forgotten; it covers that exact claim only, and its absence carries no meaning. | Do not retry the same text. Tell the user the claim was forgotten (withdrawn.at, withdrawn.subject); if it is still true, remember it in new words. To link a fact saved without an entity, remember it with entity and replaces set to its fact id instead of forgetting it. For a refused release, do not retry it: drop the hold (gbrain trust drop h<id>) unless the user wants the claim back in new words. | agent | `repeat the read that failed` | 1 | no |
 
 ### facts_absorb_write_refused
 
@@ -1451,9 +1451,9 @@ More: [docs/guides/retrieval-feedback.md#feedback_not_authorized](../../docs/gui
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A fact was not indexed from the facts fence row its request names because that row no longer reads back as the fact (removed, struck, emptied, another visibility or other text); nothing was written. | A facts row derives from its fence row, which Git holds. Indexing a fact at a row that now says something else would make the database disagree with the file, so the write stops and the file stays as it is. | Read the page (gbrain get <slug>) to see the row as it stands; if the fact is still wanted, remember it again, which writes it as a new row. | agent | `repeat the read that failed` | 1 | no |
+| A fact was not indexed from the facts fence row its request names because that row no longer reads back as the fact (removed, struck, emptied, another visibility or other text), or, for an owner release of a held row, because its context or source was edited after the hold (`held_row_edited`, named in the message); nothing was written, and a refused release leaves the fact held. | A facts row derives from its fence row, which Git holds. Indexing a fact at a row that now says something else would make the database disagree with the file, so the write stops and the file stays as it is. For `held_row_edited` the row still reads back, but the owner approved the older context or source, so indexing it would publish content the owner did not review. | Read the page (gbrain get <slug>) to see the row as it stands; if the fact is still wanted, remember it again, which writes it as a new row. For a refused gbrain trust release, do not remember it and do not release the same hold again (it refuses the same way): drop it (gbrain trust drop h<id>). If the edit was itself held, gbrain trust review lists it separately. | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `row_missing`, `struck`, `empty`, `visibility`, `text`.
+Reasons: `row_missing`, `struck`, `empty`, `visibility`, `text`, `held_row_edited`.
 
 ### fence_unrenderable
 
@@ -1731,6 +1731,14 @@ Reasons: `no_file_form`, `declared_target`, `facts_lane`.
 
 More: [docs/guides/write-refusals.md#git_home_required](../../docs/guides/write-refusals.md#git_home_required)
 
+### git_index_conflict
+
+<a id="git_index_conflict"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A strict (canonical: git) write found a staged change of its path that is not committed, so it committed nothing and left the index as it was. | The door commits a path only while the checkout's index entry for it equals HEAD's. Committing over a staged change would overwrite it in the index or publish it under a gbrain commit, so the person who staged it decides first. | Commit the staged change, or unstage it (git restore --staged -- <path> keeps the file on disk), then retry the write with a new request_id. git diff --cached --name-only -- <path> prints nothing once it is resolved. | user | `repeat the read that failed` | 1 | no |
+
 ### git_index_locked
 
 <a id="git_index_locked"></a>
@@ -1808,6 +1816,14 @@ More: [docs/guides/write-refusals.md#git_protocol_required](../../docs/guides/wr
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The canonical commit is durable locally; its push will retry. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+### git_target_changed
+
+<a id="git_target_changed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A strict (canonical: git) write's file changed on disk while it was being committed, so nothing was committed and the write was not published. | The door commits exactly the bytes the write published, and checks the file's hash against them before and after Git stores it. An edit landing in between would otherwise be committed while the database records other content; recovery leaves the changed file as it is. | When the file holds neither the write's bytes nor the version before it, the write is held in recovery (blocked reason unexpected_file_bytes) and the source's later writes wait behind it; when it holds the version before the write, nothing is held and the write failed, so read the page before resubmitting it with a new request_id. To resolve a held write, preview with gbrain repair stuck-recovery --source <id> --json, ask the user which version to keep, then run gbrain repair stuck-recovery --source <id> --keep disk\|prior --apply --expect <preview_hash> --yes (disk keeps the edit). Run: gbrain sources writer status --json | user | `repeat the read that failed` | 1 | no |
 
 ### git_target_ignored
 
@@ -4150,6 +4166,16 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#the-model](../../docs/designs/GIT_CA
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | `sync.admission` is not `normal`, so managed sync admits less than it classifies: `imports_only` admits no deletes and no keep_db writes (they wait as `paused_deletes` and `paused_keep_db`), and `classify_only` writes and stamps nothing. | The owner sets the switch on the brain host (`gbrain config set`; it is never settable remotely) as the first response to a suspected sync bug. A pass reads it at pin and in every group's admission, and a destructive request re-reads it at publication, so the change applies at the next group; `sync status --json` reports `admission: {value, set_at, effective}`, where `effective` turns true once no pass pinned before `set_at` holds the lease and no delete or keep_db reconcile admitted before it is unpublished. Doctor warns, with the value's age, for as long as it stays restricted. | Tell the user how long ago the switch was set and ask whether its reason still holds. Only they restore it: gbrain config set sync.admission normal on the brain host; the next sync admits what waited. Run: gbrain config set sync.admission normal | user | `gbrain doctor --only sync_admission_restricted --json` | 1 | no |
+
+### sync_anchor_relative
+
+<a id="sync_anchor_relative"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Sync refused: the source's stored directory (sources.local_path, or sync.repo_path) is a relative path such as ".", which names whatever directory gbrain runs from. | A relative stored path cannot prove which folder is the brain. Before #7630 a sync run from an unrelated folder treated that folder as the brain repo: it Git-initialized it, committed everything in it and imported its markdown. gbrain now refuses before any Git probe or import, and nothing is changed. | Ask the user which directory holds the source, then gbrain sources set-path <id> <absolute-directory>; or clear the pointer with gbrain sources set-path <id> --clear. A path that is absolute only on another operating system (a Windows drive path read on Linux or macOS) is refused the same way; set-path fixes it and --clear does not apply. | user | `repeat the read that failed` | 3 | no |
+
+More: [docs/guides/troubleshooting.md#relative-source-path](../../docs/guides/troubleshooting.md#relative-source-path)
 
 ### sync_cursor_replaced
 

@@ -364,7 +364,7 @@ async function adoptGroups(engine: BrainEngine, plan: GitConversionPlan, preview
         files.push({ path: target, bytes: Buffer.from(inlineExportMarkdown(await readExportPage(engine, item, withdrawals))) });
       }
       for (const file of files) writeAtomically(root, file.path, file.bytes);
-      const commit = await commitThroughDoor(root, files.map(file => ({ path: file.path })), lock);
+      const commit = await commitThroughDoor(root, files.map(file => ({ path: file.path, planned: sha256(file.bytes) })), lock);
       if (commit) commits.push(commit);
     } finally { await lock.release(); }
     await faultPoint('conversion:group_committed', { sourceId: context.sourceId, round: start / CONVERSION_GROUP_MAX + 1 });

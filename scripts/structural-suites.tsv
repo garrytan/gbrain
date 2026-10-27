@@ -76,6 +76,8 @@ test/claude-cli-recipe.test.ts	claude-cli LanguageModel — output cap (#6424)	2
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — text-only round trip	4	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — tool use	17	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli recipe registration	2	readFileSync
+test/cli-flag-equals.test.ts	#7619 refusals that keep consent, scope and targets right	26	readFileSync,source-surface-helper
+test/cli-flag-equals.test.ts	#7619 split rules	21	readFileSync,source-surface-helper
 test/cli-force-exit-teardown-arming.test.ts	cli.ts — disconnect hard-deadline armed at teardown entry, not before the op body	1	readFileSync,source-surface-helper
 test/cli.test.ts	BigInt-safe output normalization (#2450)	5	source-surface-helper
 test/cli.test.ts	CLI structure	2	source-surface-helper
@@ -286,8 +288,8 @@ test/reranker-default-seam.test.ts	DEFAULT_RERANKER_MODEL seam (#3657, flipped v
 test/resolver.test.ts	RESOLVER.md trigger round-trip (D5/C)	2	readFileSync
 test/resolver.test.ts	Skill example-name validator (D13)	4	readFileSync
 test/retrieval-reflex-recipe-routing.test.ts	retrieval-reflex recipe routing is MECE with the query skill (#4292)	5	readFileSync
-test/runtime-version.test.ts	stated Bun floor	1	readFileSync
-test/schema-bootstrap-coverage.test.ts	(file-level)	14	source-surface-helper
+test/runtime-version.test.ts	stated Bun floor	2	readFileSync
+test/schema-bootstrap-coverage.test.ts	(file-level)	15	source-surface-helper
 test/schema-pack-unify-types-handler.test.ts	#1575 unify-types worker dry-run default	1	source-surface-helper
 test/schema-pack/suggest.test.ts	runSuggest — source-text contract (structural)	1	readFileSync
 test/scripts/build-schema-migrations.test.ts	generator diagnostics (FAIL/Why/Fix/See)	9	exec-scan
@@ -333,7 +335,7 @@ test/scripts/nightly-issue.test.ts	nightly-watch incidents	9	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch routing and guard	9	readFileSync
 test/scripts/nightly-issue.test.ts	operator messages carry docs anchors that resolve	1	readFileSync
 test/scripts/postgres-lane-coverage.test.ts	check-postgres-lane-coverage.ts	9	readFileSync
-test/scripts/postgres-unit-arms.test.ts	postgres-unit-arms list	12	readFileSync
+test/scripts/postgres-unit-arms.test.ts	postgres-unit-arms list	13	readFileSync
 test/scripts/promote-stable.test.ts	promote-stable.yml	2	readFileSync
 test/scripts/regen-all.test.ts	regen:all	5	readFileSync
 test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution coverage	1	readFileSync
@@ -342,6 +344,7 @@ test/scripts/serial-files.test.ts	scripts/serial-files.tsv (serial lane manifest
 test/scripts/stress-gate.test.ts	docs anchors	1	readFileSync
 test/scripts/stress-gate.test.ts	gate plan	5	readFileSync
 test/scripts/stress-plan.test.ts	execution profiles	3	readFileSync
+test/scripts/stress-plan.test.ts	shards	5	readFileSync
 test/scripts/test-env-opt-ins-guard.test.ts	check-test-env-opt-ins	5	readFileSync
 test/scripts/test-shard.slow.test.ts	test-shard.sh — LPT balance contract	5	readFileSync
 test/scripts/test-shard.slow.test.ts	test-shard.sh — exclusion contract	7	readFileSync

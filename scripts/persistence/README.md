@@ -217,7 +217,7 @@ never a connection URL. Keep the retained directory private: its original
 the diagnostic manifest. Successful runs retain no fixtures.
 
 `persistence-validation.yml` runs the full gate on Linux x64 for both engines
-under Bun 1.4.0 and 1.4.2 and uploads every manifest. Native OS/architecture
+under Bun 1.4.4 and uploads every manifest. Native OS/architecture
 coverage is separately required by `native-locks.yml`; its configured matrix
 must not be mistaken for locally executed runtime evidence.
 
@@ -296,7 +296,7 @@ PGLite keeps the original in-memory read-latency storage model; the separate
 recorded as `full_gate: false`. `tests/heavy/read_latency_under_sync.sh`
 retains its optional `STRICT_LATENCY=1` interface and now runs the same
 three-sample harness; sample validity always fails closed. CI passes
-`--informational` on both Bun versions and both engines: a valid workload
+`--informational` on every supported Bun version and both engines: a valid workload
 over the 50% threshold exits successfully, but the manifest keeps its
 `verdict: "fail"`, `status: "failed"` and `full_gate: false` threshold result.
 Invalid samples, failed reads/writes and insufficient overlap still fail CI.
@@ -326,8 +326,8 @@ uses one file per activation state to stay within the unchanged per-file cap. Op
 `GBRAIN_TEST_RECONCILE_CRASH_MANIFEST_DIR` retains executed-case evidence.
 `test/e2e/reconcile-pgbouncer.test.ts` requires the transaction-mode pooler when
 `GBRAIN_CI_REQUIRE_PGBOUNCER=1` and proves repair followed by a new private memory
-write. The durable-persistence workflow runs these contracts on both supported
-Bun versions and uploads the crash manifests; local CI runs the slow and E2E lanes.
+write. The durable-persistence workflow runs these contracts on every supported
+Bun version and uploads the crash manifests; local CI runs the slow and E2E lanes.
 
 `test/put-page-persistence.test.ts` and `test/e2e/put-page-persistence-postgres.test.ts`
 pin durable page acceptance and ordinary-error publication: native contention
@@ -514,7 +514,7 @@ boundaries, followed by a small multi-process soak. The Postgres test creates
 and drops fresh test databases, requiring CREATEDB on the explicit test URL.
 It never truncates the shared E2E database. The reusable
 `persistence-validation.yml` gate runs 1,000 schedules and 10,000 writes per
-engine under Bun 1.4.0 and 1.4.2 and uploads actual executed-case manifests;
+engine under Bun 1.4.4 and uploads actual executed-case manifests;
 the sections above cover workloads, reruns, performance measurements and the
 process-crash scope.
 
@@ -526,10 +526,10 @@ reserved short control capacity while bulk connections remain held, then
 drains and commits the original request. Ownership cases cover mismatched
 successor manifests, stale owners, root replacement under a held kernel
 lock, and actual source deletion/recreation. The reusable persistence lane
-runs this matrix on both supported Bun versions and uploads its manifest.
+runs this matrix on every supported Bun version and uploads its manifest.
 
 The required persistence lane also runs `scripts/persistence/performance.ts`
-on both engines and Bun versions. Three independent instances use the
+on both engines and every supported Bun version. Three independent instances use the
 existing 500-page/200-query read-latency corpus, with public `put_page`
 mutations and actual in-flight interval coverage of at least 90%. Any read
 or write failure invalidates the sample. CI uses `--informational`: the 50%
@@ -639,7 +639,7 @@ every mode not skipped), `NOTES` (default 200; the large page is always there),
 client, serve and writer log per scenario) and `PGBOUNCER_CONTAINER` (mode (f)).
 
 CI: the `convergence` job of `.github/workflows/persistence-validation.yml`, on
-both supported Bun versions with the deployment matrix's pgvector and
+every supported Bun version with the deployment matrix's pgvector and
 transaction-mode PgBouncer services. Pull requests run it when
 `scripts/ci-convergence-scope.sh` selects their diff (persistence, sync,
 projections, storage, the harness and its workflow; never `package.json`

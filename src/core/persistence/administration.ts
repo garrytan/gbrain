@@ -107,19 +107,20 @@ export const CLAIM_BEFORE_ACTIVATION_NOTICE = 'Persistence is not activated. Aft
 function writerFailuresQuery(sourceId: string, params: Record<string, unknown>): import('./terminal-failures.ts').TerminalFailureQuery {
   const bad = (key: string, pattern: RegExp) => params[key] !== undefined && (typeof params[key] !== 'string' || !pattern.test(params[key] as string));
   if (bad('state', /^(all|unresolved)$/)) throw invalid('Invalid --state value.', 'Pass --state all to include resolved and historical receipts, or leave it out for the unresolved ones.');
-  if (bad('group_by', /^category$/)) throw invalid('Invalid --group-by value.', 'Pass --group-by category (groups on code, origin and category), or leave it out to list receipts.');
+  if (bad('group_by', /^category$/)) throw invalid('Invalid --group-by value.', 'Pass --group-by category (groups on code, origin and category, and a sync fault on its operation too), or leave it out to list receipts.');
   if (bad('since', /^[1-9]\d{0,3}d$/)) throw invalid('Invalid --since value.', 'Pass --since as whole days, e.g. --since 7d; the window is clamped to persistence.receipt_retention_days.');
   if (bad('before', /^\d{1,19}$/)) throw invalid('Invalid --before value.', 'Pass --before exactly as the previous page\'s next_cursor.');
   if (bad('code', /^[a-z][a-z0-9_]{0,63}$/)) throw invalid('Invalid --code value.', 'Pass --code as a snake_case code a group names, e.g. --code storage_error.');
   if (bad('origin', /^[a-z][a-z0-9_]{0,63}$/)) throw invalid('Invalid --origin value.', 'Pass --origin as an origin a group names, or none for receipts with no recorded origin.');
+  if (bad('operation', /^[a-z][a-z0-9_]{0,63}$/)) throw invalid('Invalid --operation value.', 'Pass --operation as the operation a group names, e.g. --operation put_page or --operation canonical_reconcile.');
   if (bad('category', /^[a-z][a-z_]{0,63}$/)) throw invalid('Invalid --category value.', 'Pass --category as a category a group names, e.g. --category knock_on.');
   if (params.limit !== undefined && !(typeof params.limit === 'number' && Number.isInteger(params.limit) && params.limit >= 1 && params.limit <= 100)) {
     throw invalid('Invalid --limit value.', 'Pass --limit as a whole number from 1 to 100 (default 20).');
   }
-  const p = params as { state?: 'all' | 'unresolved'; group_by?: string; since?: string; limit?: number; before?: string; code?: string; origin?: string; category?: string };
+  const p = params as { state?: 'all' | 'unresolved'; group_by?: string; since?: string; limit?: number; before?: string; code?: string; origin?: string; category?: string; operation?: string };
   return { sourceId, ...(p.state ? { state: p.state } : {}), ...(p.group_by ? { groupBy: 'category' as const } : {}), ...(p.since ? { sinceDays: Number(p.since.slice(0, -1)) } : {}),
     ...(p.limit !== undefined ? { limit: p.limit } : {}), ...(p.before ? { before: p.before } : {}), ...(p.code ? { code: p.code } : {}), ...(p.origin ? { origin: p.origin } : {}),
-    ...(p.category ? { category: p.category } : {}) };
+    ...(p.category ? { category: p.category } : {}), ...(p.operation ? { operation: p.operation } : {}) };
 }
 
 /** GBRA-130 A-59: writer status's movement, or a `not_read` with its code and a read-only fix; a failed read never reads as no movement. */
@@ -249,7 +250,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       remoteUrl:params.remote_url as string|undefined,createDirectory:params.create_directory as boolean|undefined,expiredOnly:params.expired_only as boolean|undefined});
   }
   if (operation === 'writer_failures') {
-    keys(params, ['source_id', 'state', 'group_by', 'since', 'limit', 'before', 'code', 'origin', 'category']);
+    keys(params, ['source_id', 'state', 'group_by', 'since', 'limit', 'before', 'code', 'origin', 'category', 'operation']);
     const sourceId = source(params.source_id);
     const [known] = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id=$1 AND archived IS NOT TRUE', [sourceId]);
     if (!known) throw invalid(`No active source ${sourceId}.`, 'Name an active source; archived sources are not inspected.', sourcesListFix('Lists the active source ids, read-only.'));

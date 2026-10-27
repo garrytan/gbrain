@@ -29,7 +29,7 @@ import { OWNER_TIER_FLOOR, compareTrust, effectiveWriteTrust, minTrust, storedTr
 
 /** Page writes that only edit a gbrain-managed fence (or strike a row) and keep the page's tier. */
 const FENCE_EDIT_OPERATIONS = ['remember', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve', 'takes_remove',
-  'decide_proposal', 'loops_close', 'relink_facts', 'add_timeline_entry', 'add_link', 'remove_link'];
+  'decide_proposal', 'loops_close', 'relink_facts', 'add_timeline_entry', 'add_link', 'remove_link', 'trust_release'];
 /** Page writes whose caller supplies the page content: they stamp the marker and can lower the page (CEO-12). */
 const CONTENT_OPERATIONS = ['put_page', 'capture', 'edit_page', 'append_page', 'revert_version', 'restore_page'];
 

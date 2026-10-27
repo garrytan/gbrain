@@ -626,6 +626,7 @@ src/core/trust/page-handlers.ts	markdownWithoutMarker	call:serializeMarkdown	SEG
 src/core/trust/page-handlers.ts	markdownWithoutMarker	field	SEGW	
 src/core/trust/page-handlers.ts	versionMarkdown	call:serializePageToMarkdown	SEGW	
 src/core/trust/page-handlers.ts	versionMarkdown	field	SEGW	
+src/core/trust/release-publish.ts	prepareTrustReleaseMutation	field	INLINE	read-only fence cell lookup on the body materializedPage read back within PAGE_MAX_BYTES (prepareFenceFactAppend refuses a segmented page over the ceiling first)
 src/core/utils.ts	contentHash	field	META	hashes a whole inline page; a segmented page hashes as a stream (1.4) and keeps content_hash; called on a segmented Page the getter throws
 src/core/utils.ts	contentHashLegacy	field	META	legacy formula over an inline page; segmented: getter throws
 src/core/utils.ts	rowToPage	field	INLINE	installs throwing body getters on a segmented row (guardSegmentedBody); inline rows copy the columns

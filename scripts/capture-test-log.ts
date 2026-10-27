@@ -23,9 +23,12 @@ export interface CapturedFailure { file: string; test: string; arm: string; erro
  * output. Once it starts, the rest of the shard's sync-spawning tests time
  * out one after another, in files that have nothing to do with each other.
  * A spawn that passed a `timeout` comes back `spawnSync <cmd> ETIMEDOUT`
- * instead, often minutes before the first kill (#6586).
+ * instead, often minutes before the first kill (#6586). Every supported Bun
+ * (MINIMUM_BUN_VERSION) carries the fix, so the signature is named only for a
+ * run whose `bun test` banner is older than BUN_SPAWNSYNC_FIXED or missing.
  */
 export const BUN_SPAWNSYNC_POISONED = 'bun_spawnsync_poisoned';
+const BUN_SPAWNSYNC_FIXED = [1, 4, 3];
 
 /**
  * Reads the live test output line by line and keeps the last 50 failures
@@ -97,11 +100,22 @@ export class FailureCollector {
    * killed at a test deadline, and from then on nothing but timeouts, at least
    * three of them, in at least two files. One hung test with a dangling child,
    * a run of timeouts with no killed child, or any non-timeout failure after
-   * the kill is some other hang and is left for its own diagnosis.
+   * the kill is some other hang and is left for its own diagnosis, as is the
+   * same shape on a Bun that carries the fix.
    */
   poisoned(): boolean {
-    return this.danglingKills > 0 && this.timeoutsSinceKill >= 3
+    return this.onAffectedBun() && this.danglingKills > 0 && this.timeoutsSinceKill >= 3
       && this.timeoutsSinceKill === this.failuresSinceKill && this.filesSinceKill.size >= 2;
+  }
+  /** Whether this run's Bun can carry oven-sh/bun#34069: older than the fix, or not named by the log. */
+  private onAffectedBun(): boolean {
+    const v = /^(\d+)\.(\d+)\.(\d+)(-\S*)?$/.exec(this.bunVersion);
+    if (!v) return true;
+    for (let i = 0; i < 3; i++) {
+      const d = Number(v[i + 1]) - BUN_SPAWNSYNC_FIXED[i];
+      if (d !== 0) return d < 0;
+    }
+    return v[4] !== undefined;
   }
   /** The one-paragraph verdict for a poisoned run, Markdown; empty otherwise. */
   poisonedNote(): string {
@@ -119,7 +133,7 @@ export class FailureCollector {
   takeLiveNotes(): string[] {
     const notes: string[] = [];
     const bun = this.bunVersion ? `Bun v${this.bunVersion}` : 'this Bun';
-    if (this.spawnTimeout && !this.announced.spawnTimeout) {
+    if (this.spawnTimeout && !this.announced.spawnTimeout && this.onAffectedBun()) {
       this.announced.spawnTimeout = true;
       notes.push(`> **${BUN_SPAWNSYNC_POISONED}?** ${this.spawnTimeout.file || '(before the first test file)'} printed \`${this.spawnTimeout.line.replace(/`/g, "'")}\`. `
         + `On ${bun}, a synchronous child spawn that times out is the first sign of oven-sh/bun#34069 (fixed in Bun 1.4.3): if \`killed N dangling process\` and timeouts in unrelated files follow, the shard is poisoned and the failures say nothing about the tests.`);

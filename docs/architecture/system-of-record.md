@@ -321,7 +321,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/timeline-write-through.ts` (2): the timeline write-through's page row splice and entry insert run in one `maintenanceTransaction`.
 - `src/core/trust/fence-guard.ts` (2): the guarded fence re-projection detaches or moves higher-tier fact rows inside the page's coordinated publication.
 - `src/core/trust/held-removals.ts` (1): an owner accept of a held take or timeline removal re-projects the row as the page says in a coordinated (managed) or attributed (unmanaged) transaction under the page key.
-- `src/core/trust/owner-actions.ts` (1): an owner release inserts the held fact in a coordinated (managed) or attributed (unmanaged) transaction at user_confirmed.
+- `src/core/trust/owner-actions.ts` (1): an owner release inserts the held fact database-only at user_confirmed in an attributed transaction (unmanaged) or, on a managed brain, in a coordinated one only for a hold with no entity slug or whose page is missing; every other managed fact release is a journaled `trust_release` publication (`src/core/trust/release-publish.ts`) that writes the fence row to the file first.
 - `src/core/trust/supersede-handlers.ts` (3): owner accept/undo of a trust proposal re-tiers the new fact (or take) inside the checked supersede's (or takes publication's) transaction.
 <!-- write-attribution-covered:end -->
 

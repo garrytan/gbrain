@@ -50,6 +50,7 @@ describe('sources writer failures', () => {
       operation: 'writer_failures', params: { source_id: SOURCE, group_by: 'category', limit: 5 }, json: true });
     expect(parsePersistenceAdminArgs('writer', ['failures', SOURCE, '--state', 'all', '--since', '3d', '--origin', 'none', '--before', '12'])).toMatchObject({
       operation: 'writer_failures', params: { source_id: SOURCE, state: 'all', since: '3d', origin: 'none', before: '12' }, json: false });
+    expect(parsePersistenceAdminArgs('writer', ['failures', SOURCE, '--code', 'preparation_stalled', '--operation', 'put_page']).params).toMatchObject({ code: 'preparation_stalled', operation: 'put_page' });
   });
 
   test('refuses bad options, a missing source and an archived one with the usage to fix it', async () => {
@@ -61,6 +62,7 @@ describe('sources writer failures', () => {
     await expect(run({ source_id: SOURCE, group_by: 'slug' })).rejects.toMatchObject({ code: 'invalid_params', message: 'Invalid --group-by value.' });
     await expect(run({ source_id: SOURCE, limit: 0 })).rejects.toMatchObject({ code: 'invalid_params', message: 'Invalid --limit value.' });
     await expect(run({ source_id: SOURCE, before: 'abc' })).rejects.toMatchObject({ code: 'invalid_params', message: 'Invalid --before value.' });
+    await expect(run({ source_id: SOURCE, operation: 'Bad-Op' })).rejects.toMatchObject({ code: 'invalid_params', message: 'Invalid --operation value.' });
     await expect(run({ source_id: SOURCE, slug: 'x' })).rejects.toMatchObject({ code: 'invalid_params' });
   });
 

@@ -5,13 +5,16 @@
 # reused by later sessions). Printed by: gbrain bootstrap cloud-setup-script
 set -eu
 
-# 1. Bun runtime, at least GBrain's minimum (1.4.0; older Bun is refused).
+# 1. Bun runtime, at least GBrain's minimum (1.4.4; older Bun is refused).
 #    Installed VIA npm — bun's own package fetching is proxy-incompatible in
 #    cloud sandboxes; npm's is not. A preinstalled older Bun stays untouched.
+bun_ok() { "$1" -e 'process.exit(Bun.semver.satisfies(Bun.version, ">=1.4.4") ? 0 : 1)'; }
 GBRAIN_BUN=$(command -v bun || true)
-if [ -z "$GBRAIN_BUN" ] || ! "$GBRAIN_BUN" -e 'process.exit(Bun.semver.satisfies(Bun.version, ">=1.4.0") ? 0 : 1)'; then
+if [ -z "$GBRAIN_BUN" ] || ! bun_ok "$GBRAIN_BUN"; then
   npm install -g bun
   GBRAIN_BUN="$(npm prefix -g)/bin/bun"
+  # `gbrain --version` below answers on any Bun, so check the floor here.
+  bun_ok "$GBRAIN_BUN" || { echo "gbrain: the Bun npm installed ($GBRAIN_BUN) did not report 1.4.4 or newer" >&2; exit 1; }
 fi
 export PATH="$(dirname "$GBRAIN_BUN"):$PATH"
 

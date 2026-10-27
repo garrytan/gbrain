@@ -33,6 +33,7 @@
  * marker, so its request identity and replay are unchanged; when the group
  * does not commit it takes `publishMutation` like any other member.
  */
+import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { authorizeStoredRequest, storedAuthorizationReads } from './authority.ts';
@@ -415,7 +416,13 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
       if (lane) { timed.apply?.turn(); await faultPoint('lane:applied', { requestId: head.request_id, sourceId: head.source_id, operation: head.operation }); await awaitLaneTurn(tx, lane, rows); timed.apply?.turned(); }
       // G2: one path-only commit for every member's file, in commit order, before the rows commit; a shared lease never reclaims an index lock.
       if (strict && recorded.size) {
-        const commit = await commitThroughDoor(binding.local_path!, [...recorded].map(([i, member]) => ({ path: member.record.path, note: prepared[i]!.file?.commit })), lane || joined ? undefined : lock);
+        const commit = await commitThroughDoor(binding.local_path!, [...recorded].map(([i, member]) => ({ path: member.record.path, planned: member.record.afterHash, note: prepared[i]!.file?.commit })), lane || joined ? undefined : lock,
+          paths => {
+            for (const [i, member] of recorded) {
+              const rel = relative(binding.local_path!, member.record.path).split(sep).join('/');
+              if (paths.includes(rel)) Object.assign(outcomes[i]!.persistence as object, { git_index_restored: [rel] });
+            }
+          });
         for (const i of recorded.keys()) Object.assign(outcomes[i]!.persistence as object, { git_state: 'committed', git_commit: commit });
       }
       const done = await completeGroup(tx, rows, outcomes);

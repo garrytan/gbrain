@@ -491,7 +491,7 @@ export function formatSaveOutcome(
   }
   if (dbSaved && writeThrough.skipped === 'repo_not_found') {
     return {
-      stdout: `\n_Saved to DB page \`${ctx.slug}\` (\`sync.repo_path\` is not a directory — skipped file write)._`,
+      stdout: `\n_Saved to DB page \`${ctx.slug}\` (the source directory, \`sources.local_path\` or \`sync.repo_path\`, is relative or not a directory — skipped file write)._`,
       stderr,
       exitCode: 0,
     };

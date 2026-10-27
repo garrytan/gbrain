@@ -53,6 +53,7 @@ export function parseRefreshArgs(args: string[]): { sourceId: string; json: bool
 function describe(result: WorktreeRefreshResult): string {
   const head = (value: string | null) => value ? value.slice(0, 12) : '-';
   const lines = [`Refresh ${result.status}: sources ${result.source_ids.join(', ')}; ${head(result.old_head)} -> ${head(result.target_head)}${result.upstream_ref ? ` (${result.upstream_ref})` : ''}.`];
+  if (result.recovered) lines.push(`Recovered orphaned refresh ${result.recovered.refresh_id} (${result.recovered.status}; previous holder: ${result.recovered.previous_holder ? `pid ${result.recovered.previous_holder.pid} on ${result.recovered.previous_holder.hostname}` : 'not recorded'}).`);
   if (result.incoming_files !== undefined) lines.push(`Incoming files: ${result.incoming_files}.`);
   for (const member of result.synced) lines.push(`  ${member.source_id}: sync ${member.status}, last_commit ${head(member.last_commit)}`);
   if (result.preserved_uncommitted.length) lines.push(`Preserved uncommitted paths (outside the incoming diff): ${result.preserved_uncommitted.slice(0, 20).join(', ')}${result.preserved_uncommitted.length > 20 ? ' ...' : ''}`);
@@ -70,8 +71,9 @@ export function printRefreshOutcome(outcome: { result: WorktreeRefreshResult } |
   }
   const error = outcome.error;
   // F0's legacy refusal keys stay (its `fix` is the stored command string); the v1 envelope keys ride beside them (D1).
+  // #7685: a refusal that carries a structured fix (argv, actor, ask_user) emits it as the v1 `fix`; the prose stays in `suggestion`.
   const env = toAgentError(error, { transport: 'cli', command: 'sources refresh', render: cliRenderContext() });
-  const refusal = { status: 'refused', code: error.code, cause: error.message, fix: error.suggestion ?? null, docs: error.docs ?? null,
+  const refusal = { status: 'refused', code: error.code, cause: error.message, fix: error.fix && env.fix ? env.fix : error.suggestion ?? null, docs: error.docs ?? null,
     ...(error.detail ? { detail: error.detail } : {}),
     error: env.error, message: env.message, suggestion: env.suggestion, docs_cmd: env.docs_cmd, class: env.class, retryable: env.retryable,
     contract_version: env.contract_version };

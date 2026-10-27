@@ -107,23 +107,23 @@ test('#5762 the Postgres blob never builds the indexes; v179 builds them concurr
   try { await v179.handler!(engine); } finally { engine.withReservedConnection = reserve; }
   expect(statements.filter(sql => sql.startsWith('CREATE INDEX CONCURRENTLY IF NOT EXISTS')).map(sql => sql.split(/\s+/)[6])).toEqual(NAMES);
   expect(statements.filter(sql => /^(SET|RESET)\b/i.test(sql))).toEqual([]);
-  expect(await states()).toEqual(['valid', 'valid', 'valid', 'valid']);
+  expect(await states()).toEqual(['valid', 'valid', 'valid', 'valid', 'valid']);
 }), 120_000);
 
 test('#5762 gbrain repair request-indexes rebuilds a dropped and an INVALID index on a current schema; a second run is a no-op', async () => withEnv(env, async () => {
   await engine.executeRaw('DROP INDEX persistence_requests_sync_run_open');
   await engine.executeRaw("UPDATE pg_index SET indisvalid=false WHERE indexrelid='persistence_requests_sync_run_committed'::regclass");
-  expect(await readRequestIndexStates(engine)).toEqual([{ name: NAMES[0], state: 'missing' }, { name: NAMES[1], state: 'invalid' }, { name: ALL_NAMES[2], state: 'valid' }, { name: ALL_NAMES[3], state: 'valid' }]);
+  expect(await readRequestIndexStates(engine)).toEqual([{ name: NAMES[0], state: 'missing' }, { name: NAMES[1], state: 'invalid' }, { name: ALL_NAMES[2], state: 'valid' }, { name: ALL_NAMES[3], state: 'valid' }, { name: ALL_NAMES[4], state: 'valid' }]);
   const doctor = await requestIndexesCheck(engine);
   expect(doctor).toMatchObject({ name: 'persistence_request_indexes', status: 'warn', details: { count: 2, command: 'gbrain repair request-indexes --apply' } });
   expect(doctor.message).toContain('persistence_requests_sync_run_committed is INVALID');
   const scope = await resolveRepairScope(engine);
   const preview = await runRepair(ctx(), requestIndexesRepair, scope, { apply: false });
   expect(preview).toMatchObject({ affected: 2, cost: { lifetime_ids: 0 }, apply_command: 'gbrain repair request-indexes --apply' });
-  expect(await states()).toEqual(['missing', 'invalid', 'valid', 'valid']);
+  expect(await states()).toEqual(['missing', 'invalid', 'valid', 'valid', 'valid']);
   const applied = await runRepair(ctx(), requestIndexesRepair, scope, { apply: true });
   expect(applied).toMatchObject({ applied: 2, complete: true });
-  expect(await states()).toEqual(['valid', 'valid', 'valid', 'valid']);
+  expect(await states()).toEqual(['valid', 'valid', 'valid', 'valid', 'valid']);
   expect((await requestIndexesCheck(engine)).status).toBe('ok');
   expect(await runRepair(ctx(), requestIndexesRepair, scope, { apply: true })).toMatchObject({ affected: 0, applied: 0, complete: true });
 }), 120_000);
@@ -142,7 +142,7 @@ test('#5762 a build that leaves the index INVALID (a concurrent caller failed fi
   try { await expect(buildIndexOnline(engine, 0, index)).rejects.toThrow(`Index ${index.name} is not valid after its concurrent build`); }
   finally { engine.withReservedConnection = reserve; }
   expect(await buildIndexOnline(engine, 0, index)).toBe('rebuilt');
-  expect(await states()).toEqual(['valid', 'valid', 'valid', 'valid']);
+  expect(await states()).toEqual(['valid', 'valid', 'valid', 'valid', 'valid']);
 }), 60_000);
 
 test('#5762 recovery journey: a checkpoint timeout with a dropped index is fixed by the two printed commands', async () => withEnv(env, async () => {

@@ -15,7 +15,7 @@
 
 import { readFileSync, lstatSync, type Stats } from 'fs';
 import { syncDispatchRow } from './sync-dispatch-read.ts';
-import { join, dirname, resolve } from 'path';
+import { join, dirname, isAbsolute, resolve } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { requestSnapshotRead } from './config-snapshot.ts';
 import type { ExplicitReadBinding } from './ops/contract.ts';
@@ -125,6 +125,7 @@ async function resolveRegisteredPathMatch(
   registered: RegisteredSource[],
   cwd: string,
 ): Promise<{ id: string; path: string; pathLen: number } | null> {
+  registered = registered.filter(r => isAbsolute(r.local_path));
   if (registered.length === 0) return null;
   const [cwdResolved, resolvedPaths] = await Promise.all([
     realpathOrResolveAsync(cwd),
@@ -757,6 +758,7 @@ export async function resolveSourceForRepoPath(
   const dirResolved = realpathOrResolve(dir);
   let best: { id: string; path: string; pathLen: number } | null = null;
   for (const r of registered) {
+    if (!isAbsolute(r.local_path)) continue;
     const p = realpathOrResolve(r.local_path);
     if (dirResolved === p || dirResolved.startsWith(p + '/')) {
       if (!best || p.length > best.pathLen) {

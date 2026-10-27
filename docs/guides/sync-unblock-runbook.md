@@ -374,7 +374,8 @@ run converges on the next plain sync with no flag.
 | Status `reason` | `state` | What it means | `next` |
 |---|---|---|---|
 | `pass_unfinished` | resumable | The newest pass is open or stopped at a deadline. | The plain sync (`resume_argv`); safe to loop. |
-| `pass_abandoned` | blocked | Two passes in a row never ended: the drain stopped them for making no progress, or their process was killed. The newest open pass counts once its row has not moved for 5 minutes. | `gbrain doctor --json` and a report with the gbrain version and the newest run's `drain.stall`; another plain sync is likely to stop the same way. |
+| `pass_interrupted` | resumable | The newest pass is open but no process holds the source's drain lease: its process was killed or crashed (an out-of-memory guard, a timeout) before it ended the pass, so nothing recorded a failure. `live` is null and `interrupted` names the pass, its last write and, when the lock row outlived the process, the holder and the pages it committed. Doctor `managed_sync_blocked` lists it as `pass_interrupted` (warn, then fail after an hour). | The plain sync; if that pass stops the same way, the reason becomes `pass_abandoned`. |
+| `pass_abandoned` | blocked | Two passes in a row never ended: the drain stopped them for making no progress, or their process was killed. The newest open pass counts once no process holds the source's drain lease (#7596; a reader without the lease read counts it once its row has not moved for 5 minutes). | `gbrain doctor --json` and a report with the gbrain version and the newest run's `drain.stall`; another plain sync is likely to stop the same way. |
 | `not_converged` | resumable | The pass used its four rounds while another writer kept changing the level. Everything it admitted stands. | The plain sync; after three such passes in a row `next` is `gbrain doctor --json` and a report, because another sync will not change it. |
 | `settle_mismatch` | resumable | A path keeps settling without reading settled. The next pass re-admits it once; after three passes at one level it is a `settle_mismatch` hold that needs a person. | The plain sync, then report the hold. |
 | `deletes_withheld` | blocked | The pass's deletes crossed the mass-delete threshold (#2828) or an absolute cap (#7130: `sync.max_deletes`, default 500; `sync.max_delete_ratio`, default 0.01 above 50 deletes; per source `<key>.source.<id>`). The record's `trip` names which. It wrote one withheld record and synced everything else; no per-page hold is written. | Ask the user: restore the checkout if it is wrong; when the deletion is intended, raise the cap for that source (`gbrain config set sync.max_deletes.source.<id> <n>`) or run `GBRAIN_ALLOW_MASS_RECONCILE=1 gbrain sync --source <id>` on the brain host. `gbrain sync --source <id> --dry-run --json` lists the set and its hash. |
@@ -428,7 +429,8 @@ it, and a `--full` continues until every path it covers is settled.
 - `owner`, sync finishes it by itself: `in_flight` (admitted, not yet
   published), `import`, `reparse` (an unchanged file whose page is imported
   again because its parser or schema pack changed, its origin moved, or an
-  open episode covers it), `delete`, `keep_db` and `keep_db_pending` (at most 200
+  open episode covers it and the page is not already current: same blob and
+  revision, chunks and text projection current, no hold), `delete`, `keep_db` and `keep_db_pending` (at most 200
   DB-wins writes per pass; the rest wait for the next pass),
   `legacy_unverified` (the legacy sweep checks it), and `paused_keep_db`
   (which waits for the owner's `sync.admission` change, as paused deletes

@@ -354,6 +354,18 @@ bash /workspace/gbrain/bin/gbrain-setup --upgrade
 Upgrade installs the currently stable package and applies its migrations.
 Repair is not an upgrade, and neither operation resets the brain.
 
+A helper written before v0.60.379.0 stages a Bun below 1.4.4 (1.4.3 or older),
+which current releases refuse: setup stops with `runtime_below_floor` before it
+changes anything and prints the command to run instead. It fetches the current
+helper and reruns setup with the same root, harness and flags:
+
+```bash
+curl --fail --silent --show-error --location \
+  https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/scripts/setup-in-agent.sh \
+  --output /tmp/gbrain-setup.sh
+bash /tmp/gbrain-setup.sh --root /workspace/gbrain --harness grok-bot --upgrade
+```
+
 To stop using GBrain, pause its native routine and disable its saved skill.
 Keep the root and a protected backup until you deliberately choose to remove
 the data. No daemon or system-level installation needs uninstalling. If using
@@ -367,6 +379,7 @@ hosted access, also revoke that installation's grant on the host.
 | --- | --- | --- | --- | --- |
 | Setup reports unowned state | Choose an empty root; use `--adopt` only after reviewing a compatible existing local brain | agent, after the user agrees | none | the setup receipt |
 | Runtime executable disappeared | Run the retained helper or fetch it again with the same root | agent | none | the setup receipt |
+| `runtime_below_floor` | The helper is older than the Bun floor; make a verified backup, then run the fetch-and-rerun command the refusal prints | agent, after the user agrees to the upgrade | none | the setup receipt |
 | Config is malformed or initialized memory is missing | Preserve the root; recover config or restore a full backup into a new root | agent, after the user agrees | `destructive` when restoring | the setup receipt |
 | Generated instructions were edited | Preserve your edited file under a different name, then rerun repair and reattach your additions separately | agent | none | the setup receipt |
 | `pglite_busy` | Wait for the active command to finish and retry; stop a long-lived server through its owning process before using finite CLI mode | agent | none | retry the read-only command |

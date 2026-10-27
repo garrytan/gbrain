@@ -2051,7 +2051,7 @@ Subcommands:
   shared-skills <id> on|off|status [--json]
                                     Opt a source out of (or back into) shared-skills adoption; status explains its effective policy.
   set-path <id> --clear             Clear a connector source's (google, github)
-                                    stale local_path; takes no path.
+                                    stale local_path, or any source's relative one.
   webhook <set|show|rotate|clear> <id> [options]
                                     v0.40 — per-source webhook secret management.
                                     Run 'sources webhook --help' for subcommand detail.

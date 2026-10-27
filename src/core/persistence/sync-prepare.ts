@@ -548,6 +548,7 @@ export async function publishPassStamp(tx: BrainEngine, row: WriteRequest, p: Sy
     if (pinned) throw syncPublicationRefusal('slug_root_mode_mismatch', `The source pins slug_root_mode=${pinned}, but this sync ran under ${p.slugMode}.`, row, p, slugModeMismatchCause(row.source_id, pinned, p.slugMode));
     if (!changed.length) throw syncPublicationRefusal('revision_conflict', CHECKPOINT_MOVED_MESSAGE, row, p,
       `Another sync moved the commit checkpoint of ${row.source_id} while this pass published.`);
+    // The closed episode re-imported every page except those already at the current chunker (sync-classify.ts `inPlace`).
     if (stamp.stampChunker) await tx.executeRaw('UPDATE sources SET chunker_version=$2 WHERE id=$1', [row.source_id, chunkerStamp()]);
   }
   await recordPassTail(tx, row.source_id, p.passId!, { changed: read.changed, extract: stamp.extract, ...(stamp.since ? { since: stamp.since } : {}) });
@@ -620,7 +621,8 @@ async function applyManagedSyncCheckpoint(tx: BrainEngine, row: WriteRequest, p:
   if (!changed.length) throw syncPublicationRefusal('revision_conflict', CHECKPOINT_MOVED_MESSAGE, row, p,
     `Another sync moved the commit checkpoint of ${row.source_id} while this run published.`);
   await recordSliceCursor(tx, row, p, settled);
-  // #5566: a full walk re-chunked every stale page, so acknowledge the chunker version as the legacy gate does.
+  // #5566: a full walk re-chunked every stale page, so acknowledge the chunker version as the legacy gate does. (A pass's
+  // full episode stamps through its own checkpoint, above; the pages it admits without a reparse are already current.)
   if (settled && (p.from === null || p.syncOptions?.full === true)) await tx.executeRaw('UPDATE sources SET chunker_version=$2 WHERE id=$1', [row.source_id, chunkerStamp()]);
   await tx.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,done}','true'::jsonb),updated_at=now() WHERE op='managed-sync' AND fingerprint=$1", [p.cursorKey]);
   // #6712 PR 2 (L5): the tail (statistics, links) runs after the lease is released; it is owed from this commit on.

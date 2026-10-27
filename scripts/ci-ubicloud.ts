@@ -570,7 +570,7 @@ async function main() {
 
   // The pg-arms lane's proof that unit-postgres-arms fits: each shard of the
   // workflow's own partition, its ARM_WORKERS workers' makespan over this run's
-  // measured file durations (both arms, as the Bun 1.4.0 cell runs them).
+  // measured file durations (both arms, as this lane runs them).
   const armShardReport = opts.lanes.has("pg-arms")
     ? armShards(ROOT, arms.files, ARM_SHARDS).map((files, i) => ({
       shard: i + 1,

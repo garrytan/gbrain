@@ -358,6 +358,10 @@
         "name": "rls"
       },
       {
+        "category": "ops",
+        "name": "function_search_path"
+      },
+      {
         "category": "meta",
         "name": "schema_version"
       },

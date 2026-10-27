@@ -71,8 +71,8 @@ jobs:
   # native target on the primary Bun version; other pull requests run the Linux
   # x64 smoke cell. Pushes, schedules and manual runs always run the full matrix.
   # Named exception (docs/TESTING.md#event-parity): the native-locks scope
-  # reduction on pull requests and merge-queue runs (Bun 1.4.0 and cross-target
-  # cells) is covered by every push to master and the nightly Test schedule,
+  # reduction on pull requests and merge-queue runs (cross-target cells) is
+  # covered by every push to master and the nightly Test schedule,
   # which both run scope=full.
   changes:
     runs-on: ubicloud-standard-2-ubuntu-2404
@@ -241,9 +241,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-26, windows-latest]
-        bun: ['1.4.0', '1.4.4']
+        bun: ['1.4.4']
         # Event parity: every event, pull requests and merge-queue runs
-        # included, runs both supported Bun versions on every OS
+        # included, runs every supported Bun version on every OS
         # (docs/TESTING.md#event-parity).
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4

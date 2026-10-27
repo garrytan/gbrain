@@ -34,6 +34,19 @@
     ".github/workflows/ci-health.yml": [
       "test/scripts/ci-cost-ledger.test.ts",
       "test/scripts/ci-health-report.test.ts"
+    ],
+    ".claude-plugin/plugin.json": [
+      "test/codex-plugin-manifest.test.ts",
+      "test/mcp-registration.test.ts"
+    ],
+    ".codex-plugin/plugin.json": [
+      "test/codex-plugin-manifest.test.ts"
+    ],
+    "plugin-variants/*/.claude-plugin/plugin.json": [
+      "test/codex-plugin-manifest.test.ts"
+    ],
+    "plugin-variants/*/.codex-plugin/plugin.json": [
+      "test/codex-plugin-manifest.test.ts"
     ]
   },
   "guards": [

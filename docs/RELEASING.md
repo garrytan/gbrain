@@ -124,8 +124,7 @@ push SHA, first red SHA, merged PRs). Labels, close rules and recovery steps:
 merge queue is enabled for `master` in the repository settings; check with
 `gh api repos/garrytan/gbrain/rulesets` (or the branch protection page). Queue runs use
 the pull-request profile against the queued merge commit: primary native scope,
-the newest Bun version only in the security and persistence matrices, the
-2,500-write soak and the 10,001-page export scale; the E2E selector diffs the
+the 2,500-write soak and the 10,001-page export scale; the E2E selector diffs the
 queued commit against `master`.
 
 - Without the queue, a release rebases onto the latest `origin/master` and re-runs

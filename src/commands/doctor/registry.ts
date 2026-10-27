@@ -41,6 +41,7 @@ import {
   connectionGateEntry,
 } from './checks/db-connection.ts';
 import { ipcSocketPathEntry } from './checks/local-ipc.ts';
+import { functionSearchPathEntry } from './checks/function-search-path.ts';
 import {
   pgvectorEntry,
   rlsEntry,
@@ -207,6 +208,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   // #7276: the privacy check next, with its own entry budget, before any full scan.
   derivedVisibilityEntry,
   rlsEntry,
+  functionSearchPathEntry,
   schemaVersionEntry,
   rlsEventTriggerEntry,
   embeddingsEntry,

@@ -398,6 +398,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'grant_new_ops_available',
   'reranker_health',
   'rls',
+  // #7632: every gbrain function that pins a search_path ends it with pg_temp.
+  'function_search_path',
   'rls_event_trigger',
   'search_mode',
   'decide_health',

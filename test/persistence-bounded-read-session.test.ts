@@ -26,6 +26,7 @@ import { startClaimPhase } from '../src/core/persistence/claim-phase.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { SYNC_IMPORT_PROVENANCE_OP } from '../src/core/persistence/sync-holds.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -164,6 +165,14 @@ test('on Postgres: one backend and one transaction per session, each statement b
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const OPTS = { noPull: true, noEmbed: true, noExtract: true };
 
+/**
+ * A full episode admits an already-current page in place (sync-classify.ts `inPlace`), so unchanged files reach the
+ * waiver only while a reparse is owed: here their import records name an older parser, as after a parser upgrade.
+ */
+const olderParserRecords = (engine: BrainEngine, sourceId: string) => engine.executeRaw(
+  `UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"an-older-parser"'::jsonb) WHERE op=$1 AND starts_with(fingerprint, $2 || ':')`,
+  [SYNC_IMPORT_PROVENANCE_OP, sourceId]);
+
 test('a full re-sync\'s waiver screens run their bounded reads on the waiver run\'s session, not one bounded transaction per read', () => withEnv({ GBRAIN_HOME: home }, async () => {
   for (const engine of engines) {
     const id = `brs-${randomUUID().replace(/-/g, '').slice(0, 16)}`, root = join(home, id);
@@ -175,6 +184,7 @@ test('a full re-sync\'s waiver screens run their bounded reads on the waiver run
     await claimWorktree(engine, id, root);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     expect((await performManagedSync(engine, { sourceId: id, ...OPTS })).status).toBe('first_sync');
+    await olderParserRecords(engine, id);
     await disposePersistenceConsumer(engine);
     let perRead = 0, sessions = 0;
     const counted = new Proxy(engine, { get(target, key) {

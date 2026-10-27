@@ -85,9 +85,11 @@ test/get-chunks-paging.test.ts
 test/git-canonical-conversion-g8a.test.ts
 test/git-canonical-declared-g7a.test.ts
 test/git-canonical-indexer-g3.test.ts
+test/git-door-planned-state.test.ts
 test/git-door-plumbing-gbra133.test.ts
 test/git-door-remote-g7b.test.ts
 test/git-door-strict-gbra133.test.ts
+test/git-door-write-cost.test.ts
 test/git-gap-census.test.ts
 test/google-connector-facts-fence-7292.test.ts
 test/grade-takes-window.test.ts
@@ -252,6 +254,7 @@ test/managed-sync-preparation-stalled-holds.test.ts
 test/managed-sync-row-parity.test.ts
 test/managed-sync-stale-group-head.test.ts
 test/mcp-unreadable-sources-notice.test.ts
+test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
 test/on-commit-embedding.serial.test.ts
@@ -486,6 +489,7 @@ test/sync-page-write-failed-gbra130.test.ts
 test/sync-pass-abandoned-7355.test.ts
 test/sync-pass-cost-grouping-gbra130.test.ts
 test/sync-pass-dirty-after-freeze-gbra130.test.ts
+test/sync-pass-interrupted-7596.test.ts
 test/sync-pass-phase-lines-7243.serial.test.ts
 test/sync-pass-stop-in-level-gbra133.test.ts
 test/sync-prescreen-both-delta-6712.test.ts

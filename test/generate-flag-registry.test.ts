@@ -183,6 +183,12 @@ describe('segmentDispatchBlocks — every if/case shape is a marker for its comm
     expect(CLI_FLAG_REGISTRY.reindex).toContain('--multimodal');
   });
 
+  test('flag-equals.ts stays out of the scan, so auth does not borrow its table literals (#7619)', () => {
+    for (const registry of [CLI_FLAG_REGISTRY, buildFlagRegistry()]) {
+      for (const flag of ['--purge', '--pace', '--archived-at']) expect(registry.auth).not.toContain(flag);
+    }
+  });
+
   test('committed registry: brainstorm/lsd do not carry the phantom --retry-judge (#4766)', () => {
     // The flag had no parser branch; it registered only because the judge-failed
     // advice strings in the brainstorm orchestrator mentioned it. The advice now

@@ -123,9 +123,13 @@ export async function readSyncFreshness(engine: BrainEngine, opts: { sourceIds?:
     const commits = Object.keys(times).length;
     if (!commits) { out.push({ ...empty, unresolved_commits: targets.length }); continue; }
     const [row] = await engine.executeRaw<AggregateRow>(`WITH c AS (SELECT key AS target, to_timestamp(value::double precision) AS committed_at FROM jsonb_each_text($4::text::jsonb)),
-      s AS (SELECT r.completed_at, c.committed_at, COALESCE(r.page_id, (SELECT p.id FROM pages p WHERE p.source_id=r.source_id AND p.slug=r.slug LIMIT 1)) AS page_id,
-          EXISTS (SELECT 1 FROM persistence_requests later WHERE later.source_id=r.source_id AND later.slug=r.slug AND later.sequence>r.sequence AND later.state='committed') AS superseded
+      sample AS (SELECT r.source_id, r.slug, r.sequence, r.page_id, r.completed_at, c.committed_at
         FROM persistence_requests r JOIN c ON c.target=r.intent->>'target' WHERE ${SAMPLE_WHERE}),
+      later AS MATERIALIZED (SELECT l.source_id, l.slug, max(l.sequence) AS sequence FROM persistence_requests l
+        WHERE l.state='committed' AND l.sequence > (SELECT min(sequence) FROM sample) GROUP BY l.source_id, l.slug),
+      s AS (SELECT r.completed_at, r.committed_at, COALESCE(r.page_id, (SELECT p.id FROM pages p WHERE p.source_id=r.source_id AND p.slug=r.slug LIMIT 1)) AS page_id,
+          COALESCE(later.sequence > r.sequence, false) AS superseded
+        FROM sample r LEFT JOIN later ON later.source_id=r.source_id AND later.slug=r.slug),
       e AS (SELECT s.completed_at, s.committed_at, s.superseded, ch.n, ch.missing, ch.last_at FROM s
         LEFT JOIN LATERAL (SELECT count(*) AS n, count(*) FILTER (WHERE cc.embedded_at IS NULL) AS missing, max(cc.embedded_at) AS last_at FROM content_chunks cc JOIN pages p ON p.id=cc.page_id
           WHERE cc.page_id=s.page_id AND ${chunkVisibleFilter('p', 'cc')}) ch ON true),
