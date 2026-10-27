@@ -286,6 +286,24 @@ test('enrich carries the page facts and takes fences over the model output (Code
   });
 });
 
+test('enrich publishes a model body with a dated ## Timeline section; the section stays in the body (CONCEPT_REPUBLICATION_LOSSY)', async () => {
+  // The enrich prompt suggests `## Timeline highlights` for a person. On a page with no timeline, parsing the composed
+  // page used to move that section into the timeline, so the lossless check refused every such write-up.
+  const body = '## Overview\nAlice founded WidgetCo. [Source: meetings/m1]\n\n## Timeline highlights\n\n- 2017-01-01: Founded WidgetCo. [Source: meetings/m1]';
+  await managedFixture(async (engine, sourceId) => {
+    await putPage(engine, sourceId, 'people/alice-example', '---\ntitle: Alice Example\ntype: person\n---\nStub.\n');
+    await putPage(engine, sourceId, 'meetings/m1', '---\ntitle: M1\ntype: note\n---\nNotes about [[people/alice-example]] and her widget design system work.');
+  }, async (engine, sourceId) => {
+    const result = await runEnrichCore(engine, { sourceId, types: ['person'] as never[], order: 'inbound-links' as const, thinThreshold: 4000,
+      model: 'test:model', workers: 1, minContextChars: 20, synthesizeFn: async () => body });
+    expect(result.first_failure).toBeUndefined();
+    expect({ failed: result.pages_failed, enriched: result.pages_enriched }).toEqual({ failed: 0, enriched: 1 });
+    const page = await engine.getPage('people/alice-example', { sourceId });
+    expect(page?.compiled_truth).toContain('## Timeline highlights\n\n- 2017-01-01: Founded WidgetCo.');
+    expect(page?.timeline ?? '').toBe('');
+  });
+});
+
 test('#5280: grade_takes resolves the judged take by page identity when its page is renamed during judging (Codex review)', async () => {
   const { runPhaseGradeTakes } = await import('../src/core/cycle/grade-takes.ts');
   const takes = (claim: string) => ['<!--- gbrain:takes:begin -->', '| # | claim | kind | who | weight | since | source |',
