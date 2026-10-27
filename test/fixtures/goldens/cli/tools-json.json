@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 264473,
-    "stdoutSha256": "f5647f0a0d45a36ed8685afa000792cef233379d012eeceec6fa2f9366d1b0ee",
+    "stdoutBytes": 265643,
+    "stdoutSha256": "a3193f5bf16f3f06caa9c6a96be44a89434f470729fbb1ca70230d83803cc63c",
     "toolNames": [
       "remember",
       "entity",
@@ -6406,24 +6406,47 @@
         "scope": "write"
       },
       {
-        "description": "List unverified auto-extracted entity stubs awaiting owner review (the quarantine lane from extract_entities). Promote or reject them with extraction_review.",
+        "description": "List what waits for review: unverified auto-extracted entity stubs (pending; promote or reject them with extraction_review), facts saved without an entity (unattributed; relink each with remember entity + replaces, never forget first), and, when include names it, recently created entity pages whose name is one edit or one acronym letter from another entity (possible_duplicates; flag only, never merged).",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "extraction_pending",
         "parameters": {
+          "include": "array?",
           "limit": "number?",
-          "offset": "number?"
+          "offset": "number?",
+          "possible_duplicates_cursor": "string?",
+          "since_days": "number?",
+          "unattributed_offset": "number?"
         },
         "required_scopes": [],
         "schema": {
           "properties": {
+            "include": {
+              "description": "Lists to return: pending, unattributed, possible_duplicates. Default pending and unattributed.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "limit": {
-              "description": "Max rows (default 100, cap 500).",
+              "description": "Max rows per list (default 100 for pending, 50 for the others; cap 500).",
               "type": "number"
             },
             "offset": {
-              "description": "Pagination offset.",
+              "description": "Pagination offset for pending.",
+              "type": "number"
+            },
+            "possible_duplicates_cursor": {
+              "description": "Continuation for possible_duplicates (its next_cursor).",
+              "type": "string"
+            },
+            "since_days": {
+              "description": "possible_duplicates: entity pages created in the last N days (default 30).",
+              "type": "number"
+            },
+            "unattributed_offset": {
+              "description": "Pagination offset for unattributed (its next_offset).",
               "type": "number"
             }
           },

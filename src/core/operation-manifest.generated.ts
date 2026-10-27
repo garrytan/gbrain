@@ -5456,17 +5456,40 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "List unverified auto-extracted entity stubs awaiting owner review (the quarantine lane from extract_entities). Promote or reject them with extraction_review.",
+    "description": "List what waits for review: unverified auto-extracted entity stubs (pending; promote or reject them with extraction_review), facts saved without an entity (unattributed; relink each with remember entity + replaces, never forget first), and, when include names it, recently created entity pages whose name is one edit or one acronym letter from another entity (possible_duplicates; flag only, never merged).",
     "params": {
       "limit": {
         "type": "number",
         "required": false,
-        "description": "Max rows (default 100, cap 500)."
+        "description": "Max rows per list (default 100 for pending, 50 for the others; cap 500)."
       },
       "offset": {
         "type": "number",
         "required": false,
-        "description": "Pagination offset."
+        "description": "Pagination offset for pending."
+      },
+      "include": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "required": false,
+        "description": "Lists to return: pending, unattributed, possible_duplicates. Default pending and unattributed."
+      },
+      "unattributed_offset": {
+        "type": "number",
+        "required": false,
+        "description": "Pagination offset for unattributed (its next_offset)."
+      },
+      "possible_duplicates_cursor": {
+        "type": "string",
+        "required": false,
+        "description": "Continuation for possible_duplicates (its next_cursor)."
+      },
+      "since_days": {
+        "type": "number",
+        "required": false,
+        "description": "possible_duplicates: entity pages created in the last N days (default 30)."
       }
     },
     "scope": "read",

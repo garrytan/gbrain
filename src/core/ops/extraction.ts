@@ -110,13 +110,18 @@ const extraction_pending: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'retrieval',
-  description: 'List unverified auto-extracted entity stubs awaiting owner review (the quarantine lane from extract_entities). Promote or reject them with extraction_review.',
+  description: 'List what waits for review: unverified auto-extracted entity stubs (pending; promote or reject them with extraction_review), facts saved without an entity (unattributed; relink each with remember entity + replaces, never forget first), and, when include names it, recently created entity pages whose name is one edit or one acronym letter from another entity (possible_duplicates; flag only, never merged).',
   params: {
-    limit: { type: 'number', required: false, description: 'Max rows (default 100, cap 500).' },
-    offset: { type: 'number', required: false, description: 'Pagination offset.' },
+    limit: { type: 'number', required: false, description: 'Max rows per list (default 100 for pending, 50 for the others; cap 500).' },
+    offset: { type: 'number', required: false, description: 'Pagination offset for pending.' },
+    include: { type: 'array', items: { type: 'string' }, required: false, description: 'Lists to return: pending, unattributed, possible_duplicates. Default pending and unattributed.' },
+    unattributed_offset: { type: 'number', required: false, description: 'Pagination offset for unattributed (its next_offset).' },
+    possible_duplicates_cursor: { type: 'string', required: false, description: 'Continuation for possible_duplicates (its next_cursor).' },
+    since_days: { type: 'number', required: false, description: 'possible_duplicates: entity pages created in the last N days (default 30).' },
   },
   scope: 'read',
   handler: async (ctx, p) => {
+    const include = parseInclude(p.include);
     const limit = Math.min(Math.max(Number(p.limit ?? 100) || 100, 1), 500);
     const offset = Math.max(Number(p.offset ?? 0) || 0, 0);
     // Read-side source isolation: route through sourceScopeOpts (federated
@@ -148,10 +153,40 @@ const extraction_pending: Operation = {
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );
-    return { count: rows.length, pending: rows };
+    const out: Record<string, unknown> = { count: rows.length, pending: include.has('pending') ? rows : [], include: [...include] };
+    const lists = await import('../review-lists.ts');
+    const listLimit = Math.min(Math.max(Number(p.limit ?? lists.UNATTRIBUTED_DEFAULT_LIMIT) || lists.UNATTRIBUTED_DEFAULT_LIMIT, 1), lists.REVIEW_LIST_MAX_LIMIT);
+    const sourceIds = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'];
+    if (include.has('unattributed')) {
+      out.unattributed = await lists.listUnattributedFacts(ctx.engine, ctx, sourceIds,
+        { limit: listLimit, offset: Math.max(Number(p.unattributed_offset ?? 0) || 0, 0) });
+    }
+    if (include.has('possible_duplicates')) {
+      const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
+      out.possible_duplicates = await lists.listPossibleDuplicates(ctx.engine, ctx, sourceIds[0]!, {
+        limit: listLimit, cursor: p.possible_duplicates_cursor,
+        sinceDays: Math.max(Number(p.since_days ?? lists.POSSIBLE_DUPLICATES_DEFAULT_DAYS) || lists.POSSIBLE_DUPLICATES_DEFAULT_DAYS, 1),
+        excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote),
+      });
+    }
+    return out;
   },
   cliHints: { name: 'extraction-pending' },
 };
+
+const PENDING_LISTS = ['pending', 'unattributed', 'possible_duplicates'] as const;
+
+function parseInclude(raw: unknown): Set<string> {
+  const given = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',') : null;
+  if (!given) return new Set(['pending', 'unattributed']);
+  const wanted = new Set(given.map(v => String(v).trim()).filter(Boolean));
+  const unknown = [...wanted].filter(v => !(PENDING_LISTS as readonly string[]).includes(v));
+  if (unknown.length) {
+    throw opError('invalid_params', `extraction_pending: unknown include ${unknown.map(v => JSON.stringify(v)).join(', ')}.`,
+      `Nothing was read. Pass include as any of ${PENDING_LISTS.join(', ')}.`);
+  }
+  return wanted;
+}
 
 const REVIEW_SLUG = /^[a-z0-9][a-z0-9/_.-]{0,254}$/i;
 
