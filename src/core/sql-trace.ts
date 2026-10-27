@@ -15,7 +15,8 @@
  * no per-query work.
  */
 import { appendFileSync } from 'node:fs';
-import net from 'node:net';
+import type net from 'node:net';
+import { getDbProxy, openDbSocket } from './db-proxy.ts';
 
 interface Pending { sql: string; kind: 'execute' | 'describe' | 'simple' | 'connect'; t: number; err?: string; flush?: boolean }
 interface TraceConnection {
@@ -117,8 +118,7 @@ function incoming(c: TraceConnection, chunk: Buffer, file: string, label: string
 
 async function tracedSocket(options: { host: string[]; port: number[]; path?: string | false }, file: string, label: string, pool: string): Promise<net.Socket> {
   const opened = clock();
-  const socket = options.path ? net.connect(options.path) : net.connect(options.port[0]!, options.host[0]!);
-  await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('error', reject); });
+  const socket = await openDbSocket(options);
   const c: TraceConnection = { id: ++connections, backend: 0, prepared: new Map(), text: '', executed: false, pending: [{ sql: '<connect>', kind: 'connect', t: opened }], out: null,
     startup: true, opaque: false, inHeader: Buffer.alloc(0), inType: 0, inLeft: 0, inBody: null };
   const write = socket.write.bind(socket) as (chunk: unknown, ...rest: unknown[]) => boolean;
@@ -133,10 +133,13 @@ async function tracedSocket(options: { host: string[]; port: number[]; path?: st
   return socket;
 }
 
-/** Returns `options` unchanged unless GBRAIN_SQL_TRACE names a file; then adds the tracing socket and a labelled application_name. */
+/**
+ * Returns `options` unchanged unless GBRAIN_SQL_TRACE names a file (adds the tracing socket and a labelled
+ * application_name) or `--db-proxy` is set (adds the tunnelled socket). Both compose: the tracer wraps the tunnel.
+ */
 export function traceSqlOptions<T extends Record<string, unknown>>(options: T, pool: string): T {
   const file = process.env.GBRAIN_SQL_TRACE;
-  if (!file) return options;
+  if (!file) return getDbProxy() ? { ...options, socket: openDbSocket } : options;
   const label = process.env.GBRAIN_SQL_TRACE_LABEL || process.argv[2] || 'gbrain';
   return {
     ...options,

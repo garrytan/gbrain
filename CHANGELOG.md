@@ -10,6 +10,28 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.474.0] - 2026-10-27
+
+**gbrain can reach Postgres from a network whose only way out is an HTTP proxy.**
+
+On such a network the database hostname does not resolve, so every command that opens the brain failed with `ENOTFOUND`, and `http_proxy` did not help: Postgres connections are raw TCP, not HTTP. The new global flag `--db-proxy http://host:port` opens every Postgres connection through the proxy's `CONNECT` tunnel instead. TLS to the database still runs end to end inside the tunnel, and the proxy resolves the database hostname.
+
+| Situation | Before | Now |
+|---|---|---|
+| Network routes out only through an HTTP proxy | connect fails with `ENOTFOUND` | `gbrain --db-proxy http://proxy.example:8080 <command>` connects |
+| `gbrain serve` (stdio or `--http`) behind the proxy | could not start against the brain | pass `--db-proxy` on the serve command line |
+| A command spawns a child `gbrain` | n/a | the child inherits `--db-proxy` |
+| `http_proxy` is set and `--db-proxy` is not | direct connect | direct connect (unchanged; the env var is never read) |
+| The proxy refuses `CONNECT` | n/a | the connect error names the proxy and its status line |
+
+The flag accepts only `http://[user:pass@]host:port`. Percent-encode credential characters other than letters, digits and `. _ ~ -`.
+
+### To take advantage of v0.60.474.0
+
+**Say to your agent:** *"My network only allows traffic through the HTTP proxy at proxy.example:8080; connect gbrain to the database through it."*
+
+The agent runs `gbrain --db-proxy http://proxy.example:8080 doctor --only connection`, then adds the same flag to your MCP `gbrain serve` command. See [Behind an HTTP proxy](docs/guides/move-to-postgres.md#behind-an-http-proxy).
+
 ## [0.60.473.0] - 2026-10-27
 
 **A change you stage while a write is finishing is no longer overwritten.**

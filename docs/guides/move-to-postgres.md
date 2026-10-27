@@ -76,6 +76,25 @@ read -rs GBRAIN_DIRECT_DATABASE_URL && export GBRAIN_DIRECT_DATABASE_URL   # ses
 The plan probes both routes and proves they reach the same database before any
 DDL. Background: [personal-brain tutorial, steps 7b and 7c](../tutorials/personal-brain.md#7b-get-the-transaction-pooler-connection-string-not-the-direct-one).
 
+### Behind an HTTP proxy
+
+On a network whose only way out is an HTTP proxy, the database hostname does
+not resolve and every connect fails with `ENOTFOUND`. Pass the proxy to any
+command with the global `--db-proxy` flag. gbrain opens each Postgres
+connection through the proxy's `CONNECT` tunnel; TLS to the database still runs
+end to end. The proxy must allow `CONNECT` to the database port.
+
+```bash
+gbrain --db-proxy http://proxy.example:8080 doctor --only connection
+gbrain --db-proxy http://proxy.example:8080 serve --http --port 3131
+```
+
+gbrain does not read `http_proxy` for database connections; name the proxy
+explicitly. Percent-encode any credential character other than letters, digits
+and `. _ ~ -` (`http://user:p%24ss@proxy.example:8080`).
+
+**Say to your agent:** *"My network only allows traffic through the HTTP proxy at proxy.example:8080; connect gbrain to the database through it."*
+
 ## Move the brain
 
 ### 1. Plan and ask
