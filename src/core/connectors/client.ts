@@ -4,8 +4,8 @@
  * Modeled on `GitHubClient` (`../github-source.ts`): plain `fetch` against a
  * hardcoded base ORIGIN with an off-origin guard so the cookie/bearer never
  * leaks, redirects never followed, a browser User-Agent, refresh-once-on-401
- * (never on a 403: #7515), Retry-After backoff via the shared
- * `parseRetryAfterMs`, and a per-run request ceiling and deadline. NOT routed through `fetchWithSSRFGuard` — that
+ * (never on a 403: #7515), first-429 stop, bounded transient-5xx retries,
+ * and a per-run request ceiling and deadline. NOT routed through `fetchWithSSRFGuard` — that
  * rewrites the URL to a resolved IP and breaks SNI on Cloudflare-fronted hosts;
  * SSRF guards are for user-controlled URLs, and these base origins are
  * compile-time constants.
@@ -13,7 +13,7 @@
  * Every failure classification goes through the pure `classifyResponse`
  * (`./classify.ts`), which distinguishes a Cloudflare fingerprint 403 (dead-end)
  * from an auth-expired 403 (re-auth) — the §2A distinction. `sleep`/`now` are
- * injectable so Retry-After/pacing tests don't wall-clock.
+ * injectable so retry/pacing tests don't wall-clock.
  */
 
 import { classifyResponse } from './classify.ts';
@@ -38,7 +38,7 @@ export class ConnectorForbiddenError extends Error {
   }
 }
 
-/** Raised on a 429 that outlasts its retries, or asks for a wait over MAX_RETRY_AFTER_MS: the run stops. */
+/** Raised on the first 429: stop the run without waiting or retrying into an account lockout. */
 export class ConnectorRateLimitedError extends Error {
   readonly code = 'rate_limited';
   constructor(message: string) {
@@ -129,7 +129,7 @@ export interface ConnectorClientOpts {
   minDelayMs?: number;
   /** Test seam. Default global fetch. */
   fetchImpl?: ConnectorFetch;
-  /** Injectable sleep so Retry-After tests don't wall-clock. Default setTimeout. */
+  /** Injectable sleep so retry/pacing tests don't wall-clock. Default setTimeout. */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** Injectable clock (for Retry-After HTTP-date parsing). Default Date.now. */
   now?: () => number;
@@ -137,7 +137,7 @@ export interface ConnectorClientOpts {
 }
 
 const MAX_RATE_RETRIES = 4;
-/** #7482: a Retry-After longer than this stops the run instead of holding it. */
+/** Legacy retry cap retained for import compatibility; every 429 now stops immediately (#7689). */
 export const MAX_RETRY_AFTER_MS = 120_000;
 
 function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -218,7 +218,7 @@ export class ConnectorClient {
 
   /**
    * GET a URL and parse JSON. Handles pacing, 401→refresh→retry-once,
-   * 429/Retry-After backoff, and the §2A 403 disambiguation. Throws
+   * first-429 stop, transient-5xx retries, and the §2A 403 disambiguation. Throws
    * `ConnectorAuthError` / `ConnectorForbiddenError` on terminal states.
    * A 403 or a redirect is terminal without a refresh (#7515). `headers`
    * replaces the auth headers for this request; `refresh: false` (the
@@ -278,20 +278,8 @@ export class ConnectorClient {
       }
 
       if (c.kind === 'rate_limited') {
-        const waitMs = c.retryAfterMs ?? 60_000;
-        if (waitMs > MAX_RETRY_AFTER_MS) {
-          throw new ConnectorRateLimitedError(
-            `connector: rate limited on ${pathOrUrl}; the provider asked for a ${Math.round(waitMs / 1000)}s wait, over the ${MAX_RETRY_AFTER_MS / 1000}s cap`,
-          );
-        }
-        if (rateRetries < MAX_RATE_RETRIES) {
-          this.checkLimits(pathOrUrl, waitMs);
-          rateRetries++;
-          this.log(`[connector] ${c.detail}; retry ${rateRetries}/${MAX_RATE_RETRIES} in ${Math.round(waitMs / 1000)}s`);
-          await this.sleep(waitMs, opts.signal);
-          continue;
-        }
-        throw new ConnectorRateLimitedError(`connector: rate limited on ${pathOrUrl} after ${MAX_RATE_RETRIES} retries`);
+        // Session-cookie accounts must stop on the first warning, not retry into a lockout (#7689).
+        throw new ConnectorRateLimitedError(`connector: rate limited on ${pathOrUrl}; stopped without retrying`);
       }
 
       // redirect: (fetch runs with redirect 'manual') never followed, so the cookie never leaves the origin; an API

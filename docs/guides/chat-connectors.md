@@ -39,6 +39,15 @@ value) exits 2 with an `invalid_params` error; under `--json` it is one
 envelope whose `fix` is the corrected command (`gbrain connectors sync --help`
 prints the usage).
 
+`sync --dry-run` probes and lists metadata only: it does not fetch conversation
+details, import, spool, embed, or update connector state (including auth errors
+and last-sync timestamps). JSON results expose `listComplete`; a planned preview
+also includes `wouldFetch`, after unchanged/backoff filtering and `--limit`.
+A complete empty preview is still `dry_run` with `wouldFetch: 0`. An interrupted
+listing is `partial` with `listComplete: false`; auth, challenge and rate-limit
+stops retain their terminal status. Counts from an incomplete listing are not a
+complete inventory.
+
 `gbrain connectors status` shows credential provenance/expiry and sync state
 (never the secret). `gbrain connectors logout <provider>` removes a credential.
 
@@ -295,7 +304,7 @@ the export-file lane (`conversation-archive`) — it always works.
 | `forbidden` | Cloudflare/bot challenge on server-side fetch | Use the official export + `gbrain transcripts ingest` | user (downloads the export); agent ingests it | none | `gbrain connectors status --json` |
 | `partial` with `stopReason: max_requests` or `deadline` | the run reached its request ceiling, `--max-requests` or `--deadline` ([request bounds](#request-bounds)) | Run `gbrain connectors sync <provider>` again, without `--full`; imported conversations are skipped | agent | `credentials` | `gbrain connectors status --json` |
 | `connectors sync --all` prints `Skipped <p>: connectors.<p>.auto_sync is off` | that provider's owner has not opted in to unattended sync | Nothing, or sync it once explicitly with `gbrain connectors sync <p>`; `gbrain config set connectors.<p>.auto_sync true` opts in | user (decides on unattended sync) | `credentials` | `gbrain config get connectors.<p>.auto_sync` |
-| `rate_limited` | the provider kept answering 429 after four retries, or asked for a wait over two minutes | Wait, then re-run; the next sync resumes where this one stopped. Don't loop it | agent | `credentials` | `gbrain connectors status --json` |
+| `rate_limited` | the provider answered 429; the first response stops the run without waiting or retrying, regardless of Retry-After | Wait, then re-run; the next sync resumes where this one stopped. Don't loop it | agent | `credentials` | `gbrain connectors status --json` |
 | `auth_required` with "cannot carry" in the hint | the saved cookie or token holds a line break, control or non-ASCII character (`invalid_header_value`); nothing was sent | Re-copy the Cookie header on one line, `gbrain connectors auth` | user (copies the cookie) | `credentials` | `gbrain connectors status --json` |
 | `auth_required` | cookie expired/invalid | Re-copy a fresh Cookie header, `gbrain connectors auth` | user (copies a fresh Cookie header) | `credentials` | `gbrain connectors status --json` |
 | `connectors auth` exits 1 with an `[AGENT]` cookie checklist | no credential and nobody at the terminal ([headless lane](#headless-lane-an-agent-without-a-terminal)) | Relay the `[SHOW USER]` checklist; the user pipes the cookie into `gbrain connectors auth <provider> --cookie -` | user (copies the cookie) | `credentials` | `gbrain connectors status --json` |

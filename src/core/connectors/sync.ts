@@ -88,6 +88,10 @@ export interface ConnectorSyncResult {
   status: ConnectorSyncStatus;
   provider: ConnectorProviderName;
   listed: number;
+  /** Whether metadata listing finished (including the incremental window), not whether detail fetching finished. */
+  listComplete?: boolean;
+  /** Dry-run fetch plan size after unchanged/backoff filtering and the conversation cap. */
+  wouldFetch?: number;
   fetched: number;
   fetchErrors: number;
   ingest?: {
@@ -241,6 +245,7 @@ export async function runConnectorSync(
     status: 'success',
     provider: opts.provider,
     listed: 0,
+    listComplete: false,
     fetched: 0,
     fetchErrors: 0,
     skippedUnchanged: 0,
@@ -268,7 +273,7 @@ export async function runConnectorSync(
   const probe = await provider.probe(client, opts.signal);
   if (!probe.ok) {
     const term = PROBE_TERMINAL[probe.kind];
-    if (term === 'auth_required') await stampAuthError(engine, opts.provider, now);
+    if (term === 'auth_required' && !opts.dryRun) await stampAuthError(engine, opts.provider, now);
     if (term) return { ...base, status: term, hint: probe.kind === 'invalid_credential' ? probe.detail : terminalHint(term, provider) };
     // drift / network → surface as forbidden-ish partial with the detail.
     return { ...base, status: 'partial', hint: `probe failed: ${probe.detail}` };
@@ -301,12 +306,13 @@ export async function runConnectorSync(
     if (e instanceof ConnectorRunLimitError) base.stopReason = e.reason;
     const term = classifyThrow(e);
     if (term) {
-      if (term === 'auth_required') await stampAuthError(engine, opts.provider, now);
-      return { ...base, status: term, hint: terminalHint(term, provider) };
+      if (term === 'auth_required' && !opts.dryRun) await stampAuthError(engine, opts.provider, now);
+      return { ...base, listed: stubs.length, status: term, hint: terminalHint(term, provider) };
     }
     log(`[connector] list error: ${e instanceof Error ? e.message : String(e)}`);
   }
   base.listed = stubs.length;
+  base.listComplete = !listErrored && !opts.signal?.aborted;
 
   // A complete --full listing is the provider's whole history: a failed
   // conversation it no longer contains cannot be archived any more.
@@ -320,7 +326,7 @@ export async function runConnectorSync(
     if (base.gone.length) await saveLedgers();
   }
 
-  if (stubs.length === 0 && !listErrored && Object.keys(failed).length === 0) {
+  if (!opts.dryRun && stubs.length === 0 && !listErrored && Object.keys(failed).length === 0) {
     await writeConnectorState(engine, opts.provider, sourceId, 'last_sync_at', new Date(now()).toISOString());
     return { ...base, status: 'nothing_new' };
   }
@@ -339,7 +345,11 @@ export async function runConnectorSync(
   const toFetch = [...plan.retries, ...plan.listed];
 
   if (opts.dryRun) {
-    return { ...base, status: 'dry_run', listed: stubs.length, unresolved: Object.keys(failed).length, hint: `${toFetch.length} conversation(s) would be fetched` };
+    return {
+      ...base, status: base.listComplete ? 'dry_run' : 'partial', wouldFetch: toFetch.length,
+      unresolved: Object.keys(failed).length,
+      hint: `${toFetch.length} conversation(s) would be fetched${base.listComplete ? '' : '; listing incomplete'}`,
+    };
   }
 
   // FETCH details + spool + ingest, in batches (memory-bounded; banks progress).
