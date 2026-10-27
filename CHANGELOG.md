@@ -10,6 +10,24 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**`recall` can weigh how much a fact deserves to be believed, and can group a no-entity question's facts by entity. Both are opt-in.**
+
+### What changed
+
+| Situation | Before | With the switch on |
+|---|---|---|
+| `recall {question}`: a year-old fact you confirmed and a fresh agent-written or external fact match equally | the newest fact ranked first | the confirmed fact ranks first (`recall.confidence_weighting on`) |
+| The same, between two agent-written facts | newest first | newest first (age still decays) |
+| A dated historical fact ("founded in 2015") | ranked by match | ranked by match; it does not decay |
+| `recall {question}` with no `entity` answered by two clients' facts | one flat list, the clients' figures interleaved | each entity's facts together, `facts_groups`, and an `entity_unspecified` notice offering the recall per entity (`recall.group_by_entity on`) |
+| `gbrain config set recall.question_admission <typo>` | stored and silently ignored | refused; the new switches take only `on` or `off` |
+
+Weighting is `relevance × (0.5 + 0.5 × weight)`: facts you confirmed and your own notes keep full weight at any age, other tiers decay from `valid_from` and carry a tier weight (tool 0.9, agent 0.8, external 0.6). It only reorders facts that already matched; `relevance` stays the plain score and `rank_score` and `confidence_factor` show the weighting. Grouping runs after the limit and budget cuts, so no entity is cut off by it. Both read database rows only, so they work the same on brains with no git repository.
+
+On a keyless 60-question fixture (old confirmed truth against fresh agent and external text, an agent knowledge update, dated history), weighting moved the confirmed truth to first in 20 of 20 questions, from 0 of 20, and left the update and history cases at 20 of 20. Grouping removed entity interleaving in 10 of 10 two-client questions with the same number of entities delivered.
+
 ## [0.60.474.0] - 2026-10-27
 
 **A database role that can't read the writer state is now refused instead of let through.**

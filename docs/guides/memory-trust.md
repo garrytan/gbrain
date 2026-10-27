@@ -79,6 +79,30 @@ and `get_page`, labeled, but hook context, the context engine,
 outright. `gbrain trust disable --all` turns every protection off; labels
 stay.
 
+## How recall weighs old and low-trust facts (opt-in)
+
+`recall` with a `question` ranks saved facts by how well they match. Turn on
+confidence weighting and the match is also weighed by how much each fact
+deserves to be believed now:
+
+```bash
+gbrain config set recall.confidence_weighting on
+```
+
+- Facts you confirmed, and facts from your own notes, keep full weight at any
+  age.
+- Other facts lose weight as they age (an event after about a week, a
+  preference or commitment after about three months, other facts after about
+  a year) and by tier: tool data a little, agent-written and unverified facts
+  more, external text the most.
+- A fact the writer dated ("founded in 2010") is history and keeps its weight.
+- Weighting at most halves a fact's score. It reorders the facts that match
+  and never hides one; `relevance` stays the plain match score, and
+  `rank_score` and `confidence_factor` show the weighting.
+
+It works the same on a brain with no git repository. `gbrain config set
+recall.confidence_weighting off` turns it off.
+
 ## Older memory
 
 Content saved before this release is flagged only after you claim your

@@ -23,9 +23,11 @@ import { loadEmbeddingQueryPrefix } from '../search/query-prefix.ts';
 import { embedQueryBounded, makeQueryEmbedDeadline } from '../search/hybrid.ts';
 import { resolveHnswIterativeScan } from '../search/hnsw-iterative-scan.ts';
 import {
-  FACT_ADMISSION_FLOOR_EVIDENCE, QUESTION_ADMISSION_RULES, admitted, collectFactCandidates, countUncomparableFacts, poolEntityPairs, queryTerms, scoreFactCandidates,
+  FACT_ADMISSION_FLOOR_EVIDENCE, QUESTION_ADMISSION_RULES, admitted, collectFactCandidates, countUncomparableFacts, isDatedFact, poolEntityPairs, queryTerms, scoreFactCandidates,
   type FactPoolFilters, type FactPoolScope, type QuestionAdmissionRule,
 } from '../search/fact-relevance.ts';
+import { confidenceFactor, recallConfidence } from './decay.ts';
+import { CONFIDENCE_WEIGHTING_KEY, GROUP_BY_ENTITY_KEY, recallSwitchOn } from './recall-config.ts';
 
 export const QUESTION_MAX_CHARS = 2000;
 /** Candidates per arm, separate from the output `limit`. */
@@ -177,6 +179,10 @@ export interface QuestionRecall {
   rows: CollapsedFactRead<FactRow>[];
   /** fact id → relevance (cosine + term share + 0.1 when dated). */
   relevance: Map<number, number>;
+  /** #2941 (`recall.confidence_weighting` on): fact id → rank score (relevance × confidence factor) and → confidence factor. */
+  weighting?: { rank: Map<number, number>; factor: Map<number, number> };
+  /** #2953: `recall.group_by_entity` is on and the call named no entity, so the delivered facts are grouped (groupFactsByEntity). */
+  groupByEntity?: boolean;
   degraded?: FactsDegraded;
   /** Present when the cosine arm ran on a model with no measured admission floor. */
   calibration?: FactsCalibration;
@@ -208,27 +214,35 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
   const { embedding, reason } = await questionEmbedding(ctx, question);
   if (!embedding && queryTerms(question).length === 0) return empty({ reason: 'no_query_terms' });
   try {
-    const [pool, uncomparable, rule] = await Promise.all([
+    const [pool, uncomparable, rule, weighted, grouped] = await Promise.all([
       collectFactCandidates(ctx.engine, question, scope, embedding, {
         depth: { keyword: QUESTION_POOL_DEPTH, cosine: QUESTION_POOL_DEPTH, entity: QUESTION_POOL_DEPTH }, filters, cosineForAll: true,
         hnswIterativeScan: resolveHnswIterativeScan(ctx.config),
       }),
       embedding ? countUncomparableFacts(ctx.engine, scope, filters, embedding.length) : [],
       admissionRule(ctx.engine),
+      recallSwitchOn(ctx.engine, CONFIDENCE_WEIGHTING_KEY),
+      input.entity ? false : recallSwitchOn(ctx.engine, GROUP_BY_ENTITY_KEY),
     ]);
     const ranked = scoreFactCandidates(question, pool.candidates).filter(s => admitted(s, rule));
     const unembedded = uncomparable.reduce((n, r) => n + r.n, 0);
     const why = reason ?? (embedding && !pool.column ? 'facts_embedding_column_missing' : undefined);
     const degraded: FactsDegraded | undefined = why || unembedded ? { ...(why ? { reason: why } : {}), ...(unembedded ? { unembedded } : {}) } : undefined;
-    const ids = ranked.map(s => s.candidate.id);
+    let ids = ranked.map(s => s.candidate.id);
     const raw = ids.length
       ? await ctx.engine.executeRaw<FactRowSqlShape>('SELECT * FROM facts WHERE source_id = ANY($1::text[]) AND id = ANY($2::bigint[])', [input.factSources, ids])
       : [];
     const byId = new Map(raw.map(r => { const row = rowToFact(r); return [row.id, { ...row, embedding: null }] as const; }));
     const modelKey = embedding && pool.column ? calibrationKey(getEmbeddingModel(), getEmbeddingDimensions()) : null;
+    const weighting = weighted ? weighByConfidence(ranked.map(s => ({ id: s.candidate.id, score: s.score })), byId) : undefined;
+    if (weighting) ids = weighting.order;
+    let rows: CollapsedFactRead<FactRow>[] = await collapseFactReads(ctx.engine, ids.flatMap(id => byId.get(id) ?? []));
+    if (weighting) rows = rows.map(r => weightedRepresentative(r, byId, weighting.rank));
     return {
-      rows: (await collapseFactReads(ctx.engine, ids.flatMap(id => byId.get(id) ?? []))).slice(0, input.limit),
+      rows: rows.slice(0, input.limit),
       relevance: new Map(ranked.map(s => [s.candidate.id, Math.round(s.score * 1e4) / 1e4])),
+      ...(weighting ? { weighting: { rank: weighting.rank, factor: weighting.factor } } : {}),
+      ...(grouped ? { groupByEntity: true } : {}),
       ambiguousEntity: null,
       ...(degraded ? { degraded } : {}),
       ...(modelKey && FACT_ADMISSION_FLOOR_EVIDENCE[modelKey] === undefined ? { calibration: { status: 'unmeasured' as const, model_key: modelKey } } : {}),
@@ -237,6 +251,78 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
   } catch (error) {
     throw rankingUnavailable(input.params, error);
   }
+}
+
+const round4 = (n: number) => Math.round(n * 1e4) / 1e4;
+
+/**
+ * #2941: rank admitted facts by relevance × confidenceFactor(recallConfidence),
+ * then newest valid_from, then id. Admission already ran on raw relevance, so
+ * weighting reorders the admitted set and never drops a fact.
+ */
+function weighByConfidence(scored: Array<{ id: number; score: number }>, byId: Map<number, FactRow>, now = new Date()) {
+  const rank = new Map<number, number>();
+  const factor = new Map<number, number>();
+  for (const { id, score } of scored) {
+    const row = byId.get(id);
+    const f = row ? confidenceFactor(recallConfidence(row, isDatedFact(row), now)) : 1;
+    factor.set(id, round4(f));
+    rank.set(id, score * f);
+  }
+  const order = scored.map(s => s.id).sort((a, b) => rank.get(b)! - rank.get(a)!
+    || (byId.get(b)?.valid_from.getTime() ?? 0) - (byId.get(a)?.valid_from.getTime() ?? 0) || b - a);
+  for (const [id, s] of rank) rank.set(id, round4(s));
+  return { order, rank, factor };
+}
+
+/** #7043 keeps a group's newest copy; under weighting the delivered copy is the group's best-ranked one, so its position, provenance and trust agree. */
+function weightedRepresentative(row: CollapsedFactRead<FactRow>, byId: Map<number, FactRow>, rank: Map<number, number>): CollapsedFactRead<FactRow> {
+  if (!row.collapsed_ids?.length) return row;
+  const best = row.collapsed_ids.filter(id => rank.has(id) && byId.has(id)).sort((a, b) => rank.get(b)! - rank.get(a)! || b - a)[0];
+  if (best === undefined || best === row.id) return row;
+  const { entity_slugs, collapsed_count, collapsed_ids } = row;
+  return { ...byId.get(best)!, ...(entity_slugs ? { entity_slugs } : {}), ...(collapsed_count ? { collapsed_count } : {}), collapsed_ids };
+}
+
+export interface FactEntityGroup { source_id: string; entity_slug: string | null; fact_ids: string[]; top_relevance: number | null }
+
+export const ENTITY_UNSPECIFIED_SUGGESTION = 'These facts belong to different entities. Ask which one the question is about, then recall again with entity set.';
+const ENTITY_UNSPECIFIED_MAX_OPTIONS = 5;
+
+/**
+ * #2953: the delivered facts grouped by (source_id, entity_slug), the
+ * identity key, so two entities' figures never interleave. Runs after the
+ * limit and budget cuts, so it only reorders what is delivered: each group
+ * keeps its internal order and groups are ordered by their best fact. Facts
+ * with no entity form their own group. When two or more entities answer,
+ * `entity_unspecified` lists them and the emitted notice offers the same
+ * recall per entity.
+ */
+export function groupFactsByEntity<R extends { id: number; source_id: string; entity_slug: string | null }>(rows: R[], ranking: QuestionRecall, params: Record<string, unknown>,
+  emitNotice?: (n: Notice) => void): { rows: R[]; fields: { facts_groups: FactEntityGroup[]; entity_unspecified?: { candidates: EntityCandidate[]; suggestion: string } } } {
+  const buckets = new Map<string, R[]>();
+  for (const r of rows) {
+    const key = `${r.source_id}\u0000${r.entity_slug ?? ''}`;
+    buckets.set(key, [...(buckets.get(key) ?? []), r]);
+  }
+  const groups = [...buckets.values()].map(members => ({
+    source_id: members[0]!.source_id, entity_slug: members[0]!.entity_slug, fact_ids: members.map(m => String(m.id)),
+    top_relevance: ranking.relevance.get(members[0]!.id) ?? null,
+  }));
+  const named = groups.filter(g => g.entity_slug !== null).map(g => ({ source_id: g.source_id, entity_slug: g.entity_slug as string }));
+  if (named.length < 2) return { rows: [...buckets.values()].flat(), fields: { facts_groups: groups } };
+  const args = callArgs(params);
+  const options = named.slice(0, ENTITY_UNSPECIFIED_MAX_OPTIONS).map((c, i) => ({
+    id: `e${i + 1}`, label: `${c.entity_slug} (source ${c.source_id})`, argv: recallArgv({ ...args, entity: c.entity_slug, source_id: c.source_id }),
+  }));
+  const notice: Notice = {
+    code: 'entity_unspecified',
+    kind: 'info',
+    why: `The question named no entity, and saved facts from ${named.length} entities answer it (${named.map(c => c.entity_slug).join(', ')}). They are grouped by entity in facts_groups; a figure for one entity does not apply to another.`,
+    decisions: [{ id: 'entity', question: 'Which entity is the question about?', options, default: 'e1', default_reason: 'The entity with the best-matching fact.' }],
+  };
+  emitNotice?.(notice);
+  return { rows: [...buckets.values()].flat(), fields: { facts_groups: groups, entity_unspecified: { candidates: named, suggestion: ENTITY_UNSPECIFIED_SUGGESTION } } };
 }
 
 /**

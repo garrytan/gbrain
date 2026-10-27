@@ -52,7 +52,7 @@ import { stampPageTrust, stampRowTrust } from '../eligibility/stamp.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { parseSinceParam } from '../facts/since-parse.ts';
-import { parseQuestionParam, questionRecallNotices, rankFactsByQuestion, recallHintNotice, unlinkedNamesakes, type EntityCandidate, type QuestionRecall } from '../facts/question-recall.ts';
+import { groupFactsByEntity, parseQuestionParam, questionRecallNotices, rankFactsByQuestion, recallHintNotice, unlinkedNamesakes, type EntityCandidate, type QuestionRecall } from '../facts/question-recall.ts';
 
 // ============================================================
 // v0.31 — Hot memory ops: extract_facts / recall / forget_fact
@@ -471,9 +471,7 @@ const recall: Operation = {
 
     // Engines apply grep in SQL (pre-limit). This client-side pass stays only
     // as the filter for the supersessions branch, which bypasses FactListOpts.
-    if (grep && p.supersessions === true) {
-      rows = rows.filter(r => r.fact.toLowerCase().includes(grep));
-    }
+    if (grep && p.supersessions === true) rows = rows.filter(r => r.fact.toLowerCase().includes(grep));
 
     // #7043: copies of one claim (the fact arms read MAX_SEARCH_LIMIT rows) collapse after the visibility filters, before the limit cut.
     if (!ranking) rows = (await collapseFactReads(ctx.engine, rows)).slice(0, limit);
@@ -579,6 +577,7 @@ const recall: Operation = {
       droppedCount = factsPack.meta.dropped + resultsPack.meta.dropped;
     }
 
+    const grouped = ranking?.groupByEntity ? groupFactsByEntity(packedFacts, ranking, p, ctx.emitNotice) : null; if (grouped) packedFacts = grouped.rows; // #2953: reorders delivered facts only
     const budgetPacking = recallBudgetPacking(p.budget_policy, queryText, budgetTokens, { rows, packedFacts, searchResults, packedResults }, recallResultCost(delivery));
 
     const out = {
@@ -613,13 +612,13 @@ const recall: Operation = {
         fact_id: String(r.id),
         provenance: r.source, ...(r.attributed_to ? { attributed_to: r.attributed_to } : {}),
         ...(r.entity_slugs ? { entity_slugs: r.entity_slugs } : {}), ...(r.collapsed_count ? { collapsed_count: r.collapsed_count } : {}),
-        ...(ranking ? { relevance: ranking.relevance.get(r.id) } : {}),
+        ...(ranking ? { relevance: ranking.relevance.get(r.id), ...(ranking.weighting ? { rank_score: ranking.weighting.rank.get(r.id), confidence_factor: ranking.weighting.factor.get(r.id) } : {}) } : {}),
       })), f => f.id)),
       total: packedFacts.length,
       facts_order: ranking ? 'relevance' : 'newest',
       ...(ranking?.degraded ? { facts_degraded: ranking.degraded } : {}),
       ...(ranking?.calibration ? { facts_calibration: ranking.calibration } : {}),
-      ...(ambiguousEntity ? { ambiguous_entity: { candidates: ambiguousEntity, suggestion: AMBIGUOUS_ENTITY_SUGGESTION } } : {}),
+      ...grouped?.fields, ...(ambiguousEntity ? { ambiguous_entity: { candidates: ambiguousEntity, suggestion: AMBIGUOUS_ENTITY_SUGGESTION } } : {}),
       ...(pending_consolidation_count !== undefined ? { pending_consolidation_count } : {}),
       // MEMORY_VERBS v1 envelope (G1B superset — additive on every response).
       protocol_version: MEMORY_VERBS_VERSION,

@@ -406,6 +406,7 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
     if (err) { console.error(`[config] ${err}`); process.exit(1); }
   }
   if (key.startsWith('loops.')) (await import('./config/loops-values.ts')).refuseInvalidLoopsConfigValue(key, value);
+  if (key.startsWith('recall.')) { const err = (await import('../core/facts/recall-config.ts')).recallConfigValueRefusal(key, value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key === 'sync.slug_conflicts.auto_remove') { const err = (await import('../core/repair/slug-autoheal.ts')).slugAutoRemoveValueRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key === 'sync.origin_twins.auto_resolve') { const err = (await import('../core/repair/origin-twins-heal.ts')).originAutoResolveValueRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key === 'sync.repo_path') { const err = (await import('../core/sync-config-keys.ts')).syncRepoPathRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }

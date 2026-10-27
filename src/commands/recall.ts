@@ -442,8 +442,10 @@ export async function recallVerbForCaller(engine: BrainEngine, args: string[], r
 }
 
 export type RecallVerbResult = {
-  facts: Array<{ fact_id: string; fact: string; kind: string; entity_slug: string | null; provenance: string; relevance?: number }>;
+  facts: Array<{ fact_id: string; fact: string; kind: string; entity_slug: string | null; provenance: string; relevance?: number; rank_score?: number }>;
   facts_order?: 'relevance' | 'newest';
+  facts_groups?: Array<{ source_id: string; entity_slug: string | null; fact_ids: string[] }>;
+  entity_unspecified?: { candidates: Array<{ source_id: string; entity_slug: string }>; suggestion: string };
   facts_degraded?: { reason?: string; unembedded?: number };
   results?: Array<{ slug: string; title: string | null; evidence: string; chunk: string | null }>;
   search_degraded?: string;
@@ -510,9 +512,18 @@ export async function renderRecallVerbResult(flags: ParsedFlags, result: RecallV
   const lines: string[] = [];
   if (result.facts.length) {
     lines.push(result.facts_order === 'relevance' ? 'Facts (ranked by relevance to the question):' : 'Facts:');
-    for (const f of result.facts) {
-      lines.push(`  #${f.fact_id} [${f.kind}]${f.entity_slug ? ` (${f.entity_slug})` : ''} ${f.fact} — ${f.provenance}${typeof f.relevance === 'number' ? ` (relevance ${f.relevance.toFixed(2)})` : ''}`);
+    const factLine = (f: RecallVerbResult['facts'][number], indent: string) =>
+      `${indent}#${f.fact_id} [${f.kind}]${f.entity_slug ? ` (${f.entity_slug})` : ''} ${f.fact} — ${f.provenance}${typeof f.relevance === 'number' ? ` (relevance ${f.relevance.toFixed(2)})` : ''}`;
+    const byId = new Map(result.facts.map(f => [f.fact_id, f]));
+    if (result.facts_groups?.length) {
+      for (const g of result.facts_groups) {
+        lines.push(`  ${g.entity_slug ?? 'No entity'}:`);
+        for (const id of g.fact_ids) { const f = byId.get(id); if (f) lines.push(factLine(f, '    ')); }
+      }
+    } else {
+      for (const f of result.facts) lines.push(factLine(f, '  '));
     }
+    if (result.entity_unspecified) lines.push(`note: ${result.entity_unspecified.candidates.length} entities answer this question; rerun with an entity to read one (${result.entity_unspecified.candidates.map(c => c.entity_slug).join(', ')}).`);
   }
   if (result.results?.length) {
     lines.push('Pages:');
