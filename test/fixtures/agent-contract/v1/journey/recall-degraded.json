@@ -39,7 +39,12 @@
         },
         "contract_version": 1
       }
-    ]
+    ],
+    "degraded": {
+      "reasons": [
+        "embed_unavailable"
+      ]
+    }
   },
   "content": [
     {
@@ -53,6 +58,10 @@
     {
       "type": "text",
       "text": "[gbrain notice recall_hint kind=info]\nwhy: The facts in this response are the newest saved facts: `query` searches pages and does not rank facts. `question` ranks saved facts by relevance to a question (it does not search pages).\nfix: recall {\"query\":\"quokka-journey-marker\",\"question\":\"quokka-journey-marker\"}\nnext: {{next}}"
+    },
+    {
+      "type": "text",
+      "text": "[gbrain degraded: embed_unavailable] This result is partial or degraded: never report \"no notes\" or \"not found\" from it."
     }
   ]
 }

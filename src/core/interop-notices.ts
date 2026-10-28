@@ -332,15 +332,16 @@ export function embeddingOptedOutFor(op: string, result: unknown, meta: Record<s
 /** Recall-affecting stages of one successful call, from its result and the handler-emitted `retrieval` meta. */
 export function recallStagesFor(op: string, result: unknown, meta: Record<string, unknown>, cfg?: GBrainConfig | null): string[] {
   const r = (result && typeof result === 'object' ? result : {}) as Record<string, unknown>;
-  if (op === 'search' || op === 'query') {
-    const retrieval = meta.retrieval as { degraded?: Array<{ stage?: string; reason?: string }> } | undefined;
-    return (retrieval?.degraded ?? []).filter(affectsRecall).map(d => d.stage as string);
-  }
+  const retrievalStages = ((meta.retrieval as { degraded?: Array<{ stage?: string; reason?: string }> } | undefined)?.degraded ?? [])
+    .filter(affectsRecall).map(d => d.stage as string);
+  if (op === 'search' || op === 'query' || op === 'find_experts') return retrievalStages;
   if (op === 'recall') {
     const facts = factsDegradedReason(r);
     return [...new Set([
       ...(typeof r.search_degraded === 'string' ? ['keyword_only_no_embedding_provider'] : []),
       ...(facts ? [facts === RECALL_KEYWORD_ONLY_OPTED_OUT ? 'keyword_only_no_embedding_provider' : facts] : []),
+      // GBRA-200: the page arm's own stages (an embed timeout, a failed arm, the keyword rank bound).
+      ...retrievalStages.filter(s => typeof r.search_degraded !== 'string' || s !== 'embed_unavailable'),
     ])];
   }
   if (op === 'context_pack') return typeof r.degraded_reason === 'string' ? [r.degraded_reason] : [];

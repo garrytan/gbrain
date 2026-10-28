@@ -37,7 +37,7 @@ import type { PageReadPolicy } from '../core/types.ts';
  */
 
 import type { BrainEngine } from '../core/engine.ts';
-import type { PageType, SearchResult } from '../core/types.ts';
+import type { HybridSearchMeta, PageType, SearchResult } from '../core/types.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
 import { INTERNAL_BREADTH_SEARCH_OPTS } from '../core/search/internal-breadth.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
@@ -60,6 +60,8 @@ export interface WhoknowsOpts extends PageReadPolicy {
    * falls back to DEFAULT_TYPES (person/company).
    */
   types?: PageType[];
+  /** GBRA-200: the inner search's meta, so the op can stamp a degraded (keyword-only, cut) ranking. */
+  onMeta?: (meta: HybridSearchMeta) => void;
   /**
    * v0.34.1 (#861, D3 — P0 leak seal): scope expert candidates to a
    * single source. The op-handler at operations.ts:find_experts threads
@@ -203,6 +205,7 @@ export async function findExperts(
     excludePrivate: opts.excludePrivate,
     requireSafeChunks: opts.requireSafeChunks,
     takesHoldersAllowList: opts.takesHoldersAllowList,
+    onMeta: opts.onMeta,
   });
 
   if (results.length === 0) return [];

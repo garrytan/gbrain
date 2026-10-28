@@ -29,7 +29,7 @@ import { expandQuery } from '../search/expansion.ts';
 import { dedupResults } from '../search/dedup.ts';
 import { markKeywordHits } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
-import type { HybridSearchMeta, SearchResult } from '../types.ts';
+import type { DegradedStageEntry, HybridSearchMeta, SearchResult } from '../types.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { applySnippetCap, DEFAULT_AGENT_SNIPPET_CHARS, resultChunkCap } from '../search/snippet-cap.ts';
 import { scoresFollowRank } from '../search/score-contract.ts';
@@ -802,12 +802,15 @@ const search: Operation = {
       }
       const lexicalDone = Promise.withResolvers<void>();
       const keywordCount = page ? null : timings.overlap('keyword_count', startKeywordCount(ctx.engine, queryText, undefined, keywordOpts, lexicalDone.promise));
-      const results = await keepFrontmatterMatches(ctx.engine, (page ? page.rows : dedupResults(await timings.stage('lexical', () => ctx.engine.searchKeyword(queryText, { limit, offset, ...keywordOpts })).finally(lexicalDone.resolve))).map(r => ({ ...r })), where);
+      // GBRA-200: the keyword rank bound (Postgres) is reported here as it is on the hybrid path.
+      let keywordBound: DegradedStageEntry | undefined;
+      const results = await keepFrontmatterMatches(ctx.engine, (page ? page.rows : dedupResults(await timings.stage('lexical', () => ctx.engine.searchKeyword(queryText, { limit, offset, ...keywordOpts,
+        onKeywordIncomplete: reason => { keywordBound = { stage: 'keyword_candidates_incomplete', reason }; } })).finally(lexicalDone.resolve))).map(r => ({ ...r })), where);
       await stampKeywordRows(ctx, results, { ...scope, excludePrivate }, queryText, startedAt, timings);
       // #3800: cap AFTER capture/meta so eval + cache see the real payload.
       return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, null, snippetCap, timings,
-        async rows => withCountMeta(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, null, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, filterHintFor: { op: 'search', p }, timings }),
-          page ?? keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount!), offset + limit)), page !== null);
+        async rows => withCountMeta(withCountMeta(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, null, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, filterHintFor: { op: 'search', p }, timings }),
+          page ?? keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount!), offset + limit)), { meta: {}, degraded: keywordBound }), page !== null);
     }
 
     // Cheap-hybrid (D4/D15): full vector+keyword+RRF+pool+title+alias, but

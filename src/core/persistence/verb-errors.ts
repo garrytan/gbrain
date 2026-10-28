@@ -255,6 +255,8 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
     if (error.code === 'idempotency_conflict' && error.fix) frozen.fix = error.fix;
     // #6608: an unbound-source refusal keeps its detail, docs and ask-the-user fix additively; the frozen code stays.
     if (error.detail === 'unbound_source') Object.assign(frozen, { detail: error.detail, docs: error.docs, fix: error.fix, retryable: error.retryable });
+    // GBRA-200: a write-grant refusal keeps the caller's writable sources and its retry fix additively.
+    if (error.writableSourceIds) Object.assign(frozen, { writableSourceIds: error.writableSourceIds, fix: error.fix });
     if (isWriteErrorCode(error.code)) frozen.writeError=error.code;
     throw frozen;
   }

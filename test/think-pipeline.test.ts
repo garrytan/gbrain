@@ -237,9 +237,10 @@ describe('runGather — per-stream typed warnings (GATHER_*_FAILED)', () => {
     }) as PGLiteEngine;
   }
 
-  test('clean run reports no gather warnings', async () => {
+  test('clean run reports no stream failure; its keyless page search is reported as degraded (GBRA-200)', async () => {
     const r = await runGather(engine, { question: 'technical founder' });
-    expect(r.warnings).toEqual([]);
+    // This test brain has no embedding provider, so the page search is keyword-only: reported, never silent.
+    expect(r.warnings).toEqual(['GATHER_DEGRADED:embed_unavailable', 'GATHER_DEGRADED:keyword_zero']);
   });
 
   test('a keyword-arm failure degrades inside hybrid — no gather warning, takes keep working', async () => {
@@ -248,6 +249,8 @@ describe('runGather — per-stream typed warnings (GATHER_*_FAILED)', () => {
     // throws outright, not a degraded arm.
     const r = await runGather(withFailing(['searchKeyword']), { question: 'technical founder' });
     expect(r.warnings).not.toContain('GATHER_HYBRID_FAILED');
+    // GBRA-200: the degraded arm is reported as a GATHER_DEGRADED stage instead of silently.
+    expect(r.warnings).toContain('GATHER_DEGRADED:keyword_arm_failed');
     // Fail-open: the takes stream keeps working.
     expect(r.takes.length).toBeGreaterThan(0);
   });
@@ -264,6 +267,9 @@ describe('runGather — per-stream typed warnings (GATHER_*_FAILED)', () => {
     // #4296: a degraded keyword arm no longer surfaces GATHER_HYBRID_FAILED;
     // the takes/graph streams still map failures to their own codes.
     expect([...r.warnings].sort()).toEqual([
+      'GATHER_DEGRADED:embed_unavailable',
+      'GATHER_DEGRADED:keyword_arm_failed',
+      'GATHER_DEGRADED:keyword_zero',
       'GATHER_GRAPH_FAILED',
       'GATHER_TAKES_KEYWORD_FAILED',
       'GATHER_TAKES_VECTOR_FAILED',

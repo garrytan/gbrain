@@ -23,7 +23,8 @@ import { INTERNAL_BREADTH_SEARCH_OPTS } from '../search/internal-breadth.ts';
 import { resolveHardExcludes } from '../search/source-boost.ts';
 import { boundedProjectedPrefix } from '../page-window/document.ts';
 import { overlaidBoundedRows, pageLeadSource } from '../page-window/bounded-lead.ts';
-import type { Page, SearchResult } from '../types.ts';
+import { affectsRecall, type HybridSearchMeta, type Page, type SearchResult } from '../types.ts';
+import { GATHER_DEGRADED_PREFIX } from '../degraded-stamp.ts';
 import { DEFAULT_PAGES_BUDGET, PAGES_BLOCK_EXCERPT_FLOOR_CHARS, type PagesBudget } from './pages-budget.ts';
 import { filterPagesToWindow, type TemporalWindow } from './temporal-window.ts';
 import { pageContentDate } from './temporal-context.ts';
@@ -161,6 +162,9 @@ export async function runGather(
   });
 
   let windowDiagnostic: ThinkGatherResult['diagnostics']['window'];
+  // GBRA-200: a degraded page search (keyword-only fallback, a cut arm) is reported, never silent.
+  const searchDegraded = new Set<string>();
+  const onMeta = (m: HybridSearchMeta) => { for (const d of m.degraded ?? []) if (affectsRecall(d)) searchDegraded.add(d.stage); };
 
   // Stream 1: hybrid page search (existing primitive).
   // Both legs opt out of the reader-facing trims (autocut #4561, adaptive
@@ -174,6 +178,7 @@ export async function runGather(
       ...INTERNAL_BREADTH_SEARCH_OPTS,
       ...pageScope,
       decide,
+      onMeta,
     }),
     engine.listPages({
       ...(window.startMs !== null ? { effective_after: new Date(window.startMs).toISOString() } : {}),
@@ -200,6 +205,7 @@ export async function runGather(
     ...INTERNAL_BREADTH_SEARCH_OPTS,
     ...pageScope,
     decide,
+    onMeta,
   })).catch((e) => {
     warnings.push('GATHER_HYBRID_FAILED');
     process.stderr.write(`[think.gather] hybrid stream failed: ${(e as Error).message}\n`);
@@ -301,6 +307,7 @@ export async function runGather(
     (h: TakeHit) => `${h.page_slug}#${h.row_num}`,
   ).slice(0, takesLimit);
 
+  for (const stage of searchDegraded) warnings.push(`${GATHER_DEGRADED_PREFIX}${stage}`);
   return {
     pages: pages.slice(0, gatherLimit),
     takes: fusedTakes,

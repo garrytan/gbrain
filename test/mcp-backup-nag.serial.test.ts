@@ -132,8 +132,9 @@ async function callSearch(opts: CallOpts = {}) {
   });
   // F3's degraded_recall notice (this keyless stub searches keyword-only) is
   // orthogonal to the backup block under test; it is pinned in
-  // test/mcp-notice-channels.test.ts. So is F2's keyword count line (test/search-keyword-paging.test.ts).
-  return { ...out, content: out.content.filter(c => !c.text.startsWith('[gbrain notice degraded_recall ') && !c.text.startsWith('[gbrain search] ')) };
+  // test/mcp-notice-channels.test.ts. So is F2's keyword count line (test/search-keyword-paging.test.ts),
+  // and the GBRA-200 degraded stamp (test/degraded-stamp-paths.serial.test.ts).
+  return { ...out, content: out.content.filter(c => !c.text.startsWith('[gbrain notice degraded_recall ') && !c.text.startsWith('[gbrain search] ') && !c.text.startsWith('[gbrain degraded: ')) };
 }
 
 async function waitFor(pred: () => boolean, ms = 2000): Promise<boolean> {

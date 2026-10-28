@@ -24,6 +24,7 @@ import { declareDurablePersistence } from './protocol.ts';
 import { resolveFactWriteTarget } from './fact-write-target.ts';
 import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
 import { withCoordinatedWrite } from './context.ts';
+import { grantedWriteSource, writeGrantRefusal } from './write-grant.ts';
 import { requestAttribution } from './attribution.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
@@ -49,9 +50,11 @@ async function submission(ctx: OperationContext, operation: string, params: Reco
   const p: Record<string, unknown> = { ...params, ...parseMutationPrecondition(params) };
   const requestId = typeof p.request_id === 'string' ? p.request_id : randomUUID();
   const sourceId = typeof p.source_id === 'string' ? p.source_id : ctx.sourceId ?? 'default';
-  if (ctx.remote !== false && sourceId !== (ctx.auth?.sourceId ?? ctx.sourceId ?? 'default')) {
-    throw opError('permission_denied', 'This source is outside the current write grant.',
-      `This connection may write only to source ${ctx.auth?.sourceId ?? ctx.sourceId ?? 'default'}. Omit source_id to write there, or ask the brain host's operator to grant source ${sourceId}.`);
+  const granted = grantedWriteSource(ctx);
+  if (ctx.remote !== false && sourceId !== granted) {
+    throw writeGrantRefusal(ctx,
+      `This connection may write only to source ${granted}. Omit source_id to write there, or ask the brain host's operator to grant source ${sourceId}.`,
+      { tool: operation, arguments: params });
   }
   await initializeLocalPersistence(ctx);
   const principal = await requestPrincipalForContext(ctx);

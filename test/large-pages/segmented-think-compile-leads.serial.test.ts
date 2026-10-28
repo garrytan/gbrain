@@ -36,6 +36,7 @@ const SLUG = 'people/think-lead-example';
 const INLINE = 'people/think-lead-inline-example';
 const OPENING = 'Think Lead Example runs research at acme-example and writes about widgets.';
 /** Leads do not apply the fence overlay's holds, inline or segmented (segmented-leads.test.ts), so a held row is not counted. */
+const KEYLESS_NO_MATCH_WARNINGS = ['GATHER_DEGRADED:embed_unavailable', 'GATHER_DEGRADED:keyword_zero'];
 const leaked = (text: string) => privateTokensIn(text).filter(token => token !== PRIVATE.held);
 /**
  * Lead parity as segmented-leads.test.ts states it: the same opening text. The two bounded prefixes are cut at
@@ -79,7 +80,8 @@ for (const kind of testBackends()) {
       const leads: Record<string, string> = {};
       for (const slug of [SLUG, INLINE]) {
         const gathered = await runGather(engine, { question: 'qqnomatchquestion', anchor: slug });
-        expect(gathered.warnings).toEqual([]);
+        // Keyless and no keyword match: the gather's page search reports its degraded stages (GBRA-200).
+        expect(gathered.warnings).toEqual(KEYLESS_NO_MATCH_WARNINGS);
         leads[slug] = gathered.pages.find(p => p.slug === slug)!.chunk_text;
       }
       expect(leads[SLUG]).toContain(OPENING);
@@ -89,7 +91,7 @@ for (const kind of testBackends()) {
 
     test('the temporal-window floor keeps the segmented page with the inline lead', async () => {
       const gathered = await runGather(engine, { question: 'qqnomatchquestion', window: parseTemporalWindow('2026-07-17', '2026-07-18')! });
-      expect(gathered.warnings).toEqual([]);
+      expect(gathered.warnings).toEqual(KEYLESS_NO_MATCH_WARNINGS);
       const lead = (slug: string) => gathered.pages.find(p => p.slug === slug)?.chunk_text;
       expect(lead(SLUG)).toContain(OPENING);
       expect(leaked(lead(SLUG)!)).toEqual([]);

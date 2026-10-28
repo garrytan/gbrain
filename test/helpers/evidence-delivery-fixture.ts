@@ -13,6 +13,7 @@ import { prepareMarkdownChunks } from '../../src/core/markdown-chunks.ts';
 import { installFixtureChunks } from './page-projection.ts';
 import { withEnv } from './with-env.ts';
 import { leanRow } from '../../src/core/search/lean-rows.ts';
+import { degradedStampFor, degradedStampLine } from '../../src/core/degraded-stamp.ts';
 
 export const OFF_PATH_PAGES: Array<{ slug: string; body: string; timeline?: string; frontmatter?: Record<string, unknown> }> = [
   {
@@ -123,7 +124,9 @@ function withFactsOrder(payload: Record<string, unknown>): Record<string, unknow
  * The cost wave changes remote output on purpose: C1 projects remote
  * search/query rows to lean rows (and reports `rows: "lean"` in the retrieval
  * meta), and C2 serializes MCP content[0] as compact JSON. Recall's question
- * ranking adds `facts_order` to every recall response. The frozen pre-feature
+ * ranking adds `facts_order` to every recall response. GBRA-200 appends the
+ * degraded stamp (a last text block and `_meta.degraded`) to an MCP reply whose
+ * frozen meta names a recall-affecting stage. The frozen pre-feature
  * bytes stay as captured; this applies exactly those declared transforms to
  * them, so every other byte of the capture is still compared.
  */
@@ -146,6 +149,11 @@ export function withCostWave(key: string, frozen: string): string {
   const lean = base === 'mcp-search' || base === 'mcp-query';
   res.content[0].text = JSON.stringify(lean ? (body as Record<string, unknown>[]).map(r => leanRow(r)) : base === 'mcp-recall' ? withFactsOrder(body) : body);
   if (lean && res._meta?.retrieval) res._meta.retrieval = leanRetrieval(res._meta.retrieval);
+  const stamp = degradedStampFor(base.slice('mcp-'.length), body, res._meta ?? {}, []);
+  if (stamp) {
+    res.content.push({ type: 'text', text: degradedStampLine(stamp) });
+    res._meta = { ...res._meta, degraded: stamp as unknown as Record<string, unknown> };
+  }
   return JSON.stringify(res);
 }
 

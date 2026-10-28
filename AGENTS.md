@@ -121,7 +121,7 @@ machine contract. The quick version:
    - `wait` → retry after the stated delay with the same request.
    - `report` → tell the user what happened and run `gbrain doctor --json`.
 3. Then run `fix.verify` (always read-only) to confirm the fix worked.
-4. Treat `[gbrain notice …]` blocks and `[AGENT]` blocks the same way. A degraded result is not proof of "no notes".
+4. Treat `[gbrain notice …]` blocks and `[AGENT]` blocks the same way. A degraded result is not proof of "no notes": a result stamped `[gbrain degraded: …]` (`_meta.degraded`, the CLI `degraded` key) is partial.
 <!-- END GENERATED agent-protocol:quick-contract -->
 
 Exit 3 always means "stop and ask the user". Exit 10 means the write was

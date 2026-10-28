@@ -214,7 +214,7 @@ export async function renderOp(command: string, op: OperationMeta, params: Recor
   const rendered = await buffered(() => {
     if (frame.meta) captureRetrievalMeta('retrieval', frame.meta);
     for (const notice of frame.notices) captureOpNotice(notice);
-    const { result, stderr } = applyCliOpNotices(frame.result, params.json === true);
+    const { result, stderr } = applyCliOpNotices(frame.result, params.json === true, { op: op.name, retrieval: frame.meta });
     return { result, noticeText: stderr, output: formatResult(op.name, result, params) };
   });
   if ('error' in rendered) {

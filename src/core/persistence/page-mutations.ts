@@ -7,6 +7,7 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
+import { grantedWriteSource, writeGrantRefusal } from './write-grant.ts';
 import { VERSION } from '../../version.ts';
 import { ownerBuildMismatch } from './publication-failure.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, isLegacyStoredPageSlug, normalizeSlugPrefix, parseSourceIdParam, requireWritablePage, validatePageSlug } from '../ops/context.ts';
@@ -136,9 +137,9 @@ export function pageMutationSource(ctx: OperationContext, params: Record<string,
     throw new OperationError('invalid_params', 'A mutation must target exactly one source.',
       `Pass source_id as one source (for example ${ctx.sourceId && ctx.sourceId !== '__all__' ? ctx.sourceId : 'default'}); writes never fan out across sources.`);
   }
-  const granted = ctx.auth?.sourceId ?? ctx.sourceId ?? 'default';
+  const granted = grantedWriteSource(ctx);
   if (ctx.remote !== false && sourceId !== granted) {
-    throw new OperationError('permission_denied', 'This source is outside the current write grant.',
+    throw writeGrantRefusal(ctx,
       `This connection writes only to source ${granted}. Pass source_id ${granted} (or omit it), or ask the brain host's operator to grant write access to ${sourceId}.`);
   }
   return sourceId;

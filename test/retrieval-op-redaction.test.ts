@@ -286,7 +286,7 @@ describe('memory verbs redact query-arm text for everyone and facts for remote c
   test('recall over MCP: no page token, assignment value or fact key; identities byte-identical', async () => {
     const { text } = await call('recall', { query: 'verbmark rollout', entity: 'companies/acme-example' });
     for (const secret of [pageToken, assigned, factKey]) expect(text.includes(secret)).toBe(false);
-    const body = JSON.parse(text);
+    const body = JSON.parse(text.split('\n')[0]!);
     const hit = body.results.find((r: { slug: string }) => r.slug === 'notes/verb-page');
     expect(hit.provenance).toBe('notes/verb-page');
     expect(hit.chunk).toContain('<REDACTED:github_token>');

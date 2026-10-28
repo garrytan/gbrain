@@ -39,7 +39,7 @@ import { isAvailable } from '../ai/gateway.ts';
 import { ENTITY_HINTS_CAP } from '../facts/extract.ts';
 import { parseTtlShorthand } from '../facts/ttl-parse.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
-import type { SearchResult } from '../types.ts';
+import type { DegradedStageEntry, SearchResult } from '../types.ts';
 import { MAX_SEARCH_LIMIT, type BrainEngine, type FactRow } from '../engine.ts';
 import { collapseFactReads } from '../facts/capture-dedup.ts';
 import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
@@ -523,21 +523,7 @@ const recall: Operation = {
       const searchScope = { ...federatedSearchScope(ctx, sourceIdParam), ...(eligibility.floor ? { minTrust: eligibility.floor } : {}) };
       // #4352 — recall's page-search arm enforces `visibility: private` for
       // untrusted callers with the excludePrivate resolved above.
-      const keywordOnly = await recallKeywordOnlyReason(ctx);
-      if (keywordOnly) {
-        searchResults = await keylessRecallRows(ctx, queryText, limit, excludePrivate, searchScope, rankCutOpts);
-        searchDegraded = keywordOnly;
-      } else {
-        searchResults = await hybridSearchCached(ctx.engine, queryText, {
-          limit,
-          expansion: false,
-          excludePrivate,
-          requireSafeChunks: ctx.remote !== false,
-          takesHoldersAllowList: readHolders(ctx),
-          ...searchScope,
-          ...rankCutOpts,
-        });
-      }
+      ({ rows: searchResults, keywordOnly: searchDegraded } = await recallPageRows(ctx, queryText, limit, excludePrivate, searchScope, rankCutOpts));
       bumpLastRetrievedAt(ctx.engine, searchResults.map(r => r.page_id));
       const applied = recallDeliveryPlan(effectivePlan(evidencePlan, searchResults), p.budget_policy, queryText, budgetTokens, rows);
       if (applied) ({ results: searchResults, delivery } = await deliverEvidence(ctx.engine, searchResults, applied, { ...searchScope, excludePrivate, requireSafeChunks: ctx.remote !== false }));
@@ -1423,6 +1409,28 @@ async function recallKeywordOnlyReason(ctx: OperationContext): Promise<string | 
 }
 
 /**
+ * recall's page arm: keyword-only when the brain opted out of embedding or has no provider (`keywordOnly` names
+ * why), otherwise hybrid. GBRA-200: its degraded stages (an embed timeout, a failed arm, the keyword rank bound)
+ * ride _meta.retrieval.degraded like search's, so a partial recall is stamped instead of silent.
+ */
+async function recallPageRows(
+  ctx: OperationContext, queryText: string, limit: number, excludePrivate: boolean,
+  searchScope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier }, rankCutOpts: Pick<HybridSearchOpts, 'pageRankCut'>,
+): Promise<{ rows: SearchResult[]; keywordOnly?: string }> {
+  const keywordOnly = await recallKeywordOnlyReason(ctx);
+  const stages: DegradedStageEntry[] = [];
+  const rows = keywordOnly
+    ? await keylessRecallRows(ctx, queryText, limit, excludePrivate, searchScope, rankCutOpts, stages)
+    : await hybridSearchCached(ctx.engine, queryText, {
+      limit, expansion: false, excludePrivate, requireSafeChunks: ctx.remote !== false,
+      takesHoldersAllowList: readHolders(ctx), ...searchScope, ...rankCutOpts,
+      onMeta: m => { stages.push(...(m.degraded ?? [])); },
+    });
+  if (stages.length) ctx.emitResponseMeta?.('retrieval', { degraded: stages });
+  return { rows, ...(keywordOnly ? { keywordOnly } : {}) };
+}
+
+/**
  * Keyless recall's page arm: direct keyword FTS, except that a planned
  * multi-relation question (planner on) goes through hybridSearch's keyless
  * path, which runs keyword + title + the relational chain (zero LLM).
@@ -1431,14 +1439,17 @@ async function keylessRecallRows(
   ctx: OperationContext, queryText: string, limit: number, excludePrivate: boolean,
   searchScope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier },
   rankCutOpts: Pick<HybridSearchOpts, 'pageRankCut'> = {},
+  stages: DegradedStageEntry[] = [],
 ): Promise<SearchResult[]> {
   if (await keylessChainQuestion(ctx, queryText)) {
     return hybridSearchCached(ctx.engine, queryText, {
       limit, expansion: false, excludePrivate, requireSafeChunks: ctx.remote !== false,
       takesHoldersAllowList: readHolders(ctx), ...searchScope, ...rankCutOpts,
+      onMeta: m => { stages.push(...(m.degraded ?? [])); },
     });
   }
-  const rows = dedupResults(await ctx.engine.searchKeyword(queryText, { limit, excludePrivate, requireSafeChunks: ctx.remote !== false, ...searchScope }));
+  const rows = dedupResults(await ctx.engine.searchKeyword(queryText, { limit, excludePrivate, requireSafeChunks: ctx.remote !== false, ...searchScope,
+    onKeywordIncomplete: reason => { stages.push({ stage: 'keyword_candidates_incomplete', reason }); } }));
   // #3783 — direct FTS path: every row is a keyword hit by construction.
   markKeywordHits(rows);
   stampEvidenceSafe(rows);

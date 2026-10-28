@@ -78,7 +78,7 @@ import {
 } from './command-table.ts';
 import { formatRememberResult } from './remember-format.ts';
 import { formatEntityResult, markEntityMiss } from './entity-format.ts';
-import { applyCliOpNotices, captureCapacityNotices, captureOpNotice, captureRetrievalNotices, retrievalIncompleteLine } from './op-notices.ts';
+import { applyCliOpNotices, captureCapacityNotices, captureOpNotice, captureRetrievalNotices, retrievalIncompleteLine, withRoutedDegradedStamp } from './op-notices.ts';
 import { admitAcrossCliCalls } from '../core/notice-ledger.ts';
 import { searchTimingsDocument, searchTimingsLine, timeCliPhase } from './search-timings.ts';
 
@@ -719,7 +719,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     // path's return value so renderers see the same shape they'd see on the
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
-    const { result, stderr: noticeText } = applyCliOpNotices(normalizeLocalResult(rawResult), params.json === true);
+    const { result, stderr: noticeText } = applyCliOpNotices(normalizeLocalResult(rawResult), params.json === true, { op: op.name, retrieval: lastRetrievalMeta });
     const output = formatResult(op.name, result, params);
     // Awaited delivery (#3423): queued stdout writes past 64KiB lose their
     // tail to a slow pipe reader when the exit grace lapses — see
@@ -834,13 +834,14 @@ async function runThinClientRouted(
     const envelopeMeta = extractResponseMeta(raw);
     if (envelopeMeta?.retrieval) captureRetrievalMeta('retrieval', envelopeMeta.retrieval);
     checkHostHonoredParams(op, params, raw);
-    const result = unpackToolResult(raw);
+    const { result, stderr: stampText } = withRoutedDegradedStamp(op.name, unpackToolResult(raw), envelopeMeta, params.json === true);
     hintAmbientNarrowing(op, params, result, ambientScope);
     const skew = (await import('../core/search/evidence-delivery.ts')).deliveryVersionSkewWarning(op.name, params, envelopeMeta?.retrieval as Record<string, unknown> | undefined, result);
     if (skew) process.stderr.write(skew + '\n');
     const output = formatResult(op.name, result, params);
     // Awaited delivery (#3423) — same contract as the local-engine path.
     if (output) await writeStdoutFinal(output);
+    if (stampText) process.stderr.write(stampText);
     markEntityMiss(op.name, result);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {
