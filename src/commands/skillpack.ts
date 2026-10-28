@@ -81,6 +81,9 @@ Subcommands:
 
   check                      Health report. \`check --strict\` exits non-zero
                              on any drift (for CI gating).
+  health [<skill>]           Read-only skill health: size against budget,
+                             growth since the last diet, triggers, and
+                             commands or flags this gbrain doesn't have.
 
   search [<query>]           Search the third-party registry catalog.
   info <name>                Show full metadata for a registry entry.
@@ -148,6 +151,11 @@ export async function runSkillpack(args: string[]): Promise<void> {
     case 'check':
       await routeCheck(rest);
       return;
+    case 'health': {
+      const { cmdHealth } = await import('./skillpack/health.ts');
+      await cmdHealth(rest);
+      return;
+    }
     case 'search':
       await cmdSearch(rest);
       return;

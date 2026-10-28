@@ -38,6 +38,10 @@
         "name": "skill_preconditions"
       },
       {
+        "category": "skill",
+        "name": "skill_health"
+      },
+      {
         "category": "ops",
         "name": "plugin_lane_collision"
       },

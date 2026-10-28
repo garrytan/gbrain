@@ -8,7 +8,8 @@ import type { CliSurface } from '../core/skill-drift.ts';
 import { CLI_ONLY } from './command-table.ts';
 import { ROUTERS } from './subcommands.ts';
 import { OPERATION_MANIFEST, cliOps } from './op-manifest.ts';
-import { cliAliases, findUnknownFlag, validateCommandFlags } from './main.ts';
+import { cliAliases, validateCommandFlags } from './flag-validation.ts';
+import { findUnknownFlag } from './flag-equals.ts';
 import { parseGlobalFlags } from '../core/cli-options.ts';
 import { CLI_FLAG_REGISTRY } from '../core/cli-flag-registry.generated.ts';
 

@@ -271,6 +271,8 @@ export const SKILL_CHECK_NAMES: ReadonlySet<string> = new Set([
   'skills_manifest_integrity',
   'skill_currency',
   'skill_preconditions',
+  // Skill size, growth since the last diet, triggers, and drift against this gbrain (gbrain skillpack health).
+  'skill_health',
   'whoknows_health',
 ]);
 

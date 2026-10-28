@@ -25,9 +25,8 @@ import { join, relative, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { analyzeSkillDrift, descriptionBytes } from '../src/core/skill-drift.ts';
 import { cliSurface } from '../src/cli/skill-surface.ts';
+import { DESCRIPTION_CAP, NEW_SKILL_CAP, parseSkillBudgets } from '../src/core/skill-health.ts';
 
-const NEW_SKILL_CAP = 16_384;
-const DESCRIPTION_CAP = 1_024;
 const ROOT = process.env.GBRAIN_GUARD_ROOT ? resolve(process.env.GBRAIN_GUARD_ROOT) : resolve(import.meta.dir, '..');
 const SKILLS = join(ROOT, 'skills');
 const BASELINE = join(ROOT, 'scripts', 'skill-drift-baseline.txt');
@@ -78,16 +77,9 @@ for (const key of baseline) {
 }
 
 // Size
-const rows = new Map<string, { max: number; lastDiet: number | null }>();
-if (existsSync(BUDGETS)) {
-  for (const line of readFileSync(BUDGETS, 'utf8').split('\n')) {
-    if (!line.trim() || line.startsWith('#')) continue;
-    const [skill, max, lastDiet] = line.split('\t');
-    if (!skill || !/^\d+$/.test(max ?? '')) { failures.push(`SKILL_BUDGET_ROW_INVALID skills/skill-budgets.tsv '${line}'\n    fix: write <skill>\t<max bytes>\t<last diet bytes or ->\t<note>`); continue; }
-    if (rows.has(skill)) failures.push(`SKILL_BUDGET_ROW_DUPLICATE skills/skill-budgets.tsv '${skill}'\n    fix: keep one row per skill`);
-    rows.set(skill, { max: Number(max), lastDiet: lastDiet && /^\d+$/.test(lastDiet) ? Number(lastDiet) : null });
-  }
-}
+const { rows, invalid, duplicates } = parseSkillBudgets(existsSync(BUDGETS) ? readFileSync(BUDGETS, 'utf8') : '');
+for (const line of invalid) failures.push(`SKILL_BUDGET_ROW_INVALID skills/skill-budgets.tsv '${line}'\n    fix: write <skill>\t<max bytes>\t<last diet bytes or ->\t<note>`);
+for (const skill of duplicates) failures.push(`SKILL_BUDGET_ROW_DUPLICATE skills/skill-budgets.tsv '${skill}'\n    fix: keep one row per skill`);
 const skillFiles = files.filter(f => f.endsWith('/SKILL.md'));
 const present = new Set<string>();
 for (const file of skillFiles) {

@@ -636,6 +636,8 @@ loads, place every fact on its level, cut what the model already knows, and
 keep the slim version only if a blinded before/after eval on tasks written
 before cutting shows agents do at least as well. Then set its row's
 `last_diet_bytes` and lower the ceiling to the new size plus 10%.
+`gbrain skillpack health <skill>` applies the same limits to an installed
+copy and prints the fix for each finding.
 
 **Verify** by rerunning the case that prompted the change in a fresh session,
 plus any test that asserts the skill's text.
