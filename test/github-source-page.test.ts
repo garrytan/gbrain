@@ -24,7 +24,7 @@ import {
   type GitHubItemData,
 } from '../src/core/github-source.ts';
 import { extractGitHubItemRef } from '../src/commands/serve-http.ts';
-import { GitHubClient } from '../src/core/github-source.ts';
+import { GitHubClient, GitHubPaginationError } from '../src/core/github-source.ts';
 
 function baseItemData(overrides: Partial<GitHubItemData> = {}): GitHubItemData {
   return {
@@ -285,6 +285,51 @@ describe('fetchAllPages', () => {
     await expect(
       client.fetchAllPages('/repos/a/b/commits/abc/check-runs', { field: 'check_runs' }),
     ).rejects.toThrow('non-array payload on /repos/a/b/commits/abc/check-runs (field "check_runs")');
+  });
+
+  test('a full page whose Link header is missing or unparseable throws when the list continues', async () => {
+    // Page 1 of 2 arrives with no rel="next" (lost by a proxy, a cache, or
+    // API drift). Returning page 1 alone would let a --full reconcile
+    // delete every item on page 2 and a delta move its cursor past them.
+    for (const link of [null, 'garbage']) {
+      const calls: string[] = [];
+      const client = new GitHubClient('tok', (async (u: string): Promise<Response> => {
+        calls.push(u);
+        const page = Number(new URL(u).searchParams.get('page'));
+        const h = new Headers();
+        if (link !== null) h.set('link', link);
+        const rows = page === 1 ? Array.from({ length: 3 }, (_, i) => ({ n: i })) : page === 2 ? [{ n: 3 }] : [];
+        return new Response(JSON.stringify(rows), { status: 200, headers: h });
+      }) as never);
+      await expect(client.fetchAllPages('/repos/a/b/issues?state=all', { perPage: 3 })).rejects.toBeInstanceOf(GitHubPaginationError);
+      expect(calls).toEqual([
+        'https://api.github.com/repos/a/b/issues?state=all&per_page=3&page=1',
+        'https://api.github.com/repos/a/b/issues?state=all&per_page=3&page=2',
+      ]);
+    }
+  });
+
+  test('a full last page with no rel="next" is complete when the following page is empty', async () => {
+    // GitHub omits Link on a single-page list, so a list of exactly per_page
+    // items looks like a full page with no next link.
+    const calls: string[] = [];
+    const client = new GitHubClient('tok', (async (u: string): Promise<Response> => {
+      calls.push(u);
+      const page = Number(new URL(u).searchParams.get('page'));
+      return new Response(JSON.stringify(page === 1 ? [{ n: 0 }, { n: 1 }] : []), { status: 200 });
+    }) as never);
+    expect(await client.fetchAllPages<{ n: number }>('/repos/a/b/issues', { perPage: 2 })).toEqual([{ n: 0 }, { n: 1 }]);
+    expect(calls.length).toBe(2);
+  });
+
+  test('a short page with no rel="next" ends the list without a probe', async () => {
+    let calls = 0;
+    const client = new GitHubClient('tok', (async (): Promise<Response> => {
+      calls++;
+      return new Response(JSON.stringify([{ n: 0 }]), { status: 200 });
+    }) as never);
+    expect(await client.fetchAllPages<{ n: number }>('/repos/a/b/issues', { perPage: 2 })).toEqual([{ n: 0 }]);
+    expect(calls).toBe(1);
   });
 
   test('non-array payload without a field throws naming the endpoint', async () => {

@@ -268,9 +268,9 @@ export class GitHubClient {
   /**
    * GET all pages of a paginated list, concatenated. Follows the Link
    * header (rel="next"), which GitHub sends for every paginated endpoint.
-   * Throws GitHubPaginationError when the safety cap is hit so callers
-   * can treat the enumeration as incomplete (never reconcile a truncated
-   * list against the brain).
+   * Throws GitHubPaginationError when the safety cap is hit or a full page
+   * lacks rel="next" while the list continues, so callers treat the
+   * enumeration as incomplete (never reconcile a truncated list).
    */
   async fetchAllPages<T>(
     path: string,
@@ -293,7 +293,18 @@ export class GitHubClient {
       const batch = raw as T[];
       out.push(...batch);
       const next = link !== null ? linkNextUrl(link) : null;
-      if (next === null) break;
+      if (next === null) {
+        // A full page without rel="next" is the exact end of the list or a Link
+        // lost in transit (proxy, cache, API drift): probe the following page.
+        if (batch.length === perPage) {
+          const { data: probe } = await this.fetchJSONWithMeta<Record<string, unknown> | unknown[]>(`${path}${path.includes('?') ? '&' : '?'}per_page=${perPage}&page=${pages + 2}`, opts);
+          const probeRaw = Array.isArray(probe) ? probe : opts.field ? (probe as Record<string, unknown>)[opts.field] : probe;
+          if (!Array.isArray(probeRaw) || probeRaw.length > 0) {
+            throw new GitHubPaginationError(`full page ${pages + 1} of ${path} carried no rel="next" Link but the list continues; refusing to treat a truncated list as complete`);
+          }
+        }
+        break;
+      }
       // Never follow a Link header off api.github.com: the bearer token
       // must not leak to an arbitrary host (codex LOW, round 3).
       if (!next.startsWith('https://api.github.com/')) {
