@@ -1,0 +1,9 @@
+Recorder: notetaker-a
+Recording ID: rec-1016-a
+Title: Acme pricing sync
+Date: 2026-10-16
+
+AI summary (auto-generated):
+- Bob Example and Alice Example agreed to raise widget prices 8% in January.
+- Alice Example will draft the customer notice.
+- Transcript: processing, not yet available.

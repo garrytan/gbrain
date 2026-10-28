@@ -1,0 +1,14 @@
+Recorder: notetaker-a
+Recording ID: rec-1017-a
+Title: Reconciliation fix review
+Date: 2026-10-17 09:30 ET
+Duration: 20m
+Attendees: Alice Example <alice@acme-example.com>, Bob Example <bob@acme-example.com>
+
+[00:00] Alice Example: The new reconciliation job finished in forty minutes on the biggest account.
+[00:30] Bob Example: That's the number I needed. Can we turn it on for everyone next week?
+[01:10] UNKNOWN_2: You could, but the old snapshots will need a backfill first or the totals drift.
+[01:50] Alice Example: Good catch. We'll run the backfill over the weekend.
+[02:20] UNKNOWN_2: I can watch the backfill if someone gives me access to the job runner.
+[02:45] Bob Example: Let's decide on access tomorrow. Alice, send the rollout plan.
+[03:00] Alice Example: Will do, by Monday.
