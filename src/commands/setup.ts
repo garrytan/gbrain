@@ -24,7 +24,7 @@
  */
 import { realpathSync } from 'node:fs';
 import { opError, OperationError } from '../core/ops/contract.ts';
-import { cliRenderContext, renderCliError, renderNotice, type Action, type Notice } from '../core/agent-output.ts';
+import { cliRenderContext, docsUrl, renderCliError, renderNotice, type Action, type Notice } from '../core/agent-output.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
 import { setupFirstRunNotices } from './init-first-run.ts';
 import { hostedOptionMuted, hostedOptionNotice, writeHostedOption } from '../core/onboard/hosted-option.ts';
@@ -617,6 +617,7 @@ async function finish(out: Out, doc: {
     : 'Next: open a new Claude Code session (config is read at session start) and check that /mcp lists gbrain.');
   if (state && !doc.remove) say(out, 'Memory: save what the user asks you to remember as a fact with gbrain remember "<fact>", naming its entity and provenance (MCP tool: remember). '
     + 'World-visible facts (the default) are pushed into new sessions; a private fact is not (local CLI recall only). capture writes a page, not a fact.');
+  if (state && !doc.remove) say(out, `Opt-ins (nothing is on until you turn it on): keys and embeddings, autopilot, dream schedule, connectors, auto-upgrade, release channel: ${docsUrl('INSTALL_FOR_AGENTS.md#opt-ins')}`);
   writeCliNotices(doc.notices.filter((n) => n.code !== 'hosted_option'));
   if (doc.notices.some((n) => n.code === 'hosted_option')) writeHostedOption('setup', new Set());
   return 0;

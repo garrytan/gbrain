@@ -3247,6 +3247,21 @@ only in the due-job list, which runs only when a session starts.
 
 If skipped, minimal defaults are installed automatically.
 
+## Opt-ins
+
+The default install (keyless PGLite, no repo) adds nothing: no daemon, service
+unit, cron entry, connector or dream schedule, and self-upgrade stays `notify`
+(it reports releases and installs none). An upgrade never installs autopilot on
+a brain without one. Turn each on only when the user asks:
+
+- **Keys and embeddings:** the key (Step 2), then
+  `gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024`.
+- **Autopilot** (Postgres): `gbrain autopilot --install --repo <path>`; PGLite uses `gbrain serve`.
+- **Dream schedule:** cron `0 2 * * * <wrapper> dream` ([wrapper](docs/guides/cron-schedule.md#calling-gbrain-unattended)).
+- **Connectors:** `gbrain connectors auth <provider>` ([guide](docs/guides/chat-connectors.md)).
+- **Auto-upgrade:** `gbrain config set self_upgrade.mode auto`.
+- **Release channel:** `gbrain config set self_upgrade.channel latest` (every release) or `stable`.
+
 ## Step 7: Recurring Jobs
 
 Optional: skip this entire step for memory-only installs. Ask before scheduling
@@ -3290,11 +3305,8 @@ timeout of at least 10 s. The wrapper and its rules:
   paused), 2 the daemon took itself out of rotation. Filesystem-only, so it
   works during DB outages.
 - **Auto-update** (daily): `gbrain check-update --json` (tell user, never auto-install).
-- **Dream cycle** (nightly): `gbrain dream` runs the 8-phase overnight maintenance cycle.
-  Entity sweep, citation fixes, memory consolidation, plus overnight conversation
-  synthesis and cross-session pattern detection. One cron-friendly command. This is what
-  is an opt-in maintenance capability. See `docs/guides/cron-schedule.md` for the
-  full protocol.
+- **Dream cycle** (nightly): `gbrain dream`, the opt-in maintenance cycle
+  ([Opt-ins](#opt-ins), [protocol](docs/guides/cron-schedule.md)).
 - **Weekly**: `gbrain doctor --json && gbrain embed --stale`
 
 ## Step 8: Integrations
@@ -11137,89 +11149,6 @@ need the user's confirmation (documented legacy; changing it is a v2 item).
 
 The per-command exit changes that came with contract v1 (v0.60.46.0) are in
 the [CHANGELOG](../../CHANGELOG.md#exit-code-changes-by-command).
-
----
-
-## docs/integrations/reliability-repair.md
-
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/integrations/reliability-repair.md
-
-# Reliability repair
-
-Two data-corruption classes can affect a brain on real Postgres or Supabase:
-JSONB values stored double-encoded, and markdown bodies truncated at import.
-`gbrain doctor` detects both, and the standalone `gbrain repair-jsonb`
-command fixes the mechanically fixable class. PGLite brains are not affected
-(PGLite parses text to jsonb natively, so the double-encode never happens
-there).
-
-## What the checks look for
-
-**JSONB double-encode.** Writing `${JSON.stringify(x)}::jsonb` through
-postgres.js stores a JSONB *string literal* instead of an object.
-`frontmatter ->> 'key'` returns NULL; GIN indexes are ineffective. Columns
-checked: `pages.frontmatter`, `raw_data.data`, `ingest_log.pages_updated`,
-`files.metadata`. The write-side rule that prevents it is in
-`docs/ENGINES.md` ("JSONB writes: never double-encode").
-
-**Markdown body truncation.** A page whose `compiled_truth` is much shorter
-than its `raw_data.data ->> 'content'` lost body content at import time (for
-example, when a `---` horizontal rule was treated as a body/timeline
-delimiter). Wiki-style pages with multiple `##`/`###` sections are the usual
-casualty.
-
-## Detect
-
-```
-gbrain doctor
-```
-
-Reports two checks:
-
-- `jsonb_integrity` — counts double-encoded rows per table and points you
-  at `gbrain repair-jsonb`.
-- `markdown_body_completeness` — heuristic for pages whose `compiled_truth`
-  is suspiciously short compared to `raw_data.data ->> 'content'`. A page
-  stored in segments has no `compiled_truth` column to compare, so it is not
-  checked; the check reports how many with `skipped_segmented: N`.
-
-## Repair
-
-For JSONB (mechanically fixable):
-
-```
-gbrain repair-jsonb
-```
-
-Runs `UPDATE <table> SET <col> = (<col>#>>'{}')::jsonb WHERE jsonb_typeof(<col>) = 'string'`
-across every affected column. Idempotent. Second run reports 0 rows. Use
-`--dry-run` to preview, `--json` for structured output. The `v0_12_2`
-version migration runs this automatically on `gbrain upgrade`.
-
-For truncated markdown bodies (source-dependent): the importer skips a file
-whose content hash has not changed, and trailing whitespace is trimmed before
-hashing, so a re-import needs a real edit to the page body. Make the edit, then
-re-import:
-
-```
-gbrain sync                  # git-backed brain: commit the edit first
-gbrain sync --working-tree   # or import the uncommitted working tree
-gbrain import <brain-root> --fresh   # or re-import the root you originally imported;
-                                     # --fresh ignores a resume checkpoint that would skip the path
-```
-
-gbrain cannot recover content that is already lost if you no longer have
-the source markdown file. `gbrain doctor` tells you which pages look short;
-you decide whether to re-import from source or accept the truncation.
-
-## Verify
-
-```
-gbrain doctor
-```
-
-All four `jsonb_integrity` rows should read zero. `markdown_body_completeness`
-should match your expectations for the corpus.
 
 ---
 

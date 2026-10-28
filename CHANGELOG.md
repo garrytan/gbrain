@@ -10,6 +10,25 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A fresh install and an upgrade add nothing you didn't turn on.**
+
+The default install (keyless PGLite, no repo) already started no daemon and installed no service. That is now locked by tests for `gbrain setup claude-code`, `gbrain setup codex` and `gbrain init --pglite --no-embedding`: no process outlives the command, no systemd unit, launchd plist, crontab entry or autopilot script is written, no connector is connected, and self-upgrade stays in `notify` mode.
+
+One upgrade path did install a daemon. On a Postgres brain with `sync.repo_path` set and no autopilot, the v0.11.0 migration's Phase F ran `gbrain autopilot --install`. That migration runs on `apply-migrations --yes`, `post-upgrade` and package postinstall, so a brain that never asked for autopilot could get one. Phase F now installs nothing on a brain without an autopilot: it is skipped (reason `not_installed`), prints the install command and records it, and `gbrain doctor` shows it as a `minions_migration` line until you run it. A brain that already runs autopilot gets it reinstalled as before, and an upgrade still rewrites only a service unit that is already installed.
+
+### For operators
+
+- INSTALL_FOR_AGENTS.md has one **Opt-ins** list (keys and embeddings, autopilot, dream schedule, connectors, auto-upgrade, release channel), one command each, and `gbrain setup <harness>` prints one line pointing to it.
+- To get autopilot on a brain that has none, run the command doctor shows: `gbrain autopilot --install --yes --repo <path>`.
+- `docs/integrations/reliability-repair.md` is linked from llms-full.txt instead of inlined, to stay under the size budget.
+
+### Tests
+
+- `test/boring-default.test.ts`: fresh setup (both harnesses) and init add nothing; `post-upgrade` without the opt-out on repo-less and repo brains installs no unit; an installed unit is the only one rewritten.
+- `test/apply-migrations-safety.serial.test.ts`: Phase F with `sync.repo_path` set and no autopilot installs none (the postinstall argv); with one installed it reinstalls as before.
+
 ## [0.60.477.0] - 2026-10-28
 
 **A trust release confirms only what its preview showed.**

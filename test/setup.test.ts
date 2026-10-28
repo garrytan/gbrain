@@ -108,6 +108,10 @@ describe('gbrain setup claude-code: install lifecycle', () => {
     expect(next).toBeGreaterThan(-1);
     expect(block).toBeGreaterThan(next);
     expect(r.stdout.match(/\[AGENT\]/g)).toHaveLength(2);
+    const optIns = r.stdout.indexOf('Opt-ins (nothing is on until you turn it on)');
+    expect(optIns).toBeGreaterThan(next);
+    expect(optIns).toBeLessThan(block);
+    expect(r.stdout.match(/INSTALL_FOR_AGENTS\.md#opt-ins/g)).toHaveLength(1);
     const hosted = r.stdout.indexOf('[hosted_option]');
     expect(r.stdout.indexOf('[first_run_decisions]')).toBeGreaterThan(next);
     expect(hosted).toBeGreaterThan(r.stdout.indexOf('[first_run_decisions]'));
