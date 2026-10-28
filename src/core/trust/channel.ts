@@ -152,15 +152,18 @@ export function frontmatterTrustCaps(frontmatter: Record<string, unknown> | null
  * backfill of claimed sources (trust/claim.ts). `fm` is a trusted alias or
  * column expression, never caller input; every literal comes from the lists
  * above. Kept in step with `frontmatterTrustCaps` by test/trust-claim.test.ts.
+ * `ignoreUnknownMarker` drops a `trust_tier: unknown` marker from the caps: the
+ * backfill treats it as no signal, since an old agent edit stamped it on pages
+ * that were only unclassified (marker-repair.ts).
  */
-export function frontmatterTrustCapsSql(fm: string): string[] {
+export function frontmatterTrustCapsSql(fm: string, opts: { ignoreUnknownMarker?: boolean } = {}): string[] {
   const list = (values: readonly string[]) => values.map(v => `'${v.replace(/'/g, "''")}'`).join(',');
   const text = (key: string, base = fm) => `(CASE WHEN jsonb_typeof(${base}->'${key}') = 'string' THEN NULLIF(btrim(${base}->>'${key}', E' \\t\\n\\r'), '') END)`;
   const stamp = (key: string) => `CASE WHEN ${text(key)} IN (${list(EXTERNAL_CAPTURE_KINDS)}) THEN ${TRUST_TIER_RANK.external_untrusted}
     WHEN ${text(key)} LIKE 'mcp:%' OR ${text(key)} IN (${list(AGENT_CAPTURE_KINDS)}) THEN ${TRUST_TIER_RANK.agent_written}
     WHEN ${text(key)} LIKE 'connector:%' OR ${text(key)} IN (${list(CONNECTOR_SOURCE_KINDS)}) THEN ${TRUST_TIER_RANK.external_untrusted} END`;
   return [
-    `CASE WHEN jsonb_typeof(${fm}->'trust_tier') = 'string' THEN NULLIF(${trustRankSql(`(${fm}->>'trust_tier')`)}, 0) END`,
+    `CASE WHEN jsonb_typeof(${fm}->'trust_tier') = 'string'${opts.ignoreUnknownMarker ? ` AND ${fm}->>'trust_tier' <> 'unknown'` : ''} THEN NULLIF(${trustRankSql(`(${fm}->>'trust_tier')`)}, 0) END`,
     ...['source_kind', 'ingested_via', 'captured_via'].map(stamp),
     `CASE WHEN jsonb_typeof(${fm}->'transcript_import') IN ('object', 'array') THEN
       CASE WHEN lower(${text('harness', `(${fm}->'transcript_import')`)}) IN (${list(OWN_SESSION_HARNESSES)}) THEN ${TRUST_TIER_RANK.agent_written} ELSE ${TRUST_TIER_RANK.external_untrusted} END END`,
