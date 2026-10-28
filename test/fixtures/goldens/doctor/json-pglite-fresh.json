@@ -1515,6 +1515,30 @@
         {
           "category": "ops",
           "details": {
+            "bound": 3,
+            "enabled": true,
+            "items": [],
+            "pending": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No deferred dream writes",
+          "name": "dream_write_deferred",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "bound": 3,
+            "enabled": true
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "The embedding signature restamp is running clean",
+          "name": "embedding_restamp_stalled",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
             "count": 0,
             "floor": "0.60.5.0",
             "hosts": [],

@@ -401,8 +401,11 @@ gbrain config set dream.breaker.max_dead_submissions 5   # raise the limit; 0 di
   cancelled before any work does not. A completed run resets the count, so only
   deaths in a row trip it; reset a tripped source with
   `gbrain dream reset-key 'dream:patterns:source:<source id>'`.
-- Not covered: a transcript that keeps growing gets a new content-hashed key each
-  cycle, and patterns runs outside maintenance carry no key.
+- A transcript that keeps growing gets a new content-hashed key each cycle, so
+  synthesize deaths also count per transcript under
+  `dream:synth-v2:@file:<source id>:<file>` once they span two content keys; the same
+  limit applies. `gbrain dream reset-key --list` prints it, and reset it the same way.
+- Not covered: patterns runs outside maintenance carry no key.
 - If the count query fails, the breaker is skipped for that run with a warning, the
   same posture as the synthesize daily cap.
 

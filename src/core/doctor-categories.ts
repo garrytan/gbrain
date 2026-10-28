@@ -311,6 +311,9 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'brainstorm_health',
   'connectors',
   'dream_paid_loop',
+  // W3 (GBRA-224): self-heals that reached their bound (doctor/checks/dream-write-deferred.ts, embedding-restamp.ts).
+  'dream_write_deferred',
+  'embedding_restamp_stalled',
   'connection',
   'db_only_collector_collision',
   'federation_health',

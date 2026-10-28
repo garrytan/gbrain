@@ -10,6 +10,29 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Dream and embedding maintenance fix their own routine noise for free, and tell you only when that stops working.**
+
+A self-hosted nightly cycle could end `partial` for reasons that needed no one: a purge or consolidate write accepted but still committing after its 5-second wait, a synthesize window with nothing new in it, or pages whose vectors already belonged to the current model but carried no signature, so they read as another model's space and invited a paid re-embed. Each of these now heals inside the cycle with no model or provider call, within a fixed bound, with a record of what it did and a config switch to turn it off. When a heal hits its bound, a doctor check says so.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A purge or consolidate write is accepted but still pending after the publish wait | the phase failed and the cycle ended `partial` | the phase warns `dream_write_deferred` with the receipt id; the next pass reads that receipt before it submits anything for the source. After 3 passes still pending, doctor `dream_write_deferred` names the receipt |
+| Every transcript in the synthesize window is already synthesized | triage, the manifest context and the child queue still ran | the phase returns `no_candidates` before any of that |
+| A transcript grows between runs that keep dying | each run had a new content key, so the 3-deaths breaker never tripped | deaths also count per transcript (`dream:synth-v2:@file:<source>:<file>`); the same 3-in-24h limit applies |
+| `gbrain dream reset-key` on a `dream:phase:` key that `--list` printed | refused as not a breaker key | resets it |
+| Pages whose chunks already hold current-model vectors but have no or an old signature | read as another model's space until a paid drain stamped them | the embed phase stamps them first, up to 500 pages a run, with no provider call |
+| A soft-deleted page keeps unembedded chunks | health's embedding coverage dropped | coverage counts live pages only, like `missing_embeddings` |
+
+### For operators
+
+- New doctor checks `dream_write_deferred` and `embedding_restamp_stalled` (read-only). Both are meant for the page class of `gbrain doctor --alert`.
+- New switches, on by default: `dream.write_deferral.enabled` and `embed.restamp.enabled`. Setting either to `false` restores the old behavior.
+- Every heal writes a row to the `heal.audit` config record (last 200 rows, 30 days).
+- Nothing runs on upgrade: the restamp runs only in the maintenance cycle's embed phase, and repo-less brains get the same behavior.
 ## [0.60.477.0] - 2026-10-28
 
 **A trust release confirms only what its preview showed.**

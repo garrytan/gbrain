@@ -32,9 +32,10 @@ import { sameInstantTies, type SameInstantTie } from '../../facts/claim-ties.ts'
 import { createHash } from 'node:crypto';
 import { isAborted } from '../../abort-check.ts';
 import { classifyItemFailure, ItemRun } from '../../item-failure.ts';
-import { maintenancePreflight, submitMaintenanceConsolidation } from '../../persistence/prepared-maintenance.ts';
+import { maintenancePreflight, submitMaintenanceConsolidation, type MaintenanceAuthority } from '../../persistence/prepared-maintenance.ts';
 import { clearConsolidationTies, consolidationRestored, factPreimages, holdConsolidationTie, recordConsolidationGeneration } from '../../generations/adapters/fact-rows.ts';
 import { managedPersistenceEnabled } from '../../persistence/ownership.ts';
+import { DreamWriteDeferralPass } from '../dream-write-deferral.ts';
 import { declareDerivation, derivedMaintenanceTransaction, derivedWriteTrust, isExternalTier, readTaintInputs } from '../../trust/taint.ts';
 import { DEFAULT_WRITE_GATE_CONFIG, type WriteGateConfig } from '../../write-gate.ts';
 import { loadImportSanityConfig } from '../../import-screen.ts';
@@ -87,6 +88,24 @@ async function disabledSkip(engine: BrainEngine, opts: ConsolidatePhaseOpts): Pr
 
 /** At most this many failed buckets are listed in `details.bucket_failures`; `buckets_failed` counts them all. */
 const BUCKET_FAILURE_SAMPLES = 10;
+type BucketFailure = { source_id: string; entity_slug: string; code: string; message: string; fix: Action };
+
+const rerunFix = (sourceId: string): Action => ({ argv: ['gbrain', 'dream', '--phase', 'consolidate', '--source', sourceId], consent: [], actor: 'agent',
+  requires_exclusive: false, why: 'Reruns consolidate for this source; the bucket consolidates once its entity and evidence pages are readable again.' });
+
+/**
+ * W3 (#7587): consolidations an earlier pass left pending that ended failed, as bucket failures (samples pushed onto
+ * `failures`); returns how many. A source whose receipt is still pending submits nothing this pass (`hold`), and a
+ * write still pending after its wait defers the rest of its source (`defer`); deferral off restores the failing phase.
+ */
+function reconciledBucketFailures(deferral: DreamWriteDeferralPass | null, failures: BucketFailure[]): number {
+  const failed = deferral?.reconcile.failed ?? [];
+  for (const entry of failed.slice(0, Math.max(0, BUCKET_FAILURE_SAMPLES - failures.length))) {
+    failures.push({ source_id: entry.source_id, entity_slug: entry.subject.slice(entry.source_id.length + 1), code: entry.code,
+      message: `The consolidation an earlier pass left pending (request_id ${entry.request_id}) ended with ${entry.code}: ${entry.message}`.slice(0, 300), fix: rerunFix(entry.source_id) });
+  }
+  return failed.length;
+}
 
 export const CLUSTER_THRESHOLD_KEY = 'cycle.consolidate.cluster_threshold';
 export const DEFAULT_CLUSTER_THRESHOLD = 0.85;
@@ -202,8 +221,9 @@ export async function runPhaseConsolidate(
   }
 
   const run = new ItemRun('consolidate.buckets');
-  let bucketsFailed = 0;
-  const bucketFailures: Array<{ source_id: string; entity_slug: string; code: string; message: string; fix: Action }> = [];
+  const bucketFailures: BucketFailure[] = [];
+  const deferral = await DreamWriteDeferralPass.start(engine, 'consolidate', managed && !dryRun);
+  let bucketsFailed = reconciledBucketFailures(deferral, bucketFailures);
   for (const b of buckets) {
     // #1972: bail at the top of the bucket loop on abort. Each prior bucket's
     // per-row INSERT/consolidate is already committed, so breaking returns a
@@ -216,9 +236,11 @@ export async function runPhaseConsolidate(
 
     // One bucket the writer refuses (an entity or evidence page made private or deleted while its world facts
     // stay active) is counted and sampled; later buckets still consolidate. Abort, budget and lost-connection
-    // errors stay run-scoped, and an accepted write still publishing keeps ending the phase as before.
+    // errors stay run-scoped; an accepted write still publishing defers its source (W3), or ends the phase with deferral off.
+    if (deferral?.hold(b.source_id)) continue;
+    let maintenance: MaintenanceAuthority | null = null;
     try {
-      const maintenance = managed && !dryRun ? await maintenancePreflight(engine, b.source_id) : null;
+      maintenance = managed && !dryRun ? await maintenancePreflight(engine, b.source_id) : null;
       const candidates = await engine.listFactsByEntity(b.source_id, b.entity_slug, {
         activeOnly: true,
         unconsolidatedOnly: true,
@@ -394,20 +416,18 @@ export async function runPhaseConsolidate(
       }
       run.succeed();
     } catch (error) {
-      if (classifyItemFailure(error).scope === 'pending') throw error;
+      if (classifyItemFailure(error).scope === 'pending') { if (maintenance && await deferral?.defer(error, { sourceId: b.source_id, subject: `${b.source_id}/${b.entity_slug}`, principal: maintenance.writer.principal })) continue; throw error; }
       const failure = run.fail(`${b.source_id}:${b.entity_slug}`, error);
       bucketsFailed += 1;
       if (bucketFailures.length < BUCKET_FAILURE_SAMPLES) {
-        bucketFailures.push({ source_id: b.source_id, entity_slug: b.entity_slug, code: failure.code, message: failure.message.slice(0, 300),
-          fix: { argv: ['gbrain', 'dream', '--phase', 'consolidate', '--source', b.source_id], consent: [], actor: 'agent', requires_exclusive: false,
-            why: 'Reruns consolidate for this source; the bucket consolidates once its entity and evidence pages are readable again.' } });
+        bucketFailures.push({ source_id: b.source_id, entity_slug: b.entity_slug, code: failure.code, message: failure.message.slice(0, 300), fix: rerunFix(b.source_id) });
       }
     }
   }
 
   return {
     phase: 'consolidate',
-    status: bucketsFailed > 0 || clustersHeldSameInstant > 0 ? 'warn' : factsConsolidated === 0 && clustersSkippedRetired > 0 ? 'skipped' : 'ok',
+    status: bucketsFailed > 0 || clustersHeldSameInstant > 0 || deferral?.skipped ? 'warn' : factsConsolidated === 0 && clustersSkippedRetired > 0 ? 'skipped' : 'ok',
     duration_ms: 0,
     summary: (dryRun
       ? `(dry-run) would promote ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} buckets`
@@ -415,7 +435,7 @@ export async function runPhaseConsolidate(
         (clustersSkippedRetired ? `; skipped ${clustersSkippedRetired} clusters with retired takes` : '') +
         (clustersGateHeld ? `; held ${clustersGateHeld} takes for write-gate review` : '') +
         (clustersGateRejected ? `; write gate rejected ${clustersGateRejected} takes` : '') +
-        (bucketsFailed ? `; ${bucketsFailed} bucket(s) failed (details.bucket_failures)` : '')) +
+        (bucketsFailed ? `; ${bucketsFailed} bucket(s) failed (details.bucket_failures)` : '') + (deferral?.skipped ? `; deferred ${deferral.skipped} bucket(s): an accepted write is still publishing (details.write_deferral)` : '')) +
       (clustersHeldSameInstant ? `; held ${clustersHeldSameInstant} cluster(s) whose typed claims state one metric for the same effective time (details.same_instant_clusters)` : ''),
     details: {
       dryRun,
@@ -433,7 +453,7 @@ export async function runPhaseConsolidate(
       clusters_held_same_instant: clustersHeldSameInstant,
       same_instant_clusters: sameInstantClusters,
       buckets_failed: bucketsFailed,
-      bucket_failures: bucketFailures,
+      bucket_failures: bucketFailures, ...deferral?.detailFields('buckets_deferred'),
       ...(factsConsolidated === 0 && clustersSkippedRetired > 0 ? { reason: 'retired_take' } : {}),
     },
   };
