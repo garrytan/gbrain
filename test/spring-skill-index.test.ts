@@ -20,7 +20,10 @@ import { BUNDLED_SKILL_FILES } from '../src/core/skills/bundled-skills.generated
 import { bundledCatalogId, bundledSkills, bundledSkillTriggers } from '../src/core/skills/bundled.ts';
 import { renderSkillIndexBlock, SKILL_INDEX_BUDGET_BYTES, SkillIndexTooLarge, skillIndexCatalog } from '../src/core/skills/spring-index.ts';
 import { renderBundledSkillsModule } from '../scripts/generate-bundled-skills.ts';
-import { loaderAllowRule } from '../src/core/setup/skills-block.ts';
+import { loaderAllowRule, renderSkillsBlock, SKILLS_BLOCK_BEGIN, SKILLS_BLOCK_END } from '../src/core/setup/skills-block.ts';
+import { checkResolvable } from '../src/core/check-resolvable.ts';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
 const OPTS = { refresh: 'gbrain setup claude-code --instructions-only', optOut: 'gbrain setup claude-code --instructions-only --skill-loading off' };
@@ -30,6 +33,18 @@ const entries = (block: string) => block.split('\n').filter(l => l.startsWith('-
 const SKILLS_DIR = join(import.meta.dir, '..', 'skills');
 
 describe('spring-loaded skill index', () => {
+  test('a workspace AGENTS.md carrying the index is not read as resolver rows for workspace skills', () => {
+    const ws = mkdtempSync(join(tmpdir(), 'spring-resolver-'));
+    try {
+      mkdirSync(join(ws, 'skills'));
+      writeFileSync(join(ws, 'AGENTS.md'), `# Agent\n\n${SKILLS_BLOCK_BEGIN}\n${renderSkillsBlock('openclaw', LAUNCHER)}\n${SKILLS_BLOCK_END}\n`);
+      const report = checkResolvable(join(ws, 'skills'));
+      expect(report.issues.filter(i => i.type === 'missing_file' || i.type === 'orphan_trigger')).toEqual([]);
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
   test('a launcher path with spaces, an apostrophe or shell characters prints as one shell word the index and the loader rule share', () => {
     for (const launcher of ["/home/alice-example/o'brien dir/gbrain", '/opt/a b/$(x)/gbrain', '/opt/semi;colon/gbrain']) {
       const block = renderSkillIndexBlock(bundledSkills('owner'), launcher, OPTS);

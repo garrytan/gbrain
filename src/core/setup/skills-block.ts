@@ -33,10 +33,10 @@ import { ensureGitExcluded } from '../context/compiled-core.ts';
 import { bundledCatalogId, bundledSkills, type SkillAudience } from '../skills/bundled.ts';
 import { shellQuote } from '../shell-quote.ts';
 import { renderSkillIndexBlock, SKILL_INDEX_VERSION, SkillIndexTooLarge, skillIndexCatalog } from '../skills/spring-index.ts';
+import { SKILLS_BLOCK_BEGIN, SKILLS_BLOCK_END } from '../skills/index-block.ts';
 import { BRAIN_FIRST_END, brainFirstTargetAt, CURSOR_HEAD, direntExists, readBrainFirstLedger, writeUnlessChanged, type BrainFirstHarness, type BrainFirstTarget } from './brain-first.ts';
 
-export const SKILLS_BLOCK_BEGIN = '<!-- gbrain:skills:begin -->';
-export const SKILLS_BLOCK_END = '<!-- gbrain:skills:end -->';
+export { SKILLS_BLOCK_BEGIN, SKILLS_BLOCK_END };
 export const SKILL_LOADING_ENV = 'GBRAIN_SKILL_LOADING';
 export const SKILL_LOADING_MODES = ['off', 'spring'] as const;
 export type SkillLoading = (typeof SKILL_LOADING_MODES)[number];
