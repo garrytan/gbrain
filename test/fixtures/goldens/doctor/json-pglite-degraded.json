@@ -8,6 +8,12 @@
     ],
     "exit_code": 0,
     "report": {
+      "alert": {
+        "docs": "docs/guides/troubleshooting.md#doctor-alert",
+        "items": [],
+        "level": "none",
+        "unknown": []
+      },
       "brain_checks_score": 90,
       "budget_ms": "<volatile>",
       "category_scores": {

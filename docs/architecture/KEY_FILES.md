@@ -12,7 +12,7 @@ rg -n -F 'src/core/ops/pages.ts' docs/architecture/key-files/
 Ranges use each entry's first path; an entry can document several
 files. Search when a path crosses subsystems.
 Edit the subsystem entry, not this page, when behavior changes.
-Keep entries current-state: history belongs in `CHANGELOG.md` and Git.
+Keep entries current-state: history belongs in CHANGELOG and Git.
 Where a new storage method, migration, doctor check, command, route or sync
 phase goes: [CONTRIBUTING.md](../../CONTRIBUTING.md#where-does-my-change-go).
 A branch from before refactor wave 1 follows the generated
@@ -28,7 +28,7 @@ link it here rather than raising the cap.
 | [Company-brain ingestion](key-files/company-brain.md) | Inspection, admission, receipts, derived relationships and schema; [operator guide](../guides/company-brain-ingestion.md) |
 | [Agent operator contract](key-files/agent-contract.md) | `agent-output.ts`, error registry + docs, notice ledger, `isCallable`, `--json` guard, contract scanner |
 | [Commands (1/6)](key-files/commands-1.md) | `src/commands/agent-logs.ts` through `src/commands/db-repair.ts` |
-| [Commands (2/6)](key-files/commands-2.md) | `src/commands/doctor.ts` and `src/commands/doctor/` |
+| [Commands (2/6)](key-files/commands-2.md) | `doctor.ts`, `doctor/`; [alert](key-files/doctor-alert.md) |
 | [Commands (2/6, continued)](key-files/commands-2-continued.md) | `doctor/checks/routing-federation.ts`, `git-convergence.ts`, `keyword-plan.ts`, `dream-retriage.ts` to `embed.ts` |
 | [Commands (3/6)](key-files/commands-3.md) | `src/commands/engine-status.ts` through `src/commands/extract.ts` |
 | [Commands (3/6, continued)](key-files/commands-3-continued.md) | `src/commands/extract-timeline-db.ts` through `src/commands/frontmatter-install-hook.ts` |

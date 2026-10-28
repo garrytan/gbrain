@@ -146,6 +146,8 @@ export const SECTIONS: DocSection[] = [
         description:
           "5-minute walkthrough: fork the bundled pack, add a custom `researcher` type, backfill existing pages via `gbrain schema sync --apply`, prove the T1.5 wiring via `gbrain whoknows`.",
         path: "docs/schema-author-tutorial.md",
+        // Linked, not inlined: the doctor --alert guide (troubleshooting, exit codes, cron) put llms-full.txt over FULL_SIZE_BUDGET.
+        includeInFull: false,
       },
       {
         title: "docs/guides/system-one.md",

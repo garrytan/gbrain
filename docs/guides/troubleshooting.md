@@ -12,6 +12,9 @@
 
 | Symptom | Next step | Who acts | Consent | Verify |
 |---|---|---|---|---|
+| `gbrain doctor --alert` exits 17 (`doctor_alert_act`, `alert.level: act`) | follow each `alert.items[].fix` in the `--json` document; it is that check's own fix, with its consent and actor ([doctor alert](#doctor-alert-act)) | the item's `fix.actor` | the item's `fix.consent` | `gbrain doctor --alert --json` exits 0 |
+| `gbrain doctor --alert` exits 18 (`doctor_alert_unknown`, `alert.level: unknown`), or an agent cron pages "health unknown twice in a row" | run each `alert.unknown[].fix` (it measures that check alone); a check that keeps running out of time needs `--budget-ms` raised or `gbrain doctor --alert --tier standard --json` ([doctor alert](#doctor-alert-unknown)) | agent | none | `gbrain doctor --alert --json` exits 0 and `alert.consecutive_unknown` is 0 |
+| Doctor's score drops (resolver_health fails, skill_currency warns "new built-in skill(s) available") only when run from an agent's own workspace | nothing to fix: since the W4 scoping both report `not a gbrain skills folder (<path>)` for a skills folder gbrain did not install; to grade it on purpose pass `--skills-dir <path>` ([doctor alert](#doctor-alert)) | agent | none | `gbrain doctor --only resolver_health --json` |
 | A withdrawal committed but a large page's file still shows the withdrawn row; writer status lists its mirror parked with [`segmented_mirror_writer_gate`](write-refusals.md#segmented_mirror_writer_gate), or an effect retrying with [`recovery_version_unsupported`](write-refusals.md#recovery_version_unsupported) (or `effect_unavailable` on v0.60.290.0) holds every write on the worktree | `gbrain upgrade` on the hosts the refusal or a doctor `segmented_storage` warning names (for `recovery_version_unsupported`, the owner host; doctor's information case, this host's own superseded pre-upgrade writes, does not hold the mirror), then restart their serve, sync and worker processes. A gated mirror resumes by itself once the older writes are 7 days old; never delete a recovery record or its staging file | brain host | none | `gbrain sources writer status --source <source> --json` shows no parked or retrying mirror |
 | The dream cycle's purge phase fails every night with `managed_purge_failed` (`42P01`, relation `query_cache` does not exist), or doctor `schema_missing_tables` warns | upgrade (#6911: the purge skips a missing rebuildable cache), then preview recreating it: `gbrain repair missing-tables` ([missing tables](repair.md#missing-tables)); apply the printed `--apply --expect <hash>` command. Pages parked by the earlier failures: `gbrain pages purge-deleted --retry-parked --dry-run`, then without `--dry-run` | agent, after the user agrees | `destructive` (the parked-page retry purges them) | `gbrain doctor --only schema_missing_tables --json` reports ok |
 | A managed source's autopilot freshness `sync` jobs each land about one page, or `sources status` says `parked` while a sync job runs | upgrade (#6706: sync jobs drain to their deadline and count as the source's live drain), then restart `gbrain jobs work` / the supervisor so the worker loads the handler; a job result with `incomplete: true` names its follow-up (`continuation_job_id`) or the next step in `next` | agent | none | `gbrain sync status --source <id> --json` shows `live_job_id` or a cursor at `done`; `gbrain jobs get <id> --json` shows `outcome` |
@@ -712,6 +715,68 @@ the phase, its blocker key and back-off, or the last failed job.
    streak, and a phase that fails for a different reason starts a new one.
 3. Confirm with `gbrain doctor --only global_maintenance_stalled`: it is `ok`
    after a pass completes with the phase passing.
+
+## Doctor alert
+
+<a id="doctor-alert"></a>
+
+**What should an agent cron page on?** `gbrain doctor --alert`, never
+`health_score`. The score is 100 − 20 per failing check − 5 per warning check
+over every check, so an advisory skill-routing warning costs as much as an
+outage, and a healthy brain can read 30. `--alert` runs only the page-class
+checks, fresh, under a 30 s budget (`--budget-ms` overrides it; `--tier
+standard` grades a full run instead), and prints one verdict in
+`alert.level`:
+
+| Exit | `alert.level` | Meaning |
+|---|---|---|
+| 0 | `none` | every page-class check ran fresh and none needs anyone |
+| 17 | `act` | a page-class check needs someone now; `alert.items` carry its fix |
+| 18 | `unknown` | nothing to act on, but a page-class check did not run fresh; `alert.consecutive_unknown` counts the runs in a row |
+
+`act` wins over `unknown`; both lists are always kept. Page on 17, and on 18
+from the second run in a row. Exit 1 means doctor itself failed. The counter
+lives per brain in `doctor-alert-state.json` under the gbrain home; a
+read-only home still gets a verdict (`consecutive_unknown: null` when the
+state can be neither read nor written). Remote reports (`run_doctor`) omit
+check messages and name a host-admin step instead of local commands.
+
+The page class (`PAGE_CHECK_LEVELS` in `src/core/doctor-categories.ts`); every
+other check, skill checks included, never pages:
+
+| Condition | Check | Pages on |
+|---|---|---|
+| database unreachable | `connection` | fail |
+| migrations pending or wedged | `schema_version`, `minions_migration` | warn |
+| tables the applied migrations created hold user data and are missing | `schema_missing_tables` | fail |
+| writes failing | `persistence_terminal_failures` | warn |
+| writes wedged | `persistence_write_stall` | warn |
+| more than one gbrain build running | `runtime_build_skew` | fail |
+| managed sync stopped or not moving past its window | `managed_sync_blocked`, `managed_sync_not_moving` | fail |
+| brain-wide maintenance stalled a week | `global_maintenance_stalled` | fail |
+| double-encoded JSONB rows | `jsonb_integrity` | warn |
+| public schema readable with the anon key | `rls` | fail |
+| a tripped paid-loop breaker | `dream_paid_loop` | warn |
+
+<a id="doctor-alert-act"></a>
+
+**Exit 17 (`act`).** Each item has `check`, a stable `code`, `status`, the
+check's `message`, `docs` and the check's own rendered `fix` (`next`,
+`command` or MCP call, `consent`, `actor`, `verify`). Follow `fix.next` as
+everywhere else: run it, ask the user first, or tell the user or brain host to
+run it. Then re-run `gbrain doctor --alert --json`.
+
+<a id="doctor-alert-unknown"></a>
+
+**Exit 18 (`unknown`).** Each item names the `check`, the `reason` it is not
+fresh (`budget`, `bound`, `errored`, `last_known`, `not_run`), the
+`budget_ms` it ran under and a `fix` that measures it alone. `not_run` on
+every database check means the database checks did not run: read the
+`connection` check (a live `gbrain serve` holding a PGLite brain is the
+common case: run the alert where the serve's brain is reachable, or stop the
+serve first). A check that keeps hitting its budget on a large brain needs a
+larger `--budget-ms` in the cron line. A thin client refuses `--alert`
+(`doctor_tier_unavailable`): schedule it on the brain host.
 
 ## Content-drift sweep
 

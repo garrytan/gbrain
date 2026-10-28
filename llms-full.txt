@@ -4526,6 +4526,8 @@ that work in this conversation.
 | 12 | `no_results`: a recall or entity lookup matched nothing (only with `GBRAIN_FAIL_ON_EMPTY=1`) | treat it as a miss, not a failure |
 | 13 | `pending_verify`: a harness wired, verification waits for the serve | start the serve, then run `fix.command` |
 | 14 | `bootstrap_cleanup_pending`: a harness is wired; old shared-skills enrollments or token ids still await cleanup | follow `fix.next` (re-run, or relay the owner's revoke step), then re-run |
+| 17 | `doctor_alert_act`: `gbrain doctor --alert` found a page-class check that needs someone now | follow each `alert.items[].fix` in the `--json` document |
+| 18 | `doctor_alert_unknown`: `gbrain doctor --alert` found nothing to act on, but a page-class check did not run fresh | run each `alert.unknown[].fix`; page only when `alert.consecutive_unknown` is 2 or more |
 | 75 | another runner holds the migration lock | wait, then retry |
 | 124 | the command's deadline elapsed | inspect what is still running |
 | 130 | interrupted | ask the user whether to re-run |
@@ -6814,243 +6816,6 @@ Note: there is no SQLite engine. PGLite uses the same SQL as Postgres, so no sep
 
 ---
 
-## docs/schema-author-tutorial.md
-
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/schema-author-tutorial.md
-
-# Tutorial: Build your first schema pack
-
-You'll fork the bundled `gbrain-base` pack, add a custom `researcher` page type, import a handful of placeholder researcher pages, backfill their `page.type` column with one command, then prove the wiring works by running `gbrain whoknows` and seeing your new type surface in results. End state: a forked-and-active pack on disk, ~5 pages typed as `researcher`, and a query that proves the pack-aware routing fires end-to-end.
-
-**Want the WHY before the HOW?** Read [`what-schemas-unlock.md`](what-schemas-unlock.md) first — 7 concrete use cases (4000 invisible meetings, the founder ops brain, the research brain, the legal brain, the team brain, agent-as-co-curator) plus the structural argument for why types matter at query time. Then come back here for the 5-minute walkthrough.
-
-The whole walkthrough takes about 5 minutes. You'll see something working by step 3.
-
-## What you'll need
-
-- gbrain installed (`gbrain --version` to check)
-- A brain that's been initialized (`gbrain init` already run; either PGLite or Postgres is fine)
-- A terminal you can paste commands into
-
-That's it. No API keys required for this tutorial — every step works against the bundled pack and local-only commands.
-
-## Step 1: See what pack is active today
-
-```bash
-gbrain schema active
-```
-
-You'll see something like:
-
-```text
-Active pack: gbrain-base v1.0.0
-Source: default
-Pack identity: ...
-Page types: 22
-Link verbs: 12
-Takes kinds: hot, warm, cold
-```
-
-`Source: default` means you haven't customized anything — you're on the bundled pack. `Page types: 22` is the universal starter (person, company, meeting, note, etc.). (Agents needing this as JSON use the MCP op `get_active_schema_pack` — the CLI subcommand prints human output only.)
-
-**You can't mutate bundled packs directly.** Step 2 forks it so you have something writable.
-
-## Step 2: Fork the bundled pack
-
-```bash
-gbrain schema fork gbrain-base mine
-```
-
-Output: `Forked 'gbrain-base' → 'mine' at ~/.gbrain/schema-packs/mine/pack.json`.
-
-The fork is a byte-for-byte copy of `gbrain-base` living at `~/.gbrain/schema-packs/mine/pack.json`. Now you have a writable pack you can mutate.
-
-## Step 3: Activate the fork
-
-```bash
-gbrain schema use mine
-```
-
-Output: `Pack: mine (json) ... Active.`
-
-Run `gbrain schema active` again to confirm `Active pack:` now says `mine` and `Source:` is `home-config` (read from `~/.gbrain/config.json`).
-
-**You've already accomplished something visible** — the active pack changed, and any future query will route through your fork. The next four steps add a custom type and prove it works.
-
-## Step 4: Add a researcher type
-
-```bash
-gbrain schema add-type researcher \
-  --primitive entity \
-  --prefix people/researchers/ \
-  --extractable \
-  --expert
-```
-
-Output: `Pack: mine (json)` + `Sha8: <prev> → <new>`.
-
-What just happened:
-- The mutation went through `withMutation`'s 8-step skeleton: bundled-guard → per-pack lock → read → mutate → file-plane lint validation → atomic write → audit log → cache invalidation.
-- The pack now declares `researcher` as an entity primitive bound to `people/researchers/`, marked `extractable: true` (eligible for facts extraction) and `expert_routing: true` (surfaces in `whoknows` queries).
-- An audit row landed in `~/.gbrain/audit/schema-mutations-YYYY-Www.jsonl` with your type name SHA-8-redacted and the prefix's first segment only (`people`) for privacy.
-
-Verify the type is in the pack:
-
-```bash
-gbrain schema explain researcher
-```
-
-You'll see the resolved settings printed back.
-
-## Step 5: Import some placeholder researcher pages
-
-You need pages under `people/researchers/` for the next step to do anything. If your brain repo already has them, skip ahead. If not, drop 3-5 placeholder markdown files into `<your-brain-repo>/people/researchers/` and import:
-
-```bash
-mkdir -p people/researchers
-cat > people/researchers/alice-example.md <<'EOF'
----
-title: Alice Example
----
-
-ML researcher at Example Lab. Works on contrastive embeddings.
-EOF
-
-cat > people/researchers/bob-example.md <<'EOF'
----
-title: Bob Example
----
-
-Vision researcher at Widget University. Recent paper on diffusion models.
-EOF
-
-cat > people/researchers/charlie-example.md <<'EOF'
----
-title: Charlie Example
----
-
-RL researcher at Acme Research. Focus on inverse reinforcement learning.
-EOF
-
-gbrain sync
-```
-
-The sync imports the new files. They'll be stored in the database but their `type` column will still be empty — the new type was added to the pack AFTER these pages already existed (the typical real-world scenario for an agent walking into an existing brain).
-
-## Step 6: See the gap with `stats`
-
-```bash
-gbrain schema stats --json | jq '.aggregate, .dead_prefixes'
-```
-
-You'll see `untyped_pages: 3` (or however many you just imported) and `dead_prefixes: []` — your new prefix has 3 matching pages, so it's not dead.
-
-The 3 researcher pages are "orphaned" by type even though they live in the right directory. The next step backfills them.
-
-## Step 7: Backfill with `sync --apply`
-
-First dry-run to see what would happen:
-
-```bash
-gbrain schema sync --json
-```
-
-You'll see something like:
-
-```json
-{
-  "schema_version": 1,
-  "apply": false,
-  "per_prefix": [
-    {
-      "type": "researcher",
-      "prefix": "people/researchers/",
-      "would_apply": 3,
-      "sample_slugs": ["people/researchers/alice-example", "people/researchers/bob-example", "people/researchers/charlie-example"],
-      "applied": 0
-    }
-  ],
-  "total_would_apply": 3,
-  "total_applied": 0
-}
-```
-
-`would_apply: 3` is what you'd touch. `sample_slugs` is the agent's drilldown signal — if those slugs look wrong, abort. They look right, so apply:
-
-```bash
-gbrain schema sync --apply
-```
-
-You'll see per-batch progress lines on stderr and a final `total_applied: 3`. The UPDATE ran in chunks of 1000 (yours fit in one chunk) and never wedged any concurrent writer.
-
-## Step 8: Prove the wiring works
-
-```bash
-gbrain whoknows "machine learning"
-```
-
-If your researcher pages contain ML-related content, they'll surface in the ranked results — even though they're typed `researcher`, not `person` or `company`.
-
-**This is the load-bearing demonstration of the pack-aware wiring.** `whoknows` consults the active pack's `expert_routing: true` types via `expertTypesFromPack(pack.manifest)` rather than a hardcoded `['person', 'company']` list, so your custom type routes through expert search instead of being ignored.
-
-## What you built
-
-You now have:
-- A fork of `gbrain-base` named `mine` at `~/.gbrain/schema-packs/mine/pack.json`, active in your brain via `~/.gbrain/config.json`.
-- A `researcher` page type registered in the pack with `entity` primitive, `people/researchers/` prefix, `extractable: true`, `expert_routing: true`.
-- 3 pages typed as `researcher` (backfilled from disk via `gbrain schema sync --apply`).
-- A query path that routes through the new type: `gbrain whoknows` reads the pack and includes `researcher` in its type filter.
-
-You also exercised the full mutation skeleton: bundled-pack guard, per-pack lock, validation gate, atomic write, audit log, cache invalidation. Every step was idempotent — re-running any of them is a no-op.
-
-## Next steps
-
-**Add a type set by frontmatter only.** Some types don't live in one directory: an `archive` page can sit anywhere and is typed by its frontmatter `type: archive`. Declare it with `--no-prefix` instead of `--prefix`:
-
-```bash
-gbrain schema add-type archive --primitive concept --no-prefix
-```
-
-The pack records `path_prefixes: []`, so pages get this type only from frontmatter. Leaving out both `--prefix` and `--no-prefix` is refused (exit 2, `invalid_params`), and `--no-prefix` can't be combined with `--extractable` or `--expert` (lint rules `extractable_empty_corpus`, `expert_routing_without_prefix`).
-
-**Add a link verb.** A `researcher` can `author` a `paper`. To model that:
-
-```bash
-gbrain schema add-type paper --primitive annotation --prefix research/papers/ --extractable
-gbrain schema add-link-type authored --page-type researcher --target-type paper
-gbrain schema graph
-```
-
-The graph now shows `researcher --(authored)--> paper`.
-
-**Add aliases for query closure.** If you want `gbrain query researcher` to also surface `person` rows (because researchers ARE people):
-
-```bash
-gbrain schema add-alias researcher person
-```
-
-Read [`skills/conventions/schema-evolution.md`](../skills/conventions/schema-evolution.md) for the decision tree on when to add types vs aliases vs prefixes. The short version: <20 pages → don't pack-codify; 20-100 → alias on existing type; 100+ → first-class type.
-
-**Lint your pack before shipping.** The 14-rule lint surface (with the optional `--with-db` flag for DB-aware checks, including the stored-type alias/undeclared rules) catches dangling references, prefix collisions, and dead-corpus warnings:
-
-```bash
-gbrain schema lint --with-db
-```
-
-**Commit your pack to source control.** If `~/.gbrain/schema-packs/mine/` is a git repo, commit `pack.json` and push. Your pack survives across machines, and the `mutation_count_anomaly` lint rule will nudge you when you hit >50 mutations in a week (the "you should be committing this" signal).
-
-**For agents (MCP):** the same operations are reachable over HTTPS MCP as schema ops. Register an admin-scope OAuth client and `schema_apply_mutations` lets a remote agent compose multi-step refactors as one atomic batch. The batched MCP op + per-pack lock + audit log are the load-bearing primitives that make remote schema authoring safe. See [`skills/schema-author/SKILL.md`](../skills/schema-author/SKILL.md) for the agent dispatcher.
-
-**Undo a mistake.** Every mutation primitive has an inverse (`remove-type`, `remove-alias`, `remove-prefix`, `remove-link-type`, `set-extractable false`, etc.). If you fork twice and want to revert, `gbrain schema downgrade --to <pack>` re-activates the pack you name (e.g. `--to gbrain-base`). The bare history-based form depends on `~/.gbrain/schema-pack-history.jsonl`, which nothing writes today — always pass `--to`.
-
-## Related docs
-
-- **Reference:** `gbrain schema --help` for the full CLI surface (30+ subcommands); the "Schema packs: mutation surface" section of `docs/architecture/KEY_FILES.md` for the module-by-module architecture.
-- **How-to:** [`skills/schema-author/SKILL.md`](../skills/schema-author/SKILL.md) — the agent dispatcher with the 7-phase workflow (brain → assess → propose → apply → sync → verify → commit).
-- **Explanation:** [`skills/conventions/schema-evolution.md`](../skills/conventions/schema-evolution.md) — when to add a type vs alias vs prefix.
-
----
-
 ## docs/guides/live-sync.md
 
 Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/live-sync.md
@@ -7899,6 +7664,11 @@ those (`maintenance_lock_busy`) and the holder runs them.
 # wrapper below (gbrain-run), never a bare `gbrain` or `bun run src/cli.ts`.
 0 6 * * 1 gbrain-run doctor --json >> /tmp/gbrain-health.log 2>&1 && gbrain-run embed --stale
 
+# Health alert — hourly. Page on the alert verdict, never on health_score:
+# exit 0 none, 17 act (alert.items carry each fix), 18 unknown (a page-class
+# check did not run fresh); page on 18 only from the second run in a row.
+17 * * * * gbrain-run doctor --alert --json > /tmp/gbrain-alert.json 2>> /tmp/gbrain-alert.err; rc=$?; case $rc in 0) ;; 17) your-notify "gbrain needs action" ;; 18) [ "$(jq -r '.alert.consecutive_unknown // 0' /tmp/gbrain-alert.json)" -ge 2 ] && your-notify "gbrain health unknown twice in a row" ;; *) your-notify "gbrain doctor --alert failed (exit $rc)" ;; esac
+
 # Autopilot health gate — daily at 7 AM. The exit code is the signal:
 # 0 fresh (or nothing installed), 1 needs attention (stale heartbeat,
 # never ran, paused, or brain-wide maintenance stalled: no completed pass
@@ -8300,8 +8070,8 @@ echo "Dream cycle starting at $(date)"
 # Phase 2: Shipped maintenance cycle (lint, backlinks, extract, sync, embed, synthesize)
 gbrain dream
 
-# Phase 3: Surface anything the cycle flagged
-gbrain doctor --json | jq '.checks[] | select(.status=="warn")'
+# Phase 3: Surface anything that needs someone (exit 17 act, 18 unknown)
+gbrain doctor --alert --json | jq '.alert'
 
 echo "Dream cycle complete at $(date)"
 ```
@@ -10221,6 +9991,9 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 
 | Symptom | Next step | Who acts | Consent | Verify |
 |---|---|---|---|---|
+| `gbrain doctor --alert` exits 17 (`doctor_alert_act`, `alert.level: act`) | follow each `alert.items[].fix` in the `--json` document; it is that check's own fix, with its consent and actor ([doctor alert](#doctor-alert-act)) | the item's `fix.actor` | the item's `fix.consent` | `gbrain doctor --alert --json` exits 0 |
+| `gbrain doctor --alert` exits 18 (`doctor_alert_unknown`, `alert.level: unknown`), or an agent cron pages "health unknown twice in a row" | run each `alert.unknown[].fix` (it measures that check alone); a check that keeps running out of time needs `--budget-ms` raised or `gbrain doctor --alert --tier standard --json` ([doctor alert](#doctor-alert-unknown)) | agent | none | `gbrain doctor --alert --json` exits 0 and `alert.consecutive_unknown` is 0 |
+| Doctor's score drops (resolver_health fails, skill_currency warns "new built-in skill(s) available") only when run from an agent's own workspace | nothing to fix: since the W4 scoping both report `not a gbrain skills folder (<path>)` for a skills folder gbrain did not install; to grade it on purpose pass `--skills-dir <path>` ([doctor alert](#doctor-alert)) | agent | none | `gbrain doctor --only resolver_health --json` |
 | A withdrawal committed but a large page's file still shows the withdrawn row; writer status lists its mirror parked with [`segmented_mirror_writer_gate`](write-refusals.md#segmented_mirror_writer_gate), or an effect retrying with [`recovery_version_unsupported`](write-refusals.md#recovery_version_unsupported) (or `effect_unavailable` on v0.60.290.0) holds every write on the worktree | `gbrain upgrade` on the hosts the refusal or a doctor `segmented_storage` warning names (for `recovery_version_unsupported`, the owner host; doctor's information case, this host's own superseded pre-upgrade writes, does not hold the mirror), then restart their serve, sync and worker processes. A gated mirror resumes by itself once the older writes are 7 days old; never delete a recovery record or its staging file | brain host | none | `gbrain sources writer status --source <source> --json` shows no parked or retrying mirror |
 | The dream cycle's purge phase fails every night with `managed_purge_failed` (`42P01`, relation `query_cache` does not exist), or doctor `schema_missing_tables` warns | upgrade (#6911: the purge skips a missing rebuildable cache), then preview recreating it: `gbrain repair missing-tables` ([missing tables](repair.md#missing-tables)); apply the printed `--apply --expect <hash>` command. Pages parked by the earlier failures: `gbrain pages purge-deleted --retry-parked --dry-run`, then without `--dry-run` | agent, after the user agrees | `destructive` (the parked-page retry purges them) | `gbrain doctor --only schema_missing_tables --json` reports ok |
 | A managed source's autopilot freshness `sync` jobs each land about one page, or `sources status` says `parked` while a sync job runs | upgrade (#6706: sync jobs drain to their deadline and count as the source's live drain), then restart `gbrain jobs work` / the supervisor so the worker loads the handler; a job result with `incomplete: true` names its follow-up (`continuation_job_id`) or the next step in `next` | agent | none | `gbrain sync status --source <id> --json` shows `live_job_id` or a cursor at `done`; `gbrain jobs get <id> --json` shows `outcome` |
@@ -10922,6 +10695,68 @@ the phase, its blocker key and back-off, or the last failed job.
 3. Confirm with `gbrain doctor --only global_maintenance_stalled`: it is `ok`
    after a pass completes with the phase passing.
 
+## Doctor alert
+
+<a id="doctor-alert"></a>
+
+**What should an agent cron page on?** `gbrain doctor --alert`, never
+`health_score`. The score is 100 − 20 per failing check − 5 per warning check
+over every check, so an advisory skill-routing warning costs as much as an
+outage, and a healthy brain can read 30. `--alert` runs only the page-class
+checks, fresh, under a 30 s budget (`--budget-ms` overrides it; `--tier
+standard` grades a full run instead), and prints one verdict in
+`alert.level`:
+
+| Exit | `alert.level` | Meaning |
+|---|---|---|
+| 0 | `none` | every page-class check ran fresh and none needs anyone |
+| 17 | `act` | a page-class check needs someone now; `alert.items` carry its fix |
+| 18 | `unknown` | nothing to act on, but a page-class check did not run fresh; `alert.consecutive_unknown` counts the runs in a row |
+
+`act` wins over `unknown`; both lists are always kept. Page on 17, and on 18
+from the second run in a row. Exit 1 means doctor itself failed. The counter
+lives per brain in `doctor-alert-state.json` under the gbrain home; a
+read-only home still gets a verdict (`consecutive_unknown: null` when the
+state can be neither read nor written). Remote reports (`run_doctor`) omit
+check messages and name a host-admin step instead of local commands.
+
+The page class (`PAGE_CHECK_LEVELS` in `src/core/doctor-categories.ts`); every
+other check, skill checks included, never pages:
+
+| Condition | Check | Pages on |
+|---|---|---|
+| database unreachable | `connection` | fail |
+| migrations pending or wedged | `schema_version`, `minions_migration` | warn |
+| tables the applied migrations created hold user data and are missing | `schema_missing_tables` | fail |
+| writes failing | `persistence_terminal_failures` | warn |
+| writes wedged | `persistence_write_stall` | warn |
+| more than one gbrain build running | `runtime_build_skew` | fail |
+| managed sync stopped or not moving past its window | `managed_sync_blocked`, `managed_sync_not_moving` | fail |
+| brain-wide maintenance stalled a week | `global_maintenance_stalled` | fail |
+| double-encoded JSONB rows | `jsonb_integrity` | warn |
+| public schema readable with the anon key | `rls` | fail |
+| a tripped paid-loop breaker | `dream_paid_loop` | warn |
+
+<a id="doctor-alert-act"></a>
+
+**Exit 17 (`act`).** Each item has `check`, a stable `code`, `status`, the
+check's `message`, `docs` and the check's own rendered `fix` (`next`,
+`command` or MCP call, `consent`, `actor`, `verify`). Follow `fix.next` as
+everywhere else: run it, ask the user first, or tell the user or brain host to
+run it. Then re-run `gbrain doctor --alert --json`.
+
+<a id="doctor-alert-unknown"></a>
+
+**Exit 18 (`unknown`).** Each item names the `check`, the `reason` it is not
+fresh (`budget`, `bound`, `errored`, `last_known`, `not_run`), the
+`budget_ms` it ran under and a `fix` that measures it alone. `not_run` on
+every database check means the database checks did not run: read the
+`connection` check (a live `gbrain serve` holding a PGLite brain is the
+common case: run the alert where the serve's brain is reachable, or stop the
+serve first). A check that keeps hitting its budget on a large brain needs a
+larger `--budget-ms` in the cron line. A thin client refuses `--alert`
+(`doctor_tier_unavailable`): schedule it on the brain host.
+
 ## Content-drift sweep
 
 **Doctor reports `content_drift_sweep` as a warning, or an embed run prints
@@ -11124,6 +10959,8 @@ the exit code first, then reads the JSON document (`--json`) for the details:
 | 12 | `no_results`: `gbrain recall` (an entity, text, `--grep`, `--question` or `--query` lookup) or `gbrain entity` matched nothing. Opt-in: only with `GBRAIN_FAIL_ON_EMPTY=1`; otherwise a miss exits 0 | recall's list output: `status: "no_results"`; entity: `found: false` | treat it as a miss, not a failure; a script that filters stdout can branch on it |
 | 13 | `pending_verify`: `gbrain bootstrap harness --token` wired a PGLite brain while no serve answered; nothing failed, nothing verified yet | the harness result with `status: "pending_verify"` and `fix` | tell the user to start `gbrain serve --http`, then run `fix.command` with the same token; `bootstrap harness --status` stays partial until it passes ([pending verify](bootstrap.md#pending-verify)) |
 | 14 | `bootstrap_cleanup_pending`: `gbrain bootstrap harness` (or `--status`) wired and verified the harness, but earlier shared-skills enrollments or carried token ids are not cleaned up yet | the harness result with `status: "cleanup_pending"`, a per-id `cleanup` list and `fix` | follow `fix.next`: `run` re-runs the same command; `tell_user_to_run` relays the owner's revoke or restore step, then re-run ([cleanup pending](bootstrap.md#cleanup-pending)) |
+| 17 | `doctor_alert_act`: `gbrain doctor --alert` found a page-class check that needs someone now (database, writes, migrations, builds, sync or maintenance stalls, corrupt rows, schema exposure, paid-loop breaker) | the doctor report; `alert.level: "act"`, `alert.items` with each check's `fix` | follow each item's `fix.next` ([doctor alert](troubleshooting.md#doctor-alert-act)) |
+| 18 | `doctor_alert_unknown`: `gbrain doctor --alert` found nothing to act on, but at least one page-class check did not run fresh (budget, error, last known result, tier) | the doctor report; `alert.level: "unknown"`, `alert.unknown` naming each check, its budget and a `fix`, and `alert.consecutive_unknown` | run each `fix`; an agent cron pages only from the second unknown run in a row ([doctor alert](troubleshooting.md#doctor-alert-unknown)) |
 | 69 | `gbrain serve` exited on its own after its persistence consumer reported `restart_required` for `GBRAIN_SERVE_RESTART_REQUIRED_EXIT_SECONDS` (`serve_unhealthy_exit`; opt-in) | `[gbrain serve] error code=serve_unhealthy_exit` line on stderr | nothing: the supervisor (the installed service restarts on failure) starts a fresh serve; if it repeats, follow [the unhealthy exit](../ENGINES.md#serve-unhealthy-exit) |
 | 75 | another runner holds the migration lock, or an engine graduation owns the brain (`graduation_in_progress`) | error envelope | wait for the other runner, then retry |
 | 124 | the command's own deadline elapsed | error envelope | inspect what is still running (the message names the status command) |

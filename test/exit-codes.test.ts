@@ -38,6 +38,8 @@ describe('exit code table', () => {
     expect(exitCodes.NO_RESULTS_EXIT_CODE).toBe(12);
     expect(exitCodes.HARNESS_PENDING_VERIFY_EXIT_CODE).toBe(13);
     expect(exitCodes.HARNESS_CLEANUP_PENDING_EXIT_CODE).toBe(14);
+    expect(exitCodes.DOCTOR_ALERT_ACT_EXIT_CODE).toBe(17);
+    expect(exitCodes.DOCTOR_ALERT_UNKNOWN_EXIT_CODE).toBe(18);
     expect(exitCodes.SERVE_UNHEALTHY_EXIT_CODE).toBe(69);
     expect(exitCodes.MIGRATIONS_RUNNING_EXIT_CODE).toBe(75);
     expect(exitCodes.TIMEOUT_EXIT_CODE).toBe(124);
@@ -56,6 +58,8 @@ describe('exit code table', () => {
     expect(exitCodeForCode('write_pending')).toBe(10);
     expect(exitCodeForCode('pending_verify')).toBe(13);
     expect(exitCodeForCode('bootstrap_cleanup_pending')).toBe(14);
+    expect(exitCodeForCode('doctor_alert_act')).toBe(17);
+    expect(exitCodeForCode('doctor_alert_unknown')).toBe(18);
     expect(exitCodeForCode('serve_unhealthy_exit')).toBe(69);
     expect(exitCodeForCode('timeout')).toBe(124);
     expect(exitCodeForCode('interrupted')).toBe(130);

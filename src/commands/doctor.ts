@@ -141,6 +141,7 @@ export { doctorRunSummary, type DoctorRunSummary } from './doctor/budget.ts';
 import { runDoctorRegistry, parseOnlyChecks, doctorRefreshRegistry } from './doctor/registry.ts';
 import { finalizeCheckFixes, fixLine, unknownScoreCategories, type CheckAgentFields } from './doctor/check-fix.ts';
 import { throttleDoctorHeartbeat } from './doctor/heartbeat.ts';
+import { alertRanChecks, computeAlert, printAlertReport, type DoctorAlert } from './doctor/alert.ts';
 import type { RenderContext } from '../core/agent-output.ts';
 export interface Check extends CheckAgentFields {
   name: string;
@@ -232,6 +233,8 @@ export interface DoctorReport {
    * the ranking. Additive + optional; schema_version stays at 2.
    */
   top_issues?: RankedIssue[];
+  /** W4: what an agent cron pages on (none / act / unknown, ./doctor/alert.ts); additive, the scores are unchanged. */
+  alert?: DoctorAlert;
   /**
    * db-availability loop — which engine this report was measured against and
    * where its URL came from. Additive + optional (schema_version stays 2);
@@ -280,7 +283,7 @@ function _penaltyScore(checks: Check[]): number {
  */
 export function computeDoctorReport(
   checks: Check[],
-  extras?: { engine?: 'postgres' | 'pglite'; db_url_source?: DbUrlSource | null; render?: RenderContext; run?: DoctorRunSummary },
+  extras?: { engine?: 'postgres' | 'pglite'; db_url_source?: DbUrlSource | null; render?: RenderContext; run?: DoctorRunSummary; alertRan?: ReadonlySet<string> },
 ): DoctorReport {
   const tagged = finalizeCheckFixes(checks, extras?.render).map((c) =>
     c.category ? c : { ...c, category: categorizeCheck(c.name) },
@@ -312,6 +315,7 @@ export function computeDoctorReport(
     },
     checks: tagged,
     top_issues: rankIssues(tagged),
+    alert: computeAlert(tagged, { ran: extras?.alertRan, render: extras?.render }),
     ...(extras?.engine ? { engine: extras.engine } : {}),
     ...(extras?.db_url_source !== undefined ? { db_url_source: extras.db_url_source } : {}),
     ...(capped_by.length ? { capped_by } : {}),
@@ -528,7 +532,9 @@ export async function runDoctor(
   if (args.includes('--probe') && !(await (await import('./doctor/probe-consent.ts')).authorizeProviderProbe(engine, args, jsonOutput))) return;
   const checks = await buildChecks(engine, args, dbSource, connectError, deadline, { lastKnown: 'cli' });
   const run = doctorRunSummary(args, deadline);
-  const hasFail = outputResults(checks, jsonOutput, { engine: engine?.kind, db_url_source: dbSource ?? null, run });
+  const extras = { engine: engine?.kind, db_url_source: dbSource ?? null, run, alertRan: alertRanChecks(checks, parseDoctorTier(args)) };
+  if (args.includes('--alert')) return setCliExitVerdict(printAlertReport(computeDoctorReport(checks, extras), jsonOutput));
+  const hasFail = outputResults(checks, jsonOutput, extras);
 
   // Features teaser (non-JSON, non-failing only; never under the ops deadline)
   if (!jsonOutput && !hasFail && engine && run?.tier !== 'ops') {
@@ -560,7 +566,7 @@ export function doctorProgressOptions(jsonOutput: boolean) {
 function outputResults(
   checks: Check[],
   json: boolean,
-  extras?: { engine?: 'postgres' | 'pglite'; db_url_source?: DbUrlSource | null; run?: DoctorRunSummary },
+  extras?: Parameters<typeof computeDoctorReport>[1],
 ): boolean {
   // v0.41.19.0 — render goes through computeDoctorReport so the human
   // output, JSON output, and remote MCP envelope all share one shape.

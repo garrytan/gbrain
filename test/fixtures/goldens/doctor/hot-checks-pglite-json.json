@@ -9,6 +9,12 @@
       ],
       "exit_code": 1,
       "report": {
+        "alert": {
+          "docs": "docs/guides/troubleshooting.md#doctor-alert",
+          "items": [],
+          "level": "none",
+          "unknown": []
+        },
         "brain_checks_score": 45,
         "budget_ms": "<volatile>",
         "capped_by": [
@@ -4767,6 +4773,12 @@
       ],
       "exit_code": 1,
       "report": {
+        "alert": {
+          "docs": "docs/guides/troubleshooting.md#doctor-alert",
+          "items": [],
+          "level": "none",
+          "unknown": []
+        },
         "brain_checks_score": 45,
         "budget_ms": "<volatile>",
         "capped_by": [

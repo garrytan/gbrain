@@ -475,9 +475,9 @@ your operational heartbeat.
 
 ### On every heartbeat (hourly or per-session)
 
-Run `gbrain doctor --json` and check for degradation. Report any failing checks
-to the user. Key signals: connection health, schema version, RLS status, embedding
-staleness.
+Run `gbrain doctor --alert --json`. Exit 0: report nothing. Exit 17: report each
+`alert.items` entry with its fix. Exit 18: report only when
+`alert.consecutive_unknown` is 2 or more. Never alert on `health_score`.
 
 ### Weekly maintenance
 

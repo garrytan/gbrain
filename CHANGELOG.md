@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Health alerts page only on what needs someone (GBRA-224 W4).**
+
+A self-hoster running gbrain inside an agent harness got a weekly "score 30, 1 failing check, resolver_health: 60 issues" alert. The score counted the agent's own skills folder, graded against gbrain's conventions, the same as an outage, while the brain itself was healthy.
+
+- `gbrain doctor --alert` runs only the page-class checks (database, writes, migrations, builds, sync and maintenance stalls, corrupt rows, schema exposure, the paid-loop breaker), fresh, under a 30 s budget, and exits 0 (`none`), 17 (`act`: `alert.items` carry each check's own fix) or 18 (`unknown`: a page-class check did not run fresh; `alert.consecutive_unknown` counts the runs in a row). Every doctor report carries `alert`; MCP `run_doctor` with `only` naming page-class checks runs them on the serve, redacted.
+- A skills folder found by walking up from the current directory that gbrain did not install no longer lowers the score: resolver_health and skill_currency report "not a gbrain skills folder (<path>)". `--skills-dir`, `GBRAIN_SKILLS_DIR` and `OPENCLAW_WORKSPACE` still grade it.
+- `health_score`, `brain_checks_score`, `category_scores` and `status` are unchanged for every existing check set.
+
 ## [0.60.476.0] - 2026-10-27
 
 **Text someone else wrote can no longer add facts to your brain.**
