@@ -203,6 +203,7 @@ test/fts-cjk-boundary.test.ts	one copy of the DDL	2	readFileSync
 test/gbrain-owned-page-types.test.ts	#5881 gbrain-owned page types are declared by gbrain-base-v2	3	readFileSync
 test/get-page-federated-scope.test.ts	#2555 get_chunks federated scope	5	source-surface-helper
 test/get-page-federated-scope.test.ts	#4275 alias hop scope: archived sources, include_deleted, fuzzy precedence, grant precedence	5	source-surface-helper
+test/git-env-guard.test.ts	(file-level)	5	readFileSync
 test/grant-execution-prerequisites.test.ts	execution prerequisite table	1	readFileSync
 test/harness-onboarding.test.ts	harness identity and private handoff	6	readFileSync
 test/hook-command.serial.test.ts	user-prompt	18	source-surface-helper

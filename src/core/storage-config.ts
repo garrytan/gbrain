@@ -430,6 +430,7 @@ export const DERIVE_PHASE_DB_ONLY_DEFAULTS: readonly string[] = [
   // storage.db_only) so installations that do file-back concepts are never
   // auto-gitignored by manageGitignore.
   'concepts/',
+  // Extract receipts (extract/receipt-writer.ts): derived bookkeeping, never content; the writer refuses a slug that holds content or a file.
   'extracts/',
   'dream-cycle-summaries/',
 ];

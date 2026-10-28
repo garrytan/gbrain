@@ -23,8 +23,13 @@ const DROPPED = new Set<string>([...GIT_LOCAL_ENV_VARS, ...GIT_PATHSPEC_ENV_VARS
 /**
  * #7759: each path as a literal pathspec. Use this instead of the global `--literal-pathspecs` flag, which Git exports
  * as GIT_LITERAL_PATHSPECS=1 to hooks and children, where a hook's glob pathspec then silently matches nothing.
+ * #7793: an empty path throws (`:(literal)` alone matches the whole tree; Git itself refuses an empty pathspec). `.` stays
+ * allowed: it is the explicit whole-tree scope of a read, and every writer's paths pass `scopePaths`, which refuses it.
  */
-export const literalPathspecs = (paths: readonly string[]): string[] => paths.map(path => `:(literal)${path}`);
+export const literalPathspecs = (paths: readonly string[]): string[] => paths.map(path => {
+  if (path === '') throw new Error('literalPathspecs: an empty path would match the whole tree');
+  return `:(literal)${path}`;
+});
 
 /**
  * Extra env for a Git call that only reads (diff, ls-files, cat-file, rev-parse, status): `GIT_OPTIONAL_LOCKS=0` stops Git

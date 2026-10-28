@@ -565,6 +565,14 @@ More: [docs/guides/troubleshooting.md#embedding-state](../../docs/guides/trouble
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### client_behind
+
+<a id="client_behind"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Schema setup (initSchema, which gbrain init, init --migrate-only and upgrade run, and apply-migrations before its orchestrators) refused because the brain's schema version is newer than this gbrain binary's newest migration; nothing in its schema ran and nothing changed. | initSchema replays the binary's whole schema, CREATE OR REPLACE FUNCTION included, before it runs migrations. An older binary sharing the database with a newer one (another host, a lagging cron running apply-migrations or upgrade) used to reinstall its own superseded function bodies, the writer-fence guards among them, over the newer ones and then apply nothing (#7776). Reads do not run schema setup and keep working on the older binary; doctor schema_function_bodies names bodies an older replay already reverted. | Upgrade gbrain on this host (gbrain upgrade) to the release that migrated the database or newer, then rerun the command. Run: gbrain doctor --only schema_version --json | host_admin | `gbrain doctor --json` | 1 | no |
+
 ### client_json_unreadable
 
 <a id="client_json_unreadable"></a>

@@ -10,6 +10,42 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Remote search stays clean after an extraction. The commit door's dry run now refuses whatever the real run refuses. You can stop tracking a file through the door. And an older gbrain can no longer roll back a newer schema.**
+
+These are four fixes to the Git-canonical door and the schema it guards.
+
+- **Extract receipts.** Receipts used to stay unchunked, so every remote `search` and `query` on an extracted source reported `safe_index_pending` until someone ran a repair. They are now sealed in the transaction that writes them.
+- **Dry run.** `gbrain git commit-push --dry-run` used to pass paths that the real run then refused: a sparse-checkout exclusion, a path outside the source root, or another writer's staged file. It now runs the real run's checks and exits 1 with the same error.
+- **Untrack.** Hygiene scripts that need `git rm --cached` now have a door path: `--untrack`.
+- **Older binaries.** An older gbrain binary that runs `gbrain init` or `apply-migrations` against a brain that a newer gbrain migrated now refuses with `client_behind`. Before, it reinstalled its own older function bodies.
+
+### How to use it
+
+```bash
+gbrain git commit-push --dry-run -m "notes" -- notes/b/new.md     # exits 1 with the real run's refusal, takes no lock, writes nothing
+gbrain git commit-push --untrack -m "stop tracking build output" -- build/out.json   # keeps the file on disk
+gbrain doctor --only schema_function_bodies                         # installed function bodies vs this binary's
+```
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| Remote search or query after an extraction | `safe_index_pending` on every call until `gbrain repair safe-chunks --apply` ran | Receipts are sealed when they are written. Receipts written before this release still need the repair once |
+| `commit-push --dry-run` on a path outside a non-cone sparse-checkout definition or the source root, or with another writer's change staged | Exit 0, with the path listed | Exit 1 with the real run's `commit_paths_invalid`, `commit_outside_source_root` or `commit_prestaged_paths` |
+| Untracking a file that should never have been committed | Raw `git rm --cached` outside the writer lock, or `nothing_to_commit` through the door | `--untrack` uses the same lock and the same push path, and takes the commit back if it touches anything beyond the named paths |
+| An older binary runs `gbrain init`, `apply-migrations` (including `--force-schema`) or `upgrade` against a newer schema | Its schema replay reinstalled older function bodies, including the write guards | Refuses with `client_behind` before anything runs. Doctor's `schema_function_bodies` check flags drifted bodies |
+| A path with glob characters in the `brain-commit-push.sh` fallback | Committing `[ab].md` also committed `a.md` | Every path is literal |
+
+Receipts are database-only bookkeeping on every brain, with or without a Git repository. They are never exported to Git, and a canonical conversion classes them `derive_folder`. The `client_behind` refusal, the doctor check and the receipt fix behave the same on a repo-less brain. `--untrack` and the dry-run checks need a checkout, as `commit-push` always has.
+
+### For contributors
+
+- Read paths no longer pass git's global `--literal-pathspecs` flag. `test/git-env-guard.test.ts` refuses it anywhere in `src`, and `literalPathspecs('')` throws.
+- `test/sync-relative-anchor-refusal-7630.test.ts` is split into three files of about 22 s each, well under run-e2e's 180 s per-file cap.
+
 ## [0.60.480.0] - 2026-10-28
 
 **Converting a source to Git-canonical now plans quickly on big brains, tells you where it is while it runs, converts sources with private pages instead of refusing, and pushes what it commits.**

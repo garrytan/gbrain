@@ -13,7 +13,7 @@
  */
 import { execFile, spawn } from '../spawn.ts';
 import { promisify } from 'node:util';
-import { gitChildEnv } from '../git-env.ts';
+import { gitChildEnv, literalPathspecs } from '../git-env.ts';
 import { NulRecordSplitter } from '../hardened-git.ts';
 import { ignoreCandidates } from './ignore-rules.ts';
 
@@ -31,10 +31,10 @@ const WALK_TIMEOUT_MS = 600_000;
 const INDEXES_PER_ROOT = 2;
 const GIT_MAX_BUFFER = 64 * 1024 ** 2;
 
-/** `literal`: the paths are pathspecs read literally (`log`); `check-ignore` takes plain pathnames and refuses the magic. */
-async function git(gitRoot: string, args: string[], literal = false): Promise<{ code: number; stdout: string }> {
+/** `ls-tree` paths pass `literalPathspecs`; `check-ignore` takes plain pathnames and refuses the magic. */
+async function git(gitRoot: string, args: string[]): Promise<{ code: number; stdout: string }> {
   try {
-    const { stdout } = await execFileAsync('git', ['-c', 'core.quotepath=false', ...(literal ? ['--literal-pathspecs'] : []), '-C', gitRoot, ...args],
+    const { stdout } = await execFileAsync('git', ['-c', 'core.quotepath=false', '-C', gitRoot, ...args],
       { env: gitChildEnv(), encoding: 'utf8', timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER });
     return { code: 0, stdout };
   } catch (error) {
@@ -236,7 +236,7 @@ export async function readDeletionProvenance(root: string, paths: readonly strin
   // ls-tree from `root` names the paths HEAD still holds, relative to it.
   const inHead = new Set<string>();
   for (let i = 0; i < unique.length; i += BATCH) {
-    const listed = await git(root, ['ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', ...unique.slice(i, i + BATCH)], true);
+    const listed = await git(root, ['ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', ...literalPathspecs(unique.slice(i, i + BATCH))]);
     if (listed.code !== 0) return provenance;
     for (const path of listed.stdout.split('\0')) if (path) inHead.add(path);
   }

@@ -858,7 +858,7 @@ async function initMigrateOnly(opts: { jsonOutput: boolean }) {
     }
   } catch (e) {
     // Preserve the CLI's shared retryable busy envelope for migration callers.
-    if (e instanceof PgliteBusyError) throw e;
+    if (e instanceof PgliteBusyError || (e as { code?: unknown }).code === 'client_behind') throw e;
     const isNoConfig = e instanceof MigrateOnlyError && e.message.startsWith('No brain configured');
     const msg = e instanceof Error ? e.message : String(e);
     if (opts.jsonOutput) process.exit(initJsonError({ status: 'error', reason: isNoConfig ? 'no_config' : 'migrate_failed', message: msg },

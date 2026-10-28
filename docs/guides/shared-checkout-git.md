@@ -105,7 +105,11 @@ gbrain git commit-push --pull
 # Commit and push the write-through files gbrain could not commit (doctor's dirty_age names them)
 gbrain git commit-push --pending
 
-# Preview: prints the paths, branch and lock it would use; takes no lock, writes nothing
+# Stop tracking files and keep them on disk (git rm --cached through the commit lock), then push
+gbrain git commit-push --untrack -m "stop tracking generated output" -- gen/out.json
+
+# Preview: runs the real run's path checks (source root, a sparse-checkout exclusion and the rest
+# refuse here too), prints the paths, branch and lock it would use; takes no lock, writes nothing
 gbrain git commit-push --dry-run -m "people: add alice-example" -- people/alice-example.md
 ```
 
@@ -173,7 +177,7 @@ Follow the error's `fix.next` as the
 | `committed_local` | 0 | A managed canonical worktree, or a checkout with no Git remote (`no_remote: true`): the paths were committed locally and nothing was pushed. Report the commit; it reaches a remote on the owner's next publish, or after a remote is added and `--push-only` runs. |
 | `pushed_checkout_lagging` | 0 | The push landed but this checkout was not advanced; a `[gbrain notice]` names the files that blocked it. Change nothing: the next commit-push or `--pull` catches the checkout up. Never stash or reset to "fix" it. |
 | `commit_lock_busy` | 1 | Another writer held the lock for the whole wait; nothing was committed. Retry once. If it is still busy, tell the user which checkout and lock path the message names and stop. |
-| `commit_paths_invalid` | 1 | No paths, a path outside the checkout, the checkout root itself, or a path git would not stage. Name the explicit files you wrote and rerun. |
+| `commit_paths_invalid` | 1 | No paths, a path outside the checkout, the checkout root itself, a path git would not stage (one outside a sparse-checkout definition included), or with `--untrack` a path the last commit does not hold. Name the explicit files you wrote and rerun. |
 | `commit_prestaged_paths` | 1 | Another writer staged files under a directory you named; nothing was staged or committed. Name your own files explicitly. Unstage the others (`git restore --staged -- <file>`, which keeps their bytes) only after the user agrees. |
 | `commit_outside_source_root` | 1 | The commit, or a local commit about to be published, changes files outside the brain's [source root](#source-roots); nothing was pushed. Show the user `git show --stat <sha>`; rerun with `--allow-outside-source-root` only if they want it published. |
 | `git_index_locked` | 1 | A git command that does not take the writer lock held `index.lock`. Retry once after a few seconds. |

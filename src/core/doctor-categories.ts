@@ -450,6 +450,8 @@ export const META_CHECK_NAMES: ReadonlySet<string> = new Set([
   // #5216: the resumable pages.knowledge_revision backfill (resumed by apply-migrations --force-schema).
   'revision_backfill',
   'schema_columns',
+  // #7776: function bodies an older gbrain's schema replay reverted (init --migrate-only reinstalls them).
+  'schema_function_bodies',
   // #6911: tables the applied migrations created that are missing (repair missing-tables recreates rebuildable caches).
   'schema_missing_tables',
   'schema_pack_active',

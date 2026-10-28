@@ -38,6 +38,9 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { isNeverFiledDerivedPage } from '../persistence/git-declared.ts';
+import { resealSafeChunks } from '../page-state/projections.ts';
+import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 
 /**
  * Round identifier. Matches the progressive-batch primitive's Stage
@@ -195,6 +198,15 @@ function buildReceiptFrontmatter(input: ExtractReceiptInput): Record<string, unk
  * frontmatter. Threads sourceId so federated brains route the receipt
  * to the same source the extraction targeted.
  *
+ * #7620: a receipt is database-only derived bookkeeping, never content: a
+ * never-filed page under the derive-phase `extracts/` folder (the
+ * `derive_folder` class of docs/designs/GIT_CANONICAL_MEMORY.md), so the
+ * write refuses a slug that holds a content page or a page with a file.
+ * Its chunks are installed and sealed at the safe-chunk fence in the same
+ * transaction as the page (resealSafeChunks), so no reader sees it unsealed
+ * (remote search would report safe_index_pending) and a rollback leaves
+ * neither.
+ *
  * Re-running with the same run_id + round overwrites the prior receipt
  * (idempotent on resume). The op-checkpoint id is stable across
  * resumes per src/core/op-checkpoint.ts, so this is the desired
@@ -209,26 +221,39 @@ export async function writeReceipt(
   const frontmatter = buildReceiptFrontmatter(input);
   const compiled_truth = buildReceiptBody(input);
 
-  const page = await maintenanceTransaction(engine, tx => tx.putPage(
-    slug,
-    {
-      type: 'extract_receipt',
-      title,
-      compiled_truth,
-      frontmatter,
-    },
-    { sourceId: input.source_id },
-  ));
-
-  // #4009: receipts are audit artifacts — deliberately never run through
-  // the contextual-retrieval ladder. Born with a NULL
-  // contextual_retrieval_mode they tripped doctor's
-  // contextual_retrieval_coverage warn on every extraction run right
-  // after a reindex. Stamp mode 'none' so receipts are born CR-evaluated.
-  // NOT permanent: a reindex that takes the DB fallback clears the stamp
-  // and it recurs per receipt — the doctor check also excludes
-  // type='extract_receipt' from mode_null (belt+braces).
-  await engine.updatePageContextualRetrievalState(slug, input.source_id, 'none', null);
+  const page = await maintenanceTransaction(engine, async tx => {
+    await tx.lockPageKeys([{ sourceId: input.source_id, slug }]);
+    const [prior] = await tx.executeRaw<{ type: string | null; source_path: string | null; source_uri: string | null; withheld_source_path: string | null }>(
+      'SELECT type, source_path, source_uri, withheld_source_path FROM pages WHERE source_id=$1 AND slug=$2', [input.source_id, slug]);
+    if (!isNeverFiledDerivedPage(slug, prior ?? {}) || (prior && prior.type !== 'extract_receipt')) {
+      throw new Error(`Extract receipt ${slug} (source ${input.source_id}) was not written: that slug holds a content page or a page with a file in Git, and a receipt is database-only bookkeeping.`);
+    }
+    const written = await tx.putPage(
+      slug,
+      {
+        type: 'extract_receipt',
+        title,
+        compiled_truth,
+        frontmatter,
+      },
+      { sourceId: input.source_id },
+    );
+    await resealSafeChunks(tx, slug, input.source_id);
+    const [sealed] = await tx.executeRaw<{ sealed: boolean }>(
+      `SELECT chunker_version >= ${SAFE_FENCE_CHUNKER_VERSION} AND text_projection_revision = knowledge_revision AS sealed FROM pages WHERE source_id=$1 AND slug=$2`,
+      [input.source_id, slug]);
+    if (sealed?.sealed !== true) throw new Error(`Extract receipt ${slug} (source ${input.source_id}) was not written: its chunks could not be sealed in the writing transaction.`);
+    // #4009: receipts are audit artifacts — deliberately never run through
+    // the contextual-retrieval ladder. Born with a NULL
+    // contextual_retrieval_mode they tripped doctor's
+    // contextual_retrieval_coverage warn on every extraction run right
+    // after a reindex. Stamp mode 'none' so receipts are born CR-evaluated.
+    // NOT permanent: a reindex that takes the DB fallback clears the stamp
+    // and it recurs per receipt — the doctor check also excludes
+    // type='extract_receipt' from mode_null (belt+braces).
+    await tx.updatePageContextualRetrievalState(slug, input.source_id, 'none', null);
+    return written;
+  });
 
   return { slug, page };
 }

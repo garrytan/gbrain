@@ -295,8 +295,13 @@ case "\${1:-}" in
   *)
     _msg="\${1:?usage: brain-commit-push.sh <message> <path> [paths...]}"; shift
     [ "$#" -gt 0 ] || { echo "refusing a repo-wide commit: pass explicit path(s)" >&2; exit 2; }
-    git add -A -- "$@"
-    if git diff --cached --quiet -- "$@"; then echo "nothing to commit"; else git commit --only -m "$_msg" -- "$@"; fi ;;
+    _specs=()
+    for _p in "$@"; do
+      [ -n "$_p" ] || { echo "refusing a repo-wide commit: empty path" >&2; exit 2; }
+      _specs+=(":(literal)$_p")
+    done
+    git add -A -- "\${_specs[@]}"
+    if git diff --cached --quiet -- "\${_specs[@]}"; then echo "nothing to commit"; else git commit --only -m "$_msg" -- "\${_specs[@]}"; fi ;;
 esac
 _head="$(git rev-parse HEAD)"
 # Never hold the commit lock across the network: release it and push under the publish lock, like gbrain.

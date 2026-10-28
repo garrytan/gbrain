@@ -1038,6 +1038,13 @@
           "status": "ok"
         },
         {
+          "category": "meta",
+          "elapsed_ms": "<volatile>",
+          "message": "Every function this gbrain's schema defines has its body",
+          "name": "schema_function_bodies",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "elapsed_ms": "<volatile>",
           "message": "Skipped (PGLite — no event trigger support)",

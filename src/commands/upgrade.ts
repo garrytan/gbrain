@@ -1126,7 +1126,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     console.warn(`\nSchema auto-apply skipped: ${msg}`);
     report.schema = 'skipped';
     report.warnings.push(`schema auto-apply skipped: ${msg}`);
-    console.warn('Run `gbrain init --migrate-only` manually if your brain is wedged.');
+    if ((e as { code?: unknown }).code !== 'client_behind') console.warn('Run `gbrain init --migrate-only` manually if your brain is wedged.');
   }
 
   // v0.25.1: agent-readable advisory listing recommended skills the

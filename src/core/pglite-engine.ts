@@ -165,6 +165,7 @@ import { searchKeywordCJK } from './engine-sql/cjk-search.ts';
 import * as titlesImpl from './engine-sql/titles.ts';
 import * as keywordPagesImpl from './engine-sql/keyword-pages.ts';
 import { applyForwardReferenceBootstrap, pgliteBootstrapTarget } from './engine-sql/bootstrap.ts';
+import { assertSchemaNotAhead } from './schema-client-behind.ts';
 import { wellFormedJson } from './text-safe.ts';
 
 /**
@@ -1153,6 +1154,7 @@ export class PGLiteEngine implements BrainEngine {
       dims = storedIdentity.dimensions;
       model = storedIdentity.model;
     }
+    await assertSchemaNotAhead(async (q) => (await this.db.query<Record<string, unknown>>(q)).rows); // #7776
     await this.applyForwardReferenceBootstrap();
     await this.db.exec(getPGLiteSchema(dims, model));
 
