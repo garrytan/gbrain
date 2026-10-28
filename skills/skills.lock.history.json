@@ -226,6 +226,7 @@
       "eb10547b5f2fba3edffd47c5023cd3f28335e1ee3b599f98f298c1ccd07090eb"
     ],
     "company-brainify/SKILL.md": [
+      "0ed5fd5c7e641c1ad76987e84a19bca70274c901726ed72b09f5f5ccab933703",
       "2c058b39f5364b8ceb5c53b4525cce8645734f16cc3c229a490b005d58a78311",
       "59a19560fe935ce4666ac5b8321e5891bb4e19e078ff751f48bbc5561613b0e9",
       "6f39e2ae59e6722f4afac9134ce7041e584637cf08f387861bf6013306c3bd51",
@@ -233,6 +234,9 @@
       "ae48372512645f532820e43faaf18a8fa768a691b2144973dfc89465f84d84c6",
       "bed846efe1a89271faac6aa1f7fef57b08dbdbe35a418a21102e738b8add2458",
       "f82a78337021f3cc87ad3e3674b3fbc94698193aff772e458375a3eb144ddf11"
+    ],
+    "company-brainify/references/history-purge.md": [
+      "c7ae380179ab918f6ccd9e93103428cb6315ff826f13e2ac4499c57731bae179"
     ],
     "company-brainify/routing-eval.jsonl": [
       "6f27f835eda9ae77a2b694534c78a043a871349820e8c638c3d8bbba6d3aa17b"
@@ -1045,6 +1049,7 @@
     ],
     "skill-budgets.tsv": [
       "917ac319b38596369396c3cf98d75c8eed1d6fb2d339bb3cc1084e61cac1ffe0",
+      "a89aef1c97d039970b4ec5267426dc6c284ef65ee9b4c2851cd3d74336282d56",
       "cb788b50cc3d43e32d549d52cedb6feb7dfb0409cbdc0bd0ef76f226b7e53fd2"
     ],
     "skill-creator/SKILL.md": [
