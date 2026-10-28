@@ -12,12 +12,15 @@
  *      the signature is flagged for ACK-and-ignore, never enqueued (the sync
  *      core rejects github_item on non-github kinds, so the job would die).
  */
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { githubKindCoversRepo, selectGitHubItemSources } from '../src/commands/serve-http.ts';
+import { submitGitHubItemRefresh } from '../src/commands/serve-http-webhooks.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { MinionQueue } from '../src/core/minions/queue.ts';
 import { surfaceFileSource } from './helpers/source-surface.ts';
 
 describe('githubKindCoversRepo', () => {
@@ -111,5 +114,59 @@ describe('handler wiring (source pin)', () => {
     expect(enqueue).toBeGreaterThan(guard);
     const ackSlice = src.slice(guard, enqueue);
     expect(ackSlice).toContain("res.status(202).json({ status: 'ignored'");
+  });
+});
+
+describe('submitGitHubItemRefresh (item-event job coalescing)', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  }, 60_000);
+
+  afterAll(async () => {
+    await engine.disconnect();
+  }, 60_000);
+
+  beforeEach(async () => {
+    await engine.executeRaw(`DELETE FROM minion_jobs`, []);
+  });
+
+  const item = (number: number) => ({ repo: 'acme-example/app', number, kind: 'issue' as const });
+  const queuedItems = async () =>
+    (await engine.executeRaw<{ n: string; status: string }>(
+      `SELECT data->'github_item'->>'number' AS n, status FROM minion_jobs ORDER BY id`, [],
+    )).map((r) => `${r.n}:${r.status}`);
+
+  test('events for different items of one source each get their own job', async () => {
+    const a = await submitGitHubItemRefresh(engine, 'gh-example', item(1));
+    const b = await submitGitHubItemRefresh(engine, 'gh-example', item(2));
+    expect(b.id).not.toBe(a.id);
+    expect(b.coalesced).not.toBe(true);
+    expect(await queuedItems()).toEqual(['1:waiting', '2:waiting']);
+  });
+
+  test('a repeat event for the same item folds into its waiting job', async () => {
+    const a = await submitGitHubItemRefresh(engine, 'gh-example', item(1));
+    const again = await submitGitHubItemRefresh(engine, 'gh-example', item(1));
+    expect(again.id).toBe(a.id);
+    expect(again.coalesced).toBe(true);
+    expect(await queuedItems()).toEqual(['1:waiting']);
+  });
+
+  test('an event after the item job started or finished queues a fresh refresh', async () => {
+    for (const status of ['active', 'completed']) {
+      await engine.executeRaw(`DELETE FROM minion_jobs`, []);
+      const first = await submitGitHubItemRefresh(engine, 'gh-example', item(1));
+      const queue = new MinionQueue(engine);
+      expect((await queue.claim('worker-1', 300_000, 'default', ['sync']))?.id).toBe(first.id);
+      if (status === 'completed') await queue.completeJob(first.id, 'worker-1');
+      const later = await submitGitHubItemRefresh(engine, 'gh-example', item(1));
+      expect(later.id).not.toBe(first.id);
+      expect(later.coalesced).not.toBe(true);
+      expect(await queuedItems()).toEqual([`1:${status}`, '1:waiting']);
+    }
   });
 });
