@@ -256,6 +256,7 @@ export async function importFromContent(
   opts: {
     /** Coordinator seam: prepare without publishing, then commit under its guarded transaction. */
     prepare?: (prepared: import('./persistence/prepared-import.ts').PreparedContentImport) => Promise<ImportResult>;
+    /** GBRA-217: a sync import's reason from Git and history-gap marker, stamped on the snapshot this import archives. */ history?: import('./page-state/versions.ts').VersionHistory;
     /** #5984, with `prepare`: the coordinator proves the base revision under its page guard, and the caller seals the text projection and checks the read-back (`contentHash`) from its own read after apply; apply skips all three. */
     coordinated?: boolean;
     /** #7172, with `prepare`: the caller forwards `afterCommit` and seals nothing on `projectionPending` (chunk-moves.ts). */
@@ -753,7 +754,7 @@ export async function importFromContent(
 
     const demote = !segmented && bodyStorageOf(existing) === 'segmented';
     // Before the page write: an unpinned version reads the page itself, a demoted one references the generation it retires.
-    if (existing && (!preimage || demote)) await tx.createVersion(slug, preimage ? { ...txOpts, preimage } : txOpts);
+    if (existing && (!preimage || demote)) await tx.createVersion(slug, preimage ? { ...txOpts, ...opts.history, preimage } : { ...txOpts, ...opts.history });
     if (demote) await demoteSegmentedPage(tx, Number(existing!.id));
     // Every import keeps each stored row that is identical to its new chunk and
     // writes only the rest, so an edit rewrites only the chunks it changed. The
@@ -770,7 +771,7 @@ export async function importFromContent(
     let written: Page | undefined;
     await pipelined(tx, [
       () => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug),
-      async () => { if (existing && preimage && !demote) await tx.createVersion(slug, { ...txOpts, preimage }); },
+      async () => { if (existing && preimage && !demote) await tx.createVersion(slug, { ...txOpts, ...opts.history, preimage }); },
       async () => {
         if (segmented) return segmented.apply(tx, { type: parsed.type, title: parsed.title, frontmatter: parsed.frontmatter, page_kind: 'markdown',
           effective_date: effectiveDate, effective_date_source: effectiveDateSource, import_filename: filenameForChain, source_path: opts.sourcePath ?? null,
@@ -1028,6 +1029,7 @@ export async function importFromFile(
     activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> };
     /** Git first-commit date of the file (opt-in, see git-first-commit.ts); an undated page's fallback anchor. */
     firstCommitAt?: Date;
+    /** GBRA-217: a sync import's reason from Git and history-gap marker for the snapshot this import archives. */ history?: import('./page-state/versions.ts').VersionHistory;
     /** Wave B: the segmented-storage policy, read once per command; with the switch on, a Markdown file over the single-string ceiling imports streamed. Absent: it refuses as before. */
     bodyPolicy?: PageBodyPolicy;
   } = {},
@@ -1074,7 +1076,7 @@ export async function importFromFile(
   if (isCodeFilePath(relativePath)) {
     return importCodeFile(engine, relativePath, content, {
       noEmbed: opts.noEmbed,
-      sourceId: opts.sourceId,
+      sourceId: opts.sourceId, history: opts.history,
     });
   }
 
@@ -1227,7 +1229,7 @@ export async function importCodeFile(
   engine: BrainEngine,
   relativePath: string,
   content: string,
-  opts: { noEmbed?: boolean; force?: boolean; sourceId?: string;
+  opts: { noEmbed?: boolean; force?: boolean; sourceId?: string; history?: import('./page-state/versions.ts').VersionHistory;
     prepare?: (prepared: import('./persistence/prepared-import.ts').PreparedContentImport) => Promise<ImportResult> } = {},
 ): Promise<ImportResult> {
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct file import', { sourceId: opts.sourceId ?? 'default' });
@@ -1361,7 +1363,7 @@ export async function importCodeFile(
   // under the schema DEFAULT.
   const apply = async (tx: BrainEngine) => {
     await assertImportBase(tx, slug, sourceId ?? 'default', existing);
-    if (existing) await tx.createVersion(slug, txOpts);
+    if (existing) await tx.createVersion(slug, { ...txOpts, ...opts.history });
 
     await tx.putPage(slug, {
       type: 'code' as string,

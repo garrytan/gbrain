@@ -58,6 +58,7 @@ import { faultPoint } from './fault-points.ts';
 import { directoryAt, freezeFaultHold, noteFrozen, nullBytesRefusal } from './sync-entry-fault.ts';
 import { syncCursorOptions } from './sync-slices.ts';
 import { pipelined } from '../page-state/transactions.ts';
+import { withManagedReasonNotices } from './sync-reasons.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { principalAttribution } from './attribution.ts';
 import { recordSyncRunTrend } from '../fence-repair/census-store.ts';
@@ -1272,7 +1273,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
 async function performManagedPass(engine: BrainEngine, opts: SyncOpts, slice?: { maxPages: number; maxMs: number }): Promise<SyncResult> {
   const state: HoldRunState = {};
   // #6729: every managed entry point (CLI, drain, owner slice, worktree refresh) records the renames whose identity it did not keep.
-  const synced = await noteIdentityDowngrades(engine, opts.sourceId ?? 'default', await runManagedSync(engine, opts, slice, state), serr);
+  const synced = await withManagedReasonNotices(engine, opts.sourceId ?? 'default', await noteIdentityDowngrades(engine, opts.sourceId ?? 'default', await runManagedSync(engine, opts, slice, state), serr));
   if (!state.sourceId || !state.incarnation || synced.status === 'dry_run' || currentDrainLease(state.sourceId)?.idleClear) return synced;
   const cursor = state.cursor?.() ?? null;
   try {

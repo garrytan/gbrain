@@ -48,6 +48,7 @@ import { EFFECT_FAULT_POINTS, faultPoint } from './fault-points.ts';
 import { dispatchFactsBackstopEffect } from './effect-facts.ts';
 import { runLinksEffect } from './effect-links.ts';
 import { PARK_AFTER_FAILURES, WITHHELD_BY_MIRROR, type EffectRecovery, type GitCommitNote, type PersistenceEffect, type SkippedTarget } from './effect-model.ts';
+import { visibleCommitNote } from './change-reason.ts';
 import { fileContentHash } from './large-file.ts';
 import { isSyncMetafile, metafileIsPage, readMetafilePagesMode } from '../sync.ts';
 import { diskMetafileHeads } from '../sync-metafile-pages.ts';
@@ -315,10 +316,15 @@ async function singleFileGitTarget(engine: BrainEngine, effect: PersistenceEffec
   return relative(binding.local_path, path).split(sep).join('/');
 }
 
-/** The commit metadata a single-file Git effect's preparer recorded, if any. */
-function gitCommitNote(effect: PersistenceEffect): GitCommitNote | undefined {
-  const { commit_subject: subject, commit_line: line, commit_trailer: trailer } = effect.data;
-  return typeof subject === 'string' && typeof line === 'string' ? { subject, line, ...(typeof trailer === 'string' ? { trailer } : {}) } : undefined;
+/**
+ * The commit metadata a single-file Git effect's preparer recorded, if any; its reason only while the page is still
+ * world-visible (GBRA-217: a later write may have made it private since the effect was queued).
+ */
+async function gitCommitNote(engine: BrainEngine, effect: PersistenceEffect): Promise<GitCommitNote | undefined> {
+  const { commit_subject: subject, commit_line: line, commit_trailers: listed, commit_trailer: legacy } = effect.data;
+  const trailers = Array.isArray(listed) ? listed.filter((t): t is string => typeof t === 'string') : typeof legacy === 'string' ? [legacy] : [];
+  const note = typeof subject === 'string' && typeof line === 'string' ? { subject, line, ...(trailers.length ? { trailers } : {}) } : undefined;
+  return visibleCommitNote(engine, effect.source_id, effect.data.slug, note);
 }
 
 async function gitPage(engine: BrainEngine, effect: PersistenceEffect, binding: WorktreeBinding | null, opts: EffectWorkerOptions,
@@ -338,7 +344,7 @@ async function publishGitPage(engine: BrainEngine, effect: PersistenceEffect, bi
   const root = binding.local_path;
   if (!targetedWithdrawalEffect(effect) && !effect.data.source_scan) {
     const target = await singleFileGitTarget(engine, effect, { ...binding, local_path: root }, attempt);
-    if (target !== null) await completeEffect(engine, effect, await publishGitEffect(root, target, opts.signal, hardened, gitCommitNote(effect), undefined, owner));
+    if (target !== null) await completeEffect(engine, effect, await publishGitEffect(root, target, opts.signal, hardened, await gitCommitNote(engine, effect), undefined, owner));
     return;
   }
   // Only a page walk reads snapshots; a single-file effect completes by its recorded hash.
@@ -392,7 +398,7 @@ async function publishGitPage(engine: BrainEngine, effect: PersistenceEffect, bi
     await skipTarget(engine, effect, snapshot, 'withdrawal_not_mirrored');
     return;
   }
-  const result = await publishGitEffect(root, relative(root, path).split(sep).join('/'), opts.signal, hardened, gitCommitNote(effect), undefined, owner);
+  const result = await publishGitEffect(root, relative(root, path).split(sep).join('/'), opts.signal, hardened, await gitCommitNote(engine, effect), undefined, owner);
   if (result.reason === 'durability_not_enabled') await completeEffect(engine, effect, result);
   else await finishPage(engine, effect, snapshot, result);
 }
@@ -940,7 +946,8 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
           if (path !== null) targets.push({ effect, path, attempt });
         } catch (error) { await recordFailure(engine, effect, error, opts.signal, attempt.target); }
       }
-      const notes = new Map(targets.flatMap(({ effect, path }) => { const note = gitCommitNote(effect); return note ? [[path, note] as const] : []; }));
+      const notes = new Map<string, GitCommitNote>();
+      for (const { effect, path } of targets) { const note = await gitCommitNote(engine, effect); if (note) notes.set(path, note); }
       const outcomes = targets.length ? await commitGitTargets(binding.local_path, targets.map(t => t.path), opts.signal, notes,
         { writerLock: lock, onReclaim: () => { reclaimed = true; } }) : new Map();
       const pending = unpushed.get(binding.local_path) ?? { binding, items: [] };

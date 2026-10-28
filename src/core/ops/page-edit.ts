@@ -4,7 +4,7 @@
 import type { Operation } from './contract.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, validatePageSlug } from './context.ts';
 import { pageMutationSource, submitPageMutation } from '../persistence/page-mutations.ts';
-import { PAGE_MUTATION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/params.ts';
+import { PAGE_MUTATION_PARAMS, REASON_PARAM, WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 import { EDIT_PAGE_MAX_EDITS, parseEditWithin, parsePageEdits } from '../persistence/page-edit.ts';
 
 const edit_page: Operation = {
@@ -37,6 +37,7 @@ const edit_page: Operation = {
     },
     source_id: PAGE_MUTATION_PARAMS.source_id,
     request_id: WRITE_REQUEST_PARAM,
+    reason: REASON_PARAM,
   },
   mutating: true,
   scope: 'write',

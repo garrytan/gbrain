@@ -53,6 +53,8 @@ import { markBeliefCommits } from '../belief/append.ts';
 import { appendPurgeCommitted, appendPurgeIntent } from '../belief/purge-mirror.ts';
 import { createPageVersion } from '../page-state/versions.ts';
 import { clearRebuildableCache } from '../persistence/rebuildable-cache.ts';
+import { recordReasonTombstones, redactGitEffectReasons, scanPurgeTrailers } from './purge-reasons.ts';
+import { clearReasonScanCache } from '../reason-trailers.ts';
 import { appendDerivedHidden, bumpPurgeEpoch, derivedBeliefTargets, derivedStreamSlugs, redactCarryingFields, redactPurgedKeys, registerLiveCarriers, registerVersionCarriers, sourceHasBeliefEvents,
   type LedgerPurgeReport } from '../belief/purge.ts';
 
@@ -179,7 +181,7 @@ export async function planFactPurge(engine: BrainEngine, target: PurgeTarget, al
     'SELECT slug,id AS page_id,knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND id=ANY($2::int[])', [target.source_id, extra]) : [];
   const pages = [...discovered, ...takePages.map(p => ({ ...p, page_id: Number(p.page_id) }))].sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
   const [versions] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM page_versions v JOIN pages p ON p.id=v.page_id
-    WHERE p.source_id=$1 AND (${carriesClaimSql('v', 2)}
+    WHERE p.source_id=$1 AND (${carriesClaimSql('v', 2)} OR strpos(lower(v.change_reason),$2)>0
       OR (v.body_storage='segmented' AND ${SEGMENTED_VERSION_CARRIES}))`, [target.source_id, ...claimNeedles(target.fact)]);
   const { stagings, held } = await stagingsHoldingClaim(engine, target.source_id, target.fact);
   // #6511 [R5]: a statement timeout of this unindexable substring search is deterministic on a large journal, not contention: the typed code, not a retry.
@@ -306,7 +308,10 @@ const VERSION_REDACTION_BATCH = 5000;
 export async function redactPageVersions(tx: BrainEngine, sourceId: string, claim: string, pageIds: number[]):
   Promise<{ redacted: number; prose: Array<{ slug: string; version_id: number }>; segmentedPages: number[]; replaced: Uint8Array[] }> {
   const [needle, escaped] = claimNeedles(claim);
-  let redacted = 0;
+  // GBRA-217 (A7): a change reason quoting the claim, on inline and segmented snapshots alike, wherever its page is.
+  const reasons = new Set((await tx.executeRaw<{ id: number }>(`UPDATE page_versions v SET change_reason = '[purged]' FROM pages p
+    WHERE p.id = v.page_id AND p.source_id = $1 AND strpos(lower(v.change_reason), $2) > 0 RETURNING v.id`, [sourceId, needle])).map(row => Number(row.id)));
+  let redacted = reasons.size;
   const prose: Array<{ slug: string; version_id: number }> = [];
   for (let after = 0; ;) {
     const rows = await tx.executeRaw<{ id: number; slug: string; compiled_truth: string; timeline: string | null; metadata: boolean }>(`SELECT v.id,p.slug,v.compiled_truth,v.timeline,
@@ -321,7 +326,7 @@ export async function redactPageVersions(tx: BrainEngine, sourceId: string, clai
       const timeline = await dropPurgedFenceRows(tx, sourceId, v.timeline ?? '', v.slug);
       if (compiled !== v.compiled_truth || timeline !== (v.timeline ?? '')) {
         await tx.executeRaw('UPDATE page_versions SET compiled_truth=$2,timeline=$3 WHERE id=$1', [v.id, compiled, timeline]);
-        redacted++;
+        if (!reasons.has(Number(v.id))) redacted++;
       }
       if (v.metadata || compiled.toLowerCase().includes(needle) || timeline.toLowerCase().includes(needle)) prose.push({ slug: v.slug, version_id: Number(v.id) });
     }
@@ -386,16 +391,18 @@ export async function purgeSegmentStorage(tx: BrainEngine, sourceId: string, cla
   return { texts, stagings: plan.stagings.length, parts, cancelled };
 }
 
-interface PurgeParams { id: number; rawId: string; sourceId: string; reason: string | null; allSubjects: boolean; requestId: string }
+interface PurgeParams { id: number; rawId: string; sourceId: string; reason: string | null; allSubjects: boolean; requestId: string; reasonScanLimit?: number }
 
 function parseParams(ctx: OperationContext, params: Record<string, unknown>): PurgeParams {
   const rawId = String(params.id ?? '').trim();
   const id = Number(rawId);
   if (!Number.isSafeInteger(id) || id <= 0) throw notFound(rawId);
   const reason = typeof params.reason === 'string' && params.reason.trim() ? params.reason.trim().slice(0, 200) : null;
+  const limit = params.reason_scan_limit === undefined ? undefined : Number(params.reason_scan_limit);
+  if (limit !== undefined && (!Number.isSafeInteger(limit) || limit <= 0)) throw opError('invalid_params', 'reason_scan_limit must be a positive whole number.', 'Pass the number of newest commits to check, or omit it.');
   return { id, rawId, reason, allSubjects: params.all_subjects === true,
     sourceId: typeof params.source_id === 'string' ? params.source_id : ctx.sourceId ?? 'default',
-    requestId: parseWriteRequestId(params.request_id) ?? randomUUID() };
+    requestId: parseWriteRequestId(params.request_id) ?? randomUUID(), ...(limit !== undefined ? { reasonScanLimit: limit } : {}) };
 }
 
 /** `--match`: candidate facts for a text, so the owner picks an id (purge always needs a ref). Owner-only output. */
@@ -463,6 +470,8 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
     `Run the dry run first (gbrain forget ${p.rawId} --purge --dry-run), review its receipt with the user, then confirm with the fact's token (the first 8 characters of its fingerprint).`,
     { fix: { argv: ['gbrain', 'forget', p.rawId, '--purge', '--dry-run', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Prints what the purge would remove and the confirmation token, without changing anything.' } });
+  // GBRA-217 (A7): while the claim still exists, the commits whose change reason quotes it (rechecked inside the transaction).
+  const trailers = await scanPurgeTrailers(ctx.engine, { sourceId: p.sourceId, claim: target.fact, rawId: p.rawId, ...(p.reasonScanLimit ? { limit: p.reasonScanLimit } : {}) });
   const { similarActiveAfterForget } = await import('./similar-active.ts');
   const similar = await similarActiveAfterForget(ctx.engine, { sourceId: p.sourceId, factId: p.id, remote: false, committed: true, semanticReview: false })
     .then(s => ({ ...s, candidates: s.candidates.filter(c => !plan.factIds.includes(Number(c.fact_id))) })).catch(() => null);
@@ -501,6 +510,8 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
     return withCoordinatedWrite(tx, [p.sourceId], async () => {
       const plan = committedPlan;
       await assertNoPendingPublication(tx, p.sourceId, plan.pages, admitted.id);
+      const effectReasons = await redactGitEffectReasons(tx, p.sourceId, current.fact);
+      const reasonTombstones = await recordReasonTombstones(tx, { sourceId: p.sourceId, claim: current.fact, rawId: p.rawId, plan: trailers });
       const intents = await redactRequestIntents(tx, plan.requests, admitted.id, { needles: [current.fact] });
       const ledgerPresent = await sourceHasBeliefEvents(tx, p.sourceId);
       const streams = ledgerPresent ? await factPurgeStreams(tx, p.sourceId, plan) : [];
@@ -561,7 +572,8 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
         WHERE s.id=$2 ON CONFLICT(request_id,kind) DO NOTHING`, [admitted.id, p.sourceId, JSON.stringify({ version: 2, mode: 'purge',
         commit_subject: `gbrain: purge fact ${token}`, commit_line: `purge fact ${token}`,
         targets: pages.map(page => ({ slug: page.slug, page_id: Number(page.id), revision: page.knowledge_revision })) })]);
-      counts = { facts, takes, chunks, page_versions: versions.redacted, pages: rewritten.length, persistence_requests: intents,
+      counts = { facts, takes, chunks, page_versions: versions.redacted, pages: rewritten.length, persistence_requests: intents, persistence_effects: effectReasons,
+        reason_purge_tombstones: reasonTombstones,
         query_cache: cache, decide_review: review, open_loops: loops, take_proposals: proposals, core_edit_notices: notices, ...ledger,
         write_gate_holds: holdIds.length, write_gate_receipts: gateReceipts, page_segment_texts: segments.texts, page_segment_derivations: bodies.derivations,
         page_body_stagings: segments.stagings, page_body_staging_parts: segments.parts, persistence_requests_cancelled: segments.cancelled,
@@ -596,8 +608,10 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
   counts.page_segment_derivations = (counts.page_segment_derivations ?? 0) + await continueDerivationPurges(ctx.engine, p.sourceId, { first: row.id, inline: true });
   if (beliefReport.appended || ledger?.derived_hidden) await markBeliefCommits(ctx.engine, [row.id]).catch(() => undefined);
   const sweepVerified = !await derivationPurgeState(ctx.engine, row.id);
+  clearReasonScanCache();
   const receipt: PurgeReceipt = await verifyFactPurge(ctx.engine, { target, plan: committedPlan, dryRun: false, removed: counts, prose,
-    vacuum: params.vacuum === true, ledger, sweepVerified });
+    vacuum: params.vacuum === true, ledger, sweepVerified,
+    reasonCommits: trailers.sourceRoot ? { tombstoned: counts.reason_purge_tombstones ?? 0, commits: trailers.commits, limited: trailers.limited } : undefined });
   if (sweepVerified && receipt.stores.some(s => s.store === 'page_segment_derivations' && s.status === 'incomplete')) {
     await recordDerivationPurge(ctx.engine, row.id, p.sourceId, committedPlan.pages.map(page => page.page_id), [target.fact, escapeFenceCell(target.fact)]);
   }

@@ -267,6 +267,8 @@ test/origin-twins-6948.test.ts
 test/overwritten-edits-6712.test.ts
 test/owner-refusal.test.ts
 test/pack-relation-direction-engine.test.ts
+test/page-change-reason-gbra217.test.ts
+test/page-change-reason-git-gbra217.test.ts
 test/page-embedding-budget.test.ts
 test/page-embedding-content-validity.test.ts
 test/page-embedding-install-batch.test.ts
@@ -411,6 +413,7 @@ test/purge-missing-cache-6911.test.ts
 test/purge-read-surfaces.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
 test/read-meta-diag.test.ts
+test/reason-trailers-gbra217.test.ts
 test/recall-page-fill.test.ts
 test/receipt-compaction-newest-sync-gbra130.test.ts
 test/reconcile-clears-stalled-hold-7364.test.ts

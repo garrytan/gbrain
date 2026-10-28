@@ -171,8 +171,8 @@ describe('G2 plumbing door commit', () => {
   test('the message and trailers are the porcelain path\'s, alone and in a group', async () => {
     const seed = { 'notes/a.md': 'a\n', 'notes/b.md': 'b\n', 'notes/c.md': 'c\n' };
     const notes: Record<string, GitCommitNote> = {
-      'notes/a.md': { subject: 'gbrain: repair notes/a.md  ', line: 'notes/a.md (invalid_fence)', trailer: 'gbrain-repair: invalid_fence deterministic high' },
-      'notes/b.md': { subject: 'gbrain: repair notes/b.md', line: 'notes/b.md (frontmatter_slug_conflict)', trailer: 'gbrain-repair: frontmatter_slug_conflict deterministic high' },
+      'notes/a.md': { subject: 'gbrain: repair notes/a.md  ', line: 'notes/a.md (invalid_fence)', trailers: ['gbrain-repair: invalid_fence deterministic high'] },
+      'notes/b.md': { subject: 'gbrain: repair notes/b.md', line: 'notes/b.md (frontmatter_slug_conflict)', trailers: ['gbrain-repair: frontmatter_slug_conflict deterministic high'] },
     };
     for (const paths of [['notes/a.md'], ['notes/c.md'], ['notes/a.md', 'notes/b.md', 'notes/c.md']]) {
       const porcelain = repo(seed), plumbing = repo(seed);

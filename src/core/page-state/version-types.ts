@@ -18,6 +18,12 @@ export interface PageVersion {
   /** Segmented versions: the referenced body's UTF-8 bytes. */
   body_bytes?: number;
   content_hash?: string | null;
+  /**
+   * GBRA-217: why the write that replaced this snapshot was made (`page_versions.change_reason`), as the reader may see it:
+   * a remote reader gets it only when this snapshot's successor is world-visible and was not pruned. Absent from rows
+   * read without the reason projection.
+   */
+  replaced_because?: string | null;
   id: number;
   page_id: number;
   compiled_truth: string;

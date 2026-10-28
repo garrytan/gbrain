@@ -1,6 +1,6 @@
 import { funnelPassThrough } from '../funnel.ts';
 import { suffixedSlugDryRun } from '../persistence/suffixed-slug.ts';
-import { AGENT_CONTENT_PARAMS, PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS, CAPTURE_CLI_PROVENANCE_PARAMS, WRITE_WAIT_PARAM } from '../persistence/params.ts';
+import { AGENT_CONTENT_PARAMS, PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS, CAPTURE_CLI_PROVENANCE_PARAMS, REASON_PARAM, WRITE_WAIT_PARAM } from '../persistence/params.ts';
 import { assertPurgeParams } from '../persistence/purge-params.ts';
 /**
  * Page CRUD operation cluster — pure move from operations.ts (v0.46.x
@@ -341,7 +341,7 @@ const put_page: Operation = {
     allow_empty: { type: 'boolean', required: false, description: 'Allow an empty page.', fullSurfaceOnly: true },
     allow_shrink: { type: 'boolean', required: false, description: 'Allow content under half a >256 KB page. To add text use append_page, not a re-put; a page over one request goes by begin_page_upload.', fullSurfaceOnly: true },
     drop_timeline: { type: 'boolean', required: false, description: 'No Timeline in content: delete its entries.', fullSurfaceOnly: true },
-    wait_ms: WRITE_WAIT_PARAM,
+    wait_ms: WRITE_WAIT_PARAM, reason: REASON_PARAM,
     // v0.39.3.0 provenance write-through (WARN-8 + A1 + CV6). Optional fields
     // for trusted local callers (capture CLI, autopilot, dream cycle). Remote
     // MCP callers (ctx.remote !== false) have their values OVERRIDDEN with

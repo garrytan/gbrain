@@ -265,7 +265,7 @@ export async function runImport(
   args: string[],
   opts: {
     signal?: AbortSignal;
-    commit?: string;
+    commit?: string; /** GBRA-217: a full sync's reason and history-gap note per file (absolute path) for the snapshot its import archives. */ history?: (filePath: string) => import('../core/page-state/versions.ts').VersionHistory | undefined;
     strategy?: SyncStrategy;
     sourceId?: string;
     managedBookmark?: boolean;
@@ -741,7 +741,7 @@ export async function runImport(
         ? await importManagedFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack, signal, slugRoot: opts.slugRoot })
         : isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
         ? await importImageFile(eng, filePath, importRelPath, { noEmbed, sourceId })
-        : await importFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack, bodyPolicy, firstCommitAt: firstCommits?.get(filePath) });
+        : await importFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack, bodyPolicy, firstCommitAt: firstCommits?.get(filePath), history: opts.history?.(filePath) });
       // An import that landed while cancellation arrived is still complete.
       // Account for it before stopping, so resume never loses a successful path.
       noteTypeWarning((result as { type_warning?: Parameters<typeof noteTypeWarning>[0] }).type_warning); fenceTally.note(importRelPath, result);

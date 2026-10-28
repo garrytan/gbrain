@@ -73,6 +73,9 @@ export interface SyncResult {
   fileRefusals?: import('../core/persistence/sync-discovery.ts').SyncFileRefusal[]; links?: import('../core/persistence/links-maintenance.ts').ManagedLinkExtraction; /** #6729: inexact renames split into delete + add; once recorded each is an IdentityDowngrade (old slug, what stayed on it). */ identityDowngrades?: Array<import('../core/sync.ts').DowngradedRename | import('../core/sync-identity-downgrades.ts').IdentityDowngrade>;
   /** #6712 PR 2 (L5): the owed post-checkpoint tail (statistics, links) this call ran after releasing the lease; a degraded tail carries its notice. */
   tail?: Omit<import('../core/persistence/sync-tail.ts').SyncTailReport, 'links'>;
+  /** GBRA-217: the pass's change-reason notices (a failed or capped trailer scan, a secret in a pushed trailer) and its count of skipped malformed trailers. */
+  reason_notices?: import('../core/agent-output.ts').Notice[];
+  reason_trailers_malformed?: number;
   /** #5459 (P4.5): live pages a `--full` tree walk kept because their file is in the working tree and their import provenance is the working tree or unknown. */
   working_tree_kept?: number;
   /**

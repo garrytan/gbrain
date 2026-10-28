@@ -3,7 +3,7 @@
  * owner-only `purge_fact` operation.
  *
  *   gbrain forget <id> --purge [--dry-run] [--yes --request-id <uuid>] [--reason <text>]
- *                              [--all-subjects] [--vacuum] [--source <id>] [--json]
+ *                              [--all-subjects] [--vacuum] [--reason-scan-limit <n>] [--source <id>] [--json]
  *   gbrain forget --purge --match "<text>"            # list candidate ids; never purges
  *   gbrain forget --purge --status --request-id <uuid> [--continue] # completion of an earlier purge; --continue resumes its derivation sweep
  *
@@ -35,7 +35,7 @@ export const PURGE_FAMILY_HELP = `Purge family (remove content from live stores;
 
 const USAGE = `Usage: gbrain forget <fact-id> [--reason <text>] [--source <id>] [--request-id <uuid>] [--json]
        (withdraws the fact: it expires and cannot be re-saved; the text stays in history and backups)
-       gbrain forget <fact-id> --purge [--dry-run] [--yes --request-id <uuid>] [--reason <text>] [--all-subjects] [--vacuum] [--source <id>] [--json]
+       gbrain forget <fact-id> --purge [--dry-run] [--yes --request-id <uuid>] [--reason <text>] [--all-subjects] [--vacuum] [--reason-scan-limit <n>] [--source <id>] [--json]
        gbrain forget --purge --match "<text>"
        gbrain forget --purge --status --request-id <uuid> [--continue]
 
@@ -129,7 +129,9 @@ export async function runForgetPurge(engine: BrainEngine | (() => Promise<BrainE
     }
     if (!idArg) { process.stderr.write(USAGE); setCliExitVerdict(1); return; }
     const reason = flagValue(args, '--reason');
-    const base = { id: Number(idArg), ...(reason !== undefined ? { reason } : {}), ...(args.includes('--all-subjects') ? { all_subjects: true } : {}) };
+    const scanLimit = flagValue(args, '--reason-scan-limit');
+    const base = { id: Number(idArg), ...(reason !== undefined ? { reason } : {}), ...(args.includes('--all-subjects') ? { all_subjects: true } : {}),
+      ...(scanLimit !== undefined ? { reason_scan_limit: Number(scanLimit) } : {}) };
     const dry = await invoke({ ...base, dry_run: true });
     if (args.includes('--dry-run')) { out(dry, renderPurgeReceipt(dry)); return; }
     const token = String(dry.confirm_token);

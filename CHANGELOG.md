@@ -10,6 +10,25 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A page write can say why it was made, and page history shows it.**
+
+`put_page`, `edit_page`, `revert_version` and each `put_pages` item take an optional `reason` (one line, at most 500 characters; `--reason` on the CLI). It is stored on the version the write replaced, and `get_versions` returns it as `replaced_because`, so the newest version explains the text you read now; `gbrain history` prints it as `changed because: …`. When the page's file reaches Git, the commit carries it as a trailer naming the file, `gbrain-reason: <path>: <text>`, beside any `gbrain-repair:` trailer. A brain with no Git repository gets the same history from the database. Every write result reports where the reason went in `reason_recorded`.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A write passes `reason` | refused as an unknown parameter | stored with the replaced version and, for a world-visible file, in the commit |
+| A reason over 500 characters, or one that looks like a credential | n/a | refused before admission: `change_reason_rejected` (`reason_too_long`, `reason_contains_secret`), and no journal row keeps it |
+| A remote caller reads `get_versions` | no reasons | `replaced_because` when the version and the one that replaced it are both world-visible and the replacement was not pruned |
+| A private page's write has a reason | n/a | the reason stays out of every commit message |
+| A write without a reason | | the same commit message and history as before |
+| A newer write to the same file commits first (non-strict source) | n/a | the receipt says `git: superseded` with a `reason_not_committed` notice; the reason stays in history |
+
+Guide: [page history](docs/guides/page-history.md).
+
 ## [0.60.475.0] - 2026-10-27
 
 **A repository's own commit checks now apply to commits gbrain makes.**

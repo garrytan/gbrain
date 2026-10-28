@@ -9,22 +9,31 @@ import { isSegmentedPage } from '../page-body/page-shape.ts';
 export { LARGE_PAGE_VERSIONS_KEPT };
 
 /**
+ * GBRA-217: what a sync import knows about the write a snapshot records: the reason Git gives for it
+ * (`page_versions.change_reason`), and whether the import consumed more than one commit for the page's file, or could
+ * not tell (`pages.version_history_gap_at`).
+ */
+export interface VersionHistory { reason?: string | null; historyGap?: boolean }
+
+/**
  * Version the same canonical view an API reader receives, including withdrawals.
  * `preimage` (#5984) is the caller's own read of the page under its page guard
  * in this transaction; it is versioned as read, without a second read.
  */
-export async function createPageVersion(engine: BrainEngine, slug: string, sourceId: string, preimage?: PageSnapshot): Promise<PageVersion> {
+export async function createPageVersion(engine: BrainEngine, slug: string, sourceId: string, preimage?: PageSnapshot, history: VersionHistory = {}): Promise<PageVersion> {
   const insert = async (tx: BrainEngine, snapshot: PageSnapshot) => {
     const { page, tags, revision } = snapshot;
-    if (isSegmentedPage(page)) return insertSegmentedVersion(tx, snapshot);
+    if (history.historyGap) await tx.executeRaw('UPDATE pages SET version_history_gap_at = now() WHERE id = $1', [page.id]);
+    if (isSegmentedPage(page)) return insertSegmentedVersion(tx, snapshot, history.reason ?? null);
     const rows = await tx.executeRaw<PageVersion>(`INSERT INTO page_versions
-      (page_id,compiled_truth,frontmatter,knowledge_revision,timeline,title,type,tags,is_deleted,source_path)
-      VALUES ($1,$2,$3::text::jsonb,$4::uuid,$5,$6,$7,$8::text::jsonb,$9,$10) RETURNING *`,
-    [page.id, page.compiled_truth, JSON.stringify(page.frontmatter), revision, page.timeline, page.title, page.type, JSON.stringify(tags), page.deleted_at != null, page.source_path ?? null]);
+      (page_id,compiled_truth,frontmatter,knowledge_revision,timeline,title,type,tags,is_deleted,source_path,change_reason)
+      VALUES ($1,$2,$3::text::jsonb,$4::uuid,$5,$6,$7,$8::text::jsonb,$9,$10,$11) RETURNING *`,
+    [page.id, page.compiled_truth, JSON.stringify(page.frontmatter), revision, page.timeline, page.title, page.type, JSON.stringify(tags), page.deleted_at != null, page.source_path ?? null, history.reason ?? null]);
     if (isLargePageBytes(Buffer.byteLength(page.compiled_truth ?? '', 'utf-8') + Buffer.byteLength(page.timeline ?? '', 'utf-8'))) {
-      await tx.executeRaw(`DELETE FROM page_versions WHERE page_id = $1 AND id IN (SELECT id FROM page_versions WHERE page_id = $1
-        AND octet_length(compiled_truth) + octet_length(COALESCE(timeline, '')) > $2 ORDER BY id DESC OFFSET $3)`,
+      const pruned = await tx.executeRaw<{ id: number }>(`DELETE FROM page_versions WHERE page_id = $1 AND id IN (SELECT id FROM page_versions WHERE page_id = $1
+        AND octet_length(compiled_truth) + octet_length(COALESCE(timeline, '')) > $2 ORDER BY id DESC OFFSET $3) RETURNING id`,
       [page.id, PAGE_INLINE_MAX_BYTES, LARGE_PAGE_VERSIONS_KEPT]);
+      await markPrunedHistory(tx, page.id, pruned.map(row => Number(row.id)));
     }
     return { ...rows[0], snapshot_at: new Date(rows[0].snapshot_at) };
   };
@@ -45,13 +54,13 @@ export async function createPageVersion(engine: BrainEngine, slug: string, sourc
  * before its generation flip, as every caller versions before its page write.
  * Then the page's segmented history is pruned by `pruneSegmentedVersions`.
  */
-async function insertSegmentedVersion(tx: BrainEngine, snapshot: PageSnapshot): Promise<PageVersion> {
+async function insertSegmentedVersion(tx: BrainEngine, snapshot: PageSnapshot, reason: string | null): Promise<PageVersion> {
   const { page, tags, revision } = snapshot;
   const [row] = await tx.executeRaw<PageVersion>(`INSERT INTO page_versions
-    (page_id,body_storage,body_generation,body_bytes,content_hash,frontmatter,knowledge_revision,title,type,tags,is_deleted,source_path)
-    SELECT p.id,'segmented',p.body_generation,p.body_bytes,p.content_hash,$2::text::jsonb,$3::uuid,$4,$5,$6::text::jsonb,$7,$8
+    (page_id,body_storage,body_generation,body_bytes,content_hash,frontmatter,knowledge_revision,title,type,tags,is_deleted,source_path,change_reason)
+    SELECT p.id,'segmented',p.body_generation,p.body_bytes,p.content_hash,$2::text::jsonb,$3::uuid,$4,$5,$6::text::jsonb,$7,$8,$9
       FROM pages p WHERE p.id = $1 AND p.body_storage = 'segmented' RETURNING *`,
-  [page.id, JSON.stringify(page.frontmatter), revision, page.title, page.type, JSON.stringify(tags), page.deleted_at != null, page.source_path ?? null]);
+  [page.id, JSON.stringify(page.frontmatter), revision, page.title, page.type, JSON.stringify(tags), page.deleted_at != null, page.source_path ?? null, reason]);
   if (!row) throw new Error(`createVersion failed: page id ${page.id} is no longer segmented`);
   if ((await pruneSegmentedVersions(tx, page.id)) > 0) await tx.sweepSegments({ pageId: page.id });
   return { ...row, snapshot_at: new Date(row.snapshot_at) };
@@ -84,7 +93,20 @@ export async function pruneSegmentedVersions(tx: BrainEngine, pageId: number): P
     cap AS (SELECT GREATEST($3::bigint, COALESCE(body_bytes, 0)) AS bytes FROM pages WHERE id = $1)
     DELETE FROM page_versions WHERE id IN (SELECT kept.id FROM kept, cap WHERE kept.rk > $2 OR kept.bytes > cap.bytes)
     RETURNING id`, [pageId, policy.versionsMaxPerPage, policy.versionsMaxPinnedBytes]);
+  await markPrunedHistory(tx, pageId, deleted.map(row => Number((row as { id: number }).id)));
   return deleted.length;
+}
+
+/**
+ * GBRA-217: after a prune, the retained snapshot just before each pruned one has lost its successor (`successor_pruned`,
+ * so a remote reader is never shown its reason: the successor's visibility can no longer be checked), and the page has
+ * lost history (`version_history_gap_at`, read by valid-time answers).
+ */
+async function markPrunedHistory(tx: BrainEngine, pageId: number, pruned: number[]): Promise<void> {
+  if (!pruned.length) return;
+  await tx.executeRaw(`UPDATE page_versions SET successor_pruned = true WHERE page_id = $1 AND id IN (
+      SELECT (SELECT max(k.id) FROM page_versions k WHERE k.page_id = $1 AND k.id < d.id) FROM unnest($2::int[]) AS d(id))`, [pageId, pruned]);
+  await tx.executeRaw('UPDATE pages SET version_history_gap_at = now() WHERE id = $1', [pageId]);
 }
 
 /**

@@ -1000,6 +1000,20 @@ const PAGE_VERSION_METADATA_COLUMNS = trustedSql('pv.id, pv.page_id, pv.frontmat
 const PAGE_VERSION_SEGMENTED_COLUMNS = trustedSql('pv.body_storage, pv.body_generation, pv.body_bytes, pv.content_hash');
 
 /**
+ * GBRA-217: a snapshot's `replaced_because` as a reader may see it. A trusted reader gets the stored reason. A reader
+ * held to world-visible pages (`excludePrivate`) gets it only when the snapshot's successor is world-visible too (the
+ * next snapshot of the page, or the live page, which the caller's own page predicate checks) and the successor was not
+ * pruned (`successor_pruned`: its visibility can no longer be checked, so the reason is withheld). The successor is
+ * read over every snapshot of the page, never only the rows the reader may see. Shared by get_versions and get_page as_of.
+ */
+export function replacedBecauseSql(pv: string, excludePrivate: boolean): string {
+  if (!excludePrivate) return `${pv}.change_reason`;
+  return `CASE WHEN ${pv}.change_reason IS NULL OR COALESCE(${pv}.successor_pruned, false) THEN NULL
+    WHEN COALESCE((SELECT ${privateSnapshotFilterFragment('rb_next')} FROM page_versions rb_next
+      WHERE rb_next.page_id = ${pv}.page_id AND rb_next.id > ${pv}.id ORDER BY rb_next.id LIMIT 1), true) THEN ${pv}.change_reason END`;
+}
+
+/**
  * Newest first (`pv.id` breaks snapshot_at ties). Scope, privacy and
  * re-derivation (a page a purge hid) predicates sit in WHERE, so `limit`
  * bounds only rows the caller may read; `includeBody: false` never selects
@@ -1018,7 +1032,7 @@ export async function getVersions<B extends boolean = true>(
     const columns = opts?.includeBody === false ? PAGE_VERSION_METADATA_COLUMNS : PAGE_VERSION_COLUMNS;
     const limit = opts?.limit !== undefined ? sqlFragment`LIMIT ${opts.limit}` : sqlFragment``;
     const { rows } = await exec.run(sqlFragment`
-      SELECT ${columns}, ${PAGE_VERSION_SEGMENTED_COLUMNS} FROM page_versions pv
+      SELECT ${columns}, ${PAGE_VERSION_SEGMENTED_COLUMNS}, ${trustedSql(replacedBecauseSql('pv', opts?.excludePrivate === true))} AS replaced_because FROM page_versions pv
       JOIN pages p ON p.id = pv.page_id
       WHERE p.slug = ${slug} ${scope}
         ${privacy} AND ${trustedSql(rederiveHiddenSql('pages', 'p'))}

@@ -13,6 +13,8 @@ import type { RegistryCode } from '../error-registry.ts';
 import { ownerGateInput, ownerImportTrust, ownerPageTrust } from '../trust/channel.ts';
 import { matchTrustAllowRule, type TrustAllowRule } from '../trust/allow-rules.ts';
 import { importFromContent, importCodeFile, verifyPageReadable } from '../import-file.ts';
+import { managedFileHistory } from './sync-reasons.ts';
+import type { VersionHistory } from '../page-state/versions.ts';
 import { screenImportContent, screenNormalized, type ContentRefusal, type ImportScreenResult, type ImportSanityConfig } from '../import-screen.ts';
 import { ContentSanityBlockError } from '../content-sanity.ts';
 import { parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, type ParseOpts } from '../markdown.ts';
@@ -434,7 +436,7 @@ async function recordSliceCursor(tx: BrainEngine, row: WriteRequest, p: { syncOp
 /** The code-file branch of `prepareManagedSyncMutation`: `importCodeFile` with `prepare`, text embedding deferred to `embed --stale` (the image branch is `sync-image.ts`). */
 async function prepareManagedSyncCode(engine: BrainEngine, row: WriteRequest, p: { content: string; sourcePath: string; rawHash: string | null; lineEndingOnly?: boolean; companyApproval: boolean },
   ctx: { snapshot: Snapshot | null; validate: (tx: BrainEngine) => Promise<void>; releaseHold: (tx: BrainEngine) => Promise<void>; recordProvenance: (tx: BrainEngine) => Promise<void>; clock?: ClaimPhaseClock;
-    refuse: (code: RegistryCode, message: string, cause: string) => OperationError; contentRefusal: (refusal: ContentRefusal) => OperationError }): Promise<PreparedMutation> {
+    history?: VersionHistory; refuse: (code: RegistryCode, message: string, cause: string) => OperationError; contentRefusal: (refusal: ContentRefusal) => OperationError }): Promise<PreparedMutation> {
   const { snapshot, validate, releaseHold, clock, refuse } = ctx;
   if (p.companyApproval) throw refuse('profile_incompatible', 'Company source approval permits only committed Markdown content.',
     `A company-brain source imports only committed Markdown, and ${row.slug} is a code file; remove it from the approved revision.`);
@@ -446,7 +448,7 @@ async function prepareManagedSyncCode(engine: BrainEngine, row: WriteRequest, p:
   if (codeScreen.status === 'refused') throw ctx.contentRefusal(codeScreen.refusal);
   let prepared: PreparedContentImport | undefined;
   enterClaimStep(clock, 'code_import', undefined, 'db');
-  const result = await importCodeFile(engine, p.sourcePath, p.content, { sourceId: row.source_id, noEmbed: true,
+  const result = await importCodeFile(engine, p.sourcePath, p.content, { sourceId: row.source_id, noEmbed: true, history: ctx.history,
     prepare: async value => { prepared = value; return value.result; } });
   if (!prepared || prepared.slug !== row.slug) throw refuse('invalid_params', result.error ?? 'The code file identity could not be prepared.',
     `The code file could not be prepared as page ${row.slug}.`);
@@ -792,6 +794,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
       await releaseHold(tx);
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop: !snapshot || snapshot.page.deleted_at != null };
     } };
+  const history = snapshot && typeof p.path === 'string' ? await managedFileHistory(unbounded, clock, { sourceId: row.source_id, root, path: p.path, from: p.from, to: p.target }) : undefined;
   // Wave B: a Markdown file over the single-string ceiling (never a company-brain or image entry) streams; its body is never read here.
   if (p.body_ref && typeof p.sourcePath === 'string' && typeof p.path === 'string') {
     enterClaimStep(clock, 'schema_pack', undefined, 'db');
@@ -802,7 +805,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
       throw syncPublicationRefusal('revision_conflict', 'The renamed page changed after sync admission.', row, p,
         `Page ${renamed.slug}, which this file was renamed from, changed or was deleted after the sync was admitted.`);
     }
-    return prepareManagedSyncStreamed(engine, row, { ...p, body_ref: p.body_ref, sourcePath: p.sourcePath, path: p.path }, { root, snapshot, base, ...(renamed ? { renamed } : {}),
+    return prepareManagedSyncStreamed(engine, row, { ...p, body_ref: p.body_ref, sourcePath: p.sourcePath, path: p.path }, { root, snapshot, base, ...(renamed ? { renamed } : {}), history,
       ...(pack?.manifest ? { activePack: pack.manifest } : {}), validate, releaseHold, clock, screening: !!screening,
       importProvenance: { source_id: row.source_id, incarnation: row.source_incarnation, origin: p.sourcePath, raw_sha256: p.body_ref.sha256,
         ...(p.blobOid ? { blob_oid: p.blobOid } : {}), working: p.working === true, gbrain_version: VERSION, parser: syncImportParser(pack?.identity ?? null) },
@@ -818,7 +821,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
         refuse: (code, message, cause) => syncPublicationRefusal(code, message, row, p, cause) });
   }
   if (isCodeFilePath(p.sourcePath)) return prepareManagedSyncCode(engine, row, { content: p.content, sourcePath: p.sourcePath, rawHash: p.rawHash, lineEndingOnly: p.lineEndingOnly, companyApproval: !!p.companyApproval },
-    { snapshot, validate, releaseHold, recordProvenance: syncFileProvenance(row, p, root, sha256(p.content)), clock, refuse: (code, message, cause) => syncPublicationRefusal(code, message, row, p, cause), contentRefusal: refusal => syncContentRefusal(refusal, row, p) });
+    { snapshot, validate, history, releaseHold, recordProvenance: syncFileProvenance(row, p, root, sha256(p.content)), clock, refuse: (code, message, cause) => syncPublicationRefusal(code, message, row, p, cause), contentRefusal: refusal => syncContentRefusal(refusal, row, p) });
   const schema = p.companyApproval?.schema;
   if (schema && p.processingOptions?.noSchemaPack) throw syncPublicationRefusal('profile_incompatible', 'Company source approval requires its pinned schema pack.', row,
     { ...p, processingOptions: { ...p.processingOptions!, noSchemaPack: false } },
@@ -862,7 +865,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
   // #6188: the import reuses this screen's fence verdict for the same bytes (one fence scan per file at prepare).
   const importOptions = { ...source, noEmbed: true, remote: row.authority.remote, preserveGateMarkers: true, activePack, coordinated: true, fences: 'coordinated' as const, boundedChunkWrites: true as const, writeGate: await ownerGateInput(engine, row, parsedInput.frontmatter, p.sourcePath),
     ...(importContent === p.content && screen.status === 'importable' ? { fenceScreen: screen.fences ?? null } : {}),
-    filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true,
+    filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true, history,
     segmentedOwner: { kind: 'sync' as const, principalKind: row.principal_kind, principalId: row.principal_id, baseRevision: base?.revision ?? null } };
   const result = await importFromContent(engine, renamed?.slug ?? row.slug, importContent, { ...importOptions,
     prepare: async value => { prepared = value; return value.result; } }).catch(error => {

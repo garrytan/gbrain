@@ -43,7 +43,7 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
     const commit = prepared.file.commit;
     queue('git', { relative_path: relative(binding.local_path, prepared.file.path).split(sep).join('/'),
       expected_hash: prepared.file.content === null ? null : fileContentHash(prepared.file.content),
-      ...(opts.pushOnly ? { push_only: true } : commit ? { commit_subject: commit.subject, commit_line: commit.line, ...(commit.trailer ? { commit_trailer: commit.trailer } : {}) } : {}) });
+      ...(opts.pushOnly ? { push_only: true } : commit ? { commit_subject: commit.subject, commit_line: commit.line, ...(commit.trailers?.length ? { commit_trailers: commit.trailers } : {}) } : {}) });
     if (!opts.pushOnly && outcome.persistence && typeof outcome.persistence === 'object') Object.assign(outcome.persistence, { git_state: 'queued' });
   }
   if (snapshot && !snapshot.page.deleted_at) {

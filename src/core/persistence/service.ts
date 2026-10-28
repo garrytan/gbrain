@@ -9,6 +9,7 @@ import { enginePoolStats } from '../postgres-engine/pool-stats.ts';
 import { claimOwnerKind, isOneShotCommand } from './claim-phase.ts';
 import { noteDirectPoolLease } from '../direct-pool-profile.ts';
 import { preparePageMutation } from './page-prepare.ts';
+import { withChangeReason } from './change-reason.ts';
 import { prepareSemanticPageMutation } from './semantic-pages.ts';
 import { getWriteRequestById, getWriteRequestProgress, receiptFor, type WriteRequestProgress } from './journal.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
@@ -110,8 +111,8 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   if (['add_tag','remove_tag','add_timeline_entry'].includes(row.operation)) return prepareSemanticPageMutation(e, row, cfg);
   if (row.operation === 'add_link' || row.operation === 'remove_link') return (await import('./manual-links.ts')).prepareManualLinkMutation(e, row, cfg);
   if (row.operation === 'append_page') return (await import('./page-upload.ts')).withStagedBodyIf(e, row, async () => (await import('./page-append.ts')).prepareAppendMutation(e, row, cfg, signal, clock));
-  if (['put_page','capture','delete_page','restore_page','revert_version','edit_page'].includes(row.operation)) return preparePageMutation(e, row, cfg, undefined, signal,
-    { coordinated: await writeSwitchOn(e, 'single_write_group').catch(() => true), clock, boundedChunkWrites: true });
+  if (['put_page','capture','delete_page','restore_page','revert_version','edit_page'].includes(row.operation)) return withChangeReason(row, await preparePageMutation(e, row, cfg, undefined, signal,
+    { coordinated: await writeSwitchOn(e, 'single_write_group').catch(() => true), clock, boundedChunkWrites: true }));
   throw new OperationError('unsupported_mutation_protocol', 'No compatible mutation preparer is registered for this operation.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
 }
 /**

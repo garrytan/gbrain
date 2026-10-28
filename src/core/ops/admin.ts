@@ -1,4 +1,4 @@
-import { PAGE_MUTATION_PARAMS } from '../persistence/params.ts';
+import { PAGE_MUTATION_PARAMS, REASON_PARAM } from '../persistence/params.ts';
 import { readPolicyOpts } from './context.ts';
 import { attributeVersions, canReadWriteAttribution } from './attribution.ts';
 import { GET_VERSIONS_DEFAULT_LIMIT, GET_VERSIONS_REMOTE_MAX_LIMIT, pagingLimit, reportVersionPage } from './read-paging.ts';
@@ -202,7 +202,7 @@ const get_versions: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { exempt: 'full page version snapshots by slug; a page read governed by visibility like get_page (CEO-17)' },
-  description: `Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest ${GET_VERSIONS_DEFAULT_LIMIT} versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most ${GET_VERSIONS_REMOTE_MAX_LIMIT} over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). revert_version takes the id field.`,
+  description: `Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest ${GET_VERSIONS_DEFAULT_LIMIT} versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most ${GET_VERSIONS_REMOTE_MAX_LIMIT} over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). replaced_because is the reason given for the write that replaced the snapshot (null when none was given). revert_version takes the id field.`,
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose version history to list.' },
     limit: { type: 'number', description: `Return only the newest N versions (a positive integer). Default ${GET_VERSIONS_DEFAULT_LIMIT}; MCP callers are capped at ${GET_VERSIONS_REMOTE_MAX_LIMIT}.` },
@@ -230,7 +230,7 @@ const get_versions: Operation = {
       const metadata = page(await ctx.engine.getVersions(p.slug as string, { ...opts, includeBody: false }))
         .map(v => { const { compiled_truth: _b, timeline: _t, ...rest } = v as typeof v & { compiled_truth?: unknown; timeline?: unknown }; return rest; });
       const sized = [];
-      for (const v of metadata) sized.push(await remoteVersionSize(ctx, v));
+      for (const v of metadata) sized.push({ ...await remoteVersionSize(ctx, v), ...(ctx.remote === false ? {} : remoteReason(v)) });
       return canReadWriteAttribution(ctx) ? attributeVersions(ctx.engine, sized) : sized;
     }
     const plain = page(await ctx.engine.getVersions(p.slug as string, opts));
@@ -241,12 +241,12 @@ const get_versions: Operation = {
       if (isSegmentedPage(v)) {
         const sized = await remoteVersionSize(ctx, v);
         const { compiled_truth: _b, timeline: _t, ...rest } = sized;
-        out.push({ ...rest, body_ref: { version_id: v.id, total_bytes: 'total_bytes' in sized ? sized.total_bytes : pageBodyBytes(v),
+        out.push({ ...rest, ...(ctx.remote === false ? {} : remoteReason(v)), body_ref: { version_id: v.id, total_bytes: 'total_bytes' in sized ? sized.total_bytes : pageBodyBytes(v),
           read: { tool: 'get_page', arguments: { slug: p.slug, version_id: v.id, body: 'window' } } } });
         continue;
       }
       if (ctx.remote === false) { out.push(v); continue; }
-      out.push({ ...v, compiled_truth: sanitizeRemoteBody(v.compiled_truth),
+      out.push({ ...v, compiled_truth: sanitizeRemoteBody(v.compiled_truth), ...remoteReason(v),
         ...(typeof v.timeline === 'string' ? { timeline: sanitizeRemoteBody(v.timeline) } : {}) });
     }
     return out;
@@ -254,6 +254,11 @@ const get_versions: Operation = {
   scope: 'read',
   cliHints: { name: 'history', positional: ['slug'] },
 };
+
+/** GBRA-217: a remote reader's `replaced_because` goes through the same sanitizer as the version bodies. */
+function remoteReason(v: { replaced_because?: string | null }): { replaced_because?: string } {
+  return typeof v.replaced_because === 'string' ? { replaced_because: sanitizeRemoteBody(v.replaced_because) } : {};
+}
 
 /**
  * A segmented version as a remote caller sees it: the size of its read projection (`total_bytes`, what get_page reports
@@ -276,6 +281,7 @@ const revert_version: Operation = {
     ...PAGE_MUTATION_PARAMS,
     slug: { type: 'string', required: true, description: 'Slug of the page to revert.' },
     version_id: { type: 'number', required: true, description: 'Numeric version id to revert to, as returned by get_versions. Not a version NUMBER offset — pass the id field.' },
+    reason: REASON_PARAM,
   },
   mutating: true,
   scope: 'write',

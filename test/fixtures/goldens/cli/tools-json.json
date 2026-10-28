@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 264473,
-    "stdoutSha256": "f5647f0a0d45a36ed8685afa000792cef233379d012eeceec6fa2f9366d1b0ee",
+    "stdoutBytes": 265594,
+    "stdoutSha256": "8151ee27ee0fbd9cd271ced0d710c63172ec96af3d57fb4fe50e7f6398ae2843",
     "toolNames": [
       "remember",
       "entity",
@@ -613,6 +613,7 @@
           "expected_revision": "string?",
           "force": "boolean?",
           "ingested_via": "string?",
+          "reason": "string?",
           "request_id": "string?",
           "slug": "string",
           "source_id": "string?",
@@ -658,6 +659,10 @@
             },
             "ingested_via": {
               "description": "Server-set remotely.",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why this change, one line (max 500 chars); kept in page history.",
               "type": "string"
             },
             "request_id": {
@@ -1056,6 +1061,7 @@
         "parameters": {
           "edits": "array",
           "expected_revision": "string",
+          "reason": "string?",
           "request_id": "string?",
           "slug": "string",
           "source_id": "string?",
@@ -1088,6 +1094,10 @@
             },
             "expected_revision": {
               "description": "From get_page include_content:true.",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why this change, one line (max 500 chars); kept in page history.",
               "type": "string"
             },
             "request_id": {
@@ -1244,6 +1254,10 @@
                   },
                   "expected_revision": {
                     "description": "Revision read; omit to create.",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "description": "Why this change, one line (max 500 chars); kept in page history.",
                     "type": "string"
                   },
                   "slug": {
@@ -2979,7 +2993,7 @@
         "scope": "read"
       },
       {
-        "description": "Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest 20 versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most 100 over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). revert_version takes the id field.",
+        "description": "Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest 20 versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most 100 over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). replaced_because is the reason given for the write that replaced the snapshot (null when none was given). revert_version takes the id field.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -3036,6 +3050,7 @@
         "parameters": {
           "expected_revision": "string?",
           "force": "boolean?",
+          "reason": "string?",
           "request_id": "string?",
           "slug": "string",
           "source_id": "string?",
@@ -3051,6 +3066,10 @@
             "force": {
               "description": "Ignore the revision.",
               "type": "boolean"
+            },
+            "reason": {
+              "description": "Why this change, one line (max 500 chars); kept in page history.",
+              "type": "string"
             },
             "request_id": {
               "description": "Reuse only to retry.",
@@ -6971,6 +6990,7 @@
           "id": "number?",
           "match": "string?",
           "reason": "string?",
+          "reason_scan_limit": "number?",
           "request_id": "string?",
           "source_id": "string?",
           "status": "boolean?",
@@ -7010,6 +7030,10 @@
             "reason": {
               "description": "Optional short reason stored in the text-free purge ledger.",
               "type": "string"
+            },
+            "reason_scan_limit": {
+              "description": "Check only the newest N commits for change reasons quoting the claim (after a reason_purge_scan_capped refusal, with the user's choice); older commits are not tombstoned.",
+              "type": "number"
             },
             "request_id": {
               "description": "Reuse only to retry.",

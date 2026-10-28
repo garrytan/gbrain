@@ -55,6 +55,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   pageReadFilter: 'src/core/search/read-policy-sql.ts: binds scope values as params, splices only the caller alias',
   buildRecencyComponentSql: 'src/core/search/sql-ranking.ts: inlines LIKE literals + numeric coefficients from the decay map, as master (planner behavior)',
   privatePagesFilterFragment: 'src/core/search/private-visibility.ts: constant visibility predicate over a caller alias',
+  replacedBecauseSql: 'src/core/engine-sql/pages.ts: constant GBRA-217 reason projection over a caller alias; the boolean picks one of two constant texts',
   quarantineFilterFragment: 'src/core/quarantine.ts: constant quarantine predicate over a caller alias',
   currentCodeEdgeFilter: 'src/core/code-intel/read-scope.ts: constant current-edge predicate over a caller alias',
   buildCJKKeywordSql: 'src/core/search/cjk-keyword-sql.ts: binds the query as params; shared by both engines',

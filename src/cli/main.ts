@@ -1773,7 +1773,7 @@ export function formatResult(
         const truth = v.compiled_truth ?? v.title ?? '';
         const head = truth.slice(0, VERSION_TRUTH_PREVIEW_CHARS);
         const elided = truth.length > VERSION_TRUTH_PREVIEW_CHARS ? '...' : '';
-        return `#${v.id}  ${v.snapshot_at?.toString().slice(0, 19) || '?'}  ${head}${elided}`;
+        return `#${v.id}  ${v.snapshot_at?.toString().slice(0, 19) || '?'}  ${head}${elided}${typeof v.replaced_because === 'string' ? `\n    changed because: ${v.replaced_because}` : ''}`;
       }).join('\n') + '\n';
     }
     // MEMORY_VERBS v1 [F-E]: human-readable by default; trailing `--json`

@@ -406,6 +406,13 @@ and [isolated local backup guide](in-agent-setup.md#6-back-up-the-complete-local
 <a id="purge"></a>
 ## Expire versus purge
 
+A write's [reason](page-history.md#reasons) is stored with the page's history
+and, when the page's file reaches Git, in the commit message. A purge removes
+the database copies it covers, but a commit already pushed keeps its message
+text, just as it keeps the file's earlier contents. Purge records those commits
+so no later sync stores the reason again ([purge and
+reasons](page-history.md#purge-and-reasons)).
+
 `forget` **expires**: the fact stops being recalled, cannot be saved again in
 the same source and visibility, and its row is struck in the page's Markdown.
 The text stays in the row, the file, page history and backups.

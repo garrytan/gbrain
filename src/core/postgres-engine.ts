@@ -9,7 +9,7 @@ import { assertOriginUnclaimed, assertRevivalUnclaimed, classifyOriginUniqueViol
 import { lockUnheldPageKeys, withHeldPageKeys, type HeldPageKeys } from './page-state/guards.ts';
 import { readPageSnapshot as readCanonicalPageSnapshot } from './page-state/snapshot.ts';
 import { readPageSnapshotsBatch } from './page-snapshot-batch.ts';
-import { createPageVersion } from './page-state/versions.ts';
+import { createPageVersion, type VersionHistory } from './page-state/versions.ts';
 import { moveSlugBindings, recordRenameAlias } from './page-state/rename-alias.ts';
 import { dropPhantomMigrationDuplicates } from './facts/ontology-rekey.ts';
 import { composablePostgresTransaction, transactionMemo, withCommitChecks } from './page-state/transactions.ts';
@@ -2523,8 +2523,8 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Versions
-  async createVersion(slug: string, opts?: { sourceId?: string; preimage?: PageSnapshot }): Promise<PageVersion> {
-    return createPageVersion(this, slug, opts?.sourceId ?? 'default', opts?.preimage);
+  async createVersion(slug: string, opts?: { sourceId?: string; preimage?: PageSnapshot } & VersionHistory): Promise<PageVersion> {
+    return createPageVersion(this, slug, opts?.sourceId ?? 'default', opts?.preimage, opts);
   }
 
   async getVersions<B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>): Promise<PageVersionRows<B>> {

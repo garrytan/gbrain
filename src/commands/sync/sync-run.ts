@@ -79,6 +79,8 @@ export interface SyncPlan {
   readonly holds: LegacyHolds | null;
   /** GBRA-133: gitlinks that appeared in this run's range (reported once, never followed). */
   readonly gitlinks: string[];
+  /** GBRA-217: the pass's reason-trailer scan (null when it imports nothing); set after preflight, read by the import and rename drains. */
+  readonly reasons?: import('../../core/reason-trailers.ts').SyncReasonScan | null;
 }
 
 export interface SyncRun {

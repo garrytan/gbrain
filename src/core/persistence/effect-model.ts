@@ -23,15 +23,15 @@ export interface AppendedRange { start: number; end: number; sha256: string }
  * blank line, so `git log --format=%(trailers)` finds every repair commit.
  * Location only, never page text.
  */
-export interface GitCommitNote { subject: string; line: string; trailer?: string }
+export interface GitCommitNote { subject: string; line: string; trailers?: string[] }
 const safe = (path: string) => path.replace(/[\u0000-\u001f\u007f]/g, '?');
 /** A fence-repaired file's note: `fenceRepairCommitSubject` alone, `<path> (<classes>)` as its line in a batched commit, trailer `gbrain-repair: invalid_fence <tier> high`. */
 export function fenceRepairCommit(path: string, classes: readonly string[], tier: FenceRepairReceipt['tier'] = 'deterministic'): GitCommitNote {
-  return { subject: fenceRepairCommitSubject(path, classes), line: `${safe(path)} (${classes.join(', ')})`, trailer: `gbrain-repair: invalid_fence ${tier} high` };
+  return { subject: fenceRepairCommitSubject(path, classes), line: `${safe(path)} (${classes.join(', ')})`, trailers: [`gbrain-repair: invalid_fence ${tier} high`] };
 }
 /** #6377 a slug-conflict repair's note: `gbrain: repair frontmatter slug in <path>`, `<path> (frontmatter_slug_conflict)` in a batch, trailer from the receipt's tier and confidence. */
 export function contentRepairCommit(path: string, receipt: Pick<ContentRepairReceipt, 'tier' | 'confidence'>): GitCommitNote {
-  return { subject: contentRepairCommitSubject(path), line: `${safe(path)} (frontmatter_slug_conflict)`, trailer: contentRepairTrailer(receipt) };
+  return { subject: contentRepairCommitSubject(path), line: `${safe(path)} (frontmatter_slug_conflict)`, trailers: [contentRepairTrailer(receipt)] };
 }
 /** `rule`: for `git_target_ignored`, the .gitignore rule that excludes the file (`<file>:<line>: <pattern>`). */
 export interface ParkedTarget { slug?: string; error_code: string; rule?: string }
@@ -79,6 +79,8 @@ export interface PersistenceEffect {
     /** A single-file Git target's GitCommitNote, when its preparer gave one. */
     commit_subject?: string;
     commit_line?: string;
+    /** One Git trailer line each (a repair's and a reason's). An effect an older release queued carries one `commit_trailer`. */
+    commit_trailers?: string[];
     commit_trailer?: string;
     /** G2 (git-door.ts): the file was committed with its publication (a strict source); the effect only pushes. */
     push_only?: boolean;

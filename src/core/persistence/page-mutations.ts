@@ -7,6 +7,7 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
+import { admitChangeReason, CHANGE_REASON_OPERATIONS } from './change-reason.ts';
 import { VERSION } from '../../version.ts';
 import { ownerBuildMismatch } from './publication-failure.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, isLegacyStoredPageSlug, normalizeSlugPrefix, parseSourceIdParam, requireWritablePage, validatePageSlug } from '../ops/context.ts';
@@ -308,6 +309,12 @@ export async function preparePageAdmission(ctx: OperationContext,
     () => assertPageRequestIdentity(ctx.engine, principal, requestId),
     () => getWriteRequest(ctx.engine, principal, requestId),
   ]) as [unknown, WriteRequest | null];
+  // GBRA-217: a reason is refused before anything is journaled; its canonical form joins the replay identity. An
+  // operation that records no reason never journals one a caller passed anyway.
+  if (CHANGE_REASON_OPERATIONS.includes(input.operation) && Object.hasOwn(p, 'reason')) {
+    const reason = admitChangeReason(p.reason);
+    if (reason === null) delete p.reason; else p.reason = reason;
+  } else delete p.reason;
   const callerIntent = { ...p };
   delete callerIntent.request_id;
   if (prior) {

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve as resolvePath, sep } from 'node:path';
 import { execFileBounded } from '../brain-repo-durability.ts';
 import { gitDurabilityPolicy } from './git-durability-policy.ts';
@@ -252,8 +252,23 @@ export function commitMessage(commitPaths: string[], noted: ReadonlyMap<string, 
   const subject = commitPaths.length > 1 ? `gbrain: persist ${commitPaths.length} canonical memory updates`
     : commitText(noted.get(commitPaths[0]!)?.subject ?? '') || 'gbrain: persist canonical memory update';
   const body = commitPaths.length > 1 ? [...new Set([...noted.keys()].sort().map(path => commitText(noted.get(path)!.line)).filter(Boolean))] : [];
-  const trailers = [...new Set([...noted.keys()].sort().map(path => commitText(noted.get(path)!.trailer ?? '')).filter(Boolean))];
+  const trailers = [...new Set([...noted.keys()].sort().flatMap(path => (noted.get(path)!.trailers ?? []).map(commitText)).filter(Boolean))];
   return [subject, ...(body.length ? [body.join('\n')] : []), ...(trailers.length ? [trailers.join('\n')] : [])];
+}
+
+/** Over this many bytes a commit message goes through a file (`-F`): command lines are bounded (32 KiB on Windows). */
+export const COMMIT_MESSAGE_ARG_BYTES = 8 * 1024;
+
+/**
+ * The git arguments that give a commit `paragraphs` as its message: `-m` per paragraph, or one `-F <file>` written in
+ * `dir` once the message is large. Git joins `-m` paragraphs with a blank line, so both forms produce the same message.
+ */
+export function commitMessageArgs(paragraphs: string[], dir: string | (() => string)): string[] {
+  const text = paragraphs.join('\n\n');
+  if (Buffer.byteLength(text, 'utf-8') <= COMMIT_MESSAGE_ARG_BYTES) return paragraphs.flatMap(paragraph => ['-m', paragraph]);
+  const file = join(typeof dir === 'string' ? dir : dir(), 'commit-message');
+  writeFileSync(file, `${text}\n`, { mode: 0o600 });
+  return ['-F', file];
 }
 
 /**
@@ -347,8 +362,15 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
     const commitPaths = [...new Set(changed.map(c => c.path))];
     const noted = new Map<string, GitCommitNote>();
     for (const c of changed) { const note = notes?.get(c.requested); if (note && !noted.has(c.path)) noted.set(c.path, note); }
-    const message = commitMessage(commitPaths, noted).flatMap(paragraph => ['-m', paragraph]);
-    const result = await git(session, [...(commitPaths.some(path => removed.has(path)) ? NO_FSCACHE : []), 'commit', '--only', ...message, '--', ...literalPathspecs(commitPaths)]);
+    let messageDir: string | undefined;
+    let result;
+    try {
+      const message = commitMessageArgs(commitMessage(commitPaths, noted), () => {
+        mkdirSync(persistenceHome(), { recursive: true, mode: 0o700 });
+        return messageDir = mkdtempSync(join(persistenceHome(), 'commit-message-'));
+      });
+      result = await git(session, [...(commitPaths.some(path => removed.has(path)) ? NO_FSCACHE : []), 'commit', '--only', ...message, '--', ...literalPathspecs(commitPaths)]);
+    } finally { if (messageDir) rmSync(messageDir, { recursive: true, force: true }); }
     const outcome = result.code === 0 ? { git: 'committed' } : gitFailure('Cannot commit the canonical Git target.',
       `git commit failed for ${commitPaths.length} file(s); a missing Git identity (user.name, user.email) in that checkout is one cause to check.`);
     for (const c of changed) results.set(c.requested, outcome);

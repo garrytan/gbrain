@@ -25,7 +25,7 @@ link it here rather than raising the cap.
 |---|---|
 | [Page identity and writer administration](key-files/page-identity-and-administration.md) | Opaque result IDs, current grants, state-bound ownership changes |
 | [Canonical reconciliation](key-files/canonical-reconciliation.md) | Exact-page repair, retained originals, [derived generations](key-files/generations.md), sync discovery and the origin rule (`sync-origin.ts`, `file-claims.ts`) |
-| [Company-brain ingestion](key-files/company-brain.md) | Inspection, admission, receipts, derived relationships and schema; [operator guide](../guides/company-brain-ingestion.md) |
+| [Company-brain ingestion](key-files/company-brain.md) | Inspection, admission, receipts, derived relationships and schema |
 | [Agent operator contract](key-files/agent-contract.md) | `agent-output.ts`, error registry + docs, notice ledger, `isCallable`, `--json` guard, contract scanner |
 | [Commands (1/6)](key-files/commands-1.md) | `src/commands/agent-logs.ts` through `src/commands/db-repair.ts` |
 | [Commands (2/6)](key-files/commands-2.md) | `src/commands/doctor.ts` and `src/commands/doctor/` |
@@ -47,7 +47,7 @@ link it here rather than raising the cap.
 | [Core Minions (2/2)](key-files/core-minions-2.md) | `src/core/minions/queue.ts` through `src/core/minions/worker.ts` |
 | [Core Persistence](key-files/core-persistence.md) | `src/core/persistence/` journal, coordinator, effects, managed sync |
 | [Core Persistence (continued)](key-files/core-persistence-continued.md) | worktree-refresh*, connectors, holds, receipts; [fence repair](key-files/core-fence-repair.md) |
-| [Persistence capacity](key-files/core-persistence-capacity.md) | write caps, true-up |
+| [Persistence capacity](key-files/core-persistence-capacity.md) | write caps, true-up; [page history](key-files/page-history.md) |
 | [Core Persistence (seams)](key-files/core-persistence-request-indexes.md) | `checkpoint-validation`, `fault-points`, `native-file-target`, `admission-retry`, `unbound-source` |
 | [Core Persistence (managed facts)](key-files/core-persistence-facts.md) | `facts-maintenance.ts`, `facts-prepare.ts`, `derived-facts.ts`, `same-page-shadow.ts` |
 | [Core Persistence (engine graduation)](key-files/core-persistence-graduation.md) | `engine-graduation*.ts`, `graduation-*.ts`, `commands/migrate-graduation.ts` |

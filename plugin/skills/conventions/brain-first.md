@@ -192,3 +192,12 @@ until the canonical form lands. Silent typos would be the worst outcome
 When in doubt: declare `brain_first: exempt` explicitly OR add the
 canonical Convention callout near the top of the skill body. Both are
 zero-friction one-line operations.
+
+## Recording why a page changed
+
+When you edit a policy, contract, plan or any document page, pass `reason` on
+`put_page` or `edit_page` with one line on why, in the user's words where you
+have them ("Client asked for the 30-day window."). Edit the existing page with
+its `expected_revision`; don't create a second page for a new edition.
+`get_versions` shows each version's `replaced_because`. Never put a credential
+in a reason: it can be pushed in a Git commit message, and gbrain refuses it.

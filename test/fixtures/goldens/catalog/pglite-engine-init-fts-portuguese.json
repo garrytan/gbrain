@@ -385,6 +385,8 @@
       "raw_data.raw_data_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "raw_data.raw_data_page_id_source_key": "u UNIQUE (page_id, source)",
       "raw_data.raw_data_pkey": "p PRIMARY KEY (id)",
+      "reason_purge_tombstones.reason_purge_tombstones_pkey": "p PRIMARY KEY (source_id, commit_sha, path)",
+      "reason_purge_tombstones.reason_purge_tombstones_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "retrieval_event_links.retrieval_event_links_event_id_fkey": "f FOREIGN KEY (event_id) REFERENCES retrieval_events(id) ON DELETE CASCADE",
       "retrieval_event_links.retrieval_event_links_pkey": "p PRIMARY KEY (event_id, source_id, edge_key, to_slug)",
       "retrieval_event_pages.retrieval_event_pages_event_id_fkey": "f FOREIGN KEY (event_id) REFERENCES retrieval_events(id) ON DELETE CASCADE",
@@ -939,6 +941,9 @@
       "raw_data": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "reason_purge_tombstones": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "retrieval_event_links": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1455,6 +1460,7 @@
       "question_evidence_question_idx": "CREATE INDEX question_evidence_question_idx ON public.question_evidence USING btree (question_id, answer_revision)",
       "raw_data_page_id_source_key": "CREATE UNIQUE INDEX raw_data_page_id_source_key ON public.raw_data USING btree (page_id, source)",
       "raw_data_pkey": "CREATE UNIQUE INDEX raw_data_pkey ON public.raw_data USING btree (id)",
+      "reason_purge_tombstones_pkey": "CREATE UNIQUE INDEX reason_purge_tombstones_pkey ON public.reason_purge_tombstones USING btree (source_id, commit_sha, path)",
       "retrieval_event_links_pkey": "CREATE UNIQUE INDEX retrieval_event_links_pkey ON public.retrieval_event_links USING btree (event_id, source_id, edge_key, to_slug)",
       "retrieval_event_pages_pkey": "CREATE UNIQUE INDEX retrieval_event_pages_pkey ON public.retrieval_event_pages USING btree (event_id, source_id, slug)",
       "retrieval_events_pkey": "CREATE UNIQUE INDEX retrieval_events_pkey ON public.retrieval_events USING btree (id)",
@@ -3215,7 +3221,9 @@
           "21 body_storage text/text NOT NULL DEFAULT 'inline'::text",
           "22 body_generation bigint/int8 NULL",
           "23 body_bytes bigint/int8 NULL",
-          "24 content_hash text/text NULL"
+          "24 content_hash text/text NULL",
+          "25 change_reason text/text NULL",
+          "26 successor_pruned boolean/bool NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -3294,7 +3302,8 @@
           "51 truth_lead text/text NULL",
           "52 timeline_lead text/text NULL",
           "53 links_extract_failure jsonb/jsonb NULL",
-          "54 withheld_source_path text/text NULL"
+          "54 withheld_source_path text/text NULL",
+          "55 version_history_gap_at timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -3634,6 +3643,15 @@
           "5 fetched_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=false force_rls=false"
+      },
+      "reason_purge_tombstones": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 commit_sha text/text NOT NULL",
+          "3 path text/text NOT NULL",
+          "4 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "retrieval_event_links": {
         "columns": [
