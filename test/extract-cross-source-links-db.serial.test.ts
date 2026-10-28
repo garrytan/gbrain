@@ -261,3 +261,82 @@ describe('#4611 the cross-source fallback lane follows the configured sources.de
     ]);
   });
 });
+
+/**
+ * Frontmatter values that are full page slugs resolve through the same source
+ * policy as body wikilinks. The resolver only looks in the page's own source, so
+ * a `related:` slug naming a page in another source used to be dropped before
+ * resolveCandidateSources ever saw it. Shape: a `delivery` page whose frontmatter
+ * names `github/832739129/pr-64`, which exists only in `salt-artifacts`.
+ */
+describe('frontmatter slug values resolve across sources under link_resolution.cross_source', () => {
+  async function seedFrontmatterCrossSource(): Promise<void> {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) SELECT unnest($1::text[]), unnest($1::text[])
+       ON CONFLICT (id) DO NOTHING`, [['delivery', 'salt-artifacts']],
+    );
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES ('github/832739129/pr-64', 'salt-artifacts', 'note', 'Billing export, step one', 'A pull request.', '')`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline, frontmatter)
+       VALUES ('features/billing-export', 'delivery', 'note', 'Billing export', 'A feature.', '', $1::jsonb)`,
+      [JSON.stringify({ related: ['github/832739129/pr-64', 'jira/spx/spx-9999-exists-nowhere'] })],
+    );
+  }
+
+  async function edgesWithProvenance() {
+    return engine.executeRaw<{ from_sid: string; to_slug: string; to_sid: string; link_type: string; link_source: string }>(
+      `SELECT pf.source_id AS from_sid, pt.slug AS to_slug, pt.source_id AS to_sid, l.link_type, l.link_source
+         FROM links l
+         JOIN pages pf ON l.from_page_id = pf.id
+         JOIN pages pt ON l.to_page_id = pt.id
+        ORDER BY pt.slug`,
+    );
+  }
+
+  test('extract links --source db --include-frontmatter, flag ON: the edge lands in the other source as a frontmatter edge', async () => {
+    await seedFrontmatterCrossSource();
+    process.env[ENV_KEY] = '1';
+    const cap = captureConsole();
+    try {
+      await runExtract(engine, ['links', '--source', 'db', '--include-frontmatter']);
+    } finally {
+      cap.restore();
+    }
+    expect(await edgesWithProvenance()).toEqual([
+      { from_sid: 'delivery', to_slug: 'github/832739129/pr-64', to_sid: 'salt-artifacts', link_type: 'related_to', link_source: 'frontmatter' },
+    ]);
+  });
+
+  test('extract links --source db --include-frontmatter, flag OFF: no edge, and the refused slug is reported as an unresolved frontmatter ref', async () => {
+    await seedFrontmatterCrossSource();
+    const cap = captureConsole();
+    try {
+      await runExtract(engine, ['links', '--source', 'db', '--include-frontmatter']);
+    } finally {
+      cap.restore();
+    }
+    expect(await edgesWithProvenance()).toEqual([]);
+    // The policy refuses the slug before it becomes a candidate, so it is reported as an
+    // unresolved ref (not silent), never fuzzy-matched to a page in the own source.
+    expect(cap.lines.join('\n')).toContain('1× related:github/832739129/pr-64');
+  });
+
+  test('extractStaleFromDB with frontmatter, flag ON: same edge, and the slug that exists nowhere writes nothing', async () => {
+    await seedFrontmatterCrossSource();
+    await engine.setConfig('link_resolution.cross_source', 'true');
+    const cap = captureConsole();
+    try {
+      await extractStaleFromDB(engine, {
+        dryRun: false, jsonMode: false, includeFrontmatter: true, catchUp: false,
+      });
+    } finally {
+      cap.restore();
+    }
+    expect(await edgesWithProvenance()).toEqual([
+      { from_sid: 'delivery', to_slug: 'github/832739129/pr-64', to_sid: 'salt-artifacts', link_type: 'related_to', link_source: 'frontmatter' },
+    ]);
+  });
+});

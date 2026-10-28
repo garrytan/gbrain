@@ -23,7 +23,7 @@ import { isValidSourceId } from './source-id.ts';
 import { isDatedTimelineLine, parseInlineCitationTimelineEntries, TIMELINE_LINE_RE, TIMELINE_LINE_RE_CN } from './timeline-citations.ts';
 import { isMaterializedMarkerLine } from './timeline-marker.ts';
 import { slugifyPath, slugifySegment } from './sync.ts';
-import { exactSlugCandidates } from './exact-slug-candidates.ts';
+import { EXACT_SLUG_SHAPE_RE, exactSlugCandidates } from './exact-slug-candidates.ts';
 export { EXACT_SLUG_SHAPE_RE, exactSlugCandidates } from './exact-slug-candidates.ts';
 import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
 import { foldNonDecomposingLatin } from './latin-fold.ts';
@@ -1631,6 +1631,8 @@ export const FRONTMATTER_LINK_MAP: FrontmatterFieldMapping[] = [
 export interface ResolveOptions {
   globalBasename?: boolean;
   selfSlug?: string;
+  /** Stop after step 1: the exact slug candidates and their rename aliases, nothing inferred. */
+  exactOnly?: boolean;
 }
 
 export interface SlugResolver {
@@ -1820,7 +1822,7 @@ export function makeResolver(
       if (!trimmed) return null;
 
       const basenameKey = resolveOpts?.globalBasename ? `\u0000basename:${resolveOpts.selfSlug ?? ''}` : '';
-      const cacheKey = `${trimmed}\u0000${Array.isArray(dirHint) ? dirHint.join(',') : (dirHint || '')}${basenameKey}`;
+      const cacheKey = `${trimmed}\u0000${Array.isArray(dirHint) ? dirHint.join(',') : (dirHint || '')}${basenameKey}${resolveOpts?.exactOnly ? '\u0000exact' : ''}`;
       if (cache.has(cacheKey)) return cache.get(cacheKey)!;
 
       const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
@@ -1846,6 +1848,10 @@ export function makeResolver(
             return canonical;
           }
         }
+      }
+      if (resolveOpts?.exactOnly) {
+        cache.set(cacheKey, null);
+        return null;
       }
 
       // Step 2: dir-hint + slugify → exact getPage. Two grammars (#4855):
@@ -2045,10 +2051,21 @@ export async function extractFrontmatterLinks(
         // unresolved report and edge context.
         const linkTarget = unwrapWikilink(name);
         const canonicalAttendance = mapping.type === 'attended' && mapping.direction === 'incoming';
-        let resolved = await (canonicalAttendance && resolver.resolveAttendance
-          ? resolver.resolveAttendance(linkTarget, mapping.dirHint)
-          : resolver.resolve(linkTarget, mapping.dirHint, globalBasename ? { globalBasename, selfSlug: slug } : undefined));
-        if (!resolved && globalBasename && !(canonicalAttendance && resolver.resolveAttendance)
+        // A full slug on an outgoing field names its page exactly, in whichever source holds it.
+        // The resolver searches only this page's source, so it gets the exact step alone (slug,
+        // then rename alias); on a miss the caller's source policy (`targetType`, built on
+        // resolveCandidateSources) decides: an admitted slug is the candidate as written, placed
+        // across sources like a body wikilink, and a refused one is unresolved, never matched
+        // to an unrelated page by the fuzzy title step.
+        const slugShaped = !!targetType && mapping.direction === 'outgoing'
+          && linkTarget.includes('/') && EXACT_SLUG_SHAPE_RE.test(linkTarget);
+        let resolved = slugShaped
+          ? await resolver.resolve(linkTarget, mapping.dirHint, { exactOnly: true })
+            ?? (targetType!(linkTarget) !== undefined ? linkTarget : null)
+          : await (canonicalAttendance && resolver.resolveAttendance
+            ? resolver.resolveAttendance(linkTarget, mapping.dirHint)
+            : resolver.resolve(linkTarget, mapping.dirHint, globalBasename ? { globalBasename, selfSlug: slug } : undefined));
+        if (!resolved && globalBasename && !slugShaped && !(canonicalAttendance && resolver.resolveAttendance)
           && typeof resolver.resolveBasenameMatches === 'function') {
           // Issue #972 follow-up: extend global_basename resolution to
           // frontmatter link fields. resolve() can't reach a bare-title

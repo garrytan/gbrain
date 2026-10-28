@@ -88,6 +88,11 @@ const CROSS_SOURCE_EDGES = [...EDGES,
   'alpha:notes/origin > beta:topics/beta-only mentions markdown',
   'alpha:notes/origin > beta:topics/shared mentions markdown',
 ];
+// Under `cross_source` the frontmatter slug `topics/beta-only` is admitted by the same policy and
+// becomes an edge into beta instead of an unresolved ref wanted in alpha; a federated origin
+// refuses the bare form, so there it stays unresolved.
+const CROSS_SOURCE_FRONTMATTER_EDGES = [...CROSS_SOURCE_EDGES.slice(0, -1),
+  'alpha:notes/origin > beta:topics/beta-only related_to frontmatter', ...CROSS_SOURCE_EDGES.slice(-1)];
 const resolutions = (betaOnly: string, betaOnlyQualified: string, sharedQualified: string) => [
   'alice-example  missing_target', 'bob-example  missing_target', 'ideas/unwritten  missing_target', 'people/alice-example  alpha>alpha',
   'projects/gadget  missing_target', 'projects/widget  alpha>alpha', 'shared  missing_target', `topics/beta-only  ${betaOnly}`,
@@ -98,9 +103,9 @@ const POLICIES = [
   { name: 'cross-source links off', env: {}, federated: false, expected: { edges: EDGES, unresolved: 2,
     resolutions: resolutions('cross_source', 'cross_source', 'cross_source'),
     wanted: wanted('alpha:topics/beta-only', 'alpha:bob-example', 'alpha:ideas/unwritten', 'alpha:topics/beta-only') } },
-  { name: 'link_resolution.cross_source on', env: { GBRAIN_LINK_RESOLUTION_CROSS_SOURCE: '1' }, federated: false, expected: { edges: CROSS_SOURCE_EDGES, unresolved: 2,
+  { name: 'link_resolution.cross_source on', env: { GBRAIN_LINK_RESOLUTION_CROSS_SOURCE: '1' }, federated: false, expected: { edges: CROSS_SOURCE_FRONTMATTER_EDGES, unresolved: 1,
     resolutions: resolutions('alpha>beta', 'alpha>beta', 'alpha>beta'),
-    wanted: wanted('alpha:bob-example', 'alpha:ideas/unwritten', 'alpha:topics/beta-only', 'beta:topics/beta-only') } },
+    wanted: wanted('alpha:bob-example', 'alpha:ideas/unwritten', 'beta:topics/beta-only') } },
   { name: 'federated origin source', env: {}, federated: true, expected: { edges: CROSS_SOURCE_EDGES, unresolved: 2,
     resolutions: resolutions('cross_source', 'alpha>beta', 'alpha>beta'),
     wanted: wanted('alpha:topics/beta-only', 'alpha:bob-example', 'alpha:ideas/unwritten', 'alpha:topics/beta-only', 'beta:topics/beta-only') } },
