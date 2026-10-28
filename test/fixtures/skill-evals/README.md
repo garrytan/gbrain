@@ -70,6 +70,15 @@ EVAL_ROOT=<scratch> GBRAIN_REPO=<gbrain checkout> test/fixtures/skill-evals/_lib
   arm above, which is reused because the tasks and the shipped skill are unchanged; one rerun of a red
   task is allowed.
 
+- 2026-10-28, after the v2 run and before any held-out cell: the v2 edits were chosen by reading failures on
+  the same 12 tasks that then judged v2, so those tasks were a selection set for company-brainify. A fresh
+  held-out set, `company-brainify/holdout-tasks.json` (6 tasks, sha256
+  a3e1d658ed8f9ecb96032d196720ef4fae8f6cf9f991b3146dd19ecff03c18ad, with two new `check.sh` branches,
+  `retention-gone` and `scope-reported`), is written and committed before either arm runs on it. It runs
+  `before` and v2 `after` once, 3 trials each, on Opus 5.5, Sonnet 5.5 and GPT-6.1 Sol, under the same keep
+  rule with one rerun of a red task, and is never used to edit the skill. brain-ops needs no held-out run:
+  its diet was judged once and never edited after an eval result.
+
 ## Results (2026-10-28)
 
 Counted run: 3 skills x Opus 5.5, Sonnet 5.5 and GPT-6.1 Sol x before/after/none x 12 tasks x 3 trials.

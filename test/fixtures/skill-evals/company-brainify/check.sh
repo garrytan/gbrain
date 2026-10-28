@@ -57,5 +57,15 @@ case "$1" in
   audience)
     [ "$(HOME="$PWD/team-home" gbrain config get brain.audience 2>/dev/null)" = shared ] || fail "team brain not stamped shared"
     [ "$(gbh config get brain.audience 2>/dev/null)" != shared ] || fail "personal brain stamped shared" ;;
+  retention-gone)
+    f=shared/meetings/2026-09-12-staff-sync.md
+    [ -f "$f" ] || fail "the meeting page was deleted"
+    ! grep -q -i 'considering leaving' "$f" || fail "retention discussion kept"
+    ! grep -q '50,000' "$f" || fail "retention amount kept"
+    no_forced_push || fail "force push" ;;
+  scope-reported)
+    unchanged personal || fail "./personal changed"
+    answer | grep -q -i -E 'staff-sync|meetings/' || fail "the meeting page was not named"
+    answer | grep -q -i -E 'daily|conversations' || fail "the daily or conversations page was not named" ;;
   *) echo "unknown check $1" >&2; exit 2 ;;
 esac
