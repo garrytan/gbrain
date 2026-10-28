@@ -370,6 +370,56 @@ describe('GitHubClient 403/429 handling', () => {
   });
 });
 
+describe('GitHubClient per-request timeout', () => {
+  // A request that answers only after 1.5 s (a hung socket, as far as a 50 ms
+  // budget is concerned) and stops when its signal aborts.
+  const slow = (_u: string, init: RequestInit): Promise<Response> =>
+    new Promise((resolve, reject) => {
+      const t = setTimeout(() => resolve(new Response(JSON.stringify([{ late: true }]), { status: 200 })), 1500);
+      const stop = () => { clearTimeout(t); reject(init.signal!.reason); };
+      if (init.signal?.aborted) stop(); else init.signal?.addEventListener('abort', stop, { once: true });
+    });
+
+  test('a hung request is retried once, then fails as unreachable', async () => {
+    let calls = 0;
+    const client = new GitHubClient('tok', ((u: string, init: RequestInit) => { calls++; return slow(u, init); }) as never, () => {}, 50);
+    const started = Date.now();
+    await expect(client.fetchJSON('/repos/a/b/issues/1')).rejects.toThrow('GitHub API unreachable on /repos/a/b/issues/1: no response within 0.05s');
+    expect(calls).toBe(2);
+    expect(Date.now() - started).toBeLessThan(1000);
+  }, 10_000);
+
+  test('a hung first attempt is retried and the retry answers', async () => {
+    let calls = 0;
+    const client = new GitHubClient('tok', ((u: string, init: RequestInit) => {
+      calls++;
+      return calls === 1 ? slow(u, init) : Promise.resolve(new Response(JSON.stringify([{ ok: true }]), { status: 200 }));
+    }) as never, () => {}, 50);
+    expect(await client.fetchJSON<unknown[]>('/repos/a/b/issues')).toEqual([{ ok: true }]);
+    expect(calls).toBe(2);
+  }, 10_000);
+
+  test('a response body that stalls past the budget fails as unreachable', async () => {
+    const client = new GitHubClient('tok', (async (_u: string, init: RequestInit) => new Response(new ReadableStream({
+      start(c) {
+        const t = setTimeout(() => { c.enqueue(new TextEncoder().encode('[]')); c.close(); }, 1500);
+        init.signal?.addEventListener('abort', () => { clearTimeout(t); c.error(init.signal!.reason); }, { once: true });
+      },
+    }), { status: 200 })) as never, () => {}, 50);
+    await expect(client.fetchJSON('/repos/a/b/issues')).rejects.toThrow('GitHub API unreachable on /repos/a/b/issues');
+  }, 10_000);
+
+  test("the caller's own abort is rethrown, not retried", async () => {
+    let calls = 0;
+    const client = new GitHubClient('tok', ((u: string, init: RequestInit) => { calls++; return slow(u, init); }) as never, () => {}, 60_000);
+    const ac = new AbortController();
+    const pending = client.fetchJSON('/repos/a/b/issues', { signal: ac.signal });
+    ac.abort(new Error('caller stopped'));
+    await expect(pending).rejects.toThrow('caller stopped');
+    expect(calls).toBe(1);
+  }, 10_000);
+});
+
 describe('symlink containment', () => {
   test('itemPagePath refuses a gh/ symlink escaping the managed dir', () => {
     const outside = mkdtempSync(join(tmpdir(), 'ghsrc-outside-'));
