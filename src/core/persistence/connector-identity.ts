@@ -25,13 +25,14 @@ import { parseGoogleSourceConfig } from '../google/source-config.ts';
 import { parseGitHubSourceConfig } from '../github-source-config.ts';
 import type { GitHubSourceConfig } from '../github-source.ts';
 import { DEFAULT_CONTACTS_DIR, type GoogleSourceConfig } from '../google/types.ts';
+import { parseMeetingsSourceConfig } from '../meetings/source-config.ts';
+import type { MeetingsSourceConfig } from '../meetings/types.ts';
+import { assertNever } from '../types.ts';
 
-export type ConnectorKind = 'google' | 'github';
+import type { ConnectorKind } from './connector-kinds.ts';
 
-export const CONNECTOR_SOURCE_KINDS: readonly ConnectorKind[] = ['google', 'github'];
-/** A managed Google or GitHub connector source (`sources.config.kind`). */
-export function isConnectorSourceKind(kind: unknown): kind is ConnectorKind { return CONNECTOR_SOURCE_KINDS.includes(kind as ConnectorKind); }
-export type ConnectorConfig = GoogleSourceConfig | GitHubSourceConfig;
+export { CONNECTOR_KINDS_SQL, CONNECTOR_SOURCE_KINDS, isConnectorSourceKind, type ConnectorKind } from './connector-kinds.ts';
+export type ConnectorConfig = GoogleSourceConfig | GitHubSourceConfig | MeetingsSourceConfig;
 type LeafClass = 'identity' | 'excluded';
 /** An identity leaf left out of the digest while it holds the default it was introduced with (#6561). */
 interface ElidedLeaf { elideWhen: unknown }
@@ -44,7 +45,7 @@ const underAuto = (config: GitHubSourceConfig): LeafClass => config.scope === 'a
  * output and fails on a leaf missing here; an unlisted leaf still joins the
  * identity at runtime, never the exclusion list.
  */
-export const CONNECTOR_LEAF_RULES: { google: Record<string, LeafClass | ElidedLeaf>; github: Record<string, Rule> } = {
+export const CONNECTOR_LEAF_RULES: { google: Record<string, LeafClass | ElidedLeaf>; github: Record<string, Rule>; meetings: Record<string, LeafClass> } = {
   google: {
     account: 'identity', services: 'identity', historyDays: 'identity', futureDays: 'identity', calendarId: 'identity', dir: 'identity',
     contactsDir: { elideWhen: DEFAULT_CONTACTS_DIR },
@@ -55,6 +56,11 @@ export const CONNECTOR_LEAF_RULES: { google: Record<string, LeafClass | ElidedLe
     // Under `scope: auto` the repo set is whatever the authenticated identity can see.
     tokenEnv: config => config.scope === 'auto' && !config.app ? 'identity' : 'excluded',
     app: underAuto, 'app.appId': underAuto, 'app.installId': underAuto, 'app.pemPath': 'excluded',
+  },
+  meetings: {
+    provider: 'identity', historyDays: 'identity', lookbackDays: 'identity', transcript: 'identity', record: 'identity', dir: 'identity', privateOnly: 'identity',
+    // The key's location and the schedule never change what a sweep reads; the account pin covers a swapped key.
+    tokenEnv: 'excluded', syncIntervalMin: 'excluded',
   },
 };
 
@@ -100,7 +106,12 @@ export function connectorIdentityLeaves(kind: ConnectorKind, config: ConnectorCo
 export interface ConnectorIdentity { kind: ConnectorKind; config: ConnectorConfig; digest: string; aliasDigests: string[] }
 
 export function parseConnectorConfig(kind: ConnectorKind, raw: Record<string, unknown>, localPath: string | null): ConnectorConfig {
-  return kind === 'google' ? parseGoogleSourceConfig(raw, localPath ?? '') : parseGitHubSourceConfig(raw, localPath ?? '');
+  switch (kind) {
+    case 'google': return parseGoogleSourceConfig(raw, localPath ?? '');
+    case 'github': return parseGitHubSourceConfig(raw, localPath ?? '');
+    case 'meetings': return parseMeetingsSourceConfig(raw, localPath ?? '');
+    default: return assertNever(kind);
+  }
 }
 
 /** The parsed connector config plus its identity digest. The raw config is never an identity. */

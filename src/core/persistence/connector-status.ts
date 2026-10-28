@@ -10,6 +10,7 @@
  * `connector_held_items` stay connector-only.
  */
 import type { BrainEngine } from '../engine.ts';
+import { CONNECTOR_KINDS_SQL } from './connector-kinds.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { CONNECTOR_STOPPED_RUNS, readManagedConnectorState, type ConnectorPurgedItem, type ConnectorRunCounts, type ConnectorRunFailure, type UpgradeRecovery } from './connector-state.ts';
@@ -61,7 +62,7 @@ function connectorFailureFix(sourceId: string, failure: ConnectorRunFailure): Ac
 /** #6831: the connector run failure recorded for a source (null for a non-connector source or a last run that finished). */
 export async function readConnectorLastError(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<ConnectorLastError | null> {
   const [source] = await engine.executeRaw<{ incarnation: string }>(
-    "SELECT incarnation::text FROM sources WHERE id=$1 AND NOT archived AND config->>'kind' IN ('google','github')", [sourceId]);
+    `SELECT incarnation::text FROM sources WHERE id=$1 AND NOT archived AND config->>'kind' IN (${CONNECTOR_KINDS_SQL})`, [sourceId]);
   const failure = source ? (await readManagedConnectorState(engine, sourceId, source.incarnation)).last_failure : null;
   if (!failure) return null;
   return { ...failure, stopped: failure.consecutive >= CONNECTOR_STOPPED_RUNS, ...classifySyncFault({ code: failure.code, message: failure.message }),
@@ -70,7 +71,7 @@ export async function readConnectorLastError(engine: Pick<BrainEngine, 'executeR
 
 export async function readConnectorSourceStatuses(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds?: string[]): Promise<Map<string, ConnectorSourceStatus>> {
   const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-    "SELECT id,incarnation::text FROM sources WHERE NOT archived AND config->>'kind' IN ('google','github') AND ($1::text[] IS NULL OR id=ANY($1::text[]))",
+    `SELECT id,incarnation::text FROM sources WHERE NOT archived AND config->>'kind' IN (${CONNECTOR_KINDS_SQL}) AND ($1::text[] IS NULL OR id=ANY($1::text[]))`,
     [sourceIds ?? null]);
   const statuses = new Map<string, ConnectorSourceStatus>();
   for (const source of sources) {

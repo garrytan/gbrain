@@ -19,7 +19,7 @@ import { readStdinPayload } from '../../core/stdin-read.ts';
 import { ConnectorClient, probeFailure } from '../../core/connectors/client.ts';
 import { deleteCredential, saveCredential } from '../../core/connectors/credentials.ts';
 import { getConnectorProvider, isConnectorProviderName } from '../../core/connectors/registry.ts';
-import type { ChatHistoryProvider, ConnectorCredential, ProbeResult } from '../../core/connectors/types.ts';
+import { isTokenProviderName, type ChatHistoryProvider, type ConnectorCredential, type ProbeResult } from '../../core/connectors/types.ts';
 
 interface AuthFlags {
   cookie?: string;
@@ -44,13 +44,18 @@ function parseFlags(args: string[]): { provider: string; flags: AuthFlags } {
   return { provider, flags };
 }
 
+/** A pasted credential is a header or key, never megabytes; more is refused, not truncated. */
+export const CREDENTIAL_MAX_BYTES = 64 * 1024;
+/** A credential arrives in one paste or pipe write; a stream that stalls mid-credential is discarded after 10 s. */
+export const CREDENTIAL_INACTIVITY_MS = 10_000;
+
 /** A person pasting a cookie at the terminal gets 5 minutes for the first byte. */
 const PASTE_WAIT_MS = 300_000;
 
 /** Bounded credential read (C5): an open-but-silent stdin times out with a message instead of hanging. */
 async function readStdin(firstByteMs?: number): Promise<string | null> {
   const read = await readStdinPayload("printf '%s' \"$COOKIE\" | gbrain connectors auth <provider> --cookie -",
-    firstByteMs !== undefined ? { firstByteMs } : {});
+    { credential: true, maxBytes: CREDENTIAL_MAX_BYTES, inactivityMs: CREDENTIAL_INACTIVITY_MS, ...(firstByteMs !== undefined ? { firstByteMs } : {}) });
   if (read.ok) return read.text.trim();
   console.error(read.message);
   return null;
@@ -137,8 +142,13 @@ function printFirstRun(provider: string): void {
 
 export async function runConnectorAuth(_engine: BrainEngine, args: string[]): Promise<void> {
   const { provider, flags } = parseFlags(args);
+  if (isTokenProviderName(provider)) {
+    const { runApiTokenAuth } = await import('./auth-token.ts');
+    await runApiTokenAuth(provider, flags);
+    return;
+  }
   if (!isConnectorProviderName(provider)) {
-    console.error(`Usage: gbrain connectors auth <chatgpt|claude> [--cookie -|--token V] [--try-oauth] [--force]`);
+    console.error(`Usage: gbrain connectors auth <chatgpt|claude> [--cookie -|--token V] [--try-oauth] [--force], or gbrain connectors auth fireflies --token -`);
     setCliExitVerdict(1);
     return;
   }
@@ -247,8 +257,8 @@ async function tryOauth(prov: ChatHistoryProvider, flags: AuthFlags): Promise<bo
 
 export async function runConnectorLogout(args: string[]): Promise<void> {
   const provider = args.find((a) => !a.startsWith('-')) ?? '';
-  if (!isConnectorProviderName(provider)) {
-    console.error('Usage: gbrain connectors logout <chatgpt|claude>');
+  if (!isConnectorProviderName(provider) && !isTokenProviderName(provider)) {
+    console.error('Usage: gbrain connectors logout <chatgpt|claude|fireflies>');
     setCliExitVerdict(1);
     return;
   }

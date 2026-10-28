@@ -26,6 +26,7 @@ import type { SyncOpts, SyncResult } from '../sync.ts';
 import type { IdleSkip } from '../../core/persistence/sync-idle-skips.ts';
 import { runConnectorSync } from './connector.ts';
 import { performSyncInner } from './incremental.ts';
+import { isConnectorSourceKind } from '../../core/persistence/connector-kinds.ts';
 
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
   assertSyncDispatchActive();
@@ -114,7 +115,7 @@ async function mayBeConnectorSource(engine: BrainEngine, opts: SyncOpts): Promis
   if (routing.id === null) return false;
   try {
     const config = typeof routing.config === 'string' ? JSON.parse(routing.config) : routing.config ?? {};
-    return config.kind === 'google' || config.kind === 'github';
+    return isConnectorSourceKind(config.kind);
   } catch { return true; }
 }
 

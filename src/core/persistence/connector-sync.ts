@@ -35,6 +35,7 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import { LockStolenError, syncLockId, withRefreshingLock, type DbLockHandle } from '../db-lock.ts';
 import { ownedGoogleReceipts, prepareGoogleReceiptPatch, type GoogleReceipts } from './connector-google-receipts.ts';
 import { connectorCheckpointKeys, connectorIdentity, connectorIdentityMatches, type ConnectorIdentity, type ConnectorKind } from './connector-identity.ts';
+import { connectorDirKey } from './connector-kinds.ts';
 import { CONNECTOR_PURGED_LIMIT, readManagedConnectorState, recordConnectorSyncAttempt, sameConnectorAccount, writeManagedConnectorState, type ConnectorAccount, type ConnectorPendingEntry, type ConnectorPurgedItem, type ConnectorRunCounts, type ConnectorState } from './connector-state.ts';
 import { connectorConfigDigest } from './connector-account-mismatch.ts';
 import { connectorAccountChanged, connectorFenceHint, docsAnchor, receiptDeliveredHint, CONNECTOR_INTENT_OUTDATED_OLD_HOST, CONNECTOR_INTENT_OUTDATED_PRE_UPGRADE } from './connector-errors.ts';
@@ -193,7 +194,7 @@ function connectorBindingRoot(sourceId: string, source: ConnectorSource, binding
   assertPhysicalRoot(localPath, { worktreeId: binding.worktree_id, coordinationPath });
   try {
     const root = realpathSync(join(localPath, binding.relative_path));
-    const configured = source.config[source.config.kind === 'google' ? 'g_dir' : 'gh_dir'];
+    const configured = source.config[connectorDirKey(source.config.kind as ConnectorKind)];
     const directory = typeof configured === 'string' && configured.length > 0 ? configured : sourcePath;
     if (!containsPath(localPath, root) || !statSync(root).isDirectory() || realpathSync(sourcePath) !== root || realpathSync(directory) !== root) {
       throw new Error('root mismatch');
@@ -397,6 +398,8 @@ export class ManagedConnectorSync {
     this.checkpointKeys = connectorCheckpointKeys(sourceId, source.incarnation, identity);
     this.checkpointKey = this.checkpointKeys[0]!;
   }
+  /** Whether this run publishes canonical files (a bound worktree root) rather than database-only rows. */
+  get bound(): boolean { return this.canonicalRoot !== null; }
   async assertLease(engine: BrainEngine): Promise<void> {
     if (!this.lease) return;
     this.lease.signal.throwIfAborted();

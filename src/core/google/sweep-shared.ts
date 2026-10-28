@@ -15,9 +15,7 @@ import { isWriteTargetContained } from '../path-confine.ts';
 import { mkdirPrivate } from '../atomic-write.ts';
 import { replaceableFile } from '../facts/file-body-guard.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, replaceOrInsertFactsFence } from '../facts-fence.ts';
-import { TAKES_FENCE_BEGIN } from '../takes-fence.ts';
-import { conceptPreservationHold, preserveCanonicalFences } from '../cycle/concept-publication.ts';
-import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
+import { carryStoredFences, hasFence } from '../connectors/fence-carry.ts';
 import type { Page } from '../types.ts';
 import { assertInlineBody } from '../page-body/page-shape.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -124,27 +122,6 @@ function writePrivateTemp(tmpPath: string, markdown: string): void {
   }
 }
 
-const hasFence = (text: string | null | undefined) => [FACTS_FENCE_BEGIN, TAKES_FENCE_BEGIN].some(begin => (text ?? '').includes(begin));
-
-/**
- * GBRA-133 (#7292): facts and takes fences added on the brain (loop extraction, `remember`) are not part of the
- * provider's render. The managed connector carries them into each re-render (connector-sync.ts); the unmanaged one
- * replaced the page with the bare render, so a re-render dropped the fence from the file and the database and the next
- * `extract_facts` expired its facts. Carry them the same way: a render that brings its own fence owns it, and a stored
- * fence the render cannot carry verbatim (below the timeline sentinel, duplicated, unbalanced, unparseable) refuses
- * `connector_fence_below_timeline` instead of expiring its rows.
- */
-async function carryStoredFences(sourceId: string, slug: string, relPath: string, existing: Page | null, markdown: string): Promise<string> {
-  if (!existing) return markdown;
-  assertInlineBody(existing, 'Google connector fence carry');
-  if (!(hasFence(existing.compiled_truth) || hasFence(existing.timeline))) return markdown;
-  const parsed = parseMarkdown(markdown, relPath);
-  if (hasFence(parsed.compiled_truth)) return markdown;
-  const hold = conceptPreservationHold(existing);
-  if (hold) throw (await import('../persistence/connector-sync.ts')).connectorFenceRefusal(sourceId, slug, hold);
-  return serializePageToMarkdown({ ...existing, ...parsed, compiled_truth: preserveCanonicalFences(existing, parsed.compiled_truth),
-    type: parsed.typeExplicit ? parsed.type : existing.type }, parsed.tags);
-}
 
 /** GBRA-133 (#7292): the checkout file with the live page's `## Facts` fence put back, for `replaceableFile`; null when it has a fence of its own. */
 function withStoredFactsFence(existing: Page): (fileBytes: string) => string | null {
@@ -186,7 +163,7 @@ export async function importRendered(
   assertContained(deps.cfg.dir, filePath);
   const existing = await deps.engine.getPage(slug, { sourceId: deps.sourceId });
   if (existing) assertInlineBody(existing, 'Google connector materialization');
-  markdown = await carryStoredFences(deps.sourceId, slug, relPath, existing, markdown);
+  markdown = await carryStoredFences(deps.sourceId, slug, relPath, existing, markdown, 'Google connector fence carry');
   const databaseOnly = await isWriteThroughDisabled(deps.engine) || isSourceDbOnlySlug(deps.cfg.dir, slug, 'refuse');
   const guard = databaseOnly ? null : await replaceableFile(deps.engine, deps.sourceId, slug, filePath, existing ? withStoredFactsFence(existing) : undefined);
   const drift = () => new OperationError('file_database_drift',

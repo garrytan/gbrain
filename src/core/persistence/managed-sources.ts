@@ -7,6 +7,7 @@ import { defaultCloneDir, type AddSourceOpts, type SourceRow } from '../sources-
 import { googleTuningConfig } from '../google/source-config.ts';
 import { runManagedSourceLifecycle, type SourceLifecycleInput } from './source-lifecycle.ts';
 import { isValidSourceId } from '../source-id.ts';
+import { chooseMeetingsRecord, meetingsSourceConfig } from '../meetings/source-add.ts';
 import { WRITE_ERROR_CODES, type WriteErrorCode } from './types.ts';
 
 export function assertTopologyCommitted(result:Record<string,unknown>):void{
@@ -21,9 +22,10 @@ export function assertTopologyCommitted(result:Record<string,unknown>):void{
 export function managedSourceAddInput(opts:AddSourceOpts):SourceLifecycleInput{
   if(!isValidSourceId(opts.id))throw new OperationError('invalid_params','A valid explicit source ID is required.',
     'Pass a source id of 1-32 lowercase letters, digits and inner hyphens (for example "notes" or "acme-wiki").');
-  if(opts.remoteUrl&&opts.localPath||opts.github&&opts.google||(opts.github||opts.google)&&(opts.remoteUrl||opts.localPath))
-    throw new OperationError('invalid_params','Choose exactly one source location: path, remote URL, GitHub, or Google.',
-      `Add source ${opts.id} with exactly one of a local path, a Git remote URL, a GitHub connector or a Google connector.`);
+  const connectors=[opts.github,opts.google,opts.meetings].filter(Boolean).length;
+  if(opts.remoteUrl&&opts.localPath||connectors>1||connectors&&(opts.remoteUrl||opts.localPath))
+    throw new OperationError('invalid_params','Choose exactly one source location: path, remote URL, GitHub, Google, or meetings.',
+      `Add source ${opts.id} with exactly one of a local path, a Git remote URL, or one connector (GitHub, Google, meetings).`);
   if(opts.cloneDir&&!opts.remoteUrl)throw new OperationError('invalid_params','cloneDir requires a remote URL.',
     `Drop the clone directory for source ${opts.id}, or pass it together with the Git remote URL it should clone.`);
   if(opts.force!==undefined&&typeof opts.force!=='boolean'||opts.federated!=null&&typeof opts.federated!=='boolean')
@@ -45,8 +47,13 @@ export function managedSourceAddInput(opts:AddSourceOpts):SourceLifecycleInput{
       ...(google.access&&google.access!=='vault'?{g_access:google.access}:{}),...(google.tokenCommand?{g_token_command:google.tokenCommand}:{}),
       ...(google.tokenEnv?{g_token_env:google.tokenEnv}:{}),g_managed:path===defaultCloneDir(`${opts.id}-google`),federated:opts.federated??true};
   }
+  if(opts.meetings){
+    const choice=chooseMeetingsRecord(opts.id,opts.meetings.record,opts.meetings.dir);
+    path=choice.dir??undefined;
+    config=meetingsSourceConfig(opts.meetings,choice,opts.federated,true);
+  }
   return {operation:'add',sourceId:opts.id,path,name:opts.name,config,remoteUrl:opts.remoteUrl,
-    createDirectory:!!(opts.github||opts.google),requireGitContent:!!(path&&!opts.remoteUrl&&!opts.github&&!opts.google&&!opts.force),requestId:opts.requestId,expectedIncarnation:opts.expectedIncarnation};
+    createDirectory:!!(opts.github||opts.google||opts.meetings&&path),requireGitContent:!!(path&&!opts.remoteUrl&&!opts.github&&!opts.google&&!opts.meetings&&!opts.force),requestId:opts.requestId,expectedIncarnation:opts.expectedIncarnation};
 }
 export async function addManagedSource(engine:BrainEngine,opts:AddSourceOpts):Promise<SourceRow>{
   const result=await runManagedSourceLifecycle(engine,managedSourceAddInput(opts));

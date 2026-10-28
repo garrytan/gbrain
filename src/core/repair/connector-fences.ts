@@ -12,6 +12,7 @@
  * marker, and each such page is counted (`segmented_pages`) and named.
  */
 import type { BrainEngine } from '../engine.ts';
+import { CONNECTOR_KINDS_SQL } from '../persistence/connector-kinds.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { conceptPreservationHold } from '../cycle/concept-publication.ts';
@@ -56,14 +57,14 @@ const FENCE_MARKERS = ['gbrain:facts:', 'gbrain:takes:'];
 
 async function candidates(engine: BrainEngine, sourceIds: string[]): Promise<FencePage[]> {
   return engine.executeRaw<FencePage>(`SELECT p.id,p.source_id,p.slug,p.compiled_truth,p.timeline FROM pages p JOIN sources s ON s.id=p.source_id
-    WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL AND s.config->>'kind' IN ('google','github')
+    WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL AND s.config->>'kind' IN (${CONNECTOR_KINDS_SQL})
       AND (p.timeline LIKE '%gbrain:facts:%' OR p.timeline LIKE '%gbrain:takes:%') ORDER BY p.id`, [sourceIds]);
 }
 
 /** Segmented connector pages whose timeline region holds a facts or takes fence marker, as `source:slug`. */
 async function segmentedCandidates(engine: BrainEngine, sourceIds: string[], after: RepairCursor | null): Promise<string[]> {
   const pages = await engine.executeRaw<{ id: number; source_id: string; slug: string }>(`SELECT p.id,p.source_id,p.slug FROM pages p JOIN sources s ON s.id=p.source_id
-    WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL AND s.config->>'kind' IN ('google','github') AND p.body_storage='segmented' ORDER BY p.id`, [sourceIds]);
+    WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL AND s.config->>'kind' IN (${CONNECTOR_KINDS_SQL}) AND p.body_storage='segmented' ORDER BY p.id`, [sourceIds]);
   const found: string[] = [];
   for (const page of pages) {
     if (!afterCursor({ phase: 0, id: Number(page.id) }, after)) continue;

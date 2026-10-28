@@ -92,6 +92,8 @@ src/core/code-chunks.ts	prepareCodeChunks	field	INLINE
 src/core/company-brain/inspection.ts	readPage	field	STREAM	
 src/core/company-brain/profile.ts	importCompanyBrainFile	field	META	
 src/core/company-brain/verification.ts	verifyCompanyBrain	field	STREAM	
+src/core/connectors/fence-carry.ts	carryStoredFences	call:serializePageToMarkdown	INLINE	moved from google/sweep-shared.ts: asserts inline (assertInlineBody); importRendered refuses a segmented page first
+src/core/connectors/fence-carry.ts	carryStoredFences	field	INLINE	moved from google/sweep-shared.ts: asserts inline (assertInlineBody); importRendered refuses a segmented page first
 src/core/content-repair/judgment.ts	judgmentParticipant	field	STREAM	
 src/core/content-sanity.ts	assessContentSanity	field	STREAM	
 src/core/context/proactive-brief.ts	editItem	field	INLINE	reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
@@ -255,6 +257,8 @@ src/core/facts/reconcile-watermark.ts	readFactsReconcileBacklog	sql	STREAM
 src/core/facts/reconcile-watermark.ts	selectFactsReconcileDrain	sql	STREAM	
 src/core/facts/relink-publish.ts	prepareRelinkMutation	call:serializePageToMarkdown	SEGW	
 src/core/facts/relink-publish.ts	prepareRelinkMutation	field	SEGW	
+src/core/facts/retire.ts	retireFactsFromPage	call:serializePageToMarkdown	INLINE	a segmented page is skipped (its rows counted failed) before its body is read
+src/core/facts/retire.ts	retireFactsFromPage	field	INLINE	a segmented page is skipped (its rows counted failed) before its body is read
 src/core/facts/subject-infer-write.ts	linkAllowed	field	STREAM	
 src/core/facts/unfenced-facts.ts	auditUnadoptableFacts	call:serializePageToMarkdown	SEGW	
 src/core/facts/unfenced-facts.ts	fenceDatabaseOnlyPage	call:serializePageToMarkdown	SEGW	
@@ -304,8 +308,6 @@ src/core/generations/fence.ts	readFenceBlocks	field	INLINE	a segmented page read
 src/core/generations/fence.ts	storedBlocks	field	NONE	reads the fence block strings of a FenceRead (already parsed), never a stored page body
 src/core/generations/repair.ts	releaseManaged	field	INLINE	assertInlineBody refuses a segmented origin page before the managed release reads its body to bind the origin
 src/core/google/loops-extract.ts	runLoopsExtract	field	STREAM	tail slice(-12000) of a getPage body; per-job: segmented page: getter throws page_body_segmented
-src/core/google/sweep-shared.ts	carryStoredFences	call:serializePageToMarkdown	INLINE	asserts inline (assertInlineBody); importRendered refuses a segmented page first
-src/core/google/sweep-shared.ts	carryStoredFences	field	INLINE	asserts inline (assertInlineBody); importRendered refuses a segmented page first
 src/core/google/sweep-shared.ts	withStoredFactsFence	field	INLINE	asserts inline (assertInlineBody); importRendered refuses a segmented page first
 src/core/import-file.ts	applyImportTransaction	call:putPage	SEGW	lane 1d file (streaming ingest); code/image pages inline
 src/core/import-file.ts	importCodeFile	call:putPage	SEGW	lane 1d file (streaming ingest); code/image pages inline
@@ -331,6 +333,7 @@ src/core/markdown-chunks.ts	prepareFenceAwareMarkdownChunks	field	STREAM
 src/core/markdown.ts	parseMarkdown	field	STREAM	
 src/core/markdown.ts	serializePageToMarkdown	call:serializeMarkdown	SEGW	
 src/core/markdown.ts	serializePageToMarkdown	field	STREAM	
+src/core/meetings/meetings-source.ts	afterPublish	field	INLINE	a segmented page is skipped before its body is read; meeting pages are at most 2 MiB
 src/core/mentions/aliases.ts	deriveEntityAliases	field	STREAM	
 src/core/mentions/pass.ts	pageMentions	field	INLINE	inline arm; a segmented page is scanned block by block
 src/core/mentions/pass.ts	pagesMatchingNames	sql	STREAM	segmented pages are selected by id without a body (each is a candidate; pageMentions streams it)

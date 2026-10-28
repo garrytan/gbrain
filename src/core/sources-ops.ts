@@ -214,6 +214,12 @@ export interface AddSourceOpts {
     tokenCommand?: string;
     tokenEnv?: string;
   };
+  /**
+   * Register a meetings-kind source (meeting notes from a provider API). The
+   * API key lives in the connector credential store or the env var named by
+   * `tokenEnv`; no secret lands in sources.config. See src/core/meetings/.
+   */
+  meetings?: import('./meetings/source-add.ts').AddSourceMeetingsOpts;
 }
 
 export interface RemoveSourceOpts {
@@ -416,6 +422,29 @@ export async function assertNoOverlappingPath(
  * explicit ask). Callers who want to register before git-init exists opt in
  * via `force: true` (CLI: `--force`).
  */
+/**
+ * Path E of `addSource`: `--kind meetings`. API-backed, so nothing is cloned.
+ * `database` records keep no directory (local_path NULL); `git` records commit
+ * pages into --dir, inside a Git checkout that no other source covers (a nested
+ * root would import every page twice).
+ */
+async function insertMeetingsSource(engine: BrainEngine, opts: AddSourceOpts & { meetings: NonNullable<AddSourceOpts['meetings']> }): Promise<void> {
+  const { chooseMeetingsRecord, meetingsSourceConfig } = await import('./meetings/source-add.ts');
+  const choice = chooseMeetingsRecord(opts.id, opts.meetings.record, opts.meetings.dir);
+  if (choice.dir) {
+    const overlap = (await engine.executeRaw<{ id: string; local_path: string }>('SELECT id,local_path FROM sources WHERE local_path IS NOT NULL'))
+      .find(row => isPathContained(choice.dir!, row.local_path) || isPathContained(row.local_path, choice.dir!));
+    if (overlap) throw new SourceOpError('overlapping_path',
+      `${choice.dir} overlaps source "${overlap.id}" at ${overlap.local_path}; its pages would be imported by both sources. Choose a directory no other source covers.`);
+    mkdirPrivate(choice.dir);
+  }
+  await engine.executeRaw(
+    `INSERT INTO sources (id, name, local_path, config)
+         VALUES ($1, $2, $3, $4::text::jsonb)`,
+    [opts.id, opts.name ?? opts.id, choice.dir, JSON.stringify(meetingsSourceConfig(opts.meetings, choice, opts.federated, false))],
+  );
+}
+
 export async function addSource(
   engine: BrainEngine,
   opts: AddSourceOpts,
@@ -480,7 +509,7 @@ export async function addSource(
     !!opts.localPath &&
     !opts.remoteUrl &&
     !opts.github &&
-    !opts.google;
+    !opts.google && !opts.meetings;
   if (existing.length > 0 && !attachPath) {
     const pathNote = existing[0]!.local_path
       ? ` with local_path ${existing[0]!.local_path}`
@@ -658,6 +687,8 @@ export async function addSource(
            VALUES ($1, $2, $3, $4::text::jsonb)`,
       [opts.id, displayName, finalPath, JSON.stringify(config)],
     );
+  } else if (opts.meetings) {
+    await insertMeetingsSource(engine, { ...opts, meetings: opts.meetings });
   } else {
     // ── Path B: --path or no path (existing behavior, pre-v0.28) ─────────
     // #2707: only validate when the path actually exists — a not-yet-created

@@ -10,6 +10,25 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Meeting notes now flow into the brain on a schedule, with no custom script.**
+
+A new `meetings` source kind imports meetings from Fireflies (the first provider behind a provider interface) into one page per meeting: title, date, attendees, the provider's summary, action items and keywords, and optionally the transcript. You save the API key once on stdin with `gbrain connectors auth fireflies --token -` (probed before it is saved, 0600, never in argv, config or the database), add the source with `gbrain sources add meetings --kind meetings --provider fireflies`, and run the first sync yourself. After that, autopilot keeps it fresh every `--sync-interval-min` minutes (default 60) and waits out the provider's rate limit. Nothing syncs until you register a source and run its first sync.
+
+It works on a brain with no Git repository: pages and the sync position are recorded in the database. On a brain with a Git checkout, `--dir` inside it records each page with a commit before its database row, and a missing checkout holds the meeting instead of writing it to the database alone. The record mode is chosen when the source is added and never re-inferred.
+
+| Situation | What happens |
+|---|---|
+| The key's owner did not attend the meeting | the page is private |
+| A meeting the provider is still processing | re-checked every sync; published when its summary arrives (or after 48 hours) |
+| A meeting edited upstream | the page updates and facts extracted from the old version are retired |
+| A meeting deleted upstream (inside the lookback) | the page is deleted and its facts are retired |
+| A key for a different account | refused (`connector_account_changed`) before anything is imported |
+| Summary text that looks like a facts table, citation or timeline row | made inert before it lands in the page |
+
+Guide: [docs/guides/meeting-and-slack-sources.md](docs/guides/meeting-and-slack-sources.md).
+
 ## [0.60.476.0] - 2026-10-27
 
 **Text someone else wrote can no longer add facts to your brain.**

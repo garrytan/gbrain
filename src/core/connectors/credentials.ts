@@ -27,8 +27,9 @@ import { join } from 'node:path';
 import { gbrainPath } from '../config.ts';
 import type {
   ConnectorCredential,
-  ConnectorProviderName,
+  CredentialProviderName,
   ResolvedCredential,
+  TokenProviderName,
 } from './types.ts';
 
 /** `~/.gbrain/connectors` (GBRAIN_HOME honored via `gbrainPath`). */
@@ -36,7 +37,7 @@ export function connectorsDir(): string {
   return gbrainPath('connectors');
 }
 
-export function credentialPath(provider: ConnectorProviderName): string {
+export function credentialPath(provider: CredentialProviderName): string {
   return join(connectorsDir(), `${provider}.json`);
 }
 
@@ -66,7 +67,7 @@ export function saveCredential(cred: ConnectorCredential): void {
 }
 
 /** Read the on-disk credential, or null if absent/corrupt (never throws). */
-export function loadCredential(provider: ConnectorProviderName): ConnectorCredential | null {
+export function loadCredential(provider: CredentialProviderName): ConnectorCredential | null {
   try {
     const raw = readFileSync(credentialPath(provider), 'utf8');
     const parsed = JSON.parse(raw) as ConnectorCredential;
@@ -79,7 +80,7 @@ export function loadCredential(provider: ConnectorProviderName): ConnectorCreden
 }
 
 /** Remove a saved credential. Returns true if a file was deleted. */
-export function deleteCredential(provider: ConnectorProviderName): boolean {
+export function deleteCredential(provider: CredentialProviderName): boolean {
   try {
     rmSync(credentialPath(provider));
     return true;
@@ -88,14 +89,14 @@ export function deleteCredential(provider: ConnectorProviderName): boolean {
   }
 }
 
-const ENV_COOKIE = (p: ConnectorProviderName) => `GBRAIN_CONNECTOR_${p.toUpperCase()}_COOKIE`;
-const ENV_TOKEN = (p: ConnectorProviderName) => `GBRAIN_CONNECTOR_${p.toUpperCase()}_TOKEN`;
+const ENV_COOKIE = (p: CredentialProviderName) => `GBRAIN_CONNECTOR_${p.toUpperCase()}_COOKIE`;
+const ENV_TOKEN = (p: CredentialProviderName) => `GBRAIN_CONNECTOR_${p.toUpperCase()}_TOKEN`;
 
 /**
  * Resolve a credential with provenance: env cookie/token ABOVE the file.
  * Returns null when neither is present (caller returns auth_required).
  */
-export function resolveCredential(provider: ConnectorProviderName): ResolvedCredential | null {
+export function resolveCredential(provider: CredentialProviderName): ResolvedCredential | null {
   const envCookie = process.env[ENV_COOKIE(provider)]?.trim();
   const envToken = process.env[ENV_TOKEN(provider)]?.trim();
   if (envCookie || envToken) {
@@ -114,8 +115,28 @@ export function resolveCredential(provider: ConnectorProviderName): ResolvedCred
   return file ? { source: 'file', cred: file } : null;
 }
 
+/** Where an API token came from: a source's `--token-env` variable, the provider env override, or the credential file. */
+export interface ResolvedApiToken { token: string; source: 'token_env' | 'env' | 'file'; name: string }
+
+/**
+ * An API-token provider's key for a source. A source that names `tokenEnv` reads only that variable (unset fails
+ * instead of falling back to another key); otherwise env `GBRAIN_CONNECTOR_<P>_TOKEN` wins over the 0600 file.
+ * `name` says where it came from (a variable name or the file path), never the value.
+ */
+export function resolveApiToken(provider: TokenProviderName, tokenEnv?: string): ResolvedApiToken | null {
+  if (tokenEnv) {
+    const value = process.env[tokenEnv]?.trim();
+    return value ? { token: value, source: 'token_env', name: tokenEnv } : null;
+  }
+  const envName = ENV_TOKEN(provider);
+  const env = process.env[envName]?.trim();
+  if (env) return { token: env, source: 'env', name: envName };
+  const file = loadCredential(provider);
+  return file?.accessToken ? { token: file.accessToken, source: 'file', name: credentialPath(provider) } : null;
+}
+
 /** File mode (permission bits) for the saved credential, or null if absent. */
-export function credentialMode(provider: ConnectorProviderName): number | null {
+export function credentialMode(provider: CredentialProviderName): number | null {
   try {
     return statSync(credentialPath(provider)).mode & 0o777;
   } catch {

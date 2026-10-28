@@ -28,6 +28,7 @@ function printHelp(): void {
       '  auth <provider>       Store a session credential and verify it.',
       '                          --cookie <v>|-   raw Cookie header (- = read stdin)',
       '                          --token <v>      bearer accessToken (advanced)',
+      '                          --token -        fireflies: the API key on stdin (probed before it is saved)',
       '                          --try-oauth      attempt OAuth PKCE first (chatgpt; best-effort)',
       '                          --no-browser     print the authorize URL instead of opening',
       '                          --force          save even if the probe fails',

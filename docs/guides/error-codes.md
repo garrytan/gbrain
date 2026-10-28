@@ -769,6 +769,16 @@ More: [docs/guides/write-refusals.md#connection_inherited_read_only](../../docs/
 
 More: [docs/guides/write-refusals.md#drain-connection-lost](../../docs/guides/write-refusals.md#drain-connection-lost)
 
+### connector_access_denied
+
+<a id="connector_access_denied"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The connector key works but may not read what the source asks for; nothing more was imported. | The request itself was wrong or no longer matches the brain; nothing was changed. | Save a key whose account can read it (gbrain connectors auth <provider> --token -), then gbrain sync --source <id>. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/meeting-and-slack-sources.md#connector_access_denied](../../docs/guides/meeting-and-slack-sources.md#connector_access_denied)
+
 ### connector_account_changed
 
 <a id="connector_account_changed"></a>
@@ -778,6 +788,26 @@ More: [docs/guides/write-refusals.md#drain-connection-lost](../../docs/guides/wr
 | The connector credential resolves to a different account than the source is pinned to. | A connector source is pinned to the account it first synced, so a swapped credential can never import another account's mail, calendar or repositories into it. The refused run records the mismatch, and autopilot skips the source (unavailable-path) instead of retrying it every interval (#6803). | Restore the credential for the pinned account and run gbrain sync --source <id> (it clears the skip once the account check passes), or add a new source for the new account and archive this one with gbrain sources archive <id>. gbrain doctor --only connector_account_mismatch lists every affected source. Run: gbrain doctor --only connector_account_mismatch --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#connector-account-changed](../../docs/guides/write-refusals.md#connector-account-changed)
+
+### connector_auth_required
+
+<a id="connector_auth_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The connector source has no working API key; nothing was imported. | The key is read from the source's --token-env variable when it names one, else GBRAIN_CONNECTOR_<PROVIDER>_TOKEN, else the 0600 credential file. None held a key the provider accepted. | Ask the user for the provider API key and save it on stdin: gbrain connectors auth <provider> --token -; then gbrain sync --source <id>. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/meeting-and-slack-sources.md#connector_auth_required](../../docs/guides/meeting-and-slack-sources.md#connector_auth_required)
+
+### connector_binding_missing
+
+<a id="connector_binding_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A connector source records to Git, but its Git checkout is not available; the item was held, not written database-only. | A source whose record mode is git commits each item to its checkout before the database row, so git stays the parent. When the checkout is missing the item waits in the holds and is retried on the next sync; it is never written to the database alone, and the record mode is never re-inferred. | Restore the source checkout (gbrain sources status <id>), then gbrain sources retry-held <id>. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/meeting-and-slack-sources.md#connector_binding_missing](../../docs/guides/meeting-and-slack-sources.md#connector_binding_missing)
 
 ### connector_fence_below_timeline
 
@@ -802,6 +832,36 @@ More: [docs/guides/write-refusals.md#connector-account-changed](../../docs/guide
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The connector request no longer matches the stored connector intent. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### connector_item_too_large
+
+<a id="connector_item_too_large"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A connector item renders larger than the page size limit; it was held, not truncated. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/meeting-and-slack-sources.md#connector_item_too_large](../../docs/guides/meeting-and-slack-sources.md#connector_item_too_large)
+
+### connector_response_too_large
+
+<a id="connector_response_too_large"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A connector API response exceeded the client's size limit and was not read. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/meeting-and-slack-sources.md#connector_response_too_large](../../docs/guides/meeting-and-slack-sources.md#connector_response_too_large)
+
+### connector_shape_drift
+
+<a id="connector_shape_drift"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A connector API response is missing a field it must carry; the item was held, never published partially. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/meeting-and-slack-sources.md#connector_shape_drift](../../docs/guides/meeting-and-slack-sources.md#connector_shape_drift)
 
 ### consent_required
 

@@ -21,7 +21,8 @@ import { atomicWriteFileSync } from '../atomic-write.ts';
 import { withFilesystemPublication } from '../persistence/filesystem-guard.ts';
 import type { BrainEngine } from '../engine.ts';
 import { digest } from '../persistence/digest.ts';
-import { connectorCheckpointKey, connectorIdentity, isConnectorSourceKind, type ConnectorKind } from '../persistence/connector-identity.ts';
+import { connectorDbCursorKey, readConnectorDbCursor, writeConnectorDbCursor } from './db-cursor.ts';
+import { CONNECTOR_KINDS_SQL, connectorCheckpointKey, connectorIdentity, isConnectorSourceKind, type ConnectorKind } from '../persistence/connector-identity.ts';
 import { connectorStateKey } from '../persistence/connector-state.ts';
 import { readManagedMode } from '../persistence/managed-mode.ts';
 import { heldItems, type ItemHoldRecord } from './item-holds.ts';
@@ -37,12 +38,18 @@ export async function managedBrain(engine: Exec): Promise<boolean> {
   return readManagedMode(engine);
 }
 
+/** Kinds whose unmanaged cursor lives in the database (db-cursor.ts), never in a state file. */
+const usesDbCursor = (kind: ConnectorKind) => kind === 'meetings';
+/** The `state_file` a hold carry names for a database cursor. */
+const DB_CURSOR_TARGET = 'op_checkpoints:connector-db-cursor';
+
 /** The classic-mode state file of a connector source, or null when it has no state directory. */
 export function classicConnectorStateFile(source: ConnectorSourceRow): string | null {
   const kind = source.config.kind;
   if (!isConnectorSourceKind(kind)) return null;
+  if (usesDbCursor(kind)) return null;
   const dir = (connectorIdentity(kind, source.config, source.local_path).config as { dir?: string }).dir;
-  return dir ? join(dir, kind === 'google' ? '.google-source.json' : '.github-source.json') : null;
+  return dir ? join(dir, `.${kind}-source.json`) : null;
 }
 
 /** The connector's cursor state, wherever this brain keeps it. */
@@ -56,6 +63,7 @@ export async function readConnectorCursorState(engine: Exec, source: ConnectorSo
       [connectorCheckpointKey(source.id, source.incarnation, identity)]);
     return row?.completed_keys?.[0]?.state ?? null;
   }
+  if (usesDbCursor(kind)) return (await readConnectorDbCursor(engine, connectorDbCursorKey(source.id, source.incarnation, identity))).state;
   const file = classicConnectorStateFile(source);
   if (!file || !existsSync(file)) return null;
   // A corrupt state file is unknown hold state, not "no holds": the caller reports it.
@@ -67,7 +75,7 @@ export interface SourceHolds { sourceId: string; kind: ConnectorKind; held: Item
 /** Held items per connector source (sources with none are omitted). */
 export async function readAllSourceHolds(engine: Exec, opts: { sourceIds?: string[] } = {}): Promise<SourceHolds[]> {
   const sources = await engine.executeRaw<ConnectorSourceRow>(
-    "SELECT id,incarnation::text AS incarnation,local_path,config FROM sources WHERE archived IS NOT TRUE AND config->>'kind' IN ('google','github') ORDER BY id");
+    `SELECT id,incarnation::text AS incarnation,local_path,config FROM sources WHERE archived IS NOT TRUE AND config->>'kind' IN (${CONNECTOR_KINDS_SQL}) ORDER BY id`);
   const managed = await managedBrain(engine);
   const out: SourceHolds[] = [];
   for (const source of sources) {
@@ -90,7 +98,7 @@ export interface HoldCarry {
   owner_host?: string;
 }
 
-const CONNECTOR_SOURCES_SQL = "SELECT id,incarnation::text AS incarnation,local_path,config FROM sources WHERE archived IS NOT TRUE AND config->>'kind' IN ('google','github') ORDER BY id";
+const CONNECTOR_SOURCES_SQL = `SELECT id,incarnation::text AS incarnation,local_path,config FROM sources WHERE archived IS NOT TRUE AND config->>'kind' IN (${CONNECTOR_KINDS_SQL}) ORDER BY id`;
 
 /** True when the hold cannot be carried from this host: deactivation keeps refusing for it. */
 export function holdCarryBlocked(carry: HoldCarry): boolean {
@@ -100,6 +108,12 @@ export function holdCarryBlocked(carry: HoldCarry): boolean {
 async function evaluateHoldCarry(engine: Exec, source: ConnectorSourceRow, hostId: string | null): Promise<{ holds: unknown; carry: HoldCarry } | null> {
   const holds = (await readConnectorCursorState(engine, source, true))?.item_holds;
   const items = heldItems(holds).length;
+  if (usesDbCursor(source.config.kind as ConnectorKind)) {
+    // The classic cursor is a database row on every host: nothing to place on a filesystem.
+    const classicHolds = (await readConnectorCursorState(engine, source, false))?.item_holds;
+    if (!items && classicHolds === undefined) return null;
+    return { holds, carry: { source_id: source.id, items, state_file: DB_CURSOR_TARGET } };
+  }
   const file = classicConnectorStateFile(source);
   let classic: Record<string, unknown> | null = null;
   let unreadable: string | undefined;
@@ -146,6 +160,14 @@ export async function carryHoldsToClassicState(engine: Exec, hostId: string | nu
     const { holds, carry } = evaluated;
     if (holdCarryBlocked(carry)) throw new Error(`connector source ${carry.source_id} cannot take its held items on this host`);
     if (!carry.state_file || carry.unreadable || carry.owner_host) continue;
+    if (carry.state_file === DB_CURSOR_TARGET) {
+      const identity = connectorIdentity(source.config.kind as ConnectorKind, source.config, source.local_path);
+      const key = connectorDbCursorKey(source.id, source.incarnation, identity);
+      const { item_holds: _prior, ...rest } = (await readConnectorDbCursor(engine, key)).state ?? {};
+      await writeConnectorDbCursor(engine, key, carry.items ? { ...rest, item_holds: holds } : rest);
+      if (carry.items) carried.push(carry);
+      continue;
+    }
     const file = carry.state_file;
     const { item_holds: _previous, ...rest } = existsSync(file) ? JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown> : {};
     mkdirSync(dirname(file), { recursive: true });

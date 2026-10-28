@@ -5,6 +5,8 @@ import { currentJobSignal } from '../../core/minions/submission-authority.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import { serr } from '../../core/console-prefix.ts';
 import { assertResetCheckpointSource } from '../../core/persistence/connector-reset.ts';
+import { isConnectorSourceKind, type ConnectorKind } from '../../core/persistence/connector-kinds.ts';
+import { assertNever } from '../../core/types.ts';
 import type { SyncOpts, SyncResult } from '../sync.ts';
 
 export async function runConnectorSync(engine: BrainEngine, opts: SyncOpts, managed: boolean): Promise<SyncResult | null> {
@@ -19,7 +21,7 @@ export async function runConnectorSync(engine: BrainEngine, opts: SyncOpts, mana
     return null;
   }
   const config = typeof source.config === 'string' ? JSON.parse(source.config) : source.config ?? {};
-  if (config.kind !== 'google' && config.kind !== 'github') {
+  if (!isConnectorSourceKind(config.kind)) {
     if (opts.githubItem) throw new Error(`github_item refresh requires a github-kind source, but "${sourceId}" is not github-kind.`);
     return null;
   }
@@ -30,15 +32,26 @@ export async function runConnectorSync(engine: BrainEngine, opts: SyncOpts, mana
   const options = signal ? { ...opts, signal } : opts;
   const fallbackDir = source.local_path ?? (managed ? '' : (await import('../../core/sources-ops.ts')).defaultCloneDir(`${sourceId}-${config.kind}`));
   serr(`[gbrain phase] sync.${config.kind}_materialize`);
-  let result: SyncResult;
-  if (config.kind === 'github') {
-    const { parseGitHubSourceConfig, runGitHubSync } = await import('../../core/github-source.ts');
-    result = await runGitHubSync(engine, sourceId, parseGitHubSourceConfig(config, fallbackDir), options);
-  } else {
-    const { parseGoogleSourceConfig, runGoogleSync } = await import('../../core/google/google-source.ts');
-    result = await runGoogleSync(engine, sourceId, parseGoogleSourceConfig(config, fallbackDir), options);
+  return withConnectorPartialReason(await runConnectorKind(engine, sourceId, config, fallbackDir, options), signal);
+}
+
+async function runConnectorKind(engine: BrainEngine, sourceId: string, config: Record<string, unknown> & { kind: ConnectorKind }, fallbackDir: string, options: SyncOpts): Promise<SyncResult> {
+  switch (config.kind) {
+    case 'github': {
+      const { parseGitHubSourceConfig, runGitHubSync } = await import('../../core/github-source.ts');
+      return runGitHubSync(engine, sourceId, parseGitHubSourceConfig(config, fallbackDir), options);
+    }
+    case 'google': {
+      const { parseGoogleSourceConfig, runGoogleSync } = await import('../../core/google/google-source.ts');
+      return runGoogleSync(engine, sourceId, parseGoogleSourceConfig(config, fallbackDir), options);
+    }
+    case 'meetings': {
+      const { parseMeetingsSourceConfig } = await import('../../core/meetings/source-config.ts');
+      const { runMeetingsSync } = await import('../../core/meetings/meetings-source.ts');
+      return runMeetingsSync(engine, sourceId, parseMeetingsSourceConfig(config, fallbackDir), options);
+    }
+    default: return assertNever(config.kind);
   }
-  return withConnectorPartialReason(result, signal);
 }
 
 /**

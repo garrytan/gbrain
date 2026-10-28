@@ -26,6 +26,14 @@ import type { ConnectorClient } from './client.ts';
 /** Providers with a live connector in v1. Perplexity stays manual-only (no adapter). */
 export type ConnectorProviderName = 'chatgpt' | 'claude';
 
+/** API-token providers that back a source kind (`meetings`), captured with `gbrain connectors auth <p> --token -`. */
+export type TokenProviderName = 'fireflies';
+export const TOKEN_PROVIDER_NAMES: readonly TokenProviderName[] = ['fireflies'];
+export function isTokenProviderName(name: string): name is TokenProviderName { return (TOKEN_PROVIDER_NAMES as readonly string[]).includes(name); }
+
+/** Every provider with a slot in the credential store. */
+export type CredentialProviderName = ConnectorProviderName | TokenProviderName;
+
 /**
  * Auth strategy axis. `browser-session` (paste-in cookie) is the PRIMARY lane
  * for both providers — it is the only one proven to reach conversation history.
@@ -41,8 +49,8 @@ export type AuthStrategyKind = 'oauth-pkce' | 'browser-session' | 'export-file';
  * from which a short-lived `accessToken` is re-minted on 401.
  */
 export interface ConnectorCredential {
-  provider: ConnectorProviderName;
-  strategy: 'oauth-pkce' | 'browser-session';
+  provider: CredentialProviderName;
+  strategy: 'oauth-pkce' | 'browser-session' | 'api-token';
   /** Bearer token (session accessToken or oauth access_token). Short-lived. */
   accessToken?: string;
   /** OAuth refresh token (oauth-pkce lane only). */
@@ -51,8 +59,10 @@ export interface ConnectorCredential {
   cookie?: string;
   /** Epoch ms. Absent = unknown; the probe decides validity. */
   expiresAt?: number;
-  /** Claude org uuid / ChatGPT account id (multi-account is a v2 field). */
+  /** Claude org uuid / ChatGPT account id (multi-account is a v2 field); the API-token account's user id. */
   accountId?: string;
+  /** API-token lane: the account the probe reached when the token was saved (an email or workspace name), for status. */
+  accountLabel?: string;
   /** ISO 8601 write time. Compared against auth_error_at by the dispatch gate. */
   savedAt: string;
 }

@@ -24,6 +24,7 @@ import {
 } from './write-gate.ts';
 import { WRITE_GATE_REASON_FAMILIES, type WriteGateReasonFamily } from './write-gate-patterns.ts';
 import { minTrust } from './trust/tier.ts';
+import { CONNECTOR_KINDS_SQL } from './persistence/connector-kinds.ts';
 
 export type WriteGateScanTable = 'pages' | 'facts' | 'takes' | 'timeline_entries';
 export const WRITE_GATE_SCAN_TABLES: readonly WriteGateScanTable[] = ['pages', 'facts', 'takes', 'timeline_entries'];
@@ -84,7 +85,7 @@ export function projectTier(signals: ReadonlyArray<string | null | undefined>): 
 
 /** Page-level signal on alias `pg` (with sources alias `src`): connector/webhook/clipper -> external, agent channels -> agent. */
 const PAGE_SIGNAL = (pg: string, src: string) => `CASE
-  WHEN ${src}.config->>'kind' IN ('google','github') OR ${pg}.source_kind = 'webhook' OR COALESCE(${pg}.frontmatter, '{}'::jsonb) ? 'source_url' THEN 'external_untrusted'
+  WHEN ${src}.config->>'kind' IN (${CONNECTOR_KINDS_SQL}) OR ${pg}.source_kind = 'webhook' OR COALESCE(${pg}.frontmatter, '{}'::jsonb) ? 'source_url' THEN 'external_untrusted'
   WHEN ${pg}.source_kind LIKE 'mcp:%' OR ${pg}.ingested_via LIKE 'mcp:%' OR ${pg}.source_kind = 'capture-cli'
     OR ${pg}.frontmatter->>'capturedVia' IS NOT NULL OR COALESCE(${pg}.frontmatter, '{}'::jsonb) ? 'transcript_import' THEN 'agent_written'
   END`;

@@ -6,6 +6,8 @@ import { readFix } from '../core/ops/op-fix.ts';
 import { isValidSourceId } from '../core/source-id.ts';
 import { msysToNativePath } from '../core/path-confine.ts';
 import { isWriteRequestId } from '../core/persistence/types.ts';
+import { CONNECTOR_SOURCE_KINDS, isConnectorSourceKind } from '../core/persistence/connector-kinds.ts';
+import { isMeetingProviderName, MEETING_PROVIDERS } from '../core/meetings/types.ts';
 import { defaultCloneDir, type AddSourceOpts } from '../core/sources-ops.ts';
 import { isValidRepoName } from '../core/github-source.ts';
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
@@ -41,7 +43,8 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     'federated', 'no-federated', 'no-federate', 'refederate', 'no-harden']);
   const valued = new Set(['request-id', 'expected-incarnation', 'brain', 'path', 'url', 'name', 'clone-dir',
     'pat-file', 'kind', 'account', 'access', 'token-command', 'token-env', 'services', 'history-days',
-    'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id', 'scope', 'repos', 'dir', 'app-id', 'app-pem', 'app-install']);
+    'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id', 'scope', 'repos', 'dir', 'app-id', 'app-pem', 'app-install',
+    'provider', 'transcript', 'lookback-days', 'sync-interval-min', 'record', 'visibility']);
   for (let i = 0; i < rest.length; i++) {
     const token = rest[i];
     if (!token.startsWith('-')) { positionals.push(token); continue; }
@@ -102,20 +105,24 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
 
   if (flags.has('federated') && flags.has('no-federated')) throw invalid('Choose one federation setting.', 'Pass either --federated or --no-federated, not both.');
   const kind = values.get('kind');
-  if (kind !== undefined && !['google', 'github'].includes(kind)) throw invalid('Source kind must be github or google.',
-    'Pass --kind github or --kind google; a directory or Git remote source uses --path or --url instead of --kind.');
+  if (kind !== undefined && !isConnectorSourceKind(kind)) throw invalid(`Source kind must be ${CONNECTOR_SOURCE_KINDS.join(', ')}.`,
+    `Pass --kind ${CONNECTOR_SOURCE_KINDS.join(', --kind ')}; a directory or Git remote source uses --path or --url instead of --kind.`);
   if ([values.has('path'), values.has('url'), kind !== undefined].filter(Boolean).length > 1) throw invalid('--path, --url and --kind are mutually exclusive.',
-    'Give exactly one of --path (a local directory), --url (an https Git remote) or --kind (github or google).');
-  const googleOnly = ['account', 'access', 'token-command', 'services', 'history-days', 'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id'];
-  const githubOnly = ['scope', 'repos', 'app-id', 'app-pem', 'app-install'];
-  const kindOptions = [...googleOnly, ...githubOnly, 'dir', 'token-env'];
-  for (const key of kindOptions) if (values.has(key) && !kind) throw invalid(`--${key} requires --kind github or google.`,
-    `Add ${googleOnly.includes(key) ? '--kind google' : githubOnly.includes(key) ? '--kind github' : '--kind github or --kind google'} for --${key}, or remove --${key}.`);
-  for (const key of googleOnly) {
-    if (values.has(key) && kind !== 'google') throw invalid(`--${key} requires --kind google.`, `--${key} configures a Google source: use --kind google, or remove --${key} from this ${kind} source.`);
-  }
-  for (const key of githubOnly) {
-    if (values.has(key) && kind !== 'github') throw invalid(`--${key} requires --kind github.`, `--${key} configures a GitHub source: use --kind github, or remove --${key} from this ${kind} source.`);
+    `Give exactly one of --path (a local directory), --url (an https Git remote) or --kind (${CONNECTOR_SOURCE_KINDS.join(', ')}).`);
+  // The kinds each kind-specific option applies to.
+  const optionKinds: Record<string, readonly string[]> = {
+    ...Object.fromEntries(['account', 'access', 'token-command', 'services', 'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id'].map(key => [key, ['google']])),
+    ...Object.fromEntries(['scope', 'repos', 'app-id', 'app-pem', 'app-install'].map(key => [key, ['github']])),
+    ...Object.fromEntries(['provider', 'transcript', 'lookback-days', 'sync-interval-min', 'record', 'visibility'].map(key => [key, ['meetings']])),
+    'history-days': ['google', 'meetings'],
+    'token-env': CONNECTOR_SOURCE_KINDS,
+    dir: CONNECTOR_SOURCE_KINDS,
+  };
+  for (const [key, kinds] of Object.entries(optionKinds)) {
+    if (!values.has(key)) continue;
+    if (!kind) throw invalid(`--${key} requires --kind ${kinds.join(' or ')}.`, `Add --kind ${kinds.join(' or --kind ')} for --${key}, or remove --${key}.`);
+    if (!kinds.includes(kind)) throw invalid(`--${key} requires --kind ${kinds.join(' or ')}.`,
+      `--${key} configures a ${kinds.join(' or ')} source: use --kind ${kinds.join(' or --kind ')}, or remove --${key} from this ${kind} source.`);
   }
   const number = (key: string, fallback?: number): number | undefined => {
     if (!values.has(key)) return fallback;
@@ -167,6 +174,26 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
       ...(futureDays !== undefined ? { futureDays } : {}), ...(loopsExcludeLabels.length > 0 ? { loopsExcludeLabels } : {}),
       dir: absolute(values.get('dir') ?? defaultCloneDir(`${id}-google`)), access: access as 'vault' | 'command' | 'env',
       tokenCommand: values.get('token-command'), tokenEnv: values.get('token-env') };
+  }
+  if (kind === 'meetings') {
+    const provider = values.get('provider') ?? 'fireflies';
+    if (!isMeetingProviderName(provider)) throw invalid(`--provider must be one of ${MEETING_PROVIDERS.join(', ')}.`,
+      `Pass --provider ${MEETING_PROVIDERS.join(' or --provider ')}; other meeting providers are not supported yet.`);
+    const transcript = values.get('transcript') ?? 'none';
+    if (transcript !== 'none' && transcript !== 'full') throw invalid('--transcript must be none or full.',
+      'Pass --transcript none (summary, action items and attendees; the default) or --transcript full (also the sentence transcript).');
+    const record = values.get('record') ?? 'auto';
+    if (record !== 'auto' && record !== 'git' && record !== 'database') throw invalid('--record must be git or database.',
+      'Pass --record git (pages committed to the Git checkout at --dir) or --record database (the database is the record, no directory); leave it out to choose from --dir.');
+    if (record === 'database' && values.has('dir')) throw invalid('--record database takes no --dir.',
+      'Remove --dir: a database-recorded source keeps no directory. To record pages in Git, pass --record git with --dir inside a Git checkout.');
+    const visibility = values.get('visibility') ?? 'default';
+    if (visibility !== 'default' && visibility !== 'private') throw invalid('--visibility must be private.',
+      'Pass --visibility private to write every meeting page private, or leave it out (meetings the key owner did not attend are private either way).');
+    const interval = number('sync-interval-min');
+    opts.meetings = { provider, transcript, record, historyDays: number('history-days'), lookbackDays: number('lookback-days'),
+      ...(interval !== undefined ? { syncIntervalMin: interval } : {}), ...(values.has('token-env') ? { tokenEnv: values.get('token-env') } : {}),
+      ...(values.has('dir') ? { dir: absolute(values.get('dir')!) } : {}), private: visibility === 'private' };
   }
   return { operation: 'source_add', params: { options: opts, request_id: requestId, ...(dryRun ? { dry_run: true } : {}) },
     brain: values.get('brain'), legacyOnly: values.has('pat-file'), json: flags.has('json') };

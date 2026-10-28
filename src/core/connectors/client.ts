@@ -30,6 +30,15 @@ export class ConnectorAuthError extends Error {
   }
 }
 
+/** An API that answered that this credential may not read the resource (a permission or scope refusal, not a bad key). */
+export class ConnectorAccessDeniedError extends Error {
+  readonly code = 'connector_access_denied';
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConnectorAccessDeniedError';
+  }
+}
+
 /** Raised on a Cloudflare-fingerprint 403 — server-side fetch is blocked. */
 export class ConnectorForbiddenError extends Error {
   constructor(message: string) {
@@ -41,9 +50,19 @@ export class ConnectorForbiddenError extends Error {
 /** Raised on a 429 that outlasts its retries, or asks for a wait over MAX_RETRY_AFTER_MS: the run stops. */
 export class ConnectorRateLimitedError extends Error {
   readonly code = 'rate_limited';
-  constructor(message: string) {
+  /** When the provider said the limit resets (epoch ms), if it said: the scheduler does not resubmit before it. */
+  constructor(message: string, readonly retryAt?: number) {
     super(message);
     this.name = 'ConnectorRateLimitedError';
+  }
+}
+
+/** A response body larger than the client's `maxResponseBytes`: the request fails, nothing is truncated. */
+export class ConnectorResponseTooLargeError extends Error {
+  readonly code = 'connector_response_too_large';
+  constructor(pathOrUrl: string, limit: number) {
+    super(`connector: the response to ${pathOrUrl} exceeded ${limit} bytes and was not read`);
+    this.name = 'ConnectorResponseTooLargeError';
   }
 }
 
@@ -127,6 +146,17 @@ export interface ConnectorClientOpts {
   deadlineAt?: number;
   /** Polite spacing between requests, ms. Default 700. */
   minDelayMs?: number;
+  /** User-Agent header. Default: a desktop browser (chat providers); official APIs pass an honest gbrain agent. */
+  userAgent?: string;
+  /** Per-request budget covering headers and body, ms; a stalled request fails `network` (timeout). Default: none. */
+  requestTimeoutMs?: number;
+  /** Largest response body read, bytes; a larger one fails `connector_response_too_large`. Default: unbounded. */
+  maxResponseBytes?: number;
+  /**
+   * Classifies an application error a provider returns inside an HTTP 200 body (GraphQL `errors[]`, Slack `ok:false`):
+   * it throws the client's typed error for it, or returns to accept the body.
+   */
+  validate?: (body: unknown, pathOrUrl: string) => void;
   /** Test seam. Default global fetch. */
   fetchImpl?: ConnectorFetch;
   /** Injectable sleep so Retry-After tests don't wall-clock. Default setTimeout. */
@@ -170,6 +200,10 @@ export class ConnectorClient {
   private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   private readonly now: () => number;
   private readonly log: (msg: string) => void;
+  private readonly userAgent: string;
+  private readonly requestTimeoutMs?: number;
+  private readonly maxResponseBytes?: number;
+  private readonly validate?: (body: unknown, pathOrUrl: string) => void;
   private lastRequestAt = 0;
 
   constructor(opts: ConnectorClientOpts) {
@@ -184,6 +218,10 @@ export class ConnectorClient {
     this.sleep = opts.sleep ?? defaultSleep;
     this.now = opts.now ?? Date.now;
     this.log = opts.log ?? (() => {});
+    this.userAgent = opts.userAgent ?? DEFAULT_USER_AGENT;
+    this.requestTimeoutMs = opts.requestTimeoutMs;
+    this.maxResponseBytes = opts.maxResponseBytes;
+    this.validate = opts.validate;
   }
 
   /** Resolve a relative path (or absolute same-origin URL) to a full URL, off-origin refused. */
@@ -228,6 +266,43 @@ export class ConnectorClient {
     pathOrUrl: string,
     opts: { signal?: AbortSignal; headers?: Record<string, string>; refresh?: boolean } = {},
   ): Promise<T> {
+    return this.request<T>(pathOrUrl, undefined, opts);
+  }
+
+  /** POST a JSON body and parse the JSON reply, with every guard `fetchJSON` applies. */
+  async postJSON<T>(
+    pathOrUrl: string,
+    body: unknown,
+    opts: { signal?: AbortSignal; headers?: Record<string, string>; refresh?: boolean } = {},
+  ): Promise<T> {
+    return this.request<T>(pathOrUrl, JSON.stringify(body), opts);
+  }
+
+  /** The body as text, failing on a stream past `maxResponseBytes` instead of buffering it. */
+  private async readBody(res: Response, pathOrUrl: string): Promise<string> {
+    const limit = this.maxResponseBytes;
+    if (limit === undefined || !res.body) return res.text();
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) {
+        await reader.cancel().catch(() => {});
+        throw new ConnectorResponseTooLargeError(pathOrUrl, limit);
+      }
+      chunks.push(value);
+    }
+    return new TextDecoder().decode(Buffer.concat(chunks));
+  }
+
+  private async request<T>(
+    pathOrUrl: string,
+    body: string | undefined,
+    opts: { signal?: AbortSignal; headers?: Record<string, string>; refresh?: boolean },
+  ): Promise<T> {
     const url = this.resolve(pathOrUrl);
     let refreshed = false;
     let rateRetries = 0;
@@ -240,26 +315,37 @@ export class ConnectorClient {
       this.checkLimits(pathOrUrl);
       await this.pace(opts.signal);
       this.requests++;
+      const timeout = this.requestTimeoutMs !== undefined ? AbortSignal.timeout(this.requestTimeoutMs) : undefined;
+      const signal = timeout && opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout ?? opts.signal;
       let res: Response;
+      let bodyText: string;
       try {
         res = await this.fetchImpl(url, {
-          headers: { 'user-agent': DEFAULT_USER_AGENT, accept: 'application/json', ...auth },
-          signal: opts.signal,
+          method: body === undefined ? 'GET' : 'POST',
+          headers: { 'user-agent': this.userAgent, accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...auth },
+          ...(body === undefined ? {} : { body }),
+          signal,
           redirect: 'manual',
         });
+        bodyText = await this.readBody(res, pathOrUrl);
       } catch (e) {
-        if (opts.signal?.aborted || (e as { name?: unknown })?.name === 'AbortError') throw e;
+        if (e instanceof ConnectorResponseTooLargeError) throw e;
+        if (opts.signal?.aborted) throw opts.signal.reason ?? e;
+        if (timeout?.aborted) throw new ConnectorNetworkError(pathOrUrl, { code: 'TIMEOUT' });
+        if ((e as { name?: unknown })?.name === 'AbortError') throw e;
         throw new ConnectorNetworkError(pathOrUrl, e);
       }
-      const bodyText = await res.text();
       const c = classifyResponse(res, bodyText, this.now());
 
       if (c.kind === 'ok') {
+        let parsed: unknown;
         try {
-          return JSON.parse(bodyText) as T;
+          parsed = JSON.parse(bodyText);
         } catch {
           throw new Error(`connector: expected JSON on ${pathOrUrl} but body did not parse`);
         }
+        this.validate?.(parsed, pathOrUrl);
+        return parsed as T;
       }
 
       if (c.kind === 'auth_required') {
@@ -282,6 +368,7 @@ export class ConnectorClient {
         if (waitMs > MAX_RETRY_AFTER_MS) {
           throw new ConnectorRateLimitedError(
             `connector: rate limited on ${pathOrUrl}; the provider asked for a ${Math.round(waitMs / 1000)}s wait, over the ${MAX_RETRY_AFTER_MS / 1000}s cap`,
+            c.retryAfterMs !== undefined ? this.now() + c.retryAfterMs : undefined,
           );
         }
         if (rateRetries < MAX_RATE_RETRIES) {
