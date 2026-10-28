@@ -2655,7 +2655,7 @@ export interface BrainEngine {
    * cheaper than fetching any meaningful subset of it.
    *
    * Callers that need a single key still use getConfig(). This is for the
-   * bulk-read path only.
+   * bulk-read path only; prefix inventories are omitted (use getConfig()).
    */
   getAllConfig(): Promise<Record<string, string>>;
 
