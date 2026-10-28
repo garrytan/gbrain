@@ -8,6 +8,7 @@
  *   11 resumable budget stop · 13 harness wired, verification pending ·
  *   12 no results (a lookup matched nothing; opt-in, GBRAIN_FAIL_ON_EMPTY=1) ·
  *   14 harness wired, shared-skills/token cleanup pending ·
+ *   15 no edition in force on the as_of date · 16 host upgrade required ·
  *   69 serve exited unhealthy · 75 migration
  *   lock held · 124 timeout · 130 interrupted. `test/exit-codes.test.ts` enumerates every literal
  *   exit 3 in src/ so a new one cannot reuse it.
@@ -81,3 +82,17 @@ export const HARNESS_CLEANUP_PENDING_EXIT_CODE = 14;
  * (`serve_unhealthy_exit`). EX_UNAVAILABLE: a supervisor restarts it.
  */
 export const SERVE_UNHEALTHY_EXIT_CODE = 69;
+
+/**
+ * GBRA-217: `gbrain get --as-of <date>` answered, but no edition was in force on that date (`valid_time.status` is
+ * `not_in_force`, `not_yet_in_force` or `before_recorded_history`). stdout carries the status and why, never a document,
+ * so a script cannot mistake expired or future text for the page in force. Distinct from 0 (an edition is in force) and
+ * from 1, which means the read failed.
+ */
+export const VALID_TIME_NOT_IN_FORCE_EXIT_CODE = 15;
+
+/**
+ * GBRA-217 (`host_upgrade_required`): the brain host is older than this client and answered a different question (an
+ * `as_of` read came back as the current page). Nothing was printed; upgrade the host.
+ */
+export const HOST_UPGRADE_REQUIRED_EXIT_CODE = 16;

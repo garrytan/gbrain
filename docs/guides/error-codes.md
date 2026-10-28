@@ -622,9 +622,9 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A time parameter got a value on the wrong clock: `known_as_of` (recorded time) needs an instant with a zone, not a calendar date. | Recorded time (`known_as_of`) is when the brain had recorded something; valid time (`as_of`) is when a fact held in the world, as a date. A bare date is ambiguous as a recorded-time instant, so it is refused instead of guessed. | Pass a full instant such as 2026-10-01T12:00:00Z to known_as_of, or use as_of where the tool takes a valid-time date. | agent | `repeat the read that failed` | 1 | no |
+| A time parameter got a value on the wrong clock: `known_as_of` (recorded time) needs an instant with a zone, not a calendar date (`date_for_instant`); get_page `as_of` (valid time) needs a calendar date, not an instant (`instant_for_date`). | Recorded time (`known_as_of`) is when the brain had recorded something; valid time (`as_of`) is when a fact held in the world, as a date. A bare date is ambiguous as a recorded-time instant, and an instant is not an edition date, so each is refused instead of guessed. | Pass a full instant such as 2026-10-01T12:00:00Z to known_as_of, or use as_of where the tool takes a valid-time date. | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `date_for_instant`.
+Reasons: `date_for_instant`, `instant_for_date`.
 
 More: [docs/guides/repair.md#clock-mismatch](../../docs/guides/repair.md#clock-mismatch)
 
@@ -2131,6 +2131,16 @@ More: [docs/guides/write-refusals.md#head-blocked](../../docs/guides/write-refus
 | This process's `host.json` identity differs from the identity that owns the binding although both resolve on this machine, so writes that need the owner read it as another host. | Host identity is a file under the persistence home: a job worker or container launched with a different `HOME` or `GBRAIN_HOME` mints a new `host.json` and sees the binding as another host's (`owner_unavailable`, `host_mismatch`), so its maintenance writes never reach the owner. The check names both files and the environment each was minted under (`minted_under`, `unknown` for a file minted before it was recorded); re-deriving the identity would re-own every existing binding, so the fix is the environment, never the file. | Set GBRAIN_HOME on the supervisor of the process to the owner's home (the value the check prints; config appends .gbrain itself) and restart it; never edit or delete a host.json. Run: gbrain doctor --only host_identity_mismatch --json | host_admin | `gbrain doctor --only host_identity_mismatch --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#host-identity-mismatch](../../docs/guides/troubleshooting.md#host-identity-mismatch)
+
+### host_upgrade_required
+
+<a id="host_upgrade_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The brain host is older than this client and did not answer the question asked: a get_page reply to an `as_of` read came back without `valid_time.as_of`, so it is the current page, not the edition in force on that date. Nothing historical was printed. | An older host ignores a read parameter it does not know and answers the plain read. Printing that answer as the edition in force on a date would quote the wrong text, so the client fails closed. The error carries the client version, the host version when known, and the minimum host version. | Upgrade gbrain on the brain host (`gbrain upgrade`), or ask its operator to; then run the same read again. | host_admin | `gbrain doctor --json` | 16 | no |
+
+More: [docs/guides/page-history.md#host_upgrade_required](../../docs/guides/page-history.md#host_upgrade_required)
 
 ### hosted_repo_refused
 
@@ -4661,6 +4671,16 @@ More: [docs/guides/troubleshooting.md#upstream-rewritten](../../docs/guides/trou
 | A classic source's checkout and upstream diverged and gbrain has no record of the upstream before the fetch (first pull after an upgrade, or the recorded commit is gone), so it cannot tell a force-push from local commits; local HEAD keeps syncing. | Merging could bring back commits a force-push removed; the reset preview names any local commit that was never on the upstream before anything moves. | Ask the user, then preview the gbrain sources reset-upstream command doctor sync_failures prints with --dry-run. | user | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#upstream-rewritten](../../docs/guides/troubleshooting.md#upstream-rewritten)
+
+### valid_time_undeclared
+
+<a id="valid_time_undeclared"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An `as_of` read found no version of the page that declares a readable `valid_from`, so no edition can be placed on the date. | Valid time comes only from the `valid_from` / `valid_until` frontmatter the page carries; gbrain never infers when text took effect. Only the user knows the date, so the fix asks them before a templated edit_page records it. | Ask the user when the text took effect and record it as a quoted valid_from (the fix carries the edit). For what the brain had recorded at a time, read with known_as_of instead. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/page-history.md#valid_time_undeclared](../../docs/guides/page-history.md#valid_time_undeclared)
 
 ### vector_prewarm_extension_missing
 

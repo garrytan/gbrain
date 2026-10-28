@@ -31,6 +31,9 @@ import { opError } from '../core/ops/contract.ts';
 import { readFix } from '../core/ops/op-fix.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
 import { isSegmentedPage } from '../core/page-body/page-shape.ts';
+import { VALID_TIME_NOT_IN_FORCE_EXIT_CODE } from '../core/exit-codes.ts';
+import { assertValidTimeEcho } from '../core/valid-time.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 /** Window size the thin client asks for while paging a whole page. */
 export const REMOTE_PAGE_WINDOW_BYTES = 512 * 1024;
@@ -74,8 +77,64 @@ function renderSlice(r: GetPageResult): string {
   return g.blocks.map((b: GetPageResult) => `-- lines ${b.line_start}-${b.line_end} (match at ${b.match_starts.join(', ')})\n${b.text}\n`).join('');
 }
 
+/** The stderr line for a result's valid_time: an as_of answer's status, edition, history and doubt, or a plain read's status today. */
+export function validTimeLine(vt: GetPageResult): string {
+  if (vt.history === undefined) {
+    return `[gbrain] valid_time: ${vt.status} as of ${vt.as_of} (valid_from ${vt.valid_from ?? '-'}, valid_until ${vt.valid_until ?? '-'}).`;
+  }
+  const edition = vt.chosen_is_current ? 'current page' : vt.chosen_version_id != null ? `version ${vt.chosen_version_id}` : 'none in force';
+  const date = vt.valid_from ?? vt.earliest_known_valid_from ?? '-';
+  return `[gbrain] valid_time as_of ${vt.as_of}: ${vt.status}; edition ${edition} (valid_from ${date}${vt.valid_until ? `, valid_until ${vt.valid_until}` : ''}); history ${vt.history}${vt.uncertain ? `; uncertain: ${vt.why}` : ''}.`;
+}
+
+/** True for an as_of answer with no edition in force: stdout gets the status and why, never a document. */
+export function asOfNotInForce(r: GetPageResult | null | undefined): boolean {
+  return !!r?.valid_time && r.valid_time.history !== undefined && r.valid_time.status !== 'in_force';
+}
+
+/**
+ * `gbrain get --as-of` (GBRA-217): an edition read in windows prints whole, each window fetched with the previous
+ * window's `next` (slug, source, date and the pinned edition); stderr carries the valid_time header once. False when the
+ * result is not a windowed as_of answer (formatGetPage renders it).
+ */
+export async function printAsOfWindows(call: PagedCall, first: GetPageResult, params: Record<string, unknown>, write: (text: string) => Promise<void>): Promise<boolean> {
+  if (params.as_of === undefined || params.cursor !== undefined || params.json === true || first.valid_time?.status !== 'in_force' || !first.window || !first.next) return false;
+  process.stderr.write(validTimeLine(first.valid_time) + '\n');
+  for (let r = first; ;) {
+    if (!r.window) throw new Error(`The edition of ${String(first.slug)} in force on ${String(params.as_of)} is no longer retained (${r.valid_time?.why ?? 'edition_pruned'}); the rest of it was not printed.`);
+    await write(r.window.text);
+    if (!r.next) return true;
+    r = await call(r.next.arguments as Record<string, unknown>);
+  }
+}
+
+/**
+ * After a `gbrain get --as-of` call, locally or over the thin client (`versions` set): a host reply that does not echo
+ * `valid_time.as_of` fails closed (`host_upgrade_required`, on every window too), the exit status is set, and a windowed
+ * edition is paged. True when the edition was printed here.
+ */
+export async function finishAsOfRead(call: PagedCall, result: GetPageResult, params: Record<string, unknown>, write: (text: string) => Promise<void>,
+  versions?: { client: string; host: string | null }): Promise<boolean> {
+  if (params.as_of === undefined) return false;
+  if (versions) assertValidTimeEcho(params, result, versions);
+  const checked: PagedCall = versions ? async p => { const r = await call(p); assertValidTimeEcho(params, r, versions); return r; } : call;
+  const exit = asOfExitCode(result);
+  if (exit) setCliExitVerdict(exit);
+  return printAsOfWindows(checked, result, params, write);
+}
+
+/** The exit status of an as_of answer: 15 when no edition is in force, 1 when the edition's text has gone, 0 otherwise. */
+export function asOfExitCode(r: GetPageResult | null | undefined): number {
+  if (!r?.valid_time || r.valid_time.history === undefined) return 0;
+  if (r.valid_time.status !== 'in_force') return VALID_TIME_NOT_IN_FORCE_EXIT_CODE;
+  return r.compiled_truth === undefined && !r.window ? 1 : 0;
+}
+
 /** stdout text for one get_page result; partial responses add a stderr note. */
 export function formatGetPage(r: GetPageResult): string {
+  if (r.valid_time) process.stderr.write(validTimeLine(r.valid_time) + '\n');
+  if (asOfNotInForce(r)) return `status: ${r.valid_time.status}\nwhy: ${r.valid_time.why ?? 'none'}\n`;
+  if (r.valid_time?.history !== undefined && r.compiled_truth === undefined && !r.window) return '';
   if (r.error === 'ambiguous_slug') {
     return `Ambiguous slug. Did you mean:\n${r.candidates.map((c: string) => `  ${c}`).join('\n')}\n`;
   }

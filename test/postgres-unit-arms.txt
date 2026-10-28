@@ -521,6 +521,7 @@ test/unbound-source-6536.test.ts
 test/unindexed-files-convergence-7149.test.ts
 test/unindexed-files.test.ts
 test/v273-validate-timeouts.test.ts
+test/valid-time-gbra217.test.ts
 test/vector-manifest-probe-bound.test.ts
 test/visibility-fail-closed-derived-writes.test.ts
 test/visibility-repair-scale.test.ts

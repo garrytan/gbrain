@@ -345,6 +345,8 @@ export const SECTIONS: DocSection[] = [
         title: "docs/guides/exit-codes.md",
         description: "Exit statuses (3 = confirmation_required only, 10 pending write, 11 resumable budget stop) and what the agent does on each.",
         path: "docs/guides/exit-codes.md",
+        // AGENT_OPERATOR_v1.md, inlined in full, carries the same exit table; llms-full.txt sits at its byte budget.
+        includeInFull: false,
       },
       {
         title: "docs/guides/minions-fix.md",

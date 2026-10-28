@@ -23,6 +23,7 @@ import { segmentedRevertRefusal } from '../page-state/versions.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { SAFE_FENCE_CHUNKER_VERSION, bodyWriteChunkVersion } from '../search/safe-chunks.ts';
 import { privatePagesFilterFragment, privateSnapshotFilterFragment } from '../search/private-visibility.ts';
+import { validDateSql } from '../valid-time.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
 import { rederiveHiddenSql } from '../eligibility/sql.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, isMissingSchemaObject, warnOncePerProcess } from '../utils.ts';
@@ -1006,6 +1007,9 @@ const PAGE_VERSION_SEGMENTED_COLUMNS = trustedSql('pv.body_storage, pv.body_gene
  * pruned (`successor_pruned`: its visibility can no longer be checked, so the reason is withheld). The successor is
  * read over every snapshot of the page, never only the rows the reader may see. Shared by get_versions and get_page as_of.
  */
+/** GBRA-217: each version's parsed valid time (the shared normaliser), so a timeline reads in one get_versions call. */
+const VERSION_VALID_TIME_COLUMNS = `${validDateSql("pv.frontmatter->>'valid_from'")} AS valid_from, ${validDateSql("pv.frontmatter->>'valid_until'")} AS valid_until`;
+
 export function replacedBecauseSql(pv: string, excludePrivate: boolean): string {
   if (!excludePrivate) return `${pv}.change_reason`;
   return `CASE WHEN ${pv}.change_reason IS NULL OR COALESCE(${pv}.successor_pruned, false) THEN NULL
@@ -1032,7 +1036,8 @@ export async function getVersions<B extends boolean = true>(
     const columns = opts?.includeBody === false ? PAGE_VERSION_METADATA_COLUMNS : PAGE_VERSION_COLUMNS;
     const limit = opts?.limit !== undefined ? sqlFragment`LIMIT ${opts.limit}` : sqlFragment``;
     const { rows } = await exec.run(sqlFragment`
-      SELECT ${columns}, ${PAGE_VERSION_SEGMENTED_COLUMNS}, ${trustedSql(replacedBecauseSql('pv', opts?.excludePrivate === true))} AS replaced_because FROM page_versions pv
+      SELECT ${columns}, ${PAGE_VERSION_SEGMENTED_COLUMNS}, ${trustedSql(replacedBecauseSql('pv', opts?.excludePrivate === true))} AS replaced_because,
+        ${trustedSql(VERSION_VALID_TIME_COLUMNS)} FROM page_versions pv
       JOIN pages p ON p.id = pv.page_id
       WHERE p.slug = ${slug} ${scope}
         ${privacy} AND ${trustedSql(rederiveHiddenSql('pages', 'p'))}

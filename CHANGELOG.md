@@ -29,6 +29,19 @@ identifiers and attribution are available in the pre-removal Git revision
 
 Guide: [page history](docs/guides/page-history.md).
 
+### Read a page as it stood on a date
+
+A page can now say when its text takes effect, with `valid_from` and `valid_until` in its frontmatter, and you can ask what was in force on any date: `get_page {slug, as_of: '2026-03-01'}`, or `gbrain get <slug> --as-of 2026-03-01`. Say to your agent: *"What did our refund policy say on March 1?"*
+
+- The answer is the edition with the latest `valid_from` on or before the date, picked across the current page and every version gbrain kept. Its `valid_time` block says whether that edition was `in_force`, `not_in_force`, `not_yet_in_force` or `before_recorded_history`, and whether gbrain held enough history to be sure. Only an `in_force` answer returns the text at the top level, so an agent that skips the status cannot quote expired text as current.
+- When history is missing (pruned versions, a sync that imported several commits at once, a page that came from a file) or the dates look ambiguous (a corrected date and a renewal leave the same trace), the answer says `uncertain: true`, why, and how to recover: the file's `git log`, or asking the user for a backup. It never guesses.
+- Works the same on a brain with no Git repository, the default keyless install.
+- `gbrain get --as-of` exits 15 when no edition was in force, and 16 (`host_upgrade_required`) when the brain host is too old to answer by date, printing nothing historical.
+- Writes say when they keep or change an edition's date (`valid_time_correction`, `valid_time_date_only`, `valid_from_unparsed`), and `get_versions` rows carry each version's `valid_from` and `valid_until`.
+- Behavior change: a plain `get_page` of a page whose own `valid_from` is in the future, or whose `valid_until` has passed, now also carries a `valid_time` status. Pages without those dates read exactly as before.
+
+Guide: [page history](docs/guides/page-history.md#valid-time).
+
 ## [0.60.475.0] - 2026-10-27
 
 **A repository's own commit checks now apply to commits gbrain makes.**

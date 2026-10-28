@@ -24,6 +24,9 @@ export interface PageVersion {
    * read without the reason projection.
    */
   replaced_because?: string | null;
+  /** GBRA-217: the version's frontmatter valid_from / valid_until as YYYY-MM-DD (src/core/valid-time.ts), null when absent or unreadable. */
+  valid_from?: string | null;
+  valid_until?: string | null;
   id: number;
   page_id: number;
   compiled_truth: string;

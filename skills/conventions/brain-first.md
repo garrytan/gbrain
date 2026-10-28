@@ -45,6 +45,22 @@ gbrain list --type meeting --limit 50                           # enumerate by t
   then reads as "no results". Check the exit code too.
 
 <a id="identity-exact-match"></a>
+## Dated questions: read by valid time
+
+When the user asks what a page said, or what was in force, on a date, read it
+with `get_page {slug, as_of: 'YYYY-MM-DD'}` (CLI: `gbrain get <slug> --as-of
+<date>`), not the current page. Quote text only from an `in_force` answer; any
+other status puts the edition under `last_in_force` or `earliest_known`, and
+says so. When `valid_time.uncertain` is true, tell the user why and follow the
+`fix` (it asks the user for a date or a backup; never invent either). A reply
+without `valid_time` is the current page.
+
+When you edit a page whose text takes effect on a date, keep its `valid_from`
+for a correction, or set a new quoted `valid_from` for a new edition. Read the
+write result's `valid_time` advisory and ask the user when it asks a question.
+Which record to use for a change in effect (edit in place, amendment record,
+`supersedes` link): the page history guide (`docs/guides/page-history.md`, Valid time).
+
 ## Identity needs an exact match
 
 Resolving an email sender, a calendar attendee or a contact to a person page is

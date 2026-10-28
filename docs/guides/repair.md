@@ -3622,6 +3622,11 @@ names.
 valid time; recorded time needs an instant. Pass a full instant such as
 `2026-10-01T12:00:00Z`.
 
+get_page `as_of` got an instant (`reason: instant_for_date`). `as_of` is valid
+time: the date an edition was in force, so pass the date alone
+(`2026-10-01`). For the page as the brain had recorded it at a moment, pass
+the instant to `known_as_of` instead ([valid time](page-history.md#valid-time)).
+
 ### Known as of unproven
 
 A change to the page was recorded before the instant, but nothing proves it

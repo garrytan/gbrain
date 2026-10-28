@@ -720,7 +720,8 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
     const { result, stderr: noticeText } = applyCliOpNotices(normalizeLocalResult(rawResult), params.json === true);
-    const output = formatResult(op.name, result, params);
+    const paged = op.name === 'get_page' && await (await import('./page-render.ts')).finishAsOfRead(async p => normalizeLocalResult(await op.handler(ctx, p)) as Record<string, any>, result as Record<string, any>, params, writeStdoutFinal); // GBRA-217
+    const output = paged ? '' : formatResult(op.name, result, params);
     // Awaited delivery (#3423): queued stdout writes past 64KiB lose their
     // tail to a slow pipe reader when the exit grace lapses — see
     // writeStdoutFinal.
@@ -835,6 +836,8 @@ async function runThinClientRouted(
     if (envelopeMeta?.retrieval) captureRetrievalMeta('retrieval', envelopeMeta.retrieval);
     checkHostHonoredParams(op, params, raw);
     const result = unpackToolResult(raw);
+    if (op.name === 'get_page' && await (await import('./page-render.ts')).finishAsOfRead(async p => unpackToolResult(await callRemoteTool(cfg, 'get_page', p, { timeoutMs, signal: sigintController.signal })) as Record<string, any>, // GBRA-217: an older host's
+      result as Record<string, any>, params, writeStdoutFinal, { client: VERSION, host: identityCache.get(cfg.remote_mcp!.mcp_url)?.identity.version ?? null })) return; // reply fails closed
     hintAmbientNarrowing(op, params, result, ambientScope);
     const skew = (await import('../core/search/evidence-delivery.ts')).deliveryVersionSkewWarning(op.name, params, envelopeMeta?.retrieval as Record<string, unknown> | undefined, result);
     if (skew) process.stderr.write(skew + '\n');

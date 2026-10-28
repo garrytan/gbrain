@@ -12,6 +12,7 @@
 # lead (boundedBodyPrefixSql), body_bytes or content_hash instead.
 # docs/TESTING.md#page-body-readers
 src/cli/main.ts	formatResult	field	STREAM	renders a get_page result body; segmented bodies stream in PR 2
+src/cli/page-render.ts	asOfExitCode	field	NONE	not the page body: tests whether a get_page as_of reply carries compiled_truth (a wire result, not a Page); a segmented edition replies with window, tested first
 src/cli/page-render.ts	formatGetPage	call:serializeMarkdown	SEGW	
 src/cli/page-render.ts	formatGetPage	field	STREAM	
 src/commands/brainstorm.ts	runBrainstormCli	call:serializeMarkdown	SEGW	
@@ -350,6 +351,13 @@ src/core/ops/get-page-projection.ts	projectGetPage	field	STREAM	segmented page: 
 src/core/ops/known-as-of.ts	getVersionsKnownAsOf	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/ops/known-as-of.ts	intervalView	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/ops/pages.ts	stripPrivacyFencesForRemoteReader	field	STREAM	segmented page: getter throws page_body_segmented
+src/core/ops/valid-time-read.ts	bodyKey	sql	META	body identity in SQL only: md5 over an inline row's body columns, content_hash for a segmented row (its body columns are NULL); no text leaves the database
+src/core/ops/valid-time-read.ts	editionView	call:pageDocument	INLINE	inline editions only; a segmented edition is windowed through openSegmentedBody / segmentedReadDocument
+src/core/ops/valid-time-read.ts	editionView	field	INLINE	inline editions only; a segmented edition is windowed through openSegmentedBody / segmentedReadDocument
+src/core/ops/valid-time-read.ts	loadEdition	field	INLINE	the text branch runs only for an inline current page (isSegmentedPage); a segmented edition carries its generation for the segment reader
+src/core/ops/valid-time-read.ts	loadEdition	sql	INLINE	a segmented version's body columns are NULL; it is read by generation through the segment reader in editionView
+src/core/ops/valid-time-read.ts	pick	sql	META	size only: octet_length of an inline version's body columns (segmented versions are counted by body_storage); no text leaves the database
+src/core/ops/valid-time-read.ts	validFromEdit	call:serializePageToMarkdown	NONE	not the page body: renders only the frontmatter head of an object built from slug, type, title and frontmatter with empty body fields, so a segmented page's getters are never read
 src/core/output/post-write.ts	runPostWriteLint	field	INLINE	
 src/core/output/validators/link.ts	linkValidator	field	INLINE	
 src/core/output/validators/triple-hr.ts	tripleHrValidator	field	INLINE	
@@ -498,6 +506,8 @@ src/core/persistence/sync-prepare.ts	prepareManagedSyncCode	field	INLINE	code pa
 src/core/persistence/sync-prepare.ts	prepareSyncMutation	call:serializePageToMarkdown	SEGW	lane 1d file
 src/core/persistence/sync-prepare.ts	prepareSyncMutation	field	SEGW	lane 1d file: preserveProtectedTakes over fenceBody (an unread body is fence-free)
 src/core/persistence/takes-prepare.ts	prepare	call:serializePageToMarkdown	SEGW	
+src/core/persistence/valid-time-advisory.ts	bodyKey	field	INLINE	text compare for inline pages only; a segmented page compares content_hash, which also covers frontmatter, so its date-only edit reads as a body change
+src/core/persistence/valid-time-advisory.ts	withValidTimeAdvisory	sql	INLINE	reads the written page's body columns, NULL for a segmented page (bodyKey then compares content_hash)
 src/core/persistence/writer-guard-schema.ts	MANAGED_WRITER_GUARD_FUNCTION_SQL	sql	STREAM	managed-writer guard tuple (lane 1a adds body_generation)
 src/core/pglite-engine.ts	PGLiteEngine.putPage	call:putPage	SEGW	delegation to engine-sql putPage
 src/core/pglite-engine.ts	PGLiteEngine.refreshPageBody	call:refreshPageBody	SEGW	delegation to engine-sql refreshPageBody

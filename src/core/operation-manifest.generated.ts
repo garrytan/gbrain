@@ -401,6 +401,10 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "fullSurfaceOnly": true,
         "description": "Recorded time: the page as this brain had recorded it at this ISO 8601 instant (2026-10-01T12:00:00Z), from the belief ledger. Not as_of, which is valid time (a date)."
+      },
+      "as_of": {
+        "type": "string",
+        "description": "YYYY-MM-DD: edition in force then. No valid_time in reply: current page."
       }
     },
     "scope": "read",

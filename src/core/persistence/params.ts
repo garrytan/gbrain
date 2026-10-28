@@ -38,6 +38,7 @@ import { WRITE_REQUEST_STATES, WRITE_HEALTH_REASONS, WRITE_HEALTH_ASSESSMENTS, W
 export const REASON_PARAM: ParamDef = {
   type: 'string',
   description: 'Why this change, one line (max 500 chars); kept in page history.',
+  // GBRA-217 decision 9: the starter list cannot fit both `reason` and get_page `as_of`; as_of stays, reason is full-surface only.
   fullSurfaceOnly: true,
 };
 
