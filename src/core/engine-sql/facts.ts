@@ -802,6 +802,10 @@ export interface FactRowSqlShape {
   attributed_to?: FactAttribution | null;
   trust_tier?: string | null;
   write_origin?: unknown;
+  claim_metric?: string | null;
+  claim_value?: number | string | null;
+  claim_unit?: string | null;
+  claim_period?: string | null;
 }
 
 function originRecord(value: unknown): Record<string, unknown> | null {
@@ -863,6 +867,10 @@ export function rowToFact(raw: FactRowSqlShape): FactRow {
     ...(row.attributed_to ? { attributed_to: row.attributed_to } : {}),
     ...(row.trust_tier ? { trust_tier: storedTrustTier(row.trust_tier) } : {}),
     ...(row.write_origin !== undefined ? { write_origin: originRecord(row.write_origin) } : {}),
+    ...(row.claim_metric ? { claim_metric: row.claim_metric } : {}),
+    ...(row.claim_value != null ? { claim_value: Number(row.claim_value) } : {}),
+    ...(row.claim_unit ? { claim_unit: row.claim_unit } : {}),
+    ...(row.claim_period ? { claim_period: row.claim_period } : {}),
   };
 }
 

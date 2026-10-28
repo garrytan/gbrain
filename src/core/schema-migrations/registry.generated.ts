@@ -279,6 +279,7 @@ import { v275 } from './v275-rls-backfill-unguarded-tables.ts';
 import { v276 } from './v276-persistence-foreground-committed-index.ts';
 import { v277 } from './v277-function-search-path-pg-temp.ts';
 import { v278 } from './v278-writer-fence-fail-closed.ts';
+import { v279 } from './v279-decide-proposals-claim-pair-index.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -556,4 +557,5 @@ export const MIGRATIONS: Migration[] = [
   v276,
   v277,
   v278,
+  v279,
 ];

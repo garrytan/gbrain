@@ -23,11 +23,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { OperationContext } from './operations.ts';
 import { OperationError } from './ops/contract.ts';
 import { clientRequestIdOf, parseWriteRequestId } from './persistence/preconditions.ts';
+import { CLAIM_PARAM_KEYS, claimColumns } from './facts/typed-claim.ts';
 
 export const REMEMBER_BATCH_MAX = 20;
-const ITEM_KEYS = new Set(['fact', 'provenance', 'entity', 'infer_entity', 'kind', 'ttl', 'visibility', 'content_origin', 'valid_from', 'replaces']);
-/** #7432: every per-item field but the claim and `replaces` is also a top-level default (an item's own value wins); `source_id` is top-level only. */
-const SHARED_KEYS = [...ITEM_KEYS].filter(key => key !== 'fact' && key !== 'replaces').concat('source_id');
+const CLAIM_KEYS: readonly string[] = CLAIM_PARAM_KEYS;
+const ITEM_KEYS = new Set(['fact', 'provenance', 'entity', 'infer_entity', 'kind', 'ttl', 'visibility', 'content_origin', 'valid_from', 'replaces', ...CLAIM_KEYS]);
+/** #7432: every per-item field but the claim, `replaces` and the typed claim keys is also a top-level default (an item's own value wins); `source_id` is top-level only. */
+const SHARED_KEYS = [...ITEM_KEYS].filter(key => key !== 'fact' && key !== 'replaces' && !CLAIM_KEYS.includes(key)).concat('source_id');
 
 /** Deterministic UUID for child `index` of a batch request (stable across replays). */
 export function childRequestId(requestId: string, index: number): string {
@@ -59,6 +61,11 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
   if (p.replaces !== undefined) {
     throw verbError('invalid_params', 'replaces names one fact, so it cannot apply to a whole batch.',
       'Put replaces on the item it belongs to: items: [{ "fact": "...", "replaces": "<fact_id>" }].');
+  }
+  const sharedClaim = CLAIM_KEYS.filter(key => p[key] !== undefined);
+  if (sharedClaim.length) {
+    throw verbError('invalid_params', `${sharedClaim.join(', ')} describe one fact, so they cannot apply to a whole batch.`,
+      'Put the typed claim on the item it belongs to: items: [{ "fact": "...", "claim_metric": "mrr", "claim_value": 50000 }].');
   }
   // #6280: an unusable request_id refuses the batch before any write (F6 accepts a UUID or a printable client id).
   if (p.request_id !== undefined) parseWriteRequestId(p.request_id);
@@ -98,7 +105,7 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
         index, request_id: child, status: String(out?.status ?? 'saved'),
         ...(out?.id !== undefined ? { id: out.id } : {}),
         ...(out?.entity_slug !== undefined ? { entity_slug: out.entity_slug } : {}),
-        ...(out?.superseded_fact_id !== undefined ? { superseded_fact_id: out.superseded_fact_id } : {}),
+        ...(out?.superseded_fact_id !== undefined ? { superseded_fact_id: out.superseded_fact_id } : {}), ...claimColumns(out),
         ...(Array.isArray(out?.warnings) && out.warnings.length ? { warnings: out.warnings } : {}),
         ...(out?.valid_until ? { valid_until: out.valid_until } : {}),
         ...(typeof out?.state === 'string' && out.state !== 'committed' ? { state: out.state, retry_after_ms: out.retry_after_ms ?? null } : {}),

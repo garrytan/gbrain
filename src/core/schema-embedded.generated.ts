@@ -3123,6 +3123,10 @@ DO \$rls\$ BEGIN
   END IF;
 END \$rls\$;
 
+CREATE UNIQUE INDEX IF NOT EXISTS decide_proposals_claim_pair_uidx ON decide_proposals (source_id, LEAST(new_fact_id, old_fact_id), GREATEST(new_fact_id, old_fact_id)) WHERE sweep_id LIKE 'claim_conflicts:%';
+CREATE INDEX IF NOT EXISTS decide_proposals_pending_new_idx ON decide_proposals (new_fact_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS decide_proposals_pending_old_idx ON decide_proposals (old_fact_id) WHERE status = 'pending';
+
 CREATE TABLE IF NOT EXISTS decide_review_queue (
   kind            TEXT NOT NULL,
   source_id       TEXT NOT NULL,

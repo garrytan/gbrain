@@ -8,6 +8,11 @@
  * - unconfirmed standing preferences: facts of kind preference/commitment at
  *   agent_written or lower that the write gate flagged `standing_instruction`;
  * - write-gate holds (`h<id>`);
+ * - contradictions (`dp<id>`): pending decide_proposals whose two facts are
+ *   both still active, from the keyless claim lane (facts/claim-conflicts.ts)
+ *   and the paid conflict sweep alike; each carries supersede (accept), forget
+ *   (the newer fact), confirm (the newer fact) and drop (reject) with the
+ *   actor and consent of each;
  * - the owner's active allow rules (`a<id>`) and the kill-switch state.
  *
  * Items are grouped by day and page (many agent edits to one page are one
@@ -29,7 +34,7 @@ import { claimPendingSql, TRUST_CLAIM_RESUME_COMMAND } from './claim-state.ts';
 import { listTrustAllowRules, type TrustAllowRule } from './allow-rules.ts';
 import { isQuarantined } from '../quarantine.ts';
 
-export const TRUST_REVIEW_KINDS = ['proposal', 'lowered_page', 'preference', 'hold'] as const;
+export const TRUST_REVIEW_KINDS = ['proposal', 'lowered_page', 'preference', 'hold', 'contradiction'] as const;
 export type TrustReviewKind = typeof TRUST_REVIEW_KINDS[number];
 
 export interface TrustReviewItem {
@@ -47,8 +52,13 @@ export interface TrustReviewItem {
   label: string;
   summary: string;
   /** Complete argv per decision (DX-7). Tier-raising ones are the user's to run on a TTY (DX-3). */
-  commands: Partial<Record<'confirm' | 'drop' | 'release' | 'revert' | 'repair' | 'explain', string[]>>;
+  commands: Partial<Record<TrustReviewCommand, string[]>>;
+  /** Contradiction items: who runs each command, the consent it needs, whether it can be undone and how. */
+  command_meta?: Partial<Record<TrustReviewCommand, TrustReviewCommandMeta>>;
 }
+
+export type TrustReviewCommand = 'confirm' | 'drop' | 'release' | 'revert' | 'repair' | 'explain' | 'supersede' | 'forget';
+export interface TrustReviewCommandMeta { actor: 'agent' | 'user'; consent: 'ask_user' | 'owner_tty'; durable: boolean; undo?: string[]; why: string }
 
 export interface TrustReviewFilter {
   /** `--from <source>` */
@@ -184,6 +194,41 @@ async function holds(engine: BrainEngine, filter: TrustReviewFilter): Promise<Tr
   }));
 }
 
+/** Pending decide_proposals whose two facts are both active (a decided or stale pair is not listed). */
+async function contradictions(engine: BrainEngine, filter: TrustReviewFilter): Promise<TrustReviewItem[]> {
+  const active = (a: string) => `${a}.expired_at IS NULL AND (${a}.valid_until IS NULL OR ${a}.valid_until > now())`;
+  const rows = await engine.executeRaw<Record<string, unknown>>(
+    `SELECT p.id, p.source_id, p.sweep_id, p.created_at, p.new_fact_id, p.old_fact_id, n.fact AS new_fact, o.fact AS old_fact, n.trust_tier,
+            n.entity_slug, COALESCE(n.source_markdown_slug, o.source_markdown_slug) AS slug, n.claim_metric, n.claim_unit, n.claim_period,
+            n.claim_value AS new_value, o.claim_value AS old_value
+       FROM decide_proposals p
+       JOIN facts n ON n.id = p.new_fact_id AND n.source_id = p.source_id AND ${active('n')}
+       JOIN facts o ON o.id = p.old_fact_id AND o.source_id = p.source_id AND ${active('o')}
+      WHERE p.status = 'pending' AND ($1::text IS NULL OR p.source_id = $1) AND ($2::timestamptz IS NULL OR p.created_at >= $2)
+      ORDER BY p.created_at, p.id LIMIT 1000`, [filter.sourceId ?? null, filter.since?.toISOString() ?? null]);
+  return rows.map(r => {
+    const id = String(Number(r.id)), newer = `f${Number(r.new_fact_id)}`, older = `f${Number(r.old_fact_id)}`;
+    const created = new Date(r.created_at as string).toISOString();
+    const tier = storedTrustTier(r.trust_tier);
+    const claimLane = String(r.sweep_id).startsWith('claim_conflicts:');
+    const slot = [r.claim_metric, r.claim_unit, r.claim_period].filter(Boolean).join(' ');
+    const values = claimLane ? ` (${slot}: ${Number(r.new_value)} vs ${Number(r.old_value)})` : '';
+    const decide = (verb: string) => ['gbrain', 'decide', 'proposals', verb, id];
+    return {
+      ref: `dp${id}`, kind: 'contradiction' as const, detail: claimLane ? 'claim_conflict' : 'conflict', source_id: String(r.source_id),
+      page: r.slug ? pageRef(String(r.source_id), String(r.slug)) : null, day: day(created), created_at: created, tier, label: trustLabel(tier),
+      summary: `${newer} "${snippet(r.new_fact, 60)}" contradicts ${older} "${snippet(r.old_fact, 60)}"${values} about ${r.entity_slug ?? 'no entity'}`,
+      commands: { supersede: decide('accept'), forget: ['gbrain', 'forget', newer.slice(1), '--source', String(r.source_id)], confirm: trust('confirm', newer), drop: decide('reject') },
+      command_meta: {
+        supersede: { actor: 'agent', consent: 'ask_user', durable: false, undo: decide('undo'), why: `The newer fact is right: ${newer} supersedes ${older}.` },
+        forget: { actor: 'agent', consent: 'ask_user', durable: true, why: `The newer fact is wrong: withdraw ${newer}; ${older} stays current and dp${id} goes stale. A withdrawal has no undo.` },
+        confirm: { actor: 'user', consent: 'owner_tty', durable: false, why: `Raise ${newer} to confirmed by you (typed at the terminal); dp${id} stays pending until you supersede or drop it.` },
+        drop: { actor: 'agent', consent: 'ask_user', durable: false, why: `Not a contradiction: reject dp${id}; both facts stay current and the pair is not proposed again.` },
+      },
+    };
+  });
+}
+
 /** The review queue, filtered. Read-only. */
 export async function buildTrustReview(engine: BrainEngine, filter: TrustReviewFilter = {}): Promise<TrustReview> {
   const items: TrustReviewItem[] = [];
@@ -197,6 +242,7 @@ export async function buildTrustReview(engine: BrainEngine, filter: TrustReviewF
   }
   if (wants(filter, 'preference')) items.push(...await standingPreferences(engine, filter));
   if (wants(filter, 'hold')) items.push(...await holds(engine, filter));
+  if (wants(filter, 'contradiction')) items.push(...await contradictions(engine, filter));
   items.sort((a, b) => a.day.localeCompare(b.day) || (a.page ?? '').localeCompare(b.page ?? '') || a.created_at.localeCompare(b.created_at) || a.ref.localeCompare(b.ref));
   const groups: TrustReview['groups'] = [];
   for (const item of items) {
@@ -242,7 +288,7 @@ export function renderTrustReview(review: TrustReview): string {
   }
   const c = review.counts;
   if (review.items.length) {
-    lines.push('', `${review.items.length} item(s): ${c.proposal} proposal(s), ${c.lowered_page} lowered page(s), ${c.preference} unconfirmed preference(s), ${c.hold} held write(s).`,
+    lines.push('', `${review.items.length} item(s): ${c.proposal} proposal(s), ${c.lowered_page} lowered page(s), ${c.preference} unconfirmed preference(s), ${c.hold} held write(s)${c.contradiction ? `, ${c.contradiction} contradiction(s)` : ''}.`,
       'Confirming or releasing raises trust: run the command yourself in a terminal and type the token it asks for. Explain any item: gbrain trust explain <ref>.');
   }
   return lines.join('\n');

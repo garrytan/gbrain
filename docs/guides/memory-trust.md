@@ -103,6 +103,64 @@ gbrain config set recall.confidence_weighting on
 It works the same on a brain with no git repository. `gbrain config set
 recall.confidence_weighting off` turns it off.
 
+## Old and conflicting facts
+
+Two saved facts can state different figures for the same thing: one note says
+acme-example's March MRR was 40k, a later one says 44k. Save figures as typed
+claims and gbrain can find these conflicts without an API key or a model call.
+
+```text
+remember {fact: "acme-example MRR was 44k in March", entity: "companies/acme-example",
+          claim_metric: "mrr", claim_value: 44000, claim_unit: "USD",
+          claim_period: "monthly", valid_from: "2026-03-20"}
+```
+
+| Field | Meaning |
+|---|---|
+| `claim_metric` | What is measured, e.g. `mrr`, `headcount`. Required when any other claim field is set. |
+| `claim_value` | The number (finite; `"2.5M"` is refused with the corrected call as its fix). |
+| `claim_unit` | Optional, e.g. `USD`, `people`. |
+| `claim_period` | Optional, e.g. `monthly`. `weekly`, `monthly`, `quarterly` and `annual` (or `yearly`) set the bucket below; any other text is kept as written. |
+
+The claim is stored on the fact and in the entity page's `## Facts` table, so a
+re-import keeps it. In a `remember` batch each item carries its own claim
+fields; they are never shared across items. Saving the same text again with a
+claim adds the claim to a copy saved without one, and never changes a claim
+already saved (the response says `claim_ignored: existing_claim`).
+
+Two facts conflict when they are about the same entity and state the same
+metric, unit and period in the same as-of bucket: the `valid_from` day, or its
+ISO week, month, quarter or year when the period names that cadence. Figures in
+different buckets are history, so a monthly MRR series, a run of funding rounds
+or a forecast next to an actual (different metrics) are never flagged. A typed
+write never supersedes a typed fact in another bucket either.
+
+Finding conflicts is off by default. Turn it on, or run it once:
+
+```bash
+gbrain config set dream.claim_conflicts.mode propose   # the nightly dream cycle files them
+gbrain decide sweep --claims --dry-run                 # preview; no key, nothing written
+gbrain decide sweep --claims [--source <id>]           # file them now
+```
+
+Each conflict becomes one pending proposal (`dp<id>`), filed once per pair. A
+run files at most `dream.claim_conflicts.max_pairs` (default 500) per source and
+leaves the rest for the next run. Nothing changes until you decide. Both facts are shown
+as `contested` in `recall` meanwhile, only to a caller that can read the other
+fact. Decide each one from `gbrain trust review --kind contradiction`:
+
+| Action | Command | Effect | Undo |
+|---|---|---|---|
+| supersede | `gbrain decide proposals accept <id>` | The newer fact replaces the older one | `gbrain decide proposals undo <id>` |
+| forget | `gbrain forget <newer-id> --source <src>` | Withdraws the newer fact; the older stays current | none |
+| confirm | `gbrain trust confirm f<newer-id>` (at your terminal) | Marks the newer fact confirmed by you; the proposal stays open | none |
+| drop | `gbrain decide proposals reject <id>` | Not a conflict: both stay current and the pair is not filed again | none needed |
+
+`gbrain trust review --accept-all` never decides a contradiction; it lists each
+one as skipped. All of this reads and writes database rows, so it works the
+same on a brain with no git repository. On a brain with one, page changes go
+through the usual page-write path.
+
 ## Older memory
 
 Content saved before this release is flagged only after you claim your

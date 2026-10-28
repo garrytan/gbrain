@@ -28,6 +28,22 @@ Weighting is `relevance × (0.5 + 0.5 × weight)`: facts you confirmed and your 
 
 On a keyless 60-question fixture (old confirmed truth against fresh agent and external text, an agent knowledge update, dated history), weighting moved the confirmed truth to first in 20 of 20 questions, from 0 of 20, and left the update and history cases at 20 of 20. Grouping removed entity interleaving in 10 of 10 two-client questions with the same number of entities delivered.
 
+**Typed figures you save can now be checked for conflicts without an API key, and you decide each conflict from the trust review.**
+
+`remember` takes an optional typed claim (`claim_metric`, `claim_value`, `claim_unit`, `claim_period`). Two saved claims about the same entity with the same metric, unit and period in the same as-of bucket (the day, or the week, month, quarter or year the period names) are a conflict. Figures in different buckets are history, so a monthly series, a run of funding rounds or a forecast next to an actual are never flagged. Finding conflicts is off by default: `gbrain config set dream.claim_conflicts.mode propose` turns on the nightly phase, and `gbrain decide sweep --claims` runs it once (`--dry-run` writes nothing). Each conflict becomes one pending proposal that nothing applies until you decide it.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| `remember` a figure | text only | optional typed claim, stored on the fact and in the entity page's `## Facts` table; a bad value is refused with the corrected call |
+| Two saved figures disagree for the same month | found only by the paid conflict sweep | found by `gbrain decide sweep --claims` or the `claim_conflicts` dream phase (`propose`), with no key and no model call |
+| A typed figure saved for April next to March's | could supersede March's if the text was close | both kept: a typed write never supersedes a typed fact in another bucket |
+| `gbrain trust review` | proposals, lowered pages, preferences, holds | also `contradiction` items (`dp<id>`) with supersede, forget, confirm and drop; `--accept-all` skips them |
+| `recall` of a fact in a pending decide proposal | no label | `contested` with the other fact's id, only when the caller can read that fact |
+
+A run files at most `dream.claim_conflicts.max_pairs` (default 500) proposals per source and leaves the rest for the next run. A new unique index keeps concurrent runs to one proposal per pair (migration v279); it rewrites no data. Everything reads and writes database rows, so it works the same on a brain with no git repository. Guide: the "Old and conflicting facts" section of `docs/guides/memory-trust.md`.
+
 ## [0.60.474.0] - 2026-10-27
 
 **A database role that can't read the writer state is now refused instead of let through.**

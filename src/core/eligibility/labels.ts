@@ -34,7 +34,8 @@ export interface TrustFields {
   contested?: Contested;
 }
 
-export interface Contested { proposal_ref: string; role: 'challenger' | 'challenged' }
+/** fact_id: the other fact of a decide proposal (dp<id>, facts/contested-claims.ts). */
+export interface Contested { proposal_ref: string; role: 'challenger' | 'challenged'; fact_id?: string }
 
 /** `tp12:challenger` (the contestedRefSql column) -> its Contested value; anything else -> undefined. */
 export function parseContested(value: unknown): Contested | undefined {

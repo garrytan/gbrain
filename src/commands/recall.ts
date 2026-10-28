@@ -442,7 +442,7 @@ export async function recallVerbForCaller(engine: BrainEngine, args: string[], r
 }
 
 export type RecallVerbResult = {
-  facts: Array<{ fact_id: string; fact: string; kind: string; entity_slug: string | null; provenance: string; relevance?: number; rank_score?: number }>;
+  facts: Array<{ fact_id: string; fact: string; kind: string; entity_slug: string | null; provenance: string; relevance?: number; rank_score?: number; contested?: { fact_id?: string } }>;
   facts_order?: 'relevance' | 'newest';
   facts_groups?: Array<{ source_id: string; entity_slug: string | null; fact_ids: string[] }>;
   entity_unspecified?: { candidates: Array<{ source_id: string; entity_slug: string }>; suggestion: string };
@@ -513,7 +513,7 @@ export async function renderRecallVerbResult(flags: ParsedFlags, result: RecallV
   if (result.facts.length) {
     lines.push(result.facts_order === 'relevance' ? 'Facts (ranked by relevance to the question):' : 'Facts:');
     const factLine = (f: RecallVerbResult['facts'][number], indent: string) =>
-      `${indent}#${f.fact_id} [${f.kind}]${f.entity_slug ? ` (${f.entity_slug})` : ''} ${f.fact} — ${f.provenance}${typeof f.relevance === 'number' ? ` (relevance ${f.relevance.toFixed(2)})` : ''}`;
+      `${indent}#${f.fact_id} [${f.kind}]${f.entity_slug ? ` (${f.entity_slug})` : ''} ${f.fact} — ${f.provenance}${typeof f.relevance === 'number' ? ` (relevance ${f.relevance.toFixed(2)})` : ''}${f.contested?.fact_id ? ` (contested by #${f.contested.fact_id})` : ''}`;
     const byId = new Map(result.facts.map(f => [f.fact_id, f]));
     if (result.facts_groups?.length) {
       for (const g of result.facts_groups) {

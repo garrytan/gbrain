@@ -57,6 +57,7 @@ export const SNAPSHOT_DYNAMIC_IMPORTS_NOT_HASHED: Readonly<Record<string, string
   'model-pricing.ts': 'verbs.ts request-time verb handlers',
   'interop-notices.ts': 'verbs.ts request-time verb handlers (agent contract notices)',
   'remember-batch.ts': 'verbs.ts request-time verb handlers (remember items[])',
+  'facts/typed-claim.ts': 'verbs.ts request-time verb handlers (remember typed-claim validation, GBRA-216)',
   'mentions/siblings.ts': 'entities/resolve.ts request-time entity resolution (identity-sibling names)',
   'mentions/policy.ts': 'entities/resolve.ts request-time entity resolution (pack linkable types)',
   '../version.ts': 'backfill-base.ts skip-ledger producer stamp, read when a backfill runs (never shapes the schema)',

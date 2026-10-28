@@ -3693,6 +3693,10 @@
         "kind": "interface",
         "members": [
           "attributed_to?: FactAttribution | null | undefined",
+          "claim_metric?: string | null | undefined",
+          "claim_period?: string | null | undefined",
+          "claim_unit?: string | null | undefined",
+          "claim_value?: number | null | undefined",
           "confidence: number",
           "consolidated_at: Date | null",
           "consolidated_into: number | null",

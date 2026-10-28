@@ -10,6 +10,7 @@ import { readSupersessionThreshold } from './supersession-threshold.ts';
 import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
 import { pageNotVisibleError } from '../persistence/page-visibility.ts';
 import { slugUnderBoundPrefixes } from '../ops/context.ts';
+import { sameClaimSlot } from './typed-claim.ts';
 
 export type FactCandidate = FactRow & { source_markdown_slug: string | null; row_num: number | null };
 export interface FactDecision { status: 'inserted' | 'duplicate' | 'superseded'; candidate: FactCandidate | null; }
@@ -17,6 +18,8 @@ export interface SingleFactIntent {
   fact: string; kind: FactRow['kind']; visibility: FactRow['visibility']; entity_slug: string | null;
   /** Speaker of the new claim; a fact another known speaker asserted is never its duplicate. */
   attributed_to?: FactAttribution | null;
+  /** A typed new fact's claim slot (remember): it never supersedes a typed fact in another slot (typed-claim.ts sameClaimSlot). Unset (untyped): not checked. */
+  slot?: { claim_metric: string | null; claim_unit: string | null; claim_period: string | null; valid_from: Date | string };
 }
 /** Provider work belongs to preparation, never to a page/source transaction. `disabled`: the brain opted out of embedding. */
 export async function prepareFactEmbedding(fact: string, signal?: AbortSignal, disabled = false): Promise<{ embedding: Float32Array | null; embedding_model: string | null; degraded: boolean }> {
@@ -110,8 +113,9 @@ export async function decideSingleFact(engine: BrainEngine, sourceId: string, in
   if (exact) return { status: 'duplicate', candidate: { ...exact, id: Number(exact.id) } };
   if (embedding && input.entity_slug) {
     const candidates = await listSupersessionCandidates(engine, sourceId, input.entity_slug, input.fact, embedding, embeddingModel, undefined, input.attributed_to ?? null);
-    const metadata = await engine.executeRaw<{ id: number; source_markdown_slug: string | null; row_num: number | null; trust_tier: FactRow['trust_tier'] }>(
-      `SELECT id,source_markdown_slug,row_num,trust_tier FROM facts WHERE source_id=$1 AND id=ANY($2::int[])${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`,
+    const metadata = await engine.executeRaw<{ id: number; source_markdown_slug: string | null; row_num: number | null; trust_tier: FactRow['trust_tier'];
+      claim_metric: string | null; claim_unit: string | null; claim_period: string | null }>(
+      `SELECT id,source_markdown_slug,row_num,trust_tier,claim_metric,claim_unit,claim_period FROM facts WHERE source_id=$1 AND id=ANY($2::int[])${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`,
       [sourceId, candidates.map(c => c.id)]);
     let candidate: FactCandidate | null = null;
     let score = -1;
@@ -123,7 +127,7 @@ export async function decideSingleFact(engine: BrainEngine, sourceId: string, in
       // side effect. Cross-page supersession requires a separate multi-page op.
       if (!c.embedding || c.visibility !== input.visibility || c.expired_at ||
         c.valid_until && new Date(c.valid_until).getTime() <= Date.now() ||
-        c.source_markdown_slug && c.source_markdown_slug !== input.entity_slug) continue;
+        c.source_markdown_slug && c.source_markdown_slug !== input.entity_slug || input.slot && c.claim_metric && !sameClaimSlot(input.slot, c)) continue;
       const next = cosineSimilarity(embedding, c.embedding);
       if (next > score) { score = next; candidate = c; }
     }

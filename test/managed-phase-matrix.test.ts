@@ -368,6 +368,19 @@ const MATRIX: Record<CyclePhase, Entry> = {
       expect(await engine.executeRaw("SELECT state FROM chronicle_page_state WHERE source_id=$1", [sourceId])).toEqual([{ state: 'extracted' }]);
     },
   },
+  claim_conflicts: {
+    config: { 'dream.claim_conflicts.mode': 'propose' },
+    seed: async ({ engine, sourceId }) => {
+      for (const [value, at] of [[40000, '2026-03-02'], [45000, '2026-03-20']] as const) {
+        await engine.executeRaw(`INSERT INTO facts(source_id,entity_slug,fact,kind,source,visibility,confidence,valid_from,claim_metric,claim_value,claim_unit,claim_period)
+          VALUES($1,'companies/acme-example',$2,'fact','test','world',1,$3::timestamptz,'mrr',$4,'USD','monthly')`, [sourceId, `Acme MRR is ${value}`, at, value]);
+      }
+    },
+    assert: async ({ engine, sourceId, result }) => {
+      expect(result.details).toMatchObject({ pairs_found: 1, proposals_written: 1, deferred: 0 });
+      expect(await engine.executeRaw("SELECT status FROM decide_proposals WHERE source_id=$1 AND sweep_id LIKE 'claim_conflicts:%'", [sourceId])).toEqual([{ status: 'pending' }]);
+    },
+  },
   facts_drain: {
     config: { embedding_disabled: 'true' },
     seed: async ({ engine, sourceId }) => {

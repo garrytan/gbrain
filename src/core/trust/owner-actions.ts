@@ -41,6 +41,7 @@ import { withCoordinatedWrite, withTrustPromotion, withWriteAttribution, withWri
 import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { lockedBeliefBatch } from '../belief/writers.ts';
+import { claimColumns } from '../facts/typed-claim.ts';
 import {
   addTrustAllowRule, getTrustAllowRule, normalizeTrustAllowRule, parseAllowRuleRef, principalLabel, removeTrustAllowRule, type TrustAllowRule,
 } from './allow-rules.ts';
@@ -210,7 +211,7 @@ async function publishReleasedFact(tx: BrainEngine, hold: WriteGateHold): Promis
     fact: String(p.fact ?? ''), kind: (str(p.kind) ?? 'fact') as never, entity_slug: str(p.entity_slug), visibility: (p.visibility === 'world' ? 'world' : 'private'),
     source: str(p.source) ?? `trust release h${hold.id}`, context: str(p.context), source_session: str(p.source_session), confidence: 1,
     valid_from: str(p.valid_from) ? new Date(String(p.valid_from)) : new Date(), valid_until: str(p.valid_until) ? new Date(String(p.valid_until)) : null,
-    embedding: null, embedding_model: null,
+    embedding: null, embedding_model: null, ...claimColumns(p as never),
   }, { source_id: hold.source_id }))));
   if (await managedPersistenceEnabled(tx)) await withCoordinatedWrite(tx, [hold.source_id], write, await maintenanceAttribution(tx));
   else await withWriteAttribution(tx, await maintenanceAttribution(tx), write);

@@ -208,7 +208,7 @@ export interface ProposalRow extends NewProposal {
 export async function insertProposal(engine: BrainEngine, p: NewProposal): Promise<number | null> {
   const rows = await engine.executeRaw<{ id: number | string }>(
     `INSERT INTO decide_proposals (source_id, sweep_id, pair_index, new_fact_id, old_fact_id, direction, p_supersede, threshold, proposal_floor, model_resolved)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (sweep_id, pair_index) DO NOTHING RETURNING id`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING RETURNING id`,
     [p.source_id, p.sweep_id, p.pair_index, p.new_fact_id, p.old_fact_id, p.direction, p.p_supersede, p.threshold, p.proposal_floor, p.model_resolved],
   );
   return rows[0] ? Number(rows[0].id) : null;

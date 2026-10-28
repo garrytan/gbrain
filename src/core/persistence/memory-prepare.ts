@@ -22,6 +22,7 @@ import { prepareFenceFactAppend, requestReceiptFix, type FenceFactAppend } from 
 import { privateProvenanceFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { tightenToPage } from '../facts/visibility.ts';
 import { noteBelief } from '../belief/ledger.ts';
+import { claimColumns, storedClaim } from '../facts/typed-claim.ts';
 
 function conflict(row: WriteRequest): never {
   throw opError('revision_conflict', 'The memory changed during semantic preparation.',
@@ -67,8 +68,10 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       { fix: requestReceiptFix(row) });
   }
   const p = row.intent;
+  const claim = storedClaim(p);
   const input: SingleFactIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as SingleFactIntent['kind'],
-    visibility: (p.visibility ?? 'world') as SingleFactIntent['visibility'], entity_slug: p.entity_slug as string | null };
+    visibility: (p.visibility ?? 'world') as SingleFactIntent['visibility'], entity_slug: p.entity_slug as string | null,
+    ...(claim ? { slot: { ...claim, valid_from: String(p.valid_from) } } : {}) };
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
   if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted entity was deleted or recreated.');
   // A defaulted visibility never lands broader than the target page as it stands at publication.
@@ -88,7 +91,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const replaces = p.replaces !== undefined && p.replaces !== null ? Number(p.replaces) : null;
   const replace = (e: BrainEngine, target: number, lock: boolean) =>
     decideReplacement(e, row.source_id, input, target, { pageSlug: row.slug, remote: row.authority.remote === true, lock, excludePrivate, slugPrefixes: row.authority.slugPrefixes });
-  const decide = async (e: BrainEngine, lock = false) => {
+  const decideClaim = async (e: BrainEngine, lock = false) => {
     if (replaces !== null) return replace(e, replaces, lock);
     // The same claim saved earlier without an entity is this fact unlinked: linking it supersedes that copy,
     // so no subjectless duplicate is left whose forget would withdraw the claim from every entity.
@@ -98,6 +101,11 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       if (linked) return linked;
     }
     return decideSingleFact(e, row.source_id, input, dedupEmbedding, embedding_model, undefined, { excludePrivate });
+  };
+  // A typed claim on a saved copy of the same claim that has none supersedes that copy, so the claim is kept (never dropped as a duplicate).
+  const decide = async (e: BrainEngine, lock = false) => {
+    const d = await decideClaim(e, lock);
+    return claim && d.status === 'duplicate' && !storedClaim(d.candidate) ? { ...d, status: 'superseded' as const } : d;
   };
   const decision = await decide(engine);
   // #5575 I3: a lower-tier write never supersedes; it is inserted contested and the owner decides (re-checked under lock by validate).
@@ -117,18 +125,19 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   };
   if (decision.status === 'duplicate') {
     const duplicate = decision.candidate!;
-    return { observedRevision, noop: true, validate, apply: async () => outcome(duplicate.id, 'duplicate', input.entity_slug, duplicate.valid_until, degraded, p) };
+    return { observedRevision, noop: true, validate, apply: async () => ({ ...outcome(duplicate.id, 'duplicate', input.entity_slug, duplicate.valid_until, degraded, p), ...claimColumns(duplicate),
+      ...(claim && JSON.stringify(storedClaim(duplicate)) !== JSON.stringify(claim) ? { claim_ignored: 'existing_claim' } : {}) }) };
   }
   const validUntil = p.valid_until ? new Date(String(p.valid_until)) : null;
   const validFrom = new Date(String(p.valid_from));
   const context = p.entity_inferred ? appendContextNote(null, inferenceNote(p.entity_inferred as InferredVia)) : undefined;
   const fact: NewFact & { valid_from: Date } = { ...input, source: String(p.provenance).trim(), valid_from: validFrom, valid_until: validUntil,
     confidence: 1, embedding, embedding_model, source_session: typeof p.session_id === 'string' ? p.session_id : null,
-    ...(context ? { context } : {}) };
+    ...(context ? { context } : {}), ...claimColumns(p) };
   // #5575 B3: the row-level write gate at the request's declared tier (ENG-18); a held fact inserts nothing.
   const gate = decideFactWrite({ fact: input.fact, context: context ?? null, source: fact.source }, { sourceId: row.source_id, slug: row.slug,
     payload: { fact: input.fact, kind: input.kind, visibility: input.visibility, entity_slug: input.entity_slug, source: fact.source, context: context ?? null,
-      valid_from: validFrom.toISOString(), valid_until: validUntil?.toISOString() ?? null, source_session: fact.source_session },
+      valid_from: validFrom.toISOString(), valid_until: validUntil?.toISOString() ?? null, source_session: fact.source_session, ...claimColumns(p) },
     input: gateInput(requestChannelTrust(row) ?? { tier: 'unknown', origin: null }, row.id), cfg: await loadWriteGateConfig(engine) });
   if (gate.action === 'reject') throw writeGateRejectedError(gate.assessment);
   if (gate.action === 'hold') return { observedRevision, validate, apply: async tx => heldOutcome(gate.assessment, (await recordWriteGateHold(tx, gate.hold!)).holdId) };
@@ -164,7 +173,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     const flagged = gateField(gate.assessment, `f${id}`, await recordFlaggedRow(tx, gate, { table: 'facts', id, sourceId: row.source_id }));
     const superseded = status === 'superseded' ? decision.candidate! : undefined;
     return { ...outcome(id, status, input.entity_slug, validUntil, degraded, p, superseded?.id,
-      superseded !== undefined && superseded.entity_slug == null && input.entity_slug !== null), ...fence?.fencesNormalized,
+      superseded !== undefined && superseded.entity_slug == null && input.entity_slug !== null), ...claimColumns(p), ...fence?.fencesNormalized,
       ...(contestedBy ? { contested: contestedBy } : {}), ...(flagged ? { gate: flagged } : {}),
       ...(pageReceipt?.size_state ? { size_state: pageReceipt.size_state } : {}) };
   } };

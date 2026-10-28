@@ -36,6 +36,7 @@ import { assertFactNotWithdrawn } from '../facts/single-prepare.ts';
 import { FENCE_SOURCE_DEFAULT } from '../facts/extract-from-fence.ts';
 import { parseFactsFence } from '../facts-fence.ts';
 import { materializedPage } from '../persistence/segmented-apply.ts';
+import { claimColumns } from '../facts/typed-claim.ts';
 import { getWriteGateHold, releaseWriteGateHold, type WriteGateHold } from '../write-gate-store.ts';
 
 export const TRUST_RELEASE_OPERATION = 'trust_release';
@@ -153,7 +154,7 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
     fact: String(p.fact ?? ''), kind: (str(p.kind) ?? 'fact') as NewFact['kind'], entity_slug: str(p.entity_slug) ?? row.slug,
     visibility: p.visibility === 'world' ? 'world' : 'private', source: str(p.source) ?? `trust release h${hold.id}`, context: str(p.context),
     source_session: str(p.source_session), confidence: 1, valid_from: str(p.valid_from) ? new Date(String(p.valid_from)) : new Date(),
-    valid_until: str(p.valid_until) ? new Date(String(p.valid_until)) : null, embedding: null, embedding_model: null,
+    valid_until: str(p.valid_until) ? new Date(String(p.valid_until)) : null, embedding: null, embedding_model: null, ...claimColumns(p as never),
   };
   const claim = { fact: fact.fact, kind: fact.kind ?? 'fact', visibility: fact.visibility ?? 'private', entity_slug: fact.entity_slug ?? null };
   await assertFactNotWithdrawn(engine, row.source_id, claim);

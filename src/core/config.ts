@@ -1601,6 +1601,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.patterns.subagent_timeout_ms',
   'dream.patterns.subagent_wait_timeout_ms',
   'dream.patterns.min_interval_hours', 'dream.patterns.child_read_budget_kb', // #6297: hours (default 6) / KB (default 200), 0 = off; cycle/phase-config-values.ts
+  'dream.claim_conflicts.mode', 'dream.claim_conflicts.max_pairs', // GBRA-216: propose | off (default off) / pairs per source per run (default 500); facts/claim-conflicts.ts
   // Paid-loop breaker: dead submissions of one dream key within 24h before
   // it is refused (default 3; 0 disables). `gbrain dream reset-key` clears one.
   'dream.breaker.max_dead_submissions',

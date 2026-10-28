@@ -25,6 +25,10 @@ export const PATTERNS_CHILD_READ_BUDGET_KEY = 'dream.patterns.child_read_budget_
 export const PATTERNS_CHILD_READ_BUDGET_DEFAULT_KB = 200;
 export const PATTERNS_CHILD_READ_BUDGET_MAX_KB = 100_000;
 
+/** GBRA-216: claim-conflict pairs the claim_conflicts phase files per source per run (facts/claim-conflicts.ts). */
+export const CLAIM_CONFLICTS_MAX_PAIRS_KEY = 'dream.claim_conflicts.max_pairs';
+export const CLAIM_CONFLICTS_MAX_PAIRS_MAX = 100_000;
+
 interface PhaseConfigSpec {
   /** Human range, used in the refusal and the stored-value warnings. */
   expected: string;
@@ -50,6 +54,11 @@ const wholeInRange = (raw: string, max: number): number | null => {
 };
 
 const SPECS: Record<string, PhaseConfigSpec> = {
+  [CLAIM_CONFLICTS_MAX_PAIRS_KEY]: {
+    expected: `a whole number of pairs from 1 to ${CLAIM_CONFLICTS_MAX_PAIRS_MAX}`,
+    defaultText: '500',
+    parse: raw => { const n = wholeInRange(raw, CLAIM_CONFLICTS_MAX_PAIRS_MAX); return n !== null && n >= 1 ? n : null; },
+  },
   [PATTERNS_MIN_INTERVAL_KEY]: {
     expected: `a number of hours from 0 to ${PATTERNS_MIN_INTERVAL_MAX_HOURS} (0 turns the cadence off)`,
     defaultText: String(PATTERNS_MIN_INTERVAL_DEFAULT_HOURS),

@@ -146,6 +146,7 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'grade_takes',                // v0.36.1.0
   'calibration_profile',        // v0.36.1.0
   'edge_contradictions',        // temporal typed edges (proposals by default)
+  'claim_conflicts',             // GBRA-216 keyless typed-claim conflicts (default off)
   'drift',                       // #2653 — drift detection (default OFF, report-only)
   'standing_questions',          // C4 pinned questions (no pins = skipped)
   'chronicle',                   // #5876 — Life Chronicle events (default ON)

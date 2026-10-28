@@ -18,6 +18,6 @@ registerWhatIfReducer('grounding', whatIfGrounding);
 // --- S9 conflict: sweep + proposals (lazy: help stays cheap), dataset adapter + facts-fixtures builder ---
 registerConflictDatasets();
 registerDecideSubcommand('sweep', async (engine, args) => (await import('./proposals.ts')).runSweepCommand(engine, args),
-  'sweep --slot conflict [--since <fact id>] [--source <id>] [--json]   Run the contradiction sweep now (proposals only)');
+  'sweep --slot conflict [--since <fact id>] [--source <id>] [--json] | --claims [--source <id>] [--dry-run] [--json]   Run the contradiction sweep now (proposals only); --claims is the keyless typed-claim lane');
 registerDecideSubcommand('proposals', async (engine, args) => (await import('./proposals.ts')).runProposalsCommand(engine, args),
   'proposals list [--status pending|accepted|rejected|stale|undone|all] [--json] | accept <id>|--all-from <sweep id> | reject <id>|--all-from <sweep id> | undo <id>   Review contradiction proposals');

@@ -39,6 +39,7 @@ export const MANAGED_PHASE_TABLE: Readonly<Record<CyclePhase, ManagedPhaseEntry>
   grade_takes: { class: 'no_coordinated_write', reason: 'The cycle runs it with auto-resolve off, so it only caches verdicts in take_grade_cache; opt-in auto-applied resolutions go through the coordinated takes_resolve mutation.' },
   calibration_profile: { class: 'no_coordinated_write', reason: 'Writes the calibration_profiles side table only.' },
   edge_contradictions: { class: 'writes', reason: 'Applied closures append a timeline line through the coordinated add_timeline_entry mutation; proposals live in the link_edge_proposals side table.' },
+  claim_conflicts: { class: 'no_coordinated_write', reason: 'writes the decide_proposals review queue only' },
   drift: { class: 'writes', reason: 'The drift report page publishes through the maintenance coordinator.' },
   standing_questions: { class: 'writes', reason: 'Question pages publish through coordinated put_page mutations; answers and evidence pointers live in the pinned_questions side tables.' },
   chronicle: { class: 'writes', reason: 'Life Chronicle event pages and their projections publish through the maintenance coordinator, re-validated against the judged depth revision.' },
