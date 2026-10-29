@@ -22,6 +22,7 @@ import type { RunCrossModalOpts } from '../../commands/eval-cross-modal.ts';
 import { dimensionScoreKey } from '../cross-modal-eval/runner.ts';
 import { redactSecrets } from '../../eval/longmemeval/run-config.ts';
 import type { QualityProbeFailure } from '../audit-quality-probe.ts';
+import { probeCompleteness, type ProbeCompleteness, type ProbeInputResult } from './nightly-probe-completeness.ts';
 import type { NightlyProbeModelRoutes, NightlyProbeSlotId } from './nightly-probe-routes.ts';
 
 /** Arguments accepted by the longmemeval adapter. */
@@ -38,6 +39,7 @@ export interface CrossModalProbeArgs {
   batchPath: string;
   summaryPath: string;
   maxUsd: number;
+  expectedQuestionIds?: string[];
   /** Brain-resolved routes (#5872); absent leaves the command's own defaults. */
   modelRoutes?: NightlyProbeModelRoutes;
 }
@@ -60,6 +62,7 @@ export interface CrossModalBatchSummary {
   panel?: { distinct_models: number; distinct_providers: number; slot_scored_questions?: number[] };
   /** Every non-passing question in summary order; the audit row keeps the first 10. */
   failures?: QualityProbeFailure[];
+  completeness?: ProbeCompleteness;
 }
 
 /** Error text copied into the audit row is redacted, then cut to this many characters. */
@@ -84,10 +87,30 @@ const UNRECOGNIZED_DIMENSION = 'unrecognized';
  * Embedded failures throw so the nightly phase can audit the failure
  * without terminating autopilot. Standalone CLI invocations still exit.
  */
-export async function runLongMemEvalForProbe(args: LongMemEvalProbeArgs): Promise<void> {
+export async function runLongMemEvalForProbe(args: LongMemEvalProbeArgs): Promise<ProbeInputResult> {
   const { runEvalLongMemEval } = await import('../../commands/eval-longmemeval.ts');
   const { argv, runOpts } = buildLongMemEvalProbeCall(args);
   await runEvalLongMemEval(argv, runOpts);
+  const fixture = readFileSync(args.fixturePath, 'utf8').split('\n').filter(line => line.trim()).map(line => JSON.parse(line));
+  const questionIds = fixture.map(row => row.question_id);
+  if (!questionIds.length || questionIds.some(id => typeof id !== 'string' || !id) || new Set(questionIds).size !== questionIds.length) {
+    throw new Error('nightly probe fixture needs unique nonempty question ids');
+  }
+  const rows: unknown[] = [];
+  let malformed = false;
+  const output = existsSync(args.outputPath) ? readFileSync(args.outputPath, 'utf8') : '';
+  for (const line of output.split('\n').filter(line => line.trim())) {
+    try {
+      const row = JSON.parse(line);
+      if (row?.kind !== 'by_type_summary') rows.push(row);
+    } catch { malformed = true; }
+  }
+  const completeness = probeCompleteness(questionIds, rows, 'reader');
+  if (malformed) {
+    if (completeness.complete) completeness.retryable = true;
+    completeness.complete = false;
+  }
+  return { questionIds, completeness };
 }
 
 /**
@@ -241,6 +264,10 @@ export async function runCrossModalBatchForProbe(
     verdict: typeof obj.verdict === 'string' ? obj.verdict : 'unknown',
   };
   const failures = parseBatchFailures(obj.per_question);
+  if (args.expectedQuestionIds) {
+    summary.completeness = probeCompleteness(args.expectedQuestionIds, Array.isArray(obj.per_question) ? obj.per_question : [], 'judge');
+    if (obj.total !== args.expectedQuestionIds.length || obj.malformed_count !== 0) summary.completeness.complete = false;
+  }
   if (failures.length > 0) summary.failures = failures;
   if (isCount(obj.total)) summary.total = obj.total;
   if (isCount(obj.malformed_count)) summary.malformed_count = obj.malformed_count;
