@@ -58,6 +58,21 @@ async function retiresNonMemberGhost(engine: SqlEngine, row: KnowledgePublicatio
   return !(await sharedPackMember(engine, row.source_id, row.source_incarnation, [ghost.path, `${row.slug}.md`]));
 }
 
+/** Retention removes an expired tombstone row only; it is DB-only when no file bytes are expected, and must leave pack members protected. */
+async function purgesNonMemberRetention(engine: SqlEngine, row: KnowledgePublicationTarget, preparedFile?: KnowledgePublicationFile): Promise<boolean> {
+  if (row.intent?.purge !== true || row.intent.retention !== true || (preparedFile && preparedFile.expectedBeforeHash !== null)) return false;
+  const aliases = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
+    'SELECT source_path,source_uri FROM pages WHERE source_id=$1 AND slug=$2', [row.source_id, row.slug]);
+  if (aliases.some(alias => (alias.source_path && alias.source_path !== `${row.slug}.md`) || alias.source_uri?.startsWith('file:'))) return false;
+  const paths = [row.slug, `${row.slug}.md`];
+  if (preparedFile) {
+    const targetPath = relative(preparedFile.root, preparedFile.path);
+    if (isAbsolute(targetPath) || targetPath === '..' || targetPath.startsWith(`..${sep}`)) return false;
+    paths.push(targetPath);
+  }
+  return !(await sharedPackMember(engine, row.source_id, row.source_incarnation, paths));
+}
+
 const packsInTransaction = new WeakMap<object, Promise<PackRoot[]>>();
 /** Engines (the connection owner, not a transaction view of it) whose schema has shared_skill_packs; migrations never drop it. */
 const packTablePresent = new WeakSet<object>();
@@ -99,6 +114,7 @@ export async function assertKnowledgePublicationAllowed(
   const packs = await sharedPacks(engine);
   if (!packs.length) return;
   if (await retiresNonMemberGhost(engine, row, preparedFile)) return;
+  if (await purgesNonMemberRetention(engine, row, preparedFile)) return;
   const ownPack = packs.find(pack => pack.source_id === row.source_id && pack.source_incarnation === row.source_incarnation);
   if (ownPack && reserved(row.slug)) reject();
   const roots = [...new Set(packs.flatMap(pack => [
