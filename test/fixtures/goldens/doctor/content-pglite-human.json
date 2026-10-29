@@ -241,7 +241,7 @@
       "  [OK] fence_integrity: No malformed facts or takes fence is held, stored or waiting in a checkout (2 source(s) scanned).",
       "  [OK] search_mode: Mode: conservative (no per-key overrides — mode bundle is canonical).",
       "  [OK] hidden_by_search_policy: No pages hidden by search-exclude policy.",
-      "  [OK] eval_drift: 6 retrieval-affecting file(s) changed since HEAD: src/core/search/evidence-date.ts, src/core/search/evidence-delivery.ts, src/core/search/evidence-packing.ts, …. Re-run `gbrain eval run-all` after committing these changes.",
+      "  [OK] eval_drift: No retrieval-affecting files changed in working tree.",
       "  [OK] reranker_health: Reranker disabled — no failures expected",
       "  [OK] batch_retry_health: No exhausted batch retries in last 24h.",
       "  [OK] wedged_queue: PGLite — no queue to check",
