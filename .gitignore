@@ -17,6 +17,7 @@ bin/
 !.gstack/redact-allowlist
 !.gstack/pregate.json
 !.gstack/ship-policy.json
+!.gstack/ubicloud.json
 supabase/.temp/
 .claude/skills/
 # admin/dist/ is the React SPA bundle. CLAUDE.md says it's committed for

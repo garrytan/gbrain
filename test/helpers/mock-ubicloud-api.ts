@@ -2,13 +2,15 @@
 // endpoint, enough for scripts/ubicloud/ubi-runner.sh: `vm list`, `vm L/N
 // create` (slow on purpose, and completed even when the client hangs up, like
 // the real API), `vm L/N show` (404 once gone) and `vm L/N destroy -f`.
-// VMs never reach `running`, so every `up` stays mid-provision until killed.
+// VMs never reach `running`, so every `up` stays mid-provision until killed,
+// unless `running` is set: then a created VM shows as running at 192.0.2.1
+// (pair it with a fake `ssh` on PATH).
 
 export interface MockVm {
   location: string;
   name: string;
   size: string;
-  state: "creating" | "destroying";
+  state: "creating" | "running" | "destroying";
 }
 
 export interface MockUbicloudOptions {
@@ -18,6 +20,8 @@ export interface MockUbicloudOptions {
   destroyDelayMs?: number;
   /** Refuse every create with Ubicloud's vCPU quota error (400). */
   rejectCreates?: boolean;
+  /** Created VMs show as running at 192.0.2.1. */
+  running?: boolean;
   seed?: Array<{ location?: string; name: string; size?: string }>;
 }
 
@@ -55,14 +59,14 @@ export function startMockUbicloud(opts: MockUbicloudOptions = {}): MockUbicloud 
           return text("! Unexpected response status: 400\nDetails: Validation failed for following fields: size\n  size: Insufficient quota for requested size. Requested vCPU count: 16, currently used vCPU count: 252, maximum allowed vCPU count: 256, remaining vCPU count: 4", 400);
         }
         const size = argv[argv.indexOf("-s") + 1] ?? "standard-16";
-        vms.set(name, { location, name, size, state: "creating" });
+        vms.set(name, { location, name, size, state: opts.running ? "running" : "creating" });
         events.push(`created ${name}`);
         return text(`VM created with id: vm-${name}`);
       }
       const vm = vms.get(name);
       if (verb === "show") {
         if (!vm) return text("! Unexpected response status: 404", 404);
-        return text(`id: vm-${name}\nname: ${name}\nstate: ${vm.state}\nlocation: ${vm.location}\nsize: ${vm.size}\n`);
+        return text(`id: vm-${name}\nname: ${name}\nstate: ${vm.state}\nlocation: ${vm.location}\nsize: ${vm.size}\n${vm.state === "running" ? "ip4: 192.0.2.1\n" : ""}`);
       }
       if (verb === "destroy") {
         if (vm && vm.state !== "destroying") {

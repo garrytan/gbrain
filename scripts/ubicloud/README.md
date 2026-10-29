@@ -22,29 +22,39 @@ the integrator runs the full gate.
 
 ## Ownership and teardown
 
-Every VM is named `ubirun-<owner>-<epoch>-<suffix>`, or
-`ubirun-<owner>-<epoch>-x<expiry epoch>-<suffix>` when it carries an expiry.
-The owner is `UBI_OWNER` (lowercased, letters and digits only, at most 12
+Every VM is named `ubirun-<owner>-<epoch>-<suffix>-t<hours>`, or
+`ubirun-<owner>-<epoch>-<suffix>` when it has no TTL. The owner is `UBI_OWNER` (lowercased, letters and digits only, at most 12
 characters, starting with a letter) or a random per-machine id kept in the
-runner's state directory. Set `UBI_OWNER` to your thread code
-(`UBI_OWNER=gbra41 bun run ci:ubicloud`) so everyone can see whose VMs hold
-the quota. Ubicloud names allow 63 characters of `[a-z0-9-]`, so a full name
-stays under 52.
+runner's state directory. `up`, `run`, `verify` and `ci:ubicloud` refuse (exit 2)
+without `UBI_OWNER` unless `UBI_OWNER_OPTOUT=1` picks the per-machine id, so set it
+to your thread code (`UBI_OWNER=gbra41 bun run ci:ubicloud`) and every VM traces to
+the thread holding the quota. Ubicloud names allow 63 characters of `[a-z0-9-]`, so a full name
+stays under 50.
 
-Ubicloud has no VM tags, so the expiry lives in the name. `ci:ubicloud` names
-every gate VM to expire two hours after creation (`--ttl-hours N` changes it,
-`--ttl-hours 0` means no expiry). `ubi-runner.sh up` and `run` take the same
-`--ttl-hours H`; without it their VMs never expire, which suits long dev,
-benchmark and eval VMs. `scripts/ubicloud/reap-expired.ts` is the operator
+Ubicloud has no VM tags, so the TTL lives in the name, in gstack's `-t<hours>`
+form: gstack's runner (`gstack-ubi`) and this one write and reap the same
+names. `ci:ubicloud` gives every gate VM a two-hour TTL (`--ttl-hours N`
+changes it, `--ttl-hours 0` means none). A name `ubi-runner.sh up` or `run`
+generates carries `--ttl-hours H`, else `UBI_TTL_HOURS` (default 4);
+`UBI_TTL_HOURS=0` or `-n NAME` makes a VM that never expires, which suits
+long dev, benchmark and eval VMs. Branches from before the switch still write
+the legacy form `ubirun-<owner>-<epoch>-x<expiry epoch>-<suffix>`; every
+reaper reads both.
+
+`ubi-runner.sh reap` destroys every VM in the project whose TTL ended more
+than ten minutes ago, whichever owner made it (the TTL is that owner's own
+declaration), and every `up` runs it first (`UBI_REAP=0` skips it), so a run
+a sleeping machine killed leaves nothing behind for longer than its TTL plus
+the time until anyone's next `up`. `scripts/ubicloud/reap-expired.ts` is the operator
 side of the leak guard: run from the operator's Capy automation, where the
 Ubicloud token already lives (never from GitHub Actions), it lists the project's
-VMs, selects only names in the expiring format whose expiry plus a 15-minute
+VMs, selects only names with a TTL whose end plus a 15-minute
 grace has passed, and prints each `ubirun-*` VM's owner, age, expiry and action
 plus an owner-notice block (expired VMs grouped by owner and the thread code
 the owner tag names). It is a dry run unless given `--apply`, which destroys
 each expired VM through `ubi-runner.sh down`, and it refuses the whole run when
 more than `--max` (40) VMs are expired. It never selects an owner-tagged name
-without an expiry, a legacy untagged `ubirun-<epoch>-*` name or a VM the
+without a TTL, a legacy untagged `ubirun-<epoch>-*` name or a VM the
 runner did not name, whoever owns it.
 
 Each name is recorded before its create request is sent: the runner writes
@@ -70,7 +80,32 @@ teardown can't run: on Capy, run `ci:ubicloud` as a watched background
 operation so the machine stays awake. After any interrupted run, check
 `list --mine` and reap leftovers with `down NAME` (or `gc HOURS`, which only
 destroys your own VMs older than HOURS). A gate VM nobody reaps still dies
-once its expiry passes and the operator reaper next runs with `--apply`.
+once its TTL ends and anyone's next `up` (or the operator reaper) runs.
+
+## Quota, watchdog and verify
+
+When the project's vCPU ceiling is known (`UBI_QUOTA_VCPUS`, or the maximum
+the last quota refusal printed, cached for a day), `up` adds the size's
+vCPUs to the project's VMs and refuses before sending any create request when
+that would exceed it (`UBI_QUOTA_WAIT=<seconds>` waits for room instead).
+Managed GitHub runners count against the real quota on top, so the API can
+still refuse.
+
+`run`, `verify` and `ssh NAME COMMAND` stream the remote output through a
+watchdog: a heartbeat line every `UBI_HEARTBEAT` seconds (300), and a command
+silent for `UBI_IDLE_TIMEOUT` seconds (1800) or older than `UBI_RUN_TIMEOUT`
+(0, unlimited) is killed, remote session included, with exit 124 and its last
+40 lines.
+
+`ubi-runner.sh verify` (and gstack's `gstack-ubi verify`) runs the
+repository's committed single-VM verify, `.gstack/ubicloud.json`: gbrain's
+runs the heavy suite (`bun run test:heavy`, as heavy-tests.yml does) on one
+standard-30 VM, set up by `setup-ci-vm.sh` with one slot and run through
+`ci-item.sh heavy`, and pulls its logs into `.context/ubicloud-verify`.
+Its setup script and pull destinations must be relative paths inside `--src`,
+a variable reaches the VM only when named (`--env`, or `--pass NAME` on the
+command line), and `UBICLOUD_*` never does. The full gate stays
+`bun run ci:ubicloud`.
 
 `ubi-runner.sh list --mine` lists your VMs: those tagged with your owner tag
 and every VM this machine created under any tag (its local state stays until

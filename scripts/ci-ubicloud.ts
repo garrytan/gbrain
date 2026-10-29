@@ -52,8 +52,8 @@
  * UNIT_SHARD_BUDGET_MS (unitShardCheck) and reports each shard's measured time. Durations of every run are
  * merged into .context/ci-ubicloud/weights.json, which weights the next run.
  *
- * VMs are named ubirun-<owner>-<epoch>-x<expiry epoch>-ciNN<hex> (owner:
- * UBI_OWNER or the runner's per-machine id; ubirun-<owner>-<epoch>-ciNN<hex>
+ * VMs are named ubirun-<owner>-<epoch>-ciNN<hex>-t<ttl hours> (owner:
+ * UBI_OWNER, required unless UBI_OWNER_OPTOUT=1 picks the runner's per-machine id; ubirun-<owner>-<epoch>-ciNN<hex>
  * with --ttl-hours 0). Each name is appended to <run>/vms.txt before its
  * create request is sent. On exit, including SIGINT, SIGTERM, SIGHUP (a
  * dropped terminal, a cancelled background operation) and SIGQUIT, in-flight
@@ -168,7 +168,7 @@ function parseArgs(argv: string[]): Opts {
   if (opts.location !== GATE_LOCATION && !argv.includes("--lanes")) usage(`a full gate runs only in ${GATE_LOCATION}. Test timeouts and the mined shard weights are calibrated there; on 2026-10-19 us-east-a2 ran about half as fast and timed out tests that pass in ${GATE_LOCATION}, so a full run in ${opts.location} is not gate evidence. Wait for ${GATE_LOCATION} capacity or run bun run ci:local (and report it as local). To run a diagnostic subset in ${opts.location}, pass --lanes.`);
   if (opts.pgImage && !/^[a-z0-9][a-z0-9._\/-]*(?::[A-Za-z0-9._-]+)?$/.test(opts.pgImage)) usage(`--pg-image ${opts.pgImage} is not an image reference`);
   if (opts.pgImage && !argv.includes("--lanes")) usage("a full gate runs on the default Postgres image; --pg-image is a diagnostic run, so pass --lanes (for example --lanes pg-arms,e2e).");
-  if (!Number.isInteger(opts.ttlHours) || opts.ttlHours < 0 || opts.ttlHours > 8760) usage("--ttl-hours must be a whole number of hours from 0 (no expiry) to 8760");
+  if (!Number.isInteger(opts.ttlHours) || opts.ttlHours < 0 || opts.ttlHours > 999) usage("--ttl-hours must be a whole number of hours from 0 (no expiry) to 999");
   if (!Number.isInteger(opts.vms) || opts.vms < 0 || (opts.vms === 0 && argv.includes("--vms"))) usage("--vms must be a positive integer");
   // Three slots per eight vCPUs: each slot's bun process, its children and its
   // own PostgreSQL and PgBouncer keep about 2.5 threads runnable. One slot per
@@ -224,6 +224,10 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (!process.env.UBICLOUD_API_KEY && !process.env.UBICLOUD_API_TOKEN) {
     console.error("ci-ubicloud: UBICLOUD_API_KEY (or UBICLOUD_API_TOKEN) is not set");
+    process.exit(2);
+  }
+  if (!process.env.UBI_OWNER && process.env.UBI_OWNER_OPTOUT !== "1") {
+    console.error("ci-ubicloud: UBI_OWNER is not set; set it to your thread code in lowercase (e.g. UBI_OWNER=gbra106) so the VMs trace to its thread (UBI_OWNER_OPTOUT=1 uses this machine's random id instead)");
     process.exit(2);
   }
   const sha = sh("git", ["rev-parse", "HEAD"]).trim();
@@ -397,7 +401,7 @@ async function main() {
   };
 
   const runBatch = async (vm: Vm, slot: number, lane: string, files: string[]) => {
-    const logPath = join(runDir, "logs", `${String(++batchSeq).padStart(5, "0")}-${vm.name.slice(-8)}-s${slot}-${lane}.log`);
+    const logPath = join(runDir, "logs", `${String(++batchSeq).padStart(5, "0")}-${vm.name.replace(/-t\d+$/, "").slice(-8)}-s${slot}-${lane}.log`);
     const cmd = `cd ${REMOTE_DIR} && SLOT=${slot} bash scripts/ubicloud/ci-item.sh ${lane} ${files.map(quote).join(" ")}`;
     const r = await runner(["ssh", vm.name, cmd], { out: logPath, timeoutMs: BATCH_TIMEOUT_MS });
     return { code: r.code, parsed: parseItemLog(readFileSync(logPath, "utf8")), logPath };
@@ -483,7 +487,7 @@ async function main() {
     if (up.code !== 0) {
       vm.state = "failed";
       const setupText = readFileSync(setupLog, "utf8").trim();
-      const quota = setupText.indexOf("ubi-runner: quota refused");
+      const quota = setupText.search(/ubi-runner: quota (preflight )?refused/);
       if (quota >= 0) log(`VM ${index + 1} refused by the Ubicloud vCPU quota; the run continues on the VMs that started:\n${setupText.slice(quota)}`);
       else log(`VM ${index + 1} failed to provision (see ${setupLog}): ${setupText.split("\n").slice(-2).join(" | ")}`);
       return;

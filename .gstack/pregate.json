@@ -20,7 +20,11 @@
     ],
     "scripts/ubicloud/ubi-runner.sh": [
       "test/scripts/ubi-runner.test.ts",
+      "test/scripts/ubi-runner-run.test.ts",
       "test/scripts/ci-ubicloud-vm-names.test.ts"
+    ],
+    ".gstack/ubicloud.json": [
+      "test/scripts/ubi-runner-run.test.ts"
     ],
     "scripts/ubicloud/reap-expired.ts": [
       "test/scripts/ubicloud-reap-expired.test.ts"

@@ -1,8 +1,9 @@
 // ubicloud-reap-expired.test.ts — scripts/ubicloud/reap-expired.ts, the
 // operator-side leak guard for ci:ubicloud VMs.
 //
-// Protects: only VMs in the expiring name format
-// (ubirun-<owner>-<epoch>-x<expiry>-<suffix>) whose expiry plus the grace has
+// Protects: only VMs whose name carries a TTL, in gstack's form
+// (ubirun-<owner>-<epoch>-<suffix>-t<hours>) or the legacy expiring form
+// (ubirun-<owner>-<epoch>-x<expiry>-<suffix>), whose TTL end plus the grace has
 // passed are ever selected; legacy untagged names, owner-tagged names without
 // an expiry and names ubi-runner did not make are never selected, whoever
 // owns them. Dry run is the default and destroys nothing; --apply destroys
@@ -42,12 +43,25 @@ describe("parseVmName", () => {
     expect(parseVmName(`${expired}-extra!`)).toEqual({ kind: "foreign" });
   });
 
-  it("the gate's name helper writes names of at most 63 characters that read back with their expiry", () => {
+  it("reads gstack's -t<hours> TTL form: the TTL ends that many hours after creation; -t0, a leading zero or four digits are not a TTL", () => {
+    expect(parseVmName(`ubirun-gbra140-${NOW - 5 * H}-ci03e5f6-t2`)).toEqual({ kind: "expiring", owner: "gbra140", createdAt: NOW - 5 * H, expiresAt: NOW - 3 * H });
+    expect(parseVmName(`ubirun-gbra140-${NOW}-ci03e5f6-t999`)).toEqual({ kind: "expiring", owner: "gbra140", createdAt: NOW, expiresAt: NOW + 999 * H });
+    for (const ttl of ["t0", "t02", "t1000", "tx"]) expect(parseVmName(`ubirun-gbra140-${NOW}-ci03e5f6-${ttl}`)).toEqual({ kind: "foreign" });
+    const plan = planReap(
+      [`ubirun-gbra140-${NOW - 5 * H}-ci03e5f6-t2`, `ubirun-gbra140-${NOW - 2 * H - 5 * 60}-ci04a7b8-t2`, `ubirun-gbra140-${NOW - 600}-ci05c9d0-t2`].map((name) => ({ location: LOC, name })),
+      { now: NOW, graceSeconds: 15 * 60 },
+    );
+    expect(plan.map((row) => row.action)).toEqual(["destroy", "keep", "keep"]);
+  });
+
+  it("the gate's name helper writes -t<hours> names of at most 63 characters that read back with their TTL", () => {
     const name = expiringVmName({ owner: "abcdefghijkl", createdAt: NOW, ttlHours: 2, suffix: "ci10ffff" });
-    expect(name).toBe(`ubirun-abcdefghijkl-${NOW}-x${NOW + 2 * H}-ci10ffff`);
+    expect(name).toBe(`ubirun-abcdefghijkl-${NOW}-ci10ffff-t2`);
     expect(name.length).toBeLessThanOrEqual(63);
     expect(parseVmName(name)).toEqual({ kind: "expiring", owner: "abcdefghijkl", createdAt: NOW, expiresAt: NOW + 2 * H });
+    expect(expiringVmName({ owner: "t1", createdAt: NOW, ttlHours: 999, suffix: "ci01abcd" })).toBe(`ubirun-t1-${NOW}-ci01abcd-t999`);
     expect(expiringVmName({ owner: "t1", createdAt: NOW, ttlHours: 0, suffix: "ci01abcd" })).toBe(`ubirun-t1-${NOW}-ci01abcd`);
+    expect(() => expiringVmName({ owner: "t1", createdAt: NOW, ttlHours: 1000, suffix: "ci01abcd" })).toThrow();
     expect(() => expiringVmName({ owner: "t1", createdAt: NOW, ttlHours: 1.5, suffix: "ci01abcd" })).toThrow();
     expect(() => expiringVmName({ owner: "T-1", createdAt: NOW, ttlHours: 1, suffix: "ci01abcd" })).toThrow();
   });

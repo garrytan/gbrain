@@ -13,6 +13,8 @@
 #   e2e      scripts/run-e2e.sh FILE against this slot's own postgres + pgbouncer
 #            (backend-matrix files also run through the slot's pgbouncer)
 #   verify   check-bun-test-timeout.sh + bun run verify (no FILE)
+#   heavy    bun run test:heavy against this slot's gbrain_test, as
+#            heavy-tests.yml runs it (no FILE; .gstack/ubicloud.json's verify)
 #   gitleaks the ci:local host scans (no FILE)
 #
 # Every item is bracketed by marker lines the orchestrator parses:
@@ -62,6 +64,11 @@ run_item() {
       bash scripts/run-e2e.sh "$1"
       ;;
     verify) bash scripts/check-bun-test-timeout.sh && bun run verify ;;
+    heavy)
+      env -u GBRAIN_TEST_TIMEOUT_MULTIPLIER -u GBRAIN_TEST_EXPORT_SCALE_PAGES \
+        DATABASE_URL="$pg/gbrain_test" GBRAIN_TEST_ALLOW_DATABASE_URL=1 \
+        bun run test:heavy
+      ;;
     gitleaks)
       bash scripts/test-gitleaks-config.sh &&
         bash scripts/scan-worktree-secrets.sh &&

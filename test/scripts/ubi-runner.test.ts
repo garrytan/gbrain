@@ -66,6 +66,29 @@ describe("owner tag", () => {
     expect(first).toMatch(/^m[0-9a-f]{8}$/);
     expect((await run(["owner"])).stdout.trim()).toBe(first);
   });
+
+  it("refuses to create a VM without UBI_OWNER unless UBI_OWNER_OPTOUT=1 asks for the per-machine id", async () => {
+    serve();
+    for (const args of [["up"], ["run", "--", "true"], ["verify"]]) {
+      const r = await run(args);
+      expect(r.code).toBe(2);
+      expect(r.stderr).toContain("UBI_OWNER is not set");
+      expect(r.stderr).toContain("UBI_OWNER_OPTOUT=1");
+    }
+    expect(mock!.events.filter((e) => e.startsWith("create-start "))).toEqual([]);
+    const optOut = spawnRunner(["up"], { UBI_OWNER_OPTOUT: "1" });
+    const started = await waitForEvent(mock!, /^create-start /);
+    expect(started.split(" ")[1]!).toMatch(/^ubirun-m[0-9a-f]{8}-\d{10}-[0-9a-f]{8}-t4$/);
+    optOut.kill("SIGTERM");
+    expect(await optOut.exited).toBe(130);
+  });
+
+  it("ci:ubicloud refuses before packing anything without UBI_OWNER", async () => {
+    const proc = Bun.spawn(["bun", join(RUNNER, "..", "..", "ci-ubicloud.ts"), "--vms", "1"], { env: env(), stdout: "pipe", stderr: "pipe" });
+    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+    expect(code).toBe(2);
+    expect(stderr).toContain("ci-ubicloud: UBI_OWNER is not set");
+  });
 });
 
 describe("teardown waits for in-flight creates", () => {
@@ -75,7 +98,7 @@ describe("teardown waits for in-flight creates", () => {
       const proc = spawnRunner(["up"], { UBI_OWNER: "t1" });
       const started = await waitForEvent(api, /^create-start /);
       const name = started.split(" ")[1]!;
-      expect(name).toMatch(/^ubirun-t1-\d{10}-[0-9a-f]{8}$/);
+      expect(name).toMatch(/^ubirun-t1-\d{10}-[0-9a-f]{8}-t4$/);
       proc.kill(signal);
       expect(await proc.exited).toBe(130);
       expect(api.events).toEqual([`create-start ${name}`, `created ${name}`, `destroy ${name}`, `removed ${name}`]);
@@ -272,5 +295,60 @@ describe("pack", () => {
     expect(execFileSync("git", ["-C", out, "symbolic-ref", "HEAD"], { encoding: "utf8" }).trim()).toBe(branch);
     expect(execFileSync("git", ["-C", out, "log", "--format=%s"], { encoding: "utf8" }).trim()).toBe("one");
     expect(() => execFileSync("git", ["-C", out, "cat-file", "-e", dangling], { stdio: "ignore" })).toThrow();
+  });
+});
+
+// A gate run from a linked worktree must report the same tree as one from a
+// plain clone, and the VM must get a working .git holding that tree: the
+// split-index case once shipped an index whose shared half stayed behind
+// ("index file open failed" on the VM).
+describe("pack from worktrees", () => {
+  const GATE = resolve(import.meta.dir, "..", "..", "scripts/pregate-remote-gate.sh");
+
+  function sh(cmd: string, cwd: string): string {
+    return execFileSync("bash", ["-c", cmd], {
+      cwd,
+      encoding: "utf8",
+      env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t.co", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t.co" },
+    }).trim();
+  }
+
+  // Runs scripts/pregate-remote-gate.sh in CWD with a gate that packs the
+  // checkout and unpacks it into VM (the bytes ci:ubicloud streams to every
+  // VM); returns the tree on its PREGATE_REMOTE line.
+  function gate(cwd: string, vm?: string): { code: number; tree: string; out: string } {
+    const pack = vm ? `bash ${RUNNER} pack . | tar -xzf - -C ${vm} && ` : "";
+    const proc = Bun.spawnSync(["bash", GATE], {
+      cwd,
+      env: { ...env({ UBI_OWNER: "t1" }), GBRAIN_PREGATE_GATE_CMD: `${pack}printf '=== ci-ubicloud summary ===\\n  unit 1 passed, 0 failed\\n'` },
+    });
+    const out = proc.stdout.toString() + proc.stderr.toString();
+    return { code: proc.exitCode ?? -1, tree: /PREGATE_REMOTE: tree=([0-9a-f]{40}) /.exec(out)?.[1] ?? "", out };
+  }
+
+  it("worktree, split-index worktree and detached worktree gates report the plain clone's tree, and so does the VM", () => {
+    sh("git init -q main && cd main && echo a > a.txt && git add a.txt && git commit -qm one && echo b > b.txt && git add b.txt && git commit -qm two && git branch feature", dir);
+    sh("git clone -q main plain && git -C plain checkout -q feature", dir);
+    sh("git -C main worktree add -q ../wt feature && git -C main worktree add -q --detach ../wtd feature", dir);
+    for (const c of ["plain", "wt", "wtd"]) sh("echo edit >> a.txt && echo new > u.txt", join(dir, c));
+    const want = gate(join(dir, "plain"));
+    expect(want.tree).toMatch(/^[0-9a-f]{40}$/);
+    const cases: Array<[string, string]> = [["plain", "plain"], ["wt", "worktree"], ["wtd", "detached"], ["wt", "split-index"]];
+    const got: Record<string, unknown> = {};
+    for (const [c, label] of cases) {
+      if (label === "split-index") sh("git config core.splitIndex true && git update-index --split-index && test -n \"$(git rev-parse --shared-index-path)\"", join(dir, c));
+      const vm = join(dir, `vm-${label}`);
+      execFileSync("mkdir", ["-p", vm]);
+      const local = gate(join(dir, c), vm);
+      const remote = gate(vm);
+      got[label] = {
+        local: local.tree,
+        vm: remote.tree || remote.out.trim().split("\n").at(-1),
+        gitDir: existsSync(join(vm, ".git", "HEAD")),
+        status: Bun.spawnSync(["git", "-C", vm, "status", "--porcelain"]).exitCode,
+      };
+    }
+    const same = { local: want.tree, vm: want.tree, gitDir: true, status: 0 };
+    expect(got).toEqual({ plain: same, worktree: same, detached: same, "split-index": same });
   });
 });
