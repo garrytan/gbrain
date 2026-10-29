@@ -284,6 +284,7 @@ describe('#7619 split rules', () => {
   test('EQUALS_READERS keys and the = readers in src match in both directions', () => {
     const MODULE_OWNERS: Record<string, readonly string[] | string> = {
       // owners
+      'src/cli/commands/bundled-skill.ts': ['bundled-skill'],
       'src/cli/commands/doctor.ts': ['doctor'],
       'src/commands/beliefs-replay-purges.ts': ['beliefs replay-purges'],
       'src/commands/beliefs.ts': ['beliefs', 'beliefs changes'],
