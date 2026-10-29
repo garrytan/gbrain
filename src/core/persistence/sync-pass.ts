@@ -44,6 +44,7 @@ import { buildConvergenceReceipt, readOnlySameContentScreen, type ConvergenceRec
 import { readManagedMode } from './ownership.ts';
 import { MANAGED_SYNC_PASS_OP, SYNC_ORIGIN_DELETED_OP, type SyncSelection } from './sync-pass-row.ts';
 import { faultPoint } from './fault-points.ts';
+import { MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
 import { filterYielding, loopYield, progressYield, sortYielding, turnYield, whileActive, type LoopYield } from './sync-yield.ts';
 import { countsMatch, proveConfirm, readLevelMark, type ConfirmProof, type LevelMark } from './sync-pass-confirm.ts';
 import { domainCache, levelDomain, narrowedWalk, walkAttestations, type LevelDomainCache } from './sync-pass-narrow.ts';
@@ -52,7 +53,10 @@ export { MANAGED_SYNC_PASS_OP, SYNC_ORIGIN_DELETED_OP };
 
 /** What a live pass feeds the level read (sync-pass-run.ts): its episode, the retry paths it already re-screened, and its selection. */
 export interface PassLevelInput {
-  /** The open episode's `full_id`: a live page whose record carries another is `episodeUnsatisfied`. Null: no full obligation. */
+  /**
+   * The open episode's `full_id`: a live page whose record carries another is `episodeUnsatisfied` (a current one satisfies it
+   * in place, sync-classify.ts `inPlace`, and keeps its record). Null: no full obligation.
+   */
   episodeFullId: string | null;
   /** Hold paths (source-relative) whose retry row this pass already re-screened: no longer `retried` in its later rounds. */
   retryConsumed?: ReadonlySet<string>;
@@ -308,7 +312,7 @@ const recordOids = (record: PageRow['record'], level?: string | null): string[] 
 const recordNames = (record: PageRow['record'], oid: string | null): boolean => !!record && typeof oid === 'string' && oid.length > 0
   && (record.blob_oid === oid || record.disk_blob_oid === oid);
 
-const PAGE_DELETED = 1, PAGE_RECORD = 2, PAGE_REVISION_NULL = 4, PAGE_PARSER_EXPECTED = 8, PAGE_WORKING = 16, PAGE_WORKING_TRUE = 32;
+const PAGE_DELETED = 1, PAGE_RECORD = 2, PAGE_REVISION_NULL = 4, PAGE_PARSER_EXPECTED = 8, PAGE_WORKING = 16, PAGE_WORKING_TRUE = 32, PAGE_DERIVED_CURRENT = 64;
 
 /**
  * `I⋈P` as columns, one slot per page, instead of a `PageRow` and a record object per page (about 200 B a page at 600k). A
@@ -324,6 +328,8 @@ export class PageTable {
   get length(): number { return this.id.length; }
   deleted(i: number): boolean { return (this.bits[i]! & PAGE_DELETED) !== 0; }
   hasRecord(i: number): boolean { return (this.bits[i]! & PAGE_RECORD) !== 0; }
+  /** `SyncPathState.derivedCurrent`: the page's chunks, text projection and contextual mode are current (`readPages`). */
+  derivedCurrent(i: number): boolean { return (this.bits[i]! & PAGE_DERIVED_CURRENT) !== 0; }
   /** The record's fields `row(i).record` would carry (undefined without a record), read without building it: the classifier's per-path reads. */
   diskBlobOidOf(i: number): string | null | undefined { return !this.hasRecord(i) ? undefined : this.diskBlobOid.has(i) ? this.diskBlobOid.get(i)! : this.blobOid[i] ?? null; }
   recordRevisionOf(i: number): string | undefined { return !this.hasRecord(i) || this.bits[i]! & PAGE_REVISION_NULL ? undefined : this.recordRevision.get(i) ?? this.revision[i]!; }
@@ -392,7 +398,9 @@ async function readPages(exec: Exec, kind: 'postgres' | 'pglite', sourceId: stri
       c.revision IS NULL AS rec_revision_null,
       NULLIF(c.revision, p.knowledge_revision::text) AS rec_revision,
       CASE WHEN c.parser IS DISTINCT FROM $4::jsonb THEN c.parser::text END AS rec_parser, c.parser = $4::jsonb AS rec_parser_expected,
-      c.full_episode AS rec_full_episode, c.working AS rec_working
+      c.full_episode AS rec_full_episode, c.working AS rec_working,
+      (p.page_kind = 'markdown' AND p.chunker_version = ${MARKDOWN_CHUNKER_VERSION} AND p.body_storage IS DISTINCT FROM 'segmented'
+        AND p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision AND p.contextual_retrieval_mode IS NOT NULL) AS derived_current
     FROM pages p LEFT JOIN (SELECT fingerprint, completed_keys->0->>'origin' AS origin, completed_keys->0->>'blob_oid' AS blob_oid,
         completed_keys->0->>'disk_blob_oid' AS disk_blob_oid, completed_keys->0->>'revision' AS revision,
         completed_keys->0->'parser' AS parser, completed_keys->0->>'full_episode' AS full_episode, (completed_keys->0->'working')::text AS working
@@ -400,7 +408,7 @@ async function readPages(exec: Exec, kind: 'postgres' | 'pglite', sourceId: stri
     WHERE p.source_id=$1 AND p.source_path IS NOT NULL`;
   const params = [sourceId, SYNC_IMPORT_PROVENANCE_OP, `${sourceId}:${incarnation}:`, JSON.stringify(expected)];
   type Raw = Omit<PageRow, 'record' | 'arm1' | 'attested_hash'> & { has_record: boolean; rec_origin_same: boolean; rec_origin: string | null; rec_blob_oid: string | null;
-    rec_disk_same: boolean; rec_disk_blob_oid: string | null; rec_revision_null: boolean; rec_revision: string | null; rec_parser: string | null; rec_parser_expected: boolean | null; rec_full_episode: string | null; rec_working: string | null };
+    rec_disk_same: boolean; rec_disk_blob_oid: string | null; rec_revision_null: boolean; rec_revision: string | null; rec_parser: string | null; rec_parser_expected: boolean | null; rec_full_episode: string | null; rec_working: string | null; derived_current: boolean | null };
   const pages = only?.table ?? new PageTable(expected);
   const parsers = new Map<string, SyncImportProvenance['parser'] | undefined>(), episodes = new Map<string, string>();
   const parserOf = (text: string | null) => {
@@ -413,7 +421,8 @@ async function readPages(exec: Exec, kind: 'postgres' | 'pglite', sourceId: stri
     const working = raw.rec_working === 'true' || raw.rec_working === 'false';
     pages.id[i] = raw.id; pages.slug[i] = raw.slug; pages.sourcePath[i] = raw.source_path; pages.revision[i] = raw.revision; pages.requestId[i] = raw.request_id;
     pages.bits[i] = (raw.deleted ? PAGE_DELETED : 0) | (raw.has_record ? PAGE_RECORD : 0) | (raw.rec_revision_null ? PAGE_REVISION_NULL : 0)
-      | (raw.rec_parser_expected ? PAGE_PARSER_EXPECTED : 0) | (working ? PAGE_WORKING : 0) | (raw.rec_working === 'true' ? PAGE_WORKING_TRUE : 0);
+      | (raw.rec_parser_expected ? PAGE_PARSER_EXPECTED : 0) | (working ? PAGE_WORKING : 0) | (raw.rec_working === 'true' ? PAGE_WORKING_TRUE : 0)
+      | (raw.derived_current ? PAGE_DERIVED_CURRENT : 0);
     const episode = raw.has_record ? raw.rec_full_episode : null;
     if (typeof episode === 'string' && !episodes.has(episode)) episodes.set(episode, episode);
     pages.blobOid[i] = raw.has_record ? raw.rec_blob_oid ?? undefined : undefined; pages.fullEpisode[i] = typeof episode === 'string' ? episodes.get(episode)! : episode;
@@ -800,7 +809,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
       spelling: legacySpelling.has(path) ? 'legacy' : twins.has(path),
       episodeUnsatisfied: input.pass ? !!input.pass.episodeFullId && live && (record ? pages.fullEpisode[at!] : undefined) !== input.pass.episodeFullId
         : input.full === true && live,
-      fullObligation: input.pass ? !!input.pass.episodeFullId : input.full === true,
+      derivedCurrent: live && pages.derivedCurrent(at!), fullObligation: input.pass ? !!input.pass.episodeFullId : input.full === true,
       keepDb: !mirror && keepDbPrefixes.length > 0 && row && isKeepDbSlug(pages.slug[at!]!, keepDbPrefixes),
       openWork: row && open.pageIds.has(Number(pages.id[at!])) || open.origins.has(origin),
     };
@@ -1092,7 +1101,8 @@ export async function passWritesMatched(exec: Exec, input: { kind: 'postgres' | 
       page: { live: true, revision: pages.revision[i]!, originMatches: syncOriginPath(pages.origin.get(i) ?? sourcePath) === syncOriginPath(sourcePath) },
       record: { blobOids: pages.oids(i, level), revision: recordRevision != null ? String(recordRevision) : null, parserSame: sameParser(pages.parserOf(i), parserFor(writer.path)) },
       attested: null, levelSha256: null, published: false, hold: null, marker: null, baseline: null, spelling: false,
-      episodeUnsatisfied: !!input.episodeFullId && pages.fullEpisode[i] !== input.episodeFullId, fullObligation: !!input.episodeFullId, keepDb: false, openWork: false };
+      episodeUnsatisfied: !!input.episodeFullId && pages.fullEpisode[i] !== input.episodeFullId, derivedCurrent: pages.derivedCurrent(i), fullObligation: !!input.episodeFullId,
+      keepDb: false, openWork: false };
     if (classifySyncPath(state).cls !== 'matched') return false;
   }
   return true;

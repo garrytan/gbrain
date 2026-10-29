@@ -88,7 +88,7 @@ This is the difference between a search engine and a brain. Search finds the pag
 
 ## Install
 
-Requires **Bun 1.4.0 or newer**. Existing worker installations should follow the
+Requires **Bun 1.4.4 or newer**. Existing worker installations should follow the
 [authorization and queue upgrade guide](docs/guides/authorization-upgrade.md)
 before restarting services with this version.
 

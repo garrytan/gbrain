@@ -407,7 +407,7 @@ export function withInstructionBlocks(check: Check, views: InstructionBlockView[
       why: `The brain-first markers in ${first.path} were hand-edited; gbrain will not guess which lines are its own.`,
       user_message: `The gbrain instruction block in ${first.path} has damaged markers. Please delete the block (both marker lines included), then I'll write a fresh one.` }
     : repairArgv(first);
-  return { name: check.name, status: 'warn', message, details, fix };
+  return { name: NAME, status: 'warn', message, details, fix };
 }
 
 const SKILLS_INDEX_PROBLEM: Record<Exclude<SkillsIndexState, 'current'>, string> = {

@@ -26,6 +26,8 @@ import { localHostId } from '../../src/core/persistence/identity.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { performManagedSync } from '../../src/core/persistence/sync-run.ts';
+import { SYNC_IMPORT_PROVENANCE_OP } from '../../src/core/persistence/sync-holds.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
 import { makeGitFixture } from '../helpers/git-fixture.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { LEGACY_EMBEDDING_CONFIG } from '../helpers/legacy-embedding-config.ts';
@@ -33,6 +35,14 @@ import { hasDatabase, setupLegacyEmbeddingDB, teardownDB } from './helpers.ts';
 
 const WRITER = 'gbrain_seg_off_writer_' + randomUUID().replaceAll('-', '').slice(0, 12);
 const SEGMENT_TABLES = ['page_body_manifest', 'page_body_staging_parts', 'page_body_staging_texts', 'page_body_stagings', 'page_segment_texts', 'page_view_digests'];
+
+/**
+ * A full episode admits an already-current page in place (sync-classify.ts `inPlace`), so unchanged files reach the
+ * waiver only while a reparse is owed: here their import records name an older parser, as after a parser upgrade.
+ */
+const olderParserRecords = (engine: BrainEngine, sourceId: string) => engine.executeRaw(
+  `UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"an-older-parser"'::jsonb) WHERE op=$1 AND starts_with(fingerprint, $2 || ':')`,
+  [SYNC_IMPORT_PROVENANCE_OP, sourceId]);
 
 (hasDatabase() ? describe : describe.skip)('ordinary writes while segmented storage is off (non-owner write role)', () => {
   let engine: PostgresEngine;
@@ -112,7 +122,8 @@ const SEGMENT_TABLES = ['page_body_manifest', 'page_body_staging_parts', 'page_b
     seen.sync_noop = await outcome(performManagedSync(writer, options));
     const revs = async () => JSON.stringify(await engine.executeRaw("SELECT slug, knowledge_revision::text AS r FROM pages WHERE source_id=$1 ORDER BY slug", [id]));
     const before = await revs();
-    // A full resync of unchanged files runs the no-op kernel, which waives both instead of re-admitting them.
+    // A full resync of unchanged files whose records name an older parser runs the no-op kernel, which waives both instead of re-admitting them.
+    await olderParserRecords(engine, id);
     const full = await performManagedSync(writer, { ...options, full: true });
 
     // The embedding effects the writes queued run as the write role, as its own persistence consumer would.

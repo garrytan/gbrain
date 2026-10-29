@@ -22,6 +22,7 @@
  *   gbrain sources refresh <id> — drained worktree-wide ff-only refresh on a managed brain (F0)
  *   gbrain sources git-gap <id> — read-only census of the database against the commit at HEAD (sources-git-gap.ts)
  *   gbrain sources reindex <id> --from-git — a strict source's re-derive from Git, preview then apply (sources-reindex.ts)
+ *   gbrain sources canonical <id> --to git|mixed — convert a source to git-canonical or back, preview then apply (sources-canonical.ts)
  *   gbrain sources push [<id>|--path <dir>] — scan-gated add→commit→pull→push
  *                               (agent-bootstrap; core in src/core/workspace-push.ts)
  *
@@ -1911,7 +1912,9 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'set-sync':   return (await import('./sources-sync-enabled.ts')).runSetSync(engine, rest);
     case 'refresh':    return (await import('./sources-refresh.ts')).runSourcesRefresh(engine, rest);
     case 'git-gap':    return (await import('./sources-git-gap.ts')).runSourcesGitGap(engine, rest);
+    case 'host-repo':  return (await import('./sources-host-repo.ts')).runHostRepo(engine, rest);
     case 'reindex':    return (await import('./sources-reindex.ts')).runSourcesReindex(engine, rest);
+    case 'canonical':  return (await import('./sources-canonical.ts')).runSourcesCanonical(engine, rest);
     case 'archive':    return runArchive(engine, rest);
     case 'restore':    return runRestore(engine, rest);
     case 'purge':      return runPurge(engine, rest);
@@ -2012,6 +2015,8 @@ Subcommands:
   set-strategy <id> <markdown|code|auto>  Persist the sync strategy every sync of the source uses (PR #5955).
   set-pull-strategy <id> <rebase|merge>   How pulls reconcile local commits with origin (#5429); default rebase.
   set-sync <id> <on|off> [--dry-run] [--expect <on|off>]   Include or exclude the source from automatic sync (config.syncEnabled).
+  host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
+                                    Managed brains: host an empty source in a new bare repository with a gbrain-owned worktree; it becomes git-canonical.
   refresh <id> [--dry-run] [--wait-drain <s>] [--fetch-timeout-ms <ms>] [--resume|--abandon] [--json]
                                     Managed brains: drain writes to the source's worktree, fast-forward
                                     it to its upstream (git merge --ff-only) and sync every source bound
@@ -2020,6 +2025,8 @@ Subcommands:
                                     Read-only: how far the database is from the commit at HEAD, page by page.
   reindex <id> --from-git [--dry-run | --apply --expect <hash>] [--json]
                                     Strict source: preview, then apply, the full pass where Git wins.
+  canonical <id> --to git|mixed [--dry-run | --apply --expect <hash>] [--json]
+                                    Managed brains: convert the source to git-canonical (or back), preview first.
   set-cr-mode <id> <none|title|per_chunk_synopsis>
                                     Per-source contextual retrieval mode
                                     override (v0.40.3.0). Pass "unset" or
@@ -2044,7 +2051,7 @@ Subcommands:
   shared-skills <id> on|off|status [--json]
                                     Opt a source out of (or back into) shared-skills adoption; status explains its effective policy.
   set-path <id> --clear             Clear a connector source's (google, github)
-                                    stale local_path; takes no path.
+                                    stale local_path, or any source's relative one.
   webhook <set|show|rotate|clear> <id> [options]
                                     v0.40 — per-source webhook secret management.
                                     Run 'sources webhook --help' for subcommand detail.

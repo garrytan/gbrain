@@ -53,6 +53,7 @@ import { assertInlineBody } from './page-body/page-shape.ts';
 import { OperationError } from './ops/contract.ts';
 import { isWriteThroughDisabled } from './write-through.ts';
 import { isSourceDbOnlySlug } from './persistence/source-storage.ts';
+import { neutralizeOutsideText } from './outside-content.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -735,13 +736,7 @@ export function renderRepoCard(repo: string, data: RawRepo, syncedAt: string | n
     `private: ${data.private}`,
     ...(syncedAt === null ? [] : [`synced_at: ${yamlStr(syncedAt)}`]),
     '---',
-    '',
-    `# ${repo}`,
-    '',
-    data.description ?? '',
-    '',
-    `Default branch: ${data.default_branch}`,
-    '',
+    neutralizeOutsideText(['', `# ${repo}`, '', data.description ?? '', '', `Default branch: ${data.default_branch}`, ''].join('\n')),
   ].join('\n');
 }
 
@@ -853,7 +848,7 @@ export function renderItemPage(data: GitHubItemData, detailFetched = true, synce
     }
   }
 
-  return frontmatter.join('\n') + '\n' + body.join('\n') + '\n';
+  return frontmatter.join('\n') + '\n' + neutralizeOutsideText(body.join('\n')) + '\n';
 }
 
 /**

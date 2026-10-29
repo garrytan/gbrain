@@ -285,7 +285,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "Bun <bun-version> (minimum 1.4.0)",
+            "message": "Bun <bun-version> (minimum 1.4.4)",
             "name": "bun_runtime",
             "status": "ok"
           },
@@ -1117,6 +1117,13 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "Every gbrain function that pins a search_path ends it with pg_temp",
+            "name": "function_search_path",
+            "status": "ok"
+          },
+          {
             "category": "meta",
             "elapsed_ms": "<volatile>",
             "message": "Version <latest> (latest: <latest>)",
@@ -1474,6 +1481,10 @@
                 },
                 {
                   "name": "persistence_requests_request_id",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_foreground_committed",
                   "state": "valid"
                 }
               ],
@@ -3340,6 +3351,17 @@
           {
             "category": "brain",
             "details": {
+              "items": [],
+              "total": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No released fact was confirmed with fence-row fields its release preview did not show.",
+            "name": "trust_release_unpreviewed_fields",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "bad_config": [],
               "chars_limit": 4000,
               "chars_used": 0,
@@ -3806,6 +3828,18 @@
             "elapsed_ms": "<volatile>",
             "message": "No source is strict (git-canonical), so no index trails a commit.",
             "name": "git_index_lag",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "docs": "docs/guides/repair.md#outside-content-fences",
+              "items": [],
+              "pages": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No fact, take or link is indexed from a fence on an imported email, calendar, GitHub or transcript page.",
+            "name": "outside_content_fences",
             "status": "ok"
           },
           {
@@ -5021,7 +5055,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "Bun <bun-version> (minimum 1.4.0)",
+            "message": "Bun <bun-version> (minimum 1.4.4)",
             "name": "bun_runtime",
             "status": "ok"
           },
@@ -5853,6 +5887,13 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "Every gbrain function that pins a search_path ends it with pg_temp",
+            "name": "function_search_path",
+            "status": "ok"
+          },
+          {
             "category": "meta",
             "elapsed_ms": "<volatile>",
             "message": "Version <latest> (latest: <latest>)",
@@ -6210,6 +6251,10 @@
                 },
                 {
                   "name": "persistence_requests_request_id",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_foreground_committed",
                   "state": "valid"
                 }
               ],
@@ -8076,6 +8121,17 @@
           {
             "category": "brain",
             "details": {
+              "items": [],
+              "total": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No released fact was confirmed with fence-row fields its release preview did not show.",
+            "name": "trust_release_unpreviewed_fields",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "bad_config": [],
               "chars_limit": 4000,
               "chars_used": 0,
@@ -8542,6 +8598,18 @@
             "elapsed_ms": "<volatile>",
             "message": "No source is strict (git-canonical), so no index trails a commit.",
             "name": "git_index_lag",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "docs": "docs/guides/repair.md#outside-content-fences",
+              "items": [],
+              "pages": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No fact, take or link is indexed from a fence on an imported email, calendar, GitHub or transcript page.",
+            "name": "outside_content_fences",
             "status": "ok"
           },
           {

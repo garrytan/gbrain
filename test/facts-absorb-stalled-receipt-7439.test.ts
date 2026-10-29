@@ -14,11 +14,14 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { FactsBackstopCtx } from '../src/core/facts/backstop.ts';
 import { RECOVERY_VERSION } from '../src/core/markdown.ts';
+import { MinionQueue } from '../src/core/minions/queue.ts';
 import { prepareManagedFactsSession, publishManagedFacts, resumeManagedFacts } from '../src/core/persistence/facts-maintenance.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { runReconcileApply, runReconcilePreview } from '../src/core/persistence/reconcile.ts';
 import { readGitSourceHolds, writeGitHold } from '../src/core/persistence/sync-holds.ts';
+import { resolveRepairScope } from '../src/core/repair/core.ts';
+import { repairRunner } from '../src/core/repair/registry.ts';
 import type { ManagedBrain } from './helpers/managed-brain.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -53,7 +56,14 @@ async function refusedPageBatch({ engine, ctx, root }: ManagedBrain) {
   expect(receipt[0]!.error_message).toContain('preparation_stalled');
   const retry = async () => resumeManagedFacts(engine, (await prepareManagedFactsSession(backstop, input))!);
   expect((await retry().catch(error => error)).code).toBe('source_changed');
-  return { file, pristine, receipt, retry };
+  return { file, pristine, receipt, retry, write: write!.id };
+}
+
+/** The `gbrain repair failed-writes` preview rows for the target's fact requests. */
+async function factsListing(engine: ManagedBrain['engine']) {
+  const preview = await (await repairRunner(engine, { apply: false, logger: { info() {}, warn() {}, error() {} } }))
+    .run('failed-writes', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default' });
+  return (preview.listing ?? []).filter(entry => entry.item.includes(`${TARGET} extract_facts`));
 }
 
 const factRows = (engine: ManagedBrain['engine']) => engine.executeRaw<{ fact: string }>('SELECT fact FROM facts WHERE fact=$1', [CLAIM]);
@@ -63,8 +73,21 @@ for (const backend of testBackends()) {
 
   test(`#7439 [${backend}]: a page-triggered facts batch refused for a stalled hold publishes its retained facts once the reconcile clears the hold`, () => managedBrain(async brain => {
     const { engine } = brain;
-    const { file, pristine, receipt, retry } = await refusedPageBatch(brain);
+    const { file, pristine, receipt, retry, write } = await refusedPageBatch(brain);
     expect(await factRows(engine)).toEqual([]);
+    // Value: protects=repair failed-writes lists a held-file fact refusal with the job retry that recovers it, then drops it once a
+    // follow-up committed; fails_when=the listing names extract --stale, loses the file-check note, or keeps a recovered request;
+    // why_new=#7602 covers revision_conflict listings only; seam=the job died is set by SQL (the reset needs a dead job); no_claim=does
+    // not run the job retry itself
+    const key = `facts-absorb:write:${write}`;
+    const origin = (await engine.readPageSnapshot(ORIGIN, { sourceId: 'default' }))!;
+    const job = await new MinionQueue(engine).add('facts-absorb', { slug: ORIGIN, sourceId: 'default', persistence_request_id: write, page_id: origin.page.id, revision: origin.revision }, { queue: 'default', idempotency_key: key });
+    await engine.executeRaw("UPDATE minion_jobs SET status='dead' WHERE id=$1", [job.id]);
+    const [listed, ...others] = await factsListing(engine);
+    expect(others).toEqual([]);
+    expect(listed!.class).toBe('producer_owned');
+    expect(listed!.detail).toStartWith(`recover: gbrain facts retry-dead --reset 'facts-absorb:write:${write}'`);
+    expect(listed!.detail).toContain('once the file check passes');
     writeFileSync(file, pristine);
     await withVerifiedLocalRegistration(engine, await registerLocalWriter(engine, 'cli'), async () => {
       const preview = await runReconcilePreview(engine, { source_id: 'default', slug: TARGET });
@@ -79,6 +102,27 @@ for (const backend of testBackends()) {
     expect(await engine.executeRaw('SELECT request_id, error_message FROM persistence_requests WHERE request_id=$1::uuid', [receipt[0]!.request_id])).toEqual(receipt);
     expect((await retry())?.inserted).toBe(1);
     expect(await factRows(engine)).toHaveLength(1);
+    expect(await factsListing(engine)).toEqual([]);
+  }, { databaseUrl }), 120_000);
+
+  // Value: protects=a held-file fact refusal whose entity page was deleted once the hold cleared is listed as not recoverable,
+  // never the job retry (the file walk admits nothing for a deleted page, so the refusal replays until the job dies again);
+  // fails_when=the page-identity checks apply to moved-entity refusals only; why_new=the row above keeps the page; seam=none;
+  // no_claim=a purge compacts the refusal's receipt, so a purged-and-recreated page is covered by the #7602 replaced-page row
+  test(`#7439 [${backend}]: a held-file fact refusal whose entity page was deleted after the hold cleared is not listed for the job retry`, () => managedBrain(async brain => {
+    const { engine, ctx } = brain;
+    const { file, pristine, write } = await refusedPageBatch(brain);
+    const origin = (await engine.readPageSnapshot(ORIGIN, { sourceId: 'default' }))!;
+    const job = await new MinionQueue(engine).add('facts-absorb', { slug: ORIGIN, sourceId: 'default', persistence_request_id: write, page_id: origin.page.id, revision: origin.revision }, { queue: 'default', idempotency_key: `facts-absorb:write:${write}` });
+    await engine.executeRaw("UPDATE minion_jobs SET status='dead' WHERE id=$1", [job.id]);
+    writeFileSync(file, pristine);
+    await withVerifiedLocalRegistration(engine, await registerLocalWriter(engine, 'cli'), async () => {
+      const preview = await runReconcilePreview(engine, { source_id: 'default', slug: TARGET });
+      expect((await runReconcileApply(engine, { source_id: 'default', slug: TARGET, preview: preview.preview, request_id: randomUUID() })).state).toBe('committed');
+    });
+    const snapshot = (await engine.readPageSnapshot(TARGET, { sourceId: 'default' }))!;
+    await submitPageMutation(ctx, { operation: 'delete_page', params: { slug: TARGET, expected_revision: snapshot.revision, request_id: randomUUID() } });
+    expect((await factsListing(engine)).map(entry => entry.detail)).toEqual([`not recoverable: entity page ${TARGET} was deleted after these facts were admitted`]);
   }, { databaseUrl }), 120_000);
 
   test(`#7439 [${backend}]: while the held file still differs, a retry keeps the refusal and admits nothing`, () => managedBrain(async brain => {

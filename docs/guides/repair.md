@@ -145,7 +145,7 @@ work behind exits 0, so scripts should also check `results[].complete`.
 | --- | --- | --- | --- |
 | `timeline` | `timeline_history` | Re-saves each page with its current body through a revision-bound `put_page`. The save writes each database-only timeline entry back into the page as a bullet preceded by `<!-- gbrain:materialized v1 <hash> -->`. | `kept_unrenderable_rows`: entries that would change if written as a bullet (for example an empty source). They stay in the database. |
 | `visibility` | `derived_visibility` | Stamps an explicit `visibility` on extracted atoms and synthesized concepts. An atom takes its origin page's visibility; transcript atoms and atoms whose origin is gone become `private`; a concept takes the strictest visibility of its input atoms. A concept input found only through an atom's `concepts:` list counts as private. Atoms are repaired before concepts. It never loosens an explicit value: `private` stays `private`, and `world` can only become `private`. A missing value is stamped with the origin's value, which is `world` when the origin page is public. | `concepts_without_lineage`: concepts whose inputs cannot be found. They stay as they are, and remote readers already treat a missing visibility as private. `atoms_origin_gone_to_private` counts atoms made private because their origin page no longer exists. |
-| `request-indexes` | `persistence_request_indexes` | Creates a missing request-table index (the managed sync checkpoint pair, the purge slug index, the dream postprocess request-id index), or drops an INVALID one (left by an interrupted concurrent build) and rebuilds it, on a brain whose schema version is already current. Postgres builds each index `CONCURRENTLY`, one at a time, so writes continue; PGLite builds inline. It changes no user data, takes no journal admission and runs brain-wide (`--source` does not narrow it). See [managed sync request indexes](#request-indexes). | `building`: an index another session is still building; it is never dropped. |
+| `request-indexes` | `persistence_request_indexes` | Creates a missing request-table index (the managed sync checkpoint pair, the purge slug index, the dream postprocess request-id index, the write claims' foreground-commit index), or drops an INVALID one (left by an interrupted concurrent build) and rebuilds it, on a brain whose schema version is already current. Postgres builds each index `CONCURRENTLY`, one at a time, so writes continue; PGLite builds inline. It changes no user data, takes no journal admission and runs brain-wide (`--source` does not narrow it). See [managed sync request indexes](#request-indexes). | `building`: an index another session is still building; it is never dropped. |
 | `connector-fences` | none (a `connector_fence_below_timeline` refusal names it) | Moves a facts or takes fence that sits below the timeline sentinel of a Google or GitHub page into the page body through a revision-bound `put_page`, so the connector's next re-render carries the fence instead of refusing. Then re-attempt the held item with `gbrain sources retry-held <source>`. | `kept_ambiguous_pages`: pages whose fences are duplicated, unbalanced or unparseable. Move the fence by hand: read the page, place the fence above the `<!-- timeline -->` line, and save it with the current `expected_revision`. |
 | `take-supersession` | none | Rebuilds `takes.superseded_by` for supersession chains written before the pointer moved onto the old fence row (#5886). Each struck take is linked to the row that replaced it only from evidence: a committed `takes_supersede` receipt, a stored `superseded_by`, or a row carrying the old `superseded by #<own row>` pointer with exactly one possible predecessor. The pointer is written onto the old row (`<source>; superseded by #N`) and stale self-pointers are dropped through a revision-bound `put_page`; a page whose fence is already right but whose stored pointers differ is reprojected without a page write. See [take supersession](#take-supersession). | `ambiguous_pages` / `ambiguous_rows`: pages where a new row has two or more possible predecessors, or where evidence conflicts. The preview lists each with its candidates and the manual edit; nothing on them changes. `unparsed_pages`: pages whose takes fence does not parse cleanly. |
 | `accepted-takes` | none | Explicit-only, preview-bound. Restores takes that accepting a held strike-through or kind change removed on v0.60.253.0 (`gbrain trust confirm tp<id>` ran a `takes_remove` instead of applying the change). It restores only what the records prove: the accepted proposal, the `takes_remove` receipt bound to it, the page version that receipt archived (the row the accept should have applied) and the reservation row still holding its number. `--apply --expect <hash>` republishes each page with that row through a revision-bound `put_page`. See [accepted takes](#accepted-takes). | `version_missing` (the archived version was pruned), `row_number_in_use` (the number holds a take again), `page_missing`, `fence_unreadable`. A grade or resolution the database alone held is not in any record and is not restored. |
@@ -258,7 +258,11 @@ is missing or INVALID. After the rebuild, run the retry the refusal printed
 processing flags).
 
 The same command builds `persistence_requests_slug_intent` (the page purge's
-lookup) and `persistence_requests_request_id`, which dream synthesis uses to
+lookup), `persistence_requests_foreground_committed`, which every write claim
+reads to find the newest foreground commit of a worktree (without it the
+claims after a restart can overrun their claim phase on a large request table,
+so the write queue grows and sync never commits), and
+`persistence_requests_request_id`, which dream synthesis uses to
 find each child's committed page. When that lookup, or a postprocess request
 read, still hits the statement timeout, the synthesis pass is deferred rather
 than failed: the phase warns `postprocessing deferred`, the pages stay
@@ -581,6 +585,19 @@ daemon has its own and reports a mismatch in its log, with the startup warning
 or `embedding_auth_failed` on the first rejected embedding
 ([write refusals](write-refusals.md#embedding_auth_failed)). After fixing a
 rejected key, `gbrain embed --stale` embeds what was saved meanwhile.
+
+<a id="outside-content-fences"></a>
+### Outside-content fences
+
+Doctor's `outside_content_fences` check warns when an imported page whose body is someone else's text (a Gmail thread or calendar event from a Google source, a GitHub issue, PR or repo card, an imported chat transcript) has facts, takes or links indexed from a fence on it. Before GBRA-221 those importers copied the text verbatim. A sender who wrote `<!--- gbrain:facts:begin -->` and a table planted facts, which `extract_facts` saved with the visibility and confidence the sender chose. A re-render carries a stored fence forward. Imports now escape the markers, so new mail can't do this. Rows planted earlier stay until someone removes them.
+
+The check lists each page with its counts (world-visible facts counted apart), never a cell value. It reads the indexed rows, so a fence not yet extracted shows up after the next `extract_facts` run. gbrain's own writers (`remember`, loop extraction) also add rows to some of these pages, and the check can't tell which is which, so there is no automatic repair:
+
+1. Read the page with the user: `gbrain get --source <id> -- <slug>`.
+2. For each fact they say a sender wrote, withdraw it after they agree: `gbrain forget <fact-id> --source <id>`.
+3. Verify with `gbrain doctor --only outside_content_fences --json`.
+
+**Say to your agent:** *"Which imported pages hold facts a sender could have planted? Show me before you remove anything."*
 
 <a id="connector-held-items"></a>
 ### Connector held items
@@ -2061,7 +2078,8 @@ gbrain repair duplicate-facts --apply --expect <hash> --yes
 
 A group is the active facts of one source, visibility and speaker whose text
 normalizes to the same fingerprint (the rule `forget` uses: case, punctuation
-and runs of whitespace do not matter). The oldest row is kept; every other copy gets
+and runs of whitespace do not matter). The row in a page's Facts table is kept (the
+oldest one if several are), else the oldest row; every other copy gets
 `expired_at` and `superseded_by` pointing at it, so it leaves recall but is not
 deleted or withdrawn, and the claim can be saved again. Groups whose copies all
 sit on one entity are `same_entity`. Groups spread over several entities are
@@ -2168,7 +2186,9 @@ gbrain repair failed-writes --source <id>                 # replayed writes now 
 Candidates are failed receipts refused by the guard (`writer_coordinator_required`,
 or `storage_error` "Publication failed (P0001)" from releases that did not keep
 the guard's message) and conflict receipts refused `source_changed` at
-publication. Only writes a caller made directly are replayed:
+publication. The preview also lists a fact extraction (`extract_facts`) refused
+`revision_conflict` because another write moved, replaced or deleted its entity
+page, as a `producer_owned` row. Only writes a caller made directly are replayed:
 `put_page`, `add_timeline_entry` and `remember`. The preview gives every
 candidate one class:
 
@@ -2180,7 +2200,7 @@ candidate one class:
 | `superseded` | A later write or delete of the page committed or is pending; for `put_page`, also a later failed `put_page` (newer content) or a page changed since the caller read it. | Kept; re-issue by hand if still wanted. |
 | `unpinned_target` | A `remember` saved unattributed; replaying would infer its subject again and could pick another page. | Kept. Re-issue it with an explicit `entity` if it is still wanted. |
 | `file_database_drift` | Its last replay hit `source_changed` and the file still differs from the database. | Kept until the file matches again (a reconcile that writes only the file counts) or the page changes; reconcile it first. |
-| `producer_owned` | gbrain produced it (sync or file import, reconcile, relink, maintenance page, job). | Kept. The preview prints the command that produces it again from current content (sync: `gbrain sync --source <id> --no-pull`). |
+| `producer_owned` | gbrain produced it (sync or file import, reconcile, relink, maintenance page, job). | Kept. The preview prints the command that produces it again from current content (sync: `gbrain sync --source <id> --no-pull`). A refused fact extraction (`extract_facts`, including one refused `revision_conflict` because another write moved, replaced or deleted its entity page) keeps its extracted facts: when its page write's facts-absorb job is dead and can recover them, the row says `recover: gbrain facts retry-dead --reset 'facts-absorb:write:<id>'` (the retried job re-admits the retained facts at the page's current revision without a model call); while that job still runs it says `pending:`; otherwise (the extraction has no page write or its job completed or is gone, the entity page was replaced, the page was written again since or the job would skip its page write for another reason, the follow-up batches were refused as well, or the extraction also holds refusals of another kind, such as a sibling refused for a held file) it says `re-extract:` with the `extract_facts` call to make (one model call), or `not recoverable:` when the entity page of a page write's extraction was deleted. A fact request a later request of the same extraction committed is not listed. |
 
 The apply replays exactly the previewed set. Each write is classified again
 and its original caller's authority is checked again first: a write that

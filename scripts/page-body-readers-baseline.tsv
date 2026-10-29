@@ -207,8 +207,8 @@ src/core/enrichment-service.ts	stubMarkdown	call:serializeMarkdown	INLINE	G6: a 
 src/core/export-snapshot.ts	inlineExportMarkdown	call:serializeMarkdown	SEGW	
 src/core/export-snapshot.ts	inlineExportMarkdown	field	STREAM	
 src/core/export-snapshot.ts	segmentedExportHead	call:serializeMarkdown	NONE	not the page body: the frontmatter head, rendered with an empty body
-src/core/export-snapshot.ts	readExportPage	field	STREAM	inline pages only: a segmented page skips the overlay here and streams through segmentedExportMarkdown (readBodyRange, trusted stored)
-src/core/export-snapshot.ts	readExportPage	sql	STREAM	
+src/core/export-snapshot.ts	readExportPages	field	STREAM	inline pages only: a segmented page skips the overlay here and streams through segmentedExportMarkdown (readBodyRange, trusted stored)
+src/core/export-snapshot.ts	readExportPages	sql	STREAM	
 src/core/extract-ner.ts	extractNerLinks	field	STREAM	
 src/core/extract-takes-from-pages.ts	extractTakesFromPages	call:serializePageToMarkdown	SEGW	
 src/core/extract-takes-from-pages.ts	extractTakesFromPages	field	STREAM	inline rows only (SQL filter)
@@ -224,6 +224,8 @@ src/core/facts/backstop.ts	runPipeline	field	STREAM
 src/core/facts/conversation-window-extract.ts	regularPageVersionToken	field	STREAM	
 src/core/facts/drain.ts	estimateBacklogUsd	sql	META	
 src/core/facts/eligibility.ts	isFactsBackstopEligible	field	LEAD	
+src/core/facts/fence-fact-append.ts	prepareFenceFactAppend	call:serializePageToMarkdown	SEGW	assertInlineBody first
+src/core/facts/fence-fact-append.ts	prepareFenceFactAppend	field	SEGW	assertInlineBody before the fence write
 src/core/facts/file-body-guard.ts	fileBodyMatchesStored	field	SEGW	a segmented page reads NULL inline columns, never matches, and the caller holds it (nothing written)
 src/core/facts/file-body-guard.ts	mirroredBody	field	NONE	the parsed checkout file body, not a page row
 src/core/facts/file-body-guard.ts	readStoredBody	sql	SEGW	reads the inline columns only; a segmented page reads NULL and every caller holds it
@@ -433,8 +435,6 @@ src/core/persistence/facts-maintenance.ts	prepareManagedFactsSession	field	META
 src/core/persistence/facts-prepare.ts	prepareManagedFactsMutation	call:serializePageToMarkdown	SEGW	assertInlineBody first
 src/core/persistence/facts-prepare.ts	prepareManagedFactsMutation	field	SEGW	assertInlineBody on the entity snapshot before the fence write
 src/core/persistence/file-repair.ts	canonicalRepairFields	field	META	
-src/core/persistence/grandfather.ts	prepareGrandfatherMutation	call:contentHash	META	
-src/core/persistence/grandfather.ts	prepareGrandfatherMutation	call:serializePageToMarkdown	SEGW	
 src/core/persistence/import-prepare.ts	prepareManagedImportMutation	call:serializePageToMarkdown	SEGW	
 src/core/persistence/large-page-guard.ts	assertLargePageAdmission	sql	META	stored size = body_bytes for a segmented page, octet_length of the columns for an inline page
 src/core/persistence/links-maintenance.ts	extractManagedStaleLinks	field	NONE	not the page body: result.timeline counter
@@ -445,8 +445,6 @@ src/core/persistence/loop-fact-retirement.ts	prepareLoopFactRetirement	field	SEG
 src/core/persistence/manual-links.ts	prepareManualLinkMutation	call:serializePageToMarkdown	SEGW	wholeBodySnapshot first: a segmented page within 24 MiB is read back whole, a larger one refuses
 src/core/persistence/memory-mutations.ts	planRememberTarget	call:serializePageToMarkdown	SEGW	
 src/core/persistence/memory-mutations.ts	planRememberTarget	field	STREAM	
-src/core/persistence/memory-prepare.ts	prepareMemoryMutation	call:serializePageToMarkdown	SEGW	assertInlineBody first
-src/core/persistence/memory-prepare.ts	prepareMemoryMutation	field	SEGW	assertInlineBody before the fence write
 src/core/persistence/origin-twins.ts	readOriginClaimants	sql	STREAM	#6948 twin verdict: md5 of an inline body; a segmented page (compiled_truth NULL) reads NULL and holds content_differs, so missing evidence never matches
 src/core/persistence/overwritten-edits.ts	CONTENT_COLUMNS	sql	STREAM	selects body_storage beside the inline body columns; a segmented version or page has NULL bodies and its overwrite is reported unknown (reason segmented), never compared or restored
 src/core/persistence/overwritten-edits.ts	overwriteContent	field	STREAM	returns null for a segmented row (body_storage segmented or NULL compiled_truth); the scan reports that overwrite unknown (reason segmented)
@@ -626,6 +624,7 @@ src/core/trust/page-handlers.ts	markdownWithoutMarker	call:serializeMarkdown	SEG
 src/core/trust/page-handlers.ts	markdownWithoutMarker	field	SEGW	
 src/core/trust/page-handlers.ts	versionMarkdown	call:serializePageToMarkdown	SEGW	
 src/core/trust/page-handlers.ts	versionMarkdown	field	SEGW	
+src/core/trust/release-publish.ts	cellAt	field	INLINE	read-only fence cell lookup on the body materializedPage read back within PAGE_MAX_BYTES (a segmented page over the ceiling returns null first)
 src/core/utils.ts	contentHash	field	META	hashes a whole inline page; a segmented page hashes as a stream (1.4) and keeps content_hash; called on a segmented Page the getter throws
 src/core/utils.ts	contentHashLegacy	field	META	legacy formula over an inline page; segmented: getter throws
 src/core/utils.ts	rowToPage	field	INLINE	installs throwing body getters on a segmented row (guardSegmentedBody); inline rows copy the columns

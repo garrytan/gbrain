@@ -279,14 +279,14 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
   'duplicate-facts': {
     handler: duplicateFactsRepair, embeds: 'effect', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
     consentText: {
-      what: 'Retire the previewed copies of duplicate facts, keeping the oldest row of each claim',
+      what: 'Retire the previewed copies of duplicate facts, keeping a fenced row of each claim, else its oldest row',
       why: 'The preview listed each group of active facts that state one claim (same fingerprint, source and visibility) with the row it keeps; applying it supersedes exactly the listed copies.',
       risk: 'Copies are expired with superseded_by pointing at the kept row, never deleted or withdrawn, so the claim stays in recall and can be saved again. '
         + 'Fenced copies are struck in their page as "superseded by #N" through a revision-bound page write. A row that changed since the preview is kept.',
-      user_message: 'Retire the previewed duplicate fact copies? Each claim keeps its oldest row; the copies are marked superseded by it, not deleted.',
+      user_message: 'Retire the previewed duplicate fact copies? Each claim keeps the row in its page\'s Facts table, else its oldest row; the copies are marked superseded by it, not deleted.',
     },
     summary: 'Retire exact copies of one active fact (#7043): in each group of active facts of one source and visibility that share their fingerprint, the '
-      + 'oldest row is kept and every other row is superseded by it (expired_at set, superseded_by the kept row; never a withdrawal, so the claim stays '
+      + 'oldest fenced row (else the oldest row) is kept and every other row is superseded by it (expired_at set, superseded_by the kept row; never a withdrawal, so the claim stays '
       + 'rememberable). Groups whose copies sit on other entities are listed as cross_entity and retired only with --include-cross-entity; the kept row keeps '
       + 'its entity. Near duplicates are never touched. Fenced copies are struck in their page through a revision-bound put_page when the kept row is in the '
       + 'same fence, listed as fence_kept_elsewhere otherwise, and kept as segmented_page on a segmented page. Preview-bound: --apply --expect <hash> --yes retires exactly the previewed set; a row that '

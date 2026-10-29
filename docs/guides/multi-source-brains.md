@@ -321,7 +321,37 @@ gbrain sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>]
                                (config.syncEnabled; an explicit gbrain sync --source
                                still runs). --dry-run prints the apply command, which
                                carries --expect; a moved state refuses preview_changed.
+gbrain sources host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
+                               Managed brains: host a new, empty source in a bare
+                               repository under <path> (see below). Previews without --expect.
+gbrain sources canonical <id> --to git|mixed [--dry-run | --apply --expect <hash>] [--json]
+                               Managed brains: convert a source to git-canonical or back
+                               to mixed. Previews without --apply; the apply prints progress
+                               on stderr and, if stopped, where it stopped
+                               (docs/designs/GIT_CANONICAL_MEMORY.md#conversion).
 ```
+
+### Hosted repositories
+
+`gbrain sources host-repo` gives a new, empty source its own bare repository
+(`<path>/repo.git`) that people clone and fetch from, and checks it out once
+as a linked worktree gbrain owns (`<path>/worktree`), claimed as the source's
+canonical worktree like any other. The source becomes git-canonical
+(`canonical: git`), so every page write, remote ones included, commits there
+through the door before the database indexes it. A pre-receive hook refuses
+every push into the repository; `--push-remote` names a repository of your own
+that the push effect publishes to once Git durability is enabled
+(`gbrain sources writer git-durability <id> --enable`).
+
+It runs only from the trusted local CLI on the brain host. The preview says in
+words that the source becomes strict and prints the apply command with its
+`--expect <plan_hash>`; a plan that moved refuses `preview_changed`. It refuses
+a source that is bound or already has pages (moving existing pages into a
+hosted repository is conversion, a later wave), and a directory that is not
+empty or sits inside a checkout or another source's directory. On a hosted
+source the preview reports the hook and the worktree link, and the apply
+reinstalls a missing or changed hook. An agent runs it on a production brain
+only with the user's explicit yes, one source at a time.
 
 ### Read-only mirror sources
 

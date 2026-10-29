@@ -244,6 +244,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/facts/conversation-publication.ts` (6): the managed conversation-facts preparer clears each member page's prior rows and inserts its frozen entry (or a blocked outcome row) inside the coordinator publication of its admitted batch request, clearing only for a complete replacement (#7013); the unmanaged writer runs the same publication in `maintenanceTransaction`. Its page clear also expires the rows `gbrain facts relink --conversation` linked (after deleting the previous clear's expired copies), inside the same transaction (#6764). The segmented incremental run, unmanaged only, re-anchors moved windows' facts and stamps fresh rows' windows (`source_window`) in the same `maintenanceTransaction`.
 - `src/core/facts/conversation-relink.ts` (1): `gbrain facts relink --conversation`: a `managed_maintenance_conversation_relink` request on managed brains; the unmanaged relink runs in `writeDerivedFacts` (`maintenanceTransaction`).
 - `src/core/facts/derivation-inputs.ts` (3): `hideDerivedRows` expires derived facts, deactivates derived takes and soft-deletes derived pages inside the purge's coordinated transaction, attributed to the purge request.
+- `src/core/facts/fence-fact-append.ts` (1): `prepareFenceFactAppend` inserts the facts row of a fence row the request's page file holds, in its caller's coordinated publication after the page row (remember and its callers).
 - `src/core/facts/fence-write.ts` (1): the markdown-first fence reconcile insert runs in `maintenanceTransaction` (its page body mirror goes through `facts/file-body-guard.ts`).
 - `src/core/facts/file-body-guard.ts` (2): the #6982 checked body mirror (`replaceStoredBody`: the page_versions row and the body refresh, under the page row lock) runs in its caller's `maintenanceTransaction` (fence write, unfenced-facts fence, phantom redirect, forget, proposal supersede).
 - `src/core/facts/forget.ts` (4): the legacy fence expiry, withdrawal and strike-through each run in `maintenanceTransaction` (nested inside a caller's coordinated write, they keep its actor).
@@ -279,14 +280,13 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/derived-retirement-hold.ts` (3): `retireDerivedPages` versions, soft-deletes and stamps retired derived pages (unmanaged extract_atoms stale atoms) in 500-page `maintenanceTransaction` chunks.
 - `src/core/persistence/facts-prepare.ts` (3): managed `extract_facts` request preparer.
 - `src/core/persistence/file-repair.ts` (2): `managed_file_repair` request preparer (#5988).
-- `src/core/persistence/grandfather.ts` (2): request preparer.
 - `src/core/persistence/links-maintenance.ts` (1): coordinated maintenance.
 - `src/core/persistence/loop-fact-retirement.ts` (1): request preparer.
 - `src/core/persistence/memory-mutations.ts` (1): `forget` inside its request's coordinated write.
-- `src/core/persistence/memory-prepare.ts` (3): `remember` request preparer.
+- `src/core/persistence/memory-prepare.ts` (2): `remember` request preparer; the fence row and its facts row go through `prepareFenceFactAppend`.
 - `src/core/persistence/page-append.ts` (1): segmented `append_page` / `edit_page` request preparer; the splice versions the page inside its request's publication.
 - `src/core/persistence/page-prepare.ts` (12): page request preparer (including the restore of a segmented page over 24 MiB, which flips `deleted_at` without re-serializing, and the tag flip of a segmented page, which versions it and changes its tag rows and `content_hash` without re-serializing).
-- `src/core/persistence/prepared-maintenance.ts` (3): managed maintenance request preparer.
+- `src/core/persistence/prepared-maintenance.ts` (4): managed maintenance request preparer (consolidation closes an unfenced fact in the database and a fenced one from its published fence cell).
 - `src/core/persistence/semantic-pages.ts` (1): `add_timeline_entry` request preparer.
 - `src/core/persistence/sync-image.ts` (2): managed sync image request preparer; a Git rename retires the old page inside the same publication.
 - `src/core/persistence/sync-prepare.ts` (4): managed sync request preparer.
@@ -320,7 +320,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/timeline-write-through.ts` (2): the timeline write-through's page row splice and entry insert run in one `maintenanceTransaction`.
 - `src/core/trust/fence-guard.ts` (2): the guarded fence re-projection detaches or moves higher-tier fact rows inside the page's coordinated publication.
 - `src/core/trust/held-removals.ts` (1): an owner accept of a held take or timeline removal re-projects the row as the page says in a coordinated (managed) or attributed (unmanaged) transaction under the page key.
-- `src/core/trust/owner-actions.ts` (1): an owner release inserts the held fact in a coordinated (managed) or attributed (unmanaged) transaction at user_confirmed.
+- `src/core/trust/owner-actions.ts` (1): an owner release inserts the held fact database-only at user_confirmed in an attributed transaction (unmanaged) or, on a managed brain, in a coordinated one only for a hold with no entity slug or whose page is missing; every other managed fact release is a journaled `trust_release` publication (`src/core/trust/release-publish.ts`) that writes the fence row to the file first; an index-existing release binds the cell's previewed fields and refuses `preview_changed` when the cell moved, and the database-only release re-checks the approval on the locked hold.
 - `src/core/trust/supersede-handlers.ts` (3): owner accept/undo of a trust proposal re-tiers the new fact (or take) inside the checked supersede's (or takes publication's) transaction.
 <!-- write-attribution-covered:end -->
 

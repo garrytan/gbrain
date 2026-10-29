@@ -40,6 +40,7 @@ import { remoteLinkHint } from './page-advisories.ts';
 import { stagedUploadParts, stagedUploadWork, type StagingBodyRef } from './page-upload.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
+import { assertPrivateRequestKept, privateRequestGuarded, readPrivateRequest } from './visibility-request.ts';
 
 const text = (value: unknown) => (typeof value === 'string' ? value : null);
 
@@ -129,6 +130,8 @@ export async function prepareStreamedUpload(engine: BrainEngine, row: WriteReque
     throw opError('invalid_params', result.error ?? 'The uploaded page could not be prepared.', `Page ${row.slug} was not written. Fix what the message names, then upload it again with a new request_id.`);
   }
   const prepared: StreamedPreparedImport = ready;
+  const privateRequest = privateRequestGuarded(row.operation, p.kind) ? readPrivateRequest('', () => prepared.frontmatter) : null;
+  if (privateRequest) assertPrivateRequestKept(row, privateRequest.frontmatter);
   if (coreMarking(snapshot?.page.frontmatter).core || coreMarking(prepared.frontmatter).core) {
     throw opError('page_body_segmented', `Page ${row.slug} is (or would become) always-loaded core memory, whose budget renders the page whole, and this upload is over ${PAGE_MAX_BYTES} bytes. Nothing was written.`,
       'Write a core page within the single-string ceiling, or drop always_load from its frontmatter.');

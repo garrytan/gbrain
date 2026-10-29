@@ -14,10 +14,10 @@ afterEach(() => __setDnsLookupForTests(undefined));
 const probe = { headerOnly: true };
 
 test('unsupported runtime refuses guarded operations with upgrade guidance', () => {
-  for (const version of ['', '1.3.10', '1.2.99', '1.3.11', '1.3.14', '1.4.0-canary']) {
+  for (const version of ['', '1.3.10', '1.2.99', '1.3.11', '1.3.14', '1.4.0-canary', '1.4.0', '1.4.2', '1.4.3']) {
     expect(() => assertSupportedBun(version)).toThrow('run `bun upgrade`');
   }
-  for (const version of ['1.4.0', '1.4.2', '2.0.0']) {
+  for (const version of ['1.4.4', '1.4.5', '2.0.0']) {
     expect(() => assertSupportedBun(version)).not.toThrow();
   }
 });

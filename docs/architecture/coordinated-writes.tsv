@@ -15,7 +15,7 @@ src/core/mentions/pass.ts	aliasWrite	1	projection	Mention-pass alias and mention
 src/core/ops/chronicle.ts	handler	1	facts_lane	ontology_propose observations are database-only until G4 (GBRA-190) gives ontology observations a page home.
 src/core/page-body/ingest.ts	segmentWriteScope	1	projection	Segment texts, manifest rows and sweeps are the stored form of a page body the door already published; they are rebuilt from that body.
 src/core/page-state/materialize.ts	materializePageSnapshot	1	facts_lane	Materializes the withdrawal overlay into the stored body; G4 (GBRA-190) turns forget into fence edits and retires the withdrawal mirror.
-src/core/persistence/connector-path.ts	clearConnectorLocalPath	1	operational	Clears a connector source's stale local_path pointer on the sources row; source configuration, not memory content.
+src/core/persistence/connector-path.ts	clearConnectorLocalPath	1	operational	Clears a connector source's stale local_path pointer, or any source's relative one, on the sources row; source configuration, not memory content.
 src/core/persistence/connector-sync.ts	stampFreshness	1	operational	Stamps last_sync_at/newest_content_at freshness on the sources row for a skipped checkpoint save; sync bookkeeping, not memory content.
 src/core/persistence/coordinator.ts	publishMutation	2	door	The page-mutation door itself: the prepared publication and its after-effects commit here after the file is in place.
 src/core/persistence/group-publish.ts	publishGroup	1	door	Group publication of door requests: the same prepared publications as publishMutation, committed as one group.
@@ -40,5 +40,5 @@ src/core/timeline-extract.ts	retractCoordinated	1	projection	Retracts timeline r
 src/core/trust/backfill.ts	relowerClaimedRows	2	metadata	Lowers trust tiers a claim lifted and propagates the lowering; trust tier is metadata beside the row, never content of record.
 src/core/trust/backfill.ts	runTrustBackfill	1	metadata	Backfills trust tiers computed from page rules; trust tier is metadata beside the row, never content of record.
 src/core/trust/held-removals.ts	acceptHeldRemoval	1	projection	An accepted held removal re-derives the take from its fence row or the timeline row from the page body; the rows follow the text.
-src/core/trust/owner-actions.ts	publishReleasedFact	1	facts_lane	A released held fact is inserted database-only today; it moves to the entity's fence through the door on GBRA-190's shared fence-row writer (G5 lane C, stacked after G4).
+src/core/trust/owner-actions.ts	publishReleasedFact	1	facts_lane	A released held fact with no entity slug, or whose entity page is missing, is inserted database-only (G4, GBRA-190, owns that class); every other managed fact release publishes its fence row through the door as a journaled trust_release request (trust/release-publish.ts).
 src/core/trust/page-handlers.ts	setRowTier	1	metadata	An owner trust decision sets trust_tier and its owner_decision note on a fact, take or page row; trust tier is metadata, page content changes go through trust_owner_page.

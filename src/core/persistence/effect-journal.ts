@@ -47,8 +47,8 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
     if (!opts.pushOnly && outcome.persistence && typeof outcome.persistence === 'object') Object.assign(outcome.persistence, { git_state: 'queued' });
   }
   if (snapshot && !snapshot.page.deleted_at) {
-    if (!prepared?.deferEmbedding) queue('embedding');
-    outcome.embedding_state = await embeddingDisabled(tx) ? 'disabled' : prepared?.deferEmbedding ? 'deferred' : 'queued';
+    if (!prepared?.deferEmbedding && !prepared?.embeddingCurrent) queue('embedding');
+    outcome.embedding_state = await embeddingDisabled(tx) ? 'disabled' : prepared?.deferEmbedding ? 'deferred' : prepared?.embeddingCurrent ? 'current' : 'queued';
     if ((outcome.facts_backstop as { queued?: boolean } | undefined)?.queued) {
       if (!(await isFactsExtractionEnabled(tx))) outcome.facts_backstop = { skipped: 'extraction_disabled' };
       else queue('facts-backstop', { visibility: await resolveDefaultVisibility(tx) });

@@ -51,21 +51,13 @@ import { applyRedaction, planRedaction, type EchoDictionary, type RedactionPlan 
 import { loadPatterns } from '../skillpack/harvest-lint.ts';
 import { sanitizeForJsonb } from '../batch-rows.ts';
 import { ensureWellFormed } from '../text-safe.ts';
-import { BUILTIN_PATTERNS } from '../conversation-parser/builtins.ts';
+import { neutralizeOutsideText } from '../outside-content.ts';
 import type { ParsedSession, TranscriptMessage } from './types.ts';
 import { buildTranscriptSlug, transcriptFullId, utcTimestamp } from './types.ts';
 
-// ── Shared line format (imessage-slack builtin) ─────────────────────────────
+// ── Shared line format (imessage-slack builtin; escaping lives in outside-content.ts) ──
 
-const IMESSAGE_SLACK = BUILTIN_PATTERNS.find((p) => p.id === 'imessage-slack');
-if (!IMESSAGE_SLACK) {
-  throw new Error('conversation-parser builtin imessage-slack is missing — render format broken');
-}
-/** The one anchor regex — imported from the parser, never re-declared. */
-export const MESSAGE_ANCHOR_RE: RegExp = IMESSAGE_SLACK.regex;
-
-/** Date-heading shapes some builtins treat as day boundaries — escaped too. */
-const DATE_HEADING_RE = /^#{1,6}\s*\d{4}-\d{2}-\d{2}\b/;
+export { escapeAnchorLines, MESSAGE_ANCHOR_RE } from '../outside-content.ts';
 
 /**
  * The part size sessions were split at before Wave B (#5427 set it under the
@@ -254,35 +246,6 @@ function anchorTimestamp(iso: string): string {
   return `${day} ${h}:${mm} ${ampm}`;
 }
 
-/**
- * Escape any BODY line that would parse as a message anchor or a date
- * heading: a leading backslash breaks both `^\*\*` and `^#` while staying
- * readable in raw markdown. Without this, a pasted anchor-shaped line inside
- * a message forges speakers/timestamps on round-trip (P0).
- */
-export function escapeAnchorLines(text: string): string {
-  return text
-    .split('\n')
-    .map((line) => (MESSAGE_ANCHOR_RE.test(line) || DATE_HEADING_RE.test(line) ? `\\${line}` : line))
-    .join('\n');
-}
-
-/**
- * Neutralize QUOTED facts/takes fence markers in a message body:
- * `gbrain:facts:begin` → `gbrain\:facts:begin`. A session that read another
- * page (context pack, get_page) quotes that page's `<!--- gbrain:facts:begin -->`
- * verbatim, often the begin marker without the end (a partial quote) — a
- * live, unbalanced fence on a transcript page that
- * has no fence (FACTS_FENCE_UNBALANCED on every dream cycle), or a quoted
- * fence indexed as the transcript's own facts. Every fence consumer is an
- * exact-substring matcher on the marker token, so the backslash lands INSIDE
- * the token (a leading space would not break them); the text stays readable
- * and greppable, matching the backslash idiom of escapeAnchorLines (#4821).
- */
-export function escapeFenceMarkers(text: string): string {
-  return text.replace(/gbrain:(facts|takes):(begin|end)/g, 'gbrain\\:$1:$2');
-}
-
 export interface RenderedPart {
   slug: string;
   /** Full page content: YAML frontmatter + body. */
@@ -310,7 +273,7 @@ export interface RenderSessionResult {
  * Speaker label for the anchor line. Anchor-forming characters are stripped
  * (never escaped — the label sits INSIDE the anchor, so a speaker containing
  * `**` or `(date):` shapes could otherwise forge message boundaries on
- * round-trip; hostile BODY lines are handled by escapeAnchorLines).
+ * round-trip; hostile BODY lines are handled by neutralizeOutsideText).
  */
 function speakerLabel(m: TranscriptMessage): string {
   const raw = m.speaker?.trim();
@@ -327,7 +290,7 @@ const utf8Bytes = (cp: number): number => (cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp <
  * at line breaks when a line fits, and inside an over-long line only at a
  * code-point boundary. A cut piece of a line is always a fragment's FIRST
  * line, which sits on the generated anchor line, so every body line is a
- * whole line that escapeAnchorLines already saw.
+ * whole line that neutralizeOutsideText already saw.
  */
 function messageBlocks(anchor: string, text: string, maxBytes: number): string[] {
   const whole = `${anchor}${text}`;
@@ -415,7 +378,7 @@ export function renderSessionParts(
   const blocks: Array<{ text: string; bytes: number; continued: boolean; message: number }> = messages.flatMap((m, message) => {
     const ts = m.timestamp || lastTs;
     lastTs = ts;
-    const text = escapeFenceMarkers(escapeAnchorLines(m.text));
+    const text = neutralizeOutsideText(m.text);
     const fragments = messageBlocks(`**${speakerLabel(m)}** (${anchorTimestamp(ts)}): `, text, partTargetBytes - 2);
     return fragments.map((f) => ({ text: f, bytes: Buffer.byteLength(f, 'utf8') + 2, continued: fragments.length > 1, message }));
   });

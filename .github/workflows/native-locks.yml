@@ -9,8 +9,8 @@ on:
       # smoke: the Linux x64 glibc cell on the primary Bun version (other PRs).
       # scripts/ci-native-scope.sh classifies pull requests.
       # Named exception (docs/TESTING.md#event-parity): every `inputs.scope`
-      # condition below (the openclaw/musl/Windows `if`s and the Bun 1.4.0 and
-      # cross-target excludes) narrows pull requests and merge-queue runs only;
+      # condition below (the openclaw/musl/Windows `if`s and the cross-target
+      # excludes) narrows pull requests and merge-queue runs only;
       # every push to master and the nightly Test schedule run scope=full.
       scope:
         type: string
@@ -70,12 +70,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bun: ['1.4.0', '1.4.4']
+        bun: ['1.4.4']
         target: [linux-x64-glibc, linux-arm64-glibc, darwin-arm64, darwin-x64, win32-x64, win32-arm64]
         # Pull requests: primary Bun on every target (native paths changed) or
         # the Linux x64 glibc smoke cell. Runners map from the target above.
         # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity).
-        exclude: ${{ fromJSON(inputs.scope == 'full' && '[]' || inputs.scope == 'primary' && '[{"bun":"1.4.0"}]' || '[{"bun":"1.4.0"},{"target":"linux-arm64-glibc"},{"target":"darwin-arm64"},{"target":"darwin-x64"},{"target":"win32-x64"},{"target":"win32-arm64"}]') }}
+        exclude: ${{ fromJSON(inputs.scope == 'smoke' && '[{"target":"linux-arm64-glibc"},{"target":"darwin-arm64"},{"target":"darwin-x64"},{"target":"win32-x64"},{"target":"win32-arm64"}]' || '[]') }}
     steps:
       # The data-safety step stops its suites before this job's timeout: a timeout cancel keeps no log.
       - name: Record the job deadline
@@ -249,9 +249,7 @@ jobs:
       fail-fast: false
       matrix:
         runner: [windows-2022, windows-11-arm]
-        bun: ['1.4.0', '1.4.4']
-        # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity).
-        exclude: ${{ fromJSON(inputs.scope == 'full' && '[]' || '[{"bun":"1.4.0"}]') }}
+        bun: ['1.4.4']
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         timeout-minutes: 2
@@ -285,9 +283,7 @@ jobs:
       fail-fast: false
       matrix:
         runner: [windows-2022, windows-11-arm]
-        bun: ['1.4.0', '1.4.4']
-        # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity).
-        exclude: ${{ fromJSON(inputs.scope == 'full' && '[]' || '[{"bun":"1.4.0"}]') }}
+        bun: ['1.4.4']
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         timeout-minutes: 2
@@ -320,10 +316,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bun: ['1.4.0', '1.4.4']
+        bun: ['1.4.4']
         target: [linux-x64-musl, linux-arm64-musl]
-        # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity).
-        exclude: ${{ fromJSON(inputs.scope == 'full' && '[]' || '[{"bun":"1.4.0"}]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6

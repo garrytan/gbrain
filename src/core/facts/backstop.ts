@@ -754,7 +754,7 @@ async function runPipelineBodyInner(
   const derivation = await factsDerivation(ctx, input);
   const managed = await prepareManagedFactsSession(ctx, input, derivation);
   if (managed) {
-    managed.reportRefusals = true;
+    managed.reportRefusals = true; managed.entityMoveRetry = !ctx.requestId;
     const replay = await resumeManagedFacts(ctx.engine, managed);
     if (replay) return replay;
     const embedding = await resolveManagedFactsEmbedding(ctx.engine, managed.config);

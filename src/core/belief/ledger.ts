@@ -537,5 +537,6 @@ export function publicationBeliefOptions(row: { id: string; source_id: string; s
     publicationId: row.id, op: row.operation, remote: row.authority.remote !== false,
     ...(row.authority.remote === false && (allowlistDropped || OWNER_EDIT_OPERATIONS.has(row.operation) && row.intent?.kind == null) ? { ownerEdit: true } : {}),
     ...(row.operation === 'revert_version' ? { pageEventType: 'page.reverted' as const } : {}),
+    ...(row.operation === 'trust_release' ? { cause: { hold: `wh${row.intent?.hold_id}` } } : {}),
     ...(row.operation === 'delete_page' && row.intent?.retention === true ? { hardDeleteEvent: 'page.expired' as const } : {}), ...(report ? { report } : {}) };
 }

@@ -38,6 +38,7 @@ import { assertRecoveryStagingAbsent, cleanupRecoveryStaging, recoveryStagingFil
 import { assertManagedFilesystemWrite } from './filesystem-guard.ts';
 import { beforeStagePath, fileContentBytes, fileContentHash, hashDescriptor, hashFile, isStreamedContent, LARGE_FILE_MIN_BYTES, stageBeforeCopy, stageStreamedContent, type StreamedFileContent } from './large-file.ts';
 import { declarePublication, publicationTransaction } from './publication-deadline.ts';
+import { PAGE_CHANGED_DURING_PREPARATION_MESSAGE } from './verb-errors.ts';
 import { assertMutationProtocol, assertSharedSkillPersistence, declareDurablePersistence, isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, publishStagedBundleFile, stageBundleFile, type MutationFile } from './bundle-files.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
@@ -66,6 +67,8 @@ interface PreparedMutationBase {
   /** #5470 screening only: the content is unchanged, but publication still runs (and queues effects). */
   contentUnchanged?: boolean;
   deferEmbedding?: boolean;
+  /** #7866: a content no-op whose chunks all hold a vector for their text: publication queues no embedding effect (`embedding_state: current`). */
+  embeddingCurrent?: boolean;
   /** Why a page write bound to a worktree publishes no file (receipt `write_through.skipped`). */
   databaseOnlyReason?: 'db_only' | 'unbound_source' | 'mirror_read_only' | 'sync_excluded' | 'shared_origin' | 'origin_twin' | 'detached';
   /** #6517: the receipt's `write_through.warning` for a database-only publication, set by `validate` under the publication guards. */
@@ -536,7 +539,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         // uncoordinated edit.
         const current = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
         if ((current?.revision ?? null) !== prepared.observedRevision) {
-          throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
+          throw new OperationError('revision_conflict', PAGE_CHANGED_DURING_PREPARATION_MESSAGE, 'Read its current revision and submit the updated intent with a new request_id.');
         }
         throw localEditRefusal('The canonical file changed after preparation.', row, skill, 'after the write was prepared, at an unchanged page revision');
       }
@@ -575,7 +578,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         await authorizePageVisibility(tx, row.authority, row.slug);
         if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted page was deleted or recreated.');
         await assertUnboundPublication(tx, row, snapshot?.page.source_path);
-        if ((snapshot?.revision ?? null) !== prepared.observedRevision) throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
+        if ((snapshot?.revision ?? null) !== prepared.observedRevision) throw new OperationError('revision_conflict', PAGE_CHANGED_DURING_PREPARATION_MESSAGE, 'Read its current revision and submit the updated intent with a new request_id.');
       }
       await prepared.validate?.(tx);
       // #5409: a file target prepared before the source became a read-only mirror is never published.
@@ -624,7 +627,8 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       decoratePublicationOutcome(row, prepared, outcome, final, files.length, skill);
       await recordPublicationFenceTrend(tx, row, outcome);
       // G2: a strict source's file is committed before its row; its Git effect only pushes.
-      if (door?.door) Object.assign(outcome.persistence as object, { git_state: 'committed', git_commit: await commitThroughDoor(door.door.root, [{ path: door.path, note: prepared.file?.commit }], lock ?? undefined) });
+      if (door?.door) Object.assign(outcome.persistence as object, { git_state: 'committed', git_commit: await commitThroughDoor(door.door.root, [{ path: door.path, planned: door.afterHash, note: prepared.file?.commit }], lock ?? undefined,
+        paths => Object.assign(outcome.persistence as object, { git_index_restored: paths })) });
       await timePublicationStep('effects', row.slug, () => queuePublicationEffects(tx, row, final, outcome, prepared, { pushOnly: !!door?.door }));
       if (prepared.afterEffects) await withCoordinatedWrite(tx, [row.source_id], () => prepared.afterEffects!(tx, outcome), publicationAttribution(row, prepared.trust));
       await hooks.boundary?.('before_commit', row);

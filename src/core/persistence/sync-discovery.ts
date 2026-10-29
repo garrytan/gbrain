@@ -19,7 +19,9 @@ import { resolveSlugRootMode } from '../sync-anchor.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { unboundBindCommand } from './unbound-source.ts';
-import { localHostId } from './identity.ts';
+import { currentVerifiedLocalWriter, localHostId } from './identity.ts';
+import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
+import { trustedCliRequired } from '../ops/op-fix.ts';
 import { ownerUnavailableReason } from './owner-refusal.ts';
 import { sha256 } from './digest.ts';
 import { isWindowsColonTarget } from './native-file-target.ts';
@@ -231,7 +233,11 @@ export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncO
     `Sync without pulling to import the checkout as it is (CLI: gbrain sync --no-pull --source ${sourceId}; MCP: sync_brain with no_pull: true), or fast-forward and sync the checkout with gbrain sources refresh ${sourceId}.`);
   const forbidden = managedForbiddenFlag(opts);
   if (forbidden) throw managedSyncFlagRefusal(forbidden, sourceId, ['--source', sourceId, '--no-pull']);
-  const [source, binding] = await (rows ?? readManagedSyncRows(engine, sourceId));
+  const [read, binding] = await (rows ?? readManagedSyncRows(engine, sourceId));
+  if (opts.canonicalOverride === 'git' && (currentSubmissionAuthority()?.kind === 'remote_generic' || currentVerifiedLocalWriter()?.remote)) {
+    throw trustedCliRequired('The strict-equivalent pass of a git-canonical conversion runs only from the trusted local CLI.');
+  }
+  const source = read && opts.canonicalOverride === 'git' ? { ...read, config: { ...read.config, canonical: 'git' } } : read;
   if (source?.config?.canonical === 'git' && managedForbiddenFlag(opts, true)) throw managedSyncFlagRefusal('--working-tree', sourceId, ['--source', sourceId, '--no-pull', '--working-tree']);
   if (!source || source.archived || !binding || binding.source_incarnation !== source.incarnation ||
       binding.owner_host_id !== localHostId() || binding.state !== 'active' || !binding.local_path) {

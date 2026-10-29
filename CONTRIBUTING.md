@@ -12,7 +12,7 @@ bun install --frozen-lockfile && bun run test && bun run verify
 battery. [`docs/TESTING.md`](docs/TESTING.md#quick-start) covers E2E, failure
 logs and the lanes.
 
-Requires Bun 1.4.0 or newer, matching `package.json`.
+Requires Bun 1.4.4 or newer, matching `package.json`.
 
 ### Windows
 
@@ -299,7 +299,7 @@ See [E2E selection](docs/TESTING.md#e2e-selection).
 ### Memory-trust smoke (trust tiers, write gate, purge)
 
 Touching trust tiers, the write gate, owner confirmation or `forget --purge`?
-Run `bun run trust:smoke` first (Bun >= 1.4.0, zero keys, in-memory PGLite,
+Run `bun run trust:smoke` first (Bun >= 1.4.4, zero keys, in-memory PGLite,
 about ten seconds). It drives the four seams through real write paths: the tier
 stamp, the gate verdict, the owner confirm (and an agent's refusal) and purge
 with no residual or resurrection, and prints one line per check. The script

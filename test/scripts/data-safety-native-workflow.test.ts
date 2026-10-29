@@ -80,7 +80,7 @@ describe('data-safety native CI coverage', () => {
     expect(job['runs-on']).toBe('${{ matrix.runner }}');
     expect(job.strategy['fail-fast']).toBe(false);
     expect(job.strategy.matrix.runner).toEqual(['windows-2022', 'windows-11-arm']);
-    expect(job.strategy.matrix.bun).toEqual(['1.4.0', '1.4.4']);
+    expect(job.strategy.matrix.bun).toEqual(['1.4.4']);
     expect(job.steps.some(entry => entry.run === 'bun scripts/native/verify.ts')).toBe(true);
     const step = job.steps.find(entry => entry.name === 'Compare native hidden-window launch behavior');
     expect(step).toBeDefined();
@@ -109,12 +109,12 @@ describe('data-safety native CI coverage', () => {
     } finally { rmSync(temporary, { recursive: true, force: true }); }
   });
 
-  test('the direct dotnet program comparison has its own four-cell opt-in Windows job', () => {
+  test('the direct dotnet program comparison has its own two-cell opt-in Windows job', () => {
     const job = workflow.jobs['windows-backup-dotnet'];
     expect(job['runs-on']).toBe('${{ matrix.runner }}');
     expect(job.strategy['fail-fast']).toBe(false);
     expect(job.strategy.matrix.runner).toEqual(['windows-2022', 'windows-11-arm']);
-    expect(job.strategy.matrix.bun).toEqual(['1.4.0', '1.4.4']);
+    expect(job.strategy.matrix.bun).toEqual(['1.4.4']);
     expect(job.steps.some(entry => entry.run === 'bun scripts/native/verify.ts')).toBe(true);
     const step = job.steps.find(entry => entry.name === 'Compare cmdlet and direct dotnet ACL programs');
     expect(step).toBeDefined();

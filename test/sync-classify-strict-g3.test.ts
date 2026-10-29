@@ -41,6 +41,12 @@ describe('G3: Git wins on a strict source', () => {
     expect(strict(settledKeep)).toMatchObject({ cls: 'import', action: 'import', gitWins: 'db_ahead' });
   });
 
+  test('a page no import record proves imports the commit (G8a: the unknown side of a held drift after conversion clears it)', () => {
+    const legacy = { ...base, baseline: 'B', record: null, page: { live: true, revision: 'R2', originMatches: true } };
+    expect(classifySyncPath(legacy)).toMatchObject({ cls: 'legacy_unverified', settled: true });
+    expect(strict(legacy)).toMatchObject({ cls: 'import', action: 'import', settled: false, gitWins: 'legacy_unverified' });
+  });
+
   test('an edited tombstone imports the committed file', () => {
     const tombstone = { ...gitMoved, page: { live: false, revision: 'R1', originMatches: true } };
     expect(classifySyncPath(tombstone)).toMatchObject({ cls: 'deleted_edited', action: 'hold' });

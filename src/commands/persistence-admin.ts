@@ -17,7 +17,7 @@ import { bigintToStringReplacer } from '../core/utils.ts';
 export const WRITER_HELP = `Usage:
   gbrain sources writer status [<source>] [--probe] [--json]
   gbrain sources writer failures <source> [--state all] [--group-by category] [--since 7d] [--limit 20] [--before <cursor>]
-    [--category <c>] [--code <c>] [--origin <o>|none] [--json]
+    [--category <c>] [--code <c>] [--origin <o>|none] [--operation <op>] [--json]
   gbrain sources writer movement [<source>] [--wait <dur>] [--warn-only] [--json]
   gbrain sources writer retry-effects <source> --request-id <uuid> [--admin-intent writer_retry_effects --expected-state <admin_state>] [--dry-run] [--json]
   gbrain sources writer retry-effects <source> --parked-pushes [--dry-run] [--json]
@@ -36,7 +36,8 @@ failures (read-only) lists the source's write receipts that ended without commit
 (failed, conflict, cancelled) plus any still holding a recovery record, newest first, each
 with its class, safe actions, whether a person decides, its disposition (superseded,
 already_written, duplicate or unknown), an inspect command and its fix. --group-by category
-groups them on code, origin and category, each group with its exact drill-down filter.
+groups them on code, origin and category (a sync_fault group also on its operation), each
+group with its exact drill-down filter; --operation <op> keeps one write operation.
 A full page prints truncated with the next command (--before <cursor>). Unresolved rows by
 default; --state all adds resolved and historical ones. Human table by default, JSON with --json.
 Inspect status first. movement proves that managed sync data moves over a window
@@ -162,7 +163,7 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     '--source-ids': 'source_ids', '--scopes': 'scopes', '--allowed-operations': 'allowed_operations',
     '--slug-prefixes': 'slug_prefixes', '--limit': 'limit', '--before': 'before',
     '--admin-intent': 'admin_intent', '--expected-state': 'expected_state', '--request-id': 'request_id', '--pat-file': 'pat_file', '--parked-code': 'parked_code',
-    '--state': 'state', '--group-by': 'group_by', '--since': 'since', '--code': 'code', '--origin': 'origin', '--category': 'category',
+    '--state': 'state', '--group-by': 'group_by', '--since': 'since', '--code': 'code', '--origin': 'origin', '--category': 'category', '--operation': 'operation',
   };
   const arrays = new Set(['source_ids', 'scopes', 'allowed_operations', 'slug_prefixes']);
   const seen = new Set<string>();

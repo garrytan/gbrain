@@ -438,6 +438,7 @@ function parseArgs(args: string[]): ParsedArgs {
       const name = eq >= 0 ? a.slice(0, eq) : a;
       const flag = byName.get(name);
       if (!flag) throw new Error(`unknown flag ${name} for 'gbrain eval longmemeval' (see --help)`);
+      if (flag.arg === undefined && eq >= 0) throw new Error(`${name} is a switch and takes no value (write ${name} on its own)`);
       let value = '';
       if (flag.arg !== undefined) {
         value = eq >= 0 ? a.slice(eq + 1) : (args[++i] ?? '');

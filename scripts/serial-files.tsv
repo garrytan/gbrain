@@ -446,3 +446,4 @@ test/decide/triage-decide-recheck-7307.serial.test.ts	global-state	global-state:
 test/sync-pass-phase-lines-7243.serial.test.ts	global-state	global-state: process-wide test seams __resetDelegatedSyncForTests (runs a resident pass through runnerStart)
 test/embed-once-per-content-version.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests (the forced probes hold the first provider call at the transport) and pageEmbeddingLeaseProbe (the module-wide lease contention hook); withEnv scopes GBRAIN_HOME
 test/page-embedding-lease.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests (each case swaps the embed transport, one to a refusing provider) and pageEmbeddingLeaseProbe (the module-wide lease contention hook); withEnv scopes GBRAIN_HOME
+test/migrate-search-path-best-effort.serial.test.ts	R2	R2: mock.module(v277 migration module) replaces modules for every file in the process

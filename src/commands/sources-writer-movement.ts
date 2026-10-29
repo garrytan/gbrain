@@ -76,6 +76,7 @@ export function parseMovementArgs(args: string[]): MovementArgs {
     const flag = token.startsWith('-') && equal > 0 ? token.slice(0, equal) : token;
     const value = () => { const v = equal > 0 && token.startsWith('-') ? token.slice(equal + 1) : args[++i]; if (v === undefined || v.startsWith('--')) throw usage(`${flag} requires a value.`, `Give ${flag} its value right after it, as ${flag} <value>.`); return v; };
     if (!token.startsWith('-')) { if (out.sourceId !== undefined) throw usage('Specify the source once.', `Name the source either as the argument or with --source, not both (here ${out.sourceId} and ${token}).`); out.sourceId = token; }
+    else if ((flag === '--json' || flag === '--warn-only') && flag !== token && token !== '--json=true') throw usage(`${flag} is a switch and takes no value.`, `Write ${flag} on its own.`);
     else if (flag === '--json') out.json = true;
     else if (flag === '--warn-only') out.warnOnly = true;
     else if (flag === '--source') { if (out.sourceId !== undefined) throw usage('Specify the source once.', 'Name the source either as the argument or with --source, not both.'); out.sourceId = value(); }

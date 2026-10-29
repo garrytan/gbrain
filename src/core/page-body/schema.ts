@@ -355,16 +355,19 @@ CREATE TRIGGER page_segment_derivations_refuse_purging BEFORE INSERT OR UPDATE O
 /**
  * The segment tables hold page text (`page_segment_texts`, `page_body_staging_parts`) or a page's shape and
  * headings (`page_body_manifest`, `page_body_stagings`, `page_view_digests`) or derived link context
- * (`page_segment_derivations`, and the purged claims `page_segment_derivation_purges` holds), so they get the posture of `pages`
+ * (`page_segment_derivations`, and the purged claims `page_segment_derivation_purges` holds) or a page's derivation
+ * spend (`page_derivation_spend`), so they get the posture of `pages`
  * and `content_chunks`: RLS on, re-asserted on every schema replay like the core list in src/schema.sql, so a brain
  * the auto-RLS event trigger (v35) missed, or one where it was dropped or disabled, never serves segment text to a
  * role `pages` returns no rows to. Only under a role that bypasses RLS (else the runtime role would lock itself out),
  * and only for a table still without it (ENABLE takes an ACCESS EXCLUSIVE lock even when RLS is on, #5227).
  * `page_view_digests` is absent while migration v248 runs. Postgres only: PGLite has no role system, and its
  * bootstrap enables RLS on no core table either. Source-scoped policies are operator SQL (docs/ENGINES.md).
+ * Only a full initSchema replays this block: a migration that creates one of these tables enables RLS itself
+ * (v275 backfills the v273 tables), since `gbrain apply-migrations --yes` runs migrations without the blob.
  */
 export const PAGE_BODY_RLS_TABLES = ['page_segment_texts', 'page_body_manifest', 'page_body_stagings', 'page_body_staging_parts', 'page_view_digests', 'page_body_staging_texts', 'page_segment_derivations',
-  'page_segment_derivation_purges', 'page_segment_derivation_purge_pages'] as const;
+  'page_derivation_spend', 'page_segment_derivation_purges', 'page_segment_derivation_purge_pages'] as const;
 export const PAGE_BODY_RLS_SQL = `DO $rls$
 DECLARE target TEXT;
 BEGIN

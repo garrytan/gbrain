@@ -44,6 +44,27 @@ export const AUDIT_ROW_SOURCES = [
   LEGACY_TERMINAL_AUDIT_SOURCE,
 ] as const;
 
+/** The fixed claim text of each outcome row (`terminalAuditFact`, `nonExtractableAuditFact`). */
+export const OUTCOME_MARKER_FACTS = ['EXTRACTION_COMPLETE', 'EXTRACTION_NOT_APPLICABLE'] as const;
+
+/**
+ * #7778: true for an extraction outcome row, the bookkeeping marker every
+ * conversation page carries with the same text. It is not a user claim, so no
+ * purge tombstone applies to it and no purge or forget writes one: a
+ * subject-'*' tombstone on its fingerprint would keep every page of the
+ * source from ever completing. Both the source and the exact marker text must
+ * match, so a user claim keeps every purge guarantee whatever its source.
+ */
+export function isOutcomeMarker(row: { source?: string | null; fact: string }): boolean {
+  return (AUDIT_ROW_SOURCES as readonly string[]).includes(row.source ?? '') && (OUTCOME_MARKER_FACTS as readonly string[]).includes(row.fact);
+}
+
+/** SQL twin of `isOutcomeMarker` over a facts row alias (constants only, no parameters). */
+export function outcomeMarkerSql(alias: string): string {
+  const list = (values: readonly string[]) => values.map(v => `'${v}'`).join(',');
+  return `(${alias}.source IN (${list(AUDIT_ROW_SOURCES)}) AND ${alias}.fact IN (${list(OUTCOME_MARKER_FACTS)}))`;
+}
+
 /**
  * Decision 8 (wave 9 follow-ups): the conversation parser + extractor
  * semantic version. Bump it when a parser or extractor change alters what an

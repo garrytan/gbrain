@@ -25,6 +25,7 @@ import { flushDecideWrites } from '../src/core/ai/decide/store.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import * as staleEmbedding from '../src/core/embed-stale.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { freezeCorpusSessions } from './helpers/frozen-corpus.ts';
 import { childCommittedOrdinaryCycle, interruptAfterChild, laterQuote, managedSynthesisFixture, outputSlug, type SynthesisFixture } from './helpers/managed-synthesis-fixture.ts';
 
 const backends = testBackends();
@@ -544,6 +545,7 @@ test('#5854: a postprocess publish still pending after its wait is deferred, the
     const corpus = join(root, '..', 'corpus');
     mkdirSync(corpus);
     writeFileSync(join(corpus, basename(opts.inputFile)), readFileSync(opts.inputFile));
+    freezeCorpusSessions(corpus, sourceId);
     await engine.setConfig('dream.synthesize.session_corpus_dir', corpus);
     const ordinary = { brainDir: root, sourceId, dryRun: false };
     await interruptAfterChild(engine, sourceId, ordinary);

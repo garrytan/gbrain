@@ -28,7 +28,7 @@ in CI.
 ## Rerun
 
 Needs Docker on Linux (toxiproxy runs with host networking and every
-listener binds 127.0.0.1) and Bun 1.4+. Make no provider calls: the
+listener binds 127.0.0.1) and Bun 1.4.4+. Make no provider calls: the
 effects row uses a loopback stub for `/v1/embeddings`.
 
 ```bash

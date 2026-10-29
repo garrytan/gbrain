@@ -298,12 +298,11 @@ async function resolveSyncRepo(engine: BrainEngine, opts: SyncOpts): Promise<{ d
       : `No repo path specified. Use --repo or run gbrain init with --repo first.`;
     throw new Error(hint);
   }
-  // #3696: resolve to ABSOLUTE at entry. A relative path (legacy relative
-  // sources.local_path row, or a caller-passed `--repo .`) breaks the moment
-  // any consumer runs from a different cwd (launchd daemon at cwd=/). Since
-  // writeSyncAnchor('repo_path', anchorPath) re-persists this value below,
-  // one successful sync from the right cwd self-heals a legacy relative row
-  // to absolute.
+  // #3696: resolve to ABSOLUTE at entry. A caller-passed relative path
+  // (`--repo .`) breaks the moment any consumer runs from a different cwd
+  // (launchd daemon at cwd=/). A relative STORED anchor never reaches here:
+  // performSync refuses it `sync_anchor_relative` (#7630), because from an
+  // unrelated cwd it would make that folder the brain repo.
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- rawRepoPath is the local operator's --repo CLI arg or the operator-written sync anchor (sync.repo_path / sources.local_path); the sync_brain op is localOnly:true so no remote caller reaches this path, and absolutizing it here IS the #3696 fix
   const repoPath = pathResolve(rawRepoPath);
 

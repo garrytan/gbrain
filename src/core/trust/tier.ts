@@ -149,6 +149,8 @@ export interface WriteOrigin {
   connector?: string;
   source_uri?: string;
   request_id?: string;
+  /** #7656: an index-existing trust release whose preview showed and bound the cell fields it raised (doctor trust_release_unpreviewed_fields). */
+  fields_previewed?: true;
   taint_inputs?: TaintInput[];
   taint_inputs_truncated?: true;
   taint_input_count?: number;

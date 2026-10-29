@@ -13,10 +13,12 @@
  * row stays `open`, so neither rule above saw it: a discovery-phase stop (path `<discovery>`) or an entry's stop read as
  * nothing blocked while the source indexed nothing. Such a stop is listed while it is newer than the pass row (no pass has
  * started since; a converged or idle pass clears it).
+ * #7596: an open pass whose process stopped without ending it (no live drain-lease holder: killed or crashed) is listed as
+ * `pass_interrupted` from its row's last write, and once passes in a row keep stopping that way, `pass_abandoned` (status's rule).
  */
 import type { BrainEngine } from '../engine.ts';
 import { readManagedSyncFailures } from './sync-failures.ts';
-import { passFingerprint } from './sync-pass-row.ts';
+import { ABANDONED_REPORT_STREAK, passFingerprint } from './sync-pass-row.ts';
 import { passFailureKeys } from './sync-cursor-key.ts';
 import type { ManagedSyncFailure } from './sync-failures.ts';
 
@@ -49,7 +51,22 @@ export async function readBlockedManagedSyncs(engine: BrainEngine, sourceIds?: s
     .filter(({ fingerprint, updated_at, failure }) => !passSources.has(failure.source_id) && failure.code !== 'sync_incomplete'
       && passFailureKeys(failure.source_id, failure.source_incarnation).includes(fingerprint) && new Date(updated_at).getTime() >= (passRowAt.get(failure.source_id) ?? 0))
     .map(({ failure }) => ({ source_id: failure.source_id, code: failure.code, run_id: failure.run_id, blocked_since: failure.first_seen }));
-  return [...failures
+  const listed = [...failures
     .filter(failure => failure.code !== 'sync_incomplete' && cursors.has(failure.cursor_key) && !passSources.has(failure.source_id))
     .map(failure => ({ source_id: failure.source_id, code: failure.code, run_id: failure.run_id, blocked_since: failure.first_seen })), ...passes, ...passStops];
+  // #7596: an open pass no recorded stop explains, whose drain lease no process renews: its process was killed or crashed.
+  const open = readings.filter(reading => reading.row.value.telemetry.outcome === 'open' && !listed.some(blocked => blocked.source_id === reading.source_id));
+  if (!open.length) return listed;
+  const [{ inspectLock, syncLockId }, { drainLeaseLive }, { abandonedPasses }] = await Promise.all([
+    import('../db-lock.ts'), import('./sync-lease.ts'), import('./sync-pass-status.ts')]);
+  const now = Date.now();
+  const locks = await Promise.all(open.map(({ source_id }) => inspectLock(engine, syncLockId(source_id)).catch(() => undefined)));
+  for (const [i, { source_id, row }] of open.entries()) {
+    const lock = locks[i];
+    if (lock === undefined) continue;
+    const interrupted = !lock || !drainLeaseLive(lock);
+    const abandoned = abandonedPasses(row, now, interrupted) >= ABANDONED_REPORT_STREAK;
+    if (interrupted || abandoned) listed.push({ source_id, code: abandoned ? 'pass_abandoned' : 'pass_interrupted', run_id: row.value.telemetry.pass_id, blocked_since: abandoned ? passStuckSince(row) : row.updated_at });
+  }
+  return listed;
 }
