@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { seedPage } from '../helpers/keyword-paging-fixture.ts';
-import { narrowOrFallbackTokens, orTokenSharesSql } from '../../src/core/search/keyword-or-narrow.ts';
+import { narrowOrFallbackTokens, narrowedOrFallbackQuery, orTokenSharesSql } from '../../src/core/search/keyword-or-narrow.ts';
 import { KEYWORD_RANK_CANDIDATES } from '../../src/core/search/keyword-chunk-match.ts';
 
 const run = process.env.DATABASE_URL ? describe : describe.skip;
@@ -44,6 +44,32 @@ run('keyword OR fallback narrowing on Postgres', () => {
     const tokens = rows.map(r => ({ token: r.token, lexemes: Number(r.lexemes), share: r.share === null ? null : Number(r.share) }));
     expect(narrowOrFallbackTokens(tokens, Number(rows[0].rows), 10)).toEqual(['zzqxv', 'nebulith']);
     expect(narrowOrFallbackTokens(tokens, Number(rows[0].rows))).toBeNull();
+  });
+
+  // #7899: real pg_stats + engine retry, not a timing assertion or SQL-source check.
+  // Existing cases have at most three content words, so cannot expose this gap.
+  test('long-tail retries have bounded width, keep a known match and disclose narrowing', async () => {
+    const unknown = Array.from({ length: 80 }, (_, i) => `zzlongtail${i}`);
+    const query = [...unknown, 'quasar'].join(' ');
+    const read = (sql: string, params: unknown[]) => engine.executeRaw<{
+      token: string; lexemes: number; share: number | null; rows: number; analyzed: boolean;
+    }>(sql, params);
+    const stats = await read(orTokenSharesSql('english'), [[...unknown, 'quasar']]);
+    expect(stats.slice(0, 80).every(t => t.share === null && Number(t.lexemes) === 1)).toBe(true);
+    expect(Number(stats[80].share)).toBeGreaterThan(0.9);
+    const narrowed = await narrowedOrFallbackQuery(read, query, 'english');
+    const expected = [...unknown.slice(0, 15), 'quasar'].join(' OR ');
+    expect(narrowed).toBe(expected);
+    expect(await engine.searchKeyword(query, { limit: 50 })).toEqual([]);
+    const incomplete: string[] = [];
+    const relaxed = await engine.searchKeyword(query, { limit: 50, orFallback: true, sourceId: 'default',
+      onKeywordIncomplete: reason => incomplete.push(reason) });
+    expect(relaxed).toHaveLength(40);
+    expect(relaxed.every(r => r.keyword_relaxed === true && r.source_id === 'default')).toBe(true);
+    expect(incomplete).toEqual(['candidate_budget']);
+    // Matching is narrowed, ranking still sees the entire original OR query.
+    const ranked = await engine.searchKeyword(expected, { limit: 50, sourceId: 'default', rankQuery: [...unknown, 'quasar'].join(' OR ') });
+    expect(relaxed.map(r => [r.slug, r.score])).toEqual(ranked.map(r => [r.slug, r.score]));
   });
 
   test('a page with hundreds of matching chunks does not crowd the only other match out of the pool', async () => {
