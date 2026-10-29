@@ -31,6 +31,7 @@ An identifier is a `#` number, a run of 6 or more digits, a code such as INV-202
 | `gbrain search '"dan-example" OR "erin-example"' --match keyword`, where the person pages hold the handles only in their slugs | the pages that mention the handles came back, never the pages they name: a hyphenated handle only matches text holding the literal handle | the pages whose slug ends in each handle (`people/dan-example`, `people/erin-example`) are listed and counted first |
 | The same query with `--types '["person"]'` | no results | the two person pages |
 | The same query in hybrid search | quoted terms skip the any-word retry, so the title arm found nothing either | the named pages lead the keyword arm, as rows that count like strict keyword rows |
+| A search that matches nothing while every retrieval stage ran | the CLI said "clean miss — no retrieval degradation" and MCP "this is a clean miss", which agents read as "the brain has no page for this" | "retrieval healthy", followed by the next things to try (the display name, a synonym, hybrid search) before concluding the brain has nothing; the query skill says the same |
 
 A handle is a hyphenated token with a letter in it, bare or quoted on its own (`acme-example-2` counts, `2026-10-24` does not), and resolves only to a page whose slug ends in exactly that handle. A negated handle (`-dan-example`) or one inside a longer quoted phrase is not resolved. The named pages pass the same filters as any keyword match: `--types`, the caller's sources, and for remote callers no private or quarantined page.
 
@@ -50,6 +51,7 @@ A handle is a hyphenated token with a letter in it, bare or quoted on its own (`
 - A query with a hyphenated token costs one more index lookup on page slugs: one more statement in hybrid search, and one more arm of the same statement with `--match keyword`. `keyword_total` and the `--match keyword` count include the named pages.
 - Pages that hold the identifier but not the other words can now rank above pages that match the question's meaning better. The page holding every word still comes first among keyword rows.
 - `_meta.retrieval.coverage.could_affect` can carry `pending_images`, and `could_affect.pending_projection` can drop for queries whose digits or short words used to match unrelated slugs.
+- A script that matched the text `clean miss` in an empty result should match `retrieval healthy` instead; `_meta.retrieval` is unchanged.
 - Nothing is rewritten on upgrade, no setting changed, and there is no schema migration.
 
 ## [0.60.427.0] - 2026-10-24
