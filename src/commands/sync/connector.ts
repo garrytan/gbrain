@@ -50,6 +50,11 @@ async function runConnectorKind(engine: BrainEngine, sourceId: string, config: R
       const { runMeetingsSync } = await import('../../core/meetings/meetings-source.ts');
       return runMeetingsSync(engine, sourceId, parseMeetingsSourceConfig(config, fallbackDir), options);
     }
+    case 'slack': {
+      const { parseSlackSourceConfig } = await import('../../core/slack/source-config.ts');
+      const { runSlackSync } = await import('../../core/slack/slack-source.ts');
+      return runSlackSync(engine, sourceId, parseSlackSourceConfig(config, fallbackDir), options);
+    }
     default: return assertNever(config.kind);
   }
 }

@@ -8,6 +8,8 @@ import { msysToNativePath } from '../core/path-confine.ts';
 import { isWriteRequestId } from '../core/persistence/types.ts';
 import { CONNECTOR_SOURCE_KINDS, isConnectorSourceKind } from '../core/persistence/connector-kinds.ts';
 import { isMeetingProviderName, MEETING_PROVIDERS } from '../core/meetings/types.ts';
+import { isValidTimeZone, normalizeSlackChannels, SLACK_CHANNEL_ID_RE } from '../core/slack/source-config.ts';
+import { SLACK_SKIPPABLE, type SlackSkippable } from '../core/slack/types.ts';
 import { defaultCloneDir, type AddSourceOpts } from '../core/sources-ops.ts';
 import { isValidRepoName } from '../core/github-source.ts';
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
@@ -44,7 +46,7 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
   const valued = new Set(['request-id', 'expected-incarnation', 'brain', 'path', 'url', 'name', 'clone-dir',
     'pat-file', 'kind', 'account', 'access', 'token-command', 'token-env', 'services', 'history-days',
     'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id', 'scope', 'repos', 'dir', 'app-id', 'app-pem', 'app-install',
-    'provider', 'transcript', 'lookback-days', 'sync-interval-min', 'record', 'visibility']);
+    'provider', 'transcript', 'lookback-days', 'sync-interval-min', 'record', 'visibility', 'channels', 'timezone', 'max-requests', 'skip']);
   for (let i = 0; i < rest.length; i++) {
     const token = rest[i];
     if (!token.startsWith('-')) { positionals.push(token); continue; }
@@ -113,8 +115,10 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
   const optionKinds: Record<string, readonly string[]> = {
     ...Object.fromEntries(['account', 'access', 'token-command', 'services', 'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id'].map(key => [key, ['google']])),
     ...Object.fromEntries(['scope', 'repos', 'app-id', 'app-pem', 'app-install'].map(key => [key, ['github']])),
-    ...Object.fromEntries(['provider', 'transcript', 'lookback-days', 'sync-interval-min', 'record', 'visibility'].map(key => [key, ['meetings']])),
-    'history-days': ['google', 'meetings'],
+    ...Object.fromEntries(['provider', 'transcript'].map(key => [key, ['meetings']])),
+    ...Object.fromEntries(['lookback-days', 'sync-interval-min', 'record', 'visibility'].map(key => [key, ['meetings', 'slack']])),
+    ...Object.fromEntries(['channels', 'timezone', 'max-requests', 'skip'].map(key => [key, ['slack']])),
+    'history-days': ['google', 'meetings', 'slack'],
     'token-env': CONNECTOR_SOURCE_KINDS,
     dir: CONNECTOR_SOURCE_KINDS,
   };
@@ -175,13 +179,8 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
       dir: absolute(values.get('dir') ?? defaultCloneDir(`${id}-google`)), access: access as 'vault' | 'command' | 'env',
       tokenCommand: values.get('token-command'), tokenEnv: values.get('token-env') };
   }
-  if (kind === 'meetings') {
-    const provider = values.get('provider') ?? 'fireflies';
-    if (!isMeetingProviderName(provider)) throw invalid(`--provider must be one of ${MEETING_PROVIDERS.join(', ')}.`,
-      `Pass --provider ${MEETING_PROVIDERS.join(' or --provider ')}; other meeting providers are not supported yet.`);
-    const transcript = values.get('transcript') ?? 'none';
-    if (transcript !== 'none' && transcript !== 'full') throw invalid('--transcript must be none or full.',
-      'Pass --transcript none (summary, action items and attendees; the default) or --transcript full (also the sentence transcript).');
+  /** The record mode, directory, visibility and schedule flags the API-backed kinds share. */
+  const recordFlags = (pages: string, alwaysPrivate: string) => {
     const record = values.get('record') ?? 'auto';
     if (record !== 'auto' && record !== 'git' && record !== 'database') throw invalid('--record must be git or database.',
       'Pass --record git (pages committed to the Git checkout at --dir) or --record database (the database is the record, no directory); leave it out to choose from --dir.');
@@ -189,11 +188,33 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
       'Remove --dir: a database-recorded source keeps no directory. To record pages in Git, pass --record git with --dir inside a Git checkout.');
     const visibility = values.get('visibility') ?? 'default';
     if (visibility !== 'default' && visibility !== 'private') throw invalid('--visibility must be private.',
-      'Pass --visibility private to write every meeting page private, or leave it out (meetings the key owner did not attend are private either way).');
+      `Pass --visibility private to write every ${pages} private, or leave it out (${alwaysPrivate} are private either way).`);
     const interval = number('sync-interval-min');
-    opts.meetings = { provider, transcript, record, historyDays: number('history-days'), lookbackDays: number('lookback-days'),
+    return { record: record as 'auto' | 'git' | 'database', historyDays: number('history-days'), lookbackDays: number('lookback-days'),
       ...(interval !== undefined ? { syncIntervalMin: interval } : {}), ...(values.has('token-env') ? { tokenEnv: values.get('token-env') } : {}),
       ...(values.has('dir') ? { dir: absolute(values.get('dir')!) } : {}), private: visibility === 'private' };
+  };
+  if (kind === 'meetings') {
+    const provider = values.get('provider') ?? 'fireflies';
+    if (!isMeetingProviderName(provider)) throw invalid(`--provider must be one of ${MEETING_PROVIDERS.join(', ')}.`,
+      `Pass --provider ${MEETING_PROVIDERS.join(' or --provider ')}; other meeting providers are not supported yet.`);
+    const transcript = values.get('transcript') ?? 'none';
+    if (transcript !== 'none' && transcript !== 'full') throw invalid('--transcript must be none or full.',
+      'Pass --transcript none (summary, action items and attendees; the default) or --transcript full (also the sentence transcript).');
+    opts.meetings = { provider, transcript, ...recordFlags('meeting page', 'meetings the key owner did not attend') };
+  }
+  if (kind === 'slack') {
+    const channels = normalizeSlackChannels(values.get('channels'));
+    if (!channels.length || channels.some(channel => !SLACK_CHANNEL_ID_RE.test(channel))) throw invalid('--channels needs one or more Slack channel ids.',
+      'Pass --channels as comma-separated channel ids (for example --channels C0123ABCDEF,C0456GHIJKL); a channel id is in the channel\'s details in Slack, below its name. Direct messages are not supported.');
+    const timezone = values.get('timezone') ?? 'UTC';
+    if (!isValidTimeZone(timezone)) throw invalid('--timezone must be an IANA time zone.', 'Pass --timezone as an IANA zone name such as UTC or America/Los_Angeles; a day page starts at midnight there.');
+    const skip = (values.get('skip') ?? '').split(',').map(value => value.trim()).filter(Boolean);
+    if (skip.some(value => !(SLACK_SKIPPABLE as readonly string[]).includes(value))) throw invalid(`--skip takes ${SLACK_SKIPPABLE.join(', ')}.`,
+      `Pass --skip as a comma-separated subset of ${SLACK_SKIPPABLE.join(',')} to leave bot messages or join notices out of the pages.`);
+    const maxRequests = number('max-requests');
+    opts.slack = { channels, ...recordFlags('Slack page', 'pages of private channels'), ...(values.has('timezone') ? { timezone } : {}),
+      ...(maxRequests !== undefined ? { maxRequests } : {}), ...(skip.length ? { skip: skip as SlackSkippable[] } : {}) };
   }
   return { operation: 'source_add', params: { options: opts, request_id: requestId, ...(dryRun ? { dry_run: true } : {}) },
     brain: values.get('brain'), legacyOnly: values.has('pat-file'), json: flags.has('json') };

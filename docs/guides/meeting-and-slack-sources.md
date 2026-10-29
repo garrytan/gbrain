@@ -3,8 +3,8 @@
 The `meetings` source kind imports meeting notes from a meeting-notes
 provider into brain pages, one page per meeting, on a schedule, with no
 custom script. Fireflies is the first provider; others plug in behind the
-same provider interface. A Slack channel source kind follows in a later
-release and will be documented here.
+same provider interface. The `slack` source kind imports chosen Slack
+channels, one page per channel per day; see [Slack channels](#slack-channels).
 
 The feature is opt-in and dormant until you register a meetings source and
 run its first sync yourself.
@@ -98,6 +98,121 @@ from the old version are retired (struck where they are fenced, and expired
 in the database). When a meeting inside the lookback window is deleted
 upstream, its page is deleted and its facts are retired the same way.
 
+## Slack channels
+
+The `slack` source kind reads the channels you name through your own internal
+Slack app and writes one page per channel per day at
+`slack/<channel-id>/<yyyy-mm-dd>.md`, typed `slack`. Like meetings, it is
+dormant until you add a source and run its first sync, and it works on a brain
+with no Git repository.
+
+### 1. Create an internal Slack app
+
+Use an app that belongs to your own workspace (Slack: Your apps, then Create
+New App, then From an app manifest). An internal app keeps Slack's Tier 3
+limits for history reads; an app distributed to other workspaces outside the
+Slack Marketplace gets far lower ones. The manifest needs only these bot
+scopes:
+
+```yaml
+display_information:
+  name: gbrain
+oauth_config:
+  scopes:
+    bot:
+      - channels:read
+      - channels:history
+      - groups:read
+      - groups:history
+      - users:read
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+```
+
+Install the app to the workspace, then invite it to every channel you want
+imported (`/invite @gbrain` in the channel). A hosted service that collects
+other people's Slack tokens through a web form needs a review of Slack's API
+terms first; this guide covers your own token on your own machine.
+
+### 2. Save the token
+
+Copy the Bot User OAuth Token (`xoxb-…`) from the app's OAuth & Permissions
+page and pipe it on stdin:
+
+```bash
+printf '%s' "$SLACK_TOKEN" | gbrain connectors auth slack --token -
+```
+
+It is checked with `auth.test` before it is saved to
+`~/.gbrain/connectors/slack.json` (0600). `--token-env <NAME>` on the
+source, then `GBRAIN_CONNECTOR_SLACK_TOKEN`, override the saved token, as for
+meetings.
+
+### 3. Register the source
+
+```bash
+gbrain sources add slack --kind slack --channels C0123ABCDEF,C0456GHIJKL
+```
+
+The channel id is in the channel's details in Slack. Before the source is
+registered, gbrain checks the token and every channel: a missing scope or a
+channel the app was not invited to refuses with the fix. It then prints which
+channels are private. Anyone who can read the brain sees every imported
+channel together; Slack's per-channel membership does not carry over to a
+shared brain.
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--channels` | required | Comma-separated channel ids. Direct messages are not supported. |
+| `--history-days` | 14 | How far back the first sync reaches. |
+| `--lookback-days` | 7 | Recent days re-read on every sync, so edits, deletions and new replies converge. |
+| `--timezone` | `UTC` | The IANA zone whose midnight starts a day page. |
+| `--sync-interval-min` | 30 | Minutes between scheduled syncs (floor 5). |
+| `--max-requests` | 2000 | Requests per sync; a sync that reaches it stops partial and the next one resumes. |
+| `--skip bot_message,channel_join` | none | Leave bot messages or join notices out of the pages. |
+| `--record auto\|git\|database` | `auto` | Where pages are recorded, as for meetings. |
+| `--dir` | none | The directory pages are committed to in `git` record mode. |
+| `--visibility private` | off | Every page from this source is private. |
+| `--token-env` | none | Read the token from this environment variable instead. |
+| `--federated` | off | Let Slack pages join unqualified searches. |
+
+Then run `gbrain sync --source slack` once; autopilot keeps it fresh after
+that and waits out Slack's rate limits.
+
+### What a day page holds
+
+Each message is a line `**Name** (YYYY-MM-DD H:MM AM): text` with its own UTC
+date and time, the layout the conversation parser reads. Thread replies follow
+their parent, marked `↳`, even when they were posted on a later day; a reply
+also sent to the channel is marked as such. Mentions, channel links and links
+become plain text; edited messages are marked `(edited)`, deactivated users
+`(deactivated)`, bots `(bot)`, and a deleted message that still has replies
+shows as `(message deleted)`. Message text is made inert like meeting
+summaries, so it cannot plant facts tables, citations, timeline rows or speaker
+lines.
+
+A day whose messages changed (an edit, a deletion, a new thread reply inside
+the lookback) is rebuilt whole, and the facts extracted from the old page are
+retired. A day emptied upstream is deleted and its facts are retired. Renaming
+a channel changes the title of pages rebuilt after the rename, never their
+path.
+
+Coverage limit: a reply to a thread that started before the lookback window is
+not imported unless it was also sent to the channel. Raise `--lookback-days`
+for channels with long-running threads.
+
+### Private channels
+
+A private channel's pages are `visibility: private`, and on a Git-recorded
+source they are kept in the database only. When a channel becomes private,
+every page of it is re-published private, its files are removed from the
+checkout with a commit, and the facts extracted from it are retired.
+
+A channel the app can no longer read (it was removed from the channel) is held
+on later syncs while the other channels keep syncing; invite the app back and
+run `gbrain sources retry-held <id>`.
+
 ## Troubleshooting
 
 <a id="connector_auth_required"></a>
@@ -112,7 +227,9 @@ fresh key with `gbrain connectors auth fireflies --token -`, then run
 ### connector_access_denied
 
 The key works but may not read the meetings asked for. Use a key whose
-account can read them, save it, and sync again.
+account can read them, save it, and sync again. For Slack, the message names
+the missing scope (add it to the app, reinstall it and save the new token) or
+the channel the app must be invited to.
 
 <a id="rate_limited"></a>
 ### rate_limited

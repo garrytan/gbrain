@@ -144,10 +144,12 @@ async function countPages(engine: BrainEngine, sourceId: string): Promise<number
 // ── Subcommand: add ─────────────────────────────────────────
 
 async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
+  const apiKind = args.includes('--kind') ? args[args.indexOf('--kind') + 1] : undefined;
+  if (args[0] && (apiKind === 'meetings' || apiKind === 'slack')) return (await import('./sources-add-api.ts')).runApiSourceAdd(engine, args);
   const id = args[0];
   if (!id) {
     console.error(
-      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google] ' +
+      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google|meetings|slack] ' +
         '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force]\n' +
         '       github kind: [--token-env <env>] [--scope auto|repos] ' +
         '[--repos owner/name,...] [--dir <path>] ' +

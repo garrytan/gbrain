@@ -39,7 +39,7 @@ export async function managedBrain(engine: Exec): Promise<boolean> {
 }
 
 /** Kinds whose unmanaged cursor lives in the database (db-cursor.ts), never in a state file. */
-const usesDbCursor = (kind: ConnectorKind) => kind === 'meetings';
+const usesDbCursor = (kind: ConnectorKind) => kind === 'meetings' || kind === 'slack';
 /** The `state_file` a hold carry names for a database cursor. */
 const DB_CURSOR_TARGET = 'op_checkpoints:connector-db-cursor';
 

@@ -26,9 +26,9 @@ import type { ConnectorClient } from './client.ts';
 /** Providers with a live connector in v1. Perplexity stays manual-only (no adapter). */
 export type ConnectorProviderName = 'chatgpt' | 'claude';
 
-/** API-token providers that back a source kind (`meetings`), captured with `gbrain connectors auth <p> --token -`. */
-export type TokenProviderName = 'fireflies';
-export const TOKEN_PROVIDER_NAMES: readonly TokenProviderName[] = ['fireflies'];
+/** API-token providers that back a source kind (`meetings`, `slack`), captured with `gbrain connectors auth <p> --token -`. */
+export type TokenProviderName = 'fireflies' | 'slack';
+export const TOKEN_PROVIDER_NAMES: readonly TokenProviderName[] = ['fireflies', 'slack'];
 export function isTokenProviderName(name: string): name is TokenProviderName { return (TOKEN_PROVIDER_NAMES as readonly string[]).includes(name); }
 
 /** Every provider with a slot in the credential store. */
