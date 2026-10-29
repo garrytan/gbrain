@@ -120,7 +120,9 @@ export interface ImportFilePage { slug: string; prefer: 'file'; exceptions: Drif
  */
 export interface DetachPin { path: string; page_id: number; revision: string; observed_at: string }
 export interface DetachPage { slug: string; prefer: 'database'; exceptions: DriftException[]; detach_page: DetachPin }
-type PlannedPage = ArtifactPage | SoftDeletePage | RemoveFilePage | ImportFilePage | DetachPage;
+/** A held page already agrees with its file; apply only releases the exact hold observed by the preview. */
+interface NoDriftPage { slug: string; prefer: DriftSide; exceptions: DriftException[]; no_drift: { path: string; observed_at: string; revision: string; file_hash?: string } }
+type PlannedPage = ArtifactPage | SoftDeletePage | RemoveFilePage | ImportFilePage | DetachPage | NoDriftPage;
 /** #6712 PR 4b: one held `file_drift` page a `--held` selection resolves. */
 interface HeldTarget { hold: GitHoldRecord; side: FileDriftSide; state?: FileDriftDeletedState; provenance?: DeletionProvenance }
 
@@ -765,6 +767,13 @@ export const fileDriftRepair: RepairHandler = {
           }
           if (!opts.allDrifted && !opts.held && !selectedByGlobs(live.path, opts)) { count('not_selected'); continue; }
           if (live.still_present !== true) {
+            if (live.still_present === false && live.reason === 'agrees' && target) {
+              const page: NoDriftPage = { slug, prefer: opts.prefer, exceptions: [], no_drift: { path: target.hold.path,
+                observed_at: target.hold.observed_at, revision: live.db_revision!, ...(live.file_hash ? { file_hash: live.file_hash } : {}) } };
+              pages.push(page);
+              listing.push({ item: `${sourceId}:${slug}`, class: 'no_drift', detail: 'the file already agrees with the page; apply releases the hold' });
+              continue;
+            }
             count(live.still_present === false ? 'no_drift' : `unknown_${live.reason}`);
             listing.push({ item: `${sourceId}:${slug}`, class: live.still_present === false ? 'no_drift' : 'unknown', detail: live.reason });
             continue;
@@ -791,6 +800,7 @@ export const fileDriftRepair: RepairHandler = {
         : 'detach_page' in page ? [page.slug, page.detach_page.revision, ABSENT_FILE_HASH, 'detach_page', page.detach_page.page_id, page.detach_page.observed_at]
         : 'remove_file' in page ? [page.slug, page.remove_file.revision, page.remove_file.raw_file_hash, 'remove_file', page.remove_file.state, page.remove_file.marker_digest]
         : 'import_file' in page ? [page.slug, page.import_file.revision, page.import_file.raw_file_hash, page.import_file.result_digest, page.import_file.state, page.import_file.marker_digest]
+        : 'no_drift' in page ? [page.slug, page.no_drift.revision, page.no_drift.path, page.no_drift.observed_at, page.no_drift.file_hash ?? null, 'no_drift']
         : [page.slug, page.preview.preconditions.revision, page.preview.preconditions.raw_file_hash, page.preview.result_digest]) });
     // #6712 wave: a recreated file stays only once committed; without Git durability the next sync imports the committed deletion again.
     const recreated = pages.flatMap(page => 'preview' in page && page.file_gone ? [page.preview.preconditions.relative_path] : []);
@@ -829,7 +839,8 @@ export const fileDriftRepair: RepairHandler = {
         pages: pages.map(page => ({ ...('soft_delete' in page ? { slug: page.slug, action: 'soft_delete', path: page.soft_delete.ghost.path, verb: fileDriftActionVerb('deleted', 'file_gone', 'file'), exceptions: page.exceptions }
           : 'detach_page' in page ? { slug: page.slug, action: 'detach_page', path: page.detach_page.path, verb: 'keep the page database-only (no file)', exceptions: page.exceptions }
           : 'remove_file' in page ? { slug: page.slug, action: 'remove_file', state: page.remove_file.state, path: page.remove_file.path, verb: fileDriftActionVerb('deleted', page.remove_file.state, 'database'), exceptions: page.exceptions }
-          : 'import_file' in page ? { slug: page.slug, action: 'import_file', state: page.import_file.state, path: page.import_file.path, verb: fileDriftActionVerb('deleted', page.import_file.state, 'file'), exceptions: page.exceptions, result_digest: page.import_file.result_digest }
+        : 'import_file' in page ? { slug: page.slug, action: 'import_file', state: page.import_file.state, path: page.import_file.path, verb: fileDriftActionVerb('deleted', page.import_file.state, 'file'), exceptions: page.exceptions, result_digest: page.import_file.result_digest }
+        : 'no_drift' in page ? { slug: page.slug, action: 'release_hold', path: page.no_drift.path, verb: 'release the hold because the file agrees', exceptions: page.exceptions }
           : { slug: page.slug, ...(page.file_gone ? { action: 'recreate_file' } : {}), ...(page.class ? { class: page.class } : {}),
             verb: page.file_gone ? fileDriftActionVerb('deleted', 'file_gone', 'database') : fileDriftActionVerb('both', undefined, page.prefer),
             adopt_slug_path: page.adopt_slug_path, exceptions: page.exceptions, result_digest: page.preview.result_digest }),
@@ -843,7 +854,20 @@ export const fileDriftRepair: RepairHandler = {
     if (!artifact || digest(artifact) !== page.artifact_digest) throw previewChangedError(opts?.expect ?? hash, command);
     const requestId = requestIdFor(hash, page);
     let outcome: RepairItemOutcome;
-    if ('remove_file' in artifact || 'import_file' in artifact || 'detach_page' in artifact) outcome = await applyDeletedSide(ctx, page, artifact, requestId, opts?.embed !== false);
+    if ('no_drift' in artifact) {
+      const live = await liveFileDrift(ctx.engine, page.source_id, page.slug);
+      if (live.still_present !== false || live.reason !== 'agrees' || live.db_revision !== artifact.no_drift.revision
+        || live.path !== artifact.no_drift.path || (artifact.no_drift.file_hash !== undefined && live.file_hash !== artifact.no_drift.file_hash)) {
+        outcome = { applied: false, outcome: 'changed_since_preview', reason: 'file_or_page_changed' };
+      } else {
+        const released = await ctx.engine.transaction(async tx => {
+          const [source] = await tx.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1 AND archived IS NOT TRUE', [page.source_id]);
+          return source ? clearGitHold(tx, { sourceId: page.source_id, incarnation: source.incarnation, path: artifact.no_drift.path, observedAt: artifact.no_drift.observed_at }) : false;
+        });
+        outcome = { applied: released, outcome: released ? 'repaired' : 'changed_since_preview', detail: { action: 'release_hold' } };
+      }
+    }
+    else if ('remove_file' in artifact || 'import_file' in artifact || 'detach_page' in artifact) outcome = await applyDeletedSide(ctx, page, artifact, requestId, opts?.embed !== false);
     else if ('soft_delete' in artifact) {
       const retired = await retireGhost(ctx, artifact.soft_delete.ghost, artifact.soft_delete.owner, async () => requestId);
       outcome = retired.applied ? { applied: true, outcome: 'repaired', detail: { request_id: requestId, prefer: 'file', action: 'soft_delete' } }

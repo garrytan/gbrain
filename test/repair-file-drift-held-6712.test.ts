@@ -139,6 +139,21 @@ for (const backend of testBackends()) describe(`#6712 PR 4b: repair file-drift -
   const marker = async (f: Fixture, path: string) => (await engine.executeRaw('SELECT 1 FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
     [SYNC_ORIGIN_DELETED_OP, `${f.sourceId}:${f.incarnation}:${path}`])).length > 0;
 
+  test('a held unknown page whose file already agrees releases its hold with the preview hash', () => fixture(async f => {
+    await put(f.ctx, 'notes/agrees', 'Same bytes on both sides.');
+    commitAll(f.root, 'page');
+    const path = 'notes/agrees.md';
+    const live = (await snapshot(f.sourceId, 'notes/agrees'))!;
+    await hold(f, { path, slug: 'notes/agrees', pageId: Number(live.page.id), side: 'unknown', revision: live.revision });
+
+    const preview = await run(f.sourceId, { side: 'unknown', prefer: 'file' });
+    expect(preview).toMatchObject({ mode: 'dry_run', affected: 1, residuals: {} });
+    expect(preview.details!.pages).toEqual([expect.objectContaining({ slug: 'notes/agrees', action: 'release_hold' })]);
+    const applied = await run(f.sourceId, { side: 'unknown', prefer: 'file', expect: preview.preview_hash! });
+    expect(applied.outcomes).toEqual({ repaired: 1 });
+    expect(await readGitHold(engine, f.sourceId, f.incarnation, path)).toBeNull();
+  }), 240_000);
+
   test('--side deleted without --state is refused before anything is read, naming each state with its verb', () => fixture(async f => {
     const refused = await refusal(run(f.sourceId, { side: 'deleted', prefer: 'database' }));
     expect(refused.code).toBe('file_drift_state_required');
