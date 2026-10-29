@@ -13,6 +13,7 @@ import type { ConnectorConfig, ConnectorKind } from './connector-identity.ts';
 import type { GitHubSourceConfig } from '../github-source.ts';
 import type { GoogleSourceConfig } from '../google/types.ts';
 import type { MeetingsSourceConfig } from '../meetings/types.ts';
+import type { SlackSourceConfig } from '../slack/types.ts';
 import { CONNECTOR_BOUND_HINT, CONNECTOR_BOUND_MESSAGE, UNBOUND_PUBLICATION_MESSAGE, UNBOUND_SOURCE_DOCS, unboundPublicationHint } from './unbound-source.ts';
 import { EMBEDDING_ZERO_NORM, EMBEDDING_ZERO_NORM_DOCS } from '../ai/embedding-guard.ts';
 
@@ -50,6 +51,13 @@ export function connectorAccountChanged(sourceId: string, kind: ConnectorKind, c
     const where = meetings.tokenEnv ? `the environment variable configured as m_token_env (${meetings.tokenEnv})` : `the saved key (gbrain connectors auth ${meetings.provider} --token -)`;
     restore = `restore ${where} so it belongs to ${show(recorded)}, then retry: gbrain sync --source ${sourceId}`;
     replace = `add a new source for the new account (gbrain sources add <new-id> --kind meetings --provider ${meetings.provider}), then archive this one: gbrain sources archive ${sourceId}`;
+    break;
+  }
+  case 'slack': {
+    const slack = config as SlackSourceConfig;
+    const where = slack.tokenEnv ? `the environment variable configured as s_token_env (${slack.tokenEnv})` : 'the saved token (gbrain connectors auth slack --token -)';
+    restore = `restore ${where} so it belongs to ${show(recorded)}, then retry: gbrain sync --source ${sourceId}`;
+    replace = `add a new source for the new workspace (gbrain sources add <new-id> --kind slack --channels ${slack.channels.join(',')}), then archive this one: gbrain sources archive ${sourceId}`;
     break;
   }
   default: return assertNever(kind);

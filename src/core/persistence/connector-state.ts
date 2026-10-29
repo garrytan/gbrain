@@ -24,7 +24,8 @@ export const CONNECTOR_STATE_OP = 'managed-connector-state';
 export type ConnectorAccount =
   | { kind: 'google'; email: string }
   | { kind: 'github'; installationId: number | null; login: string | null }
-  | { kind: 'meetings'; provider: string; userId: string; email: string | null };
+  | { kind: 'meetings'; provider: string; userId: string; email: string | null }
+  | { kind: 'slack'; teamId: string; enterpriseId: string | null };
 
 export interface ConnectorPendingEntry {
   /** The page slug, or `__managed_connector_checkpoint__` for a checkpoint save. */
@@ -204,6 +205,10 @@ export function sameConnectorAccount(a: ConnectorAccount, b: ConnectorAccount): 
       const other = b as typeof a;
       return a.provider === other.provider && a.userId === other.userId;
     }
+    case 'slack': {
+      const other = b as typeof a;
+      return a.teamId === other.teamId && (a.enterpriseId ?? null) === (other.enterpriseId ?? null);
+    }
     default: return assertNever(a);
   }
 }
@@ -214,6 +219,7 @@ export function describeConnectorAccount(account: ConnectorAccount): string {
     case 'github': return [account.installationId !== null ? `installation ${account.installationId}` : null, account.login ? `login ${account.login}` : null]
       .filter(Boolean).join(', ') || 'no installation or login';
     case 'meetings': return `${account.provider} user ${account.userId}${account.email ? ` (${account.email})` : ''}`;
+    case 'slack': return `Slack workspace ${account.teamId}${account.enterpriseId ? ` (enterprise ${account.enterpriseId})` : ''}`;
     default: return assertNever(account);
   }
 }

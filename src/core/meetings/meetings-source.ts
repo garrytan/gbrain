@@ -24,8 +24,6 @@
  * the window, retires the facts extracted from it before the new content is
  * queued for extraction.
  */
-import { join, relative } from 'node:path';
-import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
@@ -37,18 +35,16 @@ import { sameConnectorAccount, type ConnectorAccount } from '../persistence/conn
 import { ConnectorHoldSession, connectorHoldsResult } from '../connectors/connector-hold-session.ts';
 import { connectorDbCursorKey, readConnectorDbCursor, writeConnectorDbCursor } from '../connectors/db-cursor.ts';
 import { resolveApiToken } from '../connectors/credentials.ts';
-import { carryStoredFences } from '../connectors/fence-carry.ts';
 import { connectorRender } from '../connectors/connector-text.ts';
-import { ConnectorAccessDeniedError, ConnectorAuthError, ConnectorRateLimitedError, ConnectorRunLimitError } from '../connectors/client.ts';
-import { atomicWriteFileSync } from '../atomic-write.ts';
-import { isWriteTargetContained } from '../path-confine.ts';
-import { slugifyPath } from '../sync.ts';
-import { isSegmentedPage } from '../page-body/page-shape.ts';
+import { ConnectorAccessDeniedError, ConnectorAuthError, ConnectorRateLimitedError } from '../connectors/client.ts';
+import {
+  afterConnectorPublish, closeCoverageWindow, deleteConnectorPage, openCoverageWindow, publishConnectorPage, recordRateLimit, runScoped,
+  type ConnectorPublishCtx, type PublishSummary,
+} from '../connectors/api-source.ts';
 import { VERSION } from '../../version.ts';
 import { meetingProvider } from './providers/index.ts';
 import { FIREFLIES_PAGE_LIMIT } from './providers/fireflies.ts';
 import { meetingPagePath, renderMeetingPage } from './render.ts';
-import { connectorFactsSession, retireFactsFromPage } from '../facts/retire.ts';
 import type { MeetingAccount, MeetingProvider, MeetingRecord, MeetingStub, MeetingsSourceConfig } from './types.ts';
 
 const DAY_MS = 86_400_000;
@@ -81,10 +77,9 @@ export interface MeetingsSyncDeps {
   now?: () => number;
 }
 
-interface Summary {
+interface Summary extends PublishSummary {
   status: 'synced' | 'partial';
-  added: number; modified: number; deleted: number; chunksCreated: number; embedded: number;
-  pagesAffected: string[]; deferred: number; factsRetired: number; failedFiles: number;
+  deferred: number; failedFiles: number;
 }
 
 /** Who a meetings key belongs to, as the account pin records it. */
@@ -100,19 +95,6 @@ export function meetingsAuthRequired(sourceId: string, cfg: Pick<MeetingsSourceC
       : `Ask the user for their ${cfg.provider} API key and save it on stdin: gbrain connectors auth ${cfg.provider} --token - ; then run: gbrain sync --source ${sourceId}. The key was read from ${where}.`,
     'docs/guides/meeting-and-slack-sources.md#connector_auth_required');
   return error;
-}
-
-function runScoped(error: unknown): boolean {
-  const name = (error as { name?: string } | null)?.name;
-  return error instanceof ConnectorAuthError || error instanceof ConnectorAccessDeniedError || error instanceof ConnectorRateLimitedError
-    || error instanceof ConnectorRunLimitError || name === 'AbortError' || name === 'TimeoutError' || name === 'LockStolenError' || name === 'ConnectorWaitBudgetStop';
-}
-
-/** Records the provider's reset time so the scheduler does not resubmit before it (D1). */
-export async function recordRateLimit(engine: BrainEngine, sourceId: string, retryAt: number): Promise<void> {
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('connector-rate-limit',$1,$2::text::jsonb)
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [sourceId, JSON.stringify([{ version: 1, retry_at: new Date(retryAt).toISOString() }])]).catch(() => undefined);
 }
 
 function translate(sourceId: string, cfg: MeetingsSourceConfig, error: unknown): unknown {
@@ -181,7 +163,7 @@ async function runMeetingsSyncInner(engine: BrainEngine, sourceId: string, cfg: 
       counts: { added: summary.added, modified: summary.modified, deleted: summary.deleted, deferred: summary.deferred, facts_retired: summary.factsRetired, failed: summary.failedFiles } } : undefined);
   };
 
-  const ctx: PublishCtx = { engine, sourceId, cfg, managed, account, summary, now };
+  const ctx: PublishCtx = { engine, sourceId, cfg, managed, account, summary, now, label: 'Meetings', tag: 'meetings', record: cfg.record, dir: cfg.dir };
   const handle = async (key: string, work: () => Promise<void>, slug: string | null): Promise<boolean> => {
     try { await work(); holds.succeed(key); return true; } catch (error) {
       if (runScoped(error)) throw error;
@@ -205,11 +187,7 @@ async function runMeetingsSyncInner(engine: BrainEngine, sourceId: string, cfg: 
       }, null);
     }
 
-    const window = state.window ?? {
-      from: new Date(state.committed_to ? Date.parse(state.committed_to) - cfg.lookbackDays * DAY_MS : runStart - cfg.historyDays * DAY_MS).toISOString(),
-      to: new Date(runStart).toISOString(), done: [],
-    };
-    state.window = window;
+    const window = openCoverageWindow(state, { runStart, historyDays: cfg.historyDays, lookbackDays: cfg.lookbackDays });
     const done = new Set(window.done);
     const listed = await enumerateWindow(provider, window.from, window.to, signal);
     const ordered = [...listed.stubs.values()].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
@@ -250,9 +228,7 @@ async function runMeetingsSyncInner(engine: BrainEngine, sourceId: string, cfg: 
       }
       const unfinished = ordered.some(stub => !done.has(stub.id) && !state.pending[stub.id] && !holds.isHeld(stub.id));
       if (!unfinished) {
-        state.committed_to = window.to;
-        state.window = null;
-        const horizon = Date.parse(window.to) - (cfg.lookbackDays + 1) * DAY_MS;
+        const horizon = closeCoverageWindow(state, cfg.lookbackDays);
         for (const [id, entry] of Object.entries(state.seen)) if (Date.parse(entry.started_at) < horizon) delete state.seen[id];
       } else summary.status = 'partial';
     } else {
@@ -306,9 +282,8 @@ async function enumerateWindow(provider: MeetingProvider, from: string, to: stri
   return { stubs, stable: false };
 }
 
-interface PublishCtx {
-  engine: BrainEngine; sourceId: string; cfg: MeetingsSourceConfig; managed: ManagedConnectorSync | null;
-  account: MeetingAccount; summary: Summary; now: () => number;
+interface PublishCtx extends ConnectorPublishCtx {
+  cfg: MeetingsSourceConfig; account: MeetingAccount; summary: Summary; now: () => number;
 }
 
 async function existingPath(engine: BrainEngine, sourceId: string, meetingId: string): Promise<string | null> {
@@ -317,118 +292,22 @@ async function existingPath(engine: BrainEngine, sourceId: string, meetingId: st
   return row ? row.source_path ?? `${row.slug}.md` : null;
 }
 
-function bindingMissing(sourceId: string): OperationError {
-  return new OperationError('connector_binding_missing',
-    `Meetings source ${sourceId} records to Git, but its checkout is not available; the meeting was held, not written database-only.`,
-    `Restore the source's Git checkout (gbrain sources status ${sourceId}), then retry the held items: gbrain sources retry-held ${sourceId}. To record this source in the database instead, change its record mode explicitly.`,
-    'docs/guides/meeting-and-slack-sources.md#connector_binding_missing');
-}
-
-/** A page path inside the source directory, as the checkout root names it (the commit door takes checkout-relative paths). */
-function checkoutPath(root: string, dir: string, relPath: string): string {
-  return relative(realpathSync(root), join(realpathSync(dir), relPath)).split('\\').join('/');
-}
-
-/** The git checkout that holds an unmanaged git-mode source's directory, or null. */
-export async function gitCheckoutOf(dir: string | null): Promise<string | null> {
-  if (!dir || !existsSync(dir)) return null;
-  try {
-    const { checkoutRoot } = await import('../git/commit-push.ts');
-    return checkoutRoot(dir);
-  } catch { return null; }
-}
-
 export async function publishMeeting(ctx: PublishCtx, record: MeetingRecord): Promise<void> {
-  const { engine, sourceId, cfg, managed, summary } = ctx;
-  const relPath = (await existingPath(engine, sourceId, record.id)) ?? meetingPagePath(record);
-  const slug = slugifyPath(relPath);
-  let markdown = connectorRender(renderMeetingPage(record, { cfg, account: ctx.account }), { path: relPath, meeting_id: record.id });
-  let status: 'imported' | 'skipped';
-  let created: boolean;
-  if (managed) {
-    if (cfg.record === 'git' && !managed.bound) throw bindingMissing(sourceId);
-    const result = await managed.importMarkdown(relPath, markdown);
-    status = result.status; created = result.created;
-    summary.chunksCreated += result.chunks;
-  } else {
-    const existing = await engine.getPage(slug, { sourceId });
-    markdown = await carryStoredFences(sourceId, slug, relPath, existing, markdown, 'meetings connector fence carry');
-    const isPrivate = /^visibility: private$/m.test(markdown.split('\n---\n')[0] ?? '');
-    let filePath: string | null = null;
-    if (cfg.record === 'git') {
-      const root = await gitCheckoutOf(cfg.dir);
-      if (!root || !cfg.dir) throw bindingMissing(sourceId);
-      filePath = join(cfg.dir, relPath);
-      if (!isWriteTargetContained(filePath, cfg.dir)) throw new OperationError('invalid_params', `${relPath} resolves outside the source directory.`, 'This is a gbrain defect; report it.');
-      const { commitPathsLocked } = await import('../git/commit-push.ts');
-      // Private meetings stay database-only on a Git-recorded source; one that became private leaves the checkout.
-      if (isPrivate) {
-        if (existsSync(filePath)) { rmSync(filePath); commitPathsLocked(cfg.dir, [checkoutPath(root, cfg.dir, relPath)], `meetings(${sourceId}): ${record.id} is private; database only`, { lockWaitMs: 30_000 }); }
-      } else {
-        mkdirSync(join(filePath, '..'), { recursive: true, mode: 0o700 });
-        atomicWriteFileSync(filePath, markdown, { mode: 0o600 });
-        commitPathsLocked(cfg.dir, [checkoutPath(root, cfg.dir, relPath)], `meetings(${sourceId}): ${record.title.replace(/\s+/g, ' ').slice(0, 72)}\n\nmeeting_id: ${record.id}\nprovider: ${cfg.provider}`, { lockWaitMs: 30_000 });
-      }
-    }
-    const { importFromContent } = await import('../import-file.ts');
-    const result = await importFromContent(engine, slug, markdown, { noEmbed: true, sourceId, sourcePath: relPath, preserveGateMarkers: true });
-    if (result.status === 'error' || result.error) throw new Error(result.error ?? `Import failed for ${relPath}`);
-    status = result.status === 'imported' ? 'imported' : 'skipped';
-    created = !existing;
-    summary.chunksCreated += result.chunks;
-  }
-  if (status !== 'imported') return;
-  summary.pagesAffected.push(slug);
-  if (created) { summary.added++; return; }
-  summary.modified++;
-  const retired = await retireFactsFromPage(engine, { sourceId, slug, reason: 'the meeting changed upstream', managed: !!managed });
-  summary.factsRetired += retired.retired;
+  const relPath = (await existingPath(ctx.engine, ctx.sourceId, record.id)) ?? meetingPagePath(record);
+  await publishConnectorPage(ctx, {
+    relPath,
+    markdown: connectorRender(renderMeetingPage(record, { cfg: ctx.cfg, account: ctx.account }), { path: relPath, meeting_id: record.id }),
+    commitMessage: `meetings(${ctx.sourceId}): ${record.title.replace(/\s+/g, ' ').slice(0, 72)}\n\nmeeting_id: ${record.id}\nprovider: ${ctx.cfg.provider}`,
+    privateMessage: `meetings(${ctx.sourceId}): ${record.id} is private; database only`,
+    retireReason: 'the meeting changed upstream',
+  });
 }
 
 async function deleteMeeting(ctx: PublishCtx, meetingId: string, relPath: string): Promise<void> {
-  const { engine, sourceId, cfg, managed, summary } = ctx;
-  const slug = slugifyPath(relPath);
-  const retired = await retireFactsFromPage(engine, { sourceId, slug, reason: 'the meeting was deleted upstream', managed: !!managed });
-  summary.factsRetired += retired.retired;
-  if (managed) {
-    if (await managed.delete(slug, relPath)) summary.deleted++;
-    return;
-  }
-  if (cfg.record === 'git' && cfg.dir) {
-    const filePath = join(cfg.dir, relPath);
-    const root = await gitCheckoutOf(cfg.dir);
-    if (!root) throw bindingMissing(sourceId);
-    if (isWriteTargetContained(filePath, cfg.dir) && existsSync(filePath)) {
-      rmSync(filePath);
-      const { commitPathsLocked } = await import('../git/commit-push.ts');
-      commitPathsLocked(cfg.dir, [checkoutPath(root, cfg.dir, relPath)], `meetings(${sourceId}): ${meetingId} deleted upstream`, { lockWaitMs: 30_000 });
-    }
-  }
-  const rows = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]);
-  if (rows.length) { await engine.deletePages([slug], { sourceId }); summary.deleted++; }
+  await deleteConnectorPage(ctx, relPath, `meetings(${ctx.sourceId}): ${meetingId} deleted upstream`, 'the meeting was deleted upstream');
 }
 
 /** Facts and embeddings for the pages this run published (the connector path has no sync finalize). */
-async function afterPublish(ctx: PublishCtx, opts: SyncOpts): Promise<void> {
-  const { engine, sourceId, summary, managed } = ctx;
-  if (!summary.pagesAffected.length) return;
-  if (!opts.noExtract && summary.pagesAffected.length <= 50) {
-    const { runFactsBackstop } = await import('../facts/backstop.ts');
-    for (const slug of summary.pagesAffected) {
-      try {
-        const page = await engine.getPage(slug, { sourceId });
-        if (!page || isSegmentedPage(page)) continue;
-        await runFactsBackstop({ slug, type: page.type, compiled_truth: page.compiled_truth ?? '', frontmatter: page.frontmatter ?? {} },
-          { engine, sourceId, sessionId: connectorFactsSession(sourceId, slug), source: 'sync:import', mode: 'queue', notabilityFilter: 'high-only', sourceSlug: slug });
-      } catch { /* per-page enqueue is best-effort, as in sync */ }
-    }
-  } else if (!opts.noExtract) {
-    process.stderr.write(`[meetings] ${summary.pagesAffected.length} pages changed; facts are extracted by the cycle's backfill\n`);
-  }
-  if (managed || opts.noEmbed || summary.pagesAffected.length > 100) return;
-  try {
-    const { runEmbedCore } = await import('../../commands/embed.ts');
-    await runEmbedCore(engine, { slugs: summary.pagesAffected, sourceId });
-    summary.embedded = summary.pagesAffected.length;
-  } catch { /* embed is best-effort */ }
+function afterPublish(ctx: PublishCtx, opts: SyncOpts): Promise<void> {
+  return afterConnectorPublish(ctx, opts);
 }

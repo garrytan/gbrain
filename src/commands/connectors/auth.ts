@@ -148,7 +148,7 @@ export async function runConnectorAuth(_engine: BrainEngine, args: string[]): Pr
     return;
   }
   if (!isConnectorProviderName(provider)) {
-    console.error(`Usage: gbrain connectors auth <chatgpt|claude> [--cookie -|--token V] [--try-oauth] [--force], or gbrain connectors auth fireflies --token -`);
+    console.error(`Usage: gbrain connectors auth <chatgpt|claude> [--cookie -|--token V] [--try-oauth] [--force], or gbrain connectors auth <fireflies|slack> --token -`);
     setCliExitVerdict(1);
     return;
   }
@@ -258,7 +258,7 @@ async function tryOauth(prov: ChatHistoryProvider, flags: AuthFlags): Promise<bo
 export async function runConnectorLogout(args: string[]): Promise<void> {
   const provider = args.find((a) => !a.startsWith('-')) ?? '';
   if (!isConnectorProviderName(provider) && !isTokenProviderName(provider)) {
-    console.error('Usage: gbrain connectors logout <chatgpt|claude|fireflies>');
+    console.error('Usage: gbrain connectors logout <chatgpt|claude|fireflies|slack>');
     setCliExitVerdict(1);
     return;
   }

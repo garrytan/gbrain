@@ -26,14 +26,14 @@ export function enclosingGitCheckout(dir: string): string | null {
  * with the fix; it never falls back. Meeting pages are never nested into another source's checkout root, which
  * would import them twice, so Git recording needs its own directory.
  */
-export function chooseMeetingsRecord(sourceId: string, requested: 'auto' | MeetingRecordMode, dir: string | undefined): MeetingsRecordChoice {
+export function chooseMeetingsRecord(sourceId: string, requested: 'auto' | MeetingRecordMode, dir: string | undefined, kind: 'meetings' | 'slack' = 'meetings'): MeetingsRecordChoice {
   if (requested === 'database') return { record: 'database', dir: null };
   const checkout = dir ? enclosingGitCheckout(dir) : null;
   if (checkout && dir) return { record: 'git', dir: resolve(dir) };
   if (requested === 'auto') return { record: 'database', dir: null };
   throw new OperationError('invalid_params',
-    dir ? `--record git needs --dir inside a Git checkout; ${dir} is not in one.` : '--record git needs --dir: the Git checkout directory the meeting pages are committed to.',
-    `Create or choose a directory inside a Git checkout that no other source uses (for example: git init ~/brain-meetings), then run gbrain sources add ${sourceId} --kind meetings --record git --dir <that directory>. Or leave out --record to keep the record in the database.`);
+    dir ? `--record git needs --dir inside a Git checkout; ${dir} is not in one.` : '--record git needs --dir: the Git checkout directory the pages are committed to.',
+    `Create or choose a directory inside a Git checkout that no other source uses (for example: git init ~/brain-meetings), then run gbrain sources add ${sourceId} --kind ${kind} --record git --dir <that directory>. Or leave out --record to keep the record in the database.`);
 }
 
 /** The `sources.config` a new meetings source is registered with. Only non-default tuning keys are written. */

@@ -8,6 +8,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { assertNever, type BrainHealth } from '../core/types.ts';
 import { syncIntervalMinutes } from '../core/meetings/source-config.ts';
 import { MEETINGS_DEFAULT_SYNC_INTERVAL_MIN } from '../core/meetings/types.ts';
+import { SLACK_DEFAULT_SYNC_INTERVAL_MIN } from '../core/slack/types.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
 import { loadAllSources, parseSourceConfig, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning, type SourceRow } from '../core/sources-load.ts';
 import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts';
@@ -560,8 +561,8 @@ export async function sleepWatchingHeads(
 const rateLimitNoticePrinted = new Set<string>();
 
 /**
- * D1: how often autopilot syncs a connector source. GitHub and Google keep the base interval; a meetings source
- * syncs every `sync_interval_min` minutes (default 60, floor 5).
+ * D1: how often autopilot syncs a connector source. GitHub and Google keep the base interval; a meetings or slack
+ * source syncs every `sync_interval_min` minutes (default 60 for meetings, 30 for slack; floor 5).
  */
 export function connectorSyncIntervalMs(config: unknown, baseIntervalMs: number): number {
   const parsed = parseSourceConfig(config) as Record<string, unknown> & { kind?: unknown };
@@ -571,11 +572,12 @@ export function connectorSyncIntervalMs(config: unknown, baseIntervalMs: number)
     case 'google':
     case 'github': return baseIntervalMs;
     case 'meetings': return syncIntervalMinutes(parsed, MEETINGS_DEFAULT_SYNC_INTERVAL_MIN)! * 60_000;
+    case 'slack': return syncIntervalMinutes(parsed, SLACK_DEFAULT_SYNC_INTERVAL_MIN)! * 60_000;
     default: return assertNever(kind);
   }
 }
 
-/** Connector sources whose provider asked for a wait the last sync recorded (meetings-source.ts `recordRateLimit`): id → epoch ms. */
+/** Connector sources whose provider asked for a wait the last sync recorded (connectors/api-source.ts `recordRateLimit`): id → epoch ms. */
 export async function readConnectorRateLimits(engine: BrainEngine, now: number): Promise<Map<string, number>> {
   const rows = await engine.executeRaw<{ fingerprint: string; retry_at: string | null }>(
     `SELECT fingerprint, completed_keys->0->>'retry_at' AS retry_at FROM op_checkpoints WHERE op='connector-rate-limit'`);
