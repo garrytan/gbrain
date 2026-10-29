@@ -31,6 +31,7 @@ import { ConnectorHoldSession, connectorHoldsResult } from '../connectors/connec
 import { connectorDbCursorKey, readConnectorDbCursor, writeConnectorDbCursor } from '../connectors/db-cursor.ts';
 import { resolveApiToken } from '../connectors/credentials.ts';
 import { connectorRender } from '../connectors/connector-text.ts';
+import { serializePageToMarkdown } from '../markdown.ts';
 import { ConnectorAccessDeniedError, ConnectorAuthError, ConnectorRateLimitedError, ConnectorRunLimitError } from '../connectors/client.ts';
 import {
   afterConnectorPublish, closeCoverageWindow, deleteConnectorPage, openCoverageWindow, publishConnectorPage, recordRateLimit, runScoped,
@@ -221,16 +222,26 @@ async function runSlackSyncInner(engine: BrainEngine, sourceId: string, cfg: Sla
   };
 
   /**
-   * T23: a private channel's pages that are not private yet (the channel became private) are rebuilt from Slack as
-   * private, which takes them out of the checkout and retires their facts; a day emptied upstream is deleted.
+   * T23: pages of a private channel (or a private-only source) that are not private yet are re-stamped private from
+   * their stored copy, without asking Slack: that takes them out of the checkout and retires their facts, and a day
+   * Slack no longer returns (a free plan's retention) is kept, never deleted. Days inside the window re-render as usual.
    */
-  const makeChannelPrivate = async (info: SlackChannelInfo) => {
+  const makeChannelPrivate = async (channelId: string) => {
     const rows = await engine.executeRaw<{ day: string }>(
       `SELECT DISTINCT frontmatter->>'date' AS day FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND frontmatter->>'slack_channel_id'=$2
-        AND COALESCE(frontmatter->>'visibility','') <> 'private' AND frontmatter->>'date' IS NOT NULL ORDER BY 1`, [sourceId, info.id]);
+        AND COALESCE(frontmatter->>'visibility','') <> 'private' AND frontmatter->>'date' IS NOT NULL ORDER BY 1`, [sourceId, channelId]);
     for (const { day } of rows) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
-      await handle(`${info.id}/${day}`, () => rebuildDay(info, day), slugifyPath(slackPagePath(info.id, day)));
+      const relPath = slackPagePath(channelId, day);
+      const slug = slugifyPath(relPath);
+      await handle(`${channelId}/${day}`, async () => {
+        const page = await engine.getPage(slug, { sourceId });
+        if (!page) return;
+        const markdown = serializePageToMarkdown(page, await engine.getTags(slug, { sourceId }), { frontmatterOverrides: { visibility: 'private' } });
+        await publishConnectorPage(ctx, { relPath, markdown: connectorRender(markdown, { path: relPath, slack_channel_id: channelId }),
+          commitMessage: `slack(${sourceId}): ${channelId} ${day} is private`, privateMessage: `slack(${sourceId}): ${channelId} ${day} is private; database only`,
+          retireReason: 'the Slack channel became private' });
+      }, slug);
     }
   };
 
@@ -250,7 +261,7 @@ async function runSlackSyncInner(engine: BrainEngine, sourceId: string, cfg: Sla
     const ch = state.channels[channelId] ??= { committed_to: null, window: null, name: info.name, private: info.isPrivate, days: {} };
     ch.name = info.name;
     ch.private = info.isPrivate;
-    if (info.isPrivate) await makeChannelPrivate(info);
+    if (info.isPrivate || cfg.privateOnly) await makeChannelPrivate(channelId);
     const window = openCoverageWindow(ch, { runStart, historyDays: cfg.historyDays, lookbackDays: cfg.lookbackDays, alignFrom: ms => slackAlignToDay(ms, cfg.timezone) });
     const from = Date.parse(window.from);
     const to = Date.parse(window.to);
@@ -262,7 +273,7 @@ async function runSlackSyncInner(engine: BrainEngine, sourceId: string, cfg: Sla
     }
     for (const [day, messages] of [...byDay].sort(([a], [b]) => a.localeCompare(b))) {
       const key = `${channelId}/${day}`;
-      if (!holds.shouldAttempt(key)) continue;
+      if (!holds.shouldAttempt(key) || slackDayStartMs(day, cfg.timezone) < from) continue;
       const fp = slackDayFingerprint({ channel: info, messages, privateOnly: cfg.privateOnly });
       if (!opts.full && ch.days[day]?.fp === fp) continue;
       await handle(key, () => publishDay(info, day, messages, fp), slugifyPath(slackPagePath(channelId, day)));

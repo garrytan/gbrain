@@ -200,14 +200,18 @@ path.
 
 Coverage limit: a reply to a thread that started before the lookback window is
 not imported unless it was also sent to the channel. Raise `--lookback-days`
-for channels with long-running threads.
+for channels with long-running threads. Editing an existing thread reply does
+not rebuild its day on its own; the edit lands the next time that day is
+rebuilt for another change.
 
 ### Private channels
 
 A private channel's pages are `visibility: private`, and on a Git-recorded
-source they are kept in the database only. When a channel becomes private,
-every page of it is re-published private, its files are removed from the
-checkout with a commit, and the facts extracted from it are retired.
+source they are kept in the database only. When a channel becomes private, or
+the source is switched to `--visibility private`, every page of it is
+re-stamped private from its stored copy (a day Slack no longer returns is kept),
+its files are removed from the checkout with a commit, and the facts extracted
+from it are retired.
 
 A channel the app can no longer read (it was removed from the channel) is held
 on later syncs while the other channels keep syncing; invite the app back and

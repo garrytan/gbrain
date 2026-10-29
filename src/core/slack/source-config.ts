@@ -28,7 +28,7 @@ export function parseSlackSourceConfig(config: Record<string, unknown>, fallback
   const skip = (Array.isArray(config.s_skip) ? config.s_skip : typeof config.s_skip === 'string' ? config.s_skip.split(',') : [])
     .map(String).filter((s): s is SlackSkippable => (SLACK_SKIPPABLE as readonly string[]).includes(s));
   return {
-    channels: normalizeSlackChannels(config.s_channels),
+    channels: normalizeSlackChannels(config.s_channels).filter(id => SLACK_CHANNEL_ID_RE.test(id)),
     historyDays: positiveInt(config.s_history_days, SLACK_DEFAULT_HISTORY_DAYS, 3650),
     lookbackDays: positiveInt(config.s_lookback_days, SLACK_DEFAULT_LOOKBACK_DAYS, 60),
     timezone,

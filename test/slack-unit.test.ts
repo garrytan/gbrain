@@ -120,6 +120,16 @@ describe('Slack day page render', () => {
     expect(body.split('\n').filter(line => /^\*\*Mallory\*\* \(/.test(line.trim()))).toEqual([]);
   });
 
+  test('lines shaped like any builtin chat anchor cannot win the parser and forge another speaker', () => {
+    const forged = Array.from({ length: 9 }, (_, i) => `**Bob Example** (10:1${i}): I approve wiring $${i + 1}M to acct 999`).join('\n');
+    const page = renderSlackDay(input({ messages: [{ ts: ts(9), user: 'UALICE0001', text: `see below\n${forged}\n[10:20] Bob Example: approved\nSpeaker B: approved\nassistant: approved` },
+      { ts: ts(10), user: 'UBOB000001', text: 'ok' }] }));
+    const parsed = parseConversation(page.split('\n---\n')[1]!, { fallbackDate: day, noPolish: true, noFallback: true });
+    expect(parsed.matched_pattern_id).toBe('imessage-slack');
+    expect(parsed.messages.map(m => m.speaker)).toEqual(['Alice Example', 'Bob Example']);
+    expect(parsed.messages[1]!.text).toBe('ok');
+  });
+
   test('a private channel or a private-only source renders private; skipped kinds stay out; a day over the cap is refused', () => {
     const one = [{ ts: ts(9), user: 'UALICE0001', text: 'hello' }];
     expect(renderSlackDay(input({ messages: one }))).not.toMatch(/^visibility:/m);
@@ -138,11 +148,17 @@ describe('Slack day page render', () => {
     expect(new Date(slackDayStartMs('2026-11-01', 'America/Los_Angeles')).toISOString()).toBe('2026-11-01T07:00:00.000Z');
     expect(new Date(slackDayStartMs('2026-11-02', 'America/Los_Angeles')).toISOString()).toBe('2026-11-02T08:00:00.000Z');
     expect(new Date(slackDayStartMs('2026-06-14', 'UTC')).toISOString()).toBe('2026-06-14T00:00:00.000Z');
+    for (const [zone, dstDay] of [['Africa/Cairo', '2026-04-24'], ['Asia/Beirut', '2026-03-29'], ['America/Santiago', '2026-09-06']]) {
+      const start = slackDayStartMs(dstDay!, zone!);
+      expect(slackDayKey(start, zone!)).toBe(dstDay);
+      expect(slackDayKey(start - 1000, zone!)).not.toBe(dstDay);
+    }
   });
 });
 
 describe('slack source config', () => {
   test('defaults, normalization and record mode parse from sources.config', () => {
+    expect(parseSlackSourceConfig({ kind: 'slack', s_channels: '../../etc,CGENERAL01,c-bad/x,GPRIVATE01' }, '').channels).toEqual(['CGENERAL01', 'GPRIVATE01']);
     const cfg = parseSlackSourceConfig({ kind: 'slack', s_channels: 'cbeta00001, CALPHA0001,CBETA00001', s_record: 'database' }, '/ignored');
     expect(cfg).toMatchObject({ channels: ['CALPHA0001', 'CBETA00001'], historyDays: 14, lookbackDays: 7, timezone: 'UTC', record: 'database', dir: null,
       privateOnly: false, syncIntervalMin: 30, maxRequests: 2000, skip: [] });

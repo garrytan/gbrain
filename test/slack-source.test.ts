@@ -31,6 +31,7 @@ import { slackApi } from '../src/core/slack/client.ts';
 import { slackPagePath } from '../src/core/slack/render.ts';
 import { connectorFactsSession } from '../src/core/facts/retire.ts';
 import { addSource } from '../src/core/sources-ops.ts';
+import { runApiSourceAdd } from '../src/commands/sources-add-api.ts';
 import { slugifyPath } from '../src/core/sync.ts';
 import { CONNECTOR_DB_CURSOR_OP } from '../src/core/connectors/db-cursor.ts';
 
@@ -196,6 +197,38 @@ for (const kind of backends) describe(`repo-less brain (record: database, ${kind
     await expect(run(id, cfg, fake)).rejects.toMatchObject({ code: 'rate_limited' });
     const [row] = await engine.executeRaw<{ keys: Array<{ retry_at: string }> }>(`SELECT completed_keys AS keys FROM op_checkpoints WHERE op='connector-rate-limit' AND fingerprint=$1`, [id]);
     expect(Date.parse(row!.keys[0]!.retry_at)).toBe(NOW + 600_000);
+  });
+
+  test('a channel that becomes private re-stamps its older pages private, even days Slack no longer returns', async () => {
+    const fake = workspace();
+    const { id, cfg } = await slackSource(fake);
+    await run(id, cfg, fake);
+    await run(id, cfg, fake, { now: NOW + 10 * DAY });
+    const general = fake.channels[0]!;
+    general.isPrivate = true;
+    general.messages = [];
+    const result = await run(id, cfg, fake, { now: NOW + 11 * DAY });
+    expect(result.deleted).toBe(0);
+    const rows = await pages(id);
+    expect(rows.map(r => r.slug)).toEqual([daySlug('CGENERAL01', 2), daySlug('CGENERAL01', 1), daySlug('CPRIVATE01', 1)].sort());
+    expect(rows.map(r => r.visibility)).toEqual(['private', 'private', 'private']);
+    expect(rows.find(r => r.slug === daySlug('CGENERAL01', 2))!.body).toContain('Pricing stays monthly for now.');
+  });
+
+  test('switching the source to private re-stamps pages older than the history window', async () => {
+    const fake = workspace();
+    const { id, cfg } = await slackSource(fake);
+    await run(id, cfg, fake);
+    await run(id, cfg, fake, { now: NOW + 10 * DAY });
+    await run(id, { ...cfg, privateOnly: true }, fake, { now: NOW + 20 * DAY });
+    expect((await pages(id)).map(r => r.visibility)).toEqual(['private', 'private', 'private']);
+  });
+
+  test('sources add --kind slack --dry-run registers nothing and calls nothing', async () => {
+    await withEnv({ GBRAIN_HOME: home, GBRAIN_CONNECTOR_SLACK_TOKEN: undefined }, async () => {
+      await runApiSourceAdd(engine, ['slack-dry', '--kind', 'slack', '--channels', 'CGENERAL01', '--dry-run']);
+    });
+    expect(await engine.executeRaw('SELECT id FROM sources WHERE id=$1', ['slack-dry'])).toEqual([]);
   });
 
   test('sources add --kind slack on a repo-less brain records to the database, keeps no directory and stores no token', async () => {

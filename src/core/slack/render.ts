@@ -9,12 +9,14 @@
  * Frontmatter is serialized as data. Every Slack-authored field passes through
  * `neutralizeOutsideText` on its own, after each continuation line loses its
  * leading whitespace (the parser trims lines, so an indented anchor-shaped line
- * would otherwise read as a turn). Nothing run-specific is rendered, so an
+ * would otherwise read as a turn), and a continuation line shaped like any builtin chat anchor is escaped too, so
+ * pasted lines cannot make another pattern win the parser's scoring. Nothing run-specific is rendered, so an
  * unchanged day renders byte-identical and publishes nothing.
  */
 import { createHash } from 'node:crypto';
 import { dumpFrontmatterYaml } from '../data-frontmatter.ts';
 import { neutralizeOutsideText } from '../outside-content.ts';
+import { BUILTIN_PATTERNS } from '../conversation-parser/builtins.ts';
 import type { SlackAccount, SlackChannelInfo, SlackMessage, SlackSkippable, SlackUser } from './types.ts';
 
 /** A rendered page larger than this is held, never truncated. */
@@ -55,7 +57,15 @@ export function slackDayStartMs(day: string, zone: string): number {
     if (next === guess) break;
     guess = next;
   }
-  return guess;
+  if (slackDayKey(guess, zone) === day && slackDayKey(guess - 1000, zone) !== day) return guess;
+  // Midnight skipped or repeated by a DST change (Africa/Cairo, Asia/Beirut): the first second whose local day is `day`.
+  let lo = guess - 3 * 3_600_000;
+  let hi = guess + 3 * 3_600_000;
+  while (hi - lo > 1000) {
+    const mid = lo + Math.floor((hi - lo) / 2000) * 1000;
+    if (slackDayKey(mid, zone) >= day) hi = mid; else lo = mid;
+  }
+  return hi;
 }
 
 /** The start of the day that holds `ms` in `zone`. */
@@ -135,6 +145,7 @@ function messageLines(m: SlackMessage, users: Readonly<Record<string, SlackUser>
     : neutralizeOutsideText([slackText(m.text ?? '', userName), files.join(' ')].filter(Boolean).join('\n').split('\n').map(line => line.trimStart()).filter(Boolean).join('\n')).split('\n');
   const edited = m.edited ? ' _(edited)_' : '';
   const text = `${marker}${lines.shift() ?? ''}`;
+  for (let i = 0; i < lines.length; i++) if (BUILTIN_PATTERNS.some(p => p.regex.test(lines[i]!))) lines[i] = `\\${lines[i]}`;
   if (!lines.length) return [`**${speaker}** (${anchorTime(m.ts)}): ${text}${edited}`];
   return [`**${speaker}** (${anchorTime(m.ts)}): ${text}`, ...lines.slice(0, -1), `${lines.at(-1)}${edited}`];
 }
