@@ -11,9 +11,11 @@
  *    committed through the door, and the checkout is clean; on a repo-less brain (a plain directory, the database is
  *    the record) the same apply works and never refuses for lack of a repo. A segmented page over 24 MiB still refuses
  *    `page_body_segmented` (the preview, and an apply whose page grew past 24 MiB after its preview, before admission),
- *    and the refusal names `gbrain repair file-drift`, the 24 MiB limit and a fix.
+ *    and the refusal names `gbrain repair file-drift`, the 24 MiB limit and a fix. A --prefer file result that crosses the
+ *    storage threshold publishes in the new storage with no refusal: an inline page whose held file is ~4 MiB ends
+ *    segmented (the production shape), and a segmented page whose file drops under it ends inline.
  * 2. Fails when: the reconcile artifact refuses the segmented snapshot's fields (invalid_params, "Unsupported or missing
- *    reconciliation fields."), the reconcile publication reads the page back through its throwing body getters
+ *    reconciliation fields."), the reconcile publication reads the page it just published back through its throwing body getters
  *    (`page_body_segmented`, "Nothing was read or changed."), or the over-ceiling refusal names no file-drift fix.
  * Real PGLite, and Postgres when DATABASE_URL is set (test/e2e/repair-file-drift-segmented-postgres.test.ts); no seams.
  */
@@ -44,7 +46,9 @@ const logger = { info() {}, warn() {}, error() {} };
 const SLUG = 'people/alice-example';
 const PATH = `${SLUG}.md`;
 const TIMELINE = '- **2026-01-05** | alice-example joined acme-example\n- **2026-02-10** | acme-example shipped the launch';
-const content = `---\ntype: person\ntitle: Alice Example\n---\n\n${conversationBody(4 * 1024 * 1024, { seed: 7, needles: [{ at: 0.5, word: 'midpointmarker' }] })}\n\n<!-- timeline -->\n\n${TIMELINE}\n`;
+const page = (bytes: number, seed: number, word: string) =>
+  `---\ntype: person\ntitle: Alice Example\n---\n\n${conversationBody(bytes, { seed, needles: [{ at: 0.5, word }] })}\n\n<!-- timeline -->\n\n${TIMELINE}\n`;
+const content = page(4 * 1024 * 1024, 7, 'midpointmarker');
 
 type Kind = 'repo' | 'repo-less';
 const repoSetup = ({ root }: { root: string }) => { writeFileSync(join(root, '.gitignore'), '\n'); durableGitRepo(root, ['.gitignore']); };
@@ -67,16 +71,20 @@ for (const backend of testBackends()) for (const kind of ['repo', 'repo-less'] a
     requests: await engine.executeRaw("SELECT state, error_code FROM persistence_requests WHERE source_id='default' AND slug=$1 AND intent->>'kind'='canonical_reconcile' ORDER BY created_at", [SLUG]) });
   const revision = async (engine: BrainEngine) => (await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!.revision;
   /** The file edited and (on a repo brain) committed by another writer, then held by sync as two-sided drift. */
-  async function drift(engine: BrainEngine, root: string, from: string, to: string): Promise<string> {
-    const file = join(root, PATH);
-    const edited = readFileSync(file, 'utf8').replace(from, to);
-    writeFileSync(file, edited);
+  const drift = (engine: BrainEngine, root: string, from: string, to: string) => holdFile(engine, root, readFileSync(join(root, PATH), 'utf8').replace(from, to));
+  async function holdFile(engine: BrainEngine, root: string, edited: string): Promise<string> {
+    writeFileSync(join(root, PATH), edited);
     if (kind === 'repo') { git(root, 'add', PATH); git(root, 'commit', '-q', '-m', 'edit outside gbrain'); }
     const [src] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id='default'");
     await engine.transaction(tx => writeGitHold(tx, { source_id: 'default', incarnation: src!.incarnation, path: PATH, source_path: PATH, slug: SLUG,
       page_id: null, code: 'file_drift', message: `${PATH} is held: file drift (both)`, upstream_version: null, observed_at: new Date().toISOString(), run_id: null,
       mode: 'managed', meta: { recovery_version: RECOVERY_VERSION, side: 'both' } }));
     return edited;
+  }
+  async function put(b: { engine: BrainEngine; ctx: OperationContext; root: string }, text: string): Promise<void> {
+    expect(await putPage.handler(b.ctx, { slug: SLUG, content: text, request_id: randomUUID(), wait_ms: 30_000 })).toMatchObject({ state: 'committed' });
+    await settleManagedGitEffects(b.engine);
+    if (kind === 'repo') expect(git(b.root, 'status', '--porcelain', '--', PATH)).toBe('');
   }
   async function seed(b: { engine: BrainEngine; ctx: OperationContext; root: string }): Promise<void> {
     expect(await putPage.handler(b.ctx, { slug: SLUG, content, request_id: randomUUID(), wait_ms: 30_000 })).toMatchObject({ state: 'committed' });
@@ -142,6 +150,42 @@ for (const backend of testBackends()) for (const kind of ['repo', 'repo-less'] a
     expect(await liveFileDrift(b.engine, 'default', SLUG)).toMatchObject({ still_present: false, reason: 'agrees' });
     if (kind === 'repo') expect(git(b.root, 'rev-parse', `HEAD:${PATH}`)).toBe(git(b.root, 'hash-object', '--', PATH));
     clean(b.root);
+  }), 600_000);
+
+  /** The page's body as one string, from either storage: segments read back whole, or the inline row. */
+  const bodyOf = async (engine: BrainEngine) => (await storage(engine)).body_storage === 'segmented' ? stored(engine)
+    : (await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!.page;
+  /** --prefer file whose result crosses the storage threshold: preview, apply, one committed request, the file's body, the timeline kept. */
+  async function crossing(b: { engine: BrainEngine; ctx: OperationContext; root: string }, file: string, from: 'inline' | 'segmented', to: 'inline' | 'segmented', word: string) {
+    expect((await storage(b.engine)).body_storage).toBe(from);
+    const edited = await holdFile(b.engine, b.root, file);
+    const preview = await run(b.engine, 'file');
+    expect(preview).toMatchObject({ mode: 'dry_run', affected: 1 });
+    const applied = await run(b.engine, 'file', preview.preview_hash!);
+    expect(applied.outcome_items).toEqual([expect.objectContaining({ outcome: 'repaired' })]);
+    expect(applied.failed).toEqual([]);
+    expect((await usage(b.engine)).requests).toEqual([{ state: 'committed', error_code: null }]);
+    expect((await storage(b.engine)).body_storage).toBe(to);
+    const body = await bodyOf(b.engine);
+    expect(body.compiled_truth).toContain(word);
+    expect(body.timeline).toContain('acme-example shipped the launch');
+    // A file written outside gbrain gets the database's protected metadata in its render; its body is the file's.
+    const after = readFileSync(join(b.root, PATH), 'utf8');
+    expect(after.includes(word) && after.includes('acme-example shipped the launch')).toBe(true);
+    expect(after.slice(after.indexOf('\n---\n') + 5).trim() === edited.slice(edited.indexOf('\n---\n') + 5).trim()).toBe(true);
+    expect(await liveFileDrift(b.engine, 'default', SLUG)).toMatchObject({ still_present: false, reason: 'agrees' });
+    clean(b.root);
+  }
+
+  test('--prefer file on an inline page whose held file is ~4 MiB publishes it segmented, with no refusal', () => brain(async b => {
+    await put(b, page(100 * 1024, 3, 'smallmarker'));
+    await crossing(b, page(4 * 1024 * 1024, 5, 'grownfromfile'), 'inline', 'segmented', 'grownfromfile');
+    expect(Number((await storage(b.engine)).body_bytes)).toBeGreaterThan(4 * 1024 * 1024);
+  }), 600_000);
+
+  test('--prefer file on a segmented page whose held file drops under the threshold publishes it inline', () => brain(async b => {
+    await seed(b);
+    await crossing(b, page(100 * 1024, 9, 'shrunkfromfile'), 'segmented', 'inline', 'shrunkfromfile');
   }), 600_000);
 
   test('over 24 MiB the preview and an apply whose page grew past 24 MiB refuse before admission, naming file-drift, the limit and a fix', () => brain(async b => {
