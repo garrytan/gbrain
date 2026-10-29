@@ -2348,12 +2348,19 @@ export class MinionQueue {
     return rows.length > 0;
   }
 
-  /** Replay a completed/failed/dead job with optional data overrides. Creates a new job. */
+  /** Creates a new job from a terminal job. Completed facts-absorb is refused: this is not a zero-model batch replay. */
   async replayJob(id: number, dataOverrides?: Record<string, unknown>): Promise<MinionJob | null> {
     const source = await this.getJob(id);
     if (!source) return null;
     if (!['completed', 'failed', 'dead'].includes(source.status)) return null;
     const authority = await authorizeJobExecution(this.engine, source);
+    // A new job is not a retained-batch replay: missing/expired completion
+    // payloads can fall through to extraction, and overrides can change identity.
+    // Until replay validates the batch without model fallback, refuse completed
+    // facts absorption rather than imply a zero-model guarantee.
+    if (source.name === 'facts-absorb' && source.status === 'completed') {
+      throw new Error('Completed facts-absorb jobs cannot be replayed with a zero-model guarantee. Inspect the original job result and write receipts; receipt inspection does not replay the batch.');
+    }
     if (authority.kind !== 'application' && dataOverrides && Object.keys(dataOverrides).length) throw new Error('Remote job replay cannot override accepted data; submit a new job');
 
     const { data, clientId } = prepareDelegatedReplay(source.name, source.data, dataOverrides);
