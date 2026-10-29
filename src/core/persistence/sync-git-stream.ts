@@ -16,6 +16,7 @@ import { gitBlobOid, sha256 } from './digest.ts';
 import { readSyncFile } from './sync-discovery.ts';
 import { faultPointNow } from './fault-points.ts';
 import { loopYield, type LoopYield } from './sync-yield.ts';
+import { LFS_POINTER_MAX_BYTES, lfsPointer } from './lfs-pointer.ts';
 
 export type Dp = 'clean' | 'clean_eol' | 'clean_lfs' | 'modified' | 'deleted' | 'staged' | 'untracked' | 'unknown';
 export interface GitTreeEntry { mode: string; oid: string }
@@ -34,7 +35,6 @@ export class SyncTreeReadIncomplete extends Error {
 
 const READ_TIMEOUT_MS = 120_000;
 const PROBE_TIMEOUT_MS = 60_000;
-const LFS_POINTER_MAX_BYTES = 1024;
 const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const REGULAR_MODES = new Set(['100644', '100755']);
 
@@ -297,15 +297,6 @@ function foldCrlf(bytes: Buffer): Buffer {
     folded[length++] = bytes[i]!;
   }
   return folded.subarray(0, length);
-}
-
-function lfsPointer(blob: Buffer): { oid: string; size: number } | null {
-  const text = blob.toString('utf8');
-  if (!text.startsWith('version https://git-lfs.github.com/spec/v1\n') || !text.endsWith('\n')) return null;
-  const fields = new Map(text.slice(0, -1).split('\n').map(line => [line.slice(0, line.indexOf(' ')), line.slice(line.indexOf(' ') + 1)] as const));
-  const oid = /^sha256:([0-9a-f]{64})$/.exec(fields.get('oid') ?? '')?.[1];
-  const size = fields.get('size') ?? '';
-  return oid && /^\d+$/.test(size) ? { oid, size: Number(size) } : null;
 }
 
 const attributeSet = (value: string | undefined): boolean => value !== undefined && value !== 'unspecified' && value !== 'unset';

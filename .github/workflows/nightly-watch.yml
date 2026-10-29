@@ -49,6 +49,7 @@ on:
       - E2E Tests
       - Heavy Tests
       - Scale tier
+      - Large pages nightly
       - Convergence nightly
       - Sync freshness gate
       - Production soak

@@ -25,7 +25,7 @@
  * so it can never land in the positional lane. Over HTTP only the source id is
  * pinned (a mount id is host topology; a thin client refuses `--brain`).
  */
-import { CLI_FLAG_REGISTRY, CLI_ROUTING_FLAGS } from './cli-flag-registry.generated.ts';
+import { CLI_FLAG_REGISTRY, CLI_ROUTING_FLAGS, CLI_ROUTING_SUBCOMMANDS } from './cli-flag-registry.generated.ts';
 import { ALL_SOURCES, SOURCE_ID_RE } from './source-id.ts';
 
 export interface FixRouting { brain?: string; source?: string }
@@ -57,10 +57,15 @@ export function registerOpRoutes(ops: Iterable<{ params: Record<string, unknown>
  * `remote` (an HTTP render): a mount id is host topology, so `--brain` is never
  * pinned there, and `--source` only where a thin client can send it (an op with a
  * `source_id` scope, or a CLI command the brain host's operator runs).
+ * `subcommand` (the first positional after the command): a command whose record limits
+ * routing to some subcommands (`routes_subcommands`: `git maintenance`) routes nothing
+ * for the others (`git commit-push`), which open no brain and take no `--source`.
  */
-export function routingFlagsFor(command: string, opts: { remote?: boolean } = {}): { brain: boolean; source: SourceFlag | false } {
+export function routingFlagsFor(command: string, opts: { remote?: boolean } = {}, subcommand?: string): { brain: boolean; source: SourceFlag | false } {
   const accepted = CLI_FLAG_REGISTRY[command];
   if (accepted) {
+    const limited = CLI_ROUTING_SUBCOMMANDS[command];
+    if (limited && !limited.includes(subcommand ?? '')) return { brain: false, source: false };
     const routed = CLI_ROUTING_FLAGS[command] ?? [];
     const source = SOURCE_FLAGS.find(flag => accepted.includes(flag) && routed.includes(flag)) ?? false;
     return { brain: !opts.remote && accepted.includes('--brain') && routed.includes('--brain'), source };
@@ -75,13 +80,15 @@ const hasFlag = (head: readonly string[], flag: string) => head.some(a => a === 
 /** Append the missing routing flags to one gbrain argv (before a bare `--`). Non-gbrain argv pass through. */
 export function pinRouting(argv: readonly string[], routing: FixRouting | undefined, opts: { remote?: boolean } = {}): string[] {
   if (!routing || argv[0] !== 'gbrain' || argv.length < 2) return [...argv];
-  const flags = routingFlagsFor(argv[1]!, opts);
   const end = argv.indexOf('--');
   const head = end === -1 ? argv : argv.slice(0, end);
+  const flags = routingFlagsFor(argv[1]!, opts, head.slice(2).find(a => !a.startsWith('-')));
   const add: string[] = [];
   if (flags.brain && routing.brain && BRAIN_ID_RE.test(routing.brain) && !hasFlag(head, '--brain')) add.push('--brain', routing.brain);
   // Under `--source-id` a `--source` already present is that command's mode selector, not a source choice.
-  const selectors = flags.source === '--source-id' ? SOURCE_SELECTORS.filter(f => f !== '--source') : SOURCE_SELECTORS;
+  // A subcommand-limited record's `--path` (`git maintenance --path <dir>`) names its target as `--source` would; it refuses both.
+  const selectors = flags.source === '--source-id' ? SOURCE_SELECTORS.filter(f => f !== '--source')
+    : CLI_ROUTING_SUBCOMMANDS[argv[1]!] ? [...SOURCE_SELECTORS, '--path'] : SOURCE_SELECTORS;
   const pinnable = flags.source === '--source-id' ? SOURCE_ID_RE.test(routing.source ?? '') : pinnableSource(routing.source ?? '');
   if (flags.source && routing.source && pinnable && !selectors.some(f => hasFlag(head, f))) {
     add.push(flags.source, routing.source);

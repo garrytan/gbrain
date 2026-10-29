@@ -953,11 +953,11 @@
       },
       "git": {
         "hasSwitchCase": false,
-        "phase": "pre-connect",
+        "phase": "pre-connect-own-engine",
         "preConnectRules": [
           {
             "condition": "command === 'git'",
-            "connectsEngine": false,
+            "connectsEngine": true,
             "refusesThinClient": false,
             "routesThinClient": false,
             "terminates": true,

@@ -222,6 +222,10 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'db_ahead_of_git',
   // Git-canonical G3: how far each strict source's index trails HEAD (doctor/checks/git-index-lag.ts).
   'git_index_lag',
+  // Wave C 1C (G7): each strict source's Git object store and its last maintenance run (doctor/checks/git-repo-health.ts).
+  'git_repo_health',
+  // Wave C 1D: page files held as unsmudged Git LFS pointers (doctor/checks/lfs-page-pointers.ts).
+  'lfs_page_pointers',
   'edge_validity',
   'text_projection_readiness',
   'timeline_coverage',

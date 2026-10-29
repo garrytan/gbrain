@@ -379,7 +379,16 @@ export function buildRoutingFlags(root: string = ROOT): Record<string, string[]>
   return buildFlagArtifacts(root).routing;
 }
 
-function buildFlagArtifacts(root: string): { registry: Record<string, string[]>; routing: Record<string, string[]> } {
+/**
+ * `buildRoutingFlags` plus the subcommands each record's routing pin is limited to (`routes_subcommands`; a command
+ * not listed routes as a whole), from one generator run.
+ */
+export function buildRoutingTables(root: string = ROOT): { routing: Record<string, string[]>; subcommands: Record<string, string[]> } {
+  const { routing, subcommands } = buildFlagArtifacts(root);
+  return { routing, subcommands };
+}
+
+function buildFlagArtifacts(root: string): { registry: Record<string, string[]>; routing: Record<string, string[]>; subcommands: Record<string, string[]> } {
   // CLI_ONLY membership: one record per command in the command table
   // (src/cli/command-table.ts), read by AST so the generator never executes
   // the table.
@@ -431,6 +440,7 @@ function buildFlagArtifacts(root: string): { registry: Record<string, string[]>;
 
   const registry: Record<string, string[]> = {};
   const routing: Record<string, string[]> = {};
+  const subcommands: Record<string, string[]> = {};
   for (const command of commands) {
     const parts = blocks.get(command) ?? [];
     const flags = new Set<string>(UNIVERSAL_FLAGS);
@@ -503,11 +513,12 @@ function buildFlagArtifacts(root: string): { registry: Record<string, string[]>;
       ...(record?.routesSource ? [record.routesSource] : []),
     ];
     if (routed.length) routing[command] = routed;
+    if (routed.length && record?.routesSubcommands?.length) subcommands[command] = [...record.routesSubcommands].sort();
   }
-  return { registry, routing };
+  return { registry, routing, subcommands };
 }
 
-export function renderRegistryModule(registry: Record<string, string[]>, routing: Record<string, string[]> = {}): string {
+export function renderRegistryModule(registry: Record<string, string[]>, routing: Record<string, string[]> = {}, subcommands: Record<string, string[]> = {}): string {
   const render = (map: Record<string, string[]>) => Object.keys(map)
     .sort()
     .map(cmd => `  '${cmd}': [${map[cmd].map(f => `'${f}'`).join(', ')}],`)
@@ -540,13 +551,19 @@ ${entries}
 export const CLI_ROUTING_FLAGS: Record<string, readonly string[]> = {
 ${render(routing)}
 };
+
+// The subcommands a command's routing pin is limited to (the record's routes_subcommands): its other subcommands open
+// no brain and take no --source, so their fixes stay unpinned.
+export const CLI_ROUTING_SUBCOMMANDS: Record<string, readonly string[]> = {
+${render(subcommands)}
+};
 `;
 }
 
 if (import.meta.main) {
-  const { registry, routing } = buildFlagArtifacts(ROOT);
+  const { registry, routing, subcommands } = buildFlagArtifacts(ROOT);
   const outPath = join(ROOT, 'src/core/cli-flag-registry.generated.ts');
-  writeFileSync(outPath, renderRegistryModule(registry, routing));
+  writeFileSync(outPath, renderRegistryModule(registry, routing, subcommands));
   const n = Object.keys(registry).length;
   const total = Object.values(registry).reduce((a, v) => a + v.length, 0);
   console.log(`wrote ${outPath} (${n} commands, ${total} flag entries)`);

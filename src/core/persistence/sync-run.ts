@@ -57,6 +57,7 @@ import { dependentHold, fileDriftHold, sharedOriginSurvivor, fileChangedAfterAdm
 import { faultPoint } from './fault-points.ts';
 import { syncReceiptWait } from './sync-receipt-wait.ts';
 import { directoryAt, freezeFaultHold, noteFrozen, nullBytesRefusal } from './sync-entry-fault.ts';
+import { lfsPointerRefusal } from './lfs-pointer.ts';
 import { syncCursorOptions } from './sync-slices.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { withCoordinatedWrite } from './context.ts';
@@ -410,6 +411,8 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
     } else content = imageBytes ? frozenImageIntent(imageBytes).content : entry.action === 'import' && !oversize && !bodyRef ? pinnedContent(cursor, entry) : null;
     const nul = !screening && content !== null && !image ? nullBytesRefusal(entry.path, content) : null; // GBRA-133 S-39 with sync.holds=fail
     if (nul) throw syncRunRefusal('content_null_bytes', 'A synced Markdown file holds NUL bytes.', retry, nul.message);
+    const pointer = !screening && content !== null && !image ? lfsPointerRefusal(entry.path, content) : null; // Wave C 1D with sync.holds=fail
+    if (pointer) throw syncRunRefusal('lfs_pointer_unsmudged', 'A synced Markdown file is a Git LFS pointer.', retry, pointer.message);
     // #6340: working-tree bytes that differ from the pinned blob but are committed at HEAD (a commit past the pin on a
     // live checkout) are imported as HEAD has them; the pin..HEAD diff later re-imports the same bytes as a no-op.
     // Uncommitted bytes keep the pinned content and reach the publication screen (idea from PR #6323).

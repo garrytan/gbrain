@@ -132,6 +132,8 @@ export interface TableRecordShape {
   phase?: string;
   /** A1: the flag naming the record's target source: `'--source'` for `routes_source: true`, else the declared flag (`'--source-id'`). */
   routesSource?: '--source' | '--source-id';
+  /** A1: `routes_subcommands`, the subcommands the routing pin is limited to. */
+  routesSubcommands?: string[];
 }
 
 /** Every record of CLI_COMMANDS in table order, read by AST (the EO13 literal-load contract). */
@@ -158,7 +160,9 @@ export function readTableRecords(root: string): TableRecordShape[] {
     const routes = prop('routes_source')?.initializer;
     const routesSource = routes?.kind === ts.SyntaxKind.TrueKeyword ? '--source' as const
       : routes && ts.isStringLiteral(routes) && routes.text === '--source-id' ? '--source-id' as const : undefined;
+    const subs = prop('routes_subcommands')?.initializer;
+    const routesSubcommands = subs && ts.isArrayLiteralExpression(subs) ? subs.elements.filter(ts.isStringLiteral).map(s => s.text) : undefined;
     return { name: name.text, loadSpecifier: literalImport(prop('load')?.initializer), ...(help ? { helpSpecifier: literalImport(help.initializer) } : {}),
-      ...(phase && ts.isStringLiteral(phase) ? { phase: phase.text } : {}), ...(routesSource ? { routesSource } : {}) };
+      ...(phase && ts.isStringLiteral(phase) ? { phase: phase.text } : {}), ...(routesSource ? { routesSource } : {}), ...(routesSubcommands ? { routesSubcommands } : {}) };
   });
 }

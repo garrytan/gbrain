@@ -47,6 +47,7 @@ test/consolidate-same-instant-6023.test.ts
 test/conversation-facts-outcome-marker-purge-7778.test.ts
 test/conversation-facts-oversized-sidecar.test.ts
 test/conversation-facts-purged-claim-7438.test.ts
+test/counting-embedder.test.ts
 test/cycle/synthesize-concepts-merge.test.ts
 test/db-lock-reconnect.test.ts
 test/decide/conflict-proposals-managed.test.ts
@@ -97,6 +98,7 @@ test/git-door-remote-g7b.test.ts
 test/git-door-strict-gbra133.test.ts
 test/git-door-write-cost.test.ts
 test/git-gap-census.test.ts
+test/git-maintenance.test.ts
 test/google-connector-facts-fence-7292.test.ts
 test/grade-takes-window.test.ts
 test/graduation-copy.test.ts
@@ -127,6 +129,7 @@ test/large-pages/append-mention-links.test.ts
 test/large-pages/chunk-retirement-plan.test.ts
 test/large-pages/chunk-visibility.test.ts
 test/large-pages/contextual-reembed-segmented.test.ts
+test/large-pages/conversation-stream-probes.slow.test.ts
 test/large-pages/credential-reseal-segments.test.ts
 test/large-pages/doctor-skipped-segmented.test.ts
 test/large-pages/edit-segmented.test.ts
@@ -226,6 +229,7 @@ test/large-pages/upload-over-ceiling.test.ts
 test/large-pages/upload-provenance-7873.test.ts
 test/large-pages/upload-review.test.ts
 test/large-pages/v252-master-reader-compat.test.ts
+test/lfs-pointer-hold.test.ts
 test/link-cross-source.test.ts
 test/link-preparation-shared-index.test.ts
 test/links-attendance-blocked.test.ts
@@ -446,6 +450,7 @@ test/repair-rename-identity-6729.test.ts
 test/retrieval-coverage-notices.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts
+test/scripts/bench-large-pages-receipt.test.ts
 test/scripts/test-stress-postgres.test.ts
 test/search-read-keyword-bound.test.ts
 test/search/page-rank-cut.test.ts

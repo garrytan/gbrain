@@ -1767,6 +1767,26 @@ Reasons: `opt_in_off`, `checkout_unconfigured`.
 
 More: [docs/guides/write-refusals.md#git_lfs_not_enabled](../../docs/guides/write-refusals.md#git_lfs_not_enabled)
 
+### git_maintenance_busy
+
+<a id="git_maintenance_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another git maintenance run holds this repository's maintenance lock, so this one did not start; the object store is unchanged. | gbrain packs and prunes a repository under its own maintenance lock (never the writer lock), so two runs never overlap. | Wait for the running maintenance to finish (a first repack of a large repository takes minutes), then run gbrain git maintenance --source <id> --dry-run to see what is left. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/shared-checkout-git.md#git-maintenance](../../docs/guides/shared-checkout-git.md#git-maintenance)
+
+### git_maintenance_failed
+
+<a id="git_maintenance_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A git step of gbrain git maintenance failed; the run is recorded as failed and nothing past that step ran. | repack, prune and prune-packed are git's own commands, and gbrain stops at the first one that fails instead of continuing on a repository git could not process. | Read the git error in the message (a full disk, a corrupt object, a permission), fix its cause, then run gbrain git maintenance --source <id> --apply again; doctor git_repo_health shows the recorded failure. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#git-maintenance](../../docs/guides/shared-checkout-git.md#git-maintenance)
+
 ### git_object_missing
 
 <a id="git_object_missing"></a>
@@ -1776,6 +1796,16 @@ More: [docs/guides/write-refusals.md#git_lfs_not_enabled](../../docs/guides/writ
 | A committed file's Git object is missing from the checkout and its working-tree copy differs or is gone, so managed sync holds that file alone. | An interrupted gc, a partial clone without its promisor remote or disk corruption can drop an object a commit still names. Sync imports the working-tree bytes when they hash to the committed blob id; otherwise it imports nothing from a guess, and the rest of the source keeps syncing. | Run git fsck in the checkout to see what is missing, restore it with git fetch (a partial or shallow clone) or from a backup, then sync again; every sync re-tests the hold. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#git_object_missing](../../docs/guides/write-refusals.md#git_object_missing)
+
+### git_objects_missing
+
+<a id="git_objects_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| doctor git_repo_health found objects that a strict source's HEAD, refs or index need missing from its Git object store (git fsck --connectivity-only). | Git cannot recreate a lost object: commits that name it cannot be read, checked out or pushed until it comes back from a copy that still has it. Pruning beside a concurrent writer has a small window git itself leaves open, so doctor checks connectivity after the fact. | Stop writers to the source, restore the objects from its remote (git fetch --refetch), another clone or a backup, or hash an unchanged page file again with git hash-object -w, then run gbrain doctor --only git_repo_health. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#missing-git-objects](../../docs/guides/shared-checkout-git.md#missing-git-objects)
 
 ### git_operation_in_progress
 
@@ -2466,6 +2496,16 @@ More: [docs/guides/repair.md#legacy-twins](../../docs/guides/repair.md#legacy-tw
 Reasons: `storage_unavailable`.
 
 More: [docs/guides/repair.md#legacy-twins](../../docs/guides/repair.md#legacy-twins)
+
+### lfs_pointer_unsmudged
+
+<a id="lfs_pointer_unsmudged"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A synced Markdown file is committed as a Git LFS pointer, so managed sync holds that file and the stored page stays as it was. | Sync reads committed blobs without smudging them (GIT_LFS_SKIP_SMUDGE=1), and a checkout without git-lfs never smudges, so an LFS-tracked page reaches sync as its ~130-byte pointer text; imported, that text would replace the page, and re-indexing from Git needs the real bytes. The rest of the source keeps syncing. | Ask the user first, since it changes how the file is stored: git lfs pull --include <path>, append an anchored /<path> -filter -diff -merge override to .gitattributes (git lfs untrack misses a wildcard rule), git add --renormalize -- <path> .gitattributes, then commit both through gbrain git commit-push (a hosted source takes the real bytes from the user's own clone; the hold's fix names the branch and quotes the path), then gbrain sync --source <id> --no-pull. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#lfs_pointer_unsmudged](../../docs/guides/write-refusals.md#lfs_pointer_unsmudged)
 
 ### link_cursor_invalid
 

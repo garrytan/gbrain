@@ -177,6 +177,22 @@ const MATRIX: Record<CyclePhase, Entry> = {
       expect(await engine.executeRaw("SELECT 1 FROM pages WHERE slug='notes/unindexed-example'")).toEqual([]);
     },
   },
+  git_maintenance: {
+    // Wave C 1C: a strict source's checkout gets its first daily maintenance (pack, prune past the two-week grace); the
+    // phase writes no page and submits no coordinated write.
+    seed: async ({ engine, sourceId, root }) => {
+      git(root, 'init', '-q');
+      writeFileSync(join(root, 'maintained-example.md'), page('note', 'Maintained example', 'Body.\n'));
+      git(root, 'add', '.');
+      git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'seed');
+      await engine.executeRaw(`UPDATE sources SET config = config || '{"canonical":"git"}'::jsonb WHERE id=$1`, [sourceId]);
+    },
+    assert: async ({ engine, sourceId, result }) => {
+      expect(result.status).toBe('ok');
+      expect(result.details).toMatchObject({ mode: 'apply', sources: [{ source_id: sourceId, kind: 'daily', trigger: 'daily', loose_bytes_after: 0 }], errors: [] });
+      expect(await engine.executeRaw('SELECT 1 FROM pages WHERE source_id=$1', [sourceId])).toEqual([]);
+    },
+  },
   synthesize: {
     seed: async ({ engine, sourceId, root }) => {
       await put(engine, sourceId, 'people/example', page('note', 'Example', 'Example evidence.'));

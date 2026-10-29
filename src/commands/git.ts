@@ -10,6 +10,9 @@
  *   gbrain git commit-push --dry-run [--path <dir>] [-m <msg>] [--] <paths…>
  *   gbrain git commit-push --pending [--path <dir>] [-m <msg>]
  *   gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
+ *   gbrain git maintenance [--source <id> | --path <dir>] [--dry-run | --apply] [--json]
+ *
+ * Only `maintenance --source` opens the brain (to find the source's checkout); every other mode stays DB-free.
  */
 import { realpathSync } from 'node:fs';
 import { commitAndPush, checkoutRoot, pullShared, scopePaths, COMMIT_LOCK_NAME, type Resolution } from '../core/git/commit-push.ts';
@@ -21,6 +24,8 @@ import { writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { execFileSync } from '../core/spawn.ts';
 import { gitChildEnv } from '../core/git-env.ts';
 import { GIT_ENV } from '../core/git-transport.ts';
+import { planMaintenance, runMaintenance, PRUNE_EXPIRE, type MaintenancePlan } from '../core/git/maintenance.ts';
+import type { BrainEngine } from '../core/engine.ts';
 
 const HELP = `Usage: gbrain git commit-push [--path <dir>] -m <msg> [--json] [--] <paths...>
        gbrain git commit-push --push-only [--path <dir>] [--branch <b>]
@@ -28,6 +33,7 @@ const HELP = `Usage: gbrain git commit-push [--path <dir>] -m <msg> [--json] [--
        gbrain git commit-push --pull [--path <dir>] [--require-clean]
        gbrain git commit-push --pending [--path <dir>] [-m <msg>]
        gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
+       gbrain git maintenance [--source <id> | --path <dir>] [--dry-run | --apply] [--json]
 
 Commit only the named paths and push them, safely, in a checkout other agents
 share: a short commit lock and a separate push lock per checkout, no
@@ -71,17 +77,28 @@ prepare-commit-msg hook that refuses commits in this checkout not made through
 gbrain (git commit, -a and --no-verify included; merges and commits that finish a
 merge, cherry-pick, revert or rebase pass). A person bypasses it once with
 GBRAIN_COMMIT_GUARD=off git <command>. Without a flag it prints whether the guard
-is installed.`;
+is installed.
+
+gbrain git maintenance: pack the repository's loose objects and prune unreachable
+objects older than git's two-week grace (${PRUNE_EXPIRE}), without the writer
+lock, so writers never wait on it. A preview by default (--dry-run): loose and
+packed sizes, pack count, the last recorded run, how many unreachable objects a
+run would prune and the git steps. --apply runs them under the maintenance lock.
+--source <id> maintains that source's checkout (a hosted source's bare
+repository through its worktree); --path a checkout. The maintenance cycle runs
+it automatically on strict sources unless git.maintenance is off or the user
+scheduled git's own maintenance. Exit 0 on a preview or a finished run, 1 with
+git_maintenance_busy or git_maintenance_failed.`;
 
 interface Parsed {
   sub?: string; path?: string; message?: string; branch?: string; expectRemote?: string; json: boolean; pushOnly: boolean; pull: boolean;
   requireClean: boolean; dryRun: boolean; help: boolean; keepCheckout: boolean; paths: string[]; resolve: string[];
-  pending: boolean; allowOutside: boolean; install: boolean; uninstall: boolean;
+  pending: boolean; allowOutside: boolean; install: boolean; uninstall: boolean; source?: string; apply: boolean;
 }
 
 function parse(args: string[]): Parsed {
   const p: Parsed = { json: false, pushOnly: false, pull: false, requireClean: false, dryRun: false, help: false, keepCheckout: false, paths: [], resolve: [],
-    pending: false, allowOutside: false, install: false, uninstall: false };
+    pending: false, allowOutside: false, install: false, uninstall: false, apply: false };
   let rest = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -105,6 +122,8 @@ function parse(args: string[]): Parsed {
     else if (a === '--allow-outside-source-root') p.allowOutside = true;
     else if (a === '--install') p.install = true;
     else if (a === '--uninstall') p.uninstall = true;
+    else if (a === '--apply') p.apply = true;
+    else if (a === '--source' || a.startsWith('--source=')) p.source = take('--source');
     else if (a === '--path' || a.startsWith('--path=') || a === '--repo' || a.startsWith('--repo=')) p.path = take('--path');
     else if (a === '-m' || a === '--message' || a.startsWith('--message=')) { const m = take('--message'); p.message = p.message === undefined ? m : `${p.message}\n\n${m}`; }
     else if (a === '--resolve' || a.startsWith('--resolve=')) p.resolve.push(take('--resolve'));
@@ -136,13 +155,15 @@ function emit(json: boolean, doc: Record<string, unknown>, human: string): void 
   else console.log(human);
 }
 
-export async function runGit(args: string[]): Promise<number> {
+export async function runGit(args: string[], connectEngine?: () => Promise<BrainEngine>): Promise<number> {
   let json = args.includes('--json');
   try {
     const p = parse(args);
     json = p.json;
     if (p.help || !p.sub) { console.log(HELP); return p.sub || p.help ? 0 : 2; }
     if (p.sub === 'guard') return runGuard(p);
+    if (p.sub === 'maintenance') return await runMaintenanceCommand(p, connectEngine);
+    if (p.source || p.apply) throw opError('commit_paths_invalid', '--source and --apply belong to gbrain git maintenance.', `Run gbrain git maintenance${p.source ? ` --source ${p.source}` : ''} --apply.`);
     if (p.sub !== 'commit-push') throw opError('commit_paths_invalid', `Unknown subcommand: gbrain git ${p.sub}.`, HELP.split('\n')[0]);
     if (p.install || p.uninstall) throw opError('commit_paths_invalid', '--install and --uninstall belong to gbrain git guard.', 'Run gbrain git guard --install.');
     const repo = checkoutRoot(p.path ?? process.cwd());
@@ -223,7 +244,7 @@ export async function runGit(args: string[]): Promise<number> {
         appendPushLog(code === 'integrate_conflict' ? 'conflict' : 'local-only', branch, (e as { detail?: string }).detail ?? '');
       } catch { /* best-effort */ }
     }
-    return writeCliError(e, 'git commit-push', { json });
+    return writeCliError(e, args.find(a => !a.startsWith('-')) === 'maintenance' ? 'git maintenance' : 'git commit-push', { json });
   }
 }
 
@@ -235,6 +256,49 @@ function runGuard(p: Parsed): number {
     : p.uninstall ? (s.changed ? `commit guard removed: ${s.hook}` : 'commit guard was not installed')
     : s.installed ? `commit guard installed: ${s.hook}` : s.foreign ? `not installed; ${s.hook} is another tool's hook` : 'commit guard not installed (gbrain git guard --install)');
   return 0;
+}
+
+async function runMaintenanceCommand(p: Parsed, connectEngine?: () => Promise<BrainEngine>): Promise<number> {
+  if (p.apply && p.dryRun) throw opError('commit_paths_invalid', '--apply and --dry-run do not combine.', 'Preview with gbrain git maintenance --dry-run, then run it with --apply.');
+  if (p.source && p.path) throw opError('commit_paths_invalid', '--source and --path do not combine.', `Keep one: gbrain git maintenance --source ${p.source}, or gbrain git maintenance --path ${p.path}.`);
+  let repo: string;
+  if (p.source) {
+    if (!connectEngine) throw opError('commit_paths_invalid', 'gbrain git maintenance --source needs the brain.', 'Run it from the gbrain CLI on the brain host.');
+    const [row] = await (await connectEngine()).executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1 AND NOT archived', [p.source]);
+    if (!row) throw opError('unknown_source', `Source ${p.source} is not registered or is archived.`, 'Run gbrain sources list to see the registered sources.');
+    if (!row.local_path) throw opError('commit_paths_invalid', `Source ${p.source} has no checkout on this host, so there is no Git repository to maintain.`, 'Run it on the host that holds the source checkout.');
+    repo = checkoutRoot(row.local_path);
+  } else {
+    repo = checkoutRoot(p.path ?? process.cwd());
+  }
+  const plan = await planMaintenance(repo, { manual: true });
+  const doc = (extra: Record<string, unknown>) => ({ repo, common_dir: plan.common_dir, ...(p.source ? { source_id: p.source } : {}), kind: plan.kind,
+    user_scheduled: plan.user_scheduled, stats: plan.stats, last: plan.last, would_prune: plan.would_prune, steps: plan.steps.map(step => ['git', ...step].join(' ')), ...extra });
+  if (!p.apply) {
+    emit(p.json, doc({ mode: 'dry_run' }), describePlan(plan, p.source));
+    return 0;
+  }
+  const record = await runMaintenance(plan);
+  if (!record) {
+    throw opError('git_maintenance_busy', `Another git maintenance run holds the maintenance lock of ${repo}; nothing was changed.`,
+      'Wait for it to finish, then run gbrain git maintenance --dry-run to see what is left.', { retryable: true });
+  }
+  const mib = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+  emit(p.json, doc({ mode: 'apply', result: record }),
+    `maintained ${repo}: loose ${mib(record.before.loose_bytes)} -> ${mib(record.after?.loose_bytes ?? 0)}, ${record.after?.packs ?? 0} pack(s), ${mib(record.after?.packed_bytes ?? 0)} packed; ${record.pruned_objects} unreachable object(s) older than ${PRUNE_EXPIRE} pruned`);
+  return 0;
+}
+
+function describePlan(plan: MaintenancePlan, source?: string): string {
+  const mib = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+  const target = source ? `source ${source} (${plan.repo})` : plan.repo;
+  return [
+    `dry run: ${target}: ${plan.stats.loose_objects} loose object(s) (${mib(plan.stats.loose_bytes)}), ${plan.stats.packs} pack(s) (${mib(plan.stats.packed_bytes)}).`,
+    plan.last ? `Last run ${plan.last.at}: ${plan.last.kind}, ${plan.last.result}${plan.last.error ? ` (${plan.last.error})` : ''}.` : 'No recorded run.',
+    plan.user_scheduled ? `The user scheduled git's own maintenance here (${plan.user_scheduled}), so the maintenance cycle skips this repository.` : '',
+    `--apply would prune ${plan.would_prune} unreachable loose object(s) older than ${PRUNE_EXPIRE} (one-way) and run: ${plan.steps.map(step => ['git', ...step].join(' ')).join('; ')}.`,
+    'Nothing was changed.',
+  ].filter(Boolean).join('\n');
 }
 
 function currentBranchOf(args: string[]): string {

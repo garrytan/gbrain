@@ -72,6 +72,7 @@ export type CyclePhase =
   | 'fence_repair' // #6188: repairs held and stored malformed facts/takes fences (global maintenance lane)
   | 'content_repair' // #6377: the rest of the content-repair lane (slug conflicts and later kinds), right after fence_repair
   | 'unindexed_files' // #6865: committed files with no page and no hold, scheduled for a re-screen on the next sync
+  | 'git_maintenance' // Wave C 1C: packs and prunes strict sources' Git object stores (src/core/cycle/git-maintenance.ts)
   | 'resolve_symbol_edges'
   | 'patterns' | 'recompute_emotional_weight' | 'consolidate'
   // v0.36.1.0 Hindsight calibration wave:
@@ -134,6 +135,8 @@ export const ALL_PHASES: CyclePhase[] = [
   'content_repair',
   // #6865: after the repair lane, so its holds are settled; schedules unindexed files for the next sync.
   'unindexed_files',
+  // Wave C 1C: packs and prunes the Git object stores of strict sources, after the sync and repairs that wrote to them.
+  'git_maintenance',
   'synthesize',
   'extract',
   // v0.32.2 — reconcile DB facts index from the `## Facts` fence on
@@ -1904,14 +1907,15 @@ async function runPhaseOrphans(engine: BrainEngine, sourceId?: string): Promise<
 
 
 /**
- * #6188 / #6377 / #6865: the bounded phases that run right after `sync`, in this order: the two repair-lane phases, then
- * the unindexed-file detector. `runCycle` dispatches them through one loop; each phase module owns its gate, budget and report.
+ * #6188 / #6377 / #6865 / Wave C 1C: the bounded phases that run right after `sync`, in this order: the two repair-lane
+ * phases, the unindexed-file detector, then Git object-store maintenance. `runCycle` dispatches them through one loop; each phase module owns its gate, budget and report.
  */
-const REPAIR_LANE_PHASES = ['fence_repair', 'content_repair', 'unindexed_files'] as const;
+const REPAIR_LANE_PHASES = ['fence_repair', 'content_repair', 'unindexed_files', 'git_maintenance'] as const;
 
 async function runRepairLanePhase(phase: typeof REPAIR_LANE_PHASES[number], engine: BrainEngine | null,
   opts: { dryRun: boolean; signal?: AbortSignal; deadlineAtMs: number | null }): Promise<PhaseResult> {
   if (phase === 'unindexed_files') return (await import('./cycle/unindexed-files.ts')).runUnindexedFilesPhase(engine, opts);
+  if (phase === 'git_maintenance') return (await import('./cycle/git-maintenance.ts')).runGitMaintenancePhase(engine, opts);
   return phase === 'fence_repair' ? (await import('./cycle/fence-repair.ts')).runFenceRepairPhase(engine, opts) : (await import('./cycle/content-repair.ts')).runContentRepairPhase(engine, opts);
 }
 

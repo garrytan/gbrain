@@ -42,6 +42,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `heavy-tests.yml` | `opencode-door-canary` | Named exception: schedule-only, non-gating canary | Itself |
 | `macos-validation.yml` | Label-gated on pull requests | Named exception | Nightly macOS validation schedule |
 | `scale-tier.yml` | Path- or label-gated 10k on pull requests | Named exception | Nightly Scale tier schedule (10k-50k) |
+| `large-pages-nightly.yml` | No `pull_request` trigger: schedule and dispatch only, record-only, outside `test-status` | Named exception | Itself (nightly Large pages schedule) |
 | `semgrep.yml` | PR diff scan vs full-tree scan | Named exception | Weekly Semgrep schedule |
 | `osv-scanner.yml` | Pull requests scan only on a manifest change | Named exception | Weekly OSV schedule; `dependency-audit` on every PR |
 | `nightly-watch.yml` | `workflow_run` event guard | Not a test scope: it files issues from qualifying scheduled and push-to-master runs | — |

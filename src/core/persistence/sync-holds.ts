@@ -54,6 +54,7 @@ import { chunkerStamp } from '../chunkers/code.ts';
 import { gitBlobOid, sha256 } from './digest.ts';
 import { HOLD_ATTEMPTS_NEEDS_HUMAN, HOLD_ESCALATE_MS } from './sync-fault-class.ts';
 import { retiredSyncSetting, type RetiredSyncKeyName } from '../sync-config-keys.ts';
+import { lfsPointerHoldFix, type LfsWriter } from './lfs-pointer.ts';
 
 export const GIT_HOLD_OP = 'sync-hold';
 export const GIT_HOLD_SUMMARY_OP = 'sync-hold-summary';
@@ -91,7 +92,9 @@ export type GitHoldCode = ContentRefusal['code'] | 'rename_held' | 'parser_regre
   /** GBRA-133 S-7: a committed file whose name is not valid UTF-8, so no Git read or file finds it by its decoded name. */
   | 'path_not_utf8'
   /** GBRA-133 PR 1 (classic sync): src/core/classic-rename-holds.ts, src/core/classic-file-holds.ts and src/core/sync-byte-paths.ts. */
-  | 'rename_identity_unreadable' | 'rename_reconcile_failed' | 'absent_from_worktree' | 'unsupported_path';
+  | 'rename_identity_unreadable' | 'rename_reconcile_failed' | 'absent_from_worktree' | 'unsupported_path'
+  /** Wave C 1D: a page file whose text is a Git LFS pointer (persistence/lfs-pointer.ts). */
+  | 'lfs_pointer_unsmudged';
 /** GBRA-130 A-6: the fault a `page_write_failed` hold stands for (identifiers and classes only, never content). */
 export interface PageWriteFailureMeta { code: string; origin: string | null; error_class: string | null; errno: string | null;
   /** The newest failed receipt; null for a GBRA-133 S-63 freeze fault (origin `freeze`), which threw before any request was admitted. */
@@ -140,6 +143,8 @@ export interface GitHoldMeta {
   blob_oid?: string;
   /** The held bytes came from the working tree, not the pinned commit. */
   working?: boolean;
+  /** Wave C 1D `lfs_pointer_unsmudged`: who writes the checkout, which picks the fix's branch. */
+  lfs_writer?: LfsWriter;
   /** The held file is a rename destination: the page it moves when the hold clears. */
   rename_from?: SyncRename;
   /** #6194 `concurrent_write`: the database-only request that wrote the page during the import, and the revision it wrote. */
@@ -881,6 +886,8 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         user_message: `${record.path} holds NUL bytes (U+0000${record.meta.line !== undefined ? `, first on line ${record.meta.line}` : ''}), so sync holds it and the rest of source ${source} keeps syncing. A UTF-16 file (a Windows "Unicode" save) looks like this: save it as UTF-8. Otherwise remove the NUL bytes, or remove a binary file (or leave it out with sync.exclude), then commit and run gbrain sync --source ${source} --no-pull.`,
         why: 'Page text is stored as UTF-8 without NUL bytes, so these bytes cannot be imported as they stand; the hold re-screens when the file changes.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
+    case 'lfs_pointer_unsmudged':
+      return lfsPointerHoldFix(record);
     case 'git_object_missing':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
         user_message: `The Git object of ${record.path}${record.meta.blob_oid ? ` (blob ${record.meta.blob_oid})` : ''} is missing from the checkout of source ${source}, and its working-tree copy differs or is gone, so sync holds it and the rest of the source keeps syncing. Run git fsck in the checkout to see what is missing, restore it with git fetch (a partial or shallow clone) or from a backup, then run gbrain sync --source ${source} --no-pull.`,

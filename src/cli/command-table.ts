@@ -113,6 +113,12 @@ interface CliCommandBase {
    * (test/fix-routing.test.ts).
    */
   routes_source?: true | '--source-id';
+  /**
+   * A1: the subcommands (first positional after the command) the routing pin applies to. A command whose other
+   * subcommands open no brain and take no `--source` (`git commit-push`, `git guard`) lists the ones that do
+   * (`git maintenance`), so their fixes stay unpinned (src/core/fix-routing.ts).
+   */
+  routes_subcommands?: readonly string[];
   /** D3: lazy curated help module. */
   help?: () => Promise<{ help: CliHelpSpec }>;
   /**
@@ -208,7 +214,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // UPGRADE_AVAILABLE stderr per turn. NOTE: this path no-ops under NODE_ENV=test, so membership is
   // pinned by a source grep (test/hook-command.serial.test.ts), not a runtime test.
   // CLI_ONLY (#6530): shared-checkout-safe commit/push/pull; DB-free, pushes with host git credentials, never MCP.
-  { name: 'git', phase: 'pre-connect', thinClient: 'none', selfHelp: true, skipStartupHooks: true, load: () => import('./commands/git.ts') },
+  // Wave C 1C: `git maintenance --source` opens the brain to find the source's checkout; only it routes brain and source.
+  { name: 'git', phase: 'pre-connect-own-engine', thinClient: 'none', selfHelp: true, skipStartupHooks: true, routes_source: true, routes_subcommands: ['maintenance'], load: () => import('./commands/git.ts') },
   { name: 'hook', phase: 'pre-connect', thinClient: 'none', selfHelp: true, skipStartupHooks: true, load: () => import('./commands/hook.ts') },
   // CLI_ONLY: Monthly backup-coverage check (engine via thunk — pre-engine branch, lock-safe).
   // selfHelp: backup ships its own HELP (runBackupCli guard, engine-free — the command dispatches in

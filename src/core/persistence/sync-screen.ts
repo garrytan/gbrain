@@ -37,6 +37,7 @@ import { readSyncContent, readSyncFile, syncGitPath, UNREADABLE_SYNC_FILE, type 
 import { pinnedWindowBlock, readBlobBytes, readBlobContents, readPinnedBlob, readPinnedBytes, readPinnedContent, readTreeBlobs, SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { screenSyncImport, type SyncImportScreenInput } from './sync-prepare.ts';
 import { committedContentOrMissing, nullBytesRefusal } from './sync-entry-fault.ts';
+import { lfsPointerRefusal, lfsWriterFor } from './lfs-pointer.ts';
 import type { SyncProcessingOptions } from './sync-authority.ts';
 import { gitHoldItem, readSyncHoldPolicy, readSyncImportProvenance, type GitHoldCode, type GitHoldItem, type GitHoldRecord, type PreparationStallMeta, type SyncHoldPolicy } from './sync-holds.ts';
 import type { WriteRequest } from './model.ts';
@@ -340,6 +341,11 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
     return { ...held, meta: { ...held.meta, legacy_slugs: entry.legacySlugs } };
   }
   if (content === null) return null;
+  const pointer = lfsPointerRefusal(entry.path, content);
+  if (pointer) {
+    const held = heldEntry(entry, slug, pageId, pointer, content, blob);
+    return { ...held, meta: { ...held.meta, lfs_writer: lfsWriterFor(input.cursor.root, (await runWriteGateSource(engine, run, input.cursor.sourceId)).config) } };
+  }
   // GBRA-133 S-39: text holding NUL cannot be stored or carried in the write intent; only this file is held. A slug conflict
   // still names the hold (#6749): its message carries the path alone, and the slug-conflicts lane reports NULL_BYTES as still_invalid.
   const nul = nullBytesRefusal(entry.path, content);

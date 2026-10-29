@@ -83,6 +83,13 @@ export interface NativeLockOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * Read-only observation seam for tests and the large-page bench (scripts/bench-large-pages.ts): `held` runs once per
+ * lock taken by {@link acquireNativeLock}, after its release closed the handle, with the lock path and how long it was
+ * held. Production never installs it.
+ */
+export const nativeLockSeams: { held?: (path: string, heldMs: number) => void } = {};
+
 let bindingPromise: Promise<NativeBinding> | undefined;
 let bindingLoaded: NativeBinding | undefined;
 const windowsSocketRemovers = new WeakMap<NativeLockHandle, (path: string) => boolean>();
@@ -174,11 +181,13 @@ export async function acquireNativeLock(path: string, options: NativeLockOptions
     throw new NativeLockUnavailableError('Cannot open the stable writer lock file', cause, 'open');
   }
   let released = false;
+  let acquiredAt: number | undefined;
   const release = async () => {
     if (released) return;
     released = true;
     try { binding.close(handle); }
     catch (cause) { throw new NativeLockUnavailableError('Cannot close the writer lock handle; this host must stop publishing', cause); }
+    if (acquiredAt !== undefined) nativeLockSeams.held?.(path, performance.now() - acquiredAt);
   };
   const deadline = performance.now() + timeoutMs;
   try {
@@ -188,6 +197,7 @@ export async function acquireNativeLock(path: string, options: NativeLockOptions
       try { acquired = binding.tryLock(handle); }
       catch (cause) { throw new NativeLockUnavailableError('The OS could not acquire the writer lock', cause); }
       if (acquired) {
+        acquiredAt = performance.now();
         const guard = { get released() { return released; }, release };
         if (process.platform === 'win32') windowsSocketRemovers.set(guard, socketPath => {
           if (path !== `${socketPath}.bind.lock`) throw new NativeLockUnavailableError('The retained claim belongs to another IPC path');

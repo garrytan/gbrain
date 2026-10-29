@@ -196,6 +196,7 @@ export const SECTIONS: DocSection[] = [
         title: "docs/guides/cron-schedule.md",
         description: "Recurring job scheduling.",
         path: "docs/guides/cron-schedule.md",
+        includeInFull: false,
       },
       {
         title: "docs/guides/minions-deployment.md",
