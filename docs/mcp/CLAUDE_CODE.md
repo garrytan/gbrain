@@ -66,6 +66,17 @@ push protocol). One approval-UX difference: the bootstrap lane pre-approves
 `mcp__gbrain` via `permissions.allow` for headless runs; plugin-provided MCP
 tools use the plugin lane's own approval flow.
 
+**Per-turn hook.** Every gbrain plugin declares the `UserPromptSubmit` hook
+`gbrain setup claude-code` writes (`gbrain hook user-prompt`, 3 s), run through
+the launcher with `GBRAIN_HOOK_LANE=plugin`. While a brain-first block is
+installed it puts the brain-first rule beside each turn (`gbrain setup
+claude-code --instructions-only` writes the block; doctor `harness_wiring` and
+`gbrain post-upgrade` name that command when it's missing), and it adds the
+setup hook's read-context block when a serve is running. When setup,
+`gbrain bootstrap` or a workspace install already wires the event in your
+user settings or the project's `.claude` settings, the plugin's hook exits
+without output, so each turn gets it once. `GBRAIN_HOOKS=0`, or a recorded `gbrain setup claude-code --no-hooks`, turns it off.
+
 ## Option 1: Local (recommended, zero server needed)
 
 ```bash

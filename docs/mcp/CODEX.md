@@ -80,6 +80,18 @@ launches Codex, or use the bootstrap lane below. Unlike the OpenClaw bundle, the
 too (setup, migrate, smoke-test, gbrain-upgrade, schema authoring) — a plugin
 user IS the brain host.
 
+**Per-turn hook.** The plugin also declares the `UserPromptSubmit` hook
+`gbrain setup codex` writes (`gbrain hook user-prompt --harness codex`, 15 s),
+run through the launcher with `GBRAIN_HOOK_LANE=plugin`. Codex skips a plugin
+hook until you trust it: open `/hooks` in the CLI, review it, and trust it.
+While a brain-first block is installed it puts the brain-first rule beside
+each turn (`gbrain setup codex --instructions-only` writes the block; doctor
+`harness_wiring` and `gbrain post-upgrade` name that command when it's
+missing), and it adds the setup hook's read-context block when a serve is
+running. When `gbrain setup codex` or `gbrain bootstrap` already wires the
+event in `$CODEX_HOME/hooks.json`, the plugin's hook exits without output, so
+each turn gets it once. `GBRAIN_HOOKS=0`, or a recorded `gbrain setup codex --no-hooks`, turns it off.
+
 **Routing under the plugin lane.** The plugin serve is user-global and runs
 with the plugin snapshot as its working directory, so the per-project
 `.gbrain-source` / `.gbrain-mount` dotfiles never apply. Route the source

@@ -7,7 +7,11 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { claudeUserSettingsPath, codexConfigPath } from './host-specs.ts';
+import { codexHookCensus } from './codex-hooks.ts';
+import { classifyHarnessHook } from './hooks.ts';
+import { claudeSetupPaths } from '../setup/claude-code.ts';
+import { codexSetupPaths } from '../setup/codex.ts';
+import { CLAUDE_HOOK_SUBCOMMAND, claudeUserSettingsPath, codexConfigPath, codexHooksPath, GBRAIN_HOOK_MARKER_KEY } from './host-specs.ts';
 
 // ── Plugin-lane detection (codex/claude plugins provide an MCP server) ─────
 //
@@ -151,3 +155,38 @@ export function claudeAnyRegistrationExists(
   }
   return false;
 }
+
+/**
+ * Plugin-lane defer: the plugin's own hook (GBRAIN_HOOK_LANE=plugin) yields
+ * when the harness's setup receipt records that the user wants no hooks
+ * (one consent for both lanes), or when another gbrain install lane
+ * (`gbrain setup`, `gbrain bootstrap harness`, a workspace bootstrap) already
+ * wires this hook subcommand for the harness, so the event fires once. Claude Code: any gbrain-marked or
+ * harness-lane entry in the user settings or the cwd's .claude settings;
+ * Codex: a setup or bootstrap group in CODEX_HOME/hooks.json. Fail-open: an
+ * unreadable file counts as not wired.
+ */
+export function pluginHookYields(harness: string, subcommand: string, cwd: string): boolean {
+  const receipt = harness === 'codex' ? codexSetupPaths('gbrain').receiptPath : claudeSetupPaths({ name: 'gbrain', scope: 'user' }).receiptPath;
+  try {
+    if ((JSON.parse(readFileSync(receipt, 'utf8')) as { consent?: { wiring_scope?: { value?: { hooks?: string } } } }).consent?.wiring_scope?.value?.hooks === 'none') return true;
+  } catch { /* no receipt or unreadable: no recorded decline */ }
+  const event = Object.entries(CLAUDE_HOOK_SUBCOMMAND).find(([, s]) => s === subcommand)?.[0];
+  if (!event) return false;
+  if (harness === 'codex') {
+    try { return codexHookCensus(codexHooksPath()).some((g) => g.event === event && g.lane !== 'other'); } catch { return false; }
+  }
+  for (const path of [claudeUserSettingsPath(), join(cwd, '.claude', 'settings.json'), join(cwd, '.claude', 'settings.local.json')]) {
+    try {
+      if (!existsSync(path)) continue;
+      const groups = (JSON.parse(readFileSync(path, 'utf8')) as { hooks?: Record<string, unknown> }).hooks?.[event];
+      if (!Array.isArray(groups)) continue;
+      for (const g of groups) {
+        const entries = (g as { hooks?: unknown })?.hooks;
+        if (Array.isArray(entries) && entries.some((e) => typeof (e as Record<string, unknown> | null)?.[GBRAIN_HOOK_MARKER_KEY] === 'string' || classifyHarnessHook(e, event, 'any'))) return true;
+      }
+    } catch { /* fail-open */ }
+  }
+  return false;
+}
+

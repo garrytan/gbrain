@@ -354,10 +354,10 @@ export interface InstructionBlockView {
 
 /**
  * The brain-first instruction block for every surface gbrain wrote or was
- * told to skip (the ledger), plus each registered harness with no record,
- * checked at that harness's default instruction file. Read-only.
+ * told to skip (the ledger), plus each registered or plugin-served harness
+ * with no record, checked at that harness's default instruction file. Read-only.
  */
-export function instructionBlockViews(regs: HarnessRegistration[]): InstructionBlockView[] {
+export function instructionBlockViews(regs: HarnessRegistration[], plugins = enabledPluginLanes('gbrain')): InstructionBlockView[] {
   const state = (s: ReturnType<typeof inspectBrainFirst>['state']): InstructionBlockView['state'] =>
     s === 'current' ? 'current' : s === 'stale' ? 'stale' : s === 'damaged' ? 'damaged' : 'missing';
   const views: InstructionBlockView[] = readBrainFirstLedger().map((e) => {
@@ -368,11 +368,11 @@ export function instructionBlockViews(regs: HarnessRegistration[]): InstructionB
       ? { harness: e.harness, path, state: 'opted_out', from: 'ledger' }
       : { harness: e.harness, path, state: state(inspectBrainFirst(path, renderBrainFirstBlock(e.harness, e.access)).state), from: 'ledger', access: e.access };
   });
-  for (const r of regs) {
-    if (views.some((v) => v.harness === r.harness) || !isBrainFirstHarness(r.harness)) continue;
-    const target = brainFirstTarget(r.harness);
+  for (const harness of [...regs, ...plugins].map((r) => r.harness)) {
+    if (views.some((v) => v.harness === harness) || !isBrainFirstHarness(harness)) continue;
+    const target = brainFirstTarget(harness);
     if ('error' in target) continue;
-    views.push({ harness: r.harness, path: target.path, state: state(inspectBrainFirst(target.path).state), from: 'default_path' });
+    views.push({ harness, path: target.path, state: state(inspectBrainFirst(target.path).state), from: 'default_path' });
   }
   return views;
 }
@@ -425,6 +425,18 @@ function repairArgv(v: InstructionBlockView): Action {
       user_message: `The gbrain instruction block in ${v.path} needs a refresh. From ${dir}, run: ${argv.join(' ')}` };
   }
   return { argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(NAME), why };
+}
+
+/**
+ * post-upgrade: one line per wired harness (registration, plugin or ledger)
+ * whose brain-first block is missing or out of date, with the setup command
+ * that writes only that block. Read-only; an opt-out prints nothing.
+ */
+export function instructionBlockUpgradeHints(): string[] {
+  return instructionBlockViews(readHarnessRegistrations()).filter((v): v is InstructionBlockView & { state: 'missing' | 'stale' } => v.state === 'missing' || v.state === 'stale').map((v) => {
+    const fix = repairArgv(v);
+    return fix.argv ? `Brain-first instructions: the ${v.harness} block in ${v.path} ${INSTRUCTION_PROBLEM[v.state]}. Run \`${fix.argv.join(' ')}\` to write only that block (\`--no-instructions\` opts out).` : fix.user_message!;
+  });
 }
 
 /** Registration read (full run) or registration read + smoke (`--only harness_wiring`), plus the brain-first block. */
