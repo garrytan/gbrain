@@ -14,6 +14,7 @@
 test/access-as.test.ts
 test/access-binding.test.ts
 test/access-folder-lock-order.test.ts
+test/access-folder-multiconn.test.ts
 test/access-folder-rules.test.ts
 test/access-members.test.ts
 test/access-on-behalf-of.test.ts

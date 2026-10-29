@@ -9,7 +9,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { extractTimelineFromMeetings } from '../src/core/extract-timeline-from-meetings.ts';
 import { makeExtractTimelineFromMeetingsHandler } from '../src/core/minions/handlers/extract-timeline-from-meetings.ts';
-import { prepareMeetingTimeline } from '../src/core/extract-timeline-from-meetings.ts';
+import { MEETING_TIMELINE_INTENT, prepareMeetingTimeline } from '../src/core/extract-timeline-from-meetings.ts';
+import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../src/core/persistence/prepared-maintenance.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 
 const DATE = new Date('2026-04-20T00:00:00.000Z');
@@ -88,6 +89,21 @@ describe(`extract timeline --from-meetings on a managed brain (#6273, ${database
       await engine.executeRaw("INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ('default', 'meetings/', 'pending')");
       expect(await extractTimelineFromMeetings(engine)).toMatchObject({ batch_errors: 0, entries_created: 0 });
       expect(await requests(engine)).toBe(0);
+      expect(await rows(engine)).toEqual([]);
+    }, { databaseUrl, setup: ({ engine }) => seed(engine) });
+  }, 180_000);
+
+  test('GBRA-218: a meeting that gains a pending folder prefix between scan and apply fans out nothing (apply-time recheck)', async () => {
+    await managedBrain(async ({ engine }) => {
+      const [meeting] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='meetings/weekly'");
+      const queued = [{ date: '2026-04-20', summary: 'Discussed in Weekly Sync', source: 'extract-timeline-from-meetings:meetings/weekly', meeting_id: Number(meeting!.id) }];
+      await engine.executeRaw("INSERT INTO access_policy_state (source_id) VALUES ('default') ON CONFLICT DO NOTHING");
+      await engine.executeRaw("INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ('default', 'meetings/', 'pending')");
+      const authority = (await maintenancePreflight(engine, 'default'))!;
+      const snapshot = (await engine.readPageSnapshot('people/alice-example', { sourceId: 'default' }))!;
+      const receipt = await submitDatabaseMaintenanceIntent(engine, authority, 'people/alice-example',
+        { kind: MEETING_TIMELINE_INTENT, expected_revision: snapshot.revision, rows: queued }, crypto.randomUUID());
+      expect(Number(receipt.added ?? 0)).toBe(0);
       expect(await rows(engine)).toEqual([]);
     }, { databaseUrl, setup: ({ engine }) => seed(engine) });
   }, 180_000);

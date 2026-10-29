@@ -76,7 +76,7 @@ const reader = (p: string) => (p.startsWith('member:') ? p.slice(7) : p);
 const ruleLine = (r: FolderRule) => `  ${r.id}  ${r.prefix}  readable by ${r.readable_by.map(reader).join(', ') || 'nobody'}`;
 
 function changeLine(c: RuleChange): string {
-  const what = c.kind === 'added' ? 'add rule' : c.kind === 'removed' ? 'remove rule' : c.kind === 'prefix_moved' ? `move rule to ${c.prefix}`
+  const what = c.kind === 'added' ? 'add rule' : c.kind === 'removed' ? 'remove rule' : c.kind === 'prefix_moved' ? `move rule to ${c.prefix}` : c.kind === 'prefix_released' ? 'release the old prefix of moved rule'
     : c.kind === 'readers_removed' ? `remove readers ${(c.readers ?? []).map(reader).join(', ')} from` : `add readers ${(c.readers ?? []).map(reader).join(', ')} to`;
   return `  ${what} ${c.rule} (${c.prefix}): ${c.narrowing ? 'narrowing, applies at once' : 'widening, held until gbrain access apply'}`;
 }

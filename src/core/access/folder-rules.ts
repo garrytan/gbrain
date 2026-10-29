@@ -18,10 +18,12 @@
  *
  * classifyRulebook() compares the applied rulebook with a desired one rule by
  * rule: an added rule and removed readers narrow and apply at once; a removed
- * rule, added readers and a moved prefix widen and wait for an operator's
- * `gbrain access apply --yes`. Its target (what is applied now) is never wider
- * than the applied rulebook: a rule whose readers both lose and gain entries
- * applies the intersection.
+ * rule and added readers widen and wait for an operator's
+ * `gbrain access apply --yes`. A moved prefix is both: the rule applies at its
+ * new prefix at once, and its old prefix keeps the old readers under a held
+ * rule (heldRuleId) whose release waits for apply. Its target (what is applied
+ * now) is never wider than the applied rulebook: a rule whose readers both lose
+ * and gain entries applies the intersection.
  */
 import { createHash } from 'node:crypto';
 import { load, JSON_SCHEMA } from 'js-yaml';
@@ -213,7 +215,14 @@ export function rulesFromJson(value: unknown): FolderRule[] {
   }));
 }
 
-export type ChangeKind = 'added' | 'removed' | 'readers_removed' | 'readers_added' | 'prefix_moved';
+export type ChangeKind = 'added' | 'removed' | 'readers_removed' | 'readers_added' | 'prefix_moved' | 'prefix_released';
+
+const HELD_RULE_RE = /\.held-[0-9a-f]{8}$/;
+
+/** The id that keeps rule `id`'s old `prefix` restricted after the rule moved, until an operator approves the release. */
+export function heldRuleId(id: string, prefix: string): string {
+  return `${id.slice(0, 50).replace(/[._-]+$/, '')}.held-${createHash('sha256').update(`${id}\u0000${prefix}`).digest('hex').slice(0, 8)}`;
+}
 
 export interface RuleChange {
   rule: string;
@@ -242,7 +251,13 @@ export function classifyRulebook(applied: readonly FolderRule[], desired: readon
   for (const [id, a] of after) {
     const b = before.get(id);
     if (!b) { target.push(a); changes.push({ rule: id, kind: 'added', narrowing: true, prefix: a.prefix }); continue; }
-    if (b.prefix !== a.prefix) { target.push(b); changes.push({ rule: id, kind: 'prefix_moved', narrowing: false, prefix: a.prefix }); continue; }
+    if (b.prefix !== a.prefix) {
+      const held = { id: heldRuleId(id, b.prefix), prefix: b.prefix, readable_by: b.readable_by };
+      if (before.has(held.id) || after.has(held.id)) { target.push(b); changes.push({ rule: id, kind: 'prefix_moved', narrowing: false, prefix: a.prefix }); continue; }
+      target.push(a, held);
+      changes.push({ rule: id, kind: 'prefix_moved', narrowing: true, prefix: a.prefix }, { rule: held.id, kind: 'prefix_released', narrowing: false, prefix: b.prefix });
+      continue;
+    }
     const removed = b.readable_by.filter(p => !a.readable_by.includes(p));
     const added = a.readable_by.filter(p => !b.readable_by.includes(p));
     target.push({ id, prefix: b.prefix, readable_by: b.readable_by.filter(p => a.readable_by.includes(p)) });
@@ -252,7 +267,7 @@ export function classifyRulebook(applied: readonly FolderRule[], desired: readon
   for (const [id, b] of before) {
     if (after.has(id)) continue;
     target.push(b);
-    changes.push({ rule: id, kind: 'removed', narrowing: false, prefix: b.prefix });
+    changes.push({ rule: id, kind: HELD_RULE_RE.test(id) ? 'prefix_released' : 'removed', narrowing: false, prefix: b.prefix });
   }
   // A desired rule that takes the prefix of a rule the target still holds (an id renamed) leaves two rules on one prefix
   // until the removal is approved; both have to pass, which is never wider than either.

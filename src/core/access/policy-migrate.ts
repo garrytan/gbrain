@@ -20,7 +20,7 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import type { FolderRule } from './folder-rules.ts';
-import { appliedRules, ensurePolicyState, getRevision, listRevisions, readAccessStore, writeAccessStore, type AccessStore } from './policy.ts';
+import { appliedRules, ensurePolicyState, getRevision, listRevisions, lockSource, readAccessStore, writeAccessStore, type AccessStore } from './policy.ts';
 import { APPROVED_FILE, commitPolicyFile, isGitWorkTree, POLICY_FILE, sourcePolicyRoot, syncGitPolicy } from './policy-git.ts';
 import { serializePolicyYaml } from './folder-rules.ts';
 
@@ -33,6 +33,9 @@ export interface MigratePreview {
   approved: FolderRule[];
   resume: { id: string; phase: string } | null;
 }
+
+/** Test seam: runs after a phase is journaled ('committed', then 'switched'), before the next step. */
+export const migrateSeams: { afterPhase?: (phase: string) => Promise<void> | void } = {};
 
 async function unfinished(engine: BrainEngine, sourceId: string): Promise<{ id: string; phase: string; direction: string; receipts: Record<string, unknown> } | null> {
   const [row] = await engine.executeRaw<{ id: string; phase: string; direction: string; receipts: unknown }>(
@@ -83,12 +86,14 @@ export async function migrateAccessStore(engine: BrainEngine, sourceId: string):
   } else if (job.phase === 'started') {
     await record('committed');
   }
+  await migrateSeams.afterPhase?.('committed');
   await engine.transaction(async tx => {
-    await tx.executeRaw('SELECT 1 FROM access_policy_state WHERE source_id = $1 FOR UPDATE', [sourceId]);
+    await lockSource(tx, sourceId);
     await writeAccessStore(tx, sourceId, p.to);
     await tx.executeRaw(`UPDATE access_policy_migrations SET phase = 'switched', receipts = $2::text::jsonb, updated_at = now() WHERE id = $1`, [job!.id, JSON.stringify(receipts)]);
   });
   job.phase = 'switched';
+  await migrateSeams.afterPhase?.('switched');
   if (p.to === 'git') receipts.sync = (await syncGitPolicy(engine, sourceId, p.root!)).state;
   return { id: job.id, from: p.from, to: p.to, phase: job.phase, receipts };
 }

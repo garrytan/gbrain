@@ -34,7 +34,7 @@ import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
-import { classifyRulebook, folderRulesAllow, matchingRuleIds, parsePolicyYaml, ruleIdForPrefix, serializePolicyYaml, type FolderRule } from '../src/core/access/folder-rules.ts';
+import { classifyRulebook, folderRulesAllow, heldRuleId, matchingRuleIds, parsePolicyYaml, ruleIdForPrefix, serializePolicyYaml, type FolderRule } from '../src/core/access/folder-rules.ts';
 import { applyApproved, policySeams, policyStatus, previewApply, proposeRevision, resumePolicy } from '../src/core/access/policy.ts';
 import { runAccessRules } from '../src/commands/access-rules.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -77,12 +77,14 @@ describe('folder-rule grammar', () => {
     expect(bad('version: 2\nrules: []\n').problems[0]!.message).toContain('version');
   });
 
-  test('classification: additions and removed readers narrow; removals, added readers and moved prefixes are held; the target is never wider', () => {
+  test('classification: additions, removed readers and a moved prefix\'s new folder narrow; removals, added readers and the old folder\'s release are held; the target is never wider', () => {
     const applied = [rule('a', 'x/', ['alice-example', 'bob-example']), rule('b', 'y/', ['alice-example']), rule('c', 'z/', ['alice-example'])];
     const desired = [rule('a', 'x/', ['alice-example', 'carol-example']), rule('c', 'w/', ['alice-example']), rule('d', 'v/', ['bob-example'])];
     const cls = classifyRulebook(applied, desired);
-    expect(cls.changes.map(c => `${c.rule}:${c.kind}:${c.narrowing}`).sort()).toEqual(['a:readers_added:false', 'a:readers_removed:true', 'b:removed:false', 'c:prefix_moved:false', 'd:added:true']);
-    expect(cls.target).toEqual([rule('a', 'x/', ['alice-example']), rule('b', 'y/', ['alice-example']), rule('c', 'z/', ['alice-example']), rule('d', 'v/', ['bob-example'])]);
+    const held = heldRuleId('c', 'z/');
+    expect(cls.changes.map(c => `${c.rule}:${c.kind}:${c.narrowing}`).sort()).toEqual(['a:readers_added:false', 'a:readers_removed:true', 'b:removed:false', `${held}:prefix_released:false`, 'c:prefix_moved:true', 'd:added:true']);
+    expect(cls.target).toEqual([rule('a', 'x/', ['alice-example']), rule('b', 'y/', ['alice-example']), rule('c', 'w/', ['alice-example']), rule(held, 'z/', ['alice-example']), rule('d', 'v/', ['bob-example'])]);
+    expect(classifyRulebook(cls.target, desired).held.map(c => `${c.rule}:${c.kind}:${c.prefix}`)).toEqual(['a:readers_added:x/', 'b:removed:y/', `${held}:prefix_released:z/`]);
     expect(cls.kind).toBe('mixed');
     expect(classifyRulebook([], desired).kind).toBe('narrowing');
     expect(classifyRulebook(desired, desired).kind).toBe('unchanged');
@@ -376,6 +378,28 @@ for (const kind of testBackends()) {
         expect(parsed.ok && parsed.rules.map(r => r.id).sort()).toEqual((await policyStatus(engine, SRC)).desired!.rules.map(r => r.id).sort());
       }
     }, 120_000);
+
+    test('a moved prefix restricts the new folder at once and holds only the old folder\'s release (L4)', async () => {
+      await importFromContent(engine, 'projects/old-example/doc', pageText('old doc', 'canaryfrmvold'), { sourceId: SRC });
+      await importFromContent(engine, 'projects/new-example/doc', pageText('new doc', 'canaryfrmvnew'), { sourceId: SRC });
+      const ok = async (who: string, canary: string) => (await call(who, 'search', { query: canary, match: 'keyword', fields: 'full' })).text.includes(canary);
+      const base = (await policyStatus(engine, SRC)).desired!.rules.filter(r => r.id !== 'mv');
+      expect((await proposeRevision(engine, SRC, [...base, rule('mv', 'projects/old-example/', ['alice-example'])], { origin: 'cli' })).state).toBe('applied');
+      expect({ old: await ok('bob', 'canaryfrmvold'), new: await ok('bob', 'canaryfrmvnew') }).toEqual({ old: false, new: true });
+      const moved = await proposeRevision(engine, SRC, [...base, rule('mv', 'projects/new-example/', ['alice-example'])], { origin: 'cli' });
+      expect({ state: moved.state, changes: moved.changes.map(c => `${c.kind}:${c.narrowing}:${c.prefix}`).sort(), held: moved.held.map(h => `${h.kind}:${h.prefix}`) }).toEqual({
+        state: 'recorded', changes: ['prefix_moved:true:projects/new-example/', 'prefix_released:false:projects/old-example/'], held: ['prefix_released:projects/old-example/'] });
+      for (const who of ['bob', 'unbound']) expect({ who, old: await ok(who, 'canaryfrmvold'), new: await ok(who, 'canaryfrmvnew') }).toEqual({ who, old: false, new: false });
+      expect({ old: await ok('alice', 'canaryfrmvold'), new: await ok('alice', 'canaryfrmvnew') }).toEqual({ old: true, new: true });
+      const preview = await previewApply(engine, SRC);
+      expect(preview.widening.map(w => ({ kind: w.change.kind, prefix: w.change.prefix, pages: w.pages, sample: w.sample, gains: w.gains }))).toEqual([
+        { kind: 'prefix_released', prefix: 'projects/old-example/', pages: 1, sample: ['projects/old-example/doc'], gains: 'every_source_reader' }]);
+      expect((await stamps())[`${SRC}:projects/new-example/doc`]).toEqual([`${SRC}:mv`]);
+      await applyApproved(engine, SRC, { expect: preview.plan_hash! });
+      for (const who of ['bob', 'unbound']) expect({ who, old: await ok(who, 'canaryfrmvold'), new: await ok(who, 'canaryfrmvnew') }).toEqual({ who, old: true, new: false });
+      expect((await stamps())[`${SRC}:projects/old-example/doc`]).toBeNull();
+      expect((await policyStatus(engine, SRC)).held).toEqual([]);
+    }, 240_000);
 
     test('property: the SQL predicate and the row helper agree on generated slugs, rules and identities', async () => {
       const src = 'fr-prop';

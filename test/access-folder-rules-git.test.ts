@@ -234,3 +234,52 @@ describe('folder access rules, git store', () => {
     } finally { rmSync(bare, { recursive: true, force: true }); rmSync(repo, { recursive: true, force: true }); }
   }, 120_000);
 });
+
+describe('a moved prefix on a git source (L4)', () => {
+  let root: string;
+  let engine: PGLiteEngine;
+  const hidden = async (slug: string) => {
+    const [row] = await engine.executeRaw<{ hidden: boolean }>(
+      `SELECT (folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(source_id, slug)) AS hidden FROM pages WHERE source_id = $1 AND slug = $2`, [SRC, slug]);
+    return row?.hidden;
+  };
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' } as never);
+    await engine.initSchema();
+    root = mkdtempSync(join(tmpdir(), 'gbrain-frgit-move-'));
+    git(root, 'init', '-q', '-b', 'main');
+    git(root, 'config', 'user.email', 't@t.co');
+    git(root, 'config', 'user.name', 't');
+    for (const s of ['projects/old-example/doc', 'projects/new-example/doc']) writePage(root, s);
+    writePolicy(root, POLICY([['mv', 'projects/old-example/', 'alice-example']]));
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'pages and policy');
+    await seedBrain(engine, root);
+    await sync(engine, root, true);
+  }, 120_000);
+
+  afterAll(async () => {
+    await engine.disconnect();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test('a committed move restricts the new folder at once; the old folder stays hidden until apply, then opens', async () => {
+    expect({ old: await hidden('projects/old-example/doc'), new: await hidden('projects/new-example/doc') }).toEqual({ old: true, new: false });
+    writePolicy(root, POLICY([['mv', 'projects/new-example/', 'alice-example']]));
+    git(root, 'commit', '-q', '-am', 'move mv');
+    await sync(engine, root);
+    const status = await policyStatus(engine, SRC);
+    expect(status.held.map(h => `${h.kind}:${h.prefix}`)).toEqual(['prefix_released:projects/old-example/']);
+    expect({ old: await hidden('projects/old-example/doc'), new: await hidden('projects/new-example/doc') }).toEqual({ old: true, new: true });
+    expect((await stamps(engine))['projects/new-example/doc']).toEqual([`${SRC}:mv`]);
+    const preview = await cli(engine, ['apply', '--source', SRC]);
+    expect(preview.widening.map((w: { change: { kind: string; prefix: string }; sample: string[] }) => ({ kind: w.change.kind, prefix: w.change.prefix, sample: w.sample })))
+      .toEqual([{ kind: 'prefix_released', prefix: 'projects/old-example/', sample: ['projects/old-example/doc'] }]);
+    const applied = await cli(engine, ['apply', '--source', SRC, '--yes', '--expect', preview.plan_hash]);
+    expect(applied.git.path).toBe('.gbrain/access.approved');
+    expect({ old: await hidden('projects/old-example/doc'), new: await hidden('projects/new-example/doc') }).toEqual({ old: false, new: true });
+    expect((await policyStatus(engine, SRC)).rules.map(r => `${r.id}:${r.prefix}`)).toEqual(['mv:projects/new-example/']);
+  }, 120_000);
+});
