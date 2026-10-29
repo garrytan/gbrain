@@ -44,6 +44,7 @@ import type { ConnectProbeResult } from '../core/connect-probe.ts';
 import { probeBrainIdentity, DEFAULT_PROBE_TIMEOUT_MS } from '../core/connect-probe.ts';
 import { opencodeGlobalConfigPath } from '../core/bootstrap/host-specs.ts';
 import { acquireBootstrapLock } from '../core/bootstrap/lock.ts';
+import { brainFirstTarget, describeBrainFirstOutcome, installerBrainFirst, isBrainFirstHarness } from '../core/setup/brain-first.ts';
 import {
   GBRAIN_REMOTE_TOKEN_ENV,
   reconcileOpencodeSiblingGlobal,
@@ -174,7 +175,10 @@ Flags:
   --scopes "<s>"       With --oauth --register: client scopes (default: "${DEFAULT_SCOPES}")
   --install            Run the agent's MCP-add command, then smoke-test the token
                        (claude-code + codex + opencode; opencode installs via a direct
-                       config write — no binary needed, token stays out of the file)
+                       config write — no binary needed, token stays out of the file).
+                       Also writes the brain-first instruction block into the agent's
+                       own instruction file (CLAUDE.md / AGENTS.md)
+  --no-instructions    With --install, skip (and remove) the brain-first block
   --yes                The user's approval for --install (writes a credential-
                        bearing MCP entry); without it a non-interactive run exits 3
   --force              On --install, replace an existing server of the same name
@@ -434,6 +438,8 @@ export interface ConnectDeps {
     url: string,
     opts?: { allowReplaceOtherSource?: boolean },
   ): { configPath: string; replacedPrior: boolean } | Promise<{ configPath: string; replacedPrior: boolean }>;
+  /** After a successful registration: the brain-first block in the agent's own instruction file. Returns the line to print. */
+  writeInstructions(agent: AgentId, name: string, optOut: boolean): string | null;
 }
 
 async function defaultPromptYesNo(question: string): Promise<boolean> {
@@ -491,6 +497,13 @@ const defaultDeps: ConnectDeps = {
   probe: (url, token, timeoutMs) => probeBrainIdentity(url, token, { timeoutMs }),
   env: (name) => process.env[name],
   registerOAuthClient: defaultRegisterOAuthClient,
+  writeInstructions: (agent, name, optOut) => {
+    if (!isBrainFirstHarness(agent)) return null;
+    const target = brainFirstTarget(agent);
+    if ('error' in target) return null;
+    const o = installerBrainFirst({ target, access: { kind: 'mcp', server: name }, writer: `gbrain connect --agent ${agent} --install`, instructions: optOut ? false : undefined });
+    return `${describeBrainFirstOutcome(o, false).trim()}${o.decision.value === 'accepted' ? ' (opt out with --no-instructions)' : ''}`;
+  },
   writeOpencodeRemoteEntry: async (name, url, opts) => {
     // The writer's contract: callers hold acquireBootstrapLock on the config
     // dir (harness.ts [X11] parity) — the user-global file is shared across
@@ -537,6 +550,7 @@ interface ParsedFlags {
   force: boolean;
   json: boolean;
   showToken: boolean;
+  noInstructions: boolean;
   timeoutMs: number;
   help: boolean;
   agentError?: string;
@@ -555,6 +569,7 @@ function parseArgs(args: string[]): ParsedFlags {
     force: false,
     json: false,
     showToken: false,
+    noInstructions: false,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     help: false,
   };
@@ -583,6 +598,7 @@ function parseArgs(args: string[]): ParsedFlags {
       case '--force': out.force = true; break;
       case '--json': out.json = true; break;
       case '--show-token': out.showToken = true; break;
+      case '--no-instructions': out.noInstructions = true; break;
       case '--token': { const v = takeValue('--token'); if (v !== undefined) out.token = v; break; }
       case '--client-id': { const v = takeValue('--client-id'); if (v !== undefined) out.clientId = v; break; }
       case '--client-secret': { const v = takeValue('--client-secret'); if (v !== undefined) out.clientSecret = v; break; }
@@ -750,6 +766,8 @@ export async function runConnect(args: string[], deps: ConnectDeps = defaultDeps
       `Added MCP entry '${f.name}' -> ${url} in ${w.configPath}` +
         `${w.replacedPrior ? ' (replaced the prior gbrain entry)' : ''}. Restart opencode (config is read at session start).`,
     );
+    const ocInstructions = deps.writeInstructions(f.agent, f.name, f.noInstructions);
+    if (ocInstructions) console.error(ocInstructions);
     if (deps.env(ENV_VAR) !== realToken) {
       console.error(`opencode resolves {env:${ENV_VAR}} at read time. Add this to your shell profile so sessions can reach the brain:`);
       console.error(`  export ${ENV_VAR}=<your-token>`);
@@ -798,6 +816,8 @@ export async function runConnect(args: string[], deps: ConnectDeps = defaultDeps
     fail(`'${binary} mcp add' failed${note}: ${redactToken(add.stderr || add.stdout, realToken)}`);
   }
   console.error(`Added MCP server '${f.name}' -> ${url}.`);
+  const instructions = deps.writeInstructions(f.agent, f.name, f.noInstructions);
+  if (instructions) console.error(instructions);
 
   // Codex reads the token from the env var at runtime, not from its config.
   // If the current env doesn't already carry it, the user must export it.

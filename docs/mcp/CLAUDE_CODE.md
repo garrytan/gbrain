@@ -69,10 +69,13 @@ tools use the plugin lane's own approval flow.
 ## Option 1: Local (recommended, zero server needed)
 
 ```bash
-claude mcp add gbrain -- "$(command -v gbrain)" serve --surface full
+claude mcp add gbrain -- "$(command -v gbrain)" serve --surface starter
+gbrain setup claude-code --instructions-only
 ```
 
-That's it. Claude Code spawns `gbrain serve` as a stdio subprocess. No server, no
+(`gbrain setup claude-code` alone does both, plus hooks and a smoke test.)
+The second line adds the [brain-first instructions](#brain-first-instructions).
+Claude Code spawns `gbrain serve` as a stdio subprocess. No server, no
 tunnel, no token needed. Works with both PGLite and Supabase engines.
 
 > **PGLite brains are single-process.** PGLite is a single-writer embedded
@@ -87,14 +90,13 @@ tunnel, no token needed. Works with both PGLite and Supabase engines.
 > connections. Details:
 > [serve ↔ sync concurrency](../architecture/serve-sync-concurrency.md).
 
-`--surface full` serves the whole operation catalog (`get_page`, `put_page`,
-`put_pages`, `search`, graph ops, …), the seven-verb memory protocol (`recall`,
-`remember`, `entity`, `synthesize`, `forget`, `context_pack`, `delta` —
-[MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)) included; it is the surface
-every registration gbrain writes pins and what a bare `serve` defaults to. A
-harness that caps its tool count can register `--surface starter` (the verbs
-plus the daily-driver page/search/graph ops and capture) or `--surface verbs`
-(only the seven verbs).
+`--surface starter` lists the daily-driver tools: the seven memory verbs
+([MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)), `search`, `query`,
+`get_page`, `put_page`, `capture`, graph reads and skills. It is the surface every
+new registration gbrain writes pins (a bare `serve` still defaults to full). A parameter it leaves out is still accepted,
+and `request_tools` returns full schemas or widens the session to a left-out tool. `--surface full` lists every
+operation (`put_pages`, admin and tuning ops) and is the opt-in; `--surface verbs`
+lists only the seven verbs.
 
 ## Option 2: Remote, one command (fastest from a bearer token)
 
@@ -162,6 +164,26 @@ Replace the host with your MagicDNS name (or your ngrok domain) and
 > A `gbrain auth create` token is a long-lived, full-access secret. Keep it
 > private (it lands in `~/.claude.json`), and prefer a scoped/short-lived token
 > where your host supports one.
+
+## Brain-first instructions
+
+Registering the MCP server only makes the tools available. Agents seldom call a
+brain nobody told them about, so finish the install with:
+
+```bash
+gbrain setup claude-code --instructions-only
+```
+
+It writes one short marked block into `~/.claude/CLAUDE.md` (with `--scope project`, `./CLAUDE.local.md`): before answering any turn,
+search the brain first, read the best hit, fill gaps with other tools, apply your own
+access rules, then finish the task. Text outside the markers is never touched, a
+re-run upgrades the block in place, `--dry-run` previews it,
+`--no-instructions` opts out (and is remembered) and `--remove` takes it out.
+`gbrain setup claude-code` and `gbrain connect --install` write it for you.
+While the block is installed, setup's UserPromptSubmit hook also leads every turn
+with the same rule, beside the user's message, whether or not `gbrain serve` has
+context to add (`--no-hooks` installs no hook).
+`gbrain doctor` warns when the block is missing or out of date.
 
 ## Verify
 

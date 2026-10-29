@@ -11,6 +11,7 @@
  */
 
 import { existsSync } from 'fs';
+import { isAbsolute } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import type { BrainHealth } from '../core/types.ts';
 import { buildChecks, computeDoctorReport, type DoctorReport, type Check } from './doctor.ts';
@@ -144,7 +145,8 @@ async function runCycleFreshnessMaintenance(
   for (const sourceId of sourceIds) {
     const source = sources.find((s) => s.id === sourceId);
     const localPath = source?.local_path ?? null;
-    const brainDir = localPath && existsSync(localPath) ? localPath : null;
+    // #7630: a relative local_path names whatever directory maintain runs from, so it is no checkout.
+    const brainDir = localPath && isAbsolute(localPath) && existsSync(localPath) ? localPath : null;
     let report: CycleReport;
     try {
       report = await runCycle(engine, {

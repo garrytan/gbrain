@@ -44,6 +44,7 @@ test/company-brain-policy.test.ts
 test/company-brain-runtime.test.ts
 test/consolidate-fenced-close-reimport.test.ts
 test/consolidate-same-instant-6023.test.ts
+test/conversation-facts-outcome-marker-purge-7778.test.ts
 test/conversation-facts-oversized-sidecar.test.ts
 test/conversation-facts-purged-claim-7438.test.ts
 test/counting-embedder.test.ts
@@ -73,6 +74,7 @@ test/fact-embedding-oversized-7211.test.ts
 test/fact-fence-adoption-exits.test.ts
 test/fact-purge-lookup-timeout-6511.test.ts
 test/facts-absorb-stalled-receipt-7439.test.ts
+test/facts-entity-moved-7602.test.ts
 test/facts-insert-guards-7105.test.ts
 test/facts-publication-large-fence-6898.test.ts
 test/facts-subject-infer-7405.test.ts
@@ -83,11 +85,18 @@ test/forecast-journal.test.ts
 test/frontmatter-reserved-keys-6454.test.ts
 test/get-chunks-paging.test.ts
 test/git-canonical-conversion-g8a.test.ts
+test/git-canonical-conversion-live-writer.test.ts
+test/git-canonical-conversion-no-checkout-7885.test.ts
+test/git-canonical-conversion-progress.test.ts
+test/git-canonical-conversion-strict-pass-7866.test.ts
 test/git-canonical-declared-g7a.test.ts
 test/git-canonical-indexer-g3.test.ts
+test/git-door-index-lock-7742.test.ts
+test/git-door-planned-state.test.ts
 test/git-door-plumbing-gbra133.test.ts
 test/git-door-remote-g7b.test.ts
 test/git-door-strict-gbra133.test.ts
+test/git-door-write-cost.test.ts
 test/git-gap-census.test.ts
 test/git-maintenance.test.ts
 test/google-connector-facts-fence-7292.test.ts
@@ -217,6 +226,7 @@ test/large-pages/stuck-recovery-large.slow.test.ts
 test/large-pages/timeline-top-insert-reembed.test.ts
 test/large-pages/upload-binding.test.ts
 test/large-pages/upload-over-ceiling.test.ts
+test/large-pages/upload-provenance-7873.test.ts
 test/large-pages/upload-review.test.ts
 test/large-pages/v252-master-reader-compat.test.ts
 test/lfs-pointer-hold.test.ts
@@ -225,6 +235,7 @@ test/link-preparation-shared-index.test.ts
 test/links-attendance-blocked.test.ts
 test/links-extraction-yield.test.ts
 test/list-jobs-row-bound.test.ts
+test/maintenance-trust-marker-7905.test.ts
 test/managed-cycle-pull-upstream.test.ts
 test/managed-facts-withdrawal-recovery-6506.test.ts
 test/managed-facts-withdrawn-skip-6506.test.ts
@@ -255,6 +266,8 @@ test/managed-sync-preparation-stalled-holds.test.ts
 test/managed-sync-row-parity.test.ts
 test/managed-sync-stale-group-head.test.ts
 test/mcp-unreadable-sources-notice.test.ts
+test/migration-0-53-host-move-7900.test.ts
+test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
 test/on-commit-embedding.serial.test.ts
@@ -404,6 +417,7 @@ test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
+test/provenance-stamps-7873.test.ts
 test/purge-fact.test.ts
 test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
@@ -490,6 +504,7 @@ test/sync-page-write-failed-gbra130.test.ts
 test/sync-pass-abandoned-7355.test.ts
 test/sync-pass-cost-grouping-gbra130.test.ts
 test/sync-pass-dirty-after-freeze-gbra130.test.ts
+test/sync-pass-interrupted-7596.test.ts
 test/sync-pass-phase-lines-7243.serial.test.ts
 test/sync-pass-stop-in-level-gbra133.test.ts
 test/sync-prescreen-both-delta-6712.test.ts

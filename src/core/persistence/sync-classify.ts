@@ -8,7 +8,12 @@
  * bytes' blob id), presence on disk, the candidate dirtiness `Dp`, the page and its import record, the attestation of
  * its current revision, its hold, deletion marker, baseline blob and open work. Definitions (v3.1 §2.3, v3.2 §2.3):
  * `fileSame := L ∈ {r.blob_oid, r.disk_blob_oid}`, `dbSame := r.revision = page.revision`, `proof := dbSame ∨ att(R)`,
- * `obligation := ¬sameParser ∨ origin ≠ page.source_path ∨ episodeUnsatisfied`.
+ * `obligation := ¬sameParser ∨ origin ≠ page.source_path ∨ (episodeUnsatisfied ∧ ¬inPlace)`, where
+ * `inPlace := fileSame ∧ dbSame ∧ derivedCurrent ∧ no hold`: a page the open full episode has not re-imported yet
+ * satisfies it without a reparse when it already is the import of `L` and everything derived from it is current. The
+ * waiver only lifts the episode's term, so it can turn a `reparse` into `matched` and nothing else: any state that keeps
+ * a page from `matched` outside an episode (a stale parser, a moved origin, or any later force-import flag, which must
+ * defeat `matched` to force anything) still reparses it.
  *
  * G3 of git-canonical memory (docs/designs/GIT_CANONICAL_MEMORY.md): for a strict source (`config.canonical = "git"`) the
  * classifier reads the commit alone and Git wins. The working tree is invisible (every path in `T` is clean, a path absent
@@ -68,6 +73,12 @@ export interface SyncPathState {
   spelling: boolean | 'legacy';
   /** An open full episode has not re-imported this page yet. */
   episodeUnsatisfied: boolean;
+  /**
+   * Everything the page derives is current under this binary (sync-pass.ts `readPages`): an inline Markdown page chunked at
+   * the current chunker version, its text projection at its revision and its contextual mode stamped, so a reparse of the
+   * same bytes would change nothing. Absent: unknown, and an open episode reparses the page.
+   */
+  derivedCurrent?: boolean;
   /** `--full` or an open episode: every path, page-less ones included, owes a re-import (v3.1 §2.7). */
   fullObligation?: boolean;
   /** Under a `storage.keep_db` prefix, on a source that is not mirror-read-only. */
@@ -155,7 +166,8 @@ function afterHold(s: SyncPathState): Matched {
   const fileSame = s.level !== null && !!s.record && s.record.blobOids.includes(s.level);
   const dbSame = !!s.page && !!s.record && s.record.revision !== null && s.record.revision === s.page.revision;
   const proof = dbSame || s.attested !== null;
-  const obligation = !s.record?.parserSame || !s.page?.originMatches || s.episodeUnsatisfied;
+  const inPlace = fileSame && dbSame && s.derivedCurrent === true && s.hold === null;
+  const obligation = !s.record?.parserSame || !s.page?.originMatches || (s.episodeUnsatisfied && !inPlace);
   if (s.spelling) return { cls: 'spelling', settled: s.spelling === 'legacy', action: s.spelling === 'legacy' ? 'none' : 'refuse' };
   if (s.mode === 'committed' && s.tree === null && !live) return { cls: 'untracked', settled: true, action: 'none' };
   if (live && s.level === null) {
@@ -260,6 +272,8 @@ export interface SyncPassKindInput {
   rescreenDueHold: boolean;
   /** `--full`. */
   full: boolean;
+  /** #7866: a full round asked for without an episode (SyncOpts.fullRound). */
+  fullRound?: boolean;
 }
 
 /** Full rounds run at least this often (v3.2 §2.2, [estimated]). */
@@ -274,7 +288,7 @@ export function syncPassKind(input: SyncPassKindInput): { kind: 'idle' | 'hold_o
   else {
     if (c.target !== input.head) blockers.push('target_moved');
     if (c.parserFp !== input.parserFp || c.pack !== input.pack || c.selectionFp !== input.selectionFp) blockers.push('fingerprint_changed');
-    if (c.passesSinceFull >= SYNC_FULL_ROUND_MAX_PASSES || input.now - c.lastFullAt >= SYNC_FULL_ROUND_MAX_MS) blockers.push('full_round_due');
+    if (input.fullRound || c.passesSinceFull >= SYNC_FULL_ROUND_MAX_PASSES || input.now - c.lastFullAt >= SYNC_FULL_ROUND_MAX_MS) blockers.push('full_round_due');
   }
   if (input.full || input.openEpisode) blockers.push('open_episode');
   if (input.owedTail) blockers.push('owed_tail');

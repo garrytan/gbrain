@@ -15,6 +15,7 @@ import { execFile, spawn } from '../spawn.ts';
 import { promisify } from 'node:util';
 import { gitChildEnv } from '../git-env.ts';
 import { NulRecordSplitter } from '../hardened-git.ts';
+import { ignoreCandidates } from './ignore-rules.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -61,9 +62,11 @@ function checkIgnore(gitRoot: string, paths: readonly string[]): Promise<{ code:
 /**
  * #7130 (write-through): whether the Git work tree around `root` ignores `relativePath` and does not track it, so a
  * file written there would never be committed. False outside a work tree or when Git cannot answer (the write keeps its
- * old behavior then; sync's own evidence read still fails closed).
+ * old behavior then; sync's own evidence read still fails closed). A path no ignore rule could match (ignore-rules.ts)
+ * is answered without running check-ignore.
  */
 export async function gitIgnoresUntracked(root: string, relativePath: string): Promise<boolean> {
+  if (!(await ignoreCandidates(root, [relativePath])).length) return false;
   return (await git(root, ['check-ignore', '-q', '--', relativePath])).code === 0;
 }
 

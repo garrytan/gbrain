@@ -94,6 +94,9 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   // GBRA-130 A-7: the file is not a readable regular file inside the source root (a symlink, a non-regular file, a permission error).
   { code: 'file_unreadable', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only a change to the checkout makes the file readable',
     human_reason: 'Sync cannot read this file as a regular file inside the source root (a symlink, a non-regular file or a permission error) and never follows it; make it a readable regular file in the checkout (or exclude it with sync.exclude) and commit, then run gbrain sources retry-held <source>.' },
+  // #7848: the file asks for visibility: private in a spelling page privacy does not read; only an edit to the file clears it.
+  { code: 'visibility_noncanonical', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only an edit to the file clears it',
+    human_reason: 'The file asks for visibility: private in a spelling page privacy does not read; write visibility: private on its own frontmatter line (lowercase) and commit.' },
   // GBRA-133 S-39: the file's text holds NUL bytes (a UTF-16 save, a binary file, a padded file); only an edit or its removal clears it.
   { code: 'content_null_bytes', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only an edit to the file or its removal clears it',
     human_reason: 'The file holds NUL bytes, which page text cannot store; save a UTF-16 file as UTF-8, remove the NUL bytes, or remove a binary file (or exclude it with sync.exclude), and commit.' },

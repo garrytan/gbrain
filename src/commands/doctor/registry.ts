@@ -41,6 +41,7 @@ import {
   connectionGateEntry,
 } from './checks/db-connection.ts';
 import { ipcSocketPathEntry } from './checks/local-ipc.ts';
+import { functionSearchPathEntry } from './checks/function-search-path.ts';
 import {
   pgvectorEntry,
   rlsEntry,
@@ -116,12 +117,14 @@ import { beliefLedgerEntry } from './checks/belief-ledger.ts';
 import { trustTiersEntry } from './checks/trust-tiers.ts';
 import { trustScanEntry } from './checks/trust-scan.ts';
 import { trustSourcesUnclaimedEntry } from './checks/trust-sources-unclaimed.ts';
+import { trustReleaseUnpreviewedEntry } from './checks/trust-release-unpreviewed.ts';
 import { harnessWiringDoctorEntry } from './checks/harness-wiring.ts';
 import { agentContractEntry } from './checks/agent-contract.ts';
 import { chatFallbackChainEntry } from './checks/chat-fallback.ts';
 import { providerConsentEntry } from './checks/provider-consent.ts';
 import { behaviorChangesEntry } from './checks/behavior-changes.ts';
 import { fenceIntegrityEntry } from './checks/fence-integrity.ts';
+import { outsideContentFencesEntry } from './checks/outside-content-fences.ts';
 import { dbAheadOfGitEntry } from './checks/db-ahead-of-git.ts';
 import { gitIndexLagEntry } from './checks/git-index-lag.ts';
 import { gitRepoHealthEntry } from './checks/git-repo-health.ts';
@@ -209,6 +212,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   // #7276: the privacy check next, with its own entry budget, before any full scan.
   derivedVisibilityEntry,
   rlsEntry,
+  functionSearchPathEntry,
   schemaVersionEntry,
   rlsEventTriggerEntry,
   embeddingsEntry,
@@ -271,6 +275,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   trustTiersEntry,
   trustScanEntry,
   trustSourcesUnclaimedEntry,
+  trustReleaseUnpreviewedEntry,
   coreMemoryEntry,
   persistenceConsumersEntry,
   runtimeBuildSkewEntry,
@@ -301,6 +306,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   gitRepoHealthEntry,
   // Wave C 1D: page files held as unsmudged Git LFS pointers.
   lfsPagePointersEntry,
+  // GBRA-221: live fence rows on imported pages whose body is outside-authored text (review only).
+  outsideContentFencesEntry,
   fenceIntegrityEntry,
   searchModeEntry,
 ];

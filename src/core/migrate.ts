@@ -14,6 +14,7 @@ import {
   isRetryableConnError,
 } from './retry-matcher.ts';
 import { repairTimelineDedupIndex } from './timeline-dedup-repair.ts';
+import { hardenFunctionSearchPaths } from './schema-migrations/v277-function-search-path-pg-temp.ts';
 import { resumePageRevisionBackfill } from './page-state/revision-backfill-schema.ts';
 import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
 import { repairLinkSourceCheck, LINK_SOURCE_GATE_MIGRATION_VERSION } from './link-source-check-repair.ts';
@@ -433,7 +434,13 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   }
 
   const backfill = () => resumePageRevisionBackfill(engine).catch(e => console.error(`[migrate] page revision backfill paused (#5216): ${e instanceof Error ? e.message : String(e)}`));
+  // #7632: a migration that re-creates a gbrain function resets its search_path, a failing migration can stop the run
+  // before v277, and a failed earlier attempt leaves one behind; put pg_temp back on every run, at head too.
+  // Best-effort: doctor's function_search_path names what it left.
+  const harden = () => hardenFunctionSearchPaths(engine, 'search_path').catch((e: unknown) => process.stderr.write(
+    `  search_path: pg_temp not restored on gbrain functions (${e instanceof Error ? e.message : String(e)}); gbrain doctor (function_search_path) names them\n`));
   if (pending.length === 0) {
+    await harden();
     await backfill();
     return { applied: 0, current };
   }
@@ -491,6 +498,7 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
     // Never leak the fresh-install quiet flag into a later in-process run —
     // covers every exit path from here on (incl. the pre-flight probe).
     setQuietMigrationNotices(false);
+    await harden();
   }
   await clearMigrationTimeout(engine);
   await backfill();

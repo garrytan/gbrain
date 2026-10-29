@@ -29,7 +29,7 @@ import { appendFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, re
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { execFileSync } from '../spawn.ts';
-import { gitChildEnv } from '../git-env.ts';
+import { gitChildEnv, literalPathspecs } from '../git-env.ts';
 import { GIT_ENV, GIT_ENV_AUTH, GIT_SSRF_SUBCOMMAND_FLAGS, durableSsrfFlags } from '../git-transport.ts';
 import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesystemRootFor, type ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
 import { acquireNativeLock, acquireNativeLockSync, type NativeLockSyncHandle } from '../persistence/native-lock.ts';
@@ -397,7 +397,7 @@ function stagedPaths(root: string): string[] {
 
 /** The index entries under `rel` as `ls-files -s` records, so a failed commit can put them back exactly. */
 function indexEntries(root: string, rel: string[]): string[] {
-  return git(root, ['--literal-pathspecs', 'ls-files', '-s', '-z', '--', ...rel]).stdout.split('\0').filter(Boolean);
+  return git(root, ['ls-files', '-s', '-z', '--', ...literalPathspecs(rel)]).stdout.split('\0').filter(Boolean);
 }
 
 /**
@@ -436,7 +436,7 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
         docs: 'docs/guides/shared-checkout-git.md#outcomes' } });
   }
   const before = indexEntries(root, rel);
-  const add = withIndexRetry(root, ['--literal-pathspecs', 'add', '-A', '--', ...rel], 'git add');
+  const add = withIndexRetry(root, ['add', '-A', '--', ...literalPathspecs(rel)], 'git add');
   if (add.code !== 0) {
     throw opError('commit_paths_invalid', 'git add refused the given paths.', add.stderr.trim().slice(0, 300) || 'Check the paths exist or are tracked.');
   }
@@ -444,9 +444,11 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
     const paths = withRenamePartners(root, rel);
     const partners = paths.filter(p => !insideSourceRoots(p, scope.roots));
     if (partners.length) throw outsideRootError(root, scope.roots, partners, 'A staged rename would commit');
-    if (git(root, ['--literal-pathspecs', 'diff', '--cached', '--quiet', '--', ...paths]).code === 0) return null;
+    if (git(root, ['diff', '--cached', '--quiet', '--', ...literalPathspecs(paths)]).code === 0) return null;
     const env = { [COMMIT_VIA_ENV]: scope.lockPath, ...(scope.markHeld ? { [COMMIT_LOCK_ENV]: scope.lockPath } : {}) };
-    const commit = withIndexRetry(root, ['--literal-pathspecs', 'commit', '--only', '-m', message, '--', ...paths], 'git commit', env);
+    // #7759: literal per path, never git's global --literal-pathspecs: Git exports that to the commit's hooks, where a
+    // guard's glob pathspec ('*.json') then matches nothing and lets the commit through.
+    const commit = withIndexRetry(root, ['commit', '--only', '-m', message, '--', ...literalPathspecs(paths)], 'git commit', env);
     if (commit.code !== 0) {
       throw opError('git_unavailable', `git commit failed in ${root}; the paths were unstaged again and keep their bytes.`,
         `${commit.stderr.trim().slice(0, 300)} A missing git identity (user.name, user.email) or a refusing pre-commit hook are common causes.`);
@@ -507,7 +509,7 @@ function notePending(root: string, paths: string[]): void {
 function dirtyPaths(root: string, paths: string[]): Set<string> {
   const out = new Set<string>();
   for (let i = 0; i < paths.length; i += 500) {
-    const entries = git(root, ['--literal-pathspecs', 'status', '--porcelain', '-z', '--untracked-files=all', '--', ...paths.slice(i, i + 500)]).stdout.split('\0');
+    const entries = git(root, ['status', '--porcelain', '-z', '--untracked-files=all', '--', ...literalPathspecs(paths.slice(i, i + 500))]).stdout.split('\0');
     for (let j = 0; j < entries.length; j++) {
       if (entries[j].length < 4) continue;
       out.add(entries[j].slice(3));
@@ -706,7 +708,7 @@ function integrate(root: string, local: string, remote: string): Integration {
 interface TreeEntry { mode: string; type: string; sha: string }
 
 function treeEntry(root: string, commit: string, path: string): TreeEntry | null {
-  for (const line of git(root, ['--literal-pathspecs', 'ls-tree', '-z', commit, '--', path]).stdout.split('\0')) {
+  for (const line of git(root, ['ls-tree', '-z', commit, '--', ...literalPathspecs([path])]).stdout.split('\0')) {
     const tab = line.indexOf('\t');
     if (tab === -1 || line.slice(tab + 1) !== path) continue;
     const [mode, type, sha] = line.slice(0, tab).split(' ');
@@ -742,7 +744,7 @@ function supersededPaths(root: string, ours: string, theirs: string, merged: Mer
     if (explicit?.has(path) || merged.structural.includes(path) || path.includes('\n') || !blobConflict(root, base, ours, theirs, path)) return false;
     const remote = treeEntry(root, theirs, path);
     if (!remote) return false;
-    const commits = git(root, ['--literal-pathspecs', 'log', '--format=%H', '-n', String(MAX_SUPERSEDED_HISTORY), ours, '--', path]).stdout.split('\n').filter(Boolean);
+    const commits = git(root, ['log', '--format=%H', '-n', String(MAX_SUPERSEDED_HISTORY), ours, '--', ...literalPathspecs([path])]).stdout.split('\n').filter(Boolean);
     const blobs = git(root, ['cat-file', '--batch-check=%(objectname) %(objecttype)'], { input: commits.map(c => `${c}:${path}\n`).join('') })
       .stdout.split('\n').slice(0, commits.length).map(line => (line.endsWith(' blob') ? line.split(' ')[0] : null));
     const held = [treeEntry(root, ours, path)?.sha ?? null, ...blobs];

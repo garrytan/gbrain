@@ -44,7 +44,11 @@ another writer has half-written.
    instead of skipping silently. The push itself runs under a separate push
    lock, so a slow remote never blocks commits or gbrain's own page writes.
 2. **Commits only the paths you name.** It stages and commits exactly those
-   paths (`git add -A -- <paths>`, `git commit --only -- <paths>`). Another
+   paths (`git add -A -- <paths>`, `git commit --only -- <paths>`), each
+   marked literal (`:(literal)<path>`), so a name with `*`, `?` or `[` matches
+   only itself. The repository's hooks run as they do for a plain
+   `git commit`: a pre-commit check that picks files by pattern still sees
+   them and can refuse the commit. Another
    writer's dirty files are never staged, committed, stashed or touched. A file
    another writer already staged under a directory you named is refused
    (`commit_prestaged_paths`) instead of swept in; name the file to claim it.

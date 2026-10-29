@@ -508,6 +508,7 @@ function installDeps(over: Partial<ConnectDeps> = {}): ConnectDeps {
     env: () => undefined, // tests control the env; real GBRAIN_REMOTE_TOKEN must not leak in
     registerOAuthClient: () => ({ ok: true, clientId: 'gbrain_cl_minted', clientSecret: 'gbrain_cs_minted' }),
     writeOpencodeRemoteEntry: (name) => ({ configPath: `/tmp/xdg/opencode/opencode.jsonc (${name})`, replacedPrior: false }),
+    writeInstructions: (agent, name, optOut) => (optOut ? null : `write    instructions brain-first block for ${agent} '${name}'`),
     ...over,
   };
 }

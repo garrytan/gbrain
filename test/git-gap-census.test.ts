@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -85,8 +85,8 @@ for (const backend of testBackends()) describe(`git-gap census (git-canonical G1
     const snapshot = await snapshotOf('cmp/page');
     const text = inlineExportMarkdown(snapshot);
     expect(compareInlineExportFile(Buffer.from(text.replace('Original body.', 'Edited body.')), 'cmp/page.md', snapshot)).toEqual({ state: 'differs', paths: ['/compiled_truth'] });
-    expect(compareInlineExportFile(Buffer.from('---\ntitle: [unclosed\n---\nBody\n'), 'cmp/page.md', snapshot)).toEqual({ state: 'unparseable' });
-    expect(compareInlineExportFile(Buffer.from([0xff, 0xfe, 0x00]), 'cmp/page.md', snapshot)).toEqual({ state: 'unparseable' });
+    expect(compareInlineExportFile(Buffer.from('---\ntitle: [unclosed\n---\nBody\n'), 'cmp/page.md', snapshot)).toEqual({ state: 'unparseable', reason: 'frontmatter' });
+    expect(compareInlineExportFile(Buffer.from([0xff, 0xfe, 0x00]), 'cmp/page.md', snapshot)).toEqual({ state: 'unparseable', reason: 'not_utf8' });
     expect(compareInlineExportFile(Buffer.from(text.replace('validate: false\n', '')), 'cmp/page.md', snapshot)).toEqual({ state: 'equal' });
   });
 
@@ -141,8 +141,23 @@ for (const backend of testBackends()) describe(`git-gap census (git-canonical G1
     put(root, 'images/tracked.md', 'x');
     git(root, 'add', '-f', '.gitignore', 'images/tracked.md');
     git(root, 'commit', '-qm', 'init');
-    expect(await ignoredPaths(root, ['images/a.md', 'images/tracked.md', 'notes/b.md'])).toEqual(new Set(['images/a.md']));
-    expect(await ignoredPaths(root, ['notes/b.md'])).toEqual(new Set());
+    expect(await ignoredPaths(root, ['images/a.md', 'images/tracked.md', 'notes/b.md'])).toEqual({ ignored: new Set(['images/a.md']), unknown: new Map() });
+    expect(await ignoredPaths(root, ['notes/b.md'])).toEqual({ ignored: new Set(), unknown: new Map() });
+  });
+
+  test('#7618: a path Git refuses to check is unknown on its own, and every other path in the input is still answered', async () => {
+    const root = tempDir('git-gap-ignore-poison-');
+    git(root, 'init', '-q');
+    put(root, '.gitignore', 'images/\n');
+    mkdirSync(join(root, 'real'));
+    symlinkSync('real', join(root, 'link'));
+    const paths = Array.from({ length: 2_500 }, (_, i) => i % 100 ? `notes/n${i}.md` : `images/i${i}.md`);
+    paths.splice(1_500, 0, 'link/x.md');
+    paths.splice(10, 0, '../outside.md');
+    const status = await ignoredPaths(root, paths);
+    expect(status?.ignored).toEqual(new Set(Array.from({ length: 25 }, (_, i) => `images/i${i * 100}.md`)));
+    expect(status?.unknown).toEqual(new Map([['../outside.md', 'outside_repo'], ['link/x.md', 'symlink']]));
+    expect(await ignoredPaths(tempDir('git-gap-not-a-checkout-'), ['notes/a.md'])).toBeNull();
   });
 
   test('the census puts every page in one state, compares with HEAD and reports the working tree separately', async () => {
@@ -205,6 +220,44 @@ for (const backend of testBackends()) describe(`git-gap census (git-canonical G1
     await engine.executeRaw("UPDATE sources SET config=jsonb_build_object('mirror_read_only',true) WHERE id='default'");
     expect((await censusGitGap(engine, 'default', { sample: 0 })).declared.mirror_source).toBe(13);
   }, 120000);
+
+  test('#7618: in the conversion plan, a batch with a page beyond a symlink is classified, not refused', async () => {
+    const root = tempDir('git-gap-census-symlink-');
+    git(root, 'init', '-q');
+    await useCheckout(root);
+    for (const slug of ['notes/equal', 'notes/missing', 'link/beyond']) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `Body of ${slug}.`, timeline: '' });
+    put(root, 'notes/equal.md', await rendered('notes/equal'));
+    commitAll(root, 'init');
+    mkdirSync(join(root, 'real'));
+    symlinkSync('real', join(root, 'link'));
+    const collected: Array<{ slug: string; state: string }> = [];
+    const census = await censusGitGap(engine, 'default', { sample: 10, collect: page => collected.push(page) });
+    expect(census).toMatchObject({ complete: true, pages: 3, states: { equal: 1, undeclared_database_only: 2 } });
+    expect(census.sample.find(item => item.slug === 'link/beyond')).toMatchObject({ path: 'link/beyond.md', state: 'undeclared_database_only' });
+    expect(collected.find(page => page.slug === 'link/beyond')).toMatchObject({ state: 'undeclared_database_only' });
+  });
+
+  /**
+   * Value: protects=a page whose ignore status Git cannot read is never counted as a plain undeclared page by git-gap or doctor;
+   * the report refuses as the pre-#7617 census did; fails_when=the report path classifies it as if not ignored;
+   * seam=none (a real check-ignore refusal beyond a symlink); no_claim=timeout and outside-repo reasons.
+   */
+  test('#7618: git-gap and doctor refuse a source with a page whose ignore status Git cannot read', async () => {
+    const root = tempDir('git-gap-census-unknown-');
+    git(root, 'init', '-q');
+    await useCheckout(root);
+    for (const slug of ['notes/equal', 'link/beyond']) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `Body of ${slug}.`, timeline: '' });
+    put(root, 'notes/equal.md', await rendered('notes/equal'));
+    commitAll(root, 'init');
+    mkdirSync(join(root, 'real'));
+    symlinkSync('real', join(root, 'link'));
+    const refusal = 'Git could not say whether link/beyond.md in the checkout at';
+    await expect(censusGitGap(engine, 'default', { sample: 0 })).rejects.toMatchObject({ code: 'storage_error', message: expect.stringContaining(refusal) });
+    const [check] = await dbAheadOfGitEntry.run({ engine, progress: { heartbeat: () => {} } } as never) as Array<{ message: string; details: any }>;
+    expect(check!.details.sources.find((s: { source_id: string }) => s.source_id === 'default')).toBeUndefined();
+    expect(check!.details.errors).toEqual([expect.objectContaining({ source_id: 'default', message: expect.stringContaining('(symlink)') })]);
+    expect(check!.message).toContain(`Could not compare: default (${refusal}`);
+  });
 
   test('a repository filter, textconv or fsmonitor never runs: HEAD and the working tree are read without them', async () => {
     const root = tempDir('git-gap-filter-');

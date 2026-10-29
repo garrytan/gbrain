@@ -27,6 +27,7 @@ import { readLocalWriter, verifyLocalWriter } from '../core/persistence/identity
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import { isEngineDegraded, onEngineRecovered } from '../core/degraded-marker.ts';
 import { assertStdioSourceBindable } from './source-preflight.ts';
+import { readOnlyServeSkipsResidentDuties } from '../core/direct-pool-profile.ts';
 
 /**
  * Largest JSON-RPC message the stdio server reads (the SDK default is 10 MiB,
@@ -318,6 +319,14 @@ function stdioSurfaceSession(
   return { session, finishResult, statusResult };
 }
 
+/**
+ * #7599: a read-only stdio serve on Postgres runs no resident write duty: no persistence consumer, no delegated sync, nudge or
+ * sweep kinds, no session-cursor GC and no startup sweep (serve.ts also skips the idle sweep and the resident tickers, the
+ * on-commit watcher among them); only the onboarding cache refresher runs. The long-lived serve, worker or autopilot owns
+ * them; doctor's commit_notifier and two_consumers_on_host say when none runs. A PGLite serve keeps them (readOnlyServeSkipsResidentDuties).
+ */
+const READ_ONLY_SERVE_NOTE = '[gbrain-serve] read-only: no persistence consumer, on-commit sync or sweep runs here; a read-write serve, jobs work or autopilot owns them.\n';
+
 export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; surfaceSource?: SurfaceSource; invalidSurfaceEnv?: string; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: McpAccess } = {}) {
   const config = loadConfig();
   const bootPhase = (phase: string) => { try { opts.onBootPhase?.(phase); } catch { /* diagnostic only */ } };
@@ -522,20 +531,20 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   let ipcBinding: { close: () => void } | null = null;
   let startupSweep: { cancel: () => void } | null = null;
   const bootEngineDependents = async (): Promise<void> => {
-    // Retrieval Reflex (#1981, D9=C): the resolve/turn_context/context_pack
-    // (+ delegated sync/sweep) IPC listener. Wiring shared with `serve --http`
-    // via bindResolveIpcForServe (#4474) — best-effort; failure to bind never
-    // blocks the MCP server.
+    // Retrieval Reflex (#1981, D9=C): the resolve/turn_context/context_pack (+ delegated sync/sweep) IPC listener. Wiring
+    // shared with `serve --http` via bindResolveIpcForServe (#4474) — best-effort; failure to bind never blocks the MCP server.
     const [{ createPersistenceIpcProvider, residentPersistenceConfig }, { bindResolveIpcForServe }] = await Promise.all([import('../core/persistence/provider.ts'), import('./resolve-ipc-binding.ts')]);
     bootPhase('source_scope');
     const { sourceId: ipcSourceId } = await resolveMcpStdioSourceScope(engine);
     bootPhase('persistence_consumer');
-    const persistence = await createPersistenceIpcProvider(engine, residentPersistenceConfig(config) ?? { engine: engine.kind });
+    const lean = readOnlyServeSkipsResidentDuties(!!session.readOnly, engine.kind);
+    const persistence = lean ? undefined : await createPersistenceIpcProvider(engine, residentPersistenceConfig(config) ?? { engine: engine.kind });
     bootPhase('resolve_ipc_bind');
-    ipcBinding = await bindResolveIpcForServe(engine, ipcSourceId, persistence, { rememberCallable: () => !session.allowedOps || session.allowedOps.has('remember') });
+    ipcBinding = await bindResolveIpcForServe(engine, ipcSourceId, persistence, { rememberCallable: () => !session.allowedOps || session.allowedOps.has('remember'), lean });
+    import('../core/onboard/mcp-onboarding.ts').then(m => m.startOnboardingRefresher(engine, { idle: () => _stdioRpcsInFlight === 0 })).catch(() => { /* coaching is best-effort */ });
+    if (lean) return void process.stderr.write(READ_ONLY_SERVE_NOTE);
 
-    // v0.45.7 ambient recall: age out stale session cursors once per serve boot
-    // (7-day TTL, indexed DELETE). Best-effort — GC failure never blocks serve.
+    // v0.45.7 ambient recall: age out stale session cursors once per serve boot (7-day TTL, indexed DELETE). Best-effort — GC failure never blocks serve.
     gcSessionContextState(engine).catch(() => {});
 
     // Startup maintenance sweep [ENG-5][CX-P0.1+P0.3]: the serve process is
@@ -545,7 +554,6 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     // connect, unref'd (can never hold the process open), all errors
     // swallowed inside armStartupSweep. Kill switch: GBRAIN_SWEEP=0 (checked
     // inside the helper). Lazy import keeps sweep code off the boot path.
-    import('../core/onboard/mcp-onboarding.ts').then(m => m.startOnboardingRefresher(engine, { idle: () => _stdioRpcsInFlight === 0 })).catch(() => { /* coaching is best-effort */ });
     bootPhase('startup_sweep');
     try {
       const { armStartupSweep } = await import('../core/sweep.ts');

@@ -324,6 +324,11 @@ gbrain sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>]
 gbrain sources host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
                                Managed brains: host a new, empty source in a bare
                                repository under <path> (see below). Previews without --expect.
+gbrain sources canonical <id> --to git|mixed [--dry-run | --apply --expect <hash>] [--json]
+                               Managed brains: convert a source to git-canonical or back
+                               to mixed. Previews without --apply; the apply prints progress
+                               on stderr and, if stopped, where it stopped
+                               (docs/designs/GIT_CANONICAL_MEMORY.md#conversion).
 ```
 
 ### Hosted repositories

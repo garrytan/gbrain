@@ -42,6 +42,7 @@ import { currentCliWriteWait } from '../core/persistence/write-wait.ts';
 import { isScopeErrorCode } from '../core/error-catalogue.ts';
 import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { printCuratedHelp } from './help/render.ts';
+import { OWN_EQUALS_PARSERS, READER_ALIASES, findUnknownFlag, splitFlagEquals } from './flag-equals.ts';
 import { printHelp } from './top-help.ts';
 import { curatedFlagError } from './help/validate.ts';
 import { cliCommandOf, exitCliError, exitOnRepairFailed, unknownFlagError, usageError, writeCliError, writeCliNotice, writeFatalCliError } from './cli-error.ts';
@@ -61,9 +62,9 @@ import { RemoteMcpError, extractResponseMeta } from '../core/remote-mcp-error.ts
 import { assertSingleSourceScopeFlag, checkHostHonoredParams, hintAmbientNarrowing, type AmbientSourceBinding } from './source-scope.ts';
 import { maybePromptForUpgrade } from '../core/thin-client-upgrade-prompt.ts';
 import { CLI_FLAG_REGISTRY } from '../core/cli-flag-registry.generated.ts';
-import { cliHelpRequested } from './subcommands.ts';
+import { SEARCH_SUBCOMMANDS, cliHelpRequested } from './subcommands.ts';
 import { printRouterHelp } from './router-help.ts';
-import { strictArgsRefusal } from './strict-args.ts';
+import { strictArgsRefusal, strictSpecFor } from './strict-args.ts';
 import { migrationCliArgumentError } from '../core/embedding-migration-cli.ts';
 import { VERSION } from '../version.ts';
 import { bigintToStringReplacer } from '../core/utils.ts';
@@ -362,7 +363,7 @@ async function main() {
   // #7191: `search --exact` -> search-exact, before any ranked-search flag is parsed (cli/command-route.ts).
   const routed = routeCommand(command, args.slice(1));
   command = routed.command;
-  const subArgs = routed.subArgs;
+  let subArgs = routed.subArgs;
   dispatchedCommand = command;
   {
     const { directPoolProfileForCommand, setDirectPoolProfile } = await import('../core/direct-pool-profile.ts');
@@ -398,6 +399,12 @@ async function main() {
       printCliOnlyHelp(command);
       return;
     }
+  }
+  // #7619: after the help printers that run no handler, so a handler never sees an = token the gate refuses.
+  const flagArgs = await cliOnlyFlagArgs(command, subArgs);
+  if ('refusal' in flagArgs) exitCliError(flagArgs.refusal, command);
+  subArgs = flagArgs.args;
+  if (helpRequested) {
     // Self-help members whose handler answers --help before it touches the
     // engine. Without this they fall through to the normal dispatch, which
     // connects first — so `gbrain models --help` on a machine with no brain
@@ -1321,25 +1328,19 @@ export function validateCommandFlags(command: string, subArgs: string[]): string
   return null; // unknown command — the dispatcher's own error handles it
 }
 
-/** CLI_ONLY lane: token scan against the generated legal set. */
-export function findUnknownFlag(args: string[], legal: ReadonlySet<string>): string | null {
-  for (const a of args) {
-    if (a === '--') break;
-    const m = /^--([a-z0-9][a-z0-9-]*)(?:=.*)?$/i.exec(a);
-    if (!m) continue;
-    // Casing typo = unknown flag: every handler in the repo is
-    // case-sensitive-lowercase, so `--MIGRATE-ONLY` passing validation would
-    // just be silently ignored downstream — the exact class this validator
-    // exists to kill.
-    if (/[A-Z]/.test(m[1])) return `--${m[1]}`;
-    const name = `--${m[1]}`;
-    if (legal.has(name)) continue;
-    // --no-<flag> negation of a known flag is legal.
-    if (name.startsWith('--no-') && legal.has(`--${name.slice(5)}`)) continue;
-    return name;
-  }
-  return null;
+/** #7619: the argv a CLI_ONLY handler receives, `--flag=value` split or refused (cli/flag-equals.ts); commands with their own `=`-aware parser keep it. */
+export async function cliOnlyFlagArgs(command: string, subArgs: string[]): Promise<{ args: string[] } | { refusal: OperationError }> {
+  const handParsedSearch = command === 'search' && (SEARCH_SUBCOMMANDS as readonly string[]).includes(subArgs[0] ?? ''), keyed = READER_ALIASES[command] ?? command;
+  if (!CLI_ONLY.has(command) && !handParsedSearch || equalsExempt(command, subArgs) || strictSpecFor(command, subArgs) || OWN_EQUALS_PARSERS.has(keyed) || OWN_EQUALS_PARSERS.has(`${keyed} ${subArgs[0]}`)) return { args: subArgs };
+  return splitFlagEquals(command, subArgs);
 }
+
+/** call and config set take arbitrary values, and eval brainbench refuses unknown tokens with its own exit code; every other validation-exempt path (jobs submit, config get and unset) reads exact tokens, apart from the consent values EQUALS_READERS keeps for jobs submit. */
+function equalsExempt(command: string, subArgs: string[]): boolean {
+  return command === 'call' || command === 'config' && subArgs[0] === 'set' || command === 'eval' && subArgs[0] === 'brainbench';
+}
+
+export { findUnknownFlag };
 
 /** Op lane: mirrors parseOpArgs so flag VALUES starting with '--' are skipped. */
 export function findUnknownOpFlag(op: OperationMeta, args: string[]): string | null {

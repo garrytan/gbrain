@@ -17,7 +17,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 
 | Workflow | Condition | Class | Covered by |
 | --- | --- | --- | --- |
-| `test.yml` | `security-regressions` Bun matrix | Parity: both Bun versions on every OS, every event | — |
+| `test.yml` | `security-regressions` Bun matrix | Parity: every supported Bun version on every OS, every event | — |
 | `test.yml` | `changes` native scope (`smoke`/`primary`/`full`) | Named exception | Every push to master and the nightly Test schedule (`full`) |
 | `test.yml` | `gitleaks` commit range by event | Parity: each event scans the range it introduces | — |
 | `test.yml` | `dependency-audit` blocking scope | Named exception with a rule ([below](#dependency-audit-rule)) | Every push to master and the nightly Test schedule (always blocking) |
@@ -26,7 +26,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `test.yml` | `race-hunt` | Named exception: schedule and dispatch only, outside `test-status` | Itself (nightly Test schedule) |
 | `e2e.yml` | `order-hunt` | Named exception: schedule and `order_hunt` dispatch only, outside `e2e-status` | Itself (nightly E2E schedule) |
 | `test.yml` | `native_only`, `race_hunt`, `stress_*` dispatch inputs; concurrency suffixes | Parity: manual modes and run grouping, never applied to PR, push or schedule events | — |
-| `persistence-validation.yml` | Bun matrix of read latency, deployment matrix, unit-lane PostgreSQL arms, soak, crash robot, reconciliation, convergence | Parity: both Bun versions on every event that runs the lane | — |
+| `persistence-validation.yml` | Bun matrix of read latency, deployment matrix, unit-lane PostgreSQL arms, soak, crash robot, reconciliation, convergence | Parity: every supported Bun version on every event that runs the lane | — |
 | `test.yml`, `persistence-validation.yml` | Cheap tier on pull requests: no unit shards, serial, slow, BrainBench, admin-browser, shared-skills, coverage or `test-status`; of the persistence lanes only the crash robot and convergence, and those and the native cells only when the diff selects them | Named exception ([below](#full-ci-on-pull-requests)) | The full-ci dispatch on the head before merge (merge-train requires `full-suite`), every push to master, the merge queue and the nightly Test schedule |
 | `e2e.yml` | No `pull_request` trigger | Named exception ([below](#full-ci-on-pull-requests)) | The full-ci dispatch on the head before merge (merge-train requires `e2e-full-suite`), every push to master, the merge queue and the nightly E2E schedule |
 | `test.yml`, `e2e.yml` | A push to master skips its full lanes when it reuses a passed full-suite run of its exact tree | Named exception ([below](#master-push-reuse)) | The reused run (same tree, full profile); schedules never reuse |
@@ -34,7 +34,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `convergence-nightly.yml` | The convergence gate's nightly cell (2,000 pages, 50 ms, 20 kills, run-id seed): schedule and dispatch only, outside `test-status`; the PR cell (200 pages, 10 ms, 6 kills, seed 6650) runs in `persistence-validation.yml` | Named exception | Itself (nightly Convergence schedule) |
 | `persistence-validation.yml` | `SOAK_OPERATIONS` 2,500 vs 10,000 | Named exception | Every push to master and the nightly Test schedule |
 | `persistence-validation.yml` | Crash robot `--robot-scope=pr` (Postgres lease-bound seams skipped, 820 s PGLite and 620 s Postgres ceilings) vs `full` (1200 s PGLite, 880 s Postgres; [ceilings](#crash-robot-ceilings)); the nightly adds that day's exploration seeds | Named exception | The full-ci dispatch, every push to master (same fixed list, so it may reuse that run) and the nightly Test schedule |
-| `native-locks.yml` | `inputs.scope` (OpenClaw, musl, Windows probes, Bun 1.4.0 and cross-target cells) | Named exception | Every push to master and the nightly Test schedule (`full`) |
+| `native-locks.yml` | `inputs.scope` (OpenClaw, musl, Windows probes, cross-target cells) | Named exception | Every push to master and the nightly Test schedule (`full`) |
 | `e2e.yml` | Doc-only merge-queue entry selects no E2E file | Named exception | Every push to master (whole corpus) and the nightly E2E schedule |
 | `e2e.yml` | Full-corpus coverage lanes and their `e2e-status` checks | Named exception | Nightly E2E schedule (or a `full_corpus` dispatch) |
 | `heavy-tests.yml` | Label-gated jobs on pull requests | Named exception | Nightly Heavy Tests schedule |
@@ -100,6 +100,32 @@ reusing push only with a readable `reuse.json` naming the same workflow, the
 push head and a valid source run. It prints the reused run per workflow and
 writes `test_reused_run_id` / `e2e_reused_run_id`. Schedules never reuse.
 
+## Remote-gate reuse
+
+GitHub's full profile is the source of truth for the Ubicloud gate too.
+`scripts/pregate-remote-gate.sh`, the run that clears gstack's `remote_gate`
+obligation, first asks `bun scripts/ci-reuse.ts --gate` whether the clean
+working tree's commit, or another head with the same tree, already passed the
+complete full runs of both Test and E2E under the master-push rules above. If
+both did, the receipt comes from them: the same `PREGATE_REMOTE: tree= tests=
+failed=` line, with the runs' executed test identities as the counts, and no VM
+starts. A full run on the tree still in progress is waited for (90 minutes at
+most, a progress line every minute). The newest full run on the tree decides,
+across the head and every recent head with the same tree, so neither an empty
+commit nor an older pass elsewhere skips a newer failure; a failed one refuses
+with no receipt. A run that did not run the full job (a diagnostic dispatch, a
+push that reused) is skipped. A tree that changes `.github/workflows/test.yml`,
+`.github/workflows/e2e.yml`, `scripts/ci-reuse.ts`, `scripts/lib/gh-issue.ts`,
+`scripts/ci-full-suite-tree.sh` or `scripts/ci-executed-counts.ts` relative to `origin/master` never reuses, since its runs would attest to themselves, and the
+check runs without the model and database keys, like the gate. Every other case runs the gate: a dirty tree, a commit GitHub
+doesn't have, a missing workflow, an API error, or `GBRAIN_PREGATE_REUSE=0`.
+
+Only the identical tree reuses. A head that /ship changed after full-ci has a
+new tree, so it needs its own passed full run or gate. A stamp-only difference
+reaches the head through gstack's stamp rule (`gstack-pregate clear --receipt`
+with the stamp files in `.gstack/ship-policy.json`), never through this check.
+Merge still requires `full-suite` and `e2e-full-suite` on the exact head.
+
 ## Dependency-audit rule
 
 `dependency-audit` blocks on pushes, schedules, manual runs and pull requests
@@ -119,6 +145,9 @@ Every crash-robot run executes one fixed schedule list (`scripts/persistence/rob
 is a ceiling, not a budget: a run past it fails with `over_budget` instead of covering less.
 Each cell writes its elapsed time as a share of its ceiling to the job summary, so drift
 shows long before a run fails.
+
+The Bun 1.4.0 rows in the tables below were measured before the floor moved to
+Bun 1.4.4 (#7644); that cell no longer runs.
 
 Measured on ubicloud-standard-4, full scope, run 39996381819:
 
@@ -164,6 +193,9 @@ Measured on ubicloud-standard-4, full scope, run 39996381819:
   three lease waits, under a 1020 s ceiling.
 
 ## Cost of parity
+
+The Bun 1.4.0 cells below were dropped when the floor moved to Bun 1.4.4
+(#7644); the figures are the measurements from before that change.
 
 Measured from the 15 latest green pull-request Test runs before parity (job
 start to finish, PR parameters): the Bun 1.4.0 twins add 14 cells per

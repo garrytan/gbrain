@@ -37,14 +37,14 @@ import { DEFAULT_INLINE_BODY_BYTES, locateChunksByStoredSpans, projectPageText, 
 import { readSegmentedWindows } from './segmented-evidence.ts';
 import { stripChunkHeader } from '../chunkers/code.ts';
 import { OperationError } from '../ops/contract.ts';
-import { blockDateHeaders, evidenceDateHeaderEnabled } from './evidence-date.ts';
+import { blockDateHeaders, evidenceDateHeaderEnabled, evidenceTitlesEnabled } from './evidence-date.ts';
 import { cutWholePages, resolvePageRankCut, type PageRankCut, type PageRankCutMeta } from './page-rank-cut.ts';
 import { evidenceTailTrimEnabled, trimEvidenceTail, type TailTrimMeta } from './evidence-tail-trim.ts';
 export { pagePlanHits } from './page-plan-hits.ts';
 import { applyEffectiveDate } from '../utils.ts';
 import { configPacking, MIN_EXPLICIT_AUTO_BUDGET, parseAutoPacking, type AutoPacking } from './evidence-packing.ts';
 
-export { AUTO_PACKINGS, AUTO_PACKING_CONFIG_KEY, DEFAULT_AUTO_PACKING, MIN_EXPLICIT_AUTO_BUDGET, autoPackingValueProblem, parseAutoPacking, type AutoPacking } from './evidence-packing.ts';
+export { AUTO_PACKINGS, AUTO_PACKING_CONFIG_KEY, DEFAULT_AUTO_PACKING, MIN_EXPLICIT_AUTO_BUDGET, QUERY_BUDGET_UNIT_CONFIG_KEY, autoPackingValueProblem, parseAutoPacking, queryBudgetUsesAuto, type AutoPacking } from './evidence-packing.ts';
 
 export const RETURN_UNITS = ['chunk', 'window', 'section', 'page', 'auto'] as const;
 export type ReturnUnit = typeof RETURN_UNITS[number];
@@ -116,6 +116,8 @@ export interface DeliveryMeta {
   budget_clamped?: { requested: number; max: number };
   /** Present (true) when every block starts with its one-line date header (`search.evidence_date_header`). */
   date_header?: true;
+  /** Present (true) when page block headers also carry the page title (`search.evidence_titles`). */
+  title_header?: true;
   /** Present only when an explicit budget engaged the cap: the packing that ran. */
   auto_packing?: AutoPacking;
   /** W5: present when `search.page_rank_cut` cut the page candidates (page-rank-cut.ts). */
@@ -140,6 +142,8 @@ export interface EvidencePlan {
   budgetClamped?: { requested: number; max: number };
   /** `search.evidence_date_header` is on: each block starts with its date header line. */
   dateHeader?: true;
+  /** `search.evidence_titles` is on with the date header: page block header lines end with the page title. */
+  titleHeader?: true;
   /** F2: set only by the search/query caller (withLongPagePolicy); recall, think and assemble_evidence never carry it. */
   longPage?: LongPagePolicy;
   /** W5: page unit + caller budget + `search.page_rank_cut: whole_pages` (page-rank-cut.ts). */
@@ -280,6 +284,7 @@ export async function resolveEvidencePlan(engine: BrainEngine, input: ResolvePla
     }
   }
   const rankCut = unit === 'page' && budgetExplicit ? await resolvePageRankCut(engine, budget) : undefined;
+  const dateHeader = await evidenceDateHeaderEnabled(engine);
   return {
     requestedUnit: unit,
     unit,
@@ -289,7 +294,8 @@ export async function resolveEvidencePlan(engine: BrainEngine, input: ResolvePla
     budgetExplicit,
     packing,
     ...(budgetClamped ? { budgetClamped } : {}),
-    ...(await evidenceDateHeaderEnabled(engine) ? { dateHeader: true as const } : {}),
+    ...(dateHeader ? { dateHeader: true as const } : {}),
+    ...(dateHeader && await evidenceTitlesEnabled(engine) ? { titleHeader: true as const } : {}),
     ...(rankCut ? { rankCut } : {}),
     ...(unit === 'auto' && await evidenceTailTrimEnabled(engine) ? { tailTrim: true as const } : {}),
   };
@@ -1277,7 +1283,7 @@ export async function deliverEvidence(
     return page?.segmented ? [[g, planSegmentedBlock(engine, page, g.hits, unit, plan.window, scope.detail !== 'low').catch(() => null)] as const] : [];
   }));
   // C1 date headers: one line per block (passthrough rows included), paid for inside the budget like the title.
-  const headerFor = plan.dateHeader ? await blockDateHeaders(engine, hits, () => fallbacks.add('date_header_unavailable')) : () => '';
+  const headerFor = plan.dateHeader ? await blockDateHeaders(engine, hits, () => fallbacks.add('date_header_unavailable'), { titles: plan.titleHeader === true }) : () => '';
 
   const planned: Block[] = [];
   for (const g of groups) {
@@ -1392,6 +1398,7 @@ export async function deliverEvidence(
     ...(plan.budgetClamped ? { budget_clamped: plan.budgetClamped } : {}),
     ...(capped ? { auto_packing: plan.packing } : {}),
     ...(plan.dateHeader ? { date_header: true as const } : {}),
+    ...(plan.titleHeader ? { title_header: true as const } : {}),
     ...(rankCutMeta ? { page_rank_cut: rankCutMeta } : {}),
     ...(tailTrim ? { tail_trim: tailTrim } : {}),
   };

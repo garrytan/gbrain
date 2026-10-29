@@ -207,8 +207,8 @@ src/core/enrichment-service.ts	stubMarkdown	call:serializeMarkdown	INLINE	G6: a 
 src/core/export-snapshot.ts	inlineExportMarkdown	call:serializeMarkdown	SEGW	
 src/core/export-snapshot.ts	inlineExportMarkdown	field	STREAM	
 src/core/export-snapshot.ts	segmentedExportHead	call:serializeMarkdown	NONE	not the page body: the frontmatter head, rendered with an empty body
-src/core/export-snapshot.ts	readExportPage	field	STREAM	inline pages only: a segmented page skips the overlay here and streams through segmentedExportMarkdown (readBodyRange, trusted stored)
-src/core/export-snapshot.ts	readExportPage	sql	STREAM	
+src/core/export-snapshot.ts	readExportPages	field	STREAM	inline pages only: a segmented page skips the overlay here and streams through segmentedExportMarkdown (readBodyRange, trusted stored)
+src/core/export-snapshot.ts	readExportPages	sql	STREAM	
 src/core/extract-ner.ts	extractNerLinks	field	STREAM	
 src/core/extract-takes-from-pages.ts	extractTakesFromPages	call:serializePageToMarkdown	SEGW	
 src/core/extract-takes-from-pages.ts	extractTakesFromPages	field	STREAM	inline rows only (SQL filter)
@@ -435,8 +435,6 @@ src/core/persistence/facts-maintenance.ts	prepareManagedFactsSession	field	META
 src/core/persistence/facts-prepare.ts	prepareManagedFactsMutation	call:serializePageToMarkdown	SEGW	assertInlineBody first
 src/core/persistence/facts-prepare.ts	prepareManagedFactsMutation	field	SEGW	assertInlineBody on the entity snapshot before the fence write
 src/core/persistence/file-repair.ts	canonicalRepairFields	field	META	
-src/core/persistence/grandfather.ts	prepareGrandfatherMutation	call:contentHash	META	
-src/core/persistence/grandfather.ts	prepareGrandfatherMutation	call:serializePageToMarkdown	SEGW	
 src/core/persistence/import-prepare.ts	prepareManagedImportMutation	call:serializePageToMarkdown	SEGW	
 src/core/persistence/large-page-guard.ts	assertLargePageAdmission	sql	META	stored size = body_bytes for a segmented page, octet_length of the columns for an inline page
 src/core/persistence/links-maintenance.ts	extractManagedStaleLinks	field	NONE	not the page body: result.timeline counter
@@ -626,6 +624,7 @@ src/core/trust/page-handlers.ts	markdownWithoutMarker	call:serializeMarkdown	SEG
 src/core/trust/page-handlers.ts	markdownWithoutMarker	field	SEGW	
 src/core/trust/page-handlers.ts	versionMarkdown	call:serializePageToMarkdown	SEGW	
 src/core/trust/page-handlers.ts	versionMarkdown	field	SEGW	
+src/core/trust/release-publish.ts	cellAt	field	INLINE	read-only fence cell lookup on the body materializedPage read back within PAGE_MAX_BYTES (a segmented page over the ceiling returns null first)
 src/core/utils.ts	contentHash	field	META	hashes a whole inline page; a segmented page hashes as a stream (1.4) and keeps content_hash; called on a segmented Page the getter throws
 src/core/utils.ts	contentHashLegacy	field	META	legacy formula over an inline page; segmented: getter throws
 src/core/utils.ts	rowToPage	field	INLINE	installs throwing body getters on a segmented row (guardSegmentedBody); inline rows copy the columns

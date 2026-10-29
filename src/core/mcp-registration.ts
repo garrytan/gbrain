@@ -15,13 +15,24 @@ import type { McpSurface } from '../mcp/surface.ts';
 export { shellQuote };
 
 /**
- * The surface a new stdio registration pins: `full`, callable and advertised
- * (S0, wave 0; the maintainer chose no narrowing). Every install path reads
- * this one value: README, docs/mcp, INSTALL_FOR_AGENTS.md, the plugin
- * manifests and every registration gbrain writes. A narrower list, where a
- * harness caps its tool count, is the user's explicit `--surface starter|verbs`.
+ * The surface a new stdio registration pins: `starter`, the daily-driver tool
+ * list (Garry, 2026-10-24: new installs register starter instead of full;
+ * gbrain-evals#191 measured unchanged reach and accuracy with 17-23% fewer
+ * input tokens). Every install path reads this one value: README, docs/mcp,
+ * the plugin manifests and every registration gbrain writes. An existing
+ * registration keeps its surface; `--surface full` is the opt-in for every
+ * operation, and any hidden parameter or tool stays reachable through
+ * `request_tools`.
  */
-export const REGISTRATION_SURFACE: McpSurface = 'full';
+export const REGISTRATION_SURFACE: McpSurface = 'starter';
+
+/**
+ * The surface the Codex and Claude Code plugin manifests pin: `full`. A plugin
+ * update rewrites the registration of every existing plugin install, so
+ * narrowing it would change existing installs without asking; plugins keep
+ * full (as does a bare `serve`, whose default is unchanged).
+ */
+export const PLUGIN_SURFACE: McpSurface = 'full';
 
 /** A registration command's surface value (`verbs`, `starter` or `full`). */
 export function isRegistrationSurface(v: unknown): v is McpSurface {

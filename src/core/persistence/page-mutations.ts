@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { pageQuarantinedNotice } from '../quarantine.ts';
+import { indexRestoredNotice } from './git-door.ts';
 import { fenceNormalizedNotice, type FencesNormalized } from '../fence-repair/report.ts';
 import { parseFenceRepairReceipt } from '../fence-repair/receipt.ts';
 import { realpathSync } from 'node:fs';
@@ -160,8 +161,9 @@ async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Re
   delete p.local_file;
   const [source] = await ctx.engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [sourceId]);
   const binding = await getWorktreeBinding(ctx.engine, sourceId);
-  const root = binding ? binding.owner_host_id === localHostId() && binding.local_path ? join(binding.local_path, binding.relative_path) : null
+  let root = binding ? binding.owner_host_id === localHostId() && binding.local_path ? join(binding.local_path, binding.relative_path) : null
     : source?.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
+  if (root && !isAbsolute(root)) root = null;
   let origin: string | null = null;
   try { if (root) origin = relative(realpathSync(root), realpathSync(file)); } catch { /* unreadable or absent root */ }
   if (!root || !origin || isAbsolute(origin) || origin === '..' || origin.startsWith(`..${sep}`) || !/\.mdx?$/i.test(origin)) {
@@ -198,13 +200,15 @@ export async function withLiveSearchable(ctx: OperationContext, response: Record
   return { ...settle(response), ...(receipt ? { write_request: settle(receipt) } : {}) };
 }
 
-/** #6188 (D21): a write whose fence Tier 1 rewrote carries one `fence_normalized` coaching notice. */
+/** #6188 (D21): a write whose fence Tier 1 rewrote carries one `fence_normalized` coaching notice; a strict write whose door restored a stale index entry carries `git_index_restored`. */
 export function emitFenceNotice(ctx: Pick<OperationContext, 'emitNotice'>, response: Record<string, unknown>, slug?: string): void {
   const report = response.fences_normalized as FencesNormalized | undefined;
   if (report) ctx.emitNotice?.(fenceNormalizedNotice(report, slug));
   // #6259: a write the content-quality gate quarantined says so (`quarantined` plus one safety notice).
   const quarantined = response.quarantined as { reason: string; detail: string } | undefined;
   if (quarantined && slug) ctx.emitNotice?.(pageQuarantinedNotice(slug, quarantined, 'write'));
+  const restored = (response.persistence as { git_index_restored?: string[] } | undefined)?.git_index_restored;
+  if (restored?.length) ctx.emitNotice?.(indexRestoredNotice(restored));
 }
 
 /** Owner-internal `put_page` kinds the trusted local file writers (import, frontmatter repair, quarantine clear) submit; every other caller is refused them. */
@@ -396,7 +400,8 @@ export async function preparePageAdmission(ctx: OperationContext,
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
   const configuredWriteThrough = !/^(false|0|off|no)$/i.test(writeThroughSetting ?? 'true');
   const writeThrough = configuredWriteThrough && !sandbox && !input.databaseOnly;
-  const root = source.local_path || repoPath;
+  const configuredRoot = source.local_path || repoPath;
+  const root = configuredRoot && isAbsolute(configuredRoot) ? configuredRoot : null;
   if (sandbox) authority.databaseOnlyReason = 'subagent_sandbox';
   else if (input.databaseOnly) authority.databaseOnlyReason = input.databaseOnly;
   else if (!configuredWriteThrough) authority.databaseOnlyReason = 'disabled_by_config';

@@ -16,6 +16,7 @@ import { disposePersistenceConsumer } from '../../src/core/persistence/service.t
 import { configureGateway, __setChatTransportForTests, __setEmbedTransportForTests, __setDecideTransportForTests } from '../../src/core/ai/gateway.ts';
 import { flushDecideWrites } from '../../src/core/ai/decide/store.ts';
 import { withEnv } from './with-env.ts';
+import { freezeCorpusSessions } from './frozen-corpus.ts';
 
 export const laterQuote = 'a legitimate later quotation from a completely different interview';
 
@@ -119,6 +120,7 @@ export async function childCommittedOrdinaryCycle({ engine, sourceId, root, opts
   const corpus = join(root, '..', 'corpus');
   mkdirSync(corpus);
   writeFileSync(join(corpus, basename(opts.inputFile)), readFileSync(opts.inputFile));
+  freezeCorpusSessions(corpus, sourceId);
   await engine.setConfig('dream.synthesize.session_corpus_dir', corpus);
   const ordinary = { brainDir: root, sourceId, dryRun: false };
   await interruptAfterChild(engine, sourceId, ordinary);

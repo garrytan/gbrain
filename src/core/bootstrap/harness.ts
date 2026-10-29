@@ -59,6 +59,7 @@ import {
   renderAmbientInstructionBlock,
   stripAmbientWritebackBlockAt,
 } from './instructions-block.ts';
+import { removeHarnessBrainFirst, writeHarnessBrainFirst } from './harness-brain-first.ts';
 import { createEngine } from '../engine-factory.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { ALL_SOURCES, isResolverUserError, localFederatedSourceIds, resolveSourceWithTier } from '../source-resolver.ts';
@@ -160,6 +161,8 @@ export interface HarnessFlags {
   projects: string[];
   noHooks: boolean;
   noCapture: boolean;
+  /** `--no-instructions`: skip (and remove) the brain-first instruction block. */
+  noInstructions?: boolean;
   force: boolean;
   remove: boolean;
   /** `--remove --dry-run`: list what removal would do, write nothing. */
@@ -266,6 +269,7 @@ export function parseHarnessArgs(rest: string[]): HarnessFlags {
   }
   out.noHooks = rest.includes('--no-hooks');
   out.noCapture = rest.includes('--no-capture');
+  out.noInstructions = rest.includes('--no-instructions');
   out.force = rest.includes('--force');
   out.remove = rest.includes('--remove');
   out.dryRun = rest.includes('--dry-run');
@@ -322,6 +326,8 @@ export interface HarnessDeps {
   codexAgentsPath?: string;
   /** Resolved codex AGENTS.override.md — the [OV-A4] exclusivity probe. */
   codexAgentsOverride?: string;
+  /** Resolved opencode global AGENTS.md (the brain-first block target). */
+  opencodeAgentsPath?: string;
   /** Engine-free file-plane config loader (ambient-writeback gate); tests
    * inject a fake. */
   loadFileConfig?: () => GBrainConfig | null;
@@ -385,6 +391,7 @@ export function resolveHarnessDeps(deps: HarnessDeps): Required<Omit<HarnessDeps
     codexAgentsOverride:
       deps.codexAgentsOverride ??
       (deps.codexConfig ? join(dirname(deps.codexConfig), 'AGENTS.override.md') : codexAgentsOverridePath()),
+    opencodeAgentsPath: deps.opencodeAgentsPath ?? join(dirname(deps.opencodeConfig ?? opencodeGlobalConfigPath()), 'AGENTS.md'),
     loadFileConfig: deps.loadFileConfig ?? loadConfigFileOnly,
     mint: deps.mint ?? mintHarnessToken,
     installSharedSkills: deps.installSharedSkills ?? installSharedSkillsConnection,
@@ -1975,6 +1982,10 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   const cleanup = await convergeHarnessCleanup({ receipt, prior, current: currentSkills, wired: allConfirmed && smokeOk, skillsReady,
     memoryOnly: skillsPolicy === 'memory-only', leave: leaveHarnessSkills, save }, d);
 
+  // 10b. Brain-first instructions beside each confirmed MCP entry.
+  writeHarnessBrainFirst({ hosts: hosts.filter((h) => targets.some((t) => t.host === h && t.kind === 'mcp' && t.state === 'confirmed')),
+    server: flags.name, optOut: flags.noInstructions === true, paths: d, log: d.log });
+
   // 11. Degradation + skew honesty.
   if (health.engine === 'postgres') {
     d.log(
@@ -2249,6 +2260,8 @@ export async function removeHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
   if (!receipt.token.minted && (receipt.token.previous_ids?.length ?? 0) === 0) {
     d.log('current token was supplied via --token — not revoked (not ours to revoke).');
   }
+
+  removeHarnessBrainFirst(flags.name, d.log);
 
   if (remaining.length === 0 && tokenDone && skillsDone) {
     deleteHarnessReceipt(d.gbrainHome);

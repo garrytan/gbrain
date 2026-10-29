@@ -17,7 +17,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { cliRenderContext, toAgentError } from '../core/agent-output.ts';
-import { readExportPage, readExportWithdrawals, type ExportWithdrawal } from '../core/export-snapshot.ts';
+import { readExportPages, readExportWithdrawals, type ExportSnapshot, type ExportWithdrawal } from '../core/export-snapshot.ts';
 import { RestoreTargetError, restoreFilePath } from '../core/restore-target.ts';
 import { privatePagesFilterFragment, readHonorAliases } from '../core/search/private-visibility.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
@@ -27,7 +27,7 @@ import { GIT_HOLD_OP, readSyncImportProvenances } from '../core/persistence/sync
 import { DERIVED_LINK_SOURCES } from '../core/persistence/twin-merge.ts';
 import { scannerSlugRootMode, scannerSourcePath } from '../core/write-through.ts';
 import { compareInlineExportFile, compareSegmentedExportBlob, DECLARED_CLASSES, declaredDatabaseOnly, ignoredPaths, readBlobs, readHeadTree, worktreeBlobOid,
-  type DeclaredClass, type ExportFileComparison, type HeadTree, type TreeBlob } from '../core/persistence/git-gap.ts';
+  type DeclaredClass, type ExportFileComparison, type HeadTree, type TreeBlob, type UnparseableReason } from '../core/persistence/git-gap.ts';
 
 const USAGE = 'Usage: gbrain sources git-gap <source-id> [--sample <n>] [--json]';
 export const GIT_GAP_DOCS = 'docs/designs/GIT_CANONICAL_MEMORY.md#the-git-gap-census';
@@ -40,7 +40,9 @@ export type WorktreeState = typeof WORKTREE_STATES[number];
 
 /** One page as the census classified it, handed to a caller that plans per page (G8 conversion, persistence/git-conversion.ts). */
 export interface GitGapPage { id: string; slug: string; revision: string | null; path: string | null; state: PageState; segmented: boolean;
-  declared?: DeclaredClass; worktree?: WorktreeState; headBlob?: string; databaseAlsoMoved?: boolean }
+  declared?: DeclaredClass; worktree?: WorktreeState; headBlob?: string; databaseAlsoMoved?: boolean; unparseable?: UnparseableReason;
+  /** A declared page: whether its row records a file (`source_path`), and the size of its committed blob. */
+  recordsFile?: boolean; headSize?: number }
 
 export interface GitGapSample { slug: string; path: string; state: PageState; fields?: string[]; declared?: DeclaredClass; basis?: 'import_record' | 'no_import_record'; worktree?: WorktreeState }
 
@@ -121,7 +123,8 @@ interface Checkout { root: string; head: HeadTree; mode: Awaited<ReturnType<type
 
 const refuse = (message: string, suggestion: string) => new OperationError('storage_error', message, suggestion, GIT_GAP_DOCS);
 
-export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: { sample: number; deadlineAt?: number; collect?: (page: GitGapPage) => void }): Promise<GitGapCensus> {
+/** `collect` receives each classified page, with the export snapshot the census compared for a database_ahead or git_ahead page. */
+export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: { sample: number; deadlineAt?: number; collect?: GitGapCollect }): Promise<GitGapCensus> {
   await resolveSourceId(engine, sourceId, undefined, { skipLocalSignals: true });
   const [source] = await engine.executeRaw<{ local_path: string | null; incarnation: string }>('SELECT local_path, incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
   const root = source?.local_path && existsSync(source.local_path) ? source.local_path : null;
@@ -158,8 +161,10 @@ export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: 
   return census;
 }
 
+export type GitGapCollect = (page: GitGapPage, snapshot?: ExportSnapshot) => void;
+
 interface BatchContext { checkout: Checkout | null; policy: { mirror: boolean; databaseOnlySource: boolean; dbOnly: (slug: string) => boolean; ignored: Set<string> }; incarnation: string; sample: number;
-  collect?: (page: GitGapPage) => void }
+  collect?: GitGapCollect }
 
 const collected = (key: Key, path: string | null, state: PageState, extra: Partial<GitGapPage> = {}): GitGapPage =>
   ({ id: key.id, slug: key.slug, revision: key.revision, path, state, segmented: key.segmented === true, ...extra });
@@ -172,7 +177,9 @@ function note(census: GitGapCensus, limit: number, item: GitGapSample): void {
 async function censusBatch(tx: BrainEngine, batch: Key[], census: GitGapCensus, ctx: BatchContext): Promise<void> {
   const { checkout } = ctx;
   const target = (key: Key): string | null => {
-    try { return restoreFilePath(checkout!.root, key.slug, key.source_path, Number(key.source_path_bytes), checkout!.mode); }
+    // A withheld page's file is looked for where its private transition removed it, as page-prepare writes it there again.
+    const recorded = key.source_path || key.withheld_source_path;
+    try { return restoreFilePath(checkout!.root, key.slug, recorded, key.source_path ? Number(key.source_path_bytes) : Buffer.byteLength(recorded ?? ''), checkout!.mode); }
     catch (error) { if (error instanceof RestoreTargetError) return null; throw error; }
   };
   const rows = batch.map(key => {
@@ -180,10 +187,15 @@ async function censusBatch(tx: BrainEngine, batch: Key[], census: GitGapCensus, 
     return { key, path, rel: path ? relative(checkout!.root, path).split(sep).join('/') : null };
   });
   if (checkout) {
-    const ignored = await ignoredPaths(checkout.root, rows.flatMap(row => row.rel === null ? [] : [row.rel]));
-    if (!ignored) throw refuse(`Git could not say which paths the checkout at ${checkout.root} ignores, so the declared classes are unknown.`,
+    // A path whose ignore status Git cannot read (one beyond a symlink) is classified as if not ignored in the conversion
+    // plan, which discards it as ignore_status_unknown instead of adopting it; the census report refuses, as it did before #7617.
+    const status = await ignoredPaths(checkout.root, rows.flatMap(row => row.rel === null ? [] : [row.rel]));
+    if (!status) throw refuse(`Git could not say which paths the checkout at ${checkout.root} ignores, so the declared classes are unknown.`,
       `Nothing changed. Check that ${checkout.root} is a Git checkout (git -C ${checkout.root} rev-parse HEAD), then rerun gbrain sources git-gap ${batch[0]!.source_id}.`);
-    ctx.policy.ignored = ignored;
+    const [unknown] = status.unknown;
+    if (unknown && !ctx.collect) throw refuse(`Git could not say whether ${unknown[0]} in the checkout at ${checkout.root} is ignored (${unknown[1]}), so the declared classes are unknown.`,
+      `Nothing changed. Check the path with git -C ${checkout.root} check-ignore -- ${unknown[0]} (Git cannot check a path beyond a symlinked directory), then rerun gbrain sources git-gap ${batch[0]!.source_id}.`);
+    ctx.policy.ignored = status.ignored;
   }
   const noFile = { undeclared: [] as Key[], declared: [] as Key[] };
   const compare: Array<{ key: Key; path: string; rel: string; blob: TreeBlob; worktree: WorktreeState }> = [];
@@ -195,7 +207,9 @@ async function censusBatch(tx: BrainEngine, batch: Key[], census: GitGapCensus, 
     if (declared) {
       census.declared[declared]++;
       census.states.declared_database_only++;
-      ctx.collect?.(collected(key, rel, 'declared_database_only', { declared, ...(blob ? { headBlob: blob.oid } : {}) }));
+      const oid = ctx.collect && blob && path ? await worktreeBlobOid(path, checkout!.head.format) : undefined;
+      ctx.collect?.(collected(key, rel, 'declared_database_only', { declared, recordsFile: Boolean(key.source_path),
+        ...(blob ? { headBlob: blob.oid, headSize: blob.size, worktree: oid === null ? 'deleted' : oid === blob.oid ? 'clean' : 'modified' } : {}) }));
       if (blob) { census.declared_with_head_blob++; note(census, ctx.sample, { slug: key.slug, path: rel!, state: 'declared_database_only', declared }); }
       else if (checkout) noFile.declared.push(key);
       continue;
@@ -222,7 +236,7 @@ async function censusBatch(tx: BrainEngine, batch: Key[], census: GitGapCensus, 
     census.worktree![worktree]++;
     if (blob.mode !== '100644' && blob.mode !== '100755') {
       census.states.unparseable++;
-      ctx.collect?.(collected(key, rel, 'unparseable', { worktree, headBlob: blob.oid }));
+      ctx.collect?.(collected(key, rel, 'unparseable', { worktree, headBlob: blob.oid, unparseable: blob.mode === '120000' ? 'symlink' : 'non_regular_mode' }));
       note(census, ctx.sample, { slug: key.slug, path: rel, state: 'unparseable', worktree });
       continue;
     }
@@ -240,19 +254,20 @@ async function compareBatch(tx: BrainEngine, compare: Array<{ key: Key; path: st
   if (!blobs) throw refuse(`Git could not read committed files of the checkout at ${checkout.root}.`,
     `Nothing changed. Check the checkout with git -C ${checkout.root} fsck, then rerun gbrain sources git-gap ${sourceId}.`);
   const withdrawals: ExportWithdrawal[] = await readExportWithdrawals(tx, sourceId);
-  const differs: Array<{ key: Key; rel: string; blob: TreeBlob; worktree: WorktreeState; fields: string[] }> = [];
-  for (const item of compare) {
-    const snapshot = await readExportPage(tx, item.key, withdrawals);
+  const differs: Array<{ key: Key; rel: string; blob: TreeBlob; worktree: WorktreeState; fields: string[]; snapshot: ExportSnapshot }> = [];
+  const snapshots = await readExportPages(tx, compare.map(item => item.key), withdrawals);
+  for (const [i, item] of compare.entries()) {
+    const snapshot = snapshots[i]!;
     const compared: ExportFileComparison = item.key.segmented ? await compareSegmentedExportBlob(tx, snapshot, withdrawals, item.blob, checkout.head.format)
       : compareInlineExportFile(blobs.get(item.blob.oid)!, scannerSourcePath(checkout.root, item.path, checkout.mode), snapshot);
     if (compared.state === 'equal') { census.states.equal++; ctx.collect?.(collected(item.key, item.rel, 'equal', { worktree: item.worktree, headBlob: item.blob.oid })); continue; }
     if (compared.state === 'unparseable') {
       census.states.unparseable++;
-      ctx.collect?.(collected(item.key, item.rel, 'unparseable', { worktree: item.worktree, headBlob: item.blob.oid }));
+      ctx.collect?.(collected(item.key, item.rel, 'unparseable', { worktree: item.worktree, headBlob: item.blob.oid, unparseable: compared.reason }));
       note(census, ctx.sample, { slug: item.key.slug, path: item.rel, state: 'unparseable', worktree: item.worktree });
       continue;
     }
-    differs.push({ ...item, fields: compared.paths });
+    differs.push({ ...item, fields: compared.paths, snapshot });
   }
   if (!differs.length) return;
   const records = await readSyncImportProvenances(tx, sourceId, ctx.incarnation, differs.map(item => Number(item.key.id)));
@@ -265,7 +280,7 @@ async function compareBatch(tx: BrainEngine, compare: Array<{ key: Key; path: st
     if (!imported.length) census.database_ahead_without_import_record++;
     const databaseAlsoMoved = gitMoved && record?.revision != null && String(record.revision) !== String(item.key.revision);
     if (databaseAlsoMoved) census.git_ahead_database_also_moved++;
-    ctx.collect?.(collected(item.key, item.rel, state, { worktree: item.worktree, headBlob: item.blob.oid, databaseAlsoMoved }));
+    ctx.collect?.(collected(item.key, item.rel, state, { worktree: item.worktree, headBlob: item.blob.oid, databaseAlsoMoved }), item.snapshot);
     note(census, ctx.sample, { slug: item.key.slug, path: item.rel, state, fields: item.fields, basis: imported.length ? 'import_record' : 'no_import_record', worktree: item.worktree });
   }
 }

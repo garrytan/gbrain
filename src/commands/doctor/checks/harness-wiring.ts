@@ -26,7 +26,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { gbrainPath, loadConfig } from '../../../core/config.ts';
 import { peekLock } from '../../../core/pglite-lock.ts';
 import { harnessWiringEntry, httpStatusServerEntry, type ReadinessHarness } from '../../../core/readiness.ts';
@@ -40,6 +40,7 @@ import type { Check } from '../../doctor.ts';
 import { checkError, doctorVerify, infoCheck } from '../check-fix.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
 import { VERSION } from '../../../version.ts';
+import { brainFirstTarget, inspectBrainFirst, isBrainFirstHarness, readBrainFirstLedger, renderBrainFirstBlock, type BrainFirstAccess } from '../../../core/setup/brain-first.ts';
 
 export const HARNESS_SMOKE_TIMEOUT_MS = 15_000;
 export const HARNESS_HTTP_PROBE_TIMEOUT_MS = 3_000;
@@ -341,8 +342,109 @@ async function smoke(r: HarnessRegistration): Promise<Check> {
     ...(fix ? { fix } : { fix_unavailable_reason: 'no_safe_automatic_fix' as const }) };
 }
 
-/** Registration read (full run) or registration read + smoke (`--only harness_wiring`). */
+export interface InstructionBlockView {
+  harness: string;
+  path: string;
+  state: 'current' | 'stale' | 'missing' | 'damaged' | 'opted_out';
+  /** Where the record came from: the brain-first ledger, or the harness's default file for a registration with no record. */
+  from: 'ledger' | 'default_path';
+  /** The access the recorded block names, so the repair rewrites that block and not a default one. */
+  access?: BrainFirstAccess;
+}
+
+/**
+ * The brain-first instruction block for every surface gbrain wrote or was
+ * told to skip (the ledger), plus each registered harness with no record,
+ * checked at that harness's default instruction file. Read-only.
+ */
+export function instructionBlockViews(regs: HarnessRegistration[]): InstructionBlockView[] {
+  const state = (s: ReturnType<typeof inspectBrainFirst>['state']): InstructionBlockView['state'] =>
+    s === 'current' ? 'current' : s === 'stale' ? 'stale' : s === 'damaged' ? 'damaged' : 'missing';
+  const views: InstructionBlockView[] = readBrainFirstLedger().map((e) => {
+    // Codex reads one global file: once a non-empty AGENTS.override.md appears, a block in AGENTS.md is no longer loaded.
+    const live = e.harness === 'codex' ? brainFirstTarget('codex') : undefined;
+    const path = live && !('error' in live) && dirname(live.path) === dirname(e.path) ? live.path : e.path;
+    return e.status === 'declined'
+      ? { harness: e.harness, path, state: 'opted_out', from: 'ledger' }
+      : { harness: e.harness, path, state: state(inspectBrainFirst(path, renderBrainFirstBlock(e.harness, e.access)).state), from: 'ledger', access: e.access };
+  });
+  for (const r of regs) {
+    if (views.some((v) => v.harness === r.harness) || !isBrainFirstHarness(r.harness)) continue;
+    const target = brainFirstTarget(r.harness);
+    if ('error' in target) continue;
+    views.push({ harness: r.harness, path: target.path, state: state(inspectBrainFirst(target.path).state), from: 'default_path' });
+  }
+  return views;
+}
+
+const INSTRUCTION_PROBLEM: Record<'stale' | 'missing' | 'damaged', string> = {
+  stale: 'is out of date', missing: 'is missing', damaged: 'has damaged markers',
+};
+
+/**
+ * Fold the brain-first block into the wiring verdict: without it agents rarely
+ * reach for the brain at all, so a missing, stale or damaged block turns an
+ * `ok` wiring into a warn whose fix rewrites only the block. An opt-out is
+ * reported, never warned on. No views: the check is returned unchanged.
+ */
+export function withInstructionBlocks(check: Check, views: InstructionBlockView[]): Check {
+  if (views.length === 0) return check;
+  const details = { ...(check.details ?? {}), instructions: views };
+  const bad = views.filter((v): v is InstructionBlockView & { state: 'stale' | 'missing' | 'damaged' } => v.state === 'stale' || v.state === 'missing' || v.state === 'damaged');
+  if (bad.length === 0) {
+    const current = views.filter((v) => v.state === 'current').map((v) => v.harness);
+    const optedOut = views.filter((v) => v.state === 'opted_out').map((v) => v.harness);
+    const note = [current.length ? `brain-first instructions current for ${current.join(', ')}` : '', optedOut.length ? `opted out for ${optedOut.join(', ')}` : ''].filter(Boolean).join('; ');
+    return { ...check, message: `${check.message} ${note.charAt(0).toUpperCase()}${note.slice(1)}.`, details };
+  }
+  const first = bad[0]!;
+  const problems = bad.map((v) => `the ${v.harness} block in ${v.path} ${INSTRUCTION_PROBLEM[v.state]}`).join('; ');
+  const message = `${check.message} Brain-first instructions: ${problems}, so sessions are not told to check gbrain first.`;
+  if (check.status !== 'ok') return { ...check, message, details };
+  const fix: Action = first.state === 'damaged'
+    ? { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME),
+      why: `The brain-first markers in ${first.path} were hand-edited; gbrain will not guess which lines are its own.`,
+      user_message: `The gbrain instruction block in ${first.path} has damaged markers. Please delete the block (both marker lines included), then I'll write a fresh one.` }
+    : repairArgv(first);
+  return { name: NAME, status: 'warn', message, details, fix };
+}
+
+/** The setup command that rewrites exactly this block: same file, same connection name and surface. A project file needs its own directory, so the user runs it there. */
+function repairArgv(v: InstructionBlockView): Action {
+  const access = v.access;
+  const argv = ['gbrain', 'setup', v.harness, '--instructions-only',
+    ...(access?.kind === 'mcp' && access.server !== 'gbrain' ? ['--name', access.server] : []),
+    ...(access?.kind === 'mcp' && access.surface ? ['--surface', access.surface] : []),
+    ...(v.harness === 'openclaw' ? ['--workspace', dirname(v.path)] : []),
+    ...(v.harness === 'claude-code' && basename(v.path) === 'CLAUDE.local.md' ? ['--scope', 'project'] : [])];
+  const why = `Writes or upgrades only the marked brain-first block in ${v.path}; text outside the markers is left as it is. \`--no-instructions\` opts out instead.`;
+  const project = v.harness === 'cursor' || basename(v.path) === 'CLAUDE.local.md';
+  if (project) {
+    const dir = v.harness === 'cursor' ? dirname(dirname(dirname(v.path))) : dirname(v.path);
+    return { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME), why,
+      user_message: `The gbrain instruction block in ${v.path} needs a refresh. From ${dir}, run: ${argv.join(' ')}` };
+  }
+  return { argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(NAME), why };
+}
+
+/** Registration read (full run) or registration read + smoke (`--only harness_wiring`), plus the brain-first block. */
 export async function harnessWiringCheck(opts: { smoke: boolean }): Promise<Check> {
+  const regs = readHarnessRegistrations();
+  return withSurfaceNote(withInstructionBlocks(await registrationCheck(opts, regs), instructionBlockViews(regs)), regs);
+}
+
+/**
+ * Information only: a stdio registration pinned to `--surface full` keeps
+ * working and is never rewritten; new installs register starter (the smaller
+ * daily-driver tool list). Status and fix are unchanged.
+ */
+export function withSurfaceNote(check: Check, regs: HarnessRegistration[]): Check {
+  const full = regs.filter((r) => r.kind === 'stdio' && !r.env?.GBRAIN_SURFACE && r.args?.[r.args.indexOf('--surface') + 1] === 'full' && r.args.includes('--surface'));
+  if (full.length === 0) return check;
+  return { ...check, details: { ...(check.details ?? {}), surface_note: `${full.map((r) => HARNESS_LABEL[r.harness]).join(', ')} registered with --surface full, which stays supported. New installs register starter (a smaller tool list; request_tools reaches the rest).` } };
+}
+
+async function registrationCheck(opts: { smoke: boolean }, regs: HarnessRegistration[]): Promise<Check> {
   // A shared HTTP server that answers in status-only mode outranks every registration verdict.
   const statusServer = (await verifiedStatusMarkers())[0];
   if (statusServer) {
@@ -350,7 +452,6 @@ export async function harnessWiringCheck(opts: { smoke: boolean }): Promise<Chec
     return { name: NAME, status: 'warn', message: entry.why, ...(entry.fix ? { fix: entry.fix } : { fix_unavailable_reason: 'no_safe_automatic_fix' as const }),
       details: { reason: entry.reason, transport: 'http', port: statusServer.port, pid: statusServer.pid, status_reason: statusServer.reason } };
   }
-  const regs = readHarnessRegistrations();
   if (regs.length === 0) {
     const detected = detectedHarnesses();
     const plugins = enabledPluginLanes('gbrain').filter((lane) => detected.includes(lane.harness));

@@ -20,7 +20,7 @@
  * _brain-filing-rules.json) always ship, mirroring the openclaw bundler.
  *
  * Starter-surface gap snapshot: each bundled skill's frontmatter `tools:`
- * list is compared against the REGISTRATION_SURFACE op set (the plugin lanes
+ * list is compared against the PLUGIN_SURFACE op set (the plugin lanes
  * serve `--surface full` today, the surface every stdio registration gbrain
  * writes pins; the root plugin manifests must pin the same value). Harness tools (shell/exec/read/write/edit/
  * web_search/web_fetch), literal `gbrain` (CLI usage marker), and unknown
@@ -40,7 +40,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { allowedOpNames } from '../src/mcp/surface.ts';
-import { REGISTRATION_SURFACE } from '../src/core/mcp-registration.ts';
+import { PLUGIN_SURFACE } from '../src/core/mcp-registration.ts';
 import { operations } from '../src/core/operations.ts';
 import { cliEquivalent } from '../src/core/ops/cli-equivalent.ts';
 import { parseSkillFrontmatter } from '../src/core/skill-frontmatter.ts';
@@ -133,7 +133,7 @@ try {
 }
 
 // ── Starter-gap snapshot ────────────────────────────────────────────────────
-const SURFACE_OPS = allowedOpNames(operations, REGISTRATION_SURFACE);
+const SURFACE_OPS = allowedOpNames(operations, PLUGIN_SURFACE);
 // Harness-native tool names a skill may declare that are not gbrain MCP ops.
 const HARNESS_TOOLS = new Set(['shell', 'exec', 'read', 'write', 'edit', 'web_search', 'web_fetch', 'gbrain']);
 
@@ -176,7 +176,7 @@ function surfaceNote(gaps: readonly string[]): string {
   });
   return [
     '', '## Tools outside your MCP surface', '',
-    `This plugin serves the ${REGISTRATION_SURFACE} tool surface. When a step above names one of these tools and your tool list`,
+    `This plugin serves the ${PLUGIN_SURFACE} tool surface. When a step above names one of these tools and your tool list`,
     'does not have it, call request_tools {"surface":"full"} to add it to this session, or run its gbrain CLI equivalent:', '',
     ...rows, '',
     "To widen every new session, set this machine's plugin surface with GBRAIN_SURFACE=full.", '',
@@ -238,7 +238,7 @@ if (writeGaps) {
   }
 }
 
-// The root plugin manifests (copied into every variant) must pin the registration surface.
+// The root plugin manifests (copied into every variant) must pin the plugin surface.
 function pinnedSurface(args: unknown): string | undefined {
   if (!Array.isArray(args)) return undefined;
   const i = args.indexOf('--surface');
@@ -248,7 +248,7 @@ for (const file of ['.codex-plugin/mcp.json', '.claude-plugin/plugin.json']) {
   if (!existsSync(join(ROOT, file))) continue;
   const servers = (JSON.parse(readFileSync(join(ROOT, file), 'utf8')) as { mcpServers?: Record<string, { args?: unknown }> }).mcpServers;
   const pinned = pinnedSurface(servers?.gbrain?.args);
-  if (pinned !== REGISTRATION_SURFACE) fail(`${file} pins --surface ${pinned ?? '(none)'}; plugin lanes serve the registration surface '${REGISTRATION_SURFACE}' (src/core/mcp-registration.ts)`);
+  if (pinned !== PLUGIN_SURFACE) fail(`${file} pins --surface ${pinned ?? '(none)'}; plugin lanes serve the plugin surface '${PLUGIN_SURFACE}' (src/core/mcp-registration.ts)`);
 }
 
 if (failed) process.exit(1);
@@ -298,7 +298,7 @@ addition/exclusion).
 
 ## MCP surface note (read once)
 
-The plugin's MCP server runs \`gbrain serve --surface ${REGISTRATION_SURFACE}\` — ${SURFACE_OPS.size}
+The plugin's MCP server runs \`gbrain serve --surface ${PLUGIN_SURFACE}\` — ${SURFACE_OPS.size}
 operations, the same surface every stdio registration gbrain writes pins.
 ${gapSkills === 0
     ? `Every gbrain operation the bundled skills name is on it. A harness that caps

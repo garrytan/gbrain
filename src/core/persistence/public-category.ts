@@ -57,6 +57,7 @@ export const PUBLIC_BY_CODE: Readonly<Record<string, PublicCategory>> = {
   content_null_bytes: 'content_refused', git_object_missing: 'storage', path_not_utf8: 'content_refused',
   // Wave C 1D: a page file committed as a Git LFS pointer.
   lfs_pointer_unsmudged: 'content_refused',
+  visibility_noncanonical: 'content_refused',
 };
 
 /** A registry code's class, for a code neither table names. */

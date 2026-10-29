@@ -184,6 +184,7 @@ function resolution(hold: Pick<ContentRefusal, 'code' | 'reason' | 'key' | 'line
     case 'purged_content': return `${path} carries purged page content; delete or edit it and commit, or the owner clears the tombstone with gbrain pages unpurge.`;
     case 'write_gate_rejected': return `The write gate refused ${path} as external instruction-like content; ask the user whether to edit it or whether write_gate.external_mode should stay reject.`;
     case 'rename_held': return `Re-run the preview with --include-ambiguous to re-bind the rename of ${path} to the current page, or restore the old file name.`;
+    case 'visibility_noncanonical': return `${path} asks for visibility: private in a spelling page privacy does not read, which no repair rewrites; write visibility: private on its own frontmatter line (lowercase) and commit.`;
     case 'parser_regression': return `This is a gbrain bug: report the gbrain version, ${path} and the code; upgrade, or keep GBRAIN_SYNC_PARSER_REGRESSION=hold set for the process that syncs; never pin a release older than 0.60.305.0.`;
     default: return hold.reason === 'ambiguous_protected_key' ? `Write ${where} on one line with one quoted value; gbrain never guesses who may read a page or where it came from.`
       : hold.reason === 'ambiguous_identity_key' ? `Keep exactly one line for ${where}; gbrain never guesses which page a file is.`

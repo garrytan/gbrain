@@ -18,7 +18,7 @@ The generic `gbrain call` dispatcher is host-only and refuses before opening a
 local engine; use the named CLI command or an authorized MCP tool instead.
 
 **Surface posture:** thin CLI clients use the full MCP surface for remote
-command compatibility. Bootstrap pins `--surface full`; managed thin CLI grants
+command compatibility. Bootstrap pins `--surface starter`; managed thin CLI grants
 for OpenClaw, Grok Bot, and Muse also select `full`. Surface visibility does not
 grant authority: profiles, token scopes, operation snapshots, sources, and write
 fences still restrict requests. A `memory-writer` thin client gains neither

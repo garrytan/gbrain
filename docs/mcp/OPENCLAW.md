@@ -71,6 +71,42 @@ Leave `GBRAIN_SOURCE` unset in the MCP env unless you deliberately want
 single-source retrieval: a pin scopes every tool (search, `get_brain_identity`
 counts, …) to that one source, and nothing warns on reads.
 
+## Brain-first instructions
+
+Registering the server only makes the tools available. Agents seldom call a
+brain nobody told them about, so finish either option with:
+
+```bash
+gbrain setup openclaw   # --dry-run previews; --workspace <dir> picks the agent
+```
+
+It writes one short marked block into the workspace `AGENTS.md` (from
+`OPENCLAW_CONFIG_PATH` or `~/.openclaw/openclaw.json`: a sole agent's
+workspace, else `agents.defaults.workspace`, else `~/.openclaw/workspace`; with
+several agents, pass `--workspace`). Text outside the markers is never touched,
+a re-run upgrades the block in place, `--no-instructions` opts out and is
+remembered, and `--remove` takes it out. A thin-client install puts the same
+block at the top of `GBRAIN-INSTRUCTIONS.md`.
+
+A rule in `AGENTS.md` reaches the system prompt only, so setup also puts it next
+to every user turn with a hook-only OpenClaw plugin, `gbrain-turn-rule`: its
+`before_prompt_build` handler returns the rule as `prependContext`. The plugin is
+self-contained (the rule text is in its code; it reads and calls nothing) and
+lives in `<OpenClaw state dir>/gbrain/gbrain-turn-rule`. Setup installs it with
+OpenClaw's own CLI:
+
+```bash
+openclaw plugins install --link <state dir>/gbrain/gbrain-turn-rule --force --accept-capabilities
+openclaw plugins enable gbrain-turn-rule
+openclaw config set plugins.entries.gbrain-turn-rule.hooks.allowConversationAccess true
+```
+
+OpenClaw requires `allowConversationAccess` before a non-bundled plugin's
+`before_prompt_build` runs. With no `openclaw` on PATH, setup writes the plugin
+and prints those commands to run on the OpenClaw host; restart a running gateway
+afterwards. `--no-instructions` and `--remove` uninstall the plugin and delete
+its directory. A re-run after an upgrade rewrites the plugin with the new text.
+
 ## Scheduled jobs and workspace scripts
 
 OpenClaw cron jobs, workspace scripts and hooks run with another `HOME` and

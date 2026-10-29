@@ -88,7 +88,7 @@ This is the difference between a search engine and a brain. Search finds the pag
 
 ## Install
 
-Requires **Bun 1.4.0 or newer**. Existing worker installations should follow the
+Requires **Bun 1.4.4 or newer**. Existing worker installations should follow the
 [authorization and queue upgrade guide](docs/guides/authorization-upgrade.md)
 before restarting services with this version.
 
@@ -110,7 +110,7 @@ bun install -g github:garrytan/gbrain
 gbrain setup claude-code   # or codex; --dry-run previews, --remove undoes
 ```
 
-`setup` shows the brain, source, launcher and owner it resolved before writing, runs `gbrain init --pglite --no-embedding` only when no brain exists, writes the stdio MCP entry and read-context hooks (owned by hash, plus Codex hook trust) and smoke-tests them. Capture and providers stay off unless accepted; a hosted brain keeps `gbrain connect --install`. [Setup guide](docs/guides/setup.md).
+`setup` shows the brain, source, launcher and owner it resolved before writing, runs `gbrain init --pglite --no-embedding` only when no brain exists, writes the stdio MCP entry, read-context hooks (owned by hash, plus Codex hook trust) and a brain-first block in its instruction file (`--no-instructions` skips it), and smoke-tests them. Capture and providers stay off unless accepted; a hosted brain keeps `gbrain connect --install`. [Setup guide](docs/guides/setup.md).
 
 Start with the agent you already use. For Grok Bot and Muse, the dedicated guides above install an isolated launcher, repairable runtime, and memory in a verified persistent directory. For a coding agent, paste:
 
@@ -130,7 +130,7 @@ The following bootstrap paths are optional: use them when you want GBrain to hel
 
 ### For Codex — optional personal-agent bootstrap
 
-Turn Codex into your persistent personal agent. (Just want the brain + skills without the full agent? `codex plugin marketplace add garrytan/gbrain@codex-plugin` then `codex plugin add gbrain@gbrain` — see [docs/mcp/CODEX.md](docs/mcp/CODEX.md). The paste block below builds the whole agent.) Works in the **ChatGPT desktop app** (open Codex on a folder) and in the **Codex CLI** (`codex` in a terminal) — same install, same result. Open Codex in a **new, empty folder** (not an existing code project) — that folder becomes your agent's own **private GitHub repo**, which bootstrap creates and privacy-verifies for you. Then paste:
+Turn Codex into your persistent personal agent. (Just want the brain + skills without the full agent? `codex plugin marketplace add garrytan/gbrain@codex-plugin` then `codex plugin add gbrain@gbrain` — see [docs/mcp/CODEX.md](docs/mcp/CODEX.md).) Works in the **ChatGPT desktop app** (open Codex on a folder) and in the **Codex CLI** (`codex` in a terminal). Open Codex in a **new, empty folder** (not an existing code project) — that folder becomes your agent's own **private GitHub repo**, which bootstrap creates and privacy-verifies for you. Then paste:
 
 ```
 Read and follow every step of:
@@ -167,7 +167,7 @@ private-repo adoption, hooks, recovery, and removal.
 
 ### For OpenClaw or Hermes — GBrain as intended, always on
 
-This is GBrain used the way it was designed to be used: a server-hosted agent with 24/7 crons, continuous ingestion, and the overnight dream cycle that enriches your brain while you sleep — your agent works whether your laptop is open or not. It's also the highest-cost path: a deployed server (8GB+ RAM) plus raw API token usage that scales with how hard your agent runs, well beyond a chat subscription. Start here if you want the full experience from day one; start with Codex above if you want to feel it first. If you don't have a platform running yet, both deploy in one click:
+This is GBrain used the way it was designed to be used: a server-hosted agent with 24/7 crons, continuous ingestion, and the overnight dream cycle that enriches your brain while you sleep. It's also the highest-cost path: a deployed server (8GB+ RAM) plus raw API token usage that scales with how hard your agent runs, well beyond a chat subscription. Start here if you want the full experience from day one; start with Codex above if you want to feel it first. If you don't have a platform running yet, both deploy in one click:
 
 - **[OpenClaw](https://github.com/openclaw/openclaw)** — deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/alphaclaw) (one click, 8GB+ RAM)
 - **[Hermes](https://github.com/NousResearch/hermes-agent)** — deploy on [Railway](https://github.com/praveen-ks-2001/hermes-agent-template) (one click)
@@ -185,7 +185,7 @@ The agent starts with keyless memory and verifies it. API keys, automatic captur
 
 ### Lighter ways in
 
-**Just want a memory for your coding agent — no identity, no repo.** On Claude Code or Codex use `gbrain setup` (above). By hand: `gbrain init --pglite --no-embedding`, then `codex mcp add gbrain -- "$(command -v gbrain)" serve --surface full` (`claude mcp add` takes the same argv; `--surface verbs` or `starter` for a harness that caps its tool count). Saved memories are brain-wide by default; pass `visibility: "private"` for local-only facts.
+**Just want a memory for your coding agent — no identity, no repo.** On Claude Code or Codex use `gbrain setup` (above). By hand: `gbrain init --pglite --no-embedding`, then `codex mcp add gbrain -- "$(command -v gbrain)" serve --surface starter` (`claude mcp add` takes the same argv; `--surface full` lists every tool), then `gbrain setup codex --instructions-only` (the brain-first block). Saved memories are brain-wide by default; pass `visibility: "private"` for local-only facts.
 
 **Already have a brain on a remote host** (OpenClaw, Hermes, or any `gbrain serve --http`)? Point your laptop agents at it with one command each — `--install` wires it up and smoke-tests the token before handoff:
 
@@ -218,18 +218,18 @@ to keep daemon installation and paid reindexing opt-in.
 
 For a hosted brain, start with the [native OAuth and private machine connection guide](docs/guides/hosted-harness-access.md). To open the dashboard, register clients, edit access, or invalidate tokens, use [MCP administration](docs/mcp/ADMIN.md). A **profile** controls MCP authority; a **surface** controls which granted tools are visible. Neither grants owner dashboard access. New memory profiles use the full surface. `--surface verbs` retains exactly the seven memory verbs, with orientation available through `gbrain://capabilities`. Thin CLI connections use the full surface and remain restricted by their grants.
 
-Choose the connection instructions for your actual product:
+Pick your product, then run `gbrain setup <harness> --instructions-only`: agents seldom call a brain nobody told them about.
 
 **Upgrading a brain indexed before v0.48.3.0?** Rebuild its search chunks first: [upgrade recovery guide](skills/migrations/v0.48.3.0.md). **Say to your agent:** *"Upgrade gbrain and check whether my search index needs rebuilding."*
 
-- **[Claude Code](docs/mcp/CLAUDE_CODE.md)** — plugin: `/plugin marketplace add garrytan/gbrain` + `/plugin install gbrain@gbrain` (MCP + skills; persona variants `gbrain-coding` / `gbrain-daily` install curated subsets; pick one). Marketplace-free skills: `gbrain skillpack scaffold --harness claude-code` copies a persona-curated skill set into your user-scope skills dir. Or local one-liner: `claude mcp add gbrain -- "$(command -v gbrain)" serve`. Remote with just a bearer token: `gbrain connect https://your-host/mcp --token gbrain_xxx` prints a paste-ready block (or `--install` wires it up and smoke-tests the token).
+- **[Claude Code](docs/mcp/CLAUDE_CODE.md)** — plugin: `/plugin marketplace add garrytan/gbrain` + `/plugin install gbrain@gbrain` (MCP + skills; persona variants `gbrain-coding` / `gbrain-daily` install curated subsets; pick one). Marketplace-free skills: `gbrain skillpack scaffold --harness claude-code` copies a persona-curated skill set into your user-scope skills dir. Or by hand: `claude mcp add gbrain -- "$(command -v gbrain)" serve`. Remote with just a bearer token: `gbrain connect https://your-host/mcp --token gbrain_xxx` prints a paste-ready block (or `--install` wires it up and smoke-tests the token).
 - **[Codex](docs/mcp/CODEX.md)** — plugin (recommended): `codex plugin marketplace add garrytan/gbrain@codex-plugin` + `codex plugin add gbrain@gbrain` installs the MCP server AND the curated skill set. Or connect-only: `gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex` (or `--install`); the token path reads `$GBRAIN_REMOTE_TOKEN` at runtime, while the private-handoff installer writes a private managed HTTP header so the connection survives a new shell.
 - **[Cursor / Windsurf / any stdio MCP client](docs/mcp/CLAUDE_CODE.md)** — same shape, add `{"command": "gbrain", "args": ["serve", "--surface", "full"]}` to your MCP config.
-- **[Hermes](docs/mcp/HERMES.md)** — `printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve --surface full`. Keep `--args` last, and verify with `hermes mcp test gbrain` (the add exits 0 even on failure).
+- **[Hermes](docs/mcp/HERMES.md)** — `printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve --surface starter`. Keep `--args` last, and verify with `hermes mcp test gbrain` (the add exits 0 even on failure).
 - **[Grok Bot](docs/guides/grok-bot.md)** — recommended: keep the brain on your computer, publish it with `gbrain mcp expose --funnel`, grant the Bot a `memory-writer` client and install the thin CLI at `/workspace/gbrain`; or install memory inside the Bot computer when no machine of yours stays online. Bots share local files and credentials; sources organize memory without isolating Bots. **Say to your agent:** *"connect grok bot to my brain"*.
 - **[Muse personal agent](docs/guides/muse.md)** — first verify its durable user-files location; then either connect it to your published brain (`gbrain mcp expose --funnel` + thin CLI) or install the local CLI there. Native MCP configuration and skill activation are not assumed. **Say to your agent:** *"connect muse to my brain"*.
-- **[Grok Build](docs/mcp/GROK.md)** — `grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface full`. The add is lazy (exit 0 without connecting) — verify with `grok mcp doctor gbrain`, which spawns the server. Verified against Grok Build v1.0.4.
-- **[opencode](docs/mcp/OPENCODE.md)** (opencode.ai / SST — not OpenClaw) — `opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface full`, or let `gbrain bootstrap hooks --harness opencode` write the config for you (opencode is a bootstrap-supported harness — it reads AGENTS.md natively). The add is lazy — verify with `opencode mcp list`, which spawns the server (`✓ gbrain connected`). Remote: `gbrain connect https://your-host/mcp --token gbrain_xxx --agent opencode [--install]` — the config stores only the `{env:GBRAIN_REMOTE_TOKEN}` interpolation. Verified against opencode v1.18.18.
+- **[Grok Build](docs/mcp/GROK.md)** — `grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface starter`. The add is lazy (exit 0 without connecting) — verify with `grok mcp doctor gbrain`, which spawns the server. Verified against Grok Build v1.0.4.
+- **[opencode](docs/mcp/OPENCODE.md)** (opencode.ai / SST — not OpenClaw) — `opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface starter`, or let `gbrain bootstrap hooks --harness opencode` write the config for you. The add is lazy — verify with `opencode mcp list`, which spawns the server (`✓ gbrain connected`). Remote: `gbrain connect https://your-host/mcp --token gbrain_xxx --agent opencode [--install]` — the config stores only the `{env:GBRAIN_REMOTE_TOKEN}` interpolation. Verified against opencode v1.18.18.
 - **[OpenClaw](docs/mcp/OPENCLAW.md)** — the ClawHub bundle plugin registers gbrain automatically (`openclaw.plugin.json` ships in this repo), or register the stdio server with `openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --env GBRAIN_HOME=$HOME` (absolute path: the launchd gateway PATH lacks `~/.bun/bin`); verify with `openclaw mcp list`.
 - **[Claude Desktop (Cowork)](docs/mcp/CLAUDE_DESKTOP.md)** — Settings → Integrations → add the URL of your HTTP server. Remote only; the local `claude_desktop_config.json` does not work for remote servers.
 - **[Claude Cowork (team plan)](docs/mcp/CLAUDE_COWORK.md)** — org Owner adds the connector under Organization Settings → Connectors.

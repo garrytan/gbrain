@@ -66,14 +66,14 @@ brain (`gbrain init` — zero-config local PGLite by default). The bundled
 that exact install one-liner on stderr; with no brain, it exits with
 "No brain configured. Run: gbrain init". Unix (macOS/Linux) only.
 
-**What ships.** The MCP server runs `gbrain serve --surface full
---source-guard` through the bundled launcher (`.agents/gbrain-launcher`,
+**What ships.** The MCP server runs `gbrain serve` on the full surface with
+`--source-guard` through the bundled launcher (`.agents/gbrain-launcher`,
 resolution order: `$GBRAIN_BIN` → `~/.bun/bin/gbrain` → `gbrain` on PATH — the
 sanctioned install location is preferred over PATH so a stray `gbrain` earlier
 on PATH can't shadow it).
 `full` is every operation (the seven memory verbs, page and bulk writes
-such as `put_pages`, graph and skill tools), the surface every registration
-gbrain writes pins; the curated skills drive host-side work through the
+such as `put_pages`, graph and skill tools); the plugin keeps it because a plugin
+update rewrites existing installs (new `gbrain setup` registrations pin starter). The curated skills drive host-side work through the
 `gbrain` CLI. A harness that caps its tool count can narrow every new session
 on this machine with `GBRAIN_SURFACE=starter` (or `verbs`) in the env that
 launches Codex, or use the bootstrap lane below. Unlike the OpenClaw bundle, the plugin ships the host-side skills
@@ -182,6 +182,26 @@ Codex stores the env-var *name* (`GBRAIN_REMOTE_TOKEN`), not the token itself, a
 reads the value when it launches the MCP server. Add the `export` line to your
 `~/.zshrc` / `~/.bashrc` so it's set in every session.
 
+## Brain-first instructions
+
+Registering the MCP server only makes the tools available. Agents seldom call a
+brain nobody told them about, so finish the install with:
+
+```bash
+gbrain setup codex --instructions-only
+```
+
+It writes one short marked block into `$CODEX_HOME/AGENTS.md` (or a non-empty `AGENTS.override.md`, since Codex
+then reads only the override): before answering any turn,
+search the brain first, read the best hit, fill gaps with other tools, apply your own
+access rules, then finish the task. Text outside the markers is never touched, a
+re-run upgrades the block in place, `--dry-run` previews it,
+`--no-instructions` opts out (and is remembered) and `--remove` takes it out.
+`gbrain setup codex` and `gbrain connect --agent codex --install` write it for
+you; the Codex plugin and a hand-run `codex mcp add` do not. While the block is
+installed, setup's UserPromptSubmit hook also leads every turn with the same rule.
+`gbrain doctor` warns when the block is missing or out of date.
+
 ## Always-loaded core memory
 
 Codex does not put MCP server instructions in the prompt, so core memory
@@ -227,11 +247,10 @@ codex mcp remove gbrain
 - The token is a long-lived, full-access secret. Keep `GBRAIN_REMOTE_TOKEN` out of
   version control and prefer a scoped token if your host supports one.
 - Local stdio also works if you run the brain on the same machine:
-  `codex mcp add gbrain -- "$(command -v gbrain)" serve --surface full` — the
-  whole operation catalog, memory verbs ([MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md))
-  included, the surface every registration gbrain writes pins. A
-  `GBRAIN_SURFACE` value in the Codex server entry's `env` table overrides the
-  flag (`starter` or `verbs` for a harness that caps its tool count).
+  `codex mcp add gbrain -- "$(command -v gbrain)" serve --surface starter`, the
+  daily-driver tool list every new registration gbrain writes pins (`request_tools`
+  reaches the rest; `--surface full` is the opt-in for every operation). A
+  `GBRAIN_SURFACE` value in the Codex server entry's `env` table overrides the flag.
 - **PGLite brains are single-process.** PGLite is a single-writer embedded
   Postgres: the first running `gbrain serve` (the plugin's, or a stdio
   registration) owns the brain's data directory via the data-dir lock. A

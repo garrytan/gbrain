@@ -25,6 +25,11 @@ export const MAX_RESUBMITS_PER_PASS = 20;
 export const RESUBMIT_SPACING_MS = 60 * 60_000;
 const WRITE_KEY_PREFIX = 'facts-absorb:write:';
 
+/** The idempotency key of the facts-absorb job a page write's facts-backstop effect submits. */
+export function factsAbsorbWriteKey(requestId: string): string {
+  return `${WRITE_KEY_PREFIX}${requestId}`;
+}
+
 export type DeadAbsorbClass = 'provider' | 'config' | 'not_retryable';
 
 /**

@@ -45,7 +45,6 @@ const EXEMPT: Record<string, string> = {
   'src/core/page-state/versions.ts': 'page_versions snapshots copy the live row',
   'src/core/persistence/connector-google-receipts.ts': 'connector delivery receipts; the connector page publication is gated (connector-sync.ts)',
   'src/core/persistence/file-repair.ts': 'publishes an owner-reviewed repair preview of the owner source',
-  'src/core/persistence/grandfather.ts': 'mechanical validate:false stamp under withTrustKeep',
   'src/core/persistence/sync-image.ts': 'managed sync image import of an owner-committed file through importImageFile, which has no gate seam (its page text is gbrain-generated OCR/caption); import-prepare.ts takes the same image path',
   'src/core/persistence/sync-streamed.ts': 'managed sync of a file over the single-string ceiling applies the import page-body/streamed-import.ts prepared, which takes the owner gate input and holds a page whose tier the write gate would scan; its own writes are the rename and path stamps',
   'src/core/page-body/segment-rewrite.ts': 'forget, withdrawal and fact purge strike or drop existing fence rows of a segmented body (lifecycle); no new text',

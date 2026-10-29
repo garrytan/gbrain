@@ -2,6 +2,7 @@ import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { sizeStateField } from '../page-embedding-budget.ts';
 import { enterClaimStep, type ClaimPhaseClock } from './claim-phase.ts';
 import { boundedReads } from './bounded-reads.ts';
+import { chunksEmbeddedAsIs } from './noop-kernel.ts';
 import { basename, dirname, join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -324,7 +325,7 @@ export function screenSyncImport(input: SyncImportScreenInput): { screen: Import
   const newerWorkingTree = !input.companyApproval && !!base && !input.lineEndingOnly && input.rawHash !== sha256(content) && !sameCanonicalImport(base, parsedInput);
   const gateSource = input.writeGateSource;
   const gateTrust = gateSource ? ownerPageTrust({ frontmatter: parsedInput.frontmatter, sourceConfig: gateSource.config, channel: 'managed_sync_import', sourceUri: sourcePath }) : null;
-  const screen = screenImportContent({ content, path: `${slug}.md`, activePack, expectedSlug: resolveSlugForPath(sourcePath), fences: 'coordinated',
+  const screen = screenImportContent({ content, path: `${slug}.md`, activePack, expectedSlug: resolveSlugForPath(sourcePath), fences: 'coordinated', holdNoncanonicalPrivate: true,
     ...(input.normalize === false ? { normalize: false } : {}),
     slugExempt: declared => snapshot?.page.source_path != null && syncOriginPath(snapshot.page.source_path) === syncOriginPath(sourcePath) && declared === snapshot.page.slug,
     slugConflictMessage: (found, expected) => frontmatterSlugConflictMessage(sourcePath, found, expected),
@@ -548,6 +549,7 @@ export async function publishPassStamp(tx: BrainEngine, row: WriteRequest, p: Sy
     if (pinned) throw syncPublicationRefusal('slug_root_mode_mismatch', `The source pins slug_root_mode=${pinned}, but this sync ran under ${p.slugMode}.`, row, p, slugModeMismatchCause(row.source_id, pinned, p.slugMode));
     if (!changed.length) throw syncPublicationRefusal('revision_conflict', CHECKPOINT_MOVED_MESSAGE, row, p,
       `Another sync moved the commit checkpoint of ${row.source_id} while this pass published.`);
+    // The closed episode re-imported every page except those already at the current chunker (sync-classify.ts `inPlace`).
     if (stamp.stampChunker) await tx.executeRaw('UPDATE sources SET chunker_version=$2 WHERE id=$1', [row.source_id, chunkerStamp()]);
   }
   await recordPassTail(tx, row.source_id, p.passId!, { changed: read.changed, extract: stamp.extract, ...(stamp.since ? { since: stamp.since } : {}) });
@@ -620,7 +622,8 @@ async function applyManagedSyncCheckpoint(tx: BrainEngine, row: WriteRequest, p:
   if (!changed.length) throw syncPublicationRefusal('revision_conflict', CHECKPOINT_MOVED_MESSAGE, row, p,
     `Another sync moved the commit checkpoint of ${row.source_id} while this run published.`);
   await recordSliceCursor(tx, row, p, settled);
-  // #5566: a full walk re-chunked every stale page, so acknowledge the chunker version as the legacy gate does.
+  // #5566: a full walk re-chunked every stale page, so acknowledge the chunker version as the legacy gate does. (A pass's
+  // full episode stamps through its own checkpoint, above; the pages it admits without a reparse are already current.)
   if (settled && (p.from === null || p.syncOptions?.full === true)) await tx.executeRaw('UPDATE sources SET chunker_version=$2 WHERE id=$1', [row.source_id, chunkerStamp()]);
   await tx.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,done}','true'::jsonb),updated_at=now() WHERE op='managed-sync' AND fingerprint=$1", [p.cursorKey]);
   // #6712 PR 2 (L5): the tail (statistics, links) runs after the lease is released; it is owed from this commit on.
@@ -910,7 +913,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
     pageUnchanged: ready.noop && !moved,
     ...(renamed ? { additionalPageKeys: [{ sourceId: row.source_id, slug: renamed.slug }] } : {}),
     validate: async tx => { await validate(tx); await ready.validate(tx); },
-    deferEmbedding: p.processingOptions?.noEmbed || p.embedDeferred === true,
+    deferEmbedding: p.processingOptions?.noEmbed || p.embedDeferred === true, ...(!(p.processingOptions?.noEmbed || p.embedDeferred === true) && ready.noop && !moved && snapshot && await chunksEmbeddedAsIs(engine, snapshot.page.id) ? { embeddingCurrent: true } : {}),
     ...(ready.afterCommit || renamed ? { afterCommit: async (target: BrainEngine) => { await published.afterCommit?.(target); } } : {}),
     ...(writeback ? { file: { root, path: join(root, p.path), content: canonicalFile, expectedBeforeHash: p.rawHash } } : {}),
     ...(mirrorReadOnly ? { databaseOnlyReason: 'mirror_read_only' as const } : {}),

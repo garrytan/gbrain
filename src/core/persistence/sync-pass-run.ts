@@ -437,7 +437,7 @@ async function pinPass(engine: BrainEngine, input: SyncPassInput, lease: NonNull
     head, parserFp, pack, selectionFp, now: started, openEpisode: !!episode, owedTail: tail !== null, retryRow: retry.length > 0,
     notConvergedStreak: obligations.not_converged_streak, mismatchStreak: Object.keys(obligations.mismatch).length,
     requestNewer: probe?.newer === true, openAtStampFinished: !!converged && (converged.open_at_stamp === null || (probe?.stillOpen ?? 0) < converged.open_at_stamp.length),
-    writebackOpen: probe?.writebackOpen === true, workingChange: working.changed, rescreenDueHold: holds.some(hold => holdRescreenDue(hold, retry.includes(hold.path))), full: opts.full === true });
+    writebackOpen: probe?.writebackOpen === true, workingChange: working.changed, rescreenDueHold: holds.some(hold => holdRescreenDue(hold, retry.includes(hold.path))), full: opts.full === true, fullRound: opts.fullRound === true });
   // Design §2.6: a withheld mass delete is applied by a full round once the owner host's env valve allows it.
   const valveOpen = !remote && !!obligations.deletes_withheld && massReconcileAllowed();
   // Design §4: keep_db writes the previous pass deferred (`keep_db_pending`: its cap, or write capacity) are owed to this pass, so it is
@@ -964,7 +964,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
       const fold = passFold(level, levelCache, { imports, entries: built.entries, unsettled: deletes.length + inFlight.length + owed.length + mismatch.length + legacyWaived.size + retry.length,
         remote, episodeFullId: episode?.full_id ?? null });
       for (let i = 0; i < built.entries.length; i += PASS_BATCH_MAX) {
-        const chunk = built.entries.slice(i, i + PASS_BATCH_MAX), last = !!fold && i + chunk.length >= built.entries.length;
+        const chunk = built.entries.slice(i, i + PASS_BATCH_MAX), last = !!fold && i + chunk.length >= built.entries.length; opts.onProgress?.({ phase: 'managed_sync.round_batch', round: { round, target: head, paths: level.paths.length, batch: i / PASS_BATCH_MAX + 1, batches: Math.ceil(built.entries.length / PASS_BATCH_MAX), base: i } });
         // A folded stamp writes the pass row with the obligations as they stand when its import is frozen.
         const stopped = await drain(chunk, last ? { ...await stampFor(level), fold: { ...fold, obligations: structuredClone(value.obligations), batch: chunk.length } } : undefined);
         if (stopped) return stop(stopped);

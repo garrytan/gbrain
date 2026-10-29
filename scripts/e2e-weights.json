@@ -271,7 +271,6 @@
   "test/e2e/graduation-crash-run-3.test.ts": 68040,
   "test/e2e/graduation-faults.test.ts": 32549.999999999996,
   "test/e2e/graduation-legacy-copy.test.ts": 9520,
-  "test/e2e/grandfather-projection-postgres.test.ts": 6580,
   "test/e2e/graph-quality.test.ts": 2040,
   "test/e2e/graph-signals-engine.test.ts": 529,
   "test/e2e/graph-signals-eval.test.ts": 3900,

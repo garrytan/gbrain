@@ -527,7 +527,9 @@ async function runDefaultSourcePath(ctx: DoctorContext): Promise<Check[]> {
   // default.local_path is the DESIGNED fallback topology (pages nest under
   // sync.repo_path), so this only warns when that fallback demonstrably
   // fails: file-backed default pages with no resolvable root, or a
-  // sync.repo_path the #2018 leak guard silently skips. Logic lives in
+  // sync.repo_path the #2018 leak guard silently skips. #7630: it also warns
+  // on any relative stored path (default local_path, sync.repo_path, or another
+  // source's local_path). Logic lives in
   // doctor/checks/default-source-path.ts (module-dir rule).
   if (engine !== null) try {
     const { defaultSourceLocalPathCheck } = await import('./default-source-path.ts');

@@ -74,7 +74,7 @@ import { maintenanceCallerPreflight, maintenancePreflight, submitDatabaseMainten
 import { loadConfig } from '../config.ts';
 import { waitForWrite } from '../persistence/service.ts';
 import { catalogueError } from '../error-catalogue.ts';
-import { AUDIT_ROW_SOURCES, CONVERSATION_EXTRACTOR_VERSION, NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE, stampExtractorVersion } from './audit-sources.ts';
+import { AUDIT_ROW_SOURCES, CONVERSATION_EXTRACTOR_VERSION, NON_EXTRACTABLE_AUDIT_SOURCE, outcomeMarkerSql, TERMINAL_AUDIT_SOURCE, stampExtractorVersion } from './audit-sources.ts';
 import { ALLOWED_TYPES, pageTypesForAllowed, type AllowedType } from './conversation-types.ts';
 import { withWriteTrust } from '../persistence/context.ts';
 import { conversationDerivation } from '../persistence/derived-facts.ts';
@@ -560,14 +560,15 @@ export async function replaceConversationFacts(tx: BrainEngine, sourceId: string
  * Inserts `rows` numbered above every fact row of the page; a lost insert throws, rolling the publication back.
  * #7438: a row whose claim matches a purge tombstone (under the entity it carries after relink inheritance) is left
  * out and its index returned in `purged`; the facts insert guard would otherwise refuse the whole statement.
+ * #7778: never the page outcome row, which no tombstone applies to (the guard exempts it too).
  */
 async function insertConversationFacts(tx: BrainEngine, sourceId: string, slug: string, rows: UnnumberedFact[]): Promise<{ inserted: number; ids: number[]; purged: Set<number> }> {
   if (!rows.length) return { inserted: 0, ids: [], purged: new Set() };
   rows = await inheritRelinkedEntities(tx, sourceId, slug, rows);
-  const matches = await tx.executeRaw<{ ord: number | string }>(`SELECT n.ord FROM unnest($2::text[], $3::text[], $4::text[]) WITH ORDINALITY AS n(fact, visibility, subject, ord)
-    WHERE EXISTS (SELECT 1 FROM fact_purges p WHERE p.source_id=$1 AND p.visibility=n.visibility AND p.subject IN ('*', n.subject)
+  const matches = await tx.executeRaw<{ ord: number | string }>(`SELECT n.ord FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) WITH ORDINALITY AS n(fact, visibility, subject, source, ord)
+    WHERE NOT ${outcomeMarkerSql('n')} AND EXISTS (SELECT 1 FROM fact_purges p WHERE p.source_id=$1 AND p.visibility=n.visibility AND p.subject IN ('*', n.subject)
       AND p.fact_hash=gbrain_fact_fingerprint(n.fact))`,
-  [sourceId, rows.map(row => ensureWellFormed(row.fact)), rows.map(row => row.visibility ?? 'private'), rows.map(row => row.entity_slug ? ensureWellFormed(row.entity_slug) : null)]);
+  [sourceId, rows.map(row => ensureWellFormed(row.fact)), rows.map(row => row.visibility ?? 'private'), rows.map(row => row.entity_slug ? ensureWellFormed(row.entity_slug) : null), rows.map(row => row.source ?? null)]);
   const purged = new Set(matches.map(match => Number(match.ord) - 1));
   rows = rows.filter((_, i) => !purged.has(i));
   if (!rows.length) return { inserted: 0, ids: [], purged };

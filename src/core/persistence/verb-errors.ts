@@ -7,9 +7,28 @@ import { isFrontmatterHoldMessage } from '../markdown.ts';
 import { fenceLocationFromMessage, fenceWhere } from '../fence-repair/refusal.ts';
 import { FACT_WITHDRAWN_SUGGESTION } from '../facts/withdrawal.ts';
 import { CHECKPOINT_MOVED_MESSAGE } from './sync-slug-mode.ts';
+import { PAGE_CHANGED_AFTER_READ_MESSAGE } from '../page-state/types.ts';
 
 /** The refusal of a fact-batch completion request whose per-entity requests did not all commit (facts-prepare.ts). */
 export const FACTS_BATCH_INCOMPLETE_MESSAGE = 'Some extracted facts have not committed.';
+/** facts-prepare.ts: an entity request admitted at a revision another write moved (or a deleted or replaced entity page). */
+export const FACTS_ENTITY_CHANGED_MESSAGE = 'The fact entity changed after extraction admission.';
+export const FACTS_ENTITY_CHANGED_IN_PREPARATION_MESSAGE = 'The fact entity changed during preparation.';
+export const FACTS_DEDUP_CHANGED_MESSAGE = 'The fact deduplication state changed before publication.';
+/** The coordinator's refusal when the page moved between preparation and publication (coordinator.ts, group-publish.ts), also
+ * thrown when a staged large file no longer matches its stage (large-file.ts); fact requests never stage large files. */
+export const PAGE_CHANGED_DURING_PREPARATION_MESSAGE = 'The page changed during preparation.';
+/**
+ * #7602: entity request refusals a follow-up batch re-admits at the entity's current revision (facts-maintenance.ts), and
+ * that `gbrain repair failed-writes` lists. Stored receipts are matched by this exact text, so never reword these messages.
+ * PAGE_CHANGED_AFTER_READ_MESSAGE is how a move during preparation was stored before the fix.
+ */
+export const FACTS_ENTITY_MOVED_MESSAGES: readonly string[] = [FACTS_ENTITY_CHANGED_MESSAGE, FACTS_ENTITY_CHANGED_IN_PREPARATION_MESSAGE, FACTS_DEDUP_CHANGED_MESSAGE,
+  PAGE_CHANGED_DURING_PREPARATION_MESSAGE, PAGE_CHANGED_AFTER_READ_MESSAGE];
+
+export function isEntityMovedRefusal(row: { error_code: string | null; error_message: string | null }): boolean {
+  return row.error_code === 'revision_conflict' && FACTS_ENTITY_MOVED_MESSAGES.includes(row.error_message ?? '');
+}
 
 const FRONTMATTER_SLUG_CONFLICT = /^The frontmatter slug "[^"\n]{1,300}" in [^/"\n][^"\n]{0,1000} conflicts with its path, which expects slug "[^"\n]{1,300}"\. Remove `slug:` or make it match the path\.$/;
 

@@ -18,7 +18,7 @@
  * order inside a `::group::` block that ends with an `ARM_FILE` line carrying
  * its measured duration. With GBRAIN_TEST_RECEIPT_DIR set, each file writes its
  * own executed-test receipt (scripts/lib/test-env.sh describes the format).
- * `--postgres-only` (the Bun 1.4.3 cell) sets GBRAIN_TEST_BACKEND=postgres, so
+ * `--postgres-only` sets GBRAIN_TEST_BACKEND=postgres, so
  * testBackends() suites run only their PostgreSQL side; their PGLite side runs
  * in the unit and serial lanes, and files that read DATABASE_URL directly keep
  * both arms.
@@ -26,8 +26,8 @@
  * Weights are milliseconds per file mined from the `ARM_FILE` lines, so they
  * time each file beside another one, as the job runs it (a file ran 1.2-1.5x
  * its solo time on a 4-vCPU runner); older logs time each `::group::<file>`
- * timestamp to the next group or endgroup. The both-arms cell reads
- * ARM_WEIGHTS, the PostgreSQL-only cell ARM_WEIGHTS_POSTGRES_ONLY. A file
+ * timestamp to the next group or endgroup. The both-arms run (CI) reads
+ * ARM_WEIGHTS, a --postgres-only run ARM_WEIGHTS_POSTGRES_ONLY. A file
  * without a weight gets the p75 (scripts/sharding.ts).
  * test/scripts/postgres-unit-arms.test.ts fails when a shard's two-worker
  * makespan passes ARM_SHARD_BUDGET_MS, and ci:ubicloud's pg-arms lane fails
@@ -50,8 +50,8 @@ export const ARM_WORKERS = 2;
 /** The workflow step's `timeout-minutes: 20`: a shard whose files run longer is cut off mid-list. */
 export const ARM_STEP_TIMEOUT_MS = 20 * 60 * 1000;
 /**
- * A shard's two-worker makespan may be at most this: on a runner twice as slow as the mined weights (Bun 1.4.0
- * runners measured 1.3-2x) it still ends a minute inside the step timeout.
+ * A shard's two-worker makespan may be at most this: on a runner twice as slow as the mined weights (the
+ * dropped Bun 1.4.0 cell measured 1.3-2x) it still ends a minute inside the step timeout.
  */
 export const ARM_SHARD_BUDGET_MS = (ARM_STEP_TIMEOUT_MS - 60_000) / 2;
 /** Each file's command; ci:ubicloud's pg-arms lane (scripts/ubicloud/ci-item.sh) runs the same one. */

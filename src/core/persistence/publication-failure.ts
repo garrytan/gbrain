@@ -76,6 +76,7 @@ const RELATIONSHIP_TEXT: Record<string, string> = {
   old_source_outside: 'a row moved from a source this publication does not own',
   checkpoint_outside_owner: 'a source sync checkpoint outside owner publication',
   topology_outside_administration: 'a source topology change outside writer administration',
+  unreadable_state: 'writer state this database role cannot read (row-level security hides it, or its row is missing)',
 };
 
 function guardDetail(raw: unknown): Pick<PublicationFailureDetail, 'op' | 'relationship' | 'sources'> {

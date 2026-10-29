@@ -56,6 +56,13 @@ describe('assessDefaultSourcePath (pure)', () => {
     expect(a.message).toContain('/some/dir');
   });
 
+  // #7630: a shared brain may hold a Windows host's sync.repo_path; doctor on another OS must not call it relative.
+  test('null local_path + Windows-absolute sync.repo_path is not reported as relative', () => {
+    const a = assessDefaultSourcePath({ ...BASE, livePages: 3, fileBackedPages: 3, repoPath: 'C:\\brain-example', repoPathIsDir: false });
+    expect(a.status).toBe('warn');
+    expect(a.message).not.toContain('relative path');
+  });
+
   test('null local_path + no pages → ok (nothing routes through it yet)', () => {
     const a = assessDefaultSourcePath({ ...BASE, livePages: 0 });
     expect(a.status).toBe('ok');

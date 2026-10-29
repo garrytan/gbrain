@@ -6,6 +6,7 @@ import { withdrawnFact, withdrawalFenceBlocks } from './withdrawal-overlay.ts';
 import { ambiguousFenceClaims, discoverWithdrawalTargets, withdrawalDiscoveryFailure } from './withdrawal-discovery.ts';
 import { dropPurgedFenceRows } from './purge-overlay.ts';
 import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
+import { outcomeMarkerSql } from './audit-sources.ts';
 import { coverageActive, noteBelief, readLedgerSource, withBeliefBatch } from '../belief/ledger.ts';
 import { createPageVersion } from '../page-state/versions.ts';
 import { validateSlug } from '../utils.ts';
@@ -59,7 +60,7 @@ export async function recordFactWithdrawal(
     await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
     const visible = await tx.executeRaw<{ visibility: 'private' | 'world'; fact: string; fact_hash: string; subject: string }>(
       `SELECT visibility,fact,gbrain_fact_fingerprint(fact) AS fact_hash,COALESCE(entity_slug,'*') AS subject FROM facts WHERE id=$1 AND source_id=$2
-        AND ($3::boolean=false OR visibility='world')${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`, [id, sourceId, worldOnly]);
+        AND NOT ${outcomeMarkerSql('facts')} AND ($3::boolean=false OR visibility='world')${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`, [id, sourceId, worldOnly]);
     if (!visible.length) return { withdrawn: false, pages: [] };
     const { visibility, fact, fact_hash, subject } = visible[0];
     // Discovery is keyed on the claim and its subject: a subject-scoped

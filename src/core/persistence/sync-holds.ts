@@ -876,6 +876,11 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         user_message: `${record.path} nests YAML aliases in its frontmatter that expand past gbrain's size limit, so sync holds it and the rest of source ${source} keeps syncing. An older gbrain imported these bytes; this version refuses them on purpose. Reduce the alias nesting in its frontmatter (or write the values out), or remove the file, then commit and run gbrain sync --source ${source} --no-pull.`,
         why: 'The alias bound (#7018) stops a few hundred bytes of nested anchors from expanding into gigabytes; it is intended, so the page keeps its last imported version until the file changes.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
+    case 'visibility_noncanonical':
+      return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
+        user_message: `${record.path} asks for visibility: private in a spelling page privacy does not read (another case, a block scalar, a list, a flow mapping or a merge key), so sync holds it instead of storing a world-readable page, and the rest of source ${source} keeps syncing. Write visibility: private on its own frontmatter line (lowercase key and value), commit, then run gbrain sync --source ${source} --no-pull.`,
+        why: 'Page privacy reads only the exact lowercase visibility: private; no frontmatter repair rewrites a privacy request, and the hold re-screens when the file changes.',
+        verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'content_null_bytes':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
         user_message: `${record.path} holds NUL bytes (U+0000${record.meta.line !== undefined ? `, first on line ${record.meta.line}` : ''}), so sync holds it and the rest of source ${source} keeps syncing. A UTF-16 file (a Windows "Unicode" save) looks like this: save it as UTF-8. Otherwise remove the NUL bytes, or remove a binary file (or leave it out with sync.exclude), then commit and run gbrain sync --source ${source} --no-pull.`,
