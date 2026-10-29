@@ -53,7 +53,7 @@
  * merged into .context/ci-ubicloud/weights.json, which weights the next run.
  *
  * VMs are named ubirun-<owner>-<epoch>-ciNN<hex>-t<ttl hours> (owner:
- * UBI_OWNER or the runner's per-machine id; ubirun-<owner>-<epoch>-ciNN<hex>
+ * UBI_OWNER, required unless UBI_OWNER_OPTOUT=1 picks the runner's per-machine id; ubirun-<owner>-<epoch>-ciNN<hex>
  * with --ttl-hours 0). Each name is appended to <run>/vms.txt before its
  * create request is sent. On exit, including SIGINT, SIGTERM, SIGHUP (a
  * dropped terminal, a cancelled background operation) and SIGQUIT, in-flight
@@ -224,6 +224,10 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (!process.env.UBICLOUD_API_KEY && !process.env.UBICLOUD_API_TOKEN) {
     console.error("ci-ubicloud: UBICLOUD_API_KEY (or UBICLOUD_API_TOKEN) is not set");
+    process.exit(2);
+  }
+  if (!process.env.UBI_OWNER && process.env.UBI_OWNER_OPTOUT !== "1") {
+    console.error("ci-ubicloud: UBI_OWNER is not set; set it to your thread code in lowercase (e.g. UBI_OWNER=gbra106) so the VMs trace to its thread (UBI_OWNER_OPTOUT=1 uses this machine's random id instead)");
     process.exit(2);
   }
   const sha = sh("git", ["rev-parse", "HEAD"]).trim();

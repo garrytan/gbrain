@@ -17,8 +17,9 @@
 #
 # Ownership: VMs are named ubirun-<owner>-<epoch>-<suffix>. <owner> is UBI_OWNER
 # (lowercased, letters and digits only, at most 12 characters, starting with a
-# letter) or a random per-machine id kept in $STATE_ROOT/owner-id. Ubicloud names
-# allow 63 characters of [a-z0-9-], so a full name stays under 40.
+# letter) or a random per-machine id kept in $STATE_ROOT/owner-id. up, run and
+# verify refuse (exit 2) without UBI_OWNER unless UBI_OWNER_OPTOUT=1, so every
+# VM traces to a thread. Ubicloud names allow 63 characters of [a-z0-9-], so a full name stays under 40.
 #
 # TTL and reaper (gstack's scheme, so gstack-ubi and this runner reap each
 # other's VMs): a name this script generates ends in -t<hours>,
@@ -881,8 +882,8 @@ usage: ubi-runner.sh <command> [args]
   cli ARGS...            raw Ubicloud CLI passthrough (e.g. cli vm list)
 
 VMs are named $PREFIX-<owner>-<epoch>-<suffix>-t<ttl hours> ($PREFIX-<owner>-<epoch>-<suffix>
-without a TTL); set UBI_OWNER (e.g. your thread code) to tag them, otherwise a
-per-machine id is used.
+without a TTL); up, run and verify need UBI_OWNER (e.g. your thread code) to tag
+them, or UBI_OWNER_OPTOUT=1 to use a random per-machine id.
 defaults: size=$DEFAULT_SIZE location=$DEFAULT_LOCATION (env UBI_SIZE, UBI_LOCATION)
 env: UBI_TTL_HOURS (${TTL_HOURS}h in the name; 0 omits it), UBI_REAP (0: up skips the reap),
      UBI_IDLE_TIMEOUT (${IDLE_TIMEOUT}s of silence kills the remote command, exit 124; 0 disables),
@@ -899,6 +900,12 @@ cmd=${1:-help}
 case $cmd in
   owner|pack|help|-h|--help) ;;
   *) [ -n "${UBICLOUD_API_KEY:-}" ] || die "UBICLOUD_API_KEY is not set (create a token under your Ubicloud project's Tokens page)" ;;
+esac
+case $cmd in
+  up|run|verify) [ -n "${UBI_OWNER:-}" ] || [ "${UBI_OWNER_OPTOUT:-}" = 1 ] || {
+      echo "ubi-runner: UBI_OWNER is not set; set it to your thread code in lowercase (e.g. UBI_OWNER=gbra106) so the VM traces to its thread (UBI_OWNER_OPTOUT=1 uses this machine's random id instead)" >&2
+      exit 2
+    } ;;
 esac
 case $cmd in
   run) cmd_run "$@" ;;

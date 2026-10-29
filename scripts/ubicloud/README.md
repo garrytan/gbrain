@@ -25,9 +25,10 @@ the integrator runs the full gate.
 Every VM is named `ubirun-<owner>-<epoch>-<suffix>-t<hours>`, or
 `ubirun-<owner>-<epoch>-<suffix>` when it has no TTL. The owner is `UBI_OWNER` (lowercased, letters and digits only, at most 12
 characters, starting with a letter) or a random per-machine id kept in the
-runner's state directory. Set `UBI_OWNER` to your thread code
-(`UBI_OWNER=gbra41 bun run ci:ubicloud`) so everyone can see whose VMs hold
-the quota. Ubicloud names allow 63 characters of `[a-z0-9-]`, so a full name
+runner's state directory. `up`, `run`, `verify` and `ci:ubicloud` refuse (exit 2)
+without `UBI_OWNER` unless `UBI_OWNER_OPTOUT=1` picks the per-machine id, so set it
+to your thread code (`UBI_OWNER=gbra41 bun run ci:ubicloud`) and every VM traces to
+the thread holding the quota. Ubicloud names allow 63 characters of `[a-z0-9-]`, so a full name
 stays under 50.
 
 Ubicloud has no VM tags, so the TTL lives in the name, in gstack's `-t<hours>`

@@ -66,6 +66,29 @@ describe("owner tag", () => {
     expect(first).toMatch(/^m[0-9a-f]{8}$/);
     expect((await run(["owner"])).stdout.trim()).toBe(first);
   });
+
+  it("refuses to create a VM without UBI_OWNER unless UBI_OWNER_OPTOUT=1 asks for the per-machine id", async () => {
+    serve();
+    for (const args of [["up"], ["run", "--", "true"], ["verify"]]) {
+      const r = await run(args);
+      expect(r.code).toBe(2);
+      expect(r.stderr).toContain("UBI_OWNER is not set");
+      expect(r.stderr).toContain("UBI_OWNER_OPTOUT=1");
+    }
+    expect(mock!.events.filter((e) => e.startsWith("create-start "))).toEqual([]);
+    const optOut = spawnRunner(["up"], { UBI_OWNER_OPTOUT: "1" });
+    const started = await waitForEvent(mock!, /^create-start /);
+    expect(started.split(" ")[1]!).toMatch(/^ubirun-m[0-9a-f]{8}-\d{10}-[0-9a-f]{8}-t4$/);
+    optOut.kill("SIGTERM");
+    expect(await optOut.exited).toBe(130);
+  });
+
+  it("ci:ubicloud refuses before packing anything without UBI_OWNER", async () => {
+    const proc = Bun.spawn(["bun", join(RUNNER, "..", "..", "ci-ubicloud.ts"), "--vms", "1"], { env: env(), stdout: "pipe", stderr: "pipe" });
+    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+    expect(code).toBe(2);
+    expect(stderr).toContain("ci-ubicloud: UBI_OWNER is not set");
+  });
 });
 
 describe("teardown waits for in-flight creates", () => {
