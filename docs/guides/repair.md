@@ -2444,6 +2444,11 @@ and a deleted side refuses without `--state`
 ([`file_drift_state_required`](error-codes.md#file_drift_state_required)):
 the two `--prefer` values do opposite things in each state.
 
+A page stored in segments resolves like any other up to 24 MiB, read back
+whole. A larger one is listed `refused` with
+[`page_body_segmented`](windowed-reads.md#page_body_segmented): make its
+canonical file the copy to keep, commit it and sync.
+
 | State | `--prefer database` | `--prefer file` |
 |---|---|---|
 | `tombstone_edited` | Keeps the deletion and removes the file. | Restores the page and imports the file. |
