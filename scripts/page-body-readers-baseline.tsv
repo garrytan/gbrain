@@ -604,6 +604,7 @@ src/core/search/safe-chunks.ts	protectedBodyFilter	sql	META	segmented page: body
 src/core/shared-skills/migration-export.ts	exportInventory	call:serializeMarkdown	INLINE	
 src/core/shared-skills/migration-export.ts	exportInventory	field	INLINE	
 src/core/shared-skills/migration-projection.ts	assertExportProjectionRoundtrip	field	INLINE	
+src/core/slack/slack-source.ts	runSlackSyncInner	call:serializePageToMarkdown	INLINE	T23 private re-stamp republishes the stored day page; assertInlineBody refuses a segmented page first (the day is held), and Slack day pages are at most 2 MiB
 src/core/sweep.ts	runLinksTimelinePass	field	INLINE	inline arm; a segmented page streams its links (segment-links.ts) and timeline (bodyBlocks)
 src/core/sweep.ts	runMaintenanceSweep	sql	STREAM	LIKE over NULL never matches a segmented page (skip)
 src/core/think/gather.ts	renderPagesBlockDetailed	field	LEAD	segmented page: getter throws page_body_segmented

@@ -32,6 +32,7 @@ import { connectorDbCursorKey, readConnectorDbCursor, writeConnectorDbCursor } f
 import { resolveApiToken } from '../connectors/credentials.ts';
 import { connectorRender } from '../connectors/connector-text.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
+import { assertInlineBody } from '../page-body/page-shape.ts';
 import { ConnectorAccessDeniedError, ConnectorAuthError, ConnectorRateLimitedError, ConnectorRunLimitError } from '../connectors/client.ts';
 import {
   afterConnectorPublish, closeCoverageWindow, deleteConnectorPage, openCoverageWindow, publishConnectorPage, recordRateLimit, runScoped,
@@ -237,6 +238,7 @@ async function runSlackSyncInner(engine: BrainEngine, sourceId: string, cfg: Sla
       await handle(`${channelId}/${day}`, async () => {
         const page = await engine.getPage(slug, { sourceId });
         if (!page) return;
+        assertInlineBody(page, 'slack private re-stamp');
         const markdown = serializePageToMarkdown(page, await engine.getTags(slug, { sourceId }), { frontmatterOverrides: { visibility: 'private' } });
         await publishConnectorPage(ctx, { relPath, markdown: connectorRender(markdown, { path: relPath, slack_channel_id: channelId }),
           commitMessage: `slack(${sourceId}): ${channelId} ${day} is private`, privateMessage: `slack(${sourceId}): ${channelId} ${day} is private; database only`,
