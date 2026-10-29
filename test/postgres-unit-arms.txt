@@ -84,6 +84,8 @@ test/forecast-journal.test.ts
 test/frontmatter-reserved-keys-6454.test.ts
 test/get-chunks-paging.test.ts
 test/git-canonical-conversion-g8a.test.ts
+test/git-canonical-conversion-live-writer.test.ts
+test/git-canonical-conversion-no-checkout-7885.test.ts
 test/git-canonical-conversion-progress.test.ts
 test/git-canonical-conversion-strict-pass-7866.test.ts
 test/git-canonical-declared-g7a.test.ts
@@ -221,6 +223,7 @@ test/large-pages/stuck-recovery-large.slow.test.ts
 test/large-pages/timeline-top-insert-reembed.test.ts
 test/large-pages/upload-binding.test.ts
 test/large-pages/upload-over-ceiling.test.ts
+test/large-pages/upload-provenance-7873.test.ts
 test/large-pages/upload-review.test.ts
 test/large-pages/v252-master-reader-compat.test.ts
 test/link-cross-source.test.ts
@@ -228,6 +231,7 @@ test/link-preparation-shared-index.test.ts
 test/links-attendance-blocked.test.ts
 test/links-extraction-yield.test.ts
 test/list-jobs-row-bound.test.ts
+test/maintenance-trust-marker-7905.test.ts
 test/managed-cycle-pull-upstream.test.ts
 test/managed-facts-withdrawal-recovery-6506.test.ts
 test/managed-facts-withdrawn-skip-6506.test.ts
@@ -258,6 +262,7 @@ test/managed-sync-preparation-stalled-holds.test.ts
 test/managed-sync-row-parity.test.ts
 test/managed-sync-stale-group-head.test.ts
 test/mcp-unreadable-sources-notice.test.ts
+test/migration-0-53-host-move-7900.test.ts
 test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
@@ -408,6 +413,7 @@ test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
+test/provenance-stamps-7873.test.ts
 test/purge-fact.test.ts
 test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts

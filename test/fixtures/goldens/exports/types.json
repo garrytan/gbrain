@@ -4759,7 +4759,7 @@
         "kind": "function",
         "name": "importFromContent",
         "signature": [
-          "(engine: BrainEngine, slug: string, content: string, opts?: { prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; coordinated?: boolean; boundedChunkWrites?: true; existingSnapshot?: PageSnapshot | null; prepareFrontmatter?: (page: ParsedPage) => void; noEmbed?: boolean; sourceId?: string; filename?: string; sourcePath?: string; sourceRoot?: string; fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date; }; forceRechunk?: boolean; activePack?: ParseOpts[\"activePack\"]; source_kind?: string | null; source_uri?: string | null; ingested_via?: string | null; segmentedOwner?: SegmentedStagingOwner; reuseSegments?: SegmentedImport; remote?: boolean; preserveGateMarkers?: boolean; allowEmptyOverwrite?: boolean; overrideTier?: unknown; writeGate?: WriteGateInput; beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>; onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void; } & ImportFenceOptions) => Promise<ImportResult>"
+          "(engine: BrainEngine, slug: string, content: string, opts?: { prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; coordinated?: boolean; boundedChunkWrites?: true; existingSnapshot?: PageSnapshot | null; prepareFrontmatter?: (page: ParsedPage) => void; noEmbed?: boolean; sourceId?: string; filename?: string; sourcePath?: string; sourceRoot?: string; fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date; }; forceRechunk?: boolean; activePack?: ParseOpts[\"activePack\"]; source_kind?: string | null; source_uri?: string | null; ingested_via?: string | null; segmentedOwner?: SegmentedStagingOwner; reuseSegments?: SegmentedImport; remote?: boolean; preserveGateMarkers?: boolean; allowEmptyOverwrite?: boolean; overrideTier?: unknown; writeGate?: WriteGateInput; holdNoncanonicalPrivate?: boolean; beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>; onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void; } & ImportFenceOptions) => Promise<ImportResult>"
         ]
       },
       {
@@ -7430,6 +7430,7 @@
           "requested_unit: \"auto\" | \"window\" | \"chunk\" | \"section\" | \"page\"",
           "return_window: number",
           "tail_trim?: TailTrimMeta | undefined",
+          "title_header?: true | undefined",
           "tokenizer: \"cl100k\" | \"heuristic\"",
           "tokens_delivered: number"
         ],
@@ -7496,6 +7497,7 @@
           "rankCut?: PageRankCut | undefined",
           "requestedUnit: \"auto\" | \"window\" | \"chunk\" | \"section\" | \"page\"",
           "tailTrim?: true | undefined",
+          "titleHeader?: true | undefined",
           "unit: \"auto\" | \"window\" | \"section\" | \"page\"",
           "window: number"
         ],
@@ -7608,6 +7610,13 @@
         "name": "PAGE_OVER_INLINE_BYTES",
         "signature": [
           "\"page_over_inline_bytes\""
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "QUERY_BUDGET_UNIT_CONFIG_KEY",
+        "signature": [
+          "\"search.query_budget_unit\""
         ]
       },
       {
@@ -7835,6 +7844,13 @@
         "name": "parseReturnWindow",
         "signature": [
           "(raw: unknown, op: string) => number | undefined"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "queryBudgetUsesAuto",
+        "signature": [
+          "(engine: Pick<BrainEngine, \"getConfig\">) => Promise<boolean>"
         ]
       },
       {

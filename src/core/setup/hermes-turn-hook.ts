@@ -17,8 +17,8 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { load } from 'js-yaml';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
+import { loadBoundedYaml } from '../data-frontmatter.ts';
 import { probeBlock, removeBlock, spliceBlock, type BlockMarkers } from '../managed-block.ts';
 import { renderBrainFirstTurnRule, writeUnlessChanged, type BrainFirstAccess } from './brain-first.ts';
 
@@ -44,13 +44,12 @@ function hookYaml(command: string): string {
 
 interface Allowlist { approvals: Array<Record<string, unknown>> }
 
+/** Throws on a file gbrain cannot read as Hermes does (utf-8-sig JSON object), so it is never rewritten without the user's approvals. */
 function readAllowlist(path: string): Allowlist {
-  try {
-    const raw = JSON.parse(readFileSync(path, 'utf8')) as Allowlist;
-    return raw && Array.isArray(raw.approvals) ? raw : { ...raw, approvals: [] };
-  } catch {
-    return { approvals: [] };
-  }
+  if (!existsSync(path)) return { approvals: [] };
+  const raw = JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, '')) as Allowlist;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`${ALLOWLIST} is not a JSON object`);
+  return Array.isArray(raw.approvals) ? raw : { ...raw, approvals: [] };
 }
 
 const approves = (e: Record<string, unknown>, command: string) => e.event === EVENT && e.command === command;
@@ -83,11 +82,13 @@ export function syncHermesTurnHook(opts: { hermesHome: string; access: BrainFirs
     const probe = probeBlock(MARKERS, text);
     if (probe.state === 'damaged') return print('the gbrain turn-rule markers in config.yaml are damaged');
     if (probe.state === 'absent') {
-      const doc = load(text) as Record<string, unknown> | null | undefined;
+      const doc = loadBoundedYaml(text) as Record<string, unknown> | null | undefined;
       if (doc !== null && doc !== undefined && typeof doc !== 'object') return print('config.yaml is not a YAML mapping');
       if (doc && 'hooks' in doc) return print('config.yaml already has a hooks: section, which gbrain does not edit');
     }
+    readAllowlist(join(opts.hermesHome, ALLOWLIST));
     const next = spliceBlock(MARKERS, text, hookYaml(command));
+    if (probe.state === 'absent' && !(loadBoundedYaml(next) as Record<string, unknown> | null)?.hooks) return print('config.yaml would not parse with the hook appended');
     if (next === text) {
       if (!opts.dryRun) approve(opts.hermesHome, command);
       return { action: 'keep', path, detail: `per-turn rule hook (${EVENT}) in ${path}` };

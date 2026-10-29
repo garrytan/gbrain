@@ -121,6 +121,22 @@ describe('per-turn rule: Hermes pre_llm_call hook in config.yaml', () => {
     expect(JSON.parse(cmd.slice("/bin/echo '".length, -1))).toEqual({ context: renderBrainFirstTurnRule(access) });
   });
 
+  test('a flow-style config.yaml, or an allowlist gbrain cannot read, gets the entry printed and both files left as they are', () => {
+    const flow = '{model: alice-example-model, agent: {max_turns: 4}}\n';
+    const d = hermes(flow);
+    expect(syncHermesTurnHook({ hermesHome: d, access, dryRun: false }).action).toBe('print');
+    expect(cfg(d)).toBe(flow);
+    const unreadable = hermes('model: x\n');
+    writeFileSync(join(unreadable, 'shell-hooks-allowlist.json'), '{"approvals": [{"event": "post_tool_call", "command": "/opt/x"}],}');
+    expect(syncHermesTurnHook({ hermesHome: unreadable, access, dryRun: false }).action).toBe('print');
+    expect(cfg(unreadable)).toBe('model: x\n');
+    expect(readFileSync(join(unreadable, 'shell-hooks-allowlist.json'), 'utf8')).toContain('post_tool_call');
+    const bom = hermes('model: x\n');
+    writeFileSync(join(bom, 'shell-hooks-allowlist.json'), '\uFEFF' + JSON.stringify({ approvals: [{ event: 'post_tool_call', command: '/opt/x' }] }));
+    expect(syncHermesTurnHook({ hermesHome: bom, access, dryRun: false }).action).toBe('write');
+    expect(approvals(bom).map((e) => e.event)).toEqual(['post_tool_call', 'pre_llm_call']);
+  });
+
   test('appends a marked hook after the user\'s text, approves exactly that command, keeps on a re-run, and removal undoes both', () => {
     const mine = '# my config\nmodel:\n  default: alice-example-model\n';
     const other = { event: 'pre_tool_call', command: '/usr/bin/true', approved_at: 'x', script_mtime_at_approval: null };
@@ -231,6 +247,20 @@ describe('per-turn rule: OpenClaw before_prompt_build plugin', () => {
       expect(removeOpenclawTurnPlugin({ dryRun: false, openclawBin: '/bin/openclaw', run: gone.run }).action).toBe('remove');
       expect(gone.calls).toEqual([['/bin/openclaw', 'plugins', 'uninstall', OPENCLAW_TURN_PLUGIN_ID, '--force']]);
       expect(existsSync(join(st, 'gbrain'))).toBe(false);
+    });
+  });
+
+  test('removal keeps the directory OpenClaw still loads when the uninstall fails or openclaw is not on PATH', async () => {
+    await withEnv({ OPENCLAW_STATE_DIR: state(), OPENCLAW_PROFILE: undefined }, async () => {
+      syncOpenclawTurnPlugin({ access, dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run });
+      const failed = removeOpenclawTurnPlugin({ dryRun: false, openclawBin: '/bin/openclaw', run: recorder('uninstall').run });
+      expect(failed.action).toBe('print');
+      expect(failed.commands).toEqual([`/bin/openclaw plugins uninstall ${OPENCLAW_TURN_PLUGIN_ID} --force`]);
+      expect(existsSync(join(openclawTurnPluginDir(), 'index.js'))).toBe(true);
+      const noBin = removeOpenclawTurnPlugin({ dryRun: false, openclawBin: null });
+      expect(noBin.action).toBe('print');
+      expect(noBin.commands).toEqual([`openclaw plugins uninstall ${OPENCLAW_TURN_PLUGIN_ID} --force`]);
+      expect(existsSync(join(openclawTurnPluginDir(), 'index.js'))).toBe(true);
     });
   });
 });

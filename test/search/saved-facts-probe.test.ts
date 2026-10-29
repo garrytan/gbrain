@@ -1,6 +1,6 @@
 /**
  * The saved-fact match beside search/query blocks (ops/search.ts
- * matchingSavedFacts) gates its LIKE scan on an uncorrelated EXISTS probe so
+ * matchingSavedFacts) gates its keyword scan on an uncorrelated EXISTS probe so
  * a brain with no qualifying fact skips the scan. The probe must read the
  * facts table alone: with the page-eligibility filters inside it (private
  * provenance, quarantine, needs-rederive), Postgres planned it as merge anti
@@ -18,6 +18,7 @@ import { newSource, page, putPage } from '../helpers/pinned-questions-fixture.ts
 let engine: PGLiteEngine;
 let sourceId: string;
 const statements: string[] = [];
+const statementParams: unknown[][] = [];
 const Q = 'harbor ferry timetable';
 const search = operations.find(o => o.name === 'search')!;
 
@@ -59,7 +60,7 @@ beforeAll(async () => {
   // Unbound and called with the caller's `this`: a transaction-scoped view of the engine must keep its own executor.
   const run = engine.executeRaw;
   engine.executeRaw = function (this: PGLiteEngine, ...args: Parameters<typeof run>) {
-    if (args[0].includes('LIKE ANY($3::text[])') && args[0].includes('FROM facts f')) statements.push(args[0]);
+    if (args[0].includes('FROM facts f, k') && args[0].includes('AND EXISTS (SELECT 1 FROM facts f WHERE')) { statements.push(args[0]); statementParams.push((args[1] ?? []) as unknown[]); }
     return run.apply(this, args);
   } as typeof engine.executeRaw;
 }, 120_000);
@@ -79,6 +80,23 @@ describe('saved-fact match probe', () => {
     expect(scan).toContain('FROM pages pp');
     expect(scan).toContain('needs_rederive');
   });
+
+  // Value: protects=the keyword scan reads the facts keyword index; fails_when=an OR with the CJK substring branch is planned for every query, a sequential scan with a tsvector per fact; why_new=the probe test checks the EXISTS text only; seam=none; no_claim=Postgres plans (PGLite, 20,000 facts)
+  test('without a CJK word the scan can use idx_facts_fts', async () => {
+    statements.length = 0;
+    statementParams.length = 0;
+    await savedFacts(true);
+    expect(statements).toHaveLength(1);
+    await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source)
+      SELECT $1, 'notes/filler', 'Filler note number ' || g || ' about the warehouse inventory.', 'fact', 'world', 'notes' FROM generate_series(1, 20000) AS g`, [sourceId]);
+    try {
+      await engine.executeRaw('ANALYZE facts');
+      const plan = (await engine.executeRaw<{ 'QUERY PLAN': string }>(`EXPLAIN ${statements[0]}`, statementParams[0])).map(r => r['QUERY PLAN']).join('\n');
+      expect(plan).toContain('idx_facts_fts');
+    } finally {
+      await engine.executeRaw("DELETE FROM facts WHERE source_id = $1 AND entity_slug = 'notes/filler'", [sourceId]);
+    }
+  }, 120_000);
 
   test('a remote caller still gets only the fact whose provenance page it may read', async () => {
     expect(await savedFacts(true)).toEqual(['The harbor ferry timetable changes in May.']);

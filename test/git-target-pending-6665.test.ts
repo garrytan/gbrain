@@ -33,6 +33,7 @@ function fixture() {
   const bin = join(base, 'bin'); mkdirSync(bin);
   writeFileSync(join(bin, 'git'), `#!/bin/sh
 REAL='${realGit}'
+export PATH='${process.env.PATH}'
 if [ -n "$SHIM_RM_NOOP" ]; then for arg in "$@"; do [ "$arg" = rm ] && exit 0; done; fi
 case " $* " in *" core.fscache=false "*) exec "$REAL" "$@" ;; esac
 for arg in "$@"; do

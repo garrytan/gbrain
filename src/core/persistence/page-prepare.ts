@@ -91,6 +91,7 @@ import { withoutSafetyAssessments } from './reconcile-safety.ts';
 import { preparePagePurge, purgePageInTransaction, type PreparedPagePurge } from './page-purge.ts';
 import { withTrustKeep } from './context.ts';
 import { isFenceEditWrite, pageGateTrust, pageWriteTrust, recordAgentPageLowering, stampPageTrustMarker, storedPageTier } from '../trust/page-write.ts';
+import { compareTrust, type WriteTrust } from '../trust/tier.ts';
 import { suppliedTrustMarkerView } from '../trust/channel.ts';
 import { gateField, gateInput } from '../trust/gate-outcomes.ts';
 import { PUSH_SCAN_MAX_FILE_BYTES } from '../page-size-policy.ts';
@@ -126,14 +127,21 @@ function canonical(page: Pick<Page, 'type' | 'title' | 'compiled_truth' | 'timel
     frontmatter: comparableFrontmatter(page.frontmatter), tags: [...new Set(tags)].sort() };
 }
 interface CanonicalProvenance { source_kind: string; ingested_via: string; ingested_at: string; }
-/** Canonical stamps belong to the first write, never to a later preparation attempt. */
+/**
+ * Writes whose caller supplies the page text, and so could supply provenance stamps in its frontmatter. Unlike
+ * trust/page-write.ts CONTENT_OPERATIONS, revert_version and restore_page are absent: they replay a stored version.
+ */
+const CALLER_CONTENT_OPERATIONS = ['put_page', 'edit_page', 'append_page', 'capture'];
+/**
+ * Canonical stamps belong to the first write, never to a later preparation attempt. #7873: they are server-owned on
+ * every caller-content write a remote caller makes, with or without a repository: the caller's values are dropped and
+ * the stored page's kept. A managed put_page (local too) also stamps the first write's provenance.
+ */
 function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed: ParsedPage): CanonicalProvenance | undefined {
-  if (row.operation !== 'put_page' || !row.worktree_id) return undefined;
-  const keys = ['source_kind', 'ingested_via', 'ingested_at'] as const;
-  for (const key of keys) {
-    delete parsed.frontmatter[key];
-    if (snapshot?.page.frontmatter[key] !== undefined) parsed.frontmatter[key] = snapshot.page.frontmatter[key];
-  }
+  if (!serverOwnsProvenance(row)) return undefined;
+  const managedPut = row.operation === 'put_page' && !!row.worktree_id;
+  keepStoredProvenance(parsed.frontmatter, snapshot?.page.frontmatter);
+  if (!managedPut) return undefined;
   const tags = [...new Set([...(snapshot?.tags ?? []), ...parsed.tags])].sort();
   if (snapshot && !snapshot.page.deleted_at && digest(canonical(snapshot.page, snapshot.tags)) === digest(canonical(parsed, tags))) {
     return undefined;
@@ -150,6 +158,29 @@ function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed:
   };
   Object.assign(parsed.frontmatter, stamp);
   return stamp;
+}
+function serverOwnsProvenance(row: WriteRequest): boolean {
+  return (row.operation === 'put_page' && !!row.worktree_id) || (row.authority.remote === true && CALLER_CONTENT_OPERATIONS.includes(row.operation));
+}
+/**
+ * #7873: the tier of a write whose provenance stamps are server-owned is the lower of its own frontmatter's and the
+ * frontmatter it publishes (the stored stamps kept), so dropping a stored lowering stamp escapes neither the write gate
+ * nor the page row's tier.
+ */
+export function provenanceWriteTrust(row: WriteRequest, frontmatter: Record<string, unknown> | null, stored: Record<string, unknown> | null | undefined): WriteTrust | undefined {
+  const trust = pageWriteTrust(row, frontmatter);
+  if (!trust || !frontmatter || !serverOwnsProvenance(row)) return trust;
+  const published = { ...frontmatter };
+  keepStoredProvenance(published, stored);
+  const kept = pageWriteTrust(row, published);
+  return kept && compareTrust(kept.tier, trust.tier) < 0 ? kept : trust;
+}
+/** The provenance stamps of `stored` replace whatever `frontmatter` carries for them (removed when the stored page has none). */
+export function keepStoredProvenance(frontmatter: Record<string, unknown>, stored: Record<string, unknown> | null | undefined): void {
+  for (const key of ['source_kind', 'ingested_via', 'ingested_at'] as const) {
+    delete frontmatter[key];
+    if (stored?.[key] !== undefined) frontmatter[key] = stored[key];
+  }
 }
 export { isNeverFiledDerivedPage };
 /**
@@ -868,7 +899,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   let provenance: CanonicalProvenance | undefined;
   let suppliedTrustMarker: unknown;
   // #5575: the page's tier, computed once before import so the write gate sees exactly it (ENG-18).
-  const trust = pageWriteTrust(row, typeof content === 'string' && !isFenceEditWrite(row) ? parseMarkdown(content, row.slug, { activePack }).frontmatter : null);
+  const trust = provenanceWriteTrust(row, typeof content === 'string' && !isFenceEditWrite(row) ? parseMarkdown(content, row.slug, { activePack }).frontmatter : null, snapshot?.page.frontmatter);
   const gateTrust = pageGateTrust(row, trust, storedTier);
   // The apply diet: the publisher's locked read of row.slug is the import base, and one read after the
   // last page write serves the read-back check, the seal, the core notice and the receipt (as sync does).
@@ -890,7 +921,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     prepareFrontmatter: page => {
       provenance = putProvenance(row, snapshot, page);
       suppliedTrustMarker = page.frontmatter.trust_tier;
-      stampPageTrustMarker(row, page.frontmatter, trust, storedTier);
+      stampPageTrustMarker(row, page.frontmatter, trust, storedTier, snapshot?.page.frontmatter);
       if (privateRequest) assertPrivateRequestKept(row, page.frontmatter);
     },
     prepare: async value => { prepared = value; return value.result; },

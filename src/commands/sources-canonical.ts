@@ -140,7 +140,8 @@ export async function runSourcesCanonical(engine: BrainEngine, args: string[]): 
     const result = await withConversionReport(engine, parsed.sourceId, json,
       onProgress => applyGitConversion(engine, parsed.sourceId, parsed.expect!, { noEmbed: parsed.noEmbed, noExtract: parsed.noExtract, onProgress }));
     if (result.status === 'incomplete') {
-      const error = opError('git_conversion_incomplete', `Source ${parsed.sourceId} is git-canonical, and ${result.after.remaining} item(s) were still open after its strict pass.`,
+      const closing = result.closing_passes ? ` and ${result.closing_passes} closing pass(es), with Git still ahead at ${result.after.git_wins.count} path(s)` : '';
+      const error = opError('git_conversion_incomplete', `Source ${parsed.sourceId} is git-canonical, and ${result.after.remaining} item(s) were still open after its strict passes${closing}.`,
         `Writes landed during the conversion. Git wins on the source now; preview again with gbrain sources canonical ${parsed.sourceId} --to git --dry-run and apply the new hash.`,
         { docs: DOCS, detail: 'work_left', fix: conversionIncompleteFix(parsed.sourceId) });
       print({ status: 'incomplete', result, ...toAgentError(error, { transport: 'cli', command: 'sources canonical', render: cliRenderContext() }) }, describeResult(result));

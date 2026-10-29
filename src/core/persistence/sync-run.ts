@@ -55,6 +55,7 @@ import { checkpointSuperseded } from './sync-checkpoint-replaced.ts';
 import { publicFailureDetail } from './publication-failure.ts';
 import { dependentHold, fileDriftHold, sharedOriginSurvivor, fileChangedAfterAdmission, headCommittedBytes, liveRevision, idempotentDeletionProof, originFaultHold, pageChangeProof, pageChangedHold, pinnedWorktreeConflict, receiptPageFaultHold, worktreeDirtyHold } from './sync-page-fault.ts';
 import { faultPoint } from './fault-points.ts';
+import { syncReceiptWait } from './sync-receipt-wait.ts';
 import { directoryAt, freezeFaultHold, noteFrozen, nullBytesRefusal } from './sync-entry-fault.ts';
 import { syncCursorOptions } from './sync-slices.ts';
 import { pipelined } from '../page-state/transactions.ts';
@@ -1443,7 +1444,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
       let creditedPages = 0, creditStarted = 0, foregroundQueued = false, screenedAdmit: string | null = null;
       const sliceStarted = sliceBase?.started ?? performance.now(), sliceFirstIndex = cursor.index - (sliceBase?.pages ?? 0), drainStartedAt = opts.drainStartedAt ?? Date.now();
       // #6712 PR 4b: a local pass waits on its own write up to 30 s while this process's consumer still holds it (item 7).
-      const whileHeld = !opts.drainStartedAt && !!cursor.passId && !authority.writer.remote ? { whileHeldMs: 30_000 } : {};
+      const whileHeld = !opts.drainStartedAt && !!cursor.passId && !authority.writer.remote ? { whileHeldMs: syncReceiptWait().held } : {};
       const bulk: BulkPass = { settings: opts.bulk && !company ? opts.bulk : { enabled: false, reason: null, size: 1, maxTxnMs: 0 }, perMemberMs: null, foregroundFirst: await foregroundPriority(engine) };
       const waiveBatch = noopWaiversEnabled() && await waiverBatchEnabled(startupConfig), prescreen = { missed: new Set<number>(), limit: Infinity, drainStartedAt, assertActive, signal, onProgress: opts.onProgress,
         embeddingRequested: !(cursor.processingOptions ?? processingOptions).noEmbed && !opts.embedDeferred && !config.embedding_disabled && !!config.embedding_model?.trim() };
@@ -1516,7 +1517,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         const freezeAt: FreezeAt = base => async index => { if (base.entries[index]?.prescreened && !prescreen.missed.has(index)) return null; const frozen = await freezeEntry(engine, { ...base, index }, key, assertActive, frozenRun).catch(() => null); return frozen && 'requestId' in frozen ? frozen : null; }; // GBRA-133 S-64: a follower's throw is raised by the single path, naming its own entry
         if (bulk.settings.enabled && (bulk.foregroundFirst || !foregroundQueued) && !prior && !cursor.group && !pending.rebound && indexOf(cursor, pending) === cursor.index && groupableIntent(pending.intent)) cursor = await formGroup(engine, cursor, pending, key, bulk, config, freezeAt, assertActive);
         if (cursor.group?.[0]?.requestId === pending.requestId && cursor.pending?.requestId === pending.requestId) {
-          const step = await groupStep(engine, cursor, key, bulk, config, opts.drainStartedAt ? { waitMs: 30_000, signal } : { waitMs: 5000, signal, ...whileHeld }, drainStartedAt, opts.onProgress,
+          const step = await groupStep(engine, cursor, key, bulk, config, opts.drainStartedAt ? { waitMs: syncReceiptWait().drain, signal } : { waitMs: syncReceiptWait().pass, signal, ...whileHeld }, drainStartedAt, opts.onProgress,
             opts.drainStartedAt ? next => admitAhead(engine, next, key, bulk, config, freezeAt, assertActive) : undefined);
           if ('result' in step) return step.result;
           cursor = step.cursor;
@@ -1531,7 +1532,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         // #5762: a checkpoint's validation runs under the coordinator's 5 s statement timeout, so its wait outlasts that
         // budget; a timed-out checkpoint then reports its terminal refusal and hint in this run instead of the next.
         // #5984: a drain re-enters anyway, so it waits longer per page instead of paying a full re-entry; the stop signal bounds every wait (awaitWrite).
-        const waited = await awaitWrite(engine, row, config, opts.drainStartedAt ? { waitMs: 30_000, signal } : { waitMs: pending.intent.kind === 'managed_sync_checkpoint' ? 8000 : 5000, signal, ...whileHeld });
+        const waited = await awaitWrite(engine, row, config, opts.drainStartedAt ? { waitMs: syncReceiptWait().drain, signal } : { waitMs: pending.intent.kind === 'managed_sync_checkpoint' ? syncReceiptWait().checkpoint : syncReceiptWait().pass, signal, ...whileHeld });
         const done = waited.row;
         assertSyncDispatchActive();
         if (!isTerminalWriteState(done.state)) {
@@ -1554,7 +1555,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         }
         if (done.state !== 'committed') {
           const settled = await settleFailedRequest(engine, { cursor, key, pending, done, assertActive, run: frozenRun, syncOptions, processingOptions,
-            remote: authority.writer.remote, waitMs: opts.drainStartedAt ? 30_000 : 5000, signal });
+            remote: authority.writer.remote, waitMs: opts.drainStartedAt ? syncReceiptWait().drain : syncReceiptWait().pass, signal });
           if ('result' in settled) return settled.result;
           cursor = settled.cursor;
           opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length });

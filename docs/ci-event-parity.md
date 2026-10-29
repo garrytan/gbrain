@@ -99,6 +99,32 @@ reusing push only with a readable `reuse.json` naming the same workflow, the
 push head and a valid source run. It prints the reused run per workflow and
 writes `test_reused_run_id` / `e2e_reused_run_id`. Schedules never reuse.
 
+## Remote-gate reuse
+
+GitHub's full profile is the source of truth for the Ubicloud gate too.
+`scripts/pregate-remote-gate.sh`, the run that clears gstack's `remote_gate`
+obligation, first asks `bun scripts/ci-reuse.ts --gate` whether the clean
+working tree's commit, or another head with the same tree, already passed the
+complete full runs of both Test and E2E under the master-push rules above. If
+both did, the receipt comes from them: the same `PREGATE_REMOTE: tree= tests=
+failed=` line, with the runs' executed test identities as the counts, and no VM
+starts. A full run on the tree still in progress is waited for (90 minutes at
+most, a progress line every minute). The newest full run on the tree decides,
+across the head and every recent head with the same tree, so neither an empty
+commit nor an older pass elsewhere skips a newer failure; a failed one refuses
+with no receipt. A run that did not run the full job (a diagnostic dispatch, a
+push that reused) is skipped. A tree that changes `.github/workflows/test.yml`,
+`.github/workflows/e2e.yml`, `scripts/ci-reuse.ts`, `scripts/lib/gh-issue.ts`,
+`scripts/ci-full-suite-tree.sh` or `scripts/ci-executed-counts.ts` relative to `origin/master` never reuses, since its runs would attest to themselves, and the
+check runs without the model and database keys, like the gate. Every other case runs the gate: a dirty tree, a commit GitHub
+doesn't have, a missing workflow, an API error, or `GBRAIN_PREGATE_REUSE=0`.
+
+Only the identical tree reuses. A head that /ship changed after full-ci has a
+new tree, so it needs its own passed full run or gate. A stamp-only difference
+reaches the head through gstack's stamp rule (`gstack-pregate clear --receipt`
+with the stamp files in `.gstack/ship-policy.json`), never through this check.
+Merge still requires `full-suite` and `e2e-full-suite` on the exact head.
+
 ## Dependency-audit rule
 
 `dependency-audit` blocks on pushes, schedules, manual runs and pull requests

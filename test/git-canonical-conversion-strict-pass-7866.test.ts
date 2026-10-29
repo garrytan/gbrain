@@ -16,6 +16,8 @@ import type { SyncResult } from '../src/commands/sync.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { withDrainLease } from '../src/core/persistence/sync-lease.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import { chunksEmbeddedAsIs } from '../src/core/persistence/noop-kernel.ts';
+import { __setSyncReceiptWaitForTests } from '../src/core/persistence/sync-receipt-wait.ts';
 import { applyGitConversion, planGitConversion, type ConversionProgress } from '../src/core/persistence/git-conversion.ts';
 import { runSourcesCanonical } from '../src/commands/sources-canonical.ts';
 import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
@@ -104,6 +106,16 @@ for (const backend of testBackends()) describe(`[${backend}] #7866: the conversi
     expect(queued.map(row => Number(row.page_id)).sort((a, b) => a - b)).toEqual([ids['notes/n05']!, ids['notes/n08']!].sort((a, b) => a - b));
   }, { databaseUrl, setup }), 300_000);
 
+  // Value: protects=chunksEmbeddedAsIs reads a chunk with no vector in the active column as owing embedding work; fails_when=the predicate drops its NULL-vector clause; why_new=the conversion round never re-imports such a page, so only a direct call reaches the clause (#7886); seam=none; no_claim=which effect a sync queues (covered above)
+  test('chunksEmbeddedAsIs: a page whose chunk has no vector in the active column still owes embedding work', () => managedBrain(async ({ engine }) => {
+    await firstSync(engine);
+    await legacyEmbedded(engine);
+    const [page] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='notes/n06'");
+    expect(await chunksEmbeddedAsIs(engine, Number(page!.id))).toBe(true);
+    await engine.executeRaw('UPDATE content_chunks SET embedding=NULL WHERE id=(SELECT min(id) FROM content_chunks WHERE page_id=$1)', [page!.id]);
+    expect(await chunksEmbeddedAsIs(engine, Number(page!.id))).toBe(false);
+  }, { databaseUrl, setup }), 300_000);
+
   // Value: protects=the human-mode refusal prints the Next: command from fix and strict-pass stderr progress names the planned paths; fails_when=the Next: line or the strict-pass progress text is dropped; why_new=the drainer test reads --json only; seam=none; no_claim=JSON contract (covered by the drainer test)
   test('a refused apply in text mode prints the refusal with the fix command as Next, and strict-pass progress on stderr', () => managedBrain(async ({ engine, root }) => {
     await firstSync(engine);
@@ -125,33 +137,36 @@ for (const backend of testBackends()) describe(`[${backend}] #7866: the conversi
     expect(err.join('')).toContain(`[sources canonical] strict_pass_1: ${N} planned path(s), 0 group(s) committed`);
   }, { databaseUrl, setup }), 300_000);
 
-  test('a strict pass whose own write outlives the single pass\'s receipt wait drains on instead of refusing writer_pending', () => managedBrain(async ({ engine, root }) => {
+  for (const phase of ['strict_pass_1', 'strict_pass_2'] as const) test(`${phase}: a strict pass whose own write outlives the single pass's receipt wait drains on instead of refusing writer_pending`, () => managedBrain(async ({ engine, root }) => {
     await firstSync(engine);
-    writeFileSync(join(root, 'notes/n03.md'), note(3, 'Edited in Git after the last sync.'));
-    git(root, 'commit', '-qam', 'edit n03');
+    const slug = phase === 'strict_pass_1' ? 'n03' : 'n04';
+    const edit = () => { writeFileSync(join(root, `notes/${slug}.md`), note(3, 'Edited in Git after the last sync.')); git(root, 'commit', '-qam', `edit ${slug}`); };
+    if (phase === 'strict_pass_1') edit();
     const seen: ConversionProgress[] = [];
-    let stalled = false;
-    // Once the strict pass froze its import, the consumer stops claiming for 33 s: the admitted request waits queued past
-    // the single pass's receipt wait (5 s, held to 30 s while queued here), as it does behind a busy owner on a production host.
-    let armed = false;
+    let stalled = false, armed = false;
+    // The waits are scaled down (#7886): once the pass froze its import, the consumer stops claiming for longer than the
+    // single pass's receipt wait (held while queued here), as it does behind a busy owner on a production host. Pass 2 gets
+    // its import from a Git commit landed between the passes.
+    const restore = __setSyncReceiptWaitForTests({ pass: 200, held: 600, drain: 600 });
     installFaultHook(async point => {
-      if (point === 'sync:after_freeze' && seen.at(-1)?.phase === 'strict_pass_1') armed = true;
+      if (point === 'conversion:before_flip' && phase === 'strict_pass_2') edit();
+      if (point === 'sync:after_freeze' && seen.at(-1)?.phase === phase) armed = true;
       if (point !== 'consumer:claiming' || !armed || stalled) return;
       stalled = true;
-      // gstack-timing-ok: the stall must outlast the 30 s receipt wait; the assertions read the outcome, not the elapsed time
-      await Bun.sleep(33_000);
+      // gstack-timing-ok: the stall must outlast the injected 600 ms receipt wait; the assertions read the outcome, not the elapsed time
+      await Bun.sleep(1500);
     });
     try {
       expect(await convert(engine, seen)).toMatchObject({ status: 'converted' });
-    } finally { installFaultHook(undefined); }
+    } finally { installFaultHook(undefined); restore(); }
     expect(stalled).toBe(true);
-    const [page] = await engine.executeRaw<{ compiled_truth: string }>("SELECT compiled_truth FROM pages WHERE slug='notes/n03'");
+    const [page] = await engine.executeRaw<{ compiled_truth: string }>(`SELECT compiled_truth FROM pages WHERE slug='notes/${slug}'`);
     expect(page!.compiled_truth).toContain('Edited in Git after the last sync.');
     // The round names its candidate and its one import batch; the total stays the planned paths.
-    const pass1 = seen.filter(progress => progress.phase === 'strict_pass_1');
-    expect(pass1.every(progress => progress.total === N)).toBe(true);
-    expect(pass1.some(progress => progress.round === 1 && progress.candidates === 1 && progress.batch === 1 && progress.batches === 1)).toBe(true);
-    expect(pass1.every(progress => progress.scanned <= (progress.candidates ?? 0))).toBe(true);
+    const pass = seen.filter(progress => progress.phase === phase);
+    expect(pass.every(progress => progress.total === N)).toBe(true);
+    expect(pass.some(progress => progress.round === 1 && progress.candidates === 1 && progress.batch === 1 && progress.batches === 1)).toBe(true);
+    expect(pass.every(progress => progress.scanned <= (progress.candidates ?? 0))).toBe(true);
   }, { databaseUrl, setup }), 300_000);
 
   test('a concurrent drainer of the source refuses the apply with the operator contract and counts, before anything is flipped', () => managedBrain(async ({ engine, root }) => {

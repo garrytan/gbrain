@@ -14,7 +14,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { QUERY_FACTS_ARM_KEY, matchQueryFacts, queryTerms } from '../src/core/search/facts-arm.ts';
+import { QUERY_FACTS_ARM_KEY, QUERY_FACTS_BLOCK_KEY, matchQueryFacts, queryTerms } from '../src/core/search/facts-arm.ts';
 import { resultTokens } from '../src/core/search/token-budget.ts';
 import type { SearchResult } from '../src/core/types.ts';
 import { newSource, page, putPage } from './helpers/pinned-questions-fixture.ts';
@@ -36,6 +36,8 @@ beforeAll(async () => {
   await engine.connect({});
   await engine.initSchema();
   sourceId = await newSource(engine);
+  // The facts block (on by default) takes every budgeted query; this suite tests the arm it replaces.
+  await engine.setConfig(QUERY_FACTS_BLOCK_KEY, 'false');
   for (let i = 0; i < 6; i++) {
     await putPage(engine, sourceId, `conversations/chat-${i}`, page('conversation', `chat ${i}`, `**User:** Notes on Forge part ${i}. By the way, the Forge offsite is booked in Santa Fe.\n\n**Assistant:** Noted.`, `date: 2025-07-0${i + 1}\n`));
   }

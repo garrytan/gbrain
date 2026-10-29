@@ -96,7 +96,11 @@ export function syncOpenclawTurnPlugin(opts: { access: BrainFirstAccess; dryRun:
   return { action: changed ? 'write' : 'keep', path: dir, detail: `per-turn rule plugin ${OPENCLAW_TURN_PLUGIN_ID} (before_prompt_build) at ${dir}, installed and enabled; restart the gateway if it is running` };
 }
 
-/** Uninstall the plugin and delete its directory (decline or --remove). Never throws. */
+/**
+ * Uninstall the plugin, then delete its directory (decline or --remove). Never throws. The directory stays
+ * until the uninstall succeeds: `install --link` put it in plugins.load.paths, and OpenClaw refuses a config
+ * whose load path is missing.
+ */
 export function removeOpenclawTurnPlugin(opts: { dryRun: boolean; openclawBin?: string | null; run?: Run }): OpenclawTurnPluginOutcome {
   const dir = openclawTurnPluginDir();
   if (!existsSync(dir)) return { action: 'skip', path: dir, detail: `no per-turn rule plugin at ${dir}` };
@@ -104,11 +108,10 @@ export function removeOpenclawTurnPlugin(opts: { dryRun: boolean; openclawBin?: 
   const bin = opts.openclawBin !== undefined ? opts.openclawBin : findOpenclaw();
   const uninstall = [bin ?? 'openclaw', 'plugins', 'uninstall', OPENCLAW_TURN_PLUGIN_ID, '--force'];
   const r = bin ? (opts.run ?? defaultRun)(uninstall) : { ok: false, output: 'no openclaw on PATH' };
+  if (!r.ok) return { action: 'print', path: dir, detail: `${dir} left in place (OpenClaw still loads it); ${r.output.split('\n').at(-1)}, so run this on the OpenClaw host, then delete ${dir}`, commands: [shown(uninstall)] };
   try {
     rmSync(dir, { recursive: true, force: true });
     if (readdirSync(dirname(dir)).length === 0) rmdirSync(dirname(dir));
-  } catch { /* the uninstall outcome below is what matters */ }
-  return r.ok
-    ? { action: 'remove', path: dir, detail: `per-turn rule plugin ${OPENCLAW_TURN_PLUGIN_ID} uninstalled and ${dir} removed` }
-    : { action: 'print', path: dir, detail: `${dir} removed; ${r.output.split('\n').at(-1)}, so run this on the OpenClaw host`, commands: [shown(uninstall)] };
+  } catch { /* uninstalled; a leftover directory is no longer loaded */ }
+  return { action: 'remove', path: dir, detail: `per-turn rule plugin ${OPENCLAW_TURN_PLUGIN_ID} uninstalled and ${dir} removed` };
 }

@@ -142,6 +142,15 @@ Think reads `think.return_unit` (default `auto`) and never
 Under `auto`, think renders conversation pages whole and keeps its usual
 excerpts for every other page.
 
+### Query budgets (GBRA-205)
+
+`query`'s `token_budget` without a `return_unit` keeps its chunk-mode
+meaning by default. `gbrain config set search.query_budget_unit auto` makes
+it the same hard cap `search` uses: conversations come back whole or cut,
+packed by `search.auto_packing`. A budget below 32 is then refused.
+`search.evidence_titles` (default off) appends each page block's title to
+its date header line when date headers are on.
+
 ### Date headers
 
 With `search.evidence_date_header` on (default off), every delivered block,
@@ -192,7 +201,7 @@ each hit's `score`.
 
 Config keys: `search.return_unit`, `search.return_window`,
 `search.return_budget_default`, `search.return_budget_conversation`,
-`search.return_budget_max_remote`, `search.evidence_date_header`, `search.evidence_tail_trim`, `search.auto_packing`,
+`search.return_budget_max_remote`, `search.evidence_date_header`, `search.evidence_titles`, `search.evidence_tail_trim`, `search.auto_packing`, `search.query_budget_unit`,
 `search.page_rank_cut`, `search.page_rank_cut_factor`, `think.return_unit`. Kill switch:
 `gbrain config set search.return_unit chunk` and
 `gbrain config set think.return_unit chunk` (or pass `return_unit: "chunk"`

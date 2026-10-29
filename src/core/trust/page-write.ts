@@ -9,6 +9,9 @@
  *   lower of the write's tier and the page's stored tier (an unclassified
  *   `unknown` row does not lower it, #6550), so the tier survives
  *   the git round trip (sync honors it; an owner restamp needs the marker gone).
+ *   #7905: a derived page a maintenance job publishes (`submit_job` with a
+ *   derivation declaration: patterns, concepts, claim-source rewrites) authors
+ *   its content too, so it stamps the marker at its declared tier.
  * - ENG-1: gbrain-managed fence edits (remember / takes fence appends, proposal
  *   accept strikes, loop and relink maintenance) and add_timeline_entry rewrite
  *   the page body without authoring it, so the page keeps its stored tier
@@ -67,10 +70,17 @@ export async function storedPageTier(engine: BrainEngine, sourceId: string, slug
  * #6550: a stored `unknown` means "not classified yet", not "known unverified", so it does not lower the
  * marker: the marker names the writer's tier and the row keeps min(writer, stored) until the backfill
  * classifies it. An explicit `trust_tier: unknown` already in the frontmatter still caps (stampTrustMarker).
+ * #7873: an unclassified page's own lowering markers (`storedFrontmatter`, the page before the write) still cap the
+ * marker, so a write that removes one (a `ingested_via: webhook` stamp) cannot raise the page when it is re-derived.
+ * #7905: a derived page publication (a derivation declaration on a write that is not a fence edit) stamps it as a
+ * content write does, so a re-read of the repository cannot rate model-written text at the source default.
  */
-export function stampPageTrustMarker(row: Pick<WriteRequest, 'operation'>, frontmatter: Record<string, unknown>, trust: WriteTrust | undefined, stored: TrustTier | null): void {
-  if (!trust || !CONTENT_OPERATIONS.includes(row.operation)) return;
-  const tier = stored && stored !== 'unknown' ? minTrust(trust.tier, stored) : trust.tier;
+export function stampPageTrustMarker(row: Pick<WriteRequest, 'operation' | 'intent'>, frontmatter: Record<string, unknown>, trust: WriteTrust | undefined, stored: TrustTier | null,
+  storedFrontmatter?: Record<string, unknown> | null): void {
+  if (!trust || isFenceEditWrite(row)) return;
+  if (!CONTENT_OPERATIONS.includes(row.operation) && !readDerivationDeclaration(row.intent?.derivation)) return;
+  const prior = stored && stored !== 'unknown' ? [stored] : frontmatterTrustCaps(storedFrontmatter);
+  const tier = minTrust(trust.tier, ...prior);
   const stamped = stampTrustMarker(frontmatter, tier);
   if (stamped !== frontmatter) frontmatter.trust_tier = stamped.trust_tier;
 }

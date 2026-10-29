@@ -45,7 +45,7 @@ test/brain-durability-hook.serial.test.ts	brain-commit-push.sh (D13 guarantee)	4
 test/brain-durability-hook.serial.test.ts	durability push remote confirmation (#5138)	9	readFileSync
 test/brain-durability-hook.serial.test.ts	durability schedule (installCron:true) [D2/D12]	0	readFileSync
 test/brain-durability-hook.serial.test.ts	post-commit hook (D9 local, D7 self-contained)	4	readFileSync
-test/brain-first-turn-rule.test.ts	per-turn rule: OpenClaw before_prompt_build plugin	3	readFileSync
+test/brain-first-turn-rule.test.ts	per-turn rule: OpenClaw before_prompt_build plugin	4	readFileSync
 test/brain-repo-durability.serial.test.ts	hardenBrainRepo	20	readFileSync
 test/brain-score-breakdown.test.ts	Bug 11 — BrainHealth type shape	1	bun-file
 test/brain-score-breakdown.test.ts	Bug 11 — doctor renders brain_score breakdown	1	doctor-source-helper
@@ -209,6 +209,7 @@ test/harness-onboarding.test.ts	harness identity and private handoff	6	readFileS
 test/hook-command.serial.test.ts	user-prompt	18	source-surface-helper
 test/hook-push-spawn-env.test.ts	spawnDetachedPush env handoff	2	readFileSync
 test/hook-push-spawn-env.test.ts	tryExecAsync env handoff	1	readFileSync
+test/import-private-hold-callers-7897.test.ts	import entry points hold a non-canonical private request (#7897)	2	readFileSync
 test/init-mode-picker.test.ts	cost matrix: newest models, priced from model-pricing	6	readFileSync
 test/integrations-install.test.ts	installRecipeIntoHostRepo — happy path	6	readFileSync
 test/integrations.test.ts	CLI integration	3	source-surface-helper
