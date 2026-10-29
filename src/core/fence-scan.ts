@@ -349,11 +349,30 @@ export function indexOfOutsideCode(
   let at = body.indexOf(needle, fromIndex);
   if (at === -1) return -1;
   code ??= scanMarkdownCode(body);
-  for (let skip = codeEndAt(code, at); skip !== -1; skip = codeEndAt(code, at)) {
-    at = body.indexOf(needle, skip);
+  for (let skip = codeEndAt(code, at); skip !== -1 || quotedMarker(body, at, needle); skip = codeEndAt(code, at)) {
+    at = body.indexOf(needle, skip === -1 ? at + needle.length : skip);
     if (at === -1) return -1;
   }
   return at;
+}
+
+/**
+ * GBRA-133: whether the marker at `at` is quoted rather than a marker line. Every fence writer puts a marker on its own
+ * line, so a marker comment with other text on its line (a sentence, a blockquote's `>`, a list bullet) is quoted, as in
+ * a transcript of a conversation about gbrain. A bare partial needle (`gbrain:takes:begin` in prose, the near-miss
+ * search) is not a marker comment and is still found.
+ */
+function quotedMarker(body: string, at: number, needle: string): boolean {
+  let start = at;
+  while (start > 0 && body[start - 1] !== '\n' && body[start - 1] !== '\r') start--;
+  let end = at + needle.length;
+  while (end < body.length && body[end] !== '\n' && body[end] !== '\r') end++;
+  const before = body.slice(start, at), after = body.slice(at + needle.length, end);
+  const opener = needle.startsWith('<!--') ? '' : /<!--+[ \t]*$/.exec(before)?.[0];
+  const closer = needle.startsWith('<!--') ? '' : /^[ \t]*-*-->/.exec(after)?.[0];
+  if (opener === undefined || closer === undefined) return false;
+  return before.length > opener.length && before.slice(0, before.length - opener.length).trim() !== ''
+    || after.slice(closer.length).trim() !== '';
 }
 
 /**
