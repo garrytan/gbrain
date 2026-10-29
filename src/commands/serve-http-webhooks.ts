@@ -8,7 +8,7 @@ import rateLimit from 'express-rate-limit';
 import { createHmac } from 'crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
+import { requireBearerAuth } from '@modelcontextprotocol/express';
 import { safeHexEqual } from '../core/timing-safe.ts';
 import { isValidRepoName } from '../core/github-source.ts';
 import type { BrainEngine } from '../core/engine.ts';

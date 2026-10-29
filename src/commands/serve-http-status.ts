@@ -25,9 +25,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import { randomBytes } from 'node:crypto';
-import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { Server as McpServer, createMcpHandler, type ListToolsResult, type CallToolResult } from '@modelcontextprotocol/server';
+import { toNodeHandler } from '@modelcontextprotocol/node';
 import type { BrainEngine } from '../core/engine.ts';
 import { cliRenderContext, renderAction } from '../core/agent-output.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
@@ -64,19 +63,24 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 }
 
 async function serveStatusMcp(state: StatusModeState, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const server = new McpServer({ name: 'gbrain', version: VERSION }, { capabilities: { tools: {} }, instructions: statusInstructionLine(state, 'http') });
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [HTTP_STATUS_TOOL_DEF] }));
-  server.setRequestHandler(CallToolRequestSchema, async (request) => (request.params.name === STATUS_TOOL_NAME
-    ? statusToolResult(state, 'http') : statusModeErrorResult(state, request.params.name, 'http')));
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-  res.on('close', () => { transport.close().catch(() => {}); server.close().catch(() => {}); });
+  // Dual-era status surface: the same one-tool factory answers 2025-era
+  // `initialize` (stateless legacy fallback, the default posture) and the
+  // modern per-request path, so a probing client of either era gets the
+  // status envelope instead of a protocol error.
+  const handler = createMcpHandler(async (): Promise<McpServer> => {
+    const server = new McpServer({ name: 'gbrain', version: VERSION }, { capabilities: { tools: {} }, instructions: statusInstructionLine(state, 'http') });
+    // gbrain builds v1-shaped tool defs and result blocks; v2 narrows
+    // `inputSchema`/`content`, so the wire shapes are asserted at entry.
+    server.setRequestHandler('tools/list', async (): Promise<ListToolsResult> => ({ tools: [HTTP_STATUS_TOOL_DEF] } as ListToolsResult));
+    server.setRequestHandler('tools/call', async (request): Promise<CallToolResult> => (request.params.name === STATUS_TOOL_NAME
+      ? statusToolResult(state, 'http') : statusModeErrorResult(state, request.params.name, 'http')) as CallToolResult);
+    return server;
+  });
+  // The connector owns the per-request lifecycle; the adapter answers a
+  // JSON-RPC 500 envelope on an internal throw, so probes never receive an
+  // HTML error page.
   res.setHeader('Connection', 'close');
-  try {
-    await server.connect(transport);
-    await transport.handleRequest(req, res);
-  } catch {
-    if (!res.headersSent) sendJson(res, 503, httpStatusEnvelope());
-  }
+  await toNodeHandler(handler, { onerror: () => { /* status probes report through the envelope */ } })(req, res);
 }
 
 function statusHandler(state: StatusModeState, nonce: string): HttpRequestHandler {

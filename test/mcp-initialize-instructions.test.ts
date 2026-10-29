@@ -7,9 +7,8 @@
  * per-initialize resolver the transports install on the SDK Server.
  */
 import { describe, test, expect } from 'bun:test';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { Server, InMemoryTransport } from '@modelcontextprotocol/server';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { operations } from '../src/core/operations.ts';
 import { filterOpsForSurface } from '../src/mcp/surface.ts';
 import { buildMcpInstructions, GBRAIN_MCP_INSTRUCTIONS, installInstructionsResolver } from '../src/mcp/instructions.ts';

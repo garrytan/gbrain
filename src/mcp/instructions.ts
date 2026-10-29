@@ -15,8 +15,7 @@
  * rendering with no tail (bootstrap's instructions file and the static
  * fallback the SDK serves before the per-initialize resolver runs).
  */
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { InitializeRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { Server } from '@modelcontextprotocol/server';
 import type { GBrainConfig } from '../core/config.ts';
 import type { ReadinessEntry } from '../core/readiness.ts';
 import { buildAmbientWritebackSection } from '../core/facts/writeback-instructions.ts';
@@ -220,7 +219,7 @@ export function installInstructionsResolver(server: Server, compute: () => Promi
   };
   if (typeof s._oninitialize !== 'function') return;
   s.removeRequestHandler('initialize');
-  server.setRequestHandler(InitializeRequestSchema, async (request) => {
+  server.setRequestHandler('initialize', async (request) => {
     try { s._instructions = await compute(); } catch { /* keep the constructor value */ }
     // setImmediate fires after the SDK has written this response.
     if (onAnswered) setImmediate(onAnswered);

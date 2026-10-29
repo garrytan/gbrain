@@ -73,9 +73,10 @@ export function loadPackFromFile(path: string, opts: { maxBytes?: number } = {})
       fd = openSync(path, 'r');
     } catch (e) {
       // A pack bundled into a compiled binary lives on Bun's virtual
-      // filesystem (`/$bunfs/...`), which serves readFileSync but has no
-      // descriptors; the bound is checked on the bytes read instead.
-      if (!path.startsWith('/$bunfs/')) throw e;
+      // filesystem (`/$bunfs/...`, or `B:\~BUN\...` on Windows), which serves
+      // readFileSync but has no descriptors; the bound is checked on the
+      // bytes read instead.
+      if (!(/^\/\$bunfs\//.test(path) || /[\\/]~BUN[\\/]/.test(path))) throw e;
       const bundled = readFileSync(path);
       if (bundled.byteLength > maxBytes) throw tooLarge(path, bundled.byteLength, maxBytes);
       return loadPackFromString(bundled.toString('utf-8'), path);

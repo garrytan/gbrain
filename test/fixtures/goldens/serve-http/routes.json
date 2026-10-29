@@ -524,7 +524,7 @@
     {
       "handlers": [
         "withBearerScopeHint(requireBearerAuth({ verifier : resourceVerifier , resourceMetadataUrl }), [ 'read' , 'write' ])",
-        "<inline>"
+        "toNodeHandler(mcpHandler, { onerror : e => console . error ( 'MCP request handler error:' , e . message ) , })"
       ],
       "method": "post",
       "path": "/mcp",

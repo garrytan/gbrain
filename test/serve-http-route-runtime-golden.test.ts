@@ -163,7 +163,7 @@ const AST_TO_RUNTIME: Array<[RegExp, string]> = [
   [/^requireAdmin$/, 'requireAdmin'],
   [/^(ccRateLimiter|adminLimits\.(total|failures|consent)|ingestRateLimiter|githubWebhookLimiter)$/, 'rateLimit'],
   [/^authRouter$/, 'router'],
-  [/^(<inline>|mountOAuthCorsGate\(.*|metricsTrackingMiddleware\(.*|withBearerScopeHint\(.*|requireBearerAuth\(.*)$/, '<anonymous>'],
+  [/^(<inline>|mountOAuthCorsGate\(.*|metricsTrackingMiddleware\(.*|withBearerScopeHint\(.*|requireBearerAuth\(.*|toNodeHandler\(.*)$/, '<anonymous>'],
 ];
 
 function runtimeBase(astIdentity: string): string {

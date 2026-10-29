@@ -6,11 +6,9 @@
  */
 import { createHash } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { DEFAULT_MAX_REQUEST_BODY_SIZE } from '@modelcontextprotocol/sdk/server/requestBody.js';
-import { ListToolsRequestSchema, CallToolRequestSchema, type CallToolRequest } from '@modelcontextprotocol/sdk/types.js';
-import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
+import { Server, createMcpHandler, DEFAULT_MAX_REQUEST_BODY_SIZE, type ListToolsResult, type CallToolResult, type CallToolRequest } from '@modelcontextprotocol/server';
+import { toNodeHandler } from '@modelcontextprotocol/node';
+import { requireBearerAuth } from '@modelcontextprotocol/express';
 import { opAllowedForBoundClient } from '../core/operations.ts';
 import { authTransport } from '../core/ops/contract.ts';
 import type { AuthInfo, Operation } from '../core/operations.ts';
@@ -47,6 +45,8 @@ import { executeRawJsonb } from '../core/sql-query.ts';
 import { withRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { withBearerScopeHint } from './serve-http-oauth.ts';
 import type { ServeHttpContext } from './serve-http.ts';
+
+type McpCallContext = Parameters<Parameters<typeof createMcpHandler>[0]>[0];
 
 /** Per-request state shared by the tools/list and tools/call handlers of one POST /mcp. */
 interface McpRequestState {
@@ -122,16 +122,25 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
   // #5277: hint every scope a connector may need. Clients that request exactly
   // the hinted scope and never step up (claude.ai connectors) otherwise stay
   // read-only; grantScopes still caps each grant to the client row's scope.
-  app.post('/mcp', withBearerScopeHint(
-    requireBearerAuth({ verifier: resourceVerifier, resourceMetadataUrl }), ['read', 'write'],
-  ), (req: Request, res: Response) => withRequestConfigSnapshot(engine, () => handleMcpPost(req, res)));
+  //
+  // Dual-era MCP over SDK v2: one factory serves the modern 2026-07-28
+  // per-request `_meta`/server/discover path AND 2025-era `initialize`
+  // traffic through the stateless legacy fallback. The era comes from the
+  // request body — a `MCP-Protocol-Version` header is transport metadata, not
+  // the switch. The connector owns the per-request lifecycle (the v1 form
+  // needed a hand-rolled `res.on('close')` teardown, #2844): each request gets
+  // a FRESH `Server` from the factory below, never a shared instance.
+  // #6721: one config snapshot serves every config read of one POST /mcp.
+  const mcpHandler = createMcpHandler((mcpCtx): Promise<Server> => withRequestConfigSnapshot(engine, () => requestServer(mcpCtx)), { legacy: 'stateless' });
 
-  // #6721: one config snapshot serves every config read of one POST /mcp (the
-  // surface, row-shape and writeback reads below, tools/list and a read op's
-  // dispatch); dispatch reads live for a write op (config-snapshot.ts).
-  async function handleMcpPost(req: Request, res: Response): Promise<void> {
+  async function requestServer(mcpCtx: McpCallContext): Promise<Server> {
     const startTime = Date.now();
-    const authInfo = (req as any).auth as AuthInfo;
+    // toNodeHandler forwards the bearer middleware's `req.auth` (gbrain's
+    // extended AuthInfo, threaded through by verifyAccessToken) as
+    // `ctx.authInfo` — pass-through, never derived from headers. The SDK
+    // types it as the base AuthInfo shape.
+    const authInfo = mcpCtx.authInfo as AuthInfo;
+    const clientHeader = mcpCtx.requestInfo?.headers.get(GBRAIN_CLIENT_HEADER) ?? null;
 
     // Human-readable agent name is now threaded through AuthInfo by
     // verifyAccessToken (which JOINs oauth_clients in its existing token
@@ -145,8 +154,8 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
     // Ambient writeback (opt-in, default off) resolves CONCURRENTLY with the
     // surface read (performance review, this wave — the two independent DB
     // waits must not serialize; an initialize-only resolve is NOT possible
-    // here because /mcp has no JSON middleware, so req.body is undefined
-    // until the SDK transport reads the stream — verified by the OAuth
+    // here because /mcp has no JSON middleware, so the request body is not
+    // parsed until the connector reads the stream — verified by the OAuth
     // lifecycle test, which caught exactly that regression). Restart-free
     // like the publish gates, fail-closed with a per-engine last-known-good
     // bundle so a transient config blip serves the previous bundle instead
@@ -164,17 +173,25 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
     ]);
     // C1: gbrain's thin client keeps full rows. The header is unverified and
     // selects a row shape only; it never gates anything security-relevant.
-    const resultRows = resultRowsForRequest(req.get(GBRAIN_CLIENT_HEADER), hostResultRows);
+    const resultRows = resultRowsForRequest(clientHeader, hostResultRows);
     const mcpOperations = filterOpsForSurface(mcpOperationsBase, surface)
       .filter(op => authInfo.allowedOperations == null || authInfo.allowedOperations.includes(op.name));
     authInfo.effectiveSurface = surface;
     const surfaceAllowedOps: ReadonlySet<string> | undefined =
       surface === 'full' && authInfo.allowedOperations == null ? undefined : new Set(mcpOperations.map(o => o.name));
-    const thinClient = isGbrainThinClient(req.get(GBRAIN_CLIENT_HEADER));
+    const thinClient = isGbrainThinClient(clientHeader);
     const state: McpRequestState = { authInfo, agentName, startTime, mcpOperations, surface, surfaceCeiling, surfaceAllowedOps, resultRows, thinClient };
-    const server = createMcpRequestServer(ctx, state, writeback);
-    await serveMcpRequest(server, req, res);
+    return createMcpRequestServer(ctx, state, writeback);
   }
+
+  app.post('/mcp', withBearerScopeHint(
+    requireBearerAuth({ verifier: resourceVerifier, resourceMetadataUrl }), ['read', 'write'],
+  ), toNodeHandler(mcpHandler, {
+    // F14 parity: the adapter answers a JSON-RPC 500 envelope on its own, so
+    // clients never see express's HTML error page; log it like the v1
+    // handler did (reporting only — it never alters the response).
+    onerror: e => console.error('MCP request handler error:', e.message),
+  }));
 }
 
 function createMcpRequestServer(
@@ -222,8 +239,16 @@ function createMcpRequestServer(
       localFederatedSourceIds: await noGrantFederatedScope(engine, authInfo.hasSourceGrant, sourceId),
       allowedOps: surfaceAllowedOps, surface, surfaceCeiling };
   }));
-  server.setRequestHandler(ListToolsRequestSchema, async () => listMcpTools(ctx, state));
-  server.setRequestHandler(CallToolRequestSchema, async (request) => callMcpTool(ctx, state, request));
+  // gbrain builds v1-shaped tool defs and result blocks; v2 narrows
+  // `inputSchema`/`content`, so the wire shapes are asserted at entry.
+  server.setRequestHandler('tools/list', async (): Promise<ListToolsResult> => {
+    const listed = await listMcpTools(ctx, state);
+    return listed as unknown as ListToolsResult;
+  });
+  server.setRequestHandler('tools/call', async (request): Promise<CallToolResult> => {
+    const result = await callMcpTool(ctx, state, request);
+    return result as unknown as CallToolResult;
+  });
   return server;
 }
 
@@ -617,25 +642,4 @@ async function recordMcpToolResult(
     timestamp: new Date().toISOString(),
   });
   return toolResult;
-}
-
-async function serveMcpRequest(server: Server, req: Request, res: Response): Promise<void> {
-  // F14: wrap transport setup + handleRequest in try/catch. Without this,
-  // an SDK-level throw (e.g., schema parse failure on a malformed request)
-  // propagates to express's default error handler, which renders an HTML
-  // error page — clients expecting JSON-RPC envelopes break. On
-  // !res.headersSent we emit a minimal JSON 500 so the client at least
-  // gets parseable JSON back.
-  try {
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined as any });
-    // #2844: per-request teardown (SDK stateless pattern) — without it every POST /mcp leaks the transport+Server pair (~3GB/day RSS). Registered BEFORE connect/handleRequest so early disconnects and handleRequest throws still clean up; best-effort catches so cleanup never surfaces an unhandledRejection.
-    res.on('close', () => { transport.close().catch(() => {}); server.close().catch(() => {}); });
-    await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
-  } catch (e) {
-    console.error('MCP request handler error:', e instanceof Error ? e.message : e);
-    if (!res.headersSent) {
-      res.status(500).json(toAgentError(e, { transport: 'http', render: dispatchRenderContext({ remote: true, transport: 'http' }) }));
-    }
-  }
 }

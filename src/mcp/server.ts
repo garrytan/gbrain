@@ -1,8 +1,7 @@
 import { noteForwardProgress } from '../core/forward-progress.ts';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { Server, type ListToolsResult, type CallToolResult, type CallToolRequest, type McpServerFactory } from '@modelcontextprotocol/server';
 import type { Readable, Writable } from 'node:stream';
-import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { StdioServerTransport, serveStdio } from '@modelcontextprotocol/server/stdio';
 import type { BrainEngine } from '../core/engine.ts';
 import { opError, type OperationMeta } from '../core/ops/contract.ts';
 import { OPERATION_MANIFEST } from '../core/operation-manifest.generated.ts';
@@ -367,56 +366,14 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     remember: session.allowedOps ? session.allowedOps.has('remember') : true,
     extractFacts: session.allowedOps ? session.allowedOps.has('extract_facts') : true,
   }) : null;
-  server = new Server(
-    { name: 'gbrain', version: VERSION },
-    // listChanged: a client that handshakes during DEGRADED mode receives the
-    // gate-hidden catalog (stdioVisibleTools fail-closes every publishGateKey
-    // op on engine failure) and caches it — recovery sends the notification
-    // so the full catalog comes back without a harness restart.
-    {
-      capabilities: { tools: { listChanged: true }, resources: {} },
-      // #4748: canonical contract (+ opt-in ambient-writeback section) plus the
-      // optional operator-set deployment identity, appended last.
-      instructions: resolveMcpInstructions(config, process.env, { writeback: writebackOpts }),
-    },
-  );
-  const listing = stdioToolListing(() => resolveAdvertisedSurface(isEngineDegraded(engine) ? null : engine, config), session, server);
-  // F1: callable-set contract + readiness tail (or status-only line), resolved at client initialize.
-  installInstructionsResolver(server, async () => {
-    if (statusMode && isEngineDegraded(engine)) {
-      return resolveMcpInstructions(config, process.env, { tools: { callable: n => n === STATUS_TOOL_NAME, statusLine: statusInstructionLine(statusMode) } });
-    }
-    const visibleOps = await stdioVisibleTools(engine, session.surfacedOps), visible = new Set(visibleOps.map(op => op.name));
-    return resolveMcpInstructions(config, process.env, {
-      writeback: writebackOpts, ...await readInstructionContent(engine),
-      tools: { callable: n => visible.has(n), readiness: await instructionReadiness(engine, config, 'stdio'), hiddenCallable: visibleOps.length - (await listing.listed(visibleOps)).length },
-    });
-  }, gate.initializeAnswered);
-
-  // WP3: strict-params schema emission, resolved ONCE at startup from the
-  installCapabilitiesResource(server, async () => {
-    if (statusMode && isEngineDegraded(engine)) return { transport: 'stdio', status_only: statusPayload(statusMode) };
-    const scope = await resolveMcpStdioSourceScope(engine);
-    const available = (await stdioVisibleTools(engine, session.surfacedOps)).map(op => op.name);
-    let scopes: readonly string[] = [];
-    if (!isEngineDegraded(engine)) {
-      try {
-        const verified = await verifyLocalWriter(engine, await readLocalWriter(engine, 'stdio'));
-        if (verified.remote) scopes = verified.grant.scopes;
-      } catch {}
-    }
-    return { transport: 'stdio', scopes, surface: session.surface, surface_source: session.source, access: session.readOnly ? 'read-only' : 'full', source_id: scope.sourceId,
-      available_operations: available,
-      administration: mcpAdministrationGuidance(),
-      shared_skills: { protocol_version: 2, catalog: available.includes('list_skills') && available.includes('get_skill'),
-        can_join: available.includes('join_brain'), can_edit: available.includes('put_skill') && available.includes('delete_skill'), native_activation: 'unverified' },
-      ...await stdioCapabilityReadiness(engine, config),
-      note: 'This local MCP pipe has no OAuth profile; agent-facing operation restrictions still apply.' };
-  }, bootGatedReads(createSkillResources(engine, async () => {
-    const scope = await resolveMcpStdioSourceScope(engine);
-    return { remote: true, transport: 'stdio', sourceId: scope.sourceId,
-      localFederatedSourceIds: scope.localFederatedSourceIds, allowedOps: session.allowedOps, surface: session.surface, config: config ?? undefined };
-  }), gate.awaitBoot));
+  // Tool listings bind to the CURRENT connection instance: serveStdio pins ONE
+  // instance per connection from the factory below, so the notifier and the
+  // helpers outside it (sendToolListChanged on engine recovery or a
+  // session-surface widen) route through whatever instance is live rather
+  // than a captured one.
+  const listing = stdioToolListing(() => resolveAdvertisedSurface(isEngineDegraded(engine) ? null : engine, config), session, {
+    sendToolListChanged: async () => { await server?.sendToolListChanged(); },
+  });
 
   // FILE config plane only — stdio has no per-request list cycle, so a
   // `mcp.strict_params` flip needs a serve restart here (deliberate; the
@@ -434,11 +391,11 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // subtraction happens per request (stdioVisibleTools) — no caching, so a
   // `gbrain config set mcp.publish_skills true` takes effect on the next
   // tools/list without a serve restart (matches the HTTP transports).
-  server.setRequestHandler(ListToolsRequestSchema, async () => trackStdioRpc(() => gate.list(async () => ({
+  const stdioListHandler = async () => trackStdioRpc(() => gate.list(async () => ({
     tools: statusMode && isEngineDegraded(engine)
       ? [STATUS_TOOL_DEF]
       : buildToolDefs(await listing.listed(await stdioVisibleTools(engine, session.surfacedOps)), { strictParams }),
-  }))));
+  })));
 
   // #4583 (fixes #4564's misrouted-write symptom): once-per-process advisory
   // for unscoped default writes on a multi-source brain; latch semantics live
@@ -446,12 +403,10 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // opt-in fail-closed guard owns that lane).
   const defaultWriteAdvisory = createDefaultWriteAdvisory(engine, { enabled: !opts.sourceGuard });
 
-  // Dispatch tool calls via shared dispatch.ts (parity with HTTP transport).
-  // MCP stdio callers are remote/untrusted; dispatch defaults remote=true.
-  // The MCP SDK's response type widened in 1.29 to allow a managed-task wrapper;
-  // gbrain ops are synchronous, so we return the legacy `{ content, isError? }`
-  // shape and cast through `any` (the SDK accepts it via the ServerResult union).
-  server.setRequestHandler(CallToolRequestSchema, async (request: any): Promise<any> => trackStdioRpc(() => withRequestConfigSnapshot(engine, async () => {
+  // The MCP SDK's v2 result map narrows `tools/call` to CallToolResult; gbrain
+  // ops are synchronous, so the dispatcher's `{ content, isError? }` shape is
+  // returned as-is (no managed-task wrapper).
+  const stdioCallHandler = async (request: CallToolRequest) => trackStdioRpc(() => withRequestConfigSnapshot(engine, async () => {
     const { name, arguments: params } = request.params;
     const [{ dispatchToolCall, dispatchRenderContext, requestMetaSessionId }, { getBrainHotMemoryMeta }] = await gate.awaitCall();
     // F4: status-only mode answers gbrain_status and refuses the rest until
@@ -517,11 +472,83 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       surfaceCeiling: session.surface, stdioSurface: session, revealTools: listing.reveal, isListed: listing.isListed,
       resultRows,
     }), dispatchRenderContext);
-  })));
+  }));
 
-  const transport = mcpStdioTransport();
+  // Dual-era stdio over SDK v2: serveStdio owns the era decision for the
+  // connection (an `initialize`/claim-less opening serves 2025 legacy via
+  // `legacy: 'serve'`; a `_meta`/server/discover opening serves the modern
+  // 2026-07-28 path) and pins ONE instance from this factory per connection,
+  // so the same factory backs both eras and they cannot drift. `server` holds
+  // the live instance for the helpers outside the factory.
+  const factory: McpServerFactory = () => {
+    const mcp = new Server(
+      { name: 'gbrain', version: VERSION },
+      // listChanged: a client that handshakes during DEGRADED mode receives the
+      // gate-hidden catalog (stdioVisibleTools fail-closes every publishGateKey
+      // op on engine failure) and caches it — recovery sends the notification
+      // so the full catalog comes back without a harness restart.
+      {
+        capabilities: { tools: { listChanged: true }, resources: {} },
+        // #4748: canonical contract (+ opt-in ambient-writeback section) plus the
+        // optional operator-set deployment identity, appended last.
+        instructions: resolveMcpInstructions(config, process.env, { writeback: writebackOpts }),
+      },
+    );
+    server = mcp;
+    // F1: callable-set contract + readiness tail (or status-only line), resolved at client initialize.
+    installInstructionsResolver(mcp, async () => {
+      if (statusMode && isEngineDegraded(engine)) {
+        return resolveMcpInstructions(config, process.env, { tools: { callable: n => n === STATUS_TOOL_NAME, statusLine: statusInstructionLine(statusMode) } });
+      }
+      const visibleOps = await stdioVisibleTools(engine, session.surfacedOps), visible = new Set(visibleOps.map(op => op.name));
+      return resolveMcpInstructions(config, process.env, {
+        writeback: writebackOpts,
+        tools: { callable: n => visible.has(n), readiness: await instructionReadiness(engine, config, 'stdio'), hiddenCallable: visibleOps.length - (await listing.listed(visibleOps)).length },
+      });
+    }, gate.initializeAnswered);
+
+    // WP3: strict-params schema emission, resolved ONCE at startup from the
+    installCapabilitiesResource(mcp, async () => {
+      if (statusMode && isEngineDegraded(engine)) return { transport: 'stdio', status_only: statusPayload(statusMode) };
+      const scope = await resolveMcpStdioSourceScope(engine);
+      const available = (await stdioVisibleTools(engine, session.surfacedOps)).map(op => op.name);
+      let scopes: readonly string[] = [];
+      if (!isEngineDegraded(engine)) {
+        try {
+          const verified = await verifyLocalWriter(engine, await readLocalWriter(engine, 'stdio'));
+          if (verified.remote) scopes = verified.grant.scopes;
+        } catch {}
+      }
+      return { transport: 'stdio', scopes, surface: session.surface, surface_source: session.source, access: session.readOnly ? 'read-only' : 'full', source_id: scope.sourceId,
+        available_operations: available,
+        administration: mcpAdministrationGuidance(),
+        shared_skills: { protocol_version: 2, catalog: available.includes('list_skills') && available.includes('get_skill'),
+          can_join: available.includes('join_brain'), can_edit: available.includes('put_skill') && available.includes('delete_skill'), native_activation: 'unverified' },
+        ...await stdioCapabilityReadiness(engine, config),
+        note: 'This local MCP pipe has no OAuth profile; agent-facing operation restrictions still apply.' };
+    }, bootGatedReads(createSkillResources(engine, async () => {
+      const scope = await resolveMcpStdioSourceScope(engine);
+      return { remote: true, transport: 'stdio', sourceId: scope.sourceId,
+        localFederatedSourceIds: scope.localFederatedSourceIds, allowedOps: session.allowedOps, surface: session.surface, config: config ?? undefined };
+    }), gate.awaitBoot));
+
+    // gbrain's tool defs and result blocks are the v1-shaped wire superset
+    // (the v1 SDK accepted them directly); v2's ListToolsResult /
+    // CallToolResult narrow `inputSchema` / `content`, so the handlers are
+    // asserted once here rather than on every return path.
+    mcp.setRequestHandler('tools/list', stdioListHandler as unknown as () => Promise<ListToolsResult>);
+    mcp.setRequestHandler('tools/call', stdioCallHandler as unknown as (request: CallToolRequest) => Promise<CallToolResult>);
+    return mcp;
+  };
+  // serveStdio owns the transport internally and its handle tears the pinned
+  // instance down. gbrain still constructs the transport itself to keep a
+  // disconnect detector: serveStdio OVERWRITES `onclose` when it constructs
+  // and never reads it back, so gbrain's shutdown hook is chained AFTER
+  // serveStdio returns (below). The #870 MCP_STDIO=1 lane skips the stdin
+  // listeners, making transport close the only clean-disconnect detector there.
+  const stdioTransport = mcpStdioTransport();
   bootPhase('mcp_connect');
-  await server.connect(transport);
+  const serveHandle = serveStdio(factory, { legacy: 'serve', transport: stdioTransport });
 
   // Engine-dependent boot: the resolve-IPC listener, session-cursor GC, and
   // the startup maintenance sweep all touch the engine. In DEGRADED mode
@@ -577,8 +604,10 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       // would leak a socket binding past the shutdown close.
       if (shuttingDown) return;
       process.stderr.write('[gbrain-serve] RECOVERED: database reachable — full service restored.\n');
-      // Refresh clients holding the degraded (gate-hidden) tool catalog.
-      Promise.resolve(server.sendToolListChanged()).catch(() => { /* best-effort */ });
+      // Refresh clients holding the degraded (gate-hidden) tool catalog. The
+      // instance is the one serveStdio pinned for this connection (null until
+      // the factory ran), so the optional call is also the null guard.
+      Promise.resolve(server?.sendToolListChanged()).catch(() => { /* best-effort */ });
       bootEngineDependents().catch(() => { /* deferred boot is best-effort */ });
     });
   } else {
@@ -606,6 +635,10 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       // serve.ts's beginShutdown races here on the same signals): the job's
       // final checkpoint flush and row-lock release need the live engine.
       .then(() => import('../core/serve-sync-runner.ts').then((m) => m.shutdownDelegatedSync()))
+      // serveStdio's handle closes the pinned per-connection instance and the
+      // transport before the engine goes away (idempotent: serveStdio may have
+      // already closed it on the disconnect path).
+      .then(() => serveHandle.close())
       .catch(() => {})
       .then(() => Promise.resolve(engine.disconnect?.()))
       .catch(() => {})
@@ -620,8 +653,15 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     process.stdin.on('end', () => shutdown('stdin end'));
     process.stdin.on('close', () => shutdown('stdin close'));
   }
-  // @ts-ignore — SDK exposes onclose on transport
-  transport.onclose = () => shutdown('transport close');
+  // serveStdio assigns the transport's onclose when it constructs, so gbrain's
+  // handler is chained AFTER that assignment (never before) — the SDK's own
+  // teardown runs first, then this shutdown. Covers the #870 lane above, where
+  // the stdin listeners are skipped.
+  const sdkOnclose = stdioTransport.onclose;
+  stdioTransport.onclose = () => {
+    sdkOnclose?.();
+    shutdown('transport close');
+  };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGHUP', () => shutdown('SIGHUP'));

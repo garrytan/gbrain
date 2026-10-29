@@ -439,6 +439,32 @@ describe('loadPackFromFile size guard (#6432)', () => {
   });
 });
 
+describe('loadPackFromFile bundled virtual paths (compiled binary)', () => {
+  // A compiled bun binary resolves `with { type: 'file' }` assets inside Bun's
+  // virtual filesystem: `/$bunfs/root/...` on POSIX and `B:/~BUN/root/...`
+  // (or the backslash form) on Windows. That vfs serves readFileSync but has
+  // no descriptors, so the openSync fallback must recognize BOTH forms — the
+  // Windows form used to rethrow the openSync ENOENT, and every bundled pack
+  // read died with "cannot read pack file".
+  const yaml = 'api_version: gbrain-schema-pack-v1\nname: minimal\nversion: 0.1.0\ndescription: a tiny pack\nextends: null';
+  test.each([
+    ['/$bunfs/root/base/gbrain-base.yaml'],
+    ['B:/~BUN/root/base/gbrain-base.yaml'],
+    ['B:\\~BUN\\root\\base\\gbrain-base.yaml'],
+  ])('%s is read through readFileSync when openSync cannot take a descriptor', (path) => {
+    const original = fs.readFileSync;
+    const reads = spyOn(fs, 'readFileSync').mockImplementation(((p: unknown, ...rest: unknown[]) =>
+      p === path ? Buffer.from(yaml) : (original as (...a: unknown[]) => unknown)(p, ...rest)) as unknown as typeof fs.readFileSync);
+    try {
+      const pack = loadPackFromFile(path);
+      expect(pack.name).toBe('minimal');
+      expect(reads.mock.calls.some(call => call[0] === path)).toBe(true);
+    } finally {
+      reads.mockRestore();
+    }
+  });
+});
+
 describe('loadPackFromString end-to-end', () => {
   test('YAML round-trip', () => {
     const yaml = `api_version: gbrain-schema-pack-v1

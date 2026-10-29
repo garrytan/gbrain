@@ -25,8 +25,8 @@ import { randomBytes, createHash } from 'crypto';
 import { createMetricsCounters, metricsTrackingMiddleware, mountHealth, mountMetrics, type MetricsCounters } from './serve-http-metrics.ts';
 import { ADMIN_TOKEN_SHAPE } from '../core/serve-service.ts';
 import { getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
-import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
-import type { OAuthTokenVerifier } from '@modelcontextprotocol/sdk/server/auth/provider.js';
+// v2 bearer auth maps a branded OAuthError (InvalidToken) to a 401 challenge; a v1 InvalidTokenError would answer 500.
+import { OAuthError, OAuthErrorCode, type OAuthTokenVerifier } from '@modelcontextprotocol/server';
 import { createAdminLimiters } from './serve-http-admin-limits.ts';
 import { mountOAuth, mountOAuthConsent, mountOwnerLoginLinks } from './serve-http-oauth.ts';
 import { createRequireAdmin, mountAdminApi, mountAdminLogin } from './serve-http-admin-api.ts';
@@ -789,7 +789,7 @@ export async function buildServeHttpApp(app: express.Express, engine: BrainEngin
         try {
           canonicalOAuthResource(auth.resource, mcpResourceUrl);
         } catch {
-          throw new InvalidTokenError('Token is bound to a different resource');
+          throw new OAuthError(OAuthErrorCode.InvalidToken, 'Token is bound to a different resource');
         }
       }
       return auth;
