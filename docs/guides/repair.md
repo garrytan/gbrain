@@ -168,6 +168,7 @@ work behind exits 0, so scripts should also check `results[].complete`.
 | `aliases` | `dangling_aliases` (orphaned rows) | Explicit-only. Deletes free-text page aliases and slug redirects whose target page has no row at all (a page purged before purge removed its aliases, #6619, or a hard-deleted page), each target rechecked under its page lock; a coordinated maintenance write on a managed brain. A redirect from an old name of a page that still exists is never touched. See [aliases](#aliases). | `soft_deleted_target`: aliases of a soft-deleted page, kept for `gbrain restore` and removed when the page is purged. |
 | `rename-identity` | `rename_identity_downgrades` | Explicit-only, preview-bound, destructive consent. For an inexact Git rename that sync split into a delete plus an add (#6729): carries the old page's identity (id, version history, timeline, links, facts, aliases) onto the new slug, imports the new file onto it as an edit and retires the provisional page; or, with `--close`, settles the pair and moves nothing. `--slug <new-slug>` (and `--from <old-slug>`) names one pair; `--apply --expect <hash> --yes`. See [rename identity](#rename-identity). | `fact_rows_collide` (a fence row of the old page the new file does not keep with the same claim); `managed_remedy_unavailable` (a carry on a managed source; `--close` is the remedy there); pages changed after the preview (`changed_since_preview`). |
 | `overwritten-edits` | `sync_overwritten_db_edits` | Explicit-only, preview-bound. Restores database edits that an incremental managed sync replaced with a committed file edit and no `file_drift` hold (#6712, fixed by #6887). It restores only what the records prove: a database-only revision (its receipt published no file) archived by a managed-sync import that wrote different content, with no later revision holding the edit again. The preview diffs the live page against the edit; `--apply --expect <hash>` reverts each page to that version through a revision-bound, database-only `revert_version` and holds the committed file `file_drift` when it differs. See [overwritten edits](#overwritten-edits). | `unknown_*` findings (no persistence outcome on the writer's receipt, the import's content no longer readable, a segmented version), listed but not restored; pages that moved after the preview (`changed_since_preview`). |
+| `provenance` | `provenance_stamp_drift` | Explicit-only, preview-bound, destructive. Restores provenance stamps and lowering markers that remote writes removed before #7892, and stamps the stored tier as the marker on classified pages whose file would re-read higher (#7918). Only lowers; a lowered page files a `lower_page` proposal. See [provenance](#provenance). | The owner's own edits (`local`), pages a later local write also changed (`needs_review`), unattributed writes without `--include-ambiguous`; pages that moved after the preview (`preview_changed`). |
 | `missing-tables` | `schema_missing_tables` | Explicit-only, preview-bound. Recreates, empty, a rebuildable cache table (`query_cache`, `code_traversal_cache`) that the applied migrations created but the brain no longer has, on a brain whose schema version already covers its creating migration, so `apply-migrations` never recreates it (#6911). DDL only (`IF NOT EXISTS`), no journal admission, brain-wide. See [missing tables](#missing-tables). | `user_data_tables`: a missing table that holds user data; this repair never recreates it, so restore its rows from a backup first. `other_tables`: a missing table that holds no user data; `gbrain init --migrate-only` recreates it if the base schema defines it. |
 | `url-clone-fences` | none (`gbrain sync --source <id>` stops at the pull with `pull_blocked_local_changes`) | Explicit-only, preview-bound, destructive consent. Clears the `## Facts` fence rows an older gbrain appended to files of a clone it owns (`gbrain sources add --url`), which block every `git pull --ff-only` that touches those files (#6946). The preview proves each changed file differs from HEAD only by appended fence rows; `--apply --expect <hash> --yes` backs each file up, keeps its rows database-only and restores the file from HEAD. Unmanaged brains only. See [URL clone fences](#url-clone-fences). | `non_fence_edit`, `unparsed_fence`, `staged_change`, `deleted`, `not_in_head`, `unreadable_checkout`: a file with any other difference from HEAD, named with why; a file whose HEAD would not import as its page (`visibility_noncanonical` and the other import holds): apply keeps its rows database-only and restores the file so the clone can pull, but does not import HEAD and reports `held`; files that changed after the preview (`changed_since_preview`). |
 | `segmented-mirror` | none (doctor does not read segmented files; run the preview once if the brain ran a version before v0.60.299.0) | Explicit-only, preview-bound, destructive consent. Rewrites the canonical file of a page stored in segments that an older binary's withdrawal mirror passed by (`page_body_segmented`), so the file still holds a row `forget`, `forget_fact` or `purge_fact` removed from the database. The file becomes the page's canonical render (`gbrain export`'s bytes), written by the withdrawal mirror and committed by its Git effect. See [segmented mirror](#segmented-mirror). | `file_database_drift`: the file also differs from the database for another reason; it is listed held and never rewritten. `not_owner_host`: the preview ran off the source's owner host and read none of its files. |
@@ -738,6 +739,56 @@ gbrain repair file-drift --source <id> --slug <slug> --prefer database --apply -
 
 A restored page is not listed again.
 
+<a id="provenance"></a>
+### Provenance stamps and trust markers
+
+**Say to your agent:** *"Check whether any page lost the record of where it came from and show me what the repair would change."*
+
+Before #7892, a remote write could change or drop a page's provenance stamps
+(`source_kind`, `ingested_via`, `ingested_at`) or its lowering `trust_tier`
+marker. The page then reads as more trusted than its origin allows the next time
+its file is re-read (a rebuild, a backfill). Separately (#7918), a classified
+page below the owner tiers whose file carries no marker, or a higher one, would
+re-read above its stored tier. Doctor `provenance_stamp_drift` counts both per
+source from page history and write receipts, split by who made the write
+(remote, local, unattributed), and names the first pages. It writes nothing.
+
+Preview, show the user the list, then apply after they agree:
+
+```bash
+gbrain repair provenance --source <id>                           # each page: stamps, marker and tier before -> after, and who wrote the change
+gbrain repair provenance --source <id> --slug inbox/a            # one page
+gbrain repair provenance --source <id> --include-ambiguous       # also writes with no recorded writer
+gbrain repair provenance --source <id> --apply --expect <preview-hash> --yes
+```
+
+Each listed page has a class:
+
+- `remote`: a remote write made the change. The apply restores each stamp to
+  the server-written `pages` column when it has one, else to the value just
+  before the first remote change, stamps the lowest cap the page had as its
+  marker, and lowers the page to it.
+- `ambiguous`: no recorded writer (written before write attribution). Planned
+  only with `--include-ambiguous`, which changes the hash.
+- `restamp`: the classified page from #7918. The apply stamps its stored tier as
+  the marker; the row keeps its tier.
+- `local` and `needs_review`: the owner's own edit, or a page a later local
+  write also changed. Listed, never written; edit those pages by hand.
+
+Every change only lowers: no stamp, marker or tier is ever raised. A lowered
+page gets a `lower_page` proposal (proposer `provenance_repair`) that
+`gbrain trust review` confirms or reverts, and rows derived from the page
+follow it down. The apply writes one owner page write per page, bound to the
+previewed revision and change, so a page that moved since is `preview_changed`
+and nothing is written. On a managed brain the write publishes the file through
+the coordinator (Git stays the parent); on a classic checkout it renders the
+repaired page to its file in the same transaction, and a page whose file holds
+an edit the database lacks (run `gbrain sync` first) or whose checkout cannot
+be written is listed `needs_review` instead; on a repo-less brain the database
+is the record. It runs only from the local CLI on the brain host, and
+never from `--all`, the remediation plan or an upgrade. A second preview lists
+nothing.
+
 <a id="orphan-bindings"></a>
 ### Orphan persistence bindings
 
@@ -1215,6 +1266,14 @@ mirror pages and pages written while their source was unbound publish to the
 database only and are never ghosts. Doctor `undeclared_db_only_pages` is a
 separate audit. A preview lists at most 1,000 ghosts; apply them, then preview
 again for the rest. Sync never removes ghost pages by itself.
+
+A code or image page (a synced `.json`, `.ts` or `.png` file) is checked at
+the file it records, never at `<slug>.md`: while that file is there the page
+is not a ghost. It is a ghost only when its recorded file is gone and no file
+sits at its slug path either, and the preview lists it at the recorded path. A
+page whose recorded path names no file inside the source (an absolute path, a
+path with `..`) is never a ghost and is never removed: doctor, `gbrain pages
+ghosts` and the preview list it apart with code `recorded_path_unresolvable`.
 
 <a id="uncommitted-deletions"></a>
 ### Uncommitted deletions
@@ -3420,6 +3479,7 @@ walk me through it before changing anything."*
 | Recall or hot memory returns facts from gbrain's own claude-cli sessions or from pasted text; doctor `captured_facts_active` warns; the upgrade banner prints `captured_facts_active: N (explicit_kind_required; …)` | `gbrain repair captured-facts` (add `--include-ambiguous` to include paste candidates) | `gbrain repair captured-facts --apply --expect <hash>` with the hash that preview printed | `gbrain doctor --only captured_facts_active --json` (`captured_facts_active` ok) | brain host, after the user agrees | `destructive` (quarantines facts) |
 | A stored fact reads `[redacted](…)` where a word such as "System" belongs; doctor `facts_redaction_marker` warns; `trust scan` flags the marker | `gbrain repair redacted-facts` | `gbrain repair redacted-facts --apply --expect <hash>` with the hash that preview printed | `gbrain doctor --only facts_redaction_marker --json` (ok, or only facts the preview listed as `ambiguous` or `unproven`) | brain host, after the user agrees | none |
 | Timelines put hundreds of facts on one day; doctor `fact_bulk_dates` warns that a day holds a bulk-loaded share of a source's facts | `gbrain repair fact-claim-dates --source <id>` | `gbrain repair fact-claim-dates --source <id> --apply --expect <hash> --yes` with the hash that preview printed | `gbrain repair fact-claim-dates --source <id>` lists nothing to move (doctor keeps warning while facts without a date in the claim keep the load day) | brain host, after the user agrees | none |
+| Doctor `provenance_stamp_drift` warns that pages lost their provenance stamps or trust marker, or would re-read above their stored tier | `gbrain repair provenance --source <id>` | `gbrain repair provenance --source <id> --apply --expect <hash> --yes` with the hash that preview printed | `gbrain doctor --only provenance_stamp_drift` is ok | brain host, after the user agrees | destructive |
 | A finished promise still shows on entity cards and in recall after its loop was closed; doctor `loop_facts_drift` warns; the upgrade banner prints `loop_facts_drift: N (explicit_kind_required; …)` | `gbrain repair loop-facts` | `gbrain repair loop-facts --apply --expect <hash>` | `gbrain doctor --only loop_facts_drift --json` (`loop_facts_drift` ok) | brain host, after the user agrees | `destructive` (retires facts) |
 | `gbrain upgrade` refuses with `requires Bun >=<floor>` (exit 78), or doctor `self_upgrade_health` says `Auto-upgrade to <target> held` | `bun --version` | `bun upgrade`, then `gbrain upgrade` ([Bun floor](upgrades-auto-update.md#bun-floor)) | `gbrain --version` shows the target; `gbrain doctor --only self_upgrade_health --json` (`self_upgrade_health` ok) | user | `persistent_install` |
 

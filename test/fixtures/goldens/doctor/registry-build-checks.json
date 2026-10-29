@@ -899,6 +899,10 @@
       },
       {
         "category": "brain",
+        "name": "provenance_stamp_drift"
+      },
+      {
+        "category": "brain",
         "name": "trust_scan"
       },
       {

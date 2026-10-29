@@ -235,6 +235,7 @@ test/link-preparation-shared-index.test.ts
 test/links-attendance-blocked.test.ts
 test/links-extraction-yield.test.ts
 test/list-jobs-row-bound.test.ts
+test/maintenance-lowering-7917-7918.test.ts
 test/maintenance-trust-marker-7905.test.ts
 test/managed-cycle-pull-upstream.test.ts
 test/managed-facts-withdrawal-recovery-6506.test.ts
@@ -417,6 +418,7 @@ test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
+test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
 test/purge-fact.test.ts
 test/purge-global-marker.test.ts

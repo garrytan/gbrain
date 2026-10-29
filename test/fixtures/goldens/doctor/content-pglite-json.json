@@ -3115,6 +3115,18 @@
         {
           "category": "brain",
           "details": {
+            "docs": "docs/guides/repair.md#provenance",
+            "sources": [],
+            "truncated": false
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No page has provenance stamps or a trust marker that another writer removed.",
+          "name": "provenance_stamp_drift",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "completed_at": null,
             "detector_version": 2,
             "total_unscanned": 0,

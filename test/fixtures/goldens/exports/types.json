@@ -5877,6 +5877,13 @@
       },
       {
         "kind": "function",
+        "name": "resolveRecordedSourceFilePath",
+        "signature": [
+          "(localPath: string, rawSourcePath: string | null | undefined, pageSlug?: string | null, slugRootMode?: \"git-root\" | \"source-root\", gitScope?: string[] | null) => string | null"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "resolveSourceLocalFilePath",
         "signature": [
           "(localPath: string, rawSourcePath: string | null | undefined, pageSlug?: string | null, slugRootMode?: \"git-root\" | \"source-root\", gitScope?: string[] | null) => string | null"

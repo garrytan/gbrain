@@ -3319,6 +3319,18 @@
           {
             "category": "brain",
             "details": {
+              "docs": "docs/guides/repair.md#provenance",
+              "sources": [],
+              "truncated": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No page has provenance stamps or a trust marker that another writer removed.",
+            "name": "provenance_stamp_drift",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "completed_at": null,
               "detector_version": 2,
               "total_unscanned": 0,
@@ -8107,6 +8119,18 @@
             "elapsed_ms": "<volatile>",
             "message": "12.9% of 31 row(s) have an unverified origin (unknown tier); the backfill has classified every row it has a signal for.",
             "name": "trust_tiers",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "docs": "docs/guides/repair.md#provenance",
+              "sources": [],
+              "truncated": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No page has provenance stamps or a trust marker that another writer removed.",
+            "name": "provenance_stamp_drift",
             "status": "ok"
           },
           {

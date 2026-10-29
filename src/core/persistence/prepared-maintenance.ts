@@ -33,7 +33,8 @@ import { assertPhysicalRoot } from './physical-root.ts';
 import { isConnectorSourceKind } from './connector-identity.ts';
 import { MaintenanceWriteWait } from './maintenance-wait.ts';
 import { auditConflictsCommand, FILE_DRIFT_MESSAGE, liveFileDrift } from './drift-conflicts.ts';
-import { declaredWriteTrust, lowerToDerivedTier, readDerivationDeclaration, recordTaintEdges, type DerivationDeclaration } from '../trust/taint.ts';
+import { lowerToDerivedTier, readDerivationDeclaration, recordTaintEdges, type DerivationDeclaration } from '../trust/taint.ts';
+import { derivationWriteTrust, recordAgentPageLowering, storedPageTier } from '../trust/page-write.ts';
 import { sameInstantTies } from '../facts/claim-ties.ts';
 import { factPreimages, recordConsolidationGeneration } from '../generations/adapters/fact-rows.ts';
 
@@ -548,21 +549,27 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
  * derived row when the publication changed no content column, and records
  * the complete input edges (ENG-7). A consolidation's takes fence edit
  * keeps the entity page's tier (page-prepare's fence-edit rule).
+ * #7918: a declaration that is present but unreadable publishes at `unknown`
+ * (fail closed) with no input edges. #7917: a page the publication lowered
+ * files a `lower_page` proposal the owner sees in `gbrain trust review`.
  */
 export async function prepareMaintenanceMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
   const prepared = await prepareMaintenanceKind(engine, row, config, clock);
+  const trust = derivationWriteTrust(row.intent);
+  if (!trust) return prepared;
   const declaration = readDerivationDeclaration(row.intent?.derivation);
-  if (!declaration) return prepared;
-  const trust = declaredWriteTrust(declaration);
   const consolidation = row.intent?.kind === 'managed_maintenance_consolidate';
   return { ...prepared, trust, apply: async (tx, preimage) => {
+    const snapshot = consolidation ? null : await tx.readPageSnapshot(row.slug, { sourceId: row.source_id });
+    const prior = snapshot ? { tier: await storedPageTier(tx, row.source_id, row.slug), revision: snapshot.revision } : null;
     const outcome = await prepared.apply(tx, preimage);
     const [derived] = consolidation ? (outcome.take_id ? [{ table: 'takes' as const, id: Number(outcome.take_id) }] : [])
       : (await tx.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [row.source_id, row.slug]))
         .map(page => ({ table: 'pages' as const, id: Number(page.id) }));
     if (derived) {
-      await lowerToDerivedTier(tx, derived.table, [derived.id], trust);
-      await recordTaintEdges(tx, { ...derived, sourceId: row.source_id }, declaration.inputs);
+      const lowered = await lowerToDerivedTier(tx, derived.table, [derived.id], trust);
+      if (declaration) await recordTaintEdges(tx, { ...derived, sourceId: row.source_id }, declaration.inputs);
+      if (lowered.length && prior?.tier) await recordAgentPageLowering(tx, row, { tier: prior.tier, revision: prior.revision });
     }
     return outcome;
   } };
