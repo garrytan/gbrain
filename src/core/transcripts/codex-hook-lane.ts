@@ -38,7 +38,8 @@ import { isPathContained } from '../path-confine.ts';
 import type { ConfineTranscriptResult, ParsedTranscript, ToolCallRecord } from './claude-code-jsonl.ts';
 import { capToolCallInput, TRANSCRIPT_HARD_CAP_BYTES, TRANSCRIPT_MAX_BYTES_DEFAULT } from './claude-code-jsonl.ts';
 import type { WindowTurn } from '../context/entity-salience.ts';
-import { isRepeatedCodexUserTurn, mapCodexLine } from './codex.ts';
+import { mapCodexLine } from './codex.ts';
+import { CodexMessageFilter } from './codex-messages.ts';
 
 /** Head window kept on over-budget reads: session_meta is byte 0 of a rollout
  * and carries the identity a pure tail read would lose (codex.ts rationale). */
@@ -154,6 +155,7 @@ export function parseCodexHookTranscript(
   let parsedLines = 0;
   let skippedLines = 0;
   let headerLines = 0;
+  const messageFilter = new CodexMessageFilter();
 
   for (const line of raw.split('\n')) {
     const t = line.trim();
@@ -167,6 +169,7 @@ export function parseCodexHookTranscript(
     }
     parsedLines++;
     const mapped = mapCodexLine(entry);
+    const admit = messageFilter.accept(mapped);
     switch (mapped.kind) {
       case 'session':
         headerLines++;
@@ -176,11 +179,12 @@ export function parseCodexHookTranscript(
         if (!cwd && mapped.cwd) cwd = mapped.cwd;
         break;
       case 'user':
-        if (isRepeatedCodexUserTurn(turns.at(-1), mapped.message.text)) break;
+        if (!admit) break;
         genuineUserTurnIndexes.push(turns.length);
         turns.push({ role: mapped.message.role, text: mapped.message.text });
         break;
       case 'assistant':
+        if (!admit) break;
         turns.push({ role: mapped.message.role, text: mapped.message.text });
         break;
       case 'tool_call':
@@ -199,6 +203,7 @@ export function parseCodexHookTranscript(
         boundaryTurnIndexes.push(turns.length);
         break;
       case 'skip':
+      case 'turn_start':
         break;
     }
   }
