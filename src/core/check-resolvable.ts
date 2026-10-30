@@ -28,6 +28,7 @@ import {
   loadSkillTriggerIndex,
 } from './skill-trigger-index.ts';
 import { parseSkillFrontmatter } from './skill-frontmatter.ts';
+import { SKILLS_BLOCK_BEGIN, SKILLS_BLOCK_END } from './skills/index-block.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -150,8 +151,12 @@ export interface ResolverEntry {
 export function parseResolverEntries(resolverContent: string): ResolverEntry[] {
   const entries: ResolverEntry[] = [];
   let currentSection = '';
+  let inSkillsIndex = false;
 
   for (const line of resolverContent.split('\n')) {
+    if (line.trim() === SKILLS_BLOCK_BEGIN) { inSkillsIndex = true; continue; }
+    if (line.trim() === SKILLS_BLOCK_END) { inSkillsIndex = false; continue; }
+    if (inSkillsIndex) continue;
     // Track section headings
     const headingMatch = line.match(/^##\s+(.+)/);
     if (headingMatch) {

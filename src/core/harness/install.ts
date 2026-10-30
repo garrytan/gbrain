@@ -19,12 +19,17 @@ import { installSharedSkillsConnection } from './shared-skills.ts';
 import type { SharedSkillsToolCaller } from '../shared-skills/adapter.ts';
 import { harnessSharedSkillsRoot } from './status.ts';
 import { gitChildEnv } from '../git-env.ts';
-import { brainFirstTargetAt, codexInstructionFile, installerBrainFirst, renderBrainFirstSnippet, resolveBrainFirstDecision, type BrainFirstHarness } from '../setup/brain-first.ts';
+import { brainFirstTargetAt, codexInstructionFile, installerBrainFirst, readBrainFirstLedger, renderBrainFirstSnippet, resolveBrainFirstDecision, type BrainFirstHarness } from '../setup/brain-first.ts';
+import { indexLauncher, inspectSkillsBlock, installerSkillsBlock, isSkillLoading, renderSkillsSnippet, resolveSkillLoading, skillsOutcomeFailed, type SkillLoading, type SkillsBlockOutcome } from '../setup/skills-block.ts';
 
 export interface InstallOptions { harness: string; name?: string; root?: string; configPath?: string; remove?: boolean;
   sharedSkills?: HarnessCredentials['shared_skills']; toolCaller?: SharedSkillsToolCaller; nativeSkillsDir?: string; credentialsFile?: string; freshToken?: boolean;
   /** false: opt out of the brain-first instruction block (removes an existing one); true: opt back in. */
-  instructions?: boolean }
+  instructions?: boolean;
+  /** The spring-loaded skills index beside the brain-first block (off by default; GBRAIN_SKILL_LOADING and the recorded choice apply). */
+  skillLoading?: SkillLoading;
+  /** The absolute gbrain the native-config index names (default: this gbrain, else the one on PATH). */
+  gbrainBin?: string }
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const readJson = (path: string): Record<string, any> => {
   assertNoSymlinks(path);
@@ -175,11 +180,17 @@ export async function installHarnessConnection(c: HarnessCredentials, opts: Inst
     const beside = instructionFileBeside(adapter.connection, configPath);
     const instructions = installerBrainFirst({ target: brainFirstTargetAt(beside.harness, beside.path), access: { kind: 'mcp', server: name },
       writer: `gbrain connect --harness ${adapter.id} --install`, instructions: opts.instructions, remove: opts.remove });
+    const keptForOther = opts.remove && readBrainFirstLedger().some((b) => b.harness === beside.harness && b.path === beside.path && b.status === 'installed' && b.access.kind === 'mcp' && b.access.server !== name);
+    const skills = keptForOther
+      ? { harness: beside.harness, path: beside.path, decision: { value: 'off', source: 'flag' }, action: 'skip', state_before: inspectSkillsBlock(beside.path).state, detail: `the skills index in ${beside.path} sits beside another connection's brain-first block, so removing \`${name}\` leaves it` } satisfies SkillsBlockOutcome
+      : installerSkillsBlock({ target: brainFirstTargetAt(beside.harness, beside.path), launcher: opts.gbrainBin ?? indexLauncher() ?? 'gbrain',
+      writer: `gbrain connect --harness ${adapter.id} --install`, brainFirstDeclined: instructions.decision.value === 'declined', skillLoading: opts.skillLoading, audience: 'downstream', remove: opts.remove });
+    const skillsFailed = skillsOutcomeFailed(skills) ? { skills_failed: true } : {};
     if (opts.remove) {
       if (existsSync(receiptPath)) unlinkSync(receiptPath);
       const shared_skills = deactivated ?? await installSharedSkillsConnection(c, { ...opts, root: join(dirname(configPath), `.gbrain-${adapter.id}-${name}`) });
       const pending = 'remote_membership_pending' in shared_skills && shared_skills.remote_membership_pending === true;
-      return { ...common, status: 'removed', config_path: configPath, shared_skills, remote_membership_pending: pending, instructions,
+      return { ...common, status: 'removed', config_path: configPath, shared_skills, remote_membership_pending: pending, instructions, skills, ...skillsFailed,
         next_action: pending ? 'Local configuration and unchanged owned skills were removed. Remote membership deactivation remains pending; retry when host authority is available.'
           : 'The client configuration was removed. Revoke the grant on the brain host if access should end.' };
     }
@@ -187,7 +198,7 @@ export async function installHarnessConnection(c: HarnessCredentials, opts: Inst
       ...inlineTokenReceipt(c, adapter.id, name, configPath, adapter.reload, opts.credentialsFile) };
     atomicWriteTextFile(receiptPath, `${JSON.stringify(nextReceipt, null, 2)}\n`, { forceMode: 0o600 });
     const shared_skills = deactivated ?? await installSharedSkillsConnection(c, { ...opts, root: join(dirname(configPath), `.gbrain-${adapter.id}-${name}`) });
-    return { ...nextReceipt, shared_skills, instructions, remote_membership_pending: 'remote_membership_pending' in shared_skills && shared_skills.remote_membership_pending === true };
+    return { ...nextReceipt, shared_skills, instructions, skills, remote_membership_pending: 'remote_membership_pending' in shared_skills && shared_skills.remote_membership_pending === true, ...skillsFailed };
   } finally { lock.release(); }
 }
 
@@ -215,11 +226,15 @@ async function installThinClient(c: HarnessCredentials, opts: InstallOptions, co
     const sourceCli = fileURLToPath(new URL('../../cli.ts', import.meta.url));
     const launcher = join(root, 'bin', 'gbrain');
     const brainFirst = resolveBrainFirstDecision(opts.instructions, prior.brain_first_instructions === 'declined' ? { status: 'declined' } : undefined).value;
+    const skillLoading = opts.remove || brainFirst === 'declined' ? 'off' : resolveSkillLoading(opts.skillLoading, isSkillLoading(prior.skill_loading) ? { mode: prior.skill_loading } : undefined).value;
+    const rerun = `gbrain connect ${shellQuote(c.mcp_url)} --harness ${shellQuote(opts.harness)} --credentials-file <private-handoff-file> --root ${shellQuote(root)} --install`;
+    const skillsIndex = skillLoading === 'spring' ? renderSkillsSnippet(opts.harness, launcher, 'downstream', { refresh: rerun, optOut: `${rerun} --skill-loading off` }) : '';
+    const instructionsHead = `${brainFirst === 'declined' ? '' : renderBrainFirstSnippet(opts.harness, { kind: 'cli', launcher }, 're-run gbrain connect with --no-instructions')}${skillsIndex}`;
     const files = [
       { path: '.gbrain/config.json', text: `${JSON.stringify(config, null, 2)}\n`, mode: 0o600 },
       { path: 'bin/gbrain', text: renderAgentLauncher({ root, bunPath: process.execPath, cliPath: sourceCli.includes('$bunfs') ? undefined : sourceCli, mode: 'thin-client',
         repairHint: `Reinstall GBrain in this environment, then repeat: gbrain connect ${shellQuote(c.mcp_url)} --harness ${shellQuote(opts.harness)} --credentials-file <private-handoff-file> --root ${shellQuote(root)} --install` }), mode: 0o700 },
-      { path: 'GBRAIN-INSTRUCTIONS.md', text: `${brainFirst === 'declined' ? '' : `${renderBrainFirstSnippet(opts.harness, { kind: 'cli', launcher }, 're-run gbrain connect with --no-instructions')}\n`}${GBRAIN_MCP_INSTRUCTIONS}\n\nRun commands with the absolute launcher: ${launcher}\nThis is a hosted connection. The host grant controls sources and permissions.\n`, mode: 0o600 },
+      { path: 'GBRAIN-INSTRUCTIONS.md', text: `${instructionsHead ? `${instructionsHead}\n` : ''}${GBRAIN_MCP_INSTRUCTIONS}\n\nRun commands with the absolute launcher: ${launcher}\nThis is a hosted connection. The host grant controls sources and permissions.\n`, mode: 0o600 },
     ];
     const owned: Record<string, string> = prior.owned_files ?? {};
     const pending: Record<string, { before: string | null; after: string }> = prior.pending_files ?? {};
@@ -233,7 +248,7 @@ async function installThinClient(c: HarnessCredentials, opts: InstallOptions, co
       privateWrite(receiptPath, `${JSON.stringify({ ...common, root, status: 'removed', owned_files: {} }, null, 2)}\n`);
       return { ...common, status: 'removed', root, next_action: 'Disable the native skill and routine. Revoke the client on the host to end access; separately protect or remove retained handoff files.' };
     }
-    const receipt = { ...common, root, launcher, config_path: configPath, status: 'prepared', native_instructions: 'pending', brain_first_instructions: brainFirst, owned_files: owned, pending_files: pending };
+    const receipt = { ...common, root, launcher, config_path: configPath, status: 'prepared', native_instructions: 'pending', brain_first_instructions: brainFirst, skill_loading: skillLoading, owned_files: owned, pending_files: pending };
     const save = () => privateWrite(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
     save();
     for (const file of files) {

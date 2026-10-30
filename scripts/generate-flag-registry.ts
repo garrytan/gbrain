@@ -425,6 +425,8 @@ function buildFlagArtifacts(root: string): { registry: Record<string, string[]>;
     reindex: ['--type'],
     upgrade: ['--type', '--aliases'],
     'post-upgrade': ['--type', '--aliases'],
+    // bundled-skill's skill_not_found hint names setup's refresh command; it parses its own flags strictly.
+    'bundled-skill': ['--skill-loading', '--skills-index-only', '--install'],
   };
   const consumes = (text: string, flag: string): boolean =>
     new RegExp(`['"\`]${flag}['"\`]`).test(text);

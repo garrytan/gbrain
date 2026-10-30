@@ -77,6 +77,21 @@ import {
 } from '../core/setup/codex.ts';
 import type { CodexSetupEvent } from '../core/bootstrap/codex-hooks.ts';
 import {
+  describeSkillsBlockOutcome,
+  InvalidSkillLoadingEnv,
+  isSkillLoading,
+  indexLauncher,
+  readSkillLoadingLedger,
+  refreshSkillsIndexes,
+  removeSkillsBlock,
+  installerSkillsBlock,
+  SKILL_LOADING_ENV,
+  skillsOutcomeFailed,
+  type SkillLoading,
+  type SkillsBlockOutcome,
+} from '../core/setup/skills-block.ts';
+import {
+  BRAIN_FIRST_HARNESSES,
   brainFirstTarget,
   describeBrainFirstOutcome,
   isBrainFirstHarness,
@@ -136,6 +151,15 @@ Flags:
                        Works for a hosted connection too, and for any harness below.
   --workspace DIR      OpenClaw: the agent workspace whose AGENTS.md gets the block
                        (default: agents.defaults.workspace, then ~/.openclaw/workspace).
+  --skill-loading M    off (default) or spring. spring adds a compact index of
+                       gbrain's bundled skills beside the brain-first block (about
+                       1.5k tokens) and loads a skill's full text only when a task
+                       matches (gbrain bundled-skill <name>, from this gbrain).
+                       off removes an index an earlier run wrote. The
+                       choice is remembered; GBRAIN_SKILL_LOADING sets it too.
+  --skills-index-only  Refresh every skills index recorded for this harness (its
+                       file, launcher and skill set as recorded) and change
+                       nothing else; with --skill-loading off, remove them.
 
 Brain-first instructions: registering MCP is not enough; agents use a brain they
 are told about. By default setup also writes one short marked block into the
@@ -191,10 +215,12 @@ interface SetupFlags {
   gbrainBin?: string;
   instructions?: boolean;
   instructionsOnly: boolean;
+  skillsIndexOnly: boolean;
   workspace?: string;
+  skillLoading?: SkillLoading;
 }
 
-const VALUE_FLAGS = new Set(['--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace']);
+const VALUE_FLAGS = new Set(['--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading']);
 
 function parseFlags(args: string[]): SetupFlags | string {
   const value = (flag: string): string | undefined => {
@@ -215,6 +241,10 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (args.includes('--instructions') && args.includes('--no-instructions')) return 'pass --instructions or --no-instructions, not both';
   const workspace = value('--workspace');
   if (workspace !== undefined && !workspace.startsWith('/') && !workspace.startsWith('~')) return '--workspace needs an absolute path';
+  const skillLoading = value('--skill-loading');
+  if (skillLoading !== undefined && !isSkillLoading(skillLoading)) return `unknown --skill-loading '${skillLoading}'; pass off or spring`;
+  const envLoading = process.env[SKILL_LOADING_ENV]?.trim();
+  if (skillLoading === undefined && envLoading && !isSkillLoading(envLoading)) return new InvalidSkillLoadingEnv(envLoading).message;
   return {
     harness: positionals[0],
     dryRun: args.includes('--dry-run'),
@@ -230,7 +260,9 @@ function parseFlags(args: string[]): SetupFlags | string {
     gbrainBin: value('--gbrain-bin'),
     instructions: args.includes('--instructions') ? true : args.includes('--no-instructions') ? false : undefined,
     instructionsOnly: args.includes('--instructions-only'),
+    skillsIndexOnly: args.includes('--skills-index-only'),
     workspace,
+    skillLoading: skillLoading as SkillLoading | undefined,
   };
 }
 
@@ -339,6 +371,7 @@ export async function runSetup(args: string[]): Promise<number> {
   const flags = parsed;
   const adapter = HARNESS_ADAPTERS.find((a) => a.id === flags.harness);
   const mcpWired = flags.harness === 'claude-code' || flags.harness === 'codex';
+  if (flags.skillsIndexOnly) return runSkillsIndexOnly(flags, out);
   if ((flags.instructionsOnly && (isBrainFirstHarness(flags.harness) || adapter)) || (isBrainFirstHarness(flags.harness) && !mcpWired)) {
     return runInstructionsOnly(flags, out);
   }
@@ -454,7 +487,8 @@ export async function runSetup(args: string[]): Promise<number> {
         ...Object.entries(found.edited).map(([event]) => ({ step: 'hooks' as const, action: 'preserve' as const, detail: `${event} was edited after setup wrote it; kept` })),
       ];
       const instructions = brainFirstFor('claude-code', flags, { kind: 'mcp', server: flags.name, surface: plan.advertise ?? surface }, { scope, projectDir });
-      return finish(out, { dryRun: true, target, consent, steps, states: [], verify: null, notices: [], notes, instructions });
+      const skills = skillsFor('claude-code', flags, launcher, { scope, projectDir }, instructions);
+      return finish(out, { dryRun: true, target, consent, steps, states: [], verify: null, notices: [], notes, instructions, skills });
     }
 
     let notices: Notice[] = [];
@@ -464,7 +498,8 @@ export async function runSetup(args: string[]): Promise<number> {
     });
     for (const s of result.steps) say(out, `  ${s.action.padEnd(8)} ${s.step.padEnd(7)} ${s.detail}`);
     const instructions = brainFirstFor('claude-code', flags, { kind: 'mcp', server: flags.name, surface: plan.advertise ?? surface }, { scope, projectDir });
-    if (!result.changed && !instructionsChanged(instructions)) say(out, 'Nothing changed: this install is already wired.');
+    const skills = skillsFor('claude-code', flags, launcher, { scope, projectDir }, instructions);
+    if (!result.changed && !instructionsChanged(instructions) && !instructionsChanged(skills)) say(out, 'Nothing changed: this install is already wired.');
 
     let verify: { ok: boolean; reason: string; message: string } | null;
     if (pluginOwner) verify = { ok: false, reason: 'plugin_lane', message: `The '${pluginOwner}' plugin serves MCP; start a new Claude Code session and check /mcp lists gbrain.` };
@@ -475,7 +510,7 @@ export async function runSetup(args: string[]): Promise<number> {
     }
     const states = ['configured', ...(verify.ok ? ['connection-verified', 'native-pending'] : [])];
     const code = await finish(out, { dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent, steps: result.steps, states, verify, notices, notes,
-      preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions });
+      preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions, skills });
     return verify.ok || pluginOwner ? code : 1;
   } catch (e) {
     if (e instanceof OperationError) return refuse(e, out);
@@ -604,7 +639,8 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
         ...Object.keys(found.edited).map((event) => ({ step: 'hooks' as const, action: 'preserve' as const, detail: `${event} was edited after setup wrote it; kept` })),
       ];
       const instructions = brainFirstFor('codex', flags, { kind: 'mcp', server: flags.name, surface: plan.advertise ?? surface }, {});
-      return finish(out, { harness: 'codex', dryRun: true, target, consent, steps, states: [], verify: null, notices: [], notes, instructions });
+      const skills = skillsFor('codex', flags, launcher, {}, instructions);
+      return finish(out, { harness: 'codex', dryRun: true, target, consent, steps, states: [], verify: null, notices: [], notes, instructions, skills });
     }
 
     let notices: Notice[] = [];
@@ -615,7 +651,8 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     for (const s of result.steps) say(out, `  ${s.action.padEnd(8)} ${s.step.padEnd(7)} ${s.detail}`);
     for (const n of result.notes) say(out, `note: ${n}`);
     const instructions = brainFirstFor('codex', flags, { kind: 'mcp', server: flags.name, surface: plan.advertise ?? surface }, {});
-    if (!result.changed && !instructionsChanged(instructions)) say(out, 'Nothing changed: this install is already wired.');
+    const skills = skillsFor('codex', flags, launcher, {}, instructions);
+    if (!result.changed && !instructionsChanged(instructions) && !instructionsChanged(skills)) say(out, 'Nothing changed: this install is already wired.');
 
     let verify: { ok: boolean; reason: string; message: string };
     if (pluginOwner) verify = { ok: false, reason: 'plugin_lane', message: `The '${pluginOwner}' plugin serves MCP; start a new Codex session and check /mcp lists gbrain.` };
@@ -627,7 +664,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const push = capabilityRows('codex')[0]!.push;
     const states = ['configured', ...(verify.ok ? ['connection-verified', push === 'native-verified' && result.receipt.trust.owned.UserPromptSubmit ? 'native-verified' : 'native-pending'] : [])];
     const code = await finish(out, { harness: 'codex', dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent,
-      steps: result.steps, states, verify, notices, notes: [...notes, ...result.notes], preserved: result.preserved, instructions });
+      steps: result.steps, states, verify, notices, notes: [...notes, ...result.notes], preserved: result.preserved, instructions, skills });
     return verify.ok || pluginOwner ? code : 1;
   } catch (e) {
     if (e instanceof OperationError) return refuse(e, out);
@@ -650,8 +687,9 @@ async function runCodexRemove(flags: SetupFlags, receipt: CodexSetupReceipt | nu
   for (const s of r.steps) say(out, `  ${(flags.dryRun ? `would ${s.action}` : s.action).padEnd(14)} ${s.step.padEnd(7)} ${s.detail}`);
   for (const n of r.notes) say(out, `note: ${n}`);
   const instructions = removeBrainFirstFor('codex', {}, flags);
+  const skills = removeSkillsFor('codex', {}, flags);
   say(out, 'The brain, its notes and unrelated Codex settings were left as they were.');
-  return finish(out, { harness: 'codex', dryRun: flags.dryRun, remove: true, steps: r.steps, states: [], verify: null, notices: [], notes: r.notes, preserved: r.preserved, instructions });
+  return finish(out, { harness: 'codex', dryRun: flags.dryRun, remove: true, steps: r.steps, states: [], verify: null, notices: [], notes: r.notes, preserved: r.preserved, instructions, skills });
 }
 
 function hostedConnection(url: string, wired: boolean, name: string, harness: SetupHarnessId = 'claude-code'): OperationError {
@@ -679,8 +717,9 @@ async function runRemove(flags: SetupFlags, receipt: ClaudeSetupReceipt | null, 
   const r = await removeClaudeSetup(receipt, receiptPath, { dryRun: flags.dryRun });
   for (const s of r.steps) say(out, `  ${(flags.dryRun ? `would ${s.action}` : s.action).padEnd(14)} ${s.step.padEnd(7)} ${s.detail}`);
   const instructions = removeBrainFirstFor('claude-code', { scope: receipt.scope, projectDir: receipt.project_dir }, flags);
+  const skills = removeSkillsFor('claude-code', { scope: receipt.scope, projectDir: receipt.project_dir }, flags);
   say(out, 'The brain, its notes and unrelated Claude Code settings were left as they were.');
-  return finish(out, { dryRun: flags.dryRun, remove: true, steps: r.steps, states: [], verify: null, notices: [], notes: [], preserved: r.preserved, instructions });
+  return finish(out, { dryRun: flags.dryRun, remove: true, steps: r.steps, states: [], verify: null, notices: [], notes: [], preserved: r.preserved, instructions, skills });
 }
 
 /** The brain-first block for this run: decided from flags, env and the ledger, then applied (or previewed under --dry-run). */
@@ -698,7 +737,28 @@ function removeBrainFirstFor(harness: BrainFirstHarness, where: { scope?: Wiring
   return path ? removeBrainFirst({ harness, path, dryRun: flags.dryRun }) : null;
 }
 
-const instructionsChanged = (o: BrainFirstOutcome | null): boolean => !!o && (o.action === 'write' || o.action === 'remove');
+/**
+ * The skills index for this run (--skill-loading, GBRAIN_SKILL_LOADING, the ledger; off by default).
+ * It sits beside the brain-first block, so declining that block (--no-instructions) removes the index too.
+ */
+function skillsFor(harness: BrainFirstHarness, flags: SetupFlags, launcher: string, where: { scope?: WiringScope; projectDir?: string }, brainFirst: BrainFirstOutcome | null): SkillsBlockOutcome | null {
+  const target = brainFirstTarget(harness, { ...where, workspace: flags.workspace });
+  if ('error' in target) return null;
+  return installerSkillsBlock({ target, launcher, writer: `gbrain setup ${harness}`, brainFirstDeclined: brainFirst?.decision.value === 'declined', skillLoading: flags.skillLoading, dryRun: flags.dryRun });
+}
+
+function removeSkillsFor(harness: BrainFirstHarness, where: { scope?: WiringScope; projectDir?: string }, flags: SetupFlags): SkillsBlockOutcome | null {
+  const target = brainFirstTarget(harness, { ...where, workspace: flags.workspace });
+  let path: string | undefined;
+  try {
+    path = 'error' in target ? readSkillLoadingLedger().find((e) => e.harness === harness)?.path : target.path;
+  } catch {
+    path = 'error' in target ? undefined : target.path;
+  }
+  return path ? removeSkillsBlock({ harness, path, dryRun: flags.dryRun }) : null;
+}
+
+const instructionsChanged = (o: BrainFirstOutcome | SkillsBlockOutcome | null): boolean => !!o && (o.action === 'write' || o.action === 'remove');
 
 function describeInstructions(o: BrainFirstOutcome, dryRun: boolean): string {
   const how = o.decision.value === 'accepted' ? 'opt out with --no-instructions' : 'opt back in with --instructions';
@@ -740,11 +800,15 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
     return refuse(opError('invalid_params', target.error, 'Pass --workspace <absolute dir> for the agent whose AGENTS.md should carry the block.'), out);
   }
   let instructions: BrainFirstOutcome | null;
-  if (flags.remove) instructions = removeBrainFirstFor(harness, where, flags);
-  else {
+  let skills: SkillsBlockOutcome | null;
+  if (flags.remove) {
+    instructions = removeBrainFirstFor(harness, where, flags);
+    skills = removeSkillsFor(harness, where, flags);
+  } else {
     say(out, `Target (${adapter.label}): ${target.path} (${target.role})`);
     const decision = resolveBrainFirstDecision(flags.instructions, priorBrainFirst(harness, target.path));
     instructions = syncBrainFirst({ target, access, decision, writer: `gbrain setup ${harness}`, dryRun: flags.dryRun });
+    skills = skillsFor(harness, flags, flags.gbrainBin ?? indexLauncher() ?? 'gbrain', where, instructions);
   }
   const off = flags.remove || instructions?.decision.value === 'declined';
   const turnHook = harness === 'hermes'
@@ -752,15 +816,33 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
     : harness === 'openclaw'
       ? (off ? removeOpenclawTurnPlugin({ dryRun: flags.dryRun }) : syncOpenclawTurnPlugin({ access, dryRun: flags.dryRun }))
       : null;
-  const code = instructions?.action === 'preserve' ? 1 : 0;
+  const code = instructions?.action === 'preserve' || skillsFailed(skills) ? 1 : 0;
   if (out.json) {
-    await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, remove: flags.remove, instructions_only: true, instructions, ...(turnHook ? { turn_hook: turnHook } : {}), mcp }, null, 2)}\n`, (t) => process.stdout.write(t));
+    await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, remove: flags.remove, instructions_only: true, instructions, ...(turnHook ? { turn_hook: turnHook } : {}), skills, mcp }, null, 2)}\n`, (t) => process.stdout.write(t));
     return code;
   }
   if (instructions) say(out, flags.remove ? describeBrainFirstOutcome(instructions, flags.dryRun) : describeInstructions(instructions, flags.dryRun));
   if (turnHook) say(out, `  ${(flags.dryRun && (turnHook.action === 'write' || turnHook.action === 'remove') ? `would ${turnHook.action}` : turnHook.action).padEnd(8)} ${'turn hook'.padEnd(7)} ${turnHook.detail}${'snippet' in turnHook && turnHook.snippet ? `:\n${turnHook.snippet.replace(/^/gm, '    ')}` : ''}${'commands' in turnHook && turnHook.commands ? `:\n${turnHook.commands.map((c) => `    ${c}`).join('\n')}` : ''}`);
+  if (skills && (skills.decision.value === 'spring' || skills.action !== 'skip')) say(out, describeSkillsBlockOutcome(skills, flags.dryRun));
   if (mcp.setup === 'manual' && !flags.remove) say(out, `MCP: setup does not register ${adapter.label}'s MCP server. Follow ${adapter.guide} (one command), then start a new session.`);
   if (!flags.remove && instructions?.decision.value === 'accepted') say(out, 'Next: start a new session; the harness reads its instruction file at session start.');
+  return code;
+}
+
+/** --skills-index-only: refresh (or, with --skill-loading off, remove) the recorded skills indexes for one harness; nothing else is touched. */
+async function runSkillsIndexOnly(flags: SetupFlags, out: Out): Promise<number> {
+  const harness = flags.harness;
+  if (!isBrainFirstHarness(harness)) {
+    return refuse(opError('invalid_params', `--skills-index-only needs a harness with an instruction file: ${BRAIN_FIRST_HARNESSES.join(', ')}`, 'Pass the harness whose skills index to refresh, e.g. gbrain setup claude-code --skills-index-only.'), out);
+  }
+  const outcomes = refreshSkillsIndexes(harness, { mode: flags.skillLoading, launcher: flags.gbrainBin, dryRun: flags.dryRun });
+  const code = outcomes.some((o) => o.action === 'preserve') ? 1 : 0;
+  if (out.json) {
+    await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, skills_index_only: true, skills: outcomes }, null, 2)}\n`, (t) => process.stdout.write(t));
+    return code;
+  }
+  if (outcomes.length === 0) say(out, `No skills index is recorded for ${harness}. Add one with: gbrain setup ${harness} --skill-loading spring`);
+  for (const o of outcomes) say(out, describeSkillsBlockOutcome(o, flags.dryRun));
   return code;
 }
 
@@ -768,20 +850,23 @@ async function finish(out: Out, doc: {
   harness?: SetupHarnessId; dryRun: boolean; remove?: boolean; target?: Target; consent?: SetupConsent; steps: Array<{ step: string; action: string; detail: string }>; states: string[];
   verify: { ok: boolean; reason: string; message: string } | null; notices: Notice[]; notes: string[]; preserved?: unknown[];
   instructions?: BrainFirstOutcome | null;
+  skills?: SkillsBlockOutcome | null;
 }): Promise<number> {
   const harness = doc.harness ?? 'claude-code';
   const state = doc.states.at(-1) ?? null;
+  const code = skillsFailed(doc.skills ?? null) ? 1 : 0;
   if (out.json) {
     await writeJsonDocument(`${JSON.stringify({
       harness, dry_run: doc.dryRun, remove: doc.remove ?? false,
       ...(doc.target ? { target: doc.target } : {}), ...(doc.consent ? { consent: doc.consent } : {}),
-      steps: doc.steps, preserved: doc.preserved ?? [], instructions: doc.instructions ?? null, states: doc.states, state, verify: doc.verify,
+      steps: doc.steps, preserved: doc.preserved ?? [], instructions: doc.instructions ?? null, skills: doc.skills ?? null, states: doc.states, state, verify: doc.verify,
       capability: capabilityRows(harness)[0], capability_table_version: SETUP_CAPABILITY_TABLE_VERSION,
       notes: doc.notes, notices: doc.notices.map((n) => renderNotice(n, cliRenderContext())),
     }, null, 2)}\n`, (t) => process.stdout.write(t));
-    return 0;
+    return code;
   }
   if (doc.instructions) say(out, doc.remove ? describeBrainFirstOutcome(doc.instructions, doc.dryRun) : describeInstructions(doc.instructions, doc.dryRun));
+  if (doc.skills && (doc.skills.decision.value === 'spring' || doc.skills.action !== 'skip')) say(out, describeSkillsBlockOutcome(doc.skills, doc.dryRun));
   if (doc.verify) say(out, `Verify: ${doc.verify.ok ? 'ok' : 'not verified'} (${doc.verify.reason}): ${doc.verify.message}`);
   if (state) say(out, `State: ${state} (${doc.states.join(' -> ')}).${state === 'native-verified' ? '' : ' Native push is not claimed until an observed event reaches a fresh session.'}`);
   if (state && !doc.remove) say(out, harness === 'codex'
@@ -791,5 +876,8 @@ async function finish(out: Out, doc: {
     + 'World-visible facts (the default) are pushed into new sessions; a private fact is not (local CLI recall only). capture writes a page, not a fact.');
   writeCliNotices(doc.notices.filter((n) => n.code !== 'hosted_option'));
   if (doc.notices.some((n) => n.code === 'hosted_option')) writeHostedOption('setup', new Set());
-  return 0;
+  return code;
 }
+
+/** An index the user asked for by flag that could not be written fails the run (the rest of the install still finished). */
+const skillsFailed = (o: SkillsBlockOutcome | null): boolean => skillsOutcomeFailed(o);

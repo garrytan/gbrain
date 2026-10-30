@@ -24,6 +24,7 @@
  * Doctor seeds nothing; the only file it removes is a status marker whose
  * process is gone.
  */
+import type { SkillsIndexState, SkillsIndexView } from '../../../core/setup/skills-block.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
@@ -409,6 +410,45 @@ export function withInstructionBlocks(check: Check, views: InstructionBlockView[
   return { name: NAME, status: 'warn', message, details, fix };
 }
 
+const SKILLS_INDEX_PROBLEM: Record<Exclude<SkillsIndexState, 'current'>, string> = {
+  launcher_missing: 'names a gbrain that is no longer there, so every skill load fails',
+  ledger_unreadable: 'record cannot be read',
+  stale: 'indexes an older set of bundled skills',
+  absent: 'is gone from the file',
+  no_file: 'is gone (the file was deleted)',
+  damaged: 'has hand-edited markers',
+};
+
+/**
+ * GBRA-194 sibling of withInstructionBlocks: the spring-loaded skills index
+ * (src/core/setup/skills-block.ts) for every harness the ledger has it on.
+ * A stale, absent or damaged index is informational (a stale index still
+ * loads skills by name), so the message names the refresh command and the
+ * status is unchanged. Two states break every load or every later change and
+ * turn `ok` into a warn with a fix: the recorded launcher is gone, or the
+ * ledger cannot be read.
+ */
+export function withSkillsIndex(check: Check, views: SkillsIndexView[]): Check {
+  if (views.length === 0) return check;
+  const details = { ...(check.details ?? {}), skills_index: views };
+  const off = views.filter((v) => v.state !== 'current');
+  if (off.length === 0) return { ...check, details };
+  const notes = off.map((v) => v.state === 'ledger_unreadable'
+    ? `the skills index ${SKILLS_INDEX_PROBLEM.ledger_unreadable}: ${v.refresh}`
+    : `the ${v.harness} skills index in ${v.path} ${SKILLS_INDEX_PROBLEM[v.state as Exclude<SkillsIndexState, 'current'>]}; refresh with \`${v.refresh}\``);
+  const message = `${check.message} Skills index: ${notes.join('; ')}.`;
+  const broken = off.find((v) => v.state === 'launcher_missing' || v.state === 'ledger_unreadable');
+  if (!broken || check.status !== 'ok') return { ...check, message, details };
+  const fix: Action = broken.state === 'ledger_unreadable'
+    ? { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME),
+      why: 'gbrain will not guess which skills indexes and permission rules it owns from a ledger it cannot read.',
+      user_message: `The gbrain skills record cannot be read: ${broken.refresh}` }
+    : { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME),
+      why: `The skills index in ${broken.path} names a gbrain that is no longer there, so the agent cannot load any skill it lists.`,
+      user_message: `The ${broken.harness} skills index points at a gbrain that was moved or uninstalled. Run: ${broken.refresh}, with the absolute path of the gbrain you use now.` };
+  return { name: check.name, status: 'warn', message, details, fix };
+}
+
 /** The setup command that rewrites exactly this block: same file, same connection name and surface. A project file needs its own directory, so the user runs it there. */
 function repairArgv(v: InstructionBlockView): Action {
   const access = v.access;
@@ -442,7 +482,8 @@ export function instructionBlockUpgradeHints(): string[] {
 /** Registration read (full run) or registration read + smoke (`--only harness_wiring`), plus the brain-first block. */
 export async function harnessWiringCheck(opts: { smoke: boolean }): Promise<Check> {
   const regs = readHarnessRegistrations();
-  return withSurfaceNote(withInstructionBlocks(await registrationCheck(opts, regs), instructionBlockViews(regs)), regs);
+  const { skillsIndexViews } = await import('../../../core/setup/skills-block.ts');
+  return withSkillsIndex(withSurfaceNote(withInstructionBlocks(await registrationCheck(opts, regs), instructionBlockViews(regs)), regs), skillsIndexViews());
 }
 
 /**

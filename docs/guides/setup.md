@@ -190,6 +190,36 @@ every request. QM has no per-turn hook an install can set: its gateway's
 `instructions` are per turn but belong to the surface that posts the turn. The
 opt-out turns the per-turn rule off with the block.
 
+## Skill loading (opt-in)
+
+GBrain ships step-by-step skills (meeting ingestion, fact-checking, the
+bulk-delete gate, filing rules, …). By default no install lane hands them to
+the agent. `--skill-loading spring` adds a second marked block
+(`<!-- gbrain:skills:begin -->` … `<!-- gbrain:skills:end -->`) right after
+the brain-first block in the same file: a compact index of the bundled skills,
+one line per skill with its trigger phrases (about 1.5k tokens, capped at
+6,144 bytes). The full skill is loaded only when a task matches, with
+
+    <launcher> bundled-skill <name>                 # the SKILL.md, then the files it names
+    <launcher> bundled-skill <name> --asset <path>  # one of those files
+
+`gbrain bundled-skill` reads the skills built into gbrain itself: it opens no
+brain and needs no MCP server or skill publication, so it works on a thin
+client and from a compiled binary. The index names the absolute launcher the
+install recorded, so the index and the skills it loads come from the same
+gbrain. MCP `get_skill` is unchanged.
+
+| | |
+|---|---|
+| Select | `--skill-loading off\|spring` on `gbrain setup <harness>`, `gbrain connect --install`, `gbrain connect --harness … --install` and `gbrain bootstrap harness`; or `GBRAIN_SKILL_LOADING`. Flag, then env, then the recorded choice, then `off`. |
+| Default | `off`: no index is written, and `off` removes one an earlier run wrote. |
+| Which skills | Host installs (`setup`, `bootstrap harness`) list all bundled skills; hosted and thin-client connections leave out the host-maintenance ones. |
+| Opt out | `--skill-loading off`; `--no-instructions` removes both blocks; `--remove` takes both out and deletes a file only gbrain created once nothing else is in it. |
+| After an upgrade | The block records the skill catalog it indexes. `gbrain doctor` (`harness_wiring`) names a stale index and the refresh command (`gbrain setup <harness> --skills-index-only`, which rewrites only the skills block, keeping its recorded file, launcher and skill set). It never warns on a stale index alone, and nothing rewrites the file during an upgrade. |
+| Launcher check | Before writing, setup runs `<launcher> bundled-skill --json` and refuses (nothing written, exit 1) when the launcher is not an absolute path, does not run, or serves other skills than the ones indexed. Pass `--gbrain-bin <absolute path>` to name another gbrain. `gbrain doctor` reports an index whose recorded launcher is gone. |
+| Claude Code permission | Claude Code asks before each Bash command it has no rule for (and headless runs deny it), so on Claude Code spring also adds one rule, `Bash(<launcher> bundled-skill:*)`, to `~/.claude/settings.json`. gbrain records that it added it and takes it out with the last index that uses it; a rule you had before is left alone. If you delete the rule, gbrain doesn't add it back until you run with `--skill-loading spring` again. |
+| Choice record | `~/.gbrain/skill-loading.json` (harness, file, mode, launcher, audience, catalog, and the Claude Code rule and whether gbrain added it). |
+
 ## Harness capability table
 
 The table is data (`src/core/setup/capabilities.ts`, version 2). Push is never

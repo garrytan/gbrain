@@ -87,6 +87,7 @@
     "check:plugin-tree": "bash scripts/check-plugin-tree.sh",
     "check:wasm": "bash scripts/check-wasm-embedded.sh",
     "check:pglite-embedded": "bash scripts/check-pglite-embedded.sh",
+    "check:skills-embedded": "bash scripts/check-skills-embedded.sh",
     "check:image-decoders": "bash scripts/check-image-decoders-embedded.sh",
     "check:newlines": "bash scripts/check-trailing-newline.sh",
     "test:compile-smoke": "bun test test/binary-self-update-compiled.serial.test.ts",

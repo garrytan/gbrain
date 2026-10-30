@@ -68,6 +68,8 @@ CHECKS=(
   "check:admin-build"
   "check:wasm"
   "check:pglite-embedded"
+  # gbrain's bundled skills survive bun build --compile byte-identical (GBRA-194).
+  "check:skills-embedded"
   # HEIC + AVIF decoders survive bun build --compile (~0.6s: the smoketest
   # bundles a handful of modules, not the CLI).
   "check:image-decoders"

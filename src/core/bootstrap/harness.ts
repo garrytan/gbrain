@@ -60,6 +60,8 @@ import {
   stripAmbientWritebackBlockAt,
 } from './instructions-block.ts';
 import { removeHarnessBrainFirst, writeHarnessBrainFirst } from './harness-brain-first.ts';
+import { removeHarnessSkillsIndex, writeHarnessSkillsIndex } from './harness-skills-index.ts';
+import { isSkillLoading, skillsOutcomeFailed, type SkillLoading } from '../setup/skills-block.ts';
 import { createEngine } from '../engine-factory.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { ALL_SOURCES, isResolverUserError, localFederatedSourceIds, resolveSourceWithTier } from '../source-resolver.ts';
@@ -163,6 +165,8 @@ export interface HarnessFlags {
   noCapture: boolean;
   /** `--no-instructions`: skip (and remove) the brain-first instruction block. */
   noInstructions?: boolean;
+  /** `--skill-loading off|spring`: the spring-loaded skills index beside that block. */
+  skillLoading?: SkillLoading;
   force: boolean;
   remove: boolean;
   /** `--remove --dry-run`: list what removal would do, write nothing. */
@@ -277,6 +281,11 @@ export function parseHarnessArgs(rest: string[]): HarnessFlags {
   out.refreshSkills = rest.includes('--refresh-skills');
   out.yes = rest.includes('--yes');
   out.json = rest.includes('--json');
+  const skillLoading = value('--skill-loading');
+  if (skillLoading !== undefined) {
+    if (isSkillLoading(skillLoading)) out.skillLoading = skillLoading;
+    else out.error = out.error ?? `unknown --skill-loading '${skillLoading}'; pass off or spring`;
+  }
   const bin = value('--gbrain-bin');
   if (bin !== undefined) out.gbrainBin = bin;
   const seat = parseSeatFlags(rest);
@@ -1983,8 +1992,12 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     memoryOnly: skillsPolicy === 'memory-only', leave: leaveHarnessSkills, save }, d);
 
   // 10b. Brain-first instructions beside each confirmed MCP entry.
-  writeHarnessBrainFirst({ hosts: hosts.filter((h) => targets.some((t) => t.host === h && t.kind === 'mcp' && t.state === 'confirmed')),
-    server: flags.name, optOut: flags.noInstructions === true, paths: d, log: d.log });
+  const instructionHosts = hosts.filter((h) => targets.some((t) => t.host === h && t.kind === 'mcp' && t.state === 'confirmed'));
+  writeHarnessBrainFirst({ hosts: instructionHosts, server: flags.name, optOut: flags.noInstructions === true, paths: d, log: d.log });
+  const skillsIndex = writeHarnessSkillsIndex({ hosts: instructionHosts, launcher: flags.gbrainBin ?? d.gbrainBin ?? 'gbrain', optOut: flags.noInstructions === true,
+    skillLoading: flags.skillLoading, paths: d, settingsPath: d.userSettingsPath, log: d.log });
+  const skillsIndexFailed = skillsIndex.some(skillsOutcomeFailed);
+  if (skillsIndexFailed) d.logError('the skills index was not written as asked (see the skills line above); fix that and re-run.');
 
   // 11. Degradation + skew honesty.
   if (health.engine === 'postgres') {
@@ -2007,7 +2020,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     emitJson(
       JSON.stringify(
         {
-          schema_version: 1, ...harnessOutcomeFields(pendingFix, allConfirmed && smokeOk),
+          schema_version: 1, ...harnessOutcomeFields(pendingFix, allConfirmed && smokeOk && !skillsIndexFailed),
           ...cleanupOutcomeFields(cleanup, !pendingFix && allConfirmed && smokeOk, flags.raw),
           url,
           engine: health.engine ?? null,
@@ -2019,6 +2032,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
           shared_skills: receipt.shared_skills,
           degraded_per_turn: health.engine === 'postgres',
           smoke_ok: smokeOk,
+          skills_index: skillsIndex,
           receipt_path: harnessReceiptPath(d.gbrainHome),
         },
         null,
@@ -2026,7 +2040,8 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       ),
     );
   }
-  return pendingFix ? HARNESS_PENDING_VERIFY_EXIT_CODE : allConfirmed && smokeOk ? (cleanup.length ? HARNESS_CLEANUP_PENDING_EXIT_CODE : 0) : 1;
+  const code = pendingFix ? HARNESS_PENDING_VERIFY_EXIT_CODE : allConfirmed && smokeOk ? (cleanup.length ? HARNESS_CLEANUP_PENDING_EXIT_CODE : 0) : 1;
+  return code === 0 && skillsIndexFailed ? 1 : code;
 }
 
 // ── Remove [C9/F2/C8] ───────────────────────────────────────────────────────
@@ -2262,8 +2277,9 @@ export async function removeHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
   }
 
   removeHarnessBrainFirst(flags.name, d.log);
+  const skillsIndexDone = !removeHarnessSkillsIndex(flags.name, d.log).some(skillsOutcomeFailed);
 
-  if (remaining.length === 0 && tokenDone && skillsDone) {
+  if (remaining.length === 0 && tokenDone && skillsDone && skillsIndexDone) {
     deleteHarnessReceipt(d.gbrainHome);
     d.log('harness wiring fully removed; receipt consumed.');
     return 0;

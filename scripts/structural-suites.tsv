@@ -391,6 +391,7 @@ test/snapshot-shape-guard.test.ts	(file-level)	10	readFileSync
 test/sources-webhook.test.ts	Webhook sync job extraction contract	1	source-surface-helper
 test/spec-drain-lease-constants.test.ts	the TLA+ workflow runs when anything a mutant names changes	1	readFileSync
 test/spend-off-switch.test.ts	reindex / onboard off-switch dispatch (regression guards)	3	bun-file
+test/spring-skill-index.test.ts	spring-loaded skill index	10	readFileSync
 test/strict-source-unmanaged-import.test.ts	(file-level)	2	readFileSync
 test/supervisor.test.ts	recovery hook timeout bound (structural)	1	source-surface-helper
 test/sync-failures.test.ts	#4543 blocked output names failing files	4	doctor-source-helper,source-surface-helper

@@ -508,7 +508,7 @@ function installDeps(over: Partial<ConnectDeps> = {}): ConnectDeps {
     env: () => undefined, // tests control the env; real GBRAIN_REMOTE_TOKEN must not leak in
     registerOAuthClient: () => ({ ok: true, clientId: 'gbrain_cl_minted', clientSecret: 'gbrain_cs_minted' }),
     writeOpencodeRemoteEntry: (name) => ({ configPath: `/tmp/xdg/opencode/opencode.jsonc (${name})`, replacedPrior: false }),
-    writeInstructions: (agent, name, optOut) => (optOut ? null : `write    instructions brain-first block for ${agent} '${name}'`),
+    writeInstructions: (agent, name, optOut, skillLoading, gbrainBin) => (optOut ? null : `write    instructions brain-first block for ${agent} '${name}'${skillLoading ? ` skill-loading=${skillLoading}` : ''}${gbrainBin ? ` gbrain-bin=${gbrainBin}` : ''}`),
     ...over,
   };
 }
@@ -523,6 +523,16 @@ describe('runConnect --install', () => {
     expect(r.err.join('\n')).toMatch(/Added MCP server 'gbrain'/);
     expect(r.err.join('\n')).toMatch(/Verified/);
     expect(r.err.join('\n')).toContain(LEARN_INSTRUCTION);
+  });
+
+  test('--skill-loading and --gbrain-bin reach the instruction writer', async () => {
+    const seen: unknown[] = [];
+    const r = await runWithExitCapture(
+      ['https://brain.example.com/mcp', '--token', 'gbrain_tok', '--install', '--yes', '--skill-loading', 'spring', '--gbrain-bin', '/opt/alice-example/gbrain'],
+      installDeps({ writeInstructions: (agent, name, optOut, skillLoading, gbrainBin) => { seen.push([skillLoading, gbrainBin]); return null; } }),
+    );
+    expect(r.exitCode).toBeUndefined();
+    expect(seen).toEqual([['spring', '/opt/alice-example/gbrain']]);
   });
 
   test('probe failure warns + exits 1 + never echoes the token', async () => {
