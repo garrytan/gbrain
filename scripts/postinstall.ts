@@ -15,11 +15,13 @@
 //   guaranteed runtime), and `shell: win32` re-opens a quoting surface. A
 //   checked-in .ts run by `bun run` sidesteps all three.
 //
-// Uses Bun APIs only — `which()` for Windows-aware PATH resolution (finds
+// Uses builtin APIs only — `which()` for Windows-aware PATH resolution (finds
 // gbrain.exe / gbrain.cmd) and an argv-array `Bun.spawnSync` (no shell, nothing
 // to quote). It NEVER fails the install: every path exits 0.
 
 import { which } from 'bun';
+import { lstatSync, realpathSync } from 'node:fs';
+import { resolve, win32 } from 'node:path';
 
 // Repo modules load dynamically inside try/catch: a static import of a file
 // that is not on disk (a Docker dependency layer, a partial checkout) would
@@ -33,46 +35,90 @@ async function runtimeRefusalMessage(): Promise<string | null> {
   }
 }
 
-// The install itself runs on the user's Bun, so this is the first place an
-// upgrade onto a newer Bun floor can say so. Nothing else here would work:
-// every gbrain command refuses until Bun is upgraded.
-const runtimeRefusal = await runtimeRefusalMessage();
-if (runtimeRefusal) {
-  console.error(`[gbrain] Installed, but gbrain will not start on this Bun.\n${runtimeRefusal}`);
-  process.exit(0);
+// Keep the ownership decision importable without running the install hook.
+export function postinstallSkipReason(
+  bin: string,
+  packageRoot: string,
+  options: {
+    platform?: NodeJS.Platform;
+    realpath?: (path: string) => string;
+    isRegularFile?: (path: string) => boolean;
+  } = {},
+): string | undefined {
+  const {
+    platform = process.platform,
+    realpath = realpathSync,
+    isRegularFile = (path: string) => lstatSync(path, { throwIfNoEntry: false })?.isFile() ?? false,
+  } = options;
+  try {
+    const root = realpath(packageRoot);
+    const binaryPath = realpath(bin);
+    const separator = platform === 'win32' ? '\\' : '/';
+    if (binaryPath.startsWith(root + separator)) return;
+
+    // Windows global launchers are regular shims, not symlinks. Preserve
+    // their existing behavior without parsing versioned metadata or batch
+    // scripts. lstat keeps foreign symlinks outside this exception.
+    if (platform === 'win32' && isRegularFile(bin)) {
+      const extension = win32.extname(bin).toLowerCase();
+      if (extension === '.cmd' || (extension === '.exe' && isRegularFile(bin.slice(0, -4) + '.bunx'))) return;
+    }
+    return 'gbrain on PATH resolves outside this package';
+  } catch {
+    return 'could not resolve gbrain on PATH to this package';
+  }
 }
 
-const HINT =
-  '[gbrain] postinstall skipped. If installed via bun install -g github:...: ' +
-  'run `gbrain doctor` and `gbrain apply-migrations --yes` manually. ' +
-  'See https://github.com/garrytan/gbrain/issues/218';
+if (import.meta.main) {
+  // The install itself runs on the user's Bun, so this is the first place an
+  // upgrade onto a newer Bun floor can say so. Nothing else here would work:
+  // every gbrain command refuses until Bun is upgraded.
+  const runtimeRefusal = await runtimeRefusalMessage();
+  if (runtimeRefusal) {
+    console.error(`[gbrain] Installed, but gbrain will not start on this Bun.\n${runtimeRefusal}`);
+    process.exit(0);
+  }
 
-// #5693: under `gbrain upgrade`, post-upgrade owns migrations. Running them
-// here too would run them twice, and a slow run here outlives the install
-// timeout that `gbrain upgrade` reads as a failed upgrade.
-if (process.env.GBRAIN_UPGRADE_OWNS_MIGRATIONS === '1') {
-  console.error('[gbrain] postinstall: migrations deferred to `gbrain post-upgrade`.');
-  process.exit(0);
+  const HINT =
+    '[gbrain] postinstall skipped. If installed via bun install -g github:...: ' +
+    'run `gbrain doctor` and `gbrain apply-migrations --yes` manually. ' +
+    'See https://github.com/garrytan/gbrain/issues/218';
+
+  // #5693: under `gbrain upgrade`, post-upgrade owns migrations. Running them
+  // here too would run them twice, and a slow run here outlives the install
+  // timeout that `gbrain upgrade` reads as a failed upgrade.
+  if (process.env.GBRAIN_UPGRADE_OWNS_MIGRATIONS === '1') {
+    console.error('[gbrain] postinstall: migrations deferred to `gbrain post-upgrade`.');
+    process.exit(0);
+  }
+
+  // Windows-aware PATH resolution — finds gbrain, gbrain.exe or gbrain.cmd.
+  const bin = which('gbrain');
+
+  if (!bin) {
+    // Fresh clone / global install where gbrain isn't on PATH yet: skip cleanly.
+    console.error(HINT);
+    process.exit(0);
+  }
+
+  // A dev checkout may find a different install on PATH. Check resolved
+  // package ownership, preserving the existing Windows shim behavior.
+  const skipReason = postinstallSkipReason(bin, resolve(import.meta.dir, '..'));
+  if (skipReason) {
+    console.error(`[gbrain] postinstall skipped: ${skipReason}. Run \`gbrain apply-migrations --yes\` manually.`);
+    process.exit(0);
+  }
+
+  try {
+    const r = Bun.spawnSync({
+      cmd: [bin, 'apply-migrations', '--yes', '--non-interactive'],
+      stdout: 'inherit',
+      stderr: 'inherit',
+    });
+    if (r.exitCode !== 0) console.error(HINT);
+  } catch {
+    console.error(HINT);
+  }
+
+  process.exit(0); // never abort the install
 }
-
-// Windows-aware PATH resolution — finds gbrain, gbrain.exe or gbrain.cmd.
-const bin = which('gbrain');
-
-if (!bin) {
-  // Fresh clone / global install where gbrain isn't on PATH yet: skip cleanly.
-  console.error(HINT);
-  process.exit(0);
-}
-
-try {
-  const r = Bun.spawnSync({
-    cmd: [bin, 'apply-migrations', '--yes', '--non-interactive'],
-    stdout: 'inherit',
-    stderr: 'inherit',
-  });
-  if (r.exitCode !== 0) console.error(HINT);
-} catch {
-  console.error(HINT);
-}
-
-process.exit(0); // never abort the install
