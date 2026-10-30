@@ -1136,7 +1136,8 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     banner = io.disablePushBanner ? null : (pendingPushFailureBanner() ?? pendingBackupBanner());
     const j = await readStdinJson(io, 300);
     if (!j) return { outcome: 'degraded', reason: 'no_stdin' };
-
+    const prompt = typeof j.prompt === 'string' ? j.prompt : '';
+    if (/^\s*<(?:task-notification|teammate-message)(?=[\s/>])/.test(prompt)) return { outcome: 'ok', reason: 'harness_prompt' };
     // S3#8: transcript_path is untrusted input. A present-but-unconfined
     // path aborts the event (heartbeat + empty stdout), never "best effort".
     let turns: WindowTurn[] = [];
@@ -1187,7 +1188,6 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
         turns = []; // unreadable-mid-flight — the prompt alone still works
       }
     }
-    const prompt = typeof j.prompt === 'string' ? j.prompt : '';
     if (prompt.trim()) turns = [...turns, { role: 'user', text: prompt }];
     if (turns.length === 0) return { outcome: 'ok', reason: 'empty_window' };
 
