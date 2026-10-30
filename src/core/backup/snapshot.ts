@@ -17,6 +17,7 @@ import { isPhysicalRootMetadata } from '../persistence/physical-root-record.ts';
 import { protectNewBackupPath } from './private-path.ts';
 import { PURGE_MIRROR_FILE, readPurgeMirror, replayPurgesInRestore, type PurgeReplayResult } from '../belief/purge-mirror.ts';
 import { pgliteBackupPreflight } from './preflight.ts';
+import { writePgliteDump } from './pglite-tar.ts';
 
 interface SourceInventory { id: string; local_path: string | null; managed_relative_path: string | null }
 interface BackupMetadata {
@@ -173,8 +174,8 @@ export async function createPgliteBackup(options: { output: string; root?: strin
     const inventoryBefore = originals.map(path => ({ path, ...hashFile(confinedPath(root, path)) }));
     // Under the writer lock: a dead serve's IPC socket in the data dir would fail the dump (#5312).
     const sweep = await sweepStaleRuntimeArtefacts(dbPath);
-    const dump = await engine.db.dumpDataDir('none').catch(cause => { throw backupDumpFailed(cause, sweep); });
-    privateWrite(join(work, 'database.tar'), new Uint8Array(await dump.arrayBuffer()));
+    try { writePgliteDump(engine.db.Module.FS, join(work, 'database.tar')); }
+    catch (cause) { throw backupDumpFailed(cause, sweep); }
     const files = [
       { path: 'database.tar', file: join(work, 'database.tar') },
       { path: 'config.json', file: join(work, 'config.json') },
