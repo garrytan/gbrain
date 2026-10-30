@@ -20,6 +20,7 @@ import {
   isAvailable,
   resetGateway,
 } from '../../src/core/ai/gateway.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 const vertexConfig = {
   embedding_model: 'vertex:gemini-embedding-001',
@@ -36,20 +37,6 @@ const vertexEmbedding2Config = {
   ...vertexConfig,
   embedding_model: 'vertex:gemini-embedding-2',
 };
-
-async function withEnv<T>(overrides: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
-  const previous = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]));
-  Object.assign(process.env, overrides);
-  for (const [key, value] of Object.entries(overrides)) if (value === undefined) delete process.env[key];
-  try {
-    return await fn();
-  } finally {
-    for (const [key, value] of Object.entries(previous)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
-}
 
 beforeEach(() => resetGateway());
 afterEach(() => {

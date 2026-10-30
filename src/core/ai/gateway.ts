@@ -77,7 +77,7 @@ import { redactProviderKeys } from './key-redact.ts';
 import { applyVoyageOutputDimension, embeddingDimMismatchError } from './voyage-gateway.ts';
 import { reportEmbeddingAuthFailure } from './key-warnings.ts';
 import { buildGatewayConfig, foldNativeBaseUrlsFromFilePlane } from './build-gateway-config.ts';
-import { GcloudOAuth2Client } from './vertex-auth.ts';
+import { prepareEmbedInputs, vertexProviderSettings } from './vertex-gateway.ts';
 import { invokeAI, sdkInvocationUsage, responseInvocationUsage, hasAIInvocationGuard, isAIInvocationPolicyError } from './invocation-guard.ts';
 import { installAICallLogFromEnv } from './call-log.ts';
 import { cachedQueryEmbedding, clearQueryEmbedCache, queryEmbedCacheKey, queryEmbedGeneration, storeQueryEmbedding } from './query-embed-cache.ts';
@@ -1472,32 +1472,8 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
         ? (client as any).textEmbeddingModel(modelId)
         : (client as any).embedding(modelId);
     }
-    case 'native-vertex': {
-      const project = cfg.env.GOOGLE_VERTEX_PROJECT;
-      const location = cfg.env.GOOGLE_VERTEX_LOCATION;
-      const account = cfg.env.GOOGLE_VERTEX_ACCOUNT;
-      const gcloudPath = cfg.env.GOOGLE_VERTEX_GCLOUD_PATH;
-      if (!project || !location || !account || !gcloudPath) {
-        throw new AIConfigError(
-          'Vertex embedding requires GOOGLE_VERTEX_PROJECT, GOOGLE_VERTEX_LOCATION, GOOGLE_VERTEX_ACCOUNT and GOOGLE_VERTEX_GCLOUD_PATH.',
-          recipe.setup_hint,
-        );
-      }
-      // The Vertex SDK reads this ambient variable while constructing its
-      // provider, independently of the gateway's immutable env snapshot.
-      // Reject both locations so it cannot select Express mode.
-      if (cfg.env.GOOGLE_VERTEX_API_KEY || process.env.GOOGLE_VERTEX_API_KEY) {
-        throw new AIConfigError(
-          'Vertex embedding refuses GOOGLE_VERTEX_API_KEY because it can select Express mode.',
-          'Remove GOOGLE_VERTEX_API_KEY and use the configured gcloud OAuth account.',
-        );
-      }
-      return createVertex({
-        project,
-        location,
-        googleAuthOptions: { authClient: new GcloudOAuth2Client(gcloudPath, account) },
-      }).embeddingModel(modelId);
-    }
+    case 'native-vertex':
+      return createVertex(vertexProviderSettings(recipe, cfg.env)).embeddingModel(modelId);
     case 'native-anthropic':
       throw new AIConfigError(
         `Anthropic has no embedding model. Use openai or google for embeddings.`,
@@ -1635,28 +1611,7 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
-  // Gemini Embedding 2 does not accept the taskType/title options used by
-  // gemini-embedding-001. Its documented retrieval convention lives in the
-  // content itself, before the gateway validates or accounts for the input.
-  const preparedTexts = recipe.id === 'vertex' && modelId === 'gemini-embedding-2'
-    ? texts.map(text => {
-      const content = text ?? '';
-      return opts?.inputType === 'query'
-        ? `task: search result | query: ${content}`
-        : `title: none | text: ${content}`;
-    })
-    : texts;
-  const maxInputChars = recipe.touchpoints.embedding?.max_input_chars;
-  if (maxInputChars !== undefined) {
-    const oversized = preparedTexts.find((text) => (text ?? '').length > maxInputChars);
-    if (oversized !== undefined) {
-      throw new AIConfigError(
-        `${recipe.name} embedding input exceeds ${maxInputChars} characters and was not sent.`,
-        'Split the input before embedding; this provider is configured to reject oversize inputs rather than truncate them.',
-      );
-    }
-  }
-  const truncated = truncateEmbedInputs(preparedTexts);
+  const truncated = truncateEmbedInputs(prepareEmbedInputs(recipe, modelId, texts, opts?.inputType));
 
   // Dim override (D10) — when caller passes `dimensions`, use it. Otherwise
   // fall back to the global cfg default. dimsProviderOptions throws a

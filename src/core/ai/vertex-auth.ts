@@ -1,6 +1,6 @@
 import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile } from '../spawn.ts';
 import { promisify } from 'node:util';
 import { OAuth2Client } from 'google-auth-library';
 
