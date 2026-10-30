@@ -8,16 +8,16 @@
  * onto the build already installed (doctor's `runtime_build_skew` fix);
  * `--dry-run` prints the plan and changes nothing.
  */
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
-import { spawnSync } from '../core/spawn.ts';
-import { isThinClient, loadConfig, toEngineConfig } from '../core/config.ts';
+import { spawn, spawnSync } from '../core/spawn.ts';
+import { gbrainPath, isThinClient, loadConfig, toEngineConfig } from '../core/config.ts';
 import { opError } from '../core/ops/contract.ts';
 import type { Action } from '../core/agent-output.ts';
 import { writeCliError } from '../cli/cli-error.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
-import { SERVE_LAUNCHD_LABEL, SERVE_SYSTEMD_UNIT, serveServiceRestartArgv } from '../core/serve-service.ts';
+import { SERVE_LAUNCHD_LABEL, SERVE_SYSTEMD_UNIT, serveServiceRestartArgv, serveServiceRunsWrapper } from '../core/serve-service.ts';
 import { resolveAutopilotJob } from '../core/autopilot-paths.ts';
 import { plistPath, systemdUnitPath } from './autopilot/jobs.ts';
 import { readSupervisorBuild, readSupervisorPid } from '../core/minions/supervisor-pid.ts';
@@ -143,12 +143,22 @@ async function hostSources(): Promise<{ sources: ProcessSources; notes: string[]
 }
 
 /** The real executor for restart steps; `pidFile` is the default supervisor PID file. */
-function hostExecutor(pidFile: string): RestartExecutor {
+/** Runs restart commands without blocking the event loop (the autopilot daemon keeps its timers and signals); a command still running after `timeoutMs` is killed. */
+export function hostExecutor(pidFile: string, timeoutMs = 600_000): RestartExecutor {
   return {
-    run: (argv, env) => {
-      const r = spawnSync(argv[0]!, argv.slice(1), { encoding: 'utf8', timeout: 600_000, stdio: ['ignore', 'pipe', 'pipe'], env: env ? { ...process.env, ...env } : process.env });
-      return { status: r.error ? null : r.status, output: `${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? r.error.message : ''}` };
-    },
+    run: (argv, env) => new Promise(resolve => {
+      let output = '';
+      let timedOut = false;
+      const child = spawn(argv[0]!, argv.slice(1), { stdio: ['ignore', 'pipe', 'pipe'], env: env ? { ...process.env, ...env } : process.env });
+      const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
+      child.stdout?.on('data', chunk => { output += chunk; });
+      child.stderr?.on('data', chunk => { output += chunk; });
+      child.on('error', error => { clearTimeout(timer); resolve({ status: null, output: `${output}${error.message}` }); });
+      child.on('close', code => {
+        clearTimeout(timer);
+        resolve({ status: timedOut ? null : code, output: timedOut ? `${output}${argv[0]} timed out after ${Math.round(timeoutMs / 1000)}s` : output });
+      });
+    }),
     terminate: terminateIfUnchanged,
     supervisorPid: file => { const status = readSupervisorPid(file ?? pidFile); return status.running ? status.pid : null; },
     sleep: ms => new Promise(r => setTimeout(r, ms)),
@@ -325,6 +335,7 @@ export function planServeRestart(processes: readonly HostProcess[], serveService
 export async function restartStaleServeService(): Promise<ServeRestartOutcome> {
   const services = hostServices();
   if (!services.serve) return { outcome: 'no_service' };
+  if (!serveServiceRunsWrapper(process.platform, homedir())) return { outcome: 'manual', detail: 'the serve service on this host starts another brain\'s serve wrapper (another GBRAIN_HOME), so this autopilot leaves it alone; run `gbrain upgrade --restart-only` with that brain\'s GBRAIN_HOME' };
   const { sources, close, pidFile } = await hostSources();
   try {
     const collectServe = async () => (await collectHostProcesses(sources)).filter(p => p.role === 'serve');
@@ -338,7 +349,7 @@ export async function restartStaleServeService(): Promise<ServeRestartOutcome> {
     const { probeCliSocket } = await import('../core/cli-socket/probe.ts');
     const warmBefore = await probeCliSocket();
     const startedMs = Date.now();
-    const results = await runRestartSteps(plan, hostExecutor(pidFile));
+    const results = await runRestartSteps(plan, hostExecutor(pidFile, SERVE_RESTART_TIMEOUT_MS));
     const verified = await verifyRestart(plan, startedMs, warmBefore, {
       collect: collectServe, probeWarmSocket: () => probeCliSocket(),
       sleep: ms => new Promise(r => setTimeout(r, ms)), now: () => Date.now(),
@@ -352,12 +363,18 @@ export async function restartStaleServeService(): Promise<ServeRestartOutcome> {
 
 export type ServeRestartDeps = { state: { tried: boolean }; restart: () => Promise<ServeRestartOutcome> };
 const SERVE_RESTART_DEPS: ServeRestartDeps = { state: { tried: false }, restart: restartStaleServeService };
+const SERVE_RESTART_TIMEOUT_MS = 120_000;
+const serveRestartMarkerPath = () => gbrainPath('serve-restart-attempt.json');
+
+function serveRestartAttemptedOnThisBuild(): boolean {
+  try { return (JSON.parse(readFileSync(serveRestartMarkerPath(), 'utf8')) as { version?: unknown }).version === VERSION; } catch { return false; }
+}
 
 /**
  * #7475: the autopilot daemon calls this each tick. In auto mode, under the self-upgrade swap's own quiet-hours and
  * idle gates, the autopilot (relaunched on the new build after its swap) restarts the stale serve the serve service
- * runs, and audits the outcome as `restart_serve`. One attempt per autopilot process; the relaunch after the next
- * swap tries again. Never throws.
+ * runs, and audits the outcome as `restart_serve`. One attempt per build: `serve-restart-attempt.json` remembers it
+ * across autopilot relaunches (#8013), and the relaunch after the next swap tries again. Never throws.
  */
 export async function restartServeAfterSelfUpgrade(isIdle: () => Promise<boolean>, deps: ServeRestartDeps = SERVE_RESTART_DEPS): Promise<void> {
   if (deps.state.tried) return;
@@ -367,6 +384,9 @@ export async function restartServeAfterSelfUpgrade(isIdle: () => Promise<boolean
     if (evaluateQuietHours(resolveQuietHoursWindow(cfg.self_upgrade?.quiet_hours), new Date()) === 'allow') return;
     if (!await isIdle()) return;
     deps.state.tried = true;
+    if (serveRestartAttemptedOnThisBuild()) return;
+    mkdirSync(dirname(serveRestartMarkerPath()), { recursive: true });
+    writeFileSync(serveRestartMarkerPath(), `${JSON.stringify({ version: VERSION, ts: new Date().toISOString() })}\n`);
     const result = await deps.restart();
     if (!('detail' in result)) return;
     logSelfUpgrade({ channel: 'autopilot', action: 'restart_serve', current: VERSION, outcome: result.outcome === 'restarted' ? 'applied' : 'skipped', reason: result.outcome });
