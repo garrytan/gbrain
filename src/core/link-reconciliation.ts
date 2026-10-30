@@ -21,9 +21,12 @@ export interface LinkPageMetadata {
   knowledge_revision: string;
 }
 
+// Archived sources retain undeleted pages during recovery, but cannot supply link endpoints.
+export const LIVE_LINK_SOURCES_SQL = 'SELECT id FROM sources WHERE archived IS NOT TRUE';
+
 export async function loadLinkPageMetadata(engine: Pick<BrainEngine, 'executeRaw'>, sourceId?: string): Promise<LinkPageMetadata[]> {
   return engine.executeRaw<LinkPageMetadata>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision FROM pages
-    WHERE deleted_at IS NULL${sourceId ? ' AND source_id=$1' : ''} ORDER BY source_id, slug`, sourceId ? [sourceId] : []);
+    WHERE deleted_at IS NULL AND source_id IN (${LIVE_LINK_SOURCES_SQL})${sourceId ? ' AND source_id=$1' : ''} ORDER BY source_id, slug`, sourceId ? [sourceId] : []);
 }
 
 export function makeIndexedLinkResolver(pages: readonly LinkPageMetadata[], sourceId: string): SlugResolver {
@@ -218,7 +221,7 @@ export async function replacePageFileLinks(engine: BrainEngine, slug: string, so
 export async function fileLinkOwnership(engine: BrainEngine, sourceId: string, scope?: { slugs: readonly string[] }) {
   const pages = scope
     ? await engine.executeRaw<LinkPageMetadata>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision
-        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug`, [sourceId, [...scope.slugs]])
+        FROM pages WHERE deleted_at IS NULL AND source_id IN (${LIVE_LINK_SOURCES_SQL}) AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug`, [sourceId, [...scope.slugs]])
     : await loadLinkPageMetadata(engine);
   const metadata = new Map(pages.map(row => [`${row.source_id}\0${row.slug}`, row]));
   const resolver = makeIndexedLinkResolver(pages, sourceId);
@@ -424,8 +427,8 @@ export function resolveCandidateSources(
 
 /**
  * (slug, source_id) refs for EXACTLY the given slugs, chunked IN-list —
- * the bounded replacement for listAllPageRefs in the sweep's pass 2. Same
- * visibility as listAllPageRefs (deleted_at IS NULL).
+ * the bounded endpoint lookup in the sweep's pass 2. Only undeleted pages
+ * in live sources can supply endpoints.
  */
 export async function lookupRefsForSlugs(
   engine: BrainEngine,
@@ -441,7 +444,7 @@ export async function lookupRefsForSlugs(
     const placeholders = chunk.map((_, j) => `$${j + 1}`).join(', ');
     const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string; knowledge_revision: string }>(
       `SELECT slug, source_id, type, knowledge_revision FROM pages
-        WHERE deleted_at IS NULL AND slug IN (${placeholders})`,
+        WHERE deleted_at IS NULL AND source_id IN (${LIVE_LINK_SOURCES_SQL}) AND slug IN (${placeholders})`,
       chunk,
     );
     metadata.push(...rows);
