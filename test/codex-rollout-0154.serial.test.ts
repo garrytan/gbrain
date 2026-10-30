@@ -212,11 +212,14 @@ describe('E-N4: assistant turns with no user turn are flagged, never silent', ()
       await engine.disconnect();
     });
 
-    test('an assistant-only file imports but counts as drift and holds the watermark', async () => {
+    test('an assistant-only file is refused before writes and holds the watermark', async () => {
       await resetPgliteState(engine);
       const p = writeRollout('assistant-only.jsonl', [meta, assistant('ok')]);
       const r = await runTranscriptsIngest(engine, { paths: [p], sourceId: 'default', userPatternsPath: '/nonexistent-patterns.txt' });
-      expect(r.sessionsImported).toBe(1);
+      expect(r.sessionsImported).toBe(0);
+      expect(r.erroredFiles).toBe(1);
+      expect(r.pages.imported).toBe(0);
+      expect(await engine.listPages({ type: 'conversation', sourceId: 'default', limit: 10 })).toHaveLength(0);
       expect(r.driftFiles).toBe(1);
       expect(r.files[0]!.userTurnsMissing).toBe(true);
       expect(r.cleanScan).toBe(false);
