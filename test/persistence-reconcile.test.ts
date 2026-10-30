@@ -755,7 +755,7 @@ test('a fact withdrawn between reconciliation preparation and publication leaves
   for (const enabled of [false, true]) {
     const claim = 'withdrawn between reconciliation preparation and publication';
     const fence = renderFactsTable([{ rowNum: 1, claim, kind: 'fact', confidence: 1, visibility: 'world', notability: 'medium', active: true, context: 'test evidence' }]);
-    const f = await fixture(engine, enabled, `Facts: ${fence}`), originalBytes = readFileSync(f.file);
+    const f = await fixture(engine, enabled, `Facts:\n\n${fence}`), originalBytes = readFileSync(f.file);
     await local(engine, f.registration, async () => {
       const repair = await preparedRepair(engine, f);
       expect(String(repair.prepared.file?.content)).toContain(claim);
@@ -783,7 +783,7 @@ test("a subject-'*' purge recorded after the preview makes it stale; an artifact
   const purgeAll = (sourceId: string, text: string) => engine.executeRaw(
     "INSERT INTO fact_purges(source_id,visibility,subject,fact_hash) VALUES($1,'world','*',gbrain_fact_fingerprint($2))", [sourceId, text]);
   for (const target of [claim, 'an unrelated claim purged everywhere']) {
-    const f = await fixture(engine, false, `Facts: ${fence}`), originalBytes = readFileSync(f.file);
+    const f = await fixture(engine, false, `Facts:\n\n${fence}`), originalBytes = readFileSync(f.file);
     await local(engine, f.registration, async () => {
       const { preview } = await runReconcilePreview(engine, { source_id: f.id, slug: f.slug });
       expect(preview.preimages.database).not.toHaveProperty('globalPurges');
