@@ -17,8 +17,9 @@
  *   3. the provider-init sweep removes dead-PID scratch dirs and leaves
  *      live-PID, own-PID, and non-matching dirs alone.
  */
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
+import * as fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
@@ -36,6 +37,8 @@ import {
   isClaudeCliSelfTranscriptPath,
   sweepDeadClaudeCliScratchDirs,
 } from '../src/core/ai/providers/claude-cli-scratch.ts';
+import { selfCaptureCheck } from '../src/commands/doctor/checks/self-capture.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
 let projectsRoot: string;
 let roots: HarnessRoot[];
@@ -117,6 +120,34 @@ describe('single-session self-capture classifier (#5820)', () => {
   test('a missing projects root classifies nothing', () => {
     expect(claudeCliSelfProjectDirs(join(projectsRoot, 'missing'))).toEqual([]);
     expect(isClaudeCliSelfSessionId('session-self', [])).toBe(false);
+  });
+
+  test('doctor classifies many captures with O(projects) transcript existence stats', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'gb-self-excl-bulk-'));
+    const projectsRoot = join(root, 'projects');
+    const corpusDir = join(root, 'corpus');
+    const dirs = [0, 1, 2].map((index) => join(projectsRoot, `-${CLAUDE_CLI_CWD_PREFIX}${index}`));
+    const ids = Array.from({ length: 12 }, (_, index) => `session-${index}`);
+    const matched = new Set([ids[0]!]);
+    try {
+      mkdirSync(corpusDir, { recursive: true });
+      dirs.forEach((dir) => {
+        mkdirSync(dir, { recursive: true });
+      });
+      writeFileSync(join(dirs[2]!, `${ids[0]}.jsonl`), '{}\n', 'utf8');
+      for (const id of ids) writeFileSync(join(corpusDir, `${id}.txt`), 'capture', 'utf8');
+      const existsSyncSpy = spyOn(fs, 'existsSync');
+      try {
+        const check = await selfCaptureCheck({} as BrainEngine, { projectsRoot, corpusDir });
+        expect(check.details).toMatchObject({ classified: matched.size, unclassifiable: ids.length - matched.size, corpus_files: ids.length });
+        expect((check.details!.classified_sample as string[]).sort()).toEqual([...matched].map((id) => `${id}.txt`).sort());
+        expect(existsSyncSpy.mock.calls.length).toBeLessThanOrEqual(dirs.length);
+      } finally {
+        existsSyncSpy.mockRestore();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
