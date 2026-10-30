@@ -23,5 +23,5 @@ test('a fresh read-only code source settles its full sync', () => managedBrain(a
   const outcome = await performManagedSync(engine, { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true, full: true })
     .then(result => ({ status: result.status, reason: result.reason }), error => ({ thrown: error instanceof Error ? error.name : String(error) }));
 
-  expect(['first_sync', 'synced']).toContain('status' in outcome ? outcome.status : undefined);
+  expect('status' in outcome && (outcome.status === 'first_sync' || outcome.status === 'synced')).toBe(true);
 }, { setup }), 120_000);
