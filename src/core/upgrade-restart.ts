@@ -287,8 +287,10 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
   return { expected: ctx.expected, current, stale, steps, manual };
 }
 
+export interface RunResult { status: number | null; output: string }
+
 export interface RestartExecutor {
-  run: (argv: string[], env?: Record<string, string>) => { status: number | null; output: string };
+  run: (argv: string[], env?: Record<string, string>) => RunResult | Promise<RunResult>;
   /** SIGTERM the MCP server at pid only if it is still the process the plan saw: 'changed' when the pid now names another process. */
   terminate: (pid: number, startedMs: number | null) => 'stopped' | 'gone' | 'changed';
   /** The live supervisor's pid now (read from its PID file, the default one when null), or null. */
@@ -308,18 +310,18 @@ export async function runRestartSteps(plan: RestartPlan, exec: RestartExecutor):
       const env = { BUN_INSTALL: step.bun_install };
       const probe = ['git', 'ls-remote', '--exit-code', '--tags', 'https://github.com/garrytan/gbrain', `refs/tags/v${step.to}`];
       const add = ['bun', 'add', '-g', `github:garrytan/gbrain#v${step.to}`];
-      const probed = exec.run(probe);
+      const probed = await exec.run(probe);
       if (probed.status !== 0) { results.push({ step, ok: false, detail: `v${step.to} has no release tag, so the copy at ${step.root} was left as it is (${failed(probe, probed)})` }); continue; }
-      const removed = exec.run(['bun', 'remove', '-g', 'gbrain'], env);
-      const added = removed.status === 0 ? exec.run(add, env) : removed;
+      const removed = await exec.run(['bun', 'remove', '-g', 'gbrain'], env);
+      const added = removed.status === 0 ? await exec.run(add, env) : removed;
       if (added.status === 0) { results.push({ step, ok: true, detail: `replaced the Bun global copy at ${step.root} with v${step.to}` }); continue; }
-      const restored = removed.status === 0 && step.from ? exec.run(['bun', 'add', '-g', `github:garrytan/gbrain#v${step.from}`], env).status === 0 : false;
+      const restored = removed.status === 0 && step.from ? (await exec.run(['bun', 'add', '-g', `github:garrytan/gbrain#v${step.from}`], env)).status === 0 : false;
       results.push({ step, ok: false, detail: `could not replace the copy at ${step.root} (${failed(removed.status === 0 ? add : ['bun', 'remove', '-g', 'gbrain'], added)})${restored ? `; restored v${step.from}` : ''}` });
     } else if (step.kind === 'service') {
-      const r = exec.run(step.argv);
+      const r = await exec.run(step.argv);
       results.push({ step, ok: r.status === 0, detail: r.status === 0 ? `ran \`${step.argv.join(' ')}\`` : failed(step.argv, r) });
     } else if (step.kind === 'supervisor') {
-      const stop = exec.run(step.stop);
+      const stop = await exec.run(step.stop);
       if (stop.status !== 0) { results.push({ step, ok: false, detail: failed(step.stop, stop) }); continue; }
       await exec.sleep(SUPERVISOR_RESPAWN_GRACE_MS);
       const respawned = exec.supervisorPid(step.pid_file);
@@ -327,7 +329,7 @@ export async function runRestartSteps(plan: RestartPlan, exec: RestartExecutor):
         results.push({ step, ok: true, detail: `stopped supervisor pid ${step.pid}; its service manager started pid ${respawned}` });
         continue;
       }
-      const start = exec.run(step.start);
+      const start = await exec.run(step.start);
       results.push({ step, ok: start.status === 0, detail: start.status === 0 ? `stopped supervisor pid ${step.pid} and started it again with \`${step.start.join(' ')}\`` : failed(step.start, start) });
     } else {
       const outcome = exec.terminate(step.pid, step.started_ms);

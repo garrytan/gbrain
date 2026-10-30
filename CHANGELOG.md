@@ -10,6 +10,22 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**The autopilot's serve restart after a self-upgrade now tries once per installed build instead of once per autopilot process, leaves alone a serve service installed for another brain, and no longer freezes the autopilot while the restart runs.**
+
+#7478 had the relaunched autopilot restart the serve its installed service runs when that serve was still on the old build. Three gaps came out of its review (#8013). A restart that came back unverified was tried again by every autopilot relaunch, because the attempt was only remembered in memory. On macOS, where the autopilot doesn't filter processes by `GBRAIN_HOME`, one brain's autopilot could restart the `com.gbrain.serve` installed for another brain on the same OS user. And the restart command ran synchronously for up to ten minutes, which stopped the daemon's timers and signal handling while `systemctl --user restart` waited for the old serve to stop.
+
+Now `serve-restart-attempt.json` under the brain's `.gbrain` directory remembers the build the restart was tried on, so each build gets one attempt across relaunches. The autopilot restarts the serve service only when its plist or unit starts this brain's own serve wrapper, and audits any other case as `skipped` / `manual`. The restart command runs asynchronously with a 120-second cap.
+
+### Itemized changes
+
+- `src/commands/upgrade-restart.ts`: the per-build attempt marker in `restartServeAfterSelfUpgrade`; the ownership check before `restartStaleServeService` collects processes; `hostExecutor` spawns asynchronously and kills a command past its timeout (120 s for the autopilot's serve restart, 600 s for `gbrain upgrade --restart-only` as before).
+- `src/core/serve-service.ts`: `serveServiceRunsWrapper` reads the launchd plist or the systemd unit and checks that it starts this brain's wrapper.
+- `src/core/upgrade-restart.ts`: `RestartExecutor.run` may return a promise, and `runRestartSteps` awaits each command.
+- Docs: the Restart section of `docs/guides/upgrades-auto-update.md` and the `upgrade-restart.ts` key-files entry.
+- Tests: `test/autopilot-serve-restart-8013.test.ts`.
+
 ## [0.60.512.0] - 2026-10-30
 
 **After an automatic self-upgrade, the autopilot now restarts the serve your installed service runs when it is still on the old build, so one auto-upgrade no longer leaves two builds running until someone runs `gbrain upgrade --restart-only` by hand.**
