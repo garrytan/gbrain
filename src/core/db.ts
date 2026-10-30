@@ -57,7 +57,21 @@ export async function endPoolBounded(
  * MaxClients errors when `gbrain upgrade` spawns subprocesses that each open
  * their own pool. Set `GBRAIN_POOL_SIZE=2` (or similar) before the command.
  */
-const DEFAULT_POOL_SIZE_FALLBACK = 10;
+// Lowered from 10 to 6 (RESIDENT_POOL_FLOOR) to prevent pool exhaustion when
+// multiple gbrain processes (serve, autopilot, jobs work) run concurrently.
+// Each process opens up to this many connections; 3 processes × 6 = 18,
+// well within a 100-connection Postgres max_connections. Operators can
+// override via GBRAIN_POOL_SIZE. One-shot CLI commands use 2.
+const DEFAULT_POOL_SIZE_FALLBACK = 6;
+
+const IDLE_TIMEOUT_S = (() => {
+  const raw = process.env.GBRAIN_IDLE_TIMEOUT;
+  if (raw) {
+    const parsed = parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 10;
+})();
 
 /**
  * Supabase PgBouncer transaction-mode convention: port 6543 routes through
@@ -519,7 +533,7 @@ export async function connect(config: EngineConfig, hooks: PoolHealthHooks = {})
     const timeouts = resolveSessionTimeouts();
     const opts: Record<string, unknown> = {
       max: resolvePoolSize(config.pool_max),
-      idle_timeout: 20,
+      idle_timeout: IDLE_TIMEOUT_S,
       connect_timeout: resolveUrlConnectTimeout(url),
       // Explicit (matches the postgres.js implicit default; GBRAIN_POOL_MAX_LIFETIME_S overrides).
       max_lifetime: resolveMaxLifetimeSeconds(),
