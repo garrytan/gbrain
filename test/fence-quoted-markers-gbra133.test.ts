@@ -230,9 +230,13 @@ describe('fence writers find the fence the readers find', () => {
     const noRealBegin = `Intro.\n\nUser said: ${FACTS_FENCE_BEGIN} goes on its own line.\n\n${prose}\n\n${table.split('\n').slice(1).join('\n')}\n\nTail.`;
     expect(withdrawalFenceBlocks(noRealBegin)).toEqual([]);
     expect(dropFactFenceRowsByNumber(noRealBegin, row => row.rowNum !== 1)).toBe(noRealBegin);
-    const quotedAtLineEnd = noRealBegin.replace(' goes on its own line.', '');
-    expect(withdrawalFenceBlocks(quotedAtLineEnd)).toEqual([]);
-    expect(dropFactFenceRowsByNumber(quotedAtLineEnd, row => row.rowNum !== 1)).toBe(quotedAtLineEnd);
+    const quotedInBlockquote = noRealBegin.replace(`User said: ${FACTS_FENCE_BEGIN} goes on its own line.`, `> ${FACTS_FENCE_BEGIN}`);
+    expect(withdrawalFenceBlocks(quotedInBlockquote)).toEqual([]);
+    expect(dropFactFenceRowsByNumber(quotedInBlockquote, row => row.rowNum !== 1)).toBe(quotedInBlockquote);
+    // A label before the marker (`Facts: <marker>`) still opens a fence, for the readers and the purge alike.
+    const labelled = noRealBegin.replace(` goes on its own line.\n\n${prose}`, '');
+    expect(parseFactsFence(labelled).facts.map(f => f.claim)).toEqual(['alpha claim', 'beta claim']);
+    expect(withdrawalFenceBlocks(labelled).map(block => block.start)).toEqual([labelled.indexOf(FACTS_FENCE_BEGIN)]);
   });
 
   test('a megabyte line of quoted markers is read in one pass', () => {

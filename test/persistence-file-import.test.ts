@@ -258,7 +258,7 @@ test('publication refuses a fact withdrawn between managed-import preparation an
     const claim = 'withdrawn between managed import preparation and publication';
     const fence = renderFactsTable([{ rowNum: 1, claim, kind: 'fact', confidence: 1, visibility: 'world',
       notability: 'medium', active: true, context: 'test evidence' }]);
-    const bytes = Buffer.from(`---\ntitle: Withdrawn import\ntype: note\n---\nFacts:\n\n${fence}\n`); writeFileSync(file, bytes);
+    const bytes = Buffer.from(`---\ntitle: Withdrawn import\ntype: note\n---\nFacts: ${fence}\n`); writeFileSync(file, bytes);
     const binding = (await getWorktreeBinding(engine, f.sourceId))!;
     const { slug, content } = managedImportContent('withdrawn.md', bytes);
     const ctx = { engine, remote: false, sourceId: f.sourceId } as OperationContext;

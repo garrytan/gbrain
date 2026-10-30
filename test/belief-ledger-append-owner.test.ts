@@ -60,7 +60,7 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
         await seeded(b);
         const mark = await b.lastId();
         const clientRequest = randomUUID();
-        await b.op('append_page', { slug: SLUG, text: 'Later note about the widget plan.', request_id: clientRequest });
+        await b.op('append_page', { slug: SLUG, text: 'Later note about the widget plan.', region: 'auto', separator: 'auto', request_id: clientRequest });
         const request = await requestOf(b, clientRequest);
         const [state] = await b.engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE id = $1::uuid', [request]);
         const events = await b.events(mark);

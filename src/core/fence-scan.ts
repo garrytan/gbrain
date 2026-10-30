@@ -358,11 +358,12 @@ export function indexOfOutsideCode(
 
 /**
  * GBRA-133: whether the marker at `at` is quoted rather than a marker line. Every fence writer puts a marker on its own
- * line, so a marker comment with other text on its line (a sentence, a blockquote's `>`, a list bullet) is quoted, as in
- * a transcript of a conversation about gbrain. A bare partial needle (`gbrain:takes:begin` in prose, the near-miss
- * search) is not a marker comment and is still found. Every fence locator that splices a body uses this rule, so readers
- * and writers agree on where a fence is. Each scan stops at the first character that is not whitespace, so a body of many
- * quoted markers on one line costs one pass.
+ * line, so a marker comment followed by other text on its line (a sentence quoting it) or inside a blockquote (`> `) is
+ * quoted, as in a transcript of a conversation about gbrain. A marker with only a label before it (`Facts: <marker>`)
+ * still delimits, as before. A bare partial needle (`gbrain:takes:begin` in prose, the near-miss search) is not a
+ * marker comment and is still found. Every fence locator that splices a body uses this rule, so readers and writers agree
+ * on where a fence is. The scan after the marker stops at the first character that is not whitespace, and only a marker
+ * with nothing after it scans back to its line's start, so a line of many quoted markers is read in one pass.
  */
 export function quotedFenceMarker(body: string, at: number, needle: string): boolean {
   let start = at, end = at + needle.length;
@@ -380,17 +381,10 @@ export function quotedFenceMarker(body: string, at: number, needle: string): boo
     if (tail - close < 2 || body[tail] !== '>') return false;
     end = tail + 1;
   }
-  return !blankToLineEdge(body, start, -1) || !blankToLineEdge(body, end, 1);
-}
-
-/** Whether only whitespace lies between `from` and the line's edge in `direction` (-1 back to its start, 1 on to its end). */
-function blankToLineEdge(body: string, from: number, direction: -1 | 1): boolean {
-  for (let i = direction === -1 ? from - 1 : from; i >= 0 && i < body.length; i += direction) {
-    const ch = body[i]!;
-    if (ch === '\n' || ch === '\r') return true;
-    if (!/\s/.test(ch)) return false;
-  }
-  return true;
+  for (let i = end; i < body.length && body[i] !== '\n' && body[i] !== '\r'; i++) if (!/\s/.test(body[i]!)) return true;
+  let first = '';
+  for (let i = start - 1; i >= 0 && body[i] !== '\n' && body[i] !== '\r'; i--) if (!/\s/.test(body[i]!)) first = body[i]!;
+  return first === '>';
 }
 
 /**
