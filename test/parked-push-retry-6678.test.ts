@@ -247,6 +247,86 @@ describe('#6697 revoked writer: parked Git effect', () => {
   }), 120_000);
 });
 
+describe('#7110 visibility changes do not abort parked push recovery', () => {
+  async function privatePark(root: string, sourceId: string, slug: string) {
+    await registerLocalWriter(engine, 'stdio');
+    const id = await parked(root, sourceId, slug, { remote: true });
+    const current = (await engine.getPage(slug, { sourceId }))!;
+    await engine.putPage(slug, { ...current, frontmatter: { ...current.frontmatter, visibility: 'private' } }, { sourceId });
+    return id;
+  }
+
+  test('bulk preview and apply refuse only the now-private request, and the healthy sibling actually commits', () => isolated(async home => {
+    const root = await gitRoot(home);
+    const { sourceId, binding } = await claimedSource(root);
+    const hidden = await privatePark(root, sourceId, 'hidden7110');
+    const healthy = await parked(root, sourceId, 'healthy7110');
+    const before = await gitOutcome(hidden);
+    const preview = await retryParkedPushes(engine, binding.worktree_id, true);
+    expect(preview).toMatchObject({ status: 'partial', requests: 2, queued: 1, unchanged: 0,
+      refused: [{ request_id: await publicId(hidden), code: 'permission_denied', fix: { ask_user: true } }] });
+    expect(await gitOutcome(hidden)).toEqual(before);
+    expect(await gitOutcome(healthy)).toMatchObject({ state: 'failed' });
+    const applied = await retryParkedPushes(engine, binding.worktree_id, false);
+    expect(applied.refused).toEqual(preview.refused);
+    expect(applied).toMatchObject({ status: 'partial', queued: 1 });
+    expect(await gitOutcome(hidden)).toEqual(before);
+    await engine.executeRaw("UPDATE persistence_host_bindings SET git_durability='enabled' WHERE worktree_id=$1::uuid", [binding.worktree_id]);
+    await runEffects();
+    expect(await gitOutcome(healthy)).toMatchObject({ state: 'committed', outcome: { git: 'committed' } });
+    expect(await gitOutcome(hidden)).toEqual(before);
+  }), 120_000);
+
+  test('single-request preview preserves the visibility refusal and requires reviewed owner approval for Git only', () => isolated(async home => {
+    const root = await gitRoot(home);
+    const { sourceId, binding } = await claimedSource(root);
+    const id = await privatePark(root, sourceId, 'owner7110');
+    const requestId = await publicId(id);
+    const preview = await retryParkedEffects(engine, sourceId, requestId, true);
+    expect(preview).toMatchObject({ action: 'owner_revoked', authority: { ok: false, code: 'page_not_found' },
+      effects: [{ kind: 'git', action: 'owner_revoked' }], fix: { ask_user: true } });
+    await expect(runPersistenceAdministration(engine, 'writer_retry_effects', { source_id: sourceId, request_id: requestId }))
+      .rejects.toMatchObject({ code: 'permission_denied' });
+    await expect(runPersistenceAdministration(engine, 'writer_retry_effects', { source_id: sourceId, request_id: requestId,
+      admin_intent: 'writer_retry_effects', expected_state: 'f'.repeat(64) })).rejects.toMatchObject({ code: 'writer_admin_state_changed' });
+    const applied = await runPersistenceAdministration(engine, 'writer_retry_effects',
+      { source_id: sourceId, request_id: requestId, ...await reviewedWriterIntent(engine, 'writer_retry_effects') });
+    expect(applied).toMatchObject({ effects: [{ action: 'retry_queued', retried_under: 'owner_host' }] });
+    expect(await gitOutcome(id)).toMatchObject({ state: 'queued', data: { retried: 1, retried_under: 'owner_host', retried_by_host: localHostId() } });
+    await engine.executeRaw("UPDATE persistence_host_bindings SET git_durability='enabled' WHERE worktree_id=$1::uuid", [binding.worktree_id]);
+    await runEffects();
+    expect(await gitOutcome(id)).toMatchObject({ state: 'committed', outcome: { git: 'committed' } });
+  }), 120_000);
+
+  test('doctor names the reviewed owner remedy instead of a retry that still lacks visibility', () => isolated(async home => {
+    const root = await gitRoot(home);
+    const { sourceId } = await claimedSource(root);
+    const id = await privatePark(root, sourceId, 'doctor7110');
+    const check = await checkParkedEffects(engine, [sourceId]);
+    expect(check.status).toBe('warn');
+    const effects = (check.details as { effects: Array<Record<string, unknown>> }).effects;
+    expect(effects).toEqual([expect.objectContaining({ request_id: await publicId(id),
+      owner_revoked: 'Page not found.', exit: expect.stringContaining('--admin-intent writer_retry_effects') })]);
+    expect(await gitOutcome(id)).toMatchObject({ state: 'failed', data: { target_failures: 5 } });
+  }), 120_000);
+
+  test('visibility refusal never lets owner approval retry a withdrawal', () => isolated(async home => {
+    const root = await gitRoot(home);
+    const { sourceId } = await claimedSource(root);
+    const id = await privatePark(root, sourceId, 'withdrawal7110');
+    await engine.executeRaw("UPDATE persistence_effects SET kind='withdrawal-mirror' WHERE request_id=$1::uuid AND kind='git'", [id]);
+    const applied = await runPersistenceAdministration(engine, 'writer_retry_effects',
+      { source_id: sourceId, request_id: await publicId(id), ...await reviewedWriterIntent(engine, 'writer_retry_effects') });
+    expect(applied).toMatchObject({ action: 'owner_revoked', authority: { code: 'page_not_found' },
+      effects: [{ kind: 'withdrawal-mirror', action: 'owner_revoked' }] });
+    expect((applied.fix as { argv?: string[] }).argv).toBeUndefined();
+    const [effect] = await engine.executeRaw<{ state: string; data: Record<string, unknown> }>(
+      "SELECT state,data FROM persistence_effects WHERE request_id=$1::uuid AND kind='withdrawal-mirror'", [id]);
+    expect(effect.state).toBe('failed');
+    expect(effect.data.retried_under).toBeUndefined();
+  }), 120_000);
+});
+
 describe('#6665 doctor parked_effects', () => {
   test('names the fix for a parked git_target_pending target', () => isolated(async home => {
     const root = await gitRoot(home);
