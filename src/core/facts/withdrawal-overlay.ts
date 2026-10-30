@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
+import { quotedFenceMarker } from '../fence-scan.ts';
 import type { PageWithdrawal } from '../page-state/types.ts';
 import { OperationError } from '../ops/contract.ts';
 import { normalizeLoweredClaim } from './withdrawal-schema.ts';
@@ -44,22 +45,36 @@ interface FenceMarker { start: number; end: number; kind: 'begin' | 'end'; inlin
 function literalFenceMarkers(body: string): FenceMarker[] {
   const markers: FenceMarker[] = [];
   const tokens = new RegExp([FACTS_FENCE_BEGIN, FACTS_FENCE_END, '`'].join('|'), 'g');
-  let offset = 0;
+  let offset = 0, seen = 0;
   for (const line of body.split('\n')) {
     let ticks = 0;
     const lastTick = line.lastIndexOf('`');
     for (const token of line.matchAll(tokens)) {
       if (token[0] === '`') { ticks++; continue; }
-      if (markers.length >= WITHDRAWAL_MARKER_LIMIT) throw new OperationError('withdrawal_capacity',
+      if (seen++ >= WITHDRAWAL_MARKER_LIMIT) throw new OperationError('withdrawal_capacity',
         'The fact-fence marker limit was exceeded; incomplete withdrawal discovery is refused.',
         'Inspect and repair excessive malformed fact fences on the host before retrying. See docs/guides/concurrent-writes.md#withdrawal-recovery.');
       const start = offset + token.index;
-      markers.push({ start, end: start + token[0].length, kind: token[0] === FACTS_FENCE_BEGIN ? 'begin' : 'end',
-        inlineCode: ticks % 2 === 1 && lastTick >= token.index + token[0].length });
+      const inlineCode = ticks % 2 === 1 && lastTick >= token.index + token[0].length;
+      // A marker quoted in prose (other text on its line) delimits nothing, as for the readers; a fence wrapped only in
+      // backticks still does, so its rows are withdrawn too.
+      if (!inlineCode && quotedFenceMarker(body, start, token[0])
+        && !(onlyTicksToLineEdge(body, start, -1) && onlyTicksToLineEdge(body, start + token[0].length, 1))) continue;
+      markers.push({ start, end: start + token[0].length, kind: token[0] === FACTS_FENCE_BEGIN ? 'begin' : 'end', inlineCode });
     }
     offset += line.length + 1;
   }
   return markers;
+}
+
+/** Whether only backticks and whitespace lie between `from` and the line's edge in `direction`. */
+function onlyTicksToLineEdge(body: string, from: number, direction: -1 | 1): boolean {
+  for (let i = direction === -1 ? from - 1 : from; i >= 0 && i < body.length; i += direction) {
+    const ch = body[i]!;
+    if (ch === '\n') return true;
+    if (ch !== '`' && !/\s/.test(ch)) return false;
+  }
+  return true;
 }
 
 function inlineCodeFenceBlocks(body: string, markers: FenceMarker[]): Array<{ start: number; end: number; parsed: ReturnType<typeof parseFactsFence> }> {

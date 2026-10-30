@@ -78,6 +78,7 @@ test/facts-insert-guards-7105.test.ts
 test/facts-publication-large-fence-6898.test.ts
 test/facts-subject-infer-7405.test.ts
 test/fence-fact-append.test.ts
+test/fence-quoted-markers-gbra133.test.ts
 test/fence-repair-receipts.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
 test/forecast-journal.test.ts

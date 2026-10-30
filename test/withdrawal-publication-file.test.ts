@@ -65,7 +65,7 @@ test('a prepared repo-file write racing a withdrawal leaves the canonical file a
     const claim = 'withdrawn between file preparation and publication';
     const fence = renderFactsTable([{ rowNum: 1, claim, kind: 'fact', confidence: 1, visibility: 'world',
       notability: 'medium', active: true, context: 'test evidence' }]);
-    const content = `---\ntitle: Withdrawal file race\ntype: note\n---\nFacts: ${fence}\n`;
+    const content = `---\ntitle: Withdrawal file race\ntype: note\n---\nFacts:\n\n${fence}\n`;
     const context: OperationContext = { engine, sourceId, remote: false, dryRun: false,
       config: { engine: engine.kind }, logger: { info() {}, warn() {}, error() {} } };
     const authority = await submissionAuthority(context, 'put_page', sourceId, binding.source_incarnation, slug);

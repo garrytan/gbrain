@@ -23,6 +23,23 @@ Contributed by @Masashi-Ono0611, whose #8004 proposed the short-circuit.
 - `src/core/search/projection-readiness.ts`: the probe reads `pending` in a materialized CTE and `by_design` inside `CASE WHEN pending THEN false ELSE … END`, so its subplan never runs while pages are pending.
 - Tests: `test/projection-readiness.test.ts` (PGLite) and `test/e2e/projection-readiness-plan-postgres.test.ts` (Postgres) pin the plan: with pending pages only one scan of `pages` executes.
 
+## [0.60.513.0] - 2026-10-30
+
+**A transcript that quotes a facts or takes fence marker is no longer held `invalid_fence`: only a marker on its own line counts as a fence line.**
+
+Every fence writer puts its markers on their own lines. A page that quotes a marker inside a sentence, a blockquote or a list item (a conversation about gbrain itself, for example) used to be read as holding a fence. A run of quoted begins held it `repeated_marker`, naming a body line where no marker line exists, and one quoted begin with no end held it unbalanced. Such pages now import, and the readers find no fence in them. A real broken fence still holds: an own-line begin with no end still warns unbalanced, and a repeated own-line begin still refuses `repeated_marker`, now naming that marker's line.
+
+### What to do after upgrading
+
+- Nothing. A transcript page held `invalid_fence` only for quoted markers imports on its next sync, or now with `gbrain sync --source <id> --no-pull`.
+- A hand-edited fence whose marker line carries other text (`<!--- gbrain:facts:begin --> notes`, a list bullet before it) now reads as unbalanced and holds `invalid_fence`. Put the marker back on a line of its own and sync again.
+
+### Itemized changes
+
+- `src/core/fence-scan.ts`: `indexOfOutsideCode` skips a marker comment that has other text on its line, as it already skips markers inside code spans and closed code blocks. Every fence reader goes through it: `parseTakesFence`, `parseFactsFence`, the links fence, the strict compile gate's repeated-marker check and the content-repair lane's fence extraction. A bare near-miss mention in prose is still reported `marker_near_miss`. The check stops at the first non-space character on each side, so a long line of quoted markers is read in one pass.
+- `src/core/facts/forget.ts` (`strikeFenceRow`: forget_fact, proposal accept and undo, loop retirement) and `src/core/facts/withdrawal-overlay.ts` (withdrawal and purge on stored bodies) find the fence by the same rule, so a quoted marker never makes them rewrite the text around it.
+- Tests: `test/fence-quoted-markers-gbra133.test.ts` (PGLite and Postgres; forget, withdrawal and purge around quoted markers; a megabyte line of quoted markers).
+
 ## [0.60.512.0] - 2026-10-30
 
 **After an automatic self-upgrade, the autopilot now restarts the serve your installed service runs when it is still on the old build, so one auto-upgrade no longer leaves two builds running until someone runs `gbrain upgrade --restart-only` by hand.**
