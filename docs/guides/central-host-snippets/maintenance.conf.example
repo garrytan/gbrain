@@ -1,0 +1,6 @@
+# Optional drop-in for the existing gbrain-serve.service USER unit.
+# Install only after arranging equivalent maintenance coverage; see the guide.
+# Location: ~/.config/systemd/user/gbrain-serve.service.d/maintenance.conf
+# The generated wrapper can override this via shell profiles or ~/.gbrain/env.
+[Service]
+Environment="GBRAIN_SWEEP=0"
