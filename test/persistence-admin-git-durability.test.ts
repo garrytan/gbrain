@@ -12,11 +12,12 @@
  *        `--pat-file` refuses a readable token file before writing anything.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { randomUUID } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import type { BrainEngine, TransactionOptions } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
 import { PERSISTENCE_ADMIN_OPERATIONS } from '../src/core/persistence/admin-contract.ts';
@@ -35,15 +36,34 @@ import { PERSISTENCE_GIT_DURABILITY_COLUMN_SQL, PERSISTENCE_SCHEMA_STATEMENTS } 
 import { gitAsync } from './helpers/git-publication.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
+import { setupDB, teardownDB } from './e2e/helpers.ts';
+import { testBackends } from './helpers/test-backends.ts';
+import { resolveGbrainHome } from '../src/core/gbrain-home.ts';
 
-let engine: PGLiteEngine;
+/** Include untracked files, Git metadata and the private synthetic credential store. */
+function treeBytes(root: string): Record<string, string> {
+  const files: Record<string, string> = {};
+  const visit = (dir: string) => {
+    for (const name of readdirSync(join(root, dir)).sort()) {
+      const path = join(dir, name);
+      if (statSync(join(root, path)).isDirectory()) visit(path);
+      else files[path] = createHash('sha256').update(readFileSync(join(root, path))).digest('hex');
+    }
+  };
+  visit('');
+  return files;
+}
+
+for (const backend of testBackends()) describe(`git durability administration (${backend})`, () => {
+let engine: BrainEngine;
 const roots: string[] = [];
-const config = { engine: 'pglite' as const, embedding_disabled: true };
+const config = { engine: backend, embedding_disabled: true };
 const page = (body: string) => ({ type: 'note', title: 'Example', compiled_truth: body.trim(), timeline: '', frontmatter: {} });
 beforeAll(async () => {
-  engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema();
+  if (backend === 'postgres') engine = await setupDB();
+  else { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }
 }, 120_000);
-afterAll(async () => { await disposePersistenceConsumer(engine); await engine.disconnect(); for (const root of roots) rmSync(root, { recursive: true, force: true }); });
+afterAll(async () => { await disposePersistenceConsumer(engine); if (backend === 'postgres') await teardownDB(); else await engine.disconnect(); for (const root of roots) rmSync(root, { recursive: true, force: true }); });
 
 /** Everything runs under a private GBRAIN_HOME so the host identity, the credential store and the file-transport flag are the test's own. */
 async function isolated<T>(run: (home: string) => Promise<T>): Promise<T> {
@@ -144,6 +164,120 @@ describe('[R7i] git durability policy is tri-state and fail-closed', () => {
 });
 
 describe('[R7ii] writer git-durability verb', () => {
+  for (const mode of ['new', 'replacement', 'unchanged', 'preview', 'no-token', 'foreign-helper', 'timeout'] as const) {
+    test(`#7641 failed push probe reports retained credentials accurately (${mode})`, () => isolated(async home => {
+      const root = await gitRoot(home, { remote: true });
+      // A missing local remote fails without contacting a network or using real credentials.
+      if (mode === 'timeout') {
+        const hook = join(root, '.git', 'hooks', 'pre-push');
+        writeFileSync(hook, '#!/bin/sh\nsleep 30\n');
+        chmodSync(hook, 0o755);
+      } else await gitAsync(root, 'remote', 'set-url', 'origin', join(home, 'missing-remote.git'));
+      writeFileSync(join(root, 'AGENTS.md'), '# Keep these instructions\n');
+      const { sourceId } = await claimedSource(root);
+      const id = await committedWrite(root, sourceId, 'probe-refused');
+      await engine.executeRaw(`UPDATE persistence_effects SET state='failed',error_code='targets_parked',
+        data=data || $2::text::jsonb WHERE request_id=$1::uuid AND kind='git'`,
+      [id, JSON.stringify({ parked: [{ slug: 'probe-refused', error_code: 'git_push_unavailable' }], target_failures: 5 })]);
+      const token = join(home, 'synthetic-token');
+      const value = 'synthetic-probe-test-token';
+      writeFileSync(token, `${value}\n`, { mode: 0o600 });
+      const store = join(resolveGbrainHome(), 'git-credentials');
+      if (mode === 'replacement' || mode === 'unchanged') {
+        writeFileSync(store, `https://x-access-token:${mode === 'unchanged' ? value : 'synthetic-old-token'}@github.com\n`, { mode: 0o600 });
+        await gitAsync(root, 'config', '--local', 'credential.helper', `store --file ${store}`);
+        await gitAsync(root, 'config', '--local', 'gbrain.durability.managedcredential', 'true');
+      }
+      if (mode === 'foreign-helper') await gitAsync(root, 'config', '--local', 'credential.helper', 'cache');
+      const before = treeBytes(home);
+      const effect = await gitOutcome(id);
+      const error = await runPersistenceAdministration(engine, 'writer_git_durability', {
+        source_id: sourceId, enable: true, ...(mode === 'no-token' ? {} : { pat_file: token }),
+        ...(mode === 'preview' ? { dry_run: true } : await reviewedWriterIntent(engine, 'writer_git_durability')),
+      }).catch(error => error);
+      expect(error).toMatchObject({ code: mode === 'timeout' ? 'git_unavailable' : 'git_push_unavailable' });
+      expect(`${error.message} ${error.suggestion}`).not.toContain(value);
+      expect(await gitOutcome(id)).toEqual(effect);
+      expect((await getWorktreeBinding(engine, sourceId, localHostId()))!.git_durability).toBeNull();
+      expect(readFileSync(join(root, 'AGENTS.md'), 'utf8')).toBe('# Keep these instructions\n');
+      if (mode === 'new' || mode === 'replacement' || mode === 'timeout') {
+        expect(error.suggestion).toContain('The repo-scoped credential was written before the probe and remains configured');
+        expect(error.suggestion).not.toContain('Nothing was changed');
+        expect(error.suggestion).toContain('sources unharden');
+        expect(readFileSync(store, 'utf8')).toBe(`https://x-access-token:${value}@github.com\n`);
+        expect(statSync(store).mode & 0o777).toBe(0o600);
+        expect(await gitAsync(root, 'config', '--local', '--get', 'credential.helper')).toContain(`store --file ${store}`);
+        expect(await gitAsync(root, 'config', '--local', '--get', 'gbrain.durability.managedcredential')).toContain('true');
+      } else {
+        expect(error.suggestion).toContain('Nothing was changed');
+        expect(treeBytes(home)).toEqual(before);
+      }
+    }), 120_000);
+  }
+
+  for (const refusal of ['missing', 'wrong', 'stale', 'transaction-entry'] as const) {
+    test(`#7634 ${refusal} admin approval leaves files, credentials and parked pushes unchanged`, () => isolated(async home => {
+      const root = await gitRoot(home);
+      writeFileSync(join(root, 'AGENTS.md'), '# Operator instructions\n');
+      const { sourceId } = await claimedSource(root);
+      const id = await committedWrite(root, sourceId, 'parked');
+      await engine.executeRaw(`UPDATE persistence_effects SET state='failed',error_code='targets_parked',
+        data=data || $2::text::jsonb WHERE request_id=$1::uuid AND kind='git'`,
+      [id, JSON.stringify({ parked: [{ slug: 'parked', error_code: 'git_push_unavailable' }], target_failures: 5 })]);
+      const token = join(home, 'synthetic-token');
+      writeFileSync(token, 'synthetic-test-only-token\n', { mode: 0o600 });
+      const reviewed = await reviewedWriterIntent(engine, 'writer_git_durability');
+      const params = { source_id: sourceId, enable: true, pat_file: token,
+        ...(refusal === 'missing' ? {} : refusal === 'wrong' ? { ...reviewed, admin_intent: 'writer_activate' } : reviewed) };
+      const changeTopology = () => engine.executeRaw('UPDATE sources SET local_path=$2 WHERE id=$1', [sourceId, `${root}-moved`]);
+      if (refusal === 'stale') await changeTopology();
+      const original = engine.transaction;
+      if (refusal === 'transaction-entry') {
+        let changed = false;
+        engine.transaction = async function <T>(fn: (tx: BrainEngine) => Promise<T>, opts?: TransactionOptions): Promise<T> {
+          if (!changed) { changed = true; await changeTopology(); }
+          return original.call(this, fn, opts) as Promise<T>;
+        };
+      }
+      const before = treeBytes(home);
+      const effect = await gitOutcome(id);
+      let error: unknown;
+      try { await runPersistenceAdministration(engine, 'writer_git_durability', params); }
+      catch (caught) { error = caught; }
+      finally { engine.transaction = original; }
+      // Assert after the call so a rejection alone cannot mask earlier side effects.
+      expect(error).toMatchObject({ code: refusal === 'missing' || refusal === 'wrong' ? 'writer_admin_intent_required' : 'writer_admin_state_changed' });
+      expect(treeBytes(home)).toEqual(before);
+      expect(await gitOutcome(id)).toEqual(effect);
+      expect((await getWorktreeBinding(engine, sourceId, localHostId()))!.git_durability).toBeNull();
+    }), 120_000);
+  }
+
+  test('#7634 preview is immutable and approved credential repair queues exactly one push retry', () => isolated(async home => {
+    const root = await gitRoot(home);
+    writeFileSync(join(root, 'AGENTS.md'), '# Operator instructions\n');
+    const { sourceId } = await claimedSource(root);
+    const id = await committedWrite(root, sourceId, 'approved');
+    await engine.executeRaw(`UPDATE persistence_effects SET state='failed',error_code='targets_parked',
+      data=data || $2::text::jsonb WHERE request_id=$1::uuid AND kind='git'`,
+    [id, JSON.stringify({ parked: [{ slug: 'approved', error_code: 'git_push_unavailable' }], target_failures: 5 })]);
+    const token = join(home, 'synthetic-token');
+    writeFileSync(token, 'synthetic-test-only-token\n', { mode: 0o600 });
+    const before = treeBytes(home);
+    const effect = await gitOutcome(id);
+    const params = { source_id: sourceId, enable: true, pat_file: token };
+    const preview = await runPersistenceAdministration(engine, 'writer_git_durability', { ...params, dry_run: true });
+    expect(preview).toMatchObject({ parked_pushes: { queued: 1 }, queued_catch_up: 0 });
+    expect(treeBytes(home)).toEqual(before);
+    expect(await gitOutcome(id)).toEqual(effect);
+    const approved = await runPersistenceAdministration(engine, 'writer_git_durability', { ...params, ...await reviewedWriterIntent(engine, 'writer_git_durability') });
+    expect(approved).toMatchObject({ applied: true, parked_pushes: { queued: 1 }, agents: { commit: expect.stringContaining('gbrain git commit-push') } });
+    expect(await gitOutcome(id)).toMatchObject({ state: 'queued', data: { retried: 1 } });
+    expect((await getWorktreeBinding(engine, sourceId, localHostId()))!.git_durability).toBe('enabled');
+    expect(readFileSync(join(root, 'AGENTS.md'), 'utf8')).toContain('Page writes go through gbrain');
+    expect(await gitAsync(root, 'config', '--local', '--get', 'credential.helper')).toContain('store --file');
+  }), 120_000);
+
   test('the verb is an admin operation with a CLI spelling, and its flags parse', () => {
     expect(PERSISTENCE_ADMIN_OPERATIONS).toContain('writer_git_durability');
     const parsed = parsePersistenceAdminArgs('writer', ['git-durability', 'notes', '--enable', '--dry-run', '--json']);
@@ -249,4 +383,5 @@ describe('[R7ii] writer git-durability verb', () => {
     await expect(runPersistenceAdministration(engine, 'writer_git_durability', { source_id: sourceId, disable: true, pat_file: token, dry_run: true }))
       .rejects.toMatchObject({ code: 'invalid_params', message: expect.stringContaining('--pat-file cannot be combined with --disable') });
   }), 120_000);
+});
 });
