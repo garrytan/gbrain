@@ -349,7 +349,7 @@ export function indexOfOutsideCode(
   let at = body.indexOf(needle, fromIndex);
   if (at === -1) return -1;
   code ??= scanMarkdownCode(body);
-  for (let skip = codeEndAt(code, at); skip !== -1 || quotedMarker(body, at, needle); skip = codeEndAt(code, at)) {
+  for (let skip = codeEndAt(code, at); skip !== -1 || quotedFenceMarker(body, at, needle); skip = codeEndAt(code, at)) {
     at = body.indexOf(needle, skip === -1 ? at + needle.length : skip);
     if (at === -1) return -1;
   }
@@ -360,19 +360,37 @@ export function indexOfOutsideCode(
  * GBRA-133: whether the marker at `at` is quoted rather than a marker line. Every fence writer puts a marker on its own
  * line, so a marker comment with other text on its line (a sentence, a blockquote's `>`, a list bullet) is quoted, as in
  * a transcript of a conversation about gbrain. A bare partial needle (`gbrain:takes:begin` in prose, the near-miss
- * search) is not a marker comment and is still found.
+ * search) is not a marker comment and is still found. Every fence locator that splices a body uses this rule, so readers
+ * and writers agree on where a fence is. Each scan stops at the first character that is not whitespace, so a body of many
+ * quoted markers on one line costs one pass.
  */
-function quotedMarker(body: string, at: number, needle: string): boolean {
-  let start = at;
-  while (start > 0 && body[start - 1] !== '\n' && body[start - 1] !== '\r') start--;
-  let end = at + needle.length;
-  while (end < body.length && body[end] !== '\n' && body[end] !== '\r') end++;
-  const before = body.slice(start, at), after = body.slice(at + needle.length, end);
-  const opener = needle.startsWith('<!--') ? '' : /<!--+[ \t]*$/.exec(before)?.[0];
-  const closer = needle.startsWith('<!--') ? '' : /^[ \t]*-*-->/.exec(after)?.[0];
-  if (opener === undefined || closer === undefined) return false;
-  return before.length > opener.length && before.slice(0, before.length - opener.length).trim() !== ''
-    || after.slice(closer.length).trim() !== '';
+export function quotedFenceMarker(body: string, at: number, needle: string): boolean {
+  let start = at, end = at + needle.length;
+  if (!needle.startsWith('<!--')) {
+    let open = start;
+    while (open > 0 && (body[open - 1] === ' ' || body[open - 1] === '\t')) open--;
+    let dashes = open;
+    while (dashes > 0 && body[dashes - 1] === '-') dashes--;
+    if (open - dashes < 2 || dashes < 2 || body[dashes - 1] !== '!' || body[dashes - 2] !== '<') return false;
+    start = dashes - 2;
+    let close = end;
+    while (close < body.length && (body[close] === ' ' || body[close] === '\t')) close++;
+    let tail = close;
+    while (tail < body.length && body[tail] === '-') tail++;
+    if (tail - close < 2 || body[tail] !== '>') return false;
+    end = tail + 1;
+  }
+  return !blankToLineEdge(body, start, -1) || !blankToLineEdge(body, end, 1);
+}
+
+/** Whether only whitespace lies between `from` and the line's edge in `direction` (-1 back to its start, 1 on to its end). */
+function blankToLineEdge(body: string, from: number, direction: -1 | 1): boolean {
+  for (let i = direction === -1 ? from - 1 : from; i >= 0 && i < body.length; i += direction) {
+    const ch = body[i]!;
+    if (ch === '\n' || ch === '\r') return true;
+    if (!/\s/.test(ch)) return false;
+  }
+  return true;
 }
 
 /**

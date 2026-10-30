@@ -24,7 +24,10 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import { operations } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence } from '../src/core/facts-fence.ts';
+import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, renderFactsTable, type ParsedFact } from '../src/core/facts-fence.ts';
+import { strikeFenceRow } from '../src/core/facts/forget.ts';
+import { dropFactFenceRowsByNumber } from '../src/core/facts/purge-overlay.ts';
+import { withdrawalFenceBlocks } from '../src/core/facts/withdrawal-overlay.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence } from '../src/core/takes-fence.ts';
 import { strictFailures } from '../src/core/fence-repair/page-checks.ts';
 import { extractRawRows } from '../src/core/fence-repair/raw-rows.ts';
@@ -191,4 +194,54 @@ for (const managed of [false, true]) describe(`${managed ? 'managed brain with a
     expect(refused.message).toStartWith(`Fence repeated_marker: in the takes fence (body), at line ${secondBeginLine(`${transcript()}\n\n${repeatedBegin}`)}.`);
     expect(await engine.readPageSnapshot('notes/broken', { sourceId: ctx.sourceId! })).toBeNull();
   }), 120_000);
+});
+
+describe('fence writers find the fence the readers find', () => {
+  const fact = (rowNum: number, claim: string): ParsedFact => ({ rowNum, claim, kind: 'fact', confidence: 1, visibility: 'world', notability: 'medium',
+    validFrom: '2026-01-01', source: 'note', context: '', active: true } as ParsedFact);
+  const table = renderFactsTable([fact(1, 'alpha claim'), fact(2, 'beta claim')]);
+  const prose = 'Prose between a quoted marker and the real fence that every writer keeps.';
+  const quotedBegin = `Intro.\n\nUser said: ${FACTS_FENCE_BEGIN} goes on its own line.\n\n${prose}\n\n## Facts\n\n${table}\n\nTail.`;
+  const strike = (f: ParsedFact): ParsedFact => ({ ...f, active: false, context: 'withdrawn' });
+
+  test('forgetting a row rewrites only the real fence, never the prose after a quoted begin', () => {
+    const struck = strikeFenceRow(quotedBegin, 1, strike)!;
+    expect(struck.slice(0, struck.indexOf('## Facts'))).toBe(quotedBegin.slice(0, quotedBegin.indexOf('## Facts')));
+    expect(parseFactsFence(struck).facts.map(f => [f.rowNum, f.active])).toEqual([[1, false], [2, true]]);
+    expect(strictFailures({ compiled_truth: struck, timeline: '' })).toEqual([]);
+  });
+
+  test('a quoted end inside the real fence does not cut it short when a row is forgotten', () => {
+    const lines = table.split('\n');
+    const body = ['Intro.', '', ...lines.slice(0, -2), `> quoted ${FACTS_FENCE_END}`, ...lines.slice(-2), '', 'Tail.'].join('\n');
+    const struck = strikeFenceRow(body, 1, strike)!;
+    expect(struck.split(FACTS_FENCE_END).length - 1).toBe(1);
+    expect(parseFactsFence(struck).facts.map(f => [f.rowNum, f.active])).toEqual([[1, false], [2, true]]);
+    expect(struck.endsWith('\n\nTail.')).toBe(true);
+  });
+
+  test('withdrawal and purge on a stored body start at the real begin and keep the prose', () => {
+    expect(withdrawalFenceBlocks(quotedBegin).map(block => block.start)).toEqual([quotedBegin.indexOf(FACTS_FENCE_BEGIN, quotedBegin.indexOf('## Facts'))]);
+    const purged = dropFactFenceRowsByNumber(quotedBegin, row => row.rowNum !== 1);
+    expect(purged).toContain(prose);
+    expect(purged.slice(0, purged.indexOf('## Facts'))).toBe(quotedBegin.slice(0, quotedBegin.indexOf('## Facts')));
+    expect(parseFactsFence(purged).facts.map(f => f.claim)).toEqual(['beta claim']);
+    // With no real begin, the quoted one opens nothing: a purge leaves the quote, the prose and the unfenced rows alone.
+    const noRealBegin = `Intro.\n\nUser said: ${FACTS_FENCE_BEGIN} goes on its own line.\n\n${prose}\n\n${table.split('\n').slice(1).join('\n')}\n\nTail.`;
+    expect(withdrawalFenceBlocks(noRealBegin)).toEqual([]);
+    expect(dropFactFenceRowsByNumber(noRealBegin, row => row.rowNum !== 1)).toBe(noRealBegin);
+    const quotedAtLineEnd = noRealBegin.replace(' goes on its own line.', '');
+    expect(withdrawalFenceBlocks(quotedAtLineEnd)).toEqual([]);
+    expect(dropFactFenceRowsByNumber(quotedAtLineEnd, row => row.rowNum !== 1)).toBe(quotedAtLineEnd);
+  });
+
+  test('a megabyte line of quoted markers is read in one pass', () => {
+    const line = Array.from({ length: 32_000 }, () => `say ${TAKES_FENCE_BEGIN} ok`).join(' ');
+    const body = `${line}\n\n${realFence}\n`;
+    const started = performance.now();
+    expect(parseTakesFence(body).takes.length).toBe(1);
+    expect(strictFailures({ compiled_truth: body, timeline: '' })).toEqual([]);
+    // gstack-timing-ok: one pass takes about 15 ms here; the per-marker line scan this replaces took minutes on this body
+    expect(performance.now() - started).toBeLessThan(5_000);
+  });
 });

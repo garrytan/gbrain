@@ -18,6 +18,7 @@ import { withPageLock } from '../page-lock.ts';
 import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
+import { locateOutsideCode } from '../fence-scan.ts';
 import { contentHash } from '../utils.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { rewriteLiveSegmentedFences } from '../page-body/segment-rewrite.ts';
@@ -90,8 +91,7 @@ export function strikeFenceRow(body: string, rowNum: number, strike: (fact: Pars
   const target = parsed.facts.find(f => f.rowNum === rowNum);
   if (!target) return null;
   const updated: ParsedFact[] = parsed.facts.map(f => f.rowNum === rowNum ? strike(f) : f);
-  const begin = body.indexOf(FENCE_BEGIN);
-  const end = body.indexOf(FENCE_END, begin + 1);
+  const { beginIdx: begin, endIdx: end } = locateOutsideCode(body, FENCE_BEGIN, FENCE_END);
   if (begin === -1 || end === -1) return null;
   return body.slice(0, begin) + renderFactsTable(updated) + body.slice(end + FENCE_END.length);
 }

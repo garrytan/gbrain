@@ -19,11 +19,13 @@ Every fence writer puts its markers on their own lines. A page that quotes a mar
 ### What to do after upgrading
 
 - Nothing. A transcript page held `invalid_fence` only for quoted markers imports on its next sync, or now with `gbrain sync --source <id> --no-pull`.
+- A hand-edited fence whose marker line carries other text (`<!--- gbrain:facts:begin --> notes`, a list bullet before it) now reads as unbalanced and holds `invalid_fence`. Put the marker back on a line of its own and sync again.
 
 ### Itemized changes
 
-- `src/core/fence-scan.ts`: `indexOfOutsideCode` skips a marker comment that has other text on its line, as it already skips markers inside code spans and closed code blocks. Every fence reader goes through it: `parseTakesFence`, `parseFactsFence`, the links fence, the strict compile gate's repeated-marker check and the content-repair lane's fence extraction. A bare near-miss mention in prose is still reported `marker_near_miss`.
-- Tests: `test/fence-quoted-markers-gbra133.test.ts` (PGLite and Postgres).
+- `src/core/fence-scan.ts`: `indexOfOutsideCode` skips a marker comment that has other text on its line, as it already skips markers inside code spans and closed code blocks. Every fence reader goes through it: `parseTakesFence`, `parseFactsFence`, the links fence, the strict compile gate's repeated-marker check and the content-repair lane's fence extraction. A bare near-miss mention in prose is still reported `marker_near_miss`. The check stops at the first non-space character on each side, so a long line of quoted markers is read in one pass.
+- `src/core/facts/forget.ts` (`strikeFenceRow`: forget_fact, proposal accept and undo, loop retirement) and `src/core/facts/withdrawal-overlay.ts` (withdrawal and purge on stored bodies) find the fence by the same rule, so a quoted marker never makes them rewrite the text around it.
+- Tests: `test/fence-quoted-markers-gbra133.test.ts` (PGLite and Postgres; forget, withdrawal and purge around quoted markers; a megabyte line of quoted markers).
 
 ## [0.60.512.0] - 2026-10-30
 
