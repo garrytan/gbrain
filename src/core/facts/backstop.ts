@@ -50,7 +50,9 @@ import type { GBrainConfig } from '../config.ts';
 import { isAvailable } from '../ai/gateway.ts';
 import { withAIInvocationPreflight } from '../ai/invocation-guard.ts';
 import { decideSingleFact } from './single-prepare.ts';
-import { cosineVerdict, dedupCapturedFacts, withCaptureDrops, wouldDedupSamePage } from './capture-dedup.ts';
+import { classifyAgainstCandidates, cosineSimilarity } from './classify.ts';
+import type { ExtractedFact } from './extract.ts';
+import { cosineVerdict, dedupCapturedFacts, isCaptureLane, withCaptureDrops, wouldDedupSamePage } from './capture-dedup.ts';
 import { warnSamePageShadow } from './same-page-shadow.ts';
 import { readSupersessionThreshold } from './supersession-threshold.ts';
 import { assertAmbientCaptureAdmissible, type FactsBackstopSource } from './capture-sources.ts';
@@ -217,6 +219,47 @@ interface ParsedPageInput {
 
 /** k for findCandidateDuplicates — ceiling on candidates considered. */
 const DEDUP_CANDIDATE_LIMIT = 5;
+
+/** Lowest top-candidate cosine that asks the classifier; the consolidate phase's default cluster threshold. */
+const CLASSIFY_FLOOR = 0.85;
+
+/**
+ * #6333: re-extracting an edited page rewords its claims, and the rewordings
+ * score between CLASSIFY_FLOOR and the writer's cosine threshold (no upper
+ * bound for an uncalibrated embedding model). On explicit lanes the
+ * classifier decides that band before either writer runs: a "duplicate"
+ * verdict drops the fact and returns the matched id, like the capture-lane
+ * drops. Any other verdict, or a failed classifier call, leaves the fact to
+ * the writer's own dedup. Only same-visibility candidates count; inferred
+ * subjects and capture lanes are skipped.
+ */
+async function dropRewordedDuplicates<T extends ExtractedFact & { entity_inferred?: unknown }>(
+  ctx: FactsBackstopCtx, captured: { facts: T[]; dropped: number[] }, visibility: 'private' | 'world',
+  resolveEntity: (engine: BrainEngine, sourceId: string, raw: string) => Promise<{ slug: string; source: string } | null>,
+  abortSignal?: AbortSignal,
+): Promise<{ facts: T[]; dropped: number[] }> {
+  if (isCaptureLane(ctx.source)) return captured;
+  const kept: T[] = [];
+  const dropped = [...captured.dropped];
+  for (const f of captured.facts) {
+    const embedding = f.entity_inferred ? null : f.embedding;
+    const resolved = embedding && f.entity_slug ? await resolveEntity(ctx.engine, ctx.sourceId, f.entity_slug) : null;
+    if (!embedding || !resolved || resolved.source === 'fallback_slugify') { kept.push(f); continue; }
+    const candidates = (await ctx.engine.findCandidateDuplicates(ctx.sourceId, resolved.slug, f.fact,
+      { embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null }))
+      .filter(c => c.visibility === visibility);
+    const top = Math.max(-1, ...candidates.map(c => (c.embedding ? cosineSimilarity(embedding, c.embedding) : -1)));
+    // The writer's threshold, overrides included; no cosine cutoff when uncalibrated.
+    const cutoff = (await readSupersessionThreshold(ctx.engine, f.embedding_model, embedding.length)).threshold ?? Number.POSITIVE_INFINITY;
+    const verdict = top >= CLASSIFY_FLOOR && top < cutoff
+      ? await classifyAgainstCandidates({ fact: f.fact, kind: f.kind ?? 'fact', embedding }, candidates,
+        { model: ctx.model, cheapThreshold: cutoff, fallbackThreshold: cutoff, abortSignal })
+      : null;
+    if (verdict?.decision === 'duplicate') dropped.push(verdict.matched_id);
+    else kept.push(f);
+  }
+  return { facts: kept, dropped };
+}
 
 /**
  * Once-per-process stderr warning memo. v0.32.2 uses this to surface
@@ -742,7 +785,6 @@ async function runPipelineBodyInner(
 ): Promise<PipelineResult> {
   const { extractFactsFromTurnWithOutcome, FactsExtractionError } = await import('./extract.ts');
   const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
-  const { cosineSimilarity } = await import('./classify.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
   const { isFactWithdrawn } = await import('./withdrawal.ts');
 
@@ -819,8 +861,9 @@ async function runPipelineBodyInner(
   // facts.default_visibility (fail-closed to 'private').
   const { resolveDefaultVisibility } = await import('./visibility.ts');
   const visibility = ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine));
-  // #5888: one exact-duplicate check for the capture lanes, before either writer.
-  const { facts, dropped } = await dedupCapturedFacts(ctx, await inferMissingSubjects(ctx, outcome.facts, visibility, input.pageSlug, managed), visibility, resolveEntitySlugWithSource);
+  // #5888: one exact-duplicate check for the capture lanes, before either writer; #6333: the reworded band for explicit lanes.
+  const captured = await dedupCapturedFacts(ctx, await inferMissingSubjects(ctx, outcome.facts, visibility, input.pageSlug, managed), visibility, resolveEntitySlugWithSource);
+  const { facts, dropped } = await dropRewordedDuplicates(ctx, captured, visibility, resolveEntitySlugWithSource, abortSignal);
   if (!managed) await assertAmbientCaptureAdmissible(ctx.engine, ctx.source);
   if (managed) return withCaptureDrops(dropped, facts.length || !dropped.length ? await publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, input.pageSlug, { withdrawn: 'skip' }) : null);
 
