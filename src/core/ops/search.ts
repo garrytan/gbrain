@@ -413,7 +413,7 @@ async function buildRetrievalResponseMeta(
   const readinessScope = { ...scope, excludePrivate, types: opts.types, excludeSlugPrefixes };
   // #6721: these reads depend on nothing but the inputs above, so they run at once: on a pooled Postgres
   // the wall time is the slowest read's round trips, not their sum. The answer-feedback write still runs last.
-  const [safeIndexPending, [readiness, pendingCount], entityFacts, matchedFacts, held, sourceFreshness, embeddingHeld, filterNotice] = await Promise.all([
+  const [safeIndexPending, [readiness, pendingCount], entityFacts, matched, held, sourceFreshness, embeddingHeld, filterNotice] = await Promise.all([
     timed('safe_index', ctx.remote !== false && hasUnsealedPagesInScope(ctx, scope, excludePrivate, { types: opts.types, excludeSlugPrefixes })),
     timed('readiness', probeProjectionReadiness(ctx.engine, readinessScope).then(async r =>
       [r, r.status === 'projection_pending' ? await countPendingProjections(ctx.engine, readinessScope, relevance) : null] as const)),
@@ -435,15 +435,31 @@ async function buildRetrievalResponseMeta(
   // A fact the facts arm already returned as a row is not repeated beside the blocks.
   const factRowIds = new Set((results as SearchResult[]).flatMap(r => r.fact_row ? [r.fact_row.id] : []));
   // #7043: a matched fact may copy an entity fact; the merged list collapses again before the response.
-  // An entity fact keeps the corrected_by its matched copy carries, and a label follows its corrector into the collapse.
-  const correctedBy = new Map(matchedFacts.flatMap(m => m.corrected_by ? [[m.id, m.corrected_by] as const] : []));
-  const merged = await collapseFactReads(ctx.engine, [...entityFacts.map(e => ({ ...e, corrected_by: correctedBy.get(e.id) })),
-    ...matchedFacts.filter(m => !entityFacts.some(e => e.id === m.id))].filter(f => !factRowIds.has(f.id)));
+  // Keep pre-cap correction decisions, including members hidden behind an entity representative.
+  const merged = await collapseFactReads(ctx.engine, [...entityFacts,
+    ...matched.facts.filter(m => !entityFacts.some(e => e.id === m.id))].filter(f => !factRowIds.has(f.id)));
   const shownAs = new Map([...factRowIds].map(id => [id, id]));
   for (const f of merged) for (const id of f.collapsed_ids ?? [f.id]) shownAs.set(id, f.id);
-  const savedFacts = merged.map(({ corrected_by, ...f }) => {
-    const by = corrected_by === undefined ? undefined : shownAs.get(corrected_by);
-    return stripCollapseColumns(by === undefined || by === f.id ? f : { ...f, corrected_by: by });
+  const corrections = (f: typeof merged[number]) => (f.collapsed_ids ?? [f.id]).flatMap(id => {
+    const by = matched.correctedBy.get(id);
+    return by === undefined ? [] : [by];
+  });
+  // Removing a missing corrector can invalidate its dependants too. Reach a fixed point
+  // before rendering so every label still names a returned row, even in a chain.
+  let visible = merged;
+  for (;;) {
+    const kept = visible.filter(f => {
+      const by = corrections(f);
+      return !by.length || by.some(id => shownAs.has(id) && shownAs.get(id) !== f.id);
+    });
+    if (kept.length === visible.length) break;
+    const ids = new Set(kept.map(f => f.id));
+    for (const [id, rep] of shownAs) if (!factRowIds.has(rep) && !ids.has(rep)) shownAs.delete(id);
+    visible = kept;
+  }
+  const savedFacts = visible.map(f => {
+    const by = corrections(f).map(id => shownAs.get(id)).find(id => id !== undefined && id !== f.id);
+    return stripCollapseColumns(by === undefined ? f : { ...f, corrected_by: by });
   });
   const heldTotal = [...heldBySource.values()].reduce((sum, n) => sum + n, 0);
   const embedding = embeddingHeld?.total ? embeddingHeld : null;
