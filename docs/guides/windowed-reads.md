@@ -149,10 +149,12 @@ tag at any size without rewriting the body: the tag rows, `content_hash` and
 a version change, and a page backed by a file gets the new frontmatter in that
 file with its body bytes unchanged. `add_timeline_entry`, the `takes_*`
 writes, the facts fence write of `extract_facts`, `gbrain core add` /
-`remove` / `diff` and `gbrain sources reconcile` read a page up to 24 MiB
-back whole and write it as a normal put, with the result an inline page with
-the same body gets; over 24 MiB they refuse with this code, and the message
-names the 24 MiB limit.
+`remove` / `diff`, `gbrain sources reconcile` (preview and apply) and
+`gbrain repair file-drift` (`--prefer file` and `--prefer database`) read a
+page up to 24 MiB back whole and write it as a normal put, with the result an
+inline page with the same body gets; over 24 MiB they refuse with this code,
+and the message names the 24 MiB limit. File-drift's refusal also names the
+manual fix: make the canonical file the copy to keep, commit it and sync.
 
 ## page_body_rows_unreadable
 
