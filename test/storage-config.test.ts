@@ -11,6 +11,7 @@ import {
   normalizeAndValidateStorageConfig,
   StorageConfigError,
   isDeclaredDbOnlySlug,
+  dbOnlyVerdict,
   hasUnresolvedDbOnlyDeclaration,
   __resetMissingStorageWarning,
 } from '../src/core/storage-config.ts';
@@ -193,6 +194,11 @@ describe('loadStorageConfig — real-disk loader', () => {
     try {
       writeFileSync(join(tmp, 'gbrain.yml'), "storage:\n  db_only: ['a, b/', c/]\n");
       expect(loadStorageConfig(tmp)!.db_only).toEqual(['a, b/', 'c/']);
+      writeFileSync(join(tmp, 'gbrain.yml'), "storage:\n  db_only: [a/ b/]\n");
+      expect(loadStorageConfig(tmp)?.db_only ?? []).toEqual([]);
+      expect(hasUnresolvedDbOnlyDeclaration(tmp, loadStorageConfig(tmp))).toBe(true);
+      writeFileSync(join(tmp, 'gbrain.yml'), "storage:\n  db_only: ['my notes/', c/]\n");
+      expect(loadStorageConfig(tmp)!.db_only).toEqual(['my notes/', 'c/']);
       writeFileSync(join(tmp, 'gbrain.yml'), 'storage:\n  db_only: [[a/]]\n');
       expect(loadStorageConfig(tmp)?.db_only ?? []).toEqual([]);
       expect(hasUnresolvedDbOnlyDeclaration(tmp, loadStorageConfig(tmp))).toBe(true);
@@ -201,10 +207,28 @@ describe('loadStorageConfig — real-disk loader', () => {
     }
   });
 
-  test('#8007: a deprecated supabase_only list ignored next to canonical keys is flagged, so delete decisions treat db_only as unknown', () => {
+  test('#8015: a db_only or supabase_only list the parser refuses stays unresolved even when another key resolved', () => {
+    try {
+      for (const yml of ['storage:\n  db_only: [private/]\n  supabase_only: [archive/ old/]\n', 'storage:\n  db_only: [archive/ old/]\n  supabase_only:\n    - private/\n',
+        'storage:\n  db_only:\n    - private/\n  supabase_only: [[archive/]]\n', 'storage:\n  db_only: [private/]\n  supabase_only: archive/\n']) {
+        writeFileSync(join(tmp, 'gbrain.yml'), yml);
+        expect({ yml, unresolved: hasUnresolvedDbOnlyDeclaration(tmp, loadStorageConfig(tmp)) }).toEqual({ yml, unresolved: true });
+      }
+      writeFileSync(join(tmp, 'gbrain.yml'), 'storage:\n  db_only: [private/]\n  supabase_only: []\n');
+      expect(hasUnresolvedDbOnlyDeclaration(tmp, loadStorageConfig(tmp))).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('#8007/#8015: the dirs of a deprecated supabase_only list ignored next to canonical keys, minus those db_only covers, are unknown to delete decisions', () => {
     try {
       writeFileSync(join(tmp, 'gbrain.yml'), 'storage:\n  db_only: [private/]\n  supabase_only:\n    - archive/\n');
-      expect(loadStorageConfig(tmp)).toEqual({ db_tracked: [], db_only: ['private/'], deprecated_db_only_ignored: true });
+      const config = loadStorageConfig(tmp);
+      expect(config).toEqual({ db_tracked: [], db_only: ['private/'], ignored_db_only: ['archive/'] });
+      expect([dbOnlyVerdict('private/x', config), dbOnlyVerdict('archive/x', config), dbOnlyVerdict('notes/x', config)]).toEqual([true, 'unknown', false]);
+      writeFileSync(join(tmp, 'gbrain.yml'), 'storage:\n  db_only: [archive/, private/]\n  supabase_only:\n    - archive/\n    - private/deep/\n');
+      expect(loadStorageConfig(tmp)).toEqual({ db_tracked: [], db_only: ['archive/', 'private/'] });
       writeFileSync(join(tmp, 'gbrain.yml'), 'storage:\n  db_only: [private/]\n');
       expect(loadStorageConfig(tmp)).toEqual({ db_tracked: [], db_only: ['private/'] });
       writeFileSync(join(tmp, 'gbrain.yml'), 'storage:\n  supabase_only:\n    - archive/\n');

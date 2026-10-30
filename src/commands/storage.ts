@@ -219,6 +219,7 @@ export async function getStorageStatus(
 ): Promise<StorageStatusResult> {
   const config = repoPath ? loadStorageConfig(repoPath) : null;
   const warnings = config ? validateStorageConfig(config) : [];
+  if (config?.ignored_db_only) warnings.push(`gbrain.yml lists the deprecated supabase_only next to canonical keys, which ignores it: ${config.ignored_db_only.join(', ')}. Move those directories under db_only and remove supabase_only. Until then sync keeps every page under them whose file is gone (#8007).`);
   if (repoPath && hasUnresolvedDbOnlyDeclaration(repoPath, config)) warnings.push('gbrain.yml declares storage.db_only but no directory resolved from it (a flow list split over lines, or the key outside storage:); list the directories in block style or as one line, db_only: [a/, b/]. Until then sync keeps every page whose file is gone (#8007).');
 
   const pagesByTier: PageCountsByTier = { db_tracked: 0, db_only: 0, unspecified: 0 };

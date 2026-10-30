@@ -1,12 +1,13 @@
-// ci-ubicloud-vm-names.test.ts — VM names that carry an expiry
-// (ubirun-<owner>-<epoch>-x<expiry>-<suffix>) next to the older names, for
-// scripts/ubicloud/ubi-runner.sh and scripts/ci-ubicloud.ts.
+// ci-ubicloud-vm-names.test.ts — VM names in gstack's runner grammar
+// (ubirun-<owner>-<epoch>-<suffix>-t<H>) next to the older -x<expiry> and
+// TTL-less names, for scripts/ubicloud/ubi-runner.sh and scripts/ci-ubicloud.ts.
 //
-// Protects: `up`/`run --ttl-hours H` name their VM with an expiry H hours
-// after creation (no --ttl-hours: no expiry, never reaped), the flag is
-// validated and cannot be combined with -n, and every existing parser
-// (list --mine, usage, gc, down) reads old and new names alike: gc ages a VM
-// by its creation epoch, never its expiry.
+// Protects: `up`/`run --ttl-hours H` name their VM with a -t<H> TTL, and
+// without --ttl-hours with -t999, so no generated name is TTL-less (gstack's
+// reap destroys those at four hours); the flag is validated (1 to 999) and
+// cannot be combined with -n; every parser (list --mine, usage, gc, down)
+// reads all three formats alike: gc ages a VM by its creation epoch, never its
+// expiry.
 // Fails when: a new-format name is not owner-tagged for list --mine or usage,
 // gc sweeps by the expiry or another owner's VM, or the flag is ignored.
 // Network: none (in-process mock Ubicloud API).
@@ -60,36 +61,36 @@ async function run(args: string[], extra: Record<string, string> = {}) {
 
 describe("--ttl-hours", () => {
   for (const verb of ["up", "run"] as const) {
-    it(`${verb} --ttl-hours 3 names the VM with an expiry three hours after creation`, async () => {
+    it(`${verb} --ttl-hours 3 names the VM with a three-hour TTL in gstack's grammar`, async () => {
       const api = serve();
       const proc = spawnRunner(verb === "up" ? ["up", "--ttl-hours", "3"] : ["run", "--ttl-hours", "3", "--", "true"], { UBI_OWNER: "gbra135" });
       const name = (await waitForEvent(api, /^create-start /)).split(" ")[1]!;
       proc.kill("SIGTERM");
       await proc.exited;
-      const m = /^ubirun-gbra135-(\d{10})-x(\d{10})-[0-9a-f]{8}$/.exec(name);
+      const m = /^ubirun-gbra135-(\d{10})-[0-9a-f]{8}-t3$/.exec(name);
       expect(m).not.toBeNull();
-      expect(Number(m![2]) - Number(m![1])).toBe(3 * 3600);
       expect(Math.abs(Number(m![1]) - NOW)).toBeLessThan(120);
       expect(name.length).toBeLessThanOrEqual(63);
       expect(api.vms.size).toBe(0);
     });
   }
 
-  it("without --ttl-hours the name carries no expiry", async () => {
+  it("without --ttl-hours the name carries the longest TTL, -t999", async () => {
     const api = serve();
     const proc = spawnRunner(["up"], { UBI_OWNER: "gbra135" });
     const name = (await waitForEvent(api, /^create-start /)).split(" ")[1]!;
     proc.kill("SIGTERM");
     await proc.exited;
-    expect(name).toMatch(/^ubirun-gbra135-\d{10}-[0-9a-f]{8}$/);
+    expect(name).toMatch(/^ubirun-gbra135-\d{10}-[0-9a-f]{8}-t999$/);
+    expect(name.length).toBeLessThanOrEqual(63);
   });
 
   it("refuses a bad value and the combination with -n before any create", async () => {
     const api = serve();
-    for (const bad of ["0", "1.5", "abc", "9000"]) {
+    for (const bad of ["0", "1.5", "abc", "1000", "024"]) {
       const r = await run(["up", "--ttl-hours", bad], { UBI_OWNER: "t1" });
       expect(r.code).toBe(1);
-      expect(r.stderr).toContain("--ttl-hours must be a whole number of hours from 1 to 8760");
+      expect(r.stderr).toContain("--ttl-hours must be a whole number of hours from 1 to 999");
     }
     const both = await run(["up", "-n", "ubirun-t1-1790000000-aaaaaaaa", "--ttl-hours", "2"], { UBI_OWNER: "t1" });
     expect(both.code).toBe(1);
@@ -109,25 +110,27 @@ describe("parsers read old and new names", () => {
     { name: `ubirun-other-${OLD}-x${OLD + 3600}-ci01ffff`, size: "standard-16" },
     { name: `ubirun-${OLD}-dddddddd`, size: "standard-2" },
     { name: "prod-db", size: "standard-2" },
+    { name: `ubirun-t1-${OLD}-eeeeeeee-t3`, size: "standard-2" },
+    { name: `ubirun-other-${NOW}-ffffffff-t999`, size: "standard-4" },
   ];
 
-  it("list --mine and usage tag new-format names with their owner", async () => {
+  it("list --mine and usage tag -t<H> and -x<expiry> names with their owner", async () => {
     serve({ seed });
     const mine = await run(["list", "--mine"], { UBI_OWNER: "t1" });
-    expect(mine.stdout.trim().split("\n").map((l) => l.split(/\s+/)[1])).toEqual(seed.slice(0, 3).map((s) => s.name));
+    expect(mine.stdout.trim().split("\n").map((l) => l.split(/\s+/)[1])).toEqual([0, 1, 2, 6].map((i) => seed[i]!.name));
     const usage = (await run(["usage"], { UBI_OWNER: "t1" })).stdout;
-    expect(usage).toMatch(/^t1\s+3\s+28\s+\(you\)$/m);
-    expect(usage).toMatch(/^other\s+1\s+16$/m);
+    expect(usage).toMatch(/^t1\s+4\s+30\s+\(you\)$/m);
+    expect(usage).toMatch(/^other\s+2\s+20$/m);
     expect(usage).toMatch(/^\(untagged\)\s+1\s+2$/m);
     expect(usage).toMatch(/^\(other\)\s+1\s+2$/m);
   });
 
-  it("gc ages by creation epoch: it sweeps the caller's old VMs of both formats, not a young VM whose expiry passed", async () => {
+  it("gc ages by creation epoch: it sweeps the caller's old VMs of every format, not a young VM whose expiry passed", async () => {
     const api = serve({ seed });
     const gc = await run(["gc", "1"], { UBI_OWNER: "t1" });
     expect(gc.code).toBe(0);
-    expect(api.events.filter((e) => e.startsWith("destroy ")).sort()).toEqual([`destroy ${seed[0]!.name}`, `destroy ${seed[2]!.name}`].sort());
-    expect([...api.vms.keys()].sort()).toEqual([seed[1]!.name, seed[3]!.name, seed[4]!.name, seed[5]!.name].sort());
+    expect(api.events.filter((e) => e.startsWith("destroy ")).sort()).toEqual([0, 2, 6].map((i) => `destroy ${seed[i]!.name}`).sort());
+    expect([...api.vms.keys()].sort()).toEqual([1, 3, 4, 5, 7].map((i) => seed[i]!.name).sort());
   });
 
   it("down destroys a new-format name", async () => {

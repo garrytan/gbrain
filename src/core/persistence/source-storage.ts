@@ -1,7 +1,7 @@
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
-import { hasUnresolvedDbOnlyDeclaration, isDeclaredDbOnlySlug, loadStorageConfig, type StorageConfig } from '../storage-config.ts';
+import { dbOnlyVerdict, hasUnresolvedDbOnlyDeclaration, isDeclaredDbOnlySlug, loadStorageConfig, type StorageConfig } from '../storage-config.ts';
 
 type Loaded = { version: string; config: StorageConfig | null } | { version: string; cause: unknown };
 // One parse per gbrain.yml version per source root: bulk scans and migrations
@@ -46,8 +46,7 @@ function load(root: string): StorageConfig | null {
  */
 export function sourceDbOnlyVerdict(root: string, slug: string): boolean | 'unknown' {
   try {
-    const config = load(root);
-    return isDeclaredDbOnlySlug(slug, config) || (config?.deprecated_db_only_ignored ? 'unknown' : false);
+    return dbOnlyVerdict(slug, load(root));
   } catch {
     return 'unknown';
   }

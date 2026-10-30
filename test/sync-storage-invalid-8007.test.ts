@@ -1,7 +1,8 @@
 /**
  * #8007: a managed sync decides whether a page whose file is gone is deleted. A page under a declared storage.db_only dir
  * is kept (#7324), so when gbrain.yml's storage section cannot be read (tiers that overlap), declares db_only in a form
- * that resolves no directory (a flow list split over lines), or ignores a deprecated supabase_only list next to canonical keys, sync cannot tell which pages are database-only. On a real
+ * that resolves no directory (a flow list split over lines), or ignores a deprecated supabase_only list next to canonical keys
+ * (#8015: then only pages under its directories db_only does not cover), sync cannot tell which pages are database-only. On a real
  * managed brain (PGLite, and Postgres through the E2E wrapper), this protects:
  * - the frozen discovery manifest drops every deletion and names it in storageInvalidKept;
  * - a managed sync, incremental and full, deletes nothing: each missing-file page is held (file_drift, reason
@@ -58,7 +59,6 @@ const storageHolds = async (engine: BrainEngine) => ((await readGitHoldListing(e
 const INVALID = [
   ['tiers that overlap (the storage config cannot load)', 'storage:\n  db_only:\n    - library/\n  db_tracked:\n    - library/\n'],
   ['a db_only flow list split over lines (resolves no directory)', 'storage:\n  db_only: [library/,\n    archive/]\n'],
-  ['a deprecated supabase_only list next to a canonical key (ignored)', 'storage:\n  db_only: [archive/]\n  supabase_only:\n    - library/\n'],
 ] as const;
 
 for (const backend of testBackends()) describe(`[${backend}] #8007: an invalid gbrain.yml never turns a missing file into a deletion`, () => {
@@ -99,6 +99,33 @@ for (const backend of testBackends()) describe(`[${backend}] #8007: an invalid g
     expect(await live(engine, 'notes/control')).toBe(false);
     expect(await live(engine, 'notes/keep')).toBe(true);
     expect(await storageHolds(engine)).toEqual([]);
+  }, { databaseUrl, setup }), 240_000);
+
+  test('#8015: an ignored deprecated supabase_only list holds only pages under its uncovered dirs; one db_only covers holds nothing', () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    invalidateAndUntrack(root, 'storage:\n  db_only: [archive/]\n  supabase_only:\n    - library/\n');
+    const discovered = await discoverManagedSync(engine, OPTS);
+    expect(discovered.entries.filter(entry => entry.action === 'delete').map(entry => entry.path)).toEqual(['notes/control.md']);
+    expect([...discovered.storageInvalidKept ?? []].sort()).toEqual(['library/card-cached.md', 'library/card-gone.md']);
+    await performManagedSync(engine, OPTS);
+    await performManagedSync(engine, { ...OPTS, full: true });
+    for (const slug of CARDS) expect({ slug, live: await live(engine, slug) }).toEqual({ slug, live: true });
+    expect(await live(engine, 'notes/control')).toBe(false);
+    expect(await storageHolds(engine)).toEqual(['library/card-cached.md', 'library/card-gone.md']);
+    writeFileSync(join(root, 'gbrain.yml'), 'storage:\n  db_only: [archive/, library/]\n  supabase_only:\n    - library/\n');
+    commit(root, 'cover the deprecated dir');
+    await performManagedSync(engine, OPTS);
+    await performManagedSync(engine, { ...OPTS, full: true });
+    for (const slug of CARDS) expect({ slug, live: await live(engine, slug) }).toEqual({ slug, live: true });
+    expect(await storageHolds(engine)).toEqual([]);
+    // #8015: --prefer file never reaches a page under a declared db_only dir: it publishes database-only, so it has no drift.
+    const logger = { info() {}, warn() {}, error() {} };
+    const repair = await withVerifiedLocalRegistration(engine, await registerLocalWriter(engine, 'cli'), async () =>
+      (await repairRunner(engine, { apply: false, logger })).run('file-drift', await resolveRepairScope(engine, 'default'),
+        { explicit: true, sourceFlag: 'default', slugs: ['library/card-gone'], prefer: 'file' }));
+    expect(repair.details!.pages).toEqual([]);
+    expect(repair.listing!.map(row => row.class)).toEqual(['no_drift']);
+    expect(await live(engine, 'library/card-gone')).toBe(true);
   }, { databaseUrl, setup }), 240_000);
 
   test('sync.apply_held_deletions never deletes a held missing-file page while gbrain.yml is invalid, a hold with no reason included', () => managedBrain(async ({ engine, root }) => {

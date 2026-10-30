@@ -118,6 +118,19 @@ describe('Storage tiering on PGLite — full lifecycle (D8 + D4)', () => {
     }
   });
 
+  test('#8015: getStorageStatus names a deprecated supabase_only list canonical keys ignore, only its uncovered dirs', async () => {
+    try {
+      writeFileSync(join(tmp, 'gbrain.yml'), 'storage:\n  db_only: [media/x/]\n  supabase_only:\n    - media/x/\n    - archive/\n');
+      const status = await getStorageStatus(engine, tmp);
+      expect(status.warnings.filter(w => w.includes('deprecated supabase_only'))).toHaveLength(1);
+      expect(status.warnings.find(w => w.includes('deprecated supabase_only'))).toContain('ignores it: archive/.');
+      writeFileSync(join(tmp, 'gbrain.yml'), 'storage:\n  db_only: [media/x/, archive/]\n  supabase_only:\n    - archive/\n');
+      expect((await getStorageStatus(engine, tmp)).warnings.some(w => w.includes('deprecated supabase_only'))).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
   test('getStorageStatus scopes page checks to the source that owns the repo path (#4763)', async () => {
     try {
       writeGbrainYml();

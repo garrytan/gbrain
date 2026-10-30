@@ -38,6 +38,7 @@ import {
   danglingLabel,
   labeledEchoEligible,
   labeledValueIsCredential,
+  neutralizeRedactionMarkers,
   newTableScanState, tableCredentialCells,
 } from './secret-scan-labeled.ts';
 
@@ -130,6 +131,8 @@ interface CompiledPattern {
   validate?: (value: string, head: string) => boolean;
   /** Runs only on the line after one that ends in a dangling credential label of this form. */
   continuation?: 'single' | 'pair';
+  /** The text the regex reads instead of the line, the same length (offsets and reported values come from the line). */
+  subject?: (line: string) => string;
 }
 
 interface CorePattern {
@@ -759,6 +762,7 @@ function buildPatterns(opts: ScanOpts): CompiledPattern[] {
         re: new RegExp(p.source, 'gi'),
         ...(p.continuation ? { continuation: p.continuation } : { precheck: (line: string) => LABELED_PRECHECK_RE.test(line) }),
         validate: (value: string, head: string) => labeledValueIsCredential(value, p.form, head),
+        subject: neutralizeRedactionMarkers,
       });
     }
   }
@@ -955,14 +959,15 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
       if (p.continuation && p.continuation !== dangling) continue;
       if (p.precheck && !p.precheck(line)) continue;
       p.re.lastIndex = 0;
+      const subject = p.subject ? p.subject(line) : line;
       let m: RegExpExecArray | null;
       for (;;) {
         if (work) work.regexExecs++;
-        m = p.re.exec(line);
+        m = p.re.exec(subject);
         if (m === null) break;
         if (work) work.candidates[p.name] = (work.candidates[p.name] ?? 0) + 1;
-        const value = m[2];
         const start = m.index + m[1].length;
+        const value = subject === line ? m[2] : line.slice(start, start + m[2].length);
         const end = start + value.length;
         // Zero-width safety: never loop forever on a pathological pattern.
         if (m[0].length === 0) p.re.lastIndex++;
@@ -975,7 +980,7 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
         }
         if (p.validate) {
           if (work) work.validateCalls++;
-          if (!p.validate(value, m[1])) continue;
+          if (!p.validate(value, subject === line ? m[1] : line.slice(m.index, start))) continue;
         }
         if (!taken) {
           taken = new Uint8Array(line.length);

@@ -27,8 +27,8 @@
  *   --diff             doc-only diffs run only the doc checks and gitleaks (ci:local --diff)
  *   --record-weights   write measured durations to scripts/ubicloud/weights.json
  *   --keep             leave the VMs running (destroy with ubi-runner.sh down NAME)
- *   --ttl-hours N      VM expiry written into each name (default 2; 0 = no
- *                      expiry). The operator reaper destroys VMs past their
+ *   --ttl-hours N      VM TTL written into each name as -t<N> (default 2,
+ *                      at most 999). The operator reaper destroys VMs past their
  *                      expiry, so a VM a sleeping machine never tore down
  *                      dies within hours (scripts/ubicloud/reap-expired.ts)
  *
@@ -52,9 +52,9 @@
  * UNIT_SHARD_BUDGET_MS (unitShardCheck) and reports each shard's measured time. Durations of every run are
  * merged into .context/ci-ubicloud/weights.json, which weights the next run.
  *
- * VMs are named ubirun-<owner>-<epoch>-x<expiry epoch>-ciNN<hex> (owner:
- * UBI_OWNER or the runner's per-machine id; ubirun-<owner>-<epoch>-ciNN<hex>
- * with --ttl-hours 0). Each name is appended to <run>/vms.txt before its
+ * VMs are named ubirun-<owner>-<epoch>-ciNN<hex>-t<ttl hours> (owner:
+ * UBI_OWNER or the runner's per-machine id), gstack's runner grammar, so
+ * gstack's reap reads the same TTL. Each name is appended to <run>/vms.txt before its
  * create request is sent. On exit, including SIGINT, SIGTERM, SIGHUP (a
  * dropped terminal, a cancelled background operation) and SIGQUIT, in-flight
  * `up` calls are allowed to finish (they destroy their own VM), then every
@@ -168,7 +168,7 @@ function parseArgs(argv: string[]): Opts {
   if (opts.location !== GATE_LOCATION && !argv.includes("--lanes")) usage(`a full gate runs only in ${GATE_LOCATION}. Test timeouts and the mined shard weights are calibrated there; on 2026-10-19 us-east-a2 ran about half as fast and timed out tests that pass in ${GATE_LOCATION}, so a full run in ${opts.location} is not gate evidence. Wait for ${GATE_LOCATION} capacity or run bun run ci:local (and report it as local). To run a diagnostic subset in ${opts.location}, pass --lanes.`);
   if (opts.pgImage && !/^[a-z0-9][a-z0-9._\/-]*(?::[A-Za-z0-9._-]+)?$/.test(opts.pgImage)) usage(`--pg-image ${opts.pgImage} is not an image reference`);
   if (opts.pgImage && !argv.includes("--lanes")) usage("a full gate runs on the default Postgres image; --pg-image is a diagnostic run, so pass --lanes (for example --lanes pg-arms,e2e).");
-  if (!Number.isInteger(opts.ttlHours) || opts.ttlHours < 0 || opts.ttlHours > 8760) usage("--ttl-hours must be a whole number of hours from 0 (no expiry) to 8760");
+  if (!Number.isInteger(opts.ttlHours) || opts.ttlHours < 1 || opts.ttlHours > 999) usage("--ttl-hours must be a whole number of hours from 1 to 999 (every gate VM carries a TTL; 999 is the longest)");
   if (!Number.isInteger(opts.vms) || opts.vms < 0 || (opts.vms === 0 && argv.includes("--vms"))) usage("--vms must be a positive integer");
   // Three slots per eight vCPUs: each slot's bun process, its children and its
   // own PostgreSQL and PgBouncer keep about 2.5 threads runnable. One slot per
@@ -293,7 +293,7 @@ async function main() {
     opts.vms = decision.vms;
     log(`fleet: ${decision.reason} (pass --vms N to override)`);
   }
-  log(`provisioning ${opts.vms} × ${opts.size} in ${opts.location} (${opts.image === "stock" ? "stock Ubuntu 24.04" : `image ${opts.image}`}), ${opts.slots} slots each, ${opts.ttlHours ? `names expiring ${opts.ttlHours}h after creation` : "no expiry"}; logs in ${runDir}`);
+  log(`provisioning ${opts.vms} × ${opts.size} in ${opts.location} (${opts.image === "stock" ? "stock Ubuntu 24.04" : `image ${opts.image}`}), ${opts.slots} slots each, names expiring ${opts.ttlHours}h after creation; logs in ${runDir}`);
 
   // ── Checkout tarball, packed once while the VMs boot ─────────────────────
   const tarball = join(tmpdir(), `gbrain-ci-ubicloud-${process.pid}.tgz`);
@@ -339,7 +339,7 @@ async function main() {
     rmSync(tarball, { force: true });
     const live = vms.filter((vm) => vm.requested && vm.state !== "destroyed");
     if (opts.keep) {
-      log(`--keep: leaving ${live.map((vm) => vm.name).join(" ")} running; destroy with: scripts/ubicloud/ubi-runner.sh down NAME${opts.ttlHours ? ` (the operator reaper destroys them ${opts.ttlHours}h after creation; --ttl-hours 0 for no expiry)` : ""}`);
+      log(`--keep: leaving ${live.map((vm) => vm.name).join(" ")} running; destroy with: scripts/ubicloud/ubi-runner.sh down NAME (the operator reaper destroys them ${opts.ttlHours}h after creation; pass --ttl-hours up to 999 for longer)`);
       return;
     }
     log(`destroying ${live.length} VM(s): ${live.map((vm) => vm.name).join(" ")}`);
@@ -397,7 +397,7 @@ async function main() {
   };
 
   const runBatch = async (vm: Vm, slot: number, lane: string, files: string[]) => {
-    const logPath = join(runDir, "logs", `${String(++batchSeq).padStart(5, "0")}-${vm.name.slice(-8)}-s${slot}-${lane}.log`);
+    const logPath = join(runDir, "logs", `${String(++batchSeq).padStart(5, "0")}-${vm.name.replace(/-t\d+$/, "").slice(-8)}-s${slot}-${lane}.log`);
     const cmd = `cd ${REMOTE_DIR} && SLOT=${slot} bash scripts/ubicloud/ci-item.sh ${lane} ${files.map(quote).join(" ")}`;
     const r = await runner(["ssh", vm.name, cmd], { out: logPath, timeoutMs: BATCH_TIMEOUT_MS });
     return { code: r.code, parsed: parseItemLog(readFileSync(logPath, "utf8")), logPath };

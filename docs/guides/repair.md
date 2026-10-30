@@ -2562,7 +2562,8 @@ sync's history read did not finish, so it could not tell whether a commit held
 the file and kept the page; the provenance below reads the whole history.
 Reason `storage_invalid` (#8007) means `gbrain.yml`'s storage section did not
 load, declared `db_only` in a form that resolved no directory, or listed a
-deprecated `supabase_only` next to canonical keys (ignored), so the sync
+deprecated `supabase_only` next to canonical keys (ignored) whose directory
+holds the page and is not also under `db_only`, so the sync
 could not tell whether the page is database-only and kept it: run
 `gbrain storage status`, fix `gbrain.yml`, commit it and sync again; the hold
 clears and the page is decided under the fixed config.
