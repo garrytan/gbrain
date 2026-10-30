@@ -90,6 +90,8 @@ export interface EffectWorkerOptions {
   embedding?: { signature: string; model: string; embed: typeof embedBatch };
   /** GBRA-133: owner keys the consumer proved dead (`deadOwnerClaims`); their running effects are claimed before the lease lapses. */
   deadOwners?: readonly string[];
+  /** How long a pass waits for a contended worktree (default EFFECT_LOCK_WAIT_MS); production never supplies this. */
+  lockWaitMs?: number;
 }
 
 export async function selectedEffectPage(engine: BrainEngine, effect: PersistenceEffect): Promise<PageSnapshot | null> {
@@ -819,7 +821,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     const path = binding.coordination_path ?? '';
     if (stalled.has(path)) return acquireWorktree(binding, 0, undefined, engine);
     waited.add(path);
-    const lock = await acquireWorktreeWaiting(binding, engine, EFFECT_LOCK_WAIT_MS, opts.signal);
+    const lock = await acquireWorktreeWaiting(binding, engine, opts.lockWaitMs ?? EFFECT_LOCK_WAIT_MS, opts.signal);
     if (!lock) stalled.add(path);
     return lock;
   };

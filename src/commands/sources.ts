@@ -59,6 +59,7 @@ import {
 import { isValidRepoName } from '../core/github-source.ts';
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
 import { defaultGoogleAddTuning, parseGoogleAddFlag } from './sources-google-flags.ts';
+import { noGrantFloorNext } from './sources-add-next.ts';
 import {
   resolveSourceWithTier,
   SOURCE_TIER_NAMES,
@@ -148,7 +149,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   if (!id) {
     console.error(
       'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google] ' +
-        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force]\n' +
+        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force] [--json]\n' +
         '       github kind: [--token-env <env>] [--scope auto|repos] ' +
         '[--repos owner/name,...] [--dir <path>] ' +
         '[--app-id <n> --app-pem <path>] [--app-install <n>]\n' +
@@ -167,6 +168,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let patFile: string | undefined;
   let noHarden = false;
   let force = false;
+  let json = false;
   // v0.46 github-kind flags.
   let ghKind = false;
   let ghTokenEnv: string | undefined;
@@ -196,6 +198,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     if (a === '--pat-file') { patFile = args[++i]; continue; }
     if (a === '--no-harden') { noHarden = true; continue; }
     if (a === '--force') { force = true; continue; }
+    if (a === '--json') { json = true; continue; }
     if (a === '--kind') {
       const kind = args[++i];
       if (kind === 'github') {
@@ -446,18 +449,21 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     : created.local_path
       ? ` → ${created.local_path}`
       : '';
-  console.log(
+  const say = json ? console.error : console.log;
+  say(
     `Created source "${id}"${displayName && displayName !== id ? ` (name: ${displayName})` : ''}${tail}`,
   );
   if (finalRemoteUrl) {
-    console.log(`  clone path: ${created.local_path}`);
+    say(`  clone path: ${created.local_path}`);
   }
-  console.log(
+  say(
     `  federated: ${fed}${fed ? ' — appears in cross-source default search' : ' — only searched when explicitly named via --source'}`,
   );
-  if (!fed && federated === null) console.error(`Warning: source "${id}" is not federated. A remote token or agent connection with no source grant cannot read its pages, so its searches answer empty for them. Run \`gbrain sources federate ${id}\` to let every such connection read it, or grant one token with \`gbrain auth rescope --token <name> --sources ${id}\`.`);
+  if (!fed && federated === null) console.error(`Warning: source "${id}" is not federated. A remote token or agent connection with no source grant cannot read its pages, so its searches leave them out. Run \`gbrain sources federate ${id}\` to let every such connection read it, or grant one token with \`gbrain auth rescope --token <name> --sources ${id}\`.`);
+  const next = !fed && federated === null ? await noGrantFloorNext(engine, id).catch(() => null) : null;
+  if (next) say(`  next: ${next.command} — ${next.why}`);
   if (ghKind || gKind) {
-    console.log(`  sync: run \`gbrain sync --source ${id}\` once; after its first sync, autopilot keeps it synced on the autopilot interval.`);
+    say(`  sync: run \`gbrain sync --source ${id}\` once; after its first sync, autopilot keeps it synced on the autopilot interval.`);
   }
 
   // v0.42.44 — auto-harden managed clones for git durability the moment a brain
@@ -489,6 +495,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
       console.error(`         Run \`gbrain sources harden ${id}\` to retry.`);
     }
   }
+  if (json) console.log(JSON.stringify({ id, name: created.name, local_path: created.local_path, remote_url: finalRemoteUrl ?? null, federated: fed, ...(next ? { next } : {}) }));
 }
 
 /**
@@ -1966,7 +1973,7 @@ Subcommands:
   connect <path> --brain <id> --source <id> [--profile company-brain] [--yes] [--json]
                                     Preview, approve, import and verify a new company source; --plan <file> reuses a saved inspection.
   demo company-brain [--json]        Run a fictional company through the real import and graph pipeline offline.
-  add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
+  add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force] [--json]
                                     Register a new source. --path must be a git repo
                                     with committed files; --force skips that check.
   list [--json]                     List registered sources with page counts.

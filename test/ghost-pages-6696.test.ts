@@ -25,7 +25,10 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { liveFileDrift } from '../src/core/persistence/drift-conflicts.ts';
 import { classifyTerminal } from '../src/core/persistence/terminal-classify.ts';
-import { readGhostPages, ghostPageNow, __setGhostScanLimitForTests } from '../src/core/ghost-pages.ts';
+import { readGhostPages, ghostPageNow, scanGhostSource, __setGhostScanLimitForTests } from '../src/core/ghost-pages.ts';
+import { retireGhost } from '../src/core/repair/ghost-pages.ts';
+import { importCodeFile } from '../src/core/import-file.ts';
+import { slugifyCodePath } from '../src/core/sync.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
 import { AUTO_REPAIR_REGISTRY, EXPLICIT_REPAIR_REGISTRY, repairForCheck, repairRunner, repairSpec } from '../src/core/repair/registry.ts';
 import { runRepairCommand } from '../src/commands/repair.ts';
@@ -87,6 +90,24 @@ async function refusal(fn: () => Promise<unknown>): Promise<OperationError> {
 
 const repair = async (sourceId: string, opts: { apply?: boolean; expect?: string } = {}) => (await repairRunner(engine, { apply: opts.apply === true, logger }))
   .run('ghost-pages', await resolveRepairScope(engine, sourceId), { explicit: true, sourceFlag: sourceId, expect: opts.expect });
+
+/** #7736: a JSON file committed to the source and indexed as a code page by the real indexer; its flattened slug has no `<slug>.md`. */
+const CODE_PATH = 'projects/example/decisions.active.json';
+const CODE_SLUG = slugifyCodePath(CODE_PATH);
+async function seedCodePage(f: Fixture, managed = true): Promise<void> {
+  const json = '{"decision":"keep"}\n';
+  mkdirSync(join(f.root, 'projects/example'), { recursive: true });
+  writeFileSync(join(f.root, CODE_PATH), json);
+  execFileSync('git', ['add', CODE_PATH], { cwd: f.root });
+  execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '-q', '-m', 'code file'], { cwd: f.root });
+  if (managed) await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+  await importCodeFile(engine, CODE_PATH, json, { noEmbed: true, sourceId: f.sourceId });
+  if (managed) await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+  const [row] = await engine.executeRaw<{ page_kind: string; source_path: string }>('SELECT page_kind, source_path FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [f.sourceId, CODE_SLUG]);
+  expect(row).toEqual({ page_kind: 'code', source_path: CODE_PATH });
+  expect(existsSync(join(f.root, `${CODE_SLUG}.md`))).toBe(false);
+}
+const json = async (argv: string[]) => JSON.parse(await withEnv({ GBRAIN_INTERACTIVE: '0', CI: '1' }, () => capture(() => runRepairCommand(engine, argv)))).results[0];
 
 /** notes/agrees (file matches), notes/drift (file edited), notes/ghost (file removed), scratch/kept (declared db_only, file removed), notes/gone (deleted). */
 async function seed(f: Fixture): Promise<string> {
@@ -259,6 +280,64 @@ for (const backend of testBackends()) describe(`#6696 B5 ghost pages (${backend}
       expect(readFileSync(join(f.root, 'notes/ghost.md'), 'utf8')).toBe(bytes);
     }));
   }
+
+  test('#7736: a live JSON code page is not a ghost: pages ghosts, the preview and the confirm step leave it, the apply keeps it', () => fixture(async f => {
+    await seed(f);
+    await seedCodePage(f);
+    const listed = JSON.parse(await capture(() => runPagesGhosts(engine, ['--source', f.sourceId, '--json'])));
+    expect(listed.ghosts.map((ghost: { slug: string }) => ghost.slug)).toEqual(['notes/ghost']);
+    expect(listed.unresolvable).toBeUndefined();
+    expect(await ghostPageNow(engine, f.sourceId, CODE_SLUG)).toMatchObject({ ghost: null, reason: 'recorded_file_present' });
+    const preview = await json(['ghost-pages', '--source', f.sourceId, '--json']);
+    expect(preview.listing.map((entry: { item: string }) => entry.item)).toEqual([`${f.sourceId}:notes/ghost`]);
+    const applied = await json(['ghost-pages', '--source', f.sourceId, '--apply', '--expect', preview.preview_hash, '--yes', '--json']);
+    expect(applied).toMatchObject({ applied: 1, outcomes: { soft_deleted: 1 } });
+    expect(await live(f.sourceId, 'notes/ghost')).toBe(false);
+    expect(await live(f.sourceId, CODE_SLUG)).toBe(true);
+    // The confirm step checks the recorded file on its own: an approval naming the page at its slug path (what a preview
+    // before #7736 listed) keeps it.
+    const snapshot = (await engine.readPageSnapshot(CODE_SLUG, { sourceId: f.sourceId }))!;
+    const owner = (await scanGhostSource(engine, f.sourceId)).owner!;
+    const stale = { source_id: f.sourceId, slug: CODE_SLUG, path: `${CODE_SLUG}.md`, revision: snapshot.revision, page_id: Number(snapshot.page.id) };
+    expect(await retireGhost(f.ctx, stale, owner, async () => randomUUID())).toMatchObject({ applied: false, outcome: 'file_restored' });
+    expect(await live(f.sourceId, CODE_SLUG)).toBe(true);
+    expect(existsSync(join(f.root, CODE_PATH))).toBe(true);
+  }));
+
+  for (const managed of [true, false]) {
+    test(`#7736: a code page whose recorded JSON file is gone is a ghost at that path and the apply retires it (${managed ? 'managed' : 'unmanaged'})`, () => fixture(async f => {
+      await seedCodePage(f, managed);
+      unlinkSync(join(f.root, CODE_PATH));
+      const preview = await repair(f.sourceId);
+      expect(preview.sample).toEqual([`${f.sourceId}:${CODE_SLUG}`]);
+      expect((await ghostPageNow(engine, f.sourceId, CODE_SLUG)).ghost).toMatchObject({ path: CODE_PATH });
+      const applied = await repair(f.sourceId, { apply: true, expect: preview.preview_hash });
+      expect(applied).toMatchObject({ applied: 1, outcomes: { soft_deleted: 1 } });
+      expect(await live(f.sourceId, CODE_SLUG)).toBe(false);
+    }, { managed }));
+  }
+
+  test('#7736: a code page whose recorded path names no file inside the source is reported unresolvable and never removed', () => fixture(async f => {
+    await seed(f);
+    await seedCodePage(f);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await engine.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2', [f.sourceId, CODE_SLUG, '../outside/decisions.active.json']);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    const summary = await readGhostPages(engine, { sourceIds: [f.sourceId] });
+    expect(summary).toMatchObject({ status: 'known', count: 1, unresolvable: 1 });
+    expect(summary.unresolvable_samples).toEqual([{ source_id: f.sourceId, slug: CODE_SLUG, source_path: '../outside/decisions.active.json', page_id: expect.any(Number) }]);
+    expect(await ghostPageNow(engine, f.sourceId, CODE_SLUG)).toMatchObject({ ghost: null, reason: 'recorded_path_unresolvable' });
+    const listed = JSON.parse(await capture(() => runPagesGhosts(engine, ['--source', f.sourceId, '--json'])));
+    expect(listed.ghosts.map((ghost: { slug: string }) => ghost.slug)).toEqual(['notes/ghost']);
+    expect(listed.unresolvable).toMatchObject({ code: 'recorded_path_unresolvable', count: 1 });
+    const preview = await json(['ghost-pages', '--source', f.sourceId, '--json']);
+    expect(preview.listing).toContainEqual(expect.objectContaining({ item: `${f.sourceId}:${CODE_SLUG}`, class: 'recorded_path_unresolvable' }));
+    const applied = await json(['ghost-pages', '--source', f.sourceId, '--apply', '--expect', preview.preview_hash, '--yes', '--json']);
+    expect(applied).toMatchObject({ applied: 1, outcomes: { soft_deleted: 1 } });
+    expect(await live(f.sourceId, CODE_SLUG)).toBe(true);
+    const [check] = await ghostPagesEntry.run({ engine } as never) as Array<Record<string, any>>;
+    expect(check.details.unresolvable).toMatchObject({ code: 'recorded_path_unresolvable', count: 1 });
+  }));
 
   test('an unmanaged brain soft-deletes the approved ghost directly', () => fixture(async f => {
     mkdirSync(join(f.root, 'notes'));

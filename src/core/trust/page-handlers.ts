@@ -18,6 +18,10 @@
  * - #6550 marker repair (`repairPageMarker`, local CLI only): rewrite a page's
  *   `trust_tier: unknown` marker to its stored tier (removed at owner tiers);
  *   the row keeps its tier. trust/marker-repair.ts decides which pages.
+ * - #7891 provenance restore (`restorePageProvenance`, local CLI only): put back
+ *   the provenance stamps a remote write rewrote and the lowering marker it
+ *   removed (trust/provenance-drift.ts decides), lower the page to match, and
+ *   file a `lower_page` proposal so the owner sees it in `gbrain trust review`.
  *
  * Every function here runs after the caller established the owner's
  * confirmation (trust/confirm.ts); each re-checks the page revision it was
@@ -26,7 +30,8 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
-import { queueTierProjection } from './page-write.ts';
+import { queueTierProjection, recordAgentPageLowering } from './page-write.ts';
+import { plannedDigest, readPageDrift } from './provenance-drift.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { opError } from '../ops/contract.ts';
@@ -35,6 +40,7 @@ import type { Principal, WriteRequest } from '../persistence/model.ts';
 import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { PageType } from '../types.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
+import { assertInlineBody } from '../page-body/page-shape.ts';
 import type { PageVersion } from '../page-state/version-types.ts';
 import { maintenanceAttribution, principalAttribution, withWriteAttribution } from '../persistence/attribution.ts';
 import { withCoordinatedWrite, withTrustKeep, withTrustPromotion } from '../persistence/context.ts';
@@ -45,13 +51,15 @@ import {
   decisionResult, registerTrustProposalHandler, transitionTrustProposal, type TrustProposalAction,
   type TrustDecisionContext, type TrustDecisionResult, type TrustProposalRow,
 } from './proposals.ts';
-import { OWNER_TIER_FLOOR, compareTrust, effectiveWriteTrust, storedTrustTier, type TrustTier, type WriteTrust } from './tier.ts';
+import { OWNER_TIER_FLOOR, compareTrust, effectiveWriteTrust, minTrust, storedTrustTier, type TrustTier, type WriteTrust } from './tier.ts';
 import { propagateTierLowering } from './propagation.ts';
 import { beliefStreamSlugs, lockedBeliefBatch } from '../belief/writers.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 
 /** The journaled operation that publishes an owner page action on a managed brain. */
 export const TRUST_OWNER_PAGE_OPERATION = 'trust_owner_page';
+/** The proposer a provenance restore's `lower_page` proposal names. */
+export const PROVENANCE_PROPOSER = 'provenance_repair';
 /** Fence projections keep their own tiers when an owner action rewrites the page around them. */
 const FENCE_TABLES = ['facts', 'takes', 'timeline_entries'] as const;
 
@@ -177,7 +185,7 @@ export interface PageActionInput {
 }
 
 export interface PageActionResult {
-  status: 'confirmed' | 'reverted' | 'repaired' | 'unchanged';
+  status: 'confirmed' | 'reverted' | 'repaired' | 'restored' | 'unchanged';
   ref: string;
   tier: TrustTier;
   prior_tier: TrustTier;
@@ -186,9 +194,12 @@ export interface PageActionResult {
 }
 
 type OwnerPageIntent = {
-  mode: 'confirm' | 'revert' | 'repair_marker';
+  mode: 'confirm' | 'revert' | 'repair_marker' | 'restore_provenance';
   expected_revision: string;
   version_id?: number;
+  /** restore_provenance: the digest of the change the preview showed, and whether unattributed damage was included. */
+  planned?: string;
+  include_ambiguous?: boolean;
   via: OwnerConfirmation['via'];
   proposal?: PageActionInput['proposal'];
 };
@@ -230,7 +241,9 @@ export async function confirmPage(engine: BrainEngine, input: PageActionInput): 
 /** #6550: the marker a repaired page carries: its stored tier, none at owner tiers (CEO-21 stamps none there). */
 export const repairedMarker = (tier: TrustTier): TrustTier | null => compareTrust(tier, OWNER_TIER_FLOOR) >= 0 ? null : tier;
 
-const ACTION_NAMES: Record<OwnerPageIntent['mode'], string> = { confirm: 'its confirmation', revert: 'the revert', repair_marker: 'the marker repair' };
+const ACTION_NAMES: Record<OwnerPageIntent['mode'], string> = { confirm: 'its confirmation', revert: 'the revert', repair_marker: 'the marker repair', restore_provenance: 'the provenance restore' };
+/** Owner page modes only the trusted local CLI may run. */
+const LOCAL_ONLY_MODES: ReadonlyArray<OwnerPageIntent['mode']> = ['repair_marker', 'restore_provenance'];
 
 /** #6550: rewrites the page's marker to `repairedMarker(stored tier)`, bound to the previewed revision; the row keeps its tier. */
 export async function repairPageMarker(engine: BrainEngine, input: PageActionInput): Promise<PageActionResult & { marker: TrustTier | null }> {
@@ -242,6 +255,30 @@ export async function repairPageMarker(engine: BrainEngine, input: PageActionInp
   await publishOwnerPage(engine, input, { mode: 'repair_marker', expected_revision: input.expectedRevision, via: input.confirmation.via },
     markdownWithoutMarker(state.snapshot, marker), state.tier);
   return { status: 'repaired', ref, tier: state.tier, prior_tier: state.tier, marker };
+}
+
+/** The markdown and tier the provenance restore writes for a page now, refused when it is not the previewed change. */
+async function plannedProvenanceRestore(engine: BrainEngine, state: PageTrustState, intent: Pick<OwnerPageIntent, 'planned' | 'include_ambiguous'>): Promise<{ content: string; tier: TrustTier }> {
+  const item = await readPageDrift(engine, state.sourceId, state.slug, { includeAmbiguous: intent.include_ambiguous === true });
+  const restore = item?.verdict.restore;
+  if (!item || !restore || item.verdict.class === 'restamp' || plannedDigest(item) !== intent.planned) throw changedSincePreview(pageRef(state.sourceId, state.slug), ACTION_NAMES.restore_provenance);
+  const { page } = state.snapshot;
+  assertInlineBody(page, 'gbrain repair provenance');
+  return { content: serializeMarkdown(restore.frontmatter, page.compiled_truth ?? '', page.timeline ?? '', {
+    type: (page.type as PageType) ?? 'note', title: page.title ?? '', tags: state.snapshot.tags }), tier: minTrust(state.tier, restore.tier) };
+}
+
+/** #7891: restores the previewed provenance stamps and lowering marker, bound to the previewed revision and change; only lowers. */
+export async function restorePageProvenance(engine: BrainEngine, input: PageActionInput & { planned: string; includeAmbiguous?: boolean }): Promise<PageActionResult> {
+  const ref = pageRef(input.sourceId, input.slug);
+  const state = await readPageTrustState(engine, input.sourceId, input.slug);
+  if (!state) throw opError('page_not_found', `No live page ${ref}.`, 'Preview gbrain repair provenance again to see the current candidates.');
+  if (state.revision !== input.expectedRevision) throw changedSincePreview(ref, ACTION_NAMES.restore_provenance);
+  const intent: OwnerPageIntent = { mode: 'restore_provenance', expected_revision: input.expectedRevision, via: input.confirmation.via,
+    planned: input.planned, include_ambiguous: input.includeAmbiguous === true };
+  const { content, tier } = await plannedProvenanceRestore(engine, state, intent);
+  await publishOwnerPage(engine, input, intent, content, tier);
+  return { status: 'restored', ref, tier, prior_tier: state.tier };
 }
 
 /** The tier a version restores: its snapshot tier, `unknown` for legacy versions. */
@@ -274,15 +311,56 @@ async function publishOwnerPage(engine: BrainEngine, input: PageActionInput, int
   const { importFromContent } = await import('../import-file.ts');
   const attribution = await attributionFor(engine, input.by);
   const trust = ownerTrust(tier, intent.mode, intent.via);
+  // A repair mode on an unmanaged checkout renders the repaired row to the page's file in the same transaction, so a
+  // re-read of the checkout does not undo it; a file holding an edit the database lacks refuses the page instead.
+  const file = LOCAL_ONLY_MODES.includes(intent.mode) ? await ownerRepairFile(engine, input.sourceId, input.slug) : null;
+  if (file && !file.ok) {
+    if (file.reason === 'file_database_drift') throw changedSincePreview(pageRef(input.sourceId, input.slug), ACTION_NAMES[intent.mode]);
+    throw opError('unavailable', `The page file of ${pageRef(input.sourceId, input.slug)} cannot be written (${file.reason}); nothing was changed.`,
+      'Fix the checkout (gbrain sources status), then preview the repair again.');
+  }
+  const writeThrough = file?.ok && file.target ? await import('../write-through.ts') : null;
   await engine.transaction(tx => withWriteAttribution(tx, { ...attribution, trust }, () => withTrustPromotion(tx, tier, () =>
     withTrustKeep(tx, FENCE_TABLES, async () => {
       if ((await tx.readPageSnapshot(input.slug, { sourceId: input.sourceId }))?.revision !== input.expectedRevision) {
         throw changedSincePreview(pageRef(input.sourceId, input.slug), ACTION_NAMES[intent.mode]);
       }
       // forceRechunk: the trust_tier marker is hash-ephemeral, so removing it alone would read as unchanged content.
+      const prior = intent.mode === 'restore_provenance' ? await readPageTrustState(tx, input.sourceId, input.slug) : null;
       await importFromContent(tx, input.slug, markdown, { sourceId: input.sourceId, noEmbed: true, preserveGateMarkers: intent.mode !== 'revert', forceRechunk: true, allowEmptyOverwrite: intent.mode === 'revert' });
+      if (prior) await recordAgentPageLowering(tx, { operation: TRUST_OWNER_PAGE_OPERATION, source_id: input.sourceId, slug: input.slug }, { tier: prior.tier, revision: prior.revision }, PROVENANCE_PROPOSER);
+      if (writeThrough && file?.ok && file.target) {
+        const written = await writeThrough.writePageThrough(tx, input.slug, { sourceId: input.sourceId, expectedFileBytes: file.target.expectedFileBytes });
+        if (written.skipped === 'file_changed') throw changedSincePreview(pageRef(input.sourceId, input.slug), ACTION_NAMES[intent.mode]);
+        if (!written.written) {
+          throw opError('unavailable', `The page file of ${pageRef(input.sourceId, input.slug)} could not be written (${written.skipped ?? written.error}); nothing was changed.`,
+            'Fix the checkout (gbrain sources status), then preview the repair again.');
+        }
+      }
       await closeProposal(tx, intent.proposal, input.by);
     }))));
+}
+
+/** Write-through outcomes that leave a repair database-only on purpose: no checkout, write-through off, an ignored or db_only target. */
+const DATABASE_ONLY_TARGETS = ['no_repo_configured', 'disabled_by_config', 'not_canonical'];
+
+/**
+ * The checkout file an owner repair mode on an unmanaged brain renders the page to: `target: null` when the page has
+ * none on purpose (DATABASE_ONLY_TARGETS), the bytes the write must still find, or why the page cannot be repaired:
+ * `file_database_drift` when the file holds an edit the database lacks (a hand edit sync has not imported), else the
+ * unresolvable target (a missing checkout, a path outside the source root) or `url_clone` (a clone gbrain pulls, whose
+ * next pull would undo a database-only repair). Read-only.
+ */
+export async function ownerRepairFile(engine: BrainEngine, sourceId: string, slug: string):
+  Promise<{ ok: true; target: { expectedFileBytes: string | null } | null } | { ok: false; reason: string }> {
+  const { derivedFileTarget } = await import('../cycle/derived-write-through.ts');
+  const resolved = await derivedFileTarget(engine, slug, sourceId);
+  if (!resolved.ok) return DATABASE_ONLY_TARGETS.includes(resolved.skipped) ? { ok: true, target: null } : { ok: false, reason: resolved.skipped };
+  const { urlCloneReadOnly } = await import('../url-clone.ts');
+  if (await urlCloneReadOnly(engine, sourceId)) return { ok: false, reason: 'url_clone' };
+  const { replaceableFile } = await import('../facts/file-body-guard.ts');
+  const file = await replaceableFile(engine, sourceId, slug, resolved.target.filePath);
+  return file.ok ? { ok: true, target: { expectedFileBytes: file.expectedFileBytes } } : { ok: false, reason: 'file_database_drift' };
 }
 
 /** Admits the journaled owner page mutation and waits for its publication (the decide_proposal precedent). */
@@ -320,7 +398,7 @@ async function submitOwnerPage(engine: BrainEngine, input: PageActionInput, inte
 export async function prepareTrustOwnerPageMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
   const intent = row.intent as unknown as OwnerPageIntent | null;
   if (row.operation !== TRUST_OWNER_PAGE_OPERATION || !intent || !Object.hasOwn(ACTION_NAMES, intent.mode) || typeof intent.expected_revision !== 'string'
-    || (row.authority.remote && (intent.mode === 'repair_marker' || !(row.authority.scopes ?? []).includes(MEMORY_CONFIRM_SCOPE)))) {
+    || (row.authority.remote && (LOCAL_ONLY_MODES.includes(intent.mode) || !(row.authority.scopes ?? []).includes(MEMORY_CONFIRM_SCOPE)))) {
     throw opError('confirmation_required', 'This owner page action is not confirmed by the owner; nothing was changed.',
       'Run the gbrain trust command on the brain host in an interactive terminal.');
   }
@@ -339,7 +417,8 @@ export async function prepareTrustOwnerPageMutation(engine: BrainEngine, row: Wr
   } else if (intent.mode === 'repair_marker') {
     tier = state.tier;
     content = markdownWithoutMarker(state.snapshot, repairedMarker(tier));
-  } else content = markdownWithoutMarker(state.snapshot);
+  } else if (intent.mode === 'restore_provenance') ({ content, tier } = await plannedProvenanceRestore(engine, state, intent));
+  else content = markdownWithoutMarker(state.snapshot);
   // The request keeps its own operation, so page-prepare stamps no CEO-21 marker and files no lower_page item for it.
   const { preparePageMutation } = await import('../persistence/page-prepare.ts');
   const page = await preparePageMutation(engine, row, config, { content, expectedRevision: intent.expected_revision, ...(tags ? { tags } : {}) });
@@ -347,6 +426,7 @@ export async function prepareTrustOwnerPageMutation(engine: BrainEngine, row: Wr
   page.trust = ownerTrust(tier, intent.mode, intent.via);
   page.apply = (tx, preimage) => withTrustPromotion(tx, tier, () => withTrustKeep(tx, FENCE_TABLES, async () => {
     const outcome = await apply(tx, preimage);
+    if (intent.mode === 'restore_provenance') await recordAgentPageLowering(tx, row, { tier: state.tier, revision: state.revision }, PROVENANCE_PROPOSER);
     await closeProposal(tx, intent.proposal, { kind: row.principal_kind as Principal['kind'], id: row.principal_id });
     return { ...outcome, trust_action: intent.mode, trust_tier: tier };
   }));

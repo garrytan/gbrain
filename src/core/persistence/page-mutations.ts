@@ -36,6 +36,7 @@ import { normalizeSubagentPageInput, undeclaredPageTypeWarning, type PageTypeWar
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { decideUnboundWrite, isUnboundSourcePage } from './unbound-source.ts';
 import { assertRestoreOrigin } from './detached-pages.ts';
+import { isSourceDbOnlySlug } from './source-storage.ts';
 import { colonSlugWindowsRefusal, isWindowsColonTarget } from './native-file-target.ts';
 import { publishesDatabaseOnly } from './page-prepare.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
@@ -370,7 +371,8 @@ export async function preparePageAdmission(ctx: OperationContext,
   if (ctx.remote !== false) Object.assign(intent, { source_kind: `mcp:${input.operation}`, source_uri: null, ingested_via: `mcp:${input.operation}` });
   const [authority, , snapshot, boundAtStart, writeThroughSetting, repoPath] = await pipelined(ctx.engine, [
     () => submissionAuthority(ctx, input.operation, sourceId, source.incarnation, slug),
-    () => assertKnowledgePublicationAllowed(ctx.engine, { source_id: sourceId, source_incarnation: source.incarnation, slug }),
+    () => assertKnowledgePublicationAllowed(ctx.engine, { source_id: sourceId, source_incarnation: source.incarnation, slug, operation: input.operation,
+      intent: { purge: intent.purge, retention: intent.retention } }),
     () => ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true }),
     () => getWorktreeBinding(ctx.engine, sourceId),
     () => ctx.engine.getConfig('sync.write_through'),
@@ -399,18 +401,22 @@ export async function preparePageAdmission(ctx: OperationContext,
   let binding = boundAtStart;
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
   const configuredWriteThrough = !/^(false|0|off|no)$/i.test(writeThroughSetting ?? 'true');
-  const writeThrough = configuredWriteThrough && !sandbox && !input.databaseOnly;
   const configuredRoot = source.local_path || repoPath;
   const root = configuredRoot && isAbsolute(configuredRoot) ? configuredRoot : null;
+  // Checkout paths belong to a host binding; sources.local_path may name
+  // another host's original checkout after a verified ownership transfer.
+  const localRoot = binding ? binding.owner_host_id === localHostId() && binding.local_path
+    ? join(binding.local_path, binding.relative_path) : null : root;
+  // #7324: a declared db_only page is canonical in the database, so its detach restore publishes database-only even
+  // where write-through would re-create its file (a managed checkout); assertRestoreOrigin still requires the file gone.
+  const databaseOnly = input.databaseOnly ?? (input.operation === 'restore_page' && p.detach === true && localRoot
+    && isSourceDbOnlySlug(localRoot, slug, 'not_db_only') ? 'detached' : undefined);
+  const writeThrough = configuredWriteThrough && !sandbox && !databaseOnly;
   if (sandbox) authority.databaseOnlyReason = 'subagent_sandbox';
-  else if (input.databaseOnly) authority.databaseOnlyReason = input.databaseOnly;
+  else if (databaseOnly) authority.databaseOnlyReason = databaseOnly;
   else if (!configuredWriteThrough) authority.databaseOnlyReason = 'disabled_by_config';
   else if (!root && !binding) authority.databaseOnlyReason = 'no_repo_configured';
   if (p.local_dir !== undefined) {
-    // Checkout paths belong to a host binding; sources.local_path may name
-    // another host's original checkout after a verified ownership transfer.
-    const localRoot = binding ? binding.owner_host_id === localHostId() && binding.local_path
-      ? join(binding.local_path, binding.relative_path) : null : root;
     let matches = false;
     if (ctx.remote === false && typeof p.local_dir === 'string' && localRoot) {
       try { matches = realpathSync(resolve(p.local_dir)) === realpathSync(resolve(localRoot)); } catch { /* missing local binding */ }

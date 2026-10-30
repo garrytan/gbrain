@@ -84,7 +84,10 @@ test/forecast-journal.test.ts
 test/frontmatter-reserved-keys-6454.test.ts
 test/get-chunks-paging.test.ts
 test/git-canonical-conversion-g8a.test.ts
+test/git-canonical-conversion-live-writer.test.ts
+test/git-canonical-conversion-no-checkout-7885.test.ts
 test/git-canonical-conversion-progress.test.ts
+test/git-canonical-conversion-strict-pass-7866.test.ts
 test/git-canonical-declared-g7a.test.ts
 test/git-canonical-indexer-g3.test.ts
 test/git-door-index-lock-7742.test.ts
@@ -220,6 +223,7 @@ test/large-pages/stuck-recovery-large.slow.test.ts
 test/large-pages/timeline-top-insert-reembed.test.ts
 test/large-pages/upload-binding.test.ts
 test/large-pages/upload-over-ceiling.test.ts
+test/large-pages/upload-provenance-7873.test.ts
 test/large-pages/upload-review.test.ts
 test/large-pages/v252-master-reader-compat.test.ts
 test/link-cross-source.test.ts
@@ -227,6 +231,8 @@ test/link-preparation-shared-index.test.ts
 test/links-attendance-blocked.test.ts
 test/links-extraction-yield.test.ts
 test/list-jobs-row-bound.test.ts
+test/maintenance-lowering-7917-7918.test.ts
+test/maintenance-trust-marker-7905.test.ts
 test/managed-cycle-pull-upstream.test.ts
 test/managed-facts-withdrawal-recovery-6506.test.ts
 test/managed-facts-withdrawn-skip-6506.test.ts
@@ -256,7 +262,8 @@ test/managed-sync-pinned-reads.test.ts
 test/managed-sync-preparation-stalled-holds.test.ts
 test/managed-sync-row-parity.test.ts
 test/managed-sync-stale-group-head.test.ts
-test/mcp-unreadable-sources-notice.test.ts
+test/mcp-sources-not-readable.test.ts
+test/migration-0-53-host-move-7900.test.ts
 test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
@@ -407,6 +414,8 @@ test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
+test/provenance-drift-7891.test.ts
+test/provenance-stamps-7873.test.ts
 test/purge-fact.test.ts
 test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
@@ -439,6 +448,10 @@ test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts
 test/scripts/test-stress-postgres.test.ts
 test/search-read-keyword-bound.test.ts
+test/search-remote-page-cap.test.ts
+test/search-transcript-quote-budget.test.ts
+test/search-transcript-quote.test.ts
+test/search-vector-scope-parity.test.ts
 test/search/page-rank-cut.test.ts
 test/search/rerank-gate-hybrid.test.ts
 test/search/rerank-gate-telemetry.test.ts
@@ -476,6 +489,7 @@ test/sync-full-untracked-import-5459.test.ts
 test/sync-group-member-order.test.ts
 test/sync-handler-drain-6706.test.ts
 test/sync-holds-only-converge-7327.test.ts
+test/sync-holds-wave-gbra133.test.ts
 test/sync-import-provenance-disk.test.ts
 test/sync-inexact-rename-6729.test.ts
 test/sync-landing-gaps.test.ts
@@ -494,6 +508,7 @@ test/sync-pass-cost-grouping-gbra130.test.ts
 test/sync-pass-dirty-after-freeze-gbra130.test.ts
 test/sync-pass-interrupted-7596.test.ts
 test/sync-pass-phase-lines-7243.serial.test.ts
+test/sync-pass-readers-7614.test.ts
 test/sync-pass-stop-in-level-gbra133.test.ts
 test/sync-prescreen-both-delta-6712.test.ts
 test/sync-prescreen-drift-6712.test.ts
@@ -501,6 +516,7 @@ test/sync-slug-root-mode-6694.test.ts
 test/sync-staged-catchup.test.ts
 test/sync-status-failure-detail-6513.test.ts
 test/sync-status-truthful-7243.test.ts
+test/sync-storage-invalid-8007.test.ts
 test/sync-tree-reuse-gbra133.test.ts
 test/sync-unblock-repair-error-gbra130.test.ts
 test/sync-uncommitted-origin-7130.test.ts

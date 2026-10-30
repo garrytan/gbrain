@@ -14,7 +14,9 @@ matches an already-gated tree apart from the release stamp files needs no new
 gate). During development use `bun run ci:ubicloud:diff`, `--lanes` and
 targeted suites (`bun test --timeout=60000 <files>`). The gstack pregate remote stage
 (`scripts/pregate-remote-gate.sh`, `.gstack/pregate.json`'s `remote_gate`)
-runs the `:diff` form for the same reason. `:diff` narrows only doc-only
+runs the `:diff` form for the same reason, unless the clean tree already passed
+GitHub's full Test and E2E runs, when it reuses them and starts no VM
+([remote-gate reuse](../../docs/ci-event-parity.md#remote-gate-reuse)). `:diff` narrows only doc-only
 trees today (doc checks plus gitleaks); any other tree still runs every lane,
 so pick `--lanes` or targeted suites when the change is narrow. In a
 multi-lane wave, lanes run `ci:ubicloud:diff` or targeted suites, and only

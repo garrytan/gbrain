@@ -817,7 +817,7 @@ for (const backend of testBackends()) describe(`[${backend}] G8a: sources canoni
     let result: Record<string, any>;
     try { result = await cli(engine, ['default', '--to', 'git', '--apply', '--expect', preview.preview_hash, '--no-embed', '--no-extract']); }
     finally { installFaultHook(undefined); }
-    expect(result).toMatchObject({ status: 'incomplete', code: 'git_conversion_incomplete', result: { status: 'incomplete', committed: { pages: 1 },
+    expect(result).toMatchObject({ status: 'incomplete', code: 'git_conversion_incomplete', result: { status: 'incomplete', committed: { pages: 1 }, closing_passes: 0,
       after: { strict: true, remaining: 1, parked_effects: { retry: 1 } } } });
     expect(await strict(engine)).toBe(true);
     expect(conversionCommits(root, base)).toHaveLength(1);

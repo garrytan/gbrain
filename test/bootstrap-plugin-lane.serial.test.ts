@@ -34,6 +34,7 @@ import {
 } from '../src/core/bootstrap/harness.ts';
 import { initState, setAnswer, readBackHash, confirm } from '../src/core/bootstrap/interview.ts';
 import { readReceipt } from '../src/core/bootstrap/format.ts';
+import { REGISTRATION_ADVERTISE, REGISTRATION_SURFACE } from '../src/core/mcp-registration.ts';
 
 const REQUIRED_ANSWERS: Record<string, string> = {
   AGENT_NAME: 'Lanekeeper',
@@ -242,8 +243,49 @@ describe('runHooks plugin-lane skip (serial: env fixtures)', () => {
     expect(r.result).toBe(0);
     const add = calls.find((c) => c[0] === 'codex' && c[1] === 'mcp' && c[2] === 'add');
     expect(add).toBeDefined();
-    expect(add!.join(' ')).toContain('serve --surface full');
+    expect(add!.join(' ')).toContain('serve --surface starter');
   }, 30_000);
+
+  test('codex + an enabled persona variant (gbrain-coding) → the MCP substep skips too (#7963)', async () => {
+    writeFileSync(join(codexHome, 'config.toml'), '[plugins."gbrain-coding@gbrain"]\nenabled = true\n');
+    const { runner, calls } = makeRunner();
+    const r = await capture(() =>
+      runBootstrap(['hooks', '--workspace', ws, '--harness', 'codex', '--gbrain-bin', process.execPath], { runner }),
+    );
+    expect(r.result).toBe(0);
+    expect(r.out).toContain("the 'gbrain-coding@gbrain' plugin already provides the gbrain MCP server");
+    expect(calls.some((c) => c[0] === 'codex')).toBe(false);
+  }, 30_000);
+
+  test('replacing a registration whose surface cannot be read re-adds it at full, not the default (#7962)', async () => {
+    writeFileSync(join(codexHome, 'config.toml'), '[projects."/tmp/x"]\ntrust_level = "trusted"\n');
+    const calls: string[][] = [];
+    let lastAdd: string[] | null = null;
+    const runner = async (argv: string[]) => {
+      calls.push(argv);
+      if (argv[0] !== 'codex') return { code: 0, stdout: '', stderr: '' };
+      if (argv[2] === 'add') {
+        if (!lastAdd) { lastAdd = argv; return { code: 1, stdout: '', stderr: 'Error: server gbrain already exists' }; }
+        lastAdd = argv;
+        return { code: 0, stdout: '', stderr: '' };
+      }
+      if (argv[2] === 'get') return { code: 0, stdout: calls.some((c) => c[2] === 'remove') ? lastAdd!.join(' ') : 'gbrain\n  transport: stdio\n  command: /opt/elsewhere/gbrain-wrapper\n', stderr: '' };
+      return { code: 0, stdout: '', stderr: '' };
+    };
+    const r = await capture(() =>
+      runBootstrap(['hooks', '--workspace', ws, '--harness', 'codex', '--gbrain-bin', process.execPath], { runner }),
+    );
+    expect(r.result).toBe(0);
+    const adds = calls.filter((c) => c[0] === 'codex' && c[2] === 'add');
+    expect(adds).toHaveLength(2);
+    expect(adds[0]!.join(' ')).toContain('serve --surface starter');
+    expect(adds[1]!.join(' ')).toContain('serve --surface full');
+  }, 30_000);
+
+  test('hooks --help names the real default surface (#7962)', async () => {
+    const r = await capture(() => runBootstrap(['hooks', '--help']));
+    expect(r.out + r.err).toContain(`--surface ${REGISTRATION_SURFACE} --advertise ${REGISTRATION_ADVERTISE} unless given; a replaced entry keeps its surface, full when unreadable`);
+  });
 
   test('codex + plugin + --mcp-even-if-plugin → registration forced through', async () => {
     writeFileSync(join(codexHome, 'config.toml'), ENABLED_PLUGIN_TOML);

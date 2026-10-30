@@ -371,7 +371,7 @@ test/serve-head-watcher-managed.serial.test.ts	global-state	global-state: starts
 test/serve-http-head-watcher.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_SERVE_HEAD_POLL_MS); spies on global setInterval/clearInterval, emits SIGINT on the process and reads the process-wide cleanup registry
 test/serve-http-run-teardown.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/serve-http-status-mode.serial.test.ts	R1	R1: sets process.env.GBRAIN_HOME for the status marker reads; binds local servers/ports
-test/serve-idle-sweep-source.serial.test.ts	R2	R2: mock.module(../src/core/sweep.ts) replaces modules for every file in the process
+test/serve-idle-sweep-source.serial.test.ts	R2	R2: mock.module(../src/core/sweep.ts, facts/drain-scheduler.ts, persistence/sync-movement.ts, serve-head-watcher.ts) replaces modules for every file in the process
 test/serve-source-guard.serial.test.ts	R1	R1: mutates process.env (GBRAIN_SOURCE)
 test/serve-status-mode.serial.test.ts	global-state	global-state: binds local servers/ports
 test/serve-sync-embed-drain.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; process-wide test seams __setEmbedTransportForTests, __resetDelegatedSyncForTests; configureGateway changes the process-wide AI gateway; patches process stdout/stderr/console

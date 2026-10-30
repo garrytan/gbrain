@@ -250,6 +250,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'sync_landing_gaps',
   // #6712: live pages whose database-only edit an incremental sync overwrote without a hold (doctor/checks/overwritten-edits.ts).
   'sync_overwritten_db_edits',
+  // #7891: provenance stamps and trust markers a write removed before #7892 (doctor/checks/provenance-stamp-drift.ts).
+  'provenance_stamp_drift',
   'unified_multimodal_coverage',
   'unverified_extractions',
   'voice_gate_health',

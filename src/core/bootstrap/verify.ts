@@ -1018,6 +1018,7 @@ async function checkHooksSmoke(engine: BrainEngine, ws: string, sourceId: string
         out += s;
       },
       cwd: ws,
+      turnRule: null,
     });
     const elapsed = Date.now() - t0;
     if (code !== 0) return { id, ok: false, detail: `hook exited ${code} (must fail open with exit 0)` };

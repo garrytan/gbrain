@@ -29,6 +29,7 @@ import {
 import type { HarnessRoot } from '../src/core/transcripts/detect.ts';
 import { buildTranscriptSlug } from '../src/core/transcripts/types.ts';
 import { buildHermesFixture } from './fixtures/transcripts/hermes-fixture-builder.ts';
+import { PROVIDER_KEY_SHAPES } from './helpers/provider-keys.ts';
 
 const CODEX_SLUG = buildTranscriptSlug('codex', '2026-08-02T09:00:00.000Z', {
   sessionId: 'rollout-1', // payload.id — the per-thread id (#4981)
@@ -748,6 +749,30 @@ describe('format-based redaction before write (unprefixed credential shapes)', (
     const stored = JSON.stringify(raw);
     for (const v of [SEEDED_JWT, SEEDED_SID, SEEDED_GOOGLE, SEEDED_STRIPE, 'p4ssw0rd']) {
       expect(stored).not.toContain(v);
+    }
+  });
+});
+
+describe('AI-provider keys (#7959) are redacted before write', () => {
+  test('a bare key in a message lands as its own placeholder; neither body nor raw metadata keeps it', async () => {
+    const keys = PROVIDER_KEY_SHAPES.map((s) => ({ pattern: s.pattern, key: s.make() }));
+    const p = join(tmp, 'provider-keys-session.jsonl');
+    writeFileSync(
+      p,
+      keys.map(({ pattern, key }, i) =>
+        claudeCodeLine(i % 2 ? 'assistant' : 'user', `pk-000${i}`, `2026-08-26T10:00:0${i}.000Z`, `the ${pattern} key is ${key} for now`),
+      ).join('\n') + '\n',
+    );
+    const r = await runTranscriptsIngest(engine, baseOpts([p]));
+    expect(r.pages.imported).toBe(1);
+    expect(r.redactions).toBeGreaterThanOrEqual(keys.length);
+    const slug = r.slugsTouched[0];
+    const body = (await engine.getPage(slug, { sourceId: 'default' }))!.compiled_truth;
+    const stored = JSON.stringify(await engine.getRawData(slug, undefined, { sourceId: 'default' }));
+    for (const { pattern, key } of keys) {
+      expect(body).toContain(`the ${pattern} key is <REDACTED:${pattern}> for now`);
+      expect(body).not.toContain(key);
+      expect(stored).not.toContain(key);
     }
   });
 });

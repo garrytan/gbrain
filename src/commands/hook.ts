@@ -93,6 +93,7 @@ import {
   type HookHeartbeatEntry,
 } from '../core/context/hook-heartbeat.ts';
 import { CLAUDE_HOOK_OUTPUT_CAP_CHARS } from '../core/bootstrap/host-specs.ts';
+import { pluginHookYields } from '../core/bootstrap/plugin-lanes.ts';
 import { composeSessionStartOutput } from '../core/context/session-start-output.ts';
 import { claudeCodePressure } from '../core/context/pressure.ts';
 import { readManifest, readReceipt, type InstallReceipt } from '../core/bootstrap/format.ts';
@@ -120,6 +121,8 @@ import { isClaudeCliSelfTranscriptPath } from '../core/ai/providers/claude-cli-s
 import { withoutPhysicalRootMetadata } from '../core/persistence/root-metadata.ts';
 import { HOOK_SUBCOMMANDS as HOOK_EVENTS, ROUTERS, subcommandHelpRequested } from '../cli/subcommands.ts';
 import { isManagedFilesystemPath } from '../core/persistence/filesystem-guard.ts';
+import { brainFirstTurnRule } from '../core/setup/brain-first.ts';
+import { TURN_RULE_LANE, turnRuleHookYields } from '../core/setup/turn-hook.ts';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 
@@ -225,6 +228,12 @@ export interface HookIo {
    * a banner on stay-silent turns and read as a false fire).
    */
   disablePushBanner?: boolean;
+  /**
+   * TEST SEAM: the per-turn brain-first rule user-prompt leads every turn
+   * with. `undefined` = read it from the brain-first ledger; `null` = none
+   * (BrainBench and bootstrap verify measure the context block alone).
+   */
+  turnRule?: string | null;
   /**
    * TEST SEAM (v0.46.15, codex ship-review): suppress hook telemetry WRITES
    * (heartbeat JSONL). Telemetry paths resolve from GBRAIN_HOME/homedir —
@@ -332,6 +341,10 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
       /* fail-open */
     }
   }
+  // Plugin lane (the Claude Code and Codex plugin manifests): yields to any other gbrain lane wiring this event.
+  if (process.env.GBRAIN_HOOK_LANE === 'plugin' && pluginHookYields(io.harness ?? 'claude-code', event, io.cwd ?? process.cwd())) return 0;
+  // Turn-rule lane (src/core/setup/turn-hook.ts): rule only, and only when no other gbrain lane wires this event.
+  if (process.env.GBRAIN_HOOK_LANE === TURN_RULE_LANE && event === 'user-prompt' && turnRuleHookYields(io.harness ?? 'claude-code', io.cwd ?? process.cwd())) return 0;
 
   switch (event) {
     case 'session-start':
@@ -1110,11 +1123,16 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
   // budgeted by the 800ms deadline, not free-ride before the race starts.
   let banner: ReturnType<typeof pendingPushFailureBanner> = null;
   let wrotePayload = false;
+  // Per-turn brain-first rule (brain-first.ts): every turn, with or without a block.
+  let turnRule: string | null = null;
 
   const work = (async (): Promise<UserPromptOutcome> => {
     // Push failure wins the single banner slot; the monthly backup notice
     // rides the same rail (systemMessage + additionalContext) when no push
     // failure is pending. Both are cache/file readers, budgeted by the race.
+    turnRule = io.turnRule !== undefined ? io.turnRule : brainFirstTurnRule(io.harness ?? 'claude-code', io.cwd ?? process.cwd());
+    // The turn-rule lane's connection may reach another brain, so it never reads this machine's context or banners.
+    if (process.env.GBRAIN_HOOK_LANE === TURN_RULE_LANE) return { outcome: 'ok', reason: 'rule_only' };
     banner = io.disablePushBanner ? null : (pendingPushFailureBanner() ?? pendingBackupBanner());
     const j = await readStdinJson(io, 300);
     if (!j) return { outcome: 'degraded', reason: 'no_stdin' };
@@ -1220,7 +1238,7 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     // trim defensively rather than letting the harness divert-and-drop. The
     // banner (≤300 chars, fixed) rides inside the same payload [D5] — only
     // blockText is trimmed, so the failure notice survives the cap loop.
-    const bannerPrefix = banner ? `${banner.text}\n\n` : '';
+    const bannerPrefix = [banner?.text, turnRule].filter(Boolean).map((t) => `${t}\n\n`).join('');
     const buildPayload = (block: string) =>
       JSON.stringify({
         hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: bannerPrefix + block },
@@ -1265,16 +1283,19 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
   // (no_serve, ipc_unavailable, no_pglite_path, empty windows, transcript
   // aborts, …) still surfaces the push failure — unless the deadline expired,
   // in which case record() was never called and the banner re-fires next turn.
-  // (Local copy: TS cannot track the closure-side assignment of `banner`.)
-  const pendingBanner = banner as { text: string; record: () => void } | null;
-  if (pendingBanner && !wrotePayload && !expired) {
-    guardedWrite(
+  // The per-turn rule rides the same fallback on every path, the deadline included.
+  // (Local copies: TS cannot track the closure-side assignments.)
+  const pendingBanner = (expired ? null : banner) as { text: string; record: () => void } | null;
+  const rule = turnRule as string | null;
+  if (!wrotePayload && (pendingBanner || rule)) {
+    write(
+      io,
       JSON.stringify({
-        hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: pendingBanner.text },
-        systemMessage: pendingBanner.text,
+        hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: [pendingBanner?.text, rule].filter(Boolean).join('\n\n') },
+        ...(pendingBanner ? { systemMessage: pendingBanner.text } : {}),
       }) + '\n',
     );
-    pendingBanner.record();
+    pendingBanner?.record();
   }
   await writeHeartbeat(io, {
     ts: new Date().toISOString(),

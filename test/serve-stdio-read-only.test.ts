@@ -80,6 +80,8 @@ test('--surface reads both forms; a repeated flag takes the narrowest value, and
   for (const args of [['--surface', 'verbs'], ['--http', '--surface=verbs'], ['--surface=full', '--surface', 'verbs'], ['--surface', 'starter', '--surface=verbs']])
     expect(parseSurfaceFlag(args)).toBe('verbs');
   expect(parseSurfaceFlag(['--surface=starter'])).toBe('starter');
+  // The wider value last never widens: narrowest wins whatever the order.
+  expect(parseSurfaceFlag(['--surface', 'verbs', '--surface=full'])).toBe('verbs');
   for (const args of [['--surface'], ['--surface='], ['--surface', '--http']]) expect(() => parseSurfaceFlag(args)).toThrow(/--surface requires a value/);
   expect(() => parseSurfaceFlag(['--surface=all'])).toThrow(/Unknown --surface "all"/);
 });

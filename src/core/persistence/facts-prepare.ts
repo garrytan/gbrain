@@ -30,6 +30,7 @@ import { fenceAppendPendingTier, withPendingFenceRows } from '../eligibility/fen
 import { withPageTierKept } from '../trust/fence-append.ts';
 import { pageFencesNormalized } from '../fence-repair/report.ts';
 import { declaredWriteTrust, derivedWriteTrust, readDerivationDeclaration, readTaintInputs, recordTaintEdges } from '../trust/taint.ts';
+import { derivationWriteTrust } from '../trust/page-write.ts';
 import { minTrust, type TaintInput, type WriteTrust } from '../trust/tier.ts';
 import { applyGateDecision, derivedGateConfig, derivedGateInput, emptyGateTally } from '../trust/derived-gate.ts';
 import { decideFactWrite, recordFlaggedRow, type GatedRowDecision } from '../write-gate-store.ts';
@@ -67,6 +68,8 @@ function thawFact(fact: FrozenExtractedFact): NewFact & { entity_slug: string | 
  */
 async function managedFactsTrust(engine: BrainEngine, p: ManagedFactIntent): Promise<{ trust: WriteTrust; inputs: Array<Pick<TaintInput, 'table' | 'id'>> } | undefined> {
   const declaration = readDerivationDeclaration(p.derivation);
+  // #7918: a declaration that is present but unreadable fails closed at unknown, never the channel tier.
+  if (!declaration && p.derivation != null) return { trust: derivationWriteTrust({ derivation: p.derivation } as never)!, inputs: [] };
   if (!declaration && !p.origin) return undefined;
   const page = p.origin ? await readTaintInputs(engine, [{ table: 'pages', id: p.origin.pageId }]) : [];
   const live = derivedWriteTrust({ channel: declaration?.origin.channel ?? 'derive:facts_backstop', inputs: page, requestId: p.originalRequestId });

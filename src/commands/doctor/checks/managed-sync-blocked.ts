@@ -33,7 +33,7 @@ async function runManagedSyncBlockedCheck(ctx: DoctorContext): Promise<Check[]> 
       details: { threshold_ms: MANAGED_SYNC_BLOCKED_FAIL_MS, sources: blocked.map(b => ({ ...b, blocked_minutes: minutes(b.blocked_since) })), docs: DOCS },
       message: `${list}: the managed sync run is stopped on a page that did not commit, its passes keep stopping without converging, or its pass stopped before it ended with no process left to finish it (killed or crashed), so the source indexes nothing new until it is cleared`
         + `${over.length ? ` (over the ${MANAGED_SYNC_BLOCKED_FAIL_MS / 60_000} min threshold)` : ''}.`
-        + (blocked.some(b => b.code !== 'pass_interrupted') ? " Freshness sync jobs for the source end dead with the run's next step instead of completed." : ''),
+        + (blocked.some(b => b.code !== 'pass_interrupted' && b.code !== 'pass_abandoned') ? " Freshness sync jobs for the source end dead with the run's next step instead of completed." : ''),
       fix: agentFix(['gbrain', 'sync', 'status', '--source', first.source_id, '--json'],
         'Read-only: names the page the run stopped on, its fault class and the next step (a hold to reconcile, a repair to preview, or the resume command).',
         'managed_sync_blocked', { docs: DOCS }) });

@@ -200,7 +200,8 @@ for (const backend of testBackends()) {
           'overwritten-edits': 'gbrain repair overwritten-edits', 'legacy-twins': 'gbrain repair legacy-twins', 'missing-tables': 'gbrain repair missing-tables', 'url-clone-fences': 'gbrain repair url-clone-fences', 'segmented-mirror': 'gbrain repair segmented-mirror',
           'uncommitted-deletions': 'gbrain repair uncommitted-deletions',
           // GBRA-161: the generations preview carries its ledger kind and the restore window, so the printed command runs as is.
-          generations: 'gbrain repair generations --kind atom --since 30d', 'fact-claim-dates': 'gbrain repair fact-claim-dates' };
+          generations: 'gbrain repair generations --kind atom --since 30d', 'fact-claim-dates': 'gbrain repair fact-claim-dates',
+          provenance: 'gbrain repair provenance' };
 
         // The post-upgrade banner names both findings with the kind's read-only preview.
         const banner = await postUpgradeRecoveryBanner(engine, 'host');

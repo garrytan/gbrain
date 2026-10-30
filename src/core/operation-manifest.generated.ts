@@ -647,7 +647,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "detach": {
         "type": "boolean",
-        "description": "Restore a page whose recorded canonical file is gone from the checkout as a database-only page: it forgets the file, so sync never deletes it again. Only accepted when a plain restore refuses with canonical_file_absent; ask the user first."
+        "description": "Restore a page whose recorded canonical file is gone from the checkout as a database-only page: it forgets the file, so sync never deletes it again. Only accepted when a plain restore refuses with canonical_file_absent, or for a page under a declared storage.db_only dir whose recorded file left the checkout; ask the user first."
       }
     },
     "mutating": true,

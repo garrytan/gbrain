@@ -346,6 +346,8 @@ export async function importFromContent(
     overrideTier?: unknown;
     /** #5575: the caller's trust tier and origin for this write; absent skips the write gate (owner paths). */
     writeGate?: WriteGateInput;
+    /** #7880: external content (ingest_capture, connector and company-brain files) asking for `visibility: private` in a spelling page privacy does not read refuses `visibility_noncanonical` (`screenImportContent`); nothing is stored. */
+    holdNoncanonicalPrivate?: boolean;
     beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>;
     onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void;
   } & ImportFenceOptions = {},
@@ -365,7 +367,7 @@ export async function importFromContent(
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
-  const screen = screenImportContent({ content, path: slug + '.md', ...(opts.activePack ? { activePack: opts.activePack } : {}), ...(opts.fenceScreen === undefined ? { fences: opts.fences ?? 'lenient' } : {}) });
+  const screen = screenImportContent({ content, path: slug + '.md', ...(opts.activePack ? { activePack: opts.activePack } : {}), ...(opts.fenceScreen === undefined ? { fences: opts.fences ?? 'lenient' } : {}), ...(opts.holdNoncanonicalPrivate ? { holdNoncanonicalPrivate: true } : {}) });
   if (screen.status === 'refused') {
     return { slug, status: screen.refusal.code === 'file_too_large' ? 'skipped' : 'error', chunks: 0, error: screen.refusal.message, refusal: screen.refusal, skip_reason: screen.refusal.code };
   }

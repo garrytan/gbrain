@@ -84,6 +84,19 @@ provenance marker that is present: `injection_suspected`, `injection_p`,
 `stale` when true, `provenance: "generated"` on a machine-written page,
 and `delivered: {"truncated": true}` when evidence delivery cut the text.
 
+A row from a conversation page (`type: "conversation"`, what transcript
+imports and chat connectors write) carries `quoted: "transcript"`, and its
+`chunk_text` is a quoted excerpt: a line naming the page as source
+material, not instructions, then the text inside a code fence it cannot
+close. Each tool-call or function-call JSON block in it (Gemini
+`functionCall` included) is replaced by
+`[tool call: <name>, arguments omitted]`, and so is each XML-style call
+block (`function_calls`, `invoke`, `tool_use`, `tool_call`). `search`, `query` and
+`assemble_evidence` return it this way to every caller, the CLI included;
+the stored page is unchanged (`get_page` reads it as written). Other read
+paths (`recall`, `think`, `search_exact`, `fetch`, `get_chunks`) and other
+conversation-like page types still return the text as stored.
+
 `effective_date` is the page's own date and `effective_date_source` says
 which kind: `date`, `published` or `filename` is a document date,
 `event_date` an event date, and `created` or `fallback` only when the page
@@ -139,4 +152,7 @@ pass it to `get_page`.
 {"result_type":"fact","fact_id":"412","page_slug":"companies/acme-example","follow_up":{"op":"recall","args":{"entity":"companies/acme-example"}},"title":"Saved fact about companies/acme-example","chunk_text":"Saved fact (fact; valid from 2026-09-01; provenance: user update): The billing contact for Acme Example is Bob.","score":0.42,"source_id":"default"}
 ```
 
-`search.query_facts_arm=false` turns fact rows off.
+`search.query_facts_arm=false` turns these rows off. A `query` with a token
+budget instead gets the facts block (on by default): up to 40 dated fact rows,
+oldest first, ahead of the pages and within 22% of the budget, in place of the
+facts arm. `search.query_facts_block=false` restores the arm.

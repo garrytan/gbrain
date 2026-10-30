@@ -220,3 +220,17 @@ describe('projection readiness cache', () => {
     expect(probes).toBe(2);
   });
 });
+
+describe('a pending brain skips the by_design half (#8000)', () => {
+  test('while pages need work, only the pending subquery reads pages; by_design never runs', async () => {
+    await engine.executeRaw(`INSERT INTO pages (source_id,slug,title,type,page_kind,compiled_truth,chunker_version,frontmatter)
+      SELECT 'source-a', 'pending-' || i, 'Pending', 'concept', 'markdown', 'body', 999, '{}'::jsonb FROM generate_series(1, 300) AS i`);
+    const captured: Array<{ sql: string; params?: unknown[] }> = [];
+    const recording = { executeRaw: (sql: string, params?: unknown[]) => { captured.push({ sql, params }); return engine.executeRaw(sql, params); } };
+    const result = await withEnv({ GBRAIN_PROJECTION_READINESS_CACHE: '0' }, () => probeProjectionReadiness(recording as never, { sourceId: 'source-a' }));
+    expect(result.status).toBe('projection_pending');
+    const probe = captured.find(call => call.sql.includes('IS DISTINCT FROM'))!;
+    const plan = (await engine.executeRaw<Record<string, string>>(`EXPLAIN (ANALYZE, COSTS OFF) ${probe.sql}`, probe.params)).map(row => Object.values(row)[0]);
+    expect(plan.filter(line => / on pages p(_\d+)? /.test(line) && !line.includes('never executed'))).toHaveLength(1);
+  });
+});

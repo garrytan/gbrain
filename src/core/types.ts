@@ -1126,6 +1126,8 @@ export interface SearchResult {
   fact_row?: { id: number; valid_from: string; valid_until: string | null };
   /** Fact rows only, and what callers see of them: never a page (no slug or id); follow with `follow_up`, read `page_slug` when the entity page exists. */
   result_type?: 'fact'; fact_id?: string; page_slug?: string; follow_up?: { op: 'recall'; args: Record<string, string> };
+  /** #7600: a conversation page's row, returned fenced as quoted source material with its tool-call blocks summarized (search/transcript-quote.ts). */
+  quoted?: 'transcript';
   /** A newer active fact covers the same entity and typed claim slot as a fact taken from this page. */
   superseded_claim?: { fact_id: number; valid_from: string };
   /**

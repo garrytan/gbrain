@@ -165,7 +165,7 @@ function gitCounter(dir: string): GitCounter {
   const log = join(dir, 'git.log'), bin = join(dir, 'bin');
   mkdirSync(bin, { recursive: true });
   const real = REAL_GIT ??= execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8', timeout: 10_000, env: { ...process.env, PATH: PATH_AT_LOAD } }).trim();
-  writeFileSync(join(bin, 'git'), `#!/bin/sh\nprintf 'S %s %s %s\\n' "$$" "$(date +%s%N)" "$*" >> '${log}'\n'${real}' "$@"\ncode=$?\n`
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\nprintf 'S %s %s %s\\n' "$$" "$(date +%s%N)" "$*" >> '${log}'\nPATH='${PATH_AT_LOAD ?? ''}' '${real}' "$@"\ncode=$?\n`
     + `printf 'E %s %s %s\\n' "$$" "$(date +%s%N)" "$code" >> '${log}'\nexit $code\n`);
   chmodSync(join(bin, 'git'), 0o755);
   const lines = () => existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];

@@ -16,6 +16,8 @@ import { importFromContent } from '../../src/core/import-file.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { withManagedFixtureWrite } from '../helpers/managed-e2e-fixture-write.ts';
 import { keylessBrainEnv } from '../helpers/provider-env.ts';
+import { withEnv } from '../helpers/with-env.ts';
+import { hookResolveSocketForConfig, readIpcSecretForConfig, requestSyncStatus, socketHasLiveListener } from '../../src/core/context/resolve-ipc.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const WORD = 'quillmarsh';
@@ -27,7 +29,7 @@ describe.skipIf(!DATABASE_URL)('#7599 serve --access read-only on the session la
   let admin: PostgresEngine | null = null;
   let tag = '';
   let directBase = '';
-  let serve: ChildProcess | null = null;
+  const serves: ChildProcess[] = [];
 
   const directConnections = async () => Number((await admin!.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pg_stat_activity WHERE application_name = $1', [tag]))[0]!.n);
 
@@ -39,7 +41,7 @@ describe.skipIf(!DATABASE_URL)('#7599 serve --access read-only on the session la
     direct.searchParams.set('application_name', tag);
     const child = spawn('bun', ['--no-env-file', 'run', 'src/cli.ts', 'serve', '--surface', 'full', '--access', access],
       { cwd: process.cwd(), env: { ...env, GBRAIN_DIRECT_DATABASE_URL: direct.toString() }, stdio: ['pipe', 'pipe', 'pipe'] });
-    serve = child;
+    serves.push(child);
     child.stderr!.on('data', data => { log += String(data); });
     child.stdout!.on('data', data => { out += String(data); });
     const call = async (id: number, method: string, params: object) => {
@@ -57,14 +59,11 @@ describe.skipIf(!DATABASE_URL)('#7599 serve --access read-only on the session la
   }
 
   async function stopServe(): Promise<void> {
-    const child = serve;
-    serve = null;
-    if (!child || child.exitCode !== null || child.signalCode !== null) return;
-    await new Promise<void>(resolve => {
+    await Promise.all(serves.splice(0).map(child => child.exitCode !== null || child.signalCode !== null ? undefined : new Promise<void>(resolve => {
       const deadline = setTimeout(() => child.kill('SIGKILL'), 5_000);
       child.once('exit', () => { clearTimeout(deadline); resolve(); });
       child.stdin!.end();
-    });
+    })));
   }
 
   beforeAll(async () => {
@@ -111,12 +110,57 @@ describe.skipIf(!DATABASE_URL)('#7599 serve --access read-only on the session la
   }, 120_000);
 
   test('a read-write serve keeps its 3-connection resident direct pool and its notifier lease', async () => {
-    const s = await startServe('full');
+    // The pool opens a connection only when every open one is busy, so how many a serve holds depends on how its boot work
+    // overlaps. Holding the brain row blocks the boot transactions on their connections, so the pool has to open all 3.
+    const holder = new PostgresEngine();
+    await holder.connect({ database_url: directBase, poolSize: 1 });
+    let release!: () => void;
+    let held!: () => void;
+    const brainHeld = new Promise<void>(resolve => { held = resolve; });
+    const holding = holder.transaction(async tx => {
+      await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+      held();
+      await new Promise<void>(resolve => { release = resolve; });
+    });
+    await Promise.race([brainHeld, holding]);
     let n = 0;
-    for (let i = 0; i < 60 && n < 3; i++) { n = await directConnections(); if (n < 3) await Bun.sleep(500); }
+    let s: Awaited<ReturnType<typeof startServe>>;
+    try {
+      s = await startServe('full');
+      for (let i = 0; i < 60 && n < 3; i++) { n = await directConnections(); if (n < 3) await Bun.sleep(500); }
+      // gstack-timing-ok: the pool is full and its boot work is blocked; a pool above its cap would open a 4th within this window
+      await Bun.sleep(2_000);
+      n = await directConnections();
+    } finally {
+      release();
+      await holding;
+      await holder.disconnect();
+    }
     expect(n).toBe(3);
     for (let i = 0; i < 60 && !s.log().includes("owner of this host's notifier"); i++) await Bun.sleep(500);
     expect(s.log()).toContain("owner of this host's notifier");
+    await stopServe();
+  }, 150_000);
+
+  test('#7612: a read-write serve started after a read-only one for the same source answers delegated sync, not unsupported_kind', async () => {
+    const cfg = { engine: 'postgres' as const, database_url: directBase };
+    const inHome = <T>(fn: () => Promise<T>) => withEnv({ GBRAIN_HOME: home, GBRAIN_DATABASE_URL: undefined, DATABASE_URL: undefined }, fn);
+    const until = async (probe: () => Promise<boolean>) => { for (let i = 0; i < 120 && !(await probe()); i++) await Bun.sleep(250); };
+    const lean = await startServe('read-only');
+    await lean.call(2, 'tools/list', {});
+    await until(() => inHome(async () => socketHasLiveListener((await hookResolveSocketForConfig(cfg, 'default'))!)));
+    expect(await inHome(async () => socketHasLiveListener((await hookResolveSocketForConfig(cfg, 'default'))!))).toBe(true);
+
+    const full = await startServe('full');
+    await full.call(2, 'tools/list', {});
+    const delegated = () => inHome(async () => {
+      const socket = await hookResolveSocketForConfig(cfg, 'default', { delegation: true });
+      return ((await requestSyncStatus(socket!, { secret: readIpcSecretForConfig(cfg)!, jobId: 'no-such-job' })) as { error?: string }).error;
+    });
+    await until(async () => (await delegated()) === 'unknown_job');
+    expect(await delegated()).toBe('unknown_job');
+    // The hook lane now reaches the read-write serve too.
+    expect(await inHome(() => hookResolveSocketForConfig(cfg, 'default'))).toBe(await inHome(() => hookResolveSocketForConfig(cfg, 'default', { delegation: true })));
     await stopServe();
   }, 120_000);
 });

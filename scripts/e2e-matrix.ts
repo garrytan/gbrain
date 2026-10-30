@@ -26,7 +26,7 @@ export function exclusionNotice(file: string): string {
   if (BACKEND_MATRIX_OWNED.has(file)) return `excluded: ${file} (owned by the Tier 1 backend matrix, scripts/e2e-backend-matrix.txt)`;
   return `excluded (named-job / live-key lane): ${file}`;
 }
-export const MAX_E2E_WORKERS = 8;
+export const MAX_E2E_WORKERS = 14;
 export const E2E_EXCLUSIONS = new Set([
   'test/e2e/op-checkpoint-jsonb-parity.test.ts',
   'test/e2e/jsonb-roundtrip.test.ts',
@@ -41,7 +41,7 @@ export const E2E_EXCLUSIONS = new Set([
   'test/e2e/skills.test.ts',
   'test/e2e/voyage-rerank-live.test.ts',
   'test/e2e/voyage-multimodal.test.ts',
-  // Engine graduation: run once by tier1's graduation step (direct Postgres + PgBouncer).
+  // Engine graduation: run once by the tier1-graduation job (direct Postgres + PgBouncer).
   'test/e2e/graduation-cli.test.ts',
   'test/e2e/graduation-cli-topologies.test.ts',
   'test/e2e/graduation-cli-history.test.ts',

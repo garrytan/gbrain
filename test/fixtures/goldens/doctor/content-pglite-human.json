@@ -208,6 +208,7 @@
       "  [OK] revision_backfill: Every page has its revision; the page revision backfill is complete.",
       "  [INFO] belief_ledger_coverage: The belief ledger is off: no source records what this brain had recorded, and when.",
       "  [OK] trust_tiers: 0% of 13 row(s) have an unverified origin (unknown tier); the backfill has classified every row it has a signal for.",
+      "  [OK] provenance_stamp_drift: No page has provenance stamps or a trust marker that another writer removed.",
       "  [OK] trust_scan: Every agent-written or lower row has been scanned by the current write-gate detector; flagged rows carry their flag, and proactive surfaces withhold them when trust.agent_activation is suppress.",
       "  [OK] trust_sources_unclaimed: No unclaimed source holds rows from before trust tiers.",
       "  [OK] trust_release_unpreviewed_fields: No released fact was confirmed with fence-row fields its release preview did not show.",

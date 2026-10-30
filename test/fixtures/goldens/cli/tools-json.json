@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 264473,
-    "stdoutSha256": "f5647f0a0d45a36ed8685afa000792cef233379d012eeceec6fa2f9366d1b0ee",
+    "stdoutBytes": 264563,
+    "stdoutSha256": "0d71d7f1367627c5f9c27d3d7a9b09513131117000012eed0d35ab9ede69095f",
     "toolNames": [
       "remember",
       "entity",
@@ -838,7 +838,7 @@
         "schema": {
           "properties": {
             "detach": {
-              "description": "Restore a page whose recorded canonical file is gone from the checkout as a database-only page: it forgets the file, so sync never deletes it again. Only accepted when a plain restore refuses with canonical_file_absent; ask the user first.",
+              "description": "Restore a page whose recorded canonical file is gone from the checkout as a database-only page: it forgets the file, so sync never deletes it again. Only accepted when a plain restore refuses with canonical_file_absent, or for a page under a declared storage.db_only dir whose recorded file left the checkout; ask the user first.",
               "type": "boolean"
             },
             "expected_revision": {

@@ -2,6 +2,7 @@ import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { sizeStateField } from '../page-embedding-budget.ts';
 import { enterClaimStep, type ClaimPhaseClock } from './claim-phase.ts';
 import { boundedReads } from './bounded-reads.ts';
+import { chunksEmbeddedAsIs } from './noop-kernel.ts';
 import { basename, dirname, join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -912,7 +913,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
     pageUnchanged: ready.noop && !moved,
     ...(renamed ? { additionalPageKeys: [{ sourceId: row.source_id, slug: renamed.slug }] } : {}),
     validate: async tx => { await validate(tx); await ready.validate(tx); },
-    deferEmbedding: p.processingOptions?.noEmbed || p.embedDeferred === true,
+    deferEmbedding: p.processingOptions?.noEmbed || p.embedDeferred === true, ...(!(p.processingOptions?.noEmbed || p.embedDeferred === true) && ready.noop && !moved && snapshot && await chunksEmbeddedAsIs(engine, snapshot.page.id) ? { embeddingCurrent: true } : {}),
     ...(ready.afterCommit || renamed ? { afterCommit: async (target: BrainEngine) => { await published.afterCommit?.(target); } } : {}),
     ...(writeback ? { file: { root, path: join(root, p.path), content: canonicalFile, expectedBeforeHash: p.rawHash } } : {}),
     ...(mirrorReadOnly ? { databaseOnlyReason: 'mirror_read_only' as const } : {}),

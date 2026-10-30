@@ -149,7 +149,7 @@ async function withFailingGit<T>(token: string, code: number, fn: () => Promise<
   const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
   writeFileSync(join(bin, 'git'), `#!/bin/sh
 for a in "$@"; do if [ "$a" = "${token}" ]; then echo "fatal: injected failure of ${token}" >&2; exit ${code}; fi; done
-exec ${realGit} "$@"
+PATH='${process.env.PATH}' exec ${realGit} "$@"
 `, { mode: 0o755 });
   try { return await withEnv({ PATH: `${bin}:${process.env.PATH}` }, fn); } finally { rmSync(bin, { recursive: true, force: true }); }
 }

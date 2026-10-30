@@ -266,6 +266,11 @@ describe('pass kind (v3.2 §2.2)', () => {
     expect(syncPassKind({ ...idle, rescreenDueHold: true }).kind).toBe('hold_only');
     expect(syncPassKind({ ...idle, rescreenDueHold: true, requestNewer: true }).kind).toBe('full');
   });
+  // Value: protects=a conversion strict pass (fullRound) reads the whole level without opening a --full episode; fails_when=fullRound stops forcing a full round or opens an episode; why_new=the table below holds no fullRound row; seam=none; no_claim=end-to-end no-reimport (git-canonical-conversion-strict-pass-7866.test.ts)
+  test('#7866: fullRound alone forces a full round for the converged head, with full_round_due and without open_episode', () => {
+    expect(syncPassKind({ ...idle, fullRound: true })).toEqual({ kind: 'full', blockers: ['full_round_due'] });
+    expect(syncPassKind({ ...idle, fullRound: false })).toEqual({ kind: 'idle', blockers: [] });
+  });
   test('every obligation disqualifies idle (probe 30: --full or a retry at an unchanged HEAD runs a full round)', () => {
     for (const patch of [{ full: true }, { openEpisode: true }, { retryRow: true }, { owedTail: true }, { notConvergedStreak: 1 }, { mismatchStreak: 2 },
       { requestNewer: true }, { openAtStampFinished: true }, { workingChange: true }, { head: 'H2' }, { parserFp: 'p2' }, { pack: 'x' }, { selectionFp: 's2' },

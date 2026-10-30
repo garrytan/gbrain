@@ -23,8 +23,9 @@ import { execFileSync, spawnSync } from 'node:child_process';
 
 import { runSources } from '../src/commands/sources.ts';
 import { acquirePushLock, resolveWorkspaceRoot, PUSH_STREAM_SCAN_MAX_BYTES } from '../src/core/workspace-push.ts';
-import { SCAN_ALLOW_FILENAME } from '../src/core/secret-scan.ts';
+import { SCAN_ALLOW_FILENAME, patternSince } from '../src/core/secret-scan.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { PROVIDER_KEY_SHAPES } from './helpers/provider-keys.ts';
 
 const T = 60_000; // explicit per-test timeout — bun ignores bunfig.toml's key
 const OPENAI = 'sk-' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4';
@@ -311,6 +312,25 @@ describe('--json output', () => {
 });
 
 // ── refusal guidance (security wave DX-3/ENG-11/CEO-21) ─────────────────────
+
+describe('AI-provider keys (#7959) block the push', () => {
+  test('each bare key is one finding under its own rule with its since; no key reaches stdout or stderr', async () => {
+    const keys = PROVIDER_KEY_SHAPES.map((s) => s.make());
+    writeFileSync(join(work, 'keys.md'), keys.map((k, i) => `line ${i}: ${k}`).join('\n') + '\n');
+    const r = await runPushCli(untouchableEngine, ['--path', work, '--allow-unverified-remote', '--json']);
+    expect(r.exitCode).toBe(5);
+    const res = JSON.parse(r.stdout[0]!);
+    expect(res.status).toBe('blocked_secrets');
+    expect(res.findings.map((f: { pattern: string }) => f.pattern).sort()).toEqual(PROVIDER_KEY_SHAPES.map((s) => s.pattern).sort());
+    for (const f of res.findings) {
+      expect(f.file).toBe('keys.md');
+      expect(f.since).toBe(patternSince(f.pattern));
+    }
+    const out = [...r.stdout, ...r.stderr].join('\n');
+    for (const k of keys) expect(out.includes(k)).toBe(false);
+    expect(originHead(bare)).toBe(git(work, 'rev-parse', 'origin/main'));
+  }, T);
+});
 
 describe('blocked_secrets guidance — runnable from outside the source dir', () => {
   function cloneAt(dir: string): void {

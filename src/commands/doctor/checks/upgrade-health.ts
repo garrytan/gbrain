@@ -62,7 +62,7 @@ export function upgradeErrorResolved(
  * in ts order.
  */
 function heldAutoUpgrade(recent: SelfUpgradeAuditEvent[], runningVersion: string): SelfUpgradeAuditEvent | null {
-  const last = recent.filter((e) => e.channel === 'autopilot').at(-1);
+  const last = recent.filter((e) => e.channel === 'autopilot' && e.action !== 'restart_serve').at(-1);
   if (last?.action !== ('unsupported_runtime' satisfies SelfUpgradeAction) || !last.latest) return null;
   return isNewerVersion(runningVersion, last.latest) ? last : null;
 }

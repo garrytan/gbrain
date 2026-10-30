@@ -14,7 +14,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
-import { MAX_RESERVE_ROWS, TEMPORAL_FACT_RESERVE_KEY, TEMPORAL_RESERVE_ROW_SHARE, TEMPORAL_RESERVE_SHARE, hasTemporalCue } from '../src/core/search/facts-arm.ts';
+import { MAX_RESERVE_ROWS, QUERY_FACTS_BLOCK_KEY, TEMPORAL_FACT_RESERVE_KEY, TEMPORAL_RESERVE_ROW_SHARE, TEMPORAL_RESERVE_SHARE, hasTemporalCue } from '../src/core/search/facts-arm.ts';
 import { resultTokens } from '../src/core/search/token-budget.ts';
 import type { SearchResult } from '../src/core/types.ts';
 import { newSource, page, putPage } from './helpers/pinned-questions-fixture.ts';
@@ -41,6 +41,8 @@ beforeAll(async () => {
   await engine.connect({});
   await engine.initSchema();
   sourceId = await newSource(engine);
+  // The facts block (on by default) takes every budgeted query; this suite tests the arm it replaces.
+  await engine.setConfig(QUERY_FACTS_BLOCK_KEY, 'false');
   for (let i = 0; i < 6; i++) {
     await putPage(engine, sourceId, `conversations/chat-${i}`, page('conversation', `chat ${i}`, `**User:** Notes on the Forge offsite part ${i}. The Forge offsite venue was booked and the venue changed once.\n\n**Assistant:** Noted.`, `date: 2025-07-0${i + 1}\n`));
   }
