@@ -10,6 +10,21 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.513.0] - 2026-10-30
+
+**A transcript that quotes a facts or takes fence marker is no longer held `invalid_fence`: only a marker on its own line counts as a fence line.**
+
+Every fence writer puts its markers on their own lines. A page that quotes a marker inside a sentence, a blockquote or a list item (a conversation about gbrain itself, for example) used to be read as holding a fence. A run of quoted begins held it `repeated_marker`, naming a body line where no marker line exists, and one quoted begin with no end held it unbalanced. Such pages now import, and the readers find no fence in them. A real broken fence still holds: an own-line begin with no end still warns unbalanced, and a repeated own-line begin still refuses `repeated_marker`, now naming that marker's line.
+
+### What to do after upgrading
+
+- Nothing. A transcript page held `invalid_fence` only for quoted markers imports on its next sync, or now with `gbrain sync --source <id> --no-pull`.
+
+### Itemized changes
+
+- `src/core/fence-scan.ts`: `indexOfOutsideCode` skips a marker comment that has other text on its line, as it already skips markers inside code spans and closed code blocks. Every fence reader goes through it: `parseTakesFence`, `parseFactsFence`, the links fence, the strict compile gate's repeated-marker check and the content-repair lane's fence extraction. A bare near-miss mention in prose is still reported `marker_near_miss`.
+- Tests: `test/fence-quoted-markers-gbra133.test.ts` (PGLite and Postgres).
+
 ## [0.60.512.0] - 2026-10-30
 
 **After an automatic self-upgrade, the autopilot now restarts the serve your installed service runs when it is still on the old build, so one auto-upgrade no longer leaves two builds running until someone runs `gbrain upgrade --restart-only` by hand.**
