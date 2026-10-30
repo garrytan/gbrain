@@ -13,7 +13,7 @@ import { assertNoUnreviewedJobs, authorizeJobExecution, withSubmissionAuthority 
  */
 
 import { existsSync } from 'fs';
-import { autopilotOperatorPauseMarkerPath, autopilotPausedMarkerPath } from '../autopilot-paths.ts';
+import { autopilotOperatorPauseMarkerPath, autopilotPaused, autopilotPausedMarkerPath } from '../autopilot-paths.ts';
 import type { BrainEngine } from '../engine.ts';
 import type {
   MinionJob, MinionJobContext, MinionHandler, MinionWorkerOpts,
@@ -709,7 +709,7 @@ export class MinionWorker extends EventEmitter {
           // detector too would double-act (and both emitting 'unhealthy' +
           // supervisor SIGTERM race). Bare `gbrain jobs work` keeps it.
           if (!isSupervisedChild) {
-          if (this.jobsCompleted > lastKnownCompleted) {
+          if (this.jobsCompleted > lastKnownCompleted || autopilotPaused()) { // #7966: a pause holds claims, so its ticks restart the clock
             lastKnownCompleted = this.jobsCompleted;
             lastCompletionTime = Date.now();
             stallWarningSince = null;
