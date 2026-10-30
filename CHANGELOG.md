@@ -25,7 +25,8 @@ Every fence writer puts its markers on their own lines. A page that quotes a mar
 
 - `src/core/fence-scan.ts`: `indexOfOutsideCode` skips a marker comment followed by other text on its line or inside a blockquote, as it already skips markers inside code spans and closed code blocks. Every fence reader goes through it: `parseTakesFence`, `parseFactsFence`, the links fence, the strict compile gate's repeated-marker check and the content-repair lane's fence extraction. A bare near-miss mention in prose is still reported `marker_near_miss`. The check stops at the first non-space character after the marker, so a long line of quoted markers is read in one pass.
 - `src/core/facts/forget.ts` (`strikeFenceRow`: forget_fact, proposal accept and undo, loop retirement) and `src/core/facts/withdrawal-overlay.ts` (withdrawal and purge on stored bodies) find the fence by the same rule, so a quoted marker never makes them rewrite the text around it.
-- Tests: `test/fence-quoted-markers-gbra133.test.ts` (PGLite and Postgres; forget, withdrawal and purge around quoted markers; a megabyte line of quoted markers).
+- `src/core/page-body/read-range.ts`: `markerCarry` carries only a marker a segment cut splits, never a whole one, so a trusted read of a segmented page whose truth ends with a facts fence no longer joins the truth's last segment to the timeline's first (where the end marker would read as quoted).
+- Tests: `test/large-pages/segmented-truth-end-fence.test.ts` (PGLite), `test/fence-quoted-markers-gbra133.test.ts` (PGLite and Postgres; forget, withdrawal and purge around quoted markers; a megabyte line of quoted markers).
 
 ## [0.60.512.0] - 2026-10-30
 

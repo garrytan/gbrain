@@ -427,7 +427,7 @@ const MARKER_CARRY_MAX = Math.max(FACTS_FENCE_BEGIN.length, FACTS_FENCE_END.leng
 export function markerCarry(text: string): string {
   for (let k = Math.min(text.length, MARKER_CARRY_MAX); k > 0; k--) {
     const tail = text.slice(-k);
-    if (FACTS_FENCE_BEGIN.startsWith(tail) || FACTS_FENCE_END.startsWith(tail)) return tail;
+    if ((k < FACTS_FENCE_BEGIN.length && FACTS_FENCE_BEGIN.startsWith(tail)) || (k < FACTS_FENCE_END.length && FACTS_FENCE_END.startsWith(tail))) return tail;
   }
   return '';
 }
