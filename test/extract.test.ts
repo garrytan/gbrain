@@ -148,6 +148,15 @@ describe('extractLinksFromFile', () => {
       .toEqual(['companies/acme.io', 'sources/voice/2030-01-01-1200-call-with-mira']);
   });
 
+  it('frontmatter related: to a slug no file in the walk holds writes no link on the fs resolver', async () => {
+    // The fs targetType admits only slugs in the walk, so a slug-shaped value naming no file is
+    // not taken as written by extractFrontmatterLinks' source-policy step.
+    const content = '---\nrelated: [jira/spx/spx-1234-does-not-exist, companies/acme.io]\ntype: concept\n---\nContent.';
+    const allSlugs = new Set(['wiki/note', 'companies/acme.io']);
+    const links = await extractLinksFromFile(content, 'wiki/note.md', allSlugs, { includeFrontmatter: true });
+    expect(links.filter(l => l.link_type === 'related_to').map(l => l.to_slug)).toEqual(['companies/acme.io']);
+  });
+
   it('frontmatter extraction is default OFF (back-compat)', async () => {
     // Without includeFrontmatter, fs-source no longer auto-extracts frontmatter.
     // Matches db-source behavior. User opts in with --include-frontmatter flag.

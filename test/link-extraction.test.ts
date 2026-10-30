@@ -15,6 +15,7 @@ import {
   queryBasenameIndex,
   normalizeBasename,
   type SlugResolver,
+  type ResolveOptions,
 } from '../src/core/link-extraction.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -2385,5 +2386,110 @@ describe('#4995 — markdown link anchors are stripped, pass-1 targets lowercase
       'x', 'See [[people/Alice]].', {}, 'concept', nullResolver, { skipFrontmatter: true, globalBasename: false },
     );
     expect(wiki.candidates.map(c => c.targetSlug)).toContain('people/alice');
+  });
+});
+
+describe('extractFrontmatterLinks — full slugs resolve through the source policy, not the own-source resolver', () => {
+  // A resolver whose exact step (exactOnly) finds only `exact`, and whose full resolution and
+  // basename lookup match the wrong page, the way findByTitleFuzzy did for a `jira/...` value.
+  function recordingResolver(exact: Record<string, string> = {}): { resolver: SlugResolver; calls: string[] } {
+    const calls: string[] = [];
+    const resolver: SlugResolver = {
+      async resolve(name: string, _hint?: string | string[], opts?: ResolveOptions) {
+        calls.push(opts?.exactOnly ? `exact:${name}` : name);
+        return exact[name] ?? (opts?.exactOnly ? null : 'features/unrelated-feature');
+      },
+      async resolveBasenameMatches(name: string) { calls.push(`basename:${name}`); return ['features/unrelated-feature']; },
+    };
+    return { resolver, calls };
+  }
+
+  test('a slug in no own-source page that the policy admits becomes the candidate as written', async () => {
+    const { resolver, calls } = recordingResolver();
+    const asked: string[] = [];
+    const { candidates, unresolved } = await extractFrontmatterLinks(
+      'features/billing-export', 'note' as never,
+      { related: 'github/832739129/pr-64' }, resolver, false, null,
+      (target) => { asked.push(target); return target === 'github/832739129/pr-64' ? 'pull_request' : undefined; },
+    );
+    expect(calls).toEqual(['exact:github/832739129/pr-64']);
+    expect(asked).toContain('github/832739129/pr-64');
+    expect(unresolved).toEqual([]);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      fromSlug: 'features/billing-export',
+      targetSlug: 'github/832739129/pr-64',
+      linkType: 'related_to',
+      linkSource: 'frontmatter',
+      originSlug: 'features/billing-export',
+      originField: 'related',
+    });
+    expect(candidates[0].targetSourceId).toBeUndefined();
+  });
+
+  test('an admitted slug wrapped in [[ ]] is the same candidate', async () => {
+    const { resolver, calls } = recordingResolver();
+    const { candidates } = await extractFrontmatterLinks(
+      'features/billing-export', 'note' as never,
+      { related: ['[[github/832739129/pr-64|PR 64]]'] }, resolver, false, null,
+      () => 'pull_request',
+    );
+    expect(calls).toEqual(['exact:github/832739129/pr-64']);
+    expect(candidates.map(c => c.targetSlug)).toEqual(['github/832739129/pr-64']);
+  });
+
+  test('a slug the policy refuses is unresolved and never reaches the fuzzy or basename steps', async () => {
+    const { resolver, calls } = recordingResolver();
+    const { candidates, unresolved } = await extractFrontmatterLinks(
+      'features/billing-export', 'note' as never,
+      { related: ['jira/spx/spx-1234-does-not-exist'] }, resolver, true, null,
+      () => undefined,
+    );
+    expect(calls).toEqual(['exact:jira/spx/spx-1234-does-not-exist']);
+    expect(candidates).toEqual([]);
+    expect(unresolved).toEqual([{ field: 'related', name: 'jira/spx/spx-1234-does-not-exist' }]);
+  });
+
+  test('the exact step still follows a rename alias in the own source, whatever the policy says of the old slug', async () => {
+    const { resolver, calls } = recordingResolver({ 'projects/gadget': 'projects/widget' });
+    const { candidates, unresolved } = await extractFrontmatterLinks(
+      'notes/origin', 'note' as never,
+      { related: 'projects/gadget' }, resolver, false, null,
+      (target) => target === 'projects/widget' ? 'project' : undefined,
+    );
+    expect(calls).toEqual(['exact:projects/gadget']);
+    expect(unresolved).toEqual([]);
+    expect(candidates.map(c => c.targetSlug)).toEqual(['projects/widget']);
+  });
+
+  test('a bare name still goes through the full resolver, whatever the policy says', async () => {
+    const { resolver, calls } = recordingResolver();
+    const { candidates, unresolved } = await extractFrontmatterLinks(
+      'features/billing-export', 'note' as never,
+      { related: 'Billing Export' }, resolver, false, null,
+      () => undefined,
+    );
+    expect(calls).toEqual(['Billing Export']);
+    expect(unresolved).toEqual([]);
+    expect(candidates.map(c => c.targetSlug)).toEqual(['features/unrelated-feature']);
+  });
+
+  test('without a targetType callback a slug still goes through the full resolver as before', async () => {
+    const { resolver, calls } = recordingResolver();
+    await extractFrontmatterLinks(
+      'features/billing-export', 'note' as never,
+      { related: 'github/832739129/pr-64' }, resolver,
+    );
+    expect(calls).toEqual(['github/832739129/pr-64']);
+  });
+
+  test('an incoming mapping keeps the full resolver for a slug', async () => {
+    const { resolver, calls } = recordingResolver();
+    await extractFrontmatterLinks(
+      'companies/acme', 'company' as never,
+      { key_people: 'people/alice-example' }, resolver, false, null,
+      () => 'person',
+    );
+    expect(calls).toEqual(['people/alice-example']);
   });
 });

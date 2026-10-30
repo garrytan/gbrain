@@ -64,7 +64,7 @@ import {
   WIKILINK_BASENAME_LINK_TYPE,
   buildBasenameIndex, queryBasenameIndex, stripCodeBlocks, normalizeBasename, exactSlugCandidates,
   parseInlineCitationTimelineEntries,
-  type UnresolvedFrontmatterRef, type LinkCandidate, type LinkExtractionPack,
+  type UnresolvedFrontmatterRef, type LinkCandidate, type LinkExtractionPack, type ResolveOptions,
 } from '../core/link-extraction.ts';
 // #3190: pack-aware link typing on every extract surface (db/stale/fs).
 import { loadActivePackForLocalEngine } from '../core/schema-pack/best-effort.ts';
@@ -606,7 +606,7 @@ export async function extractLinksFromFile(
         const matches = [...new Set(candidates.filter(candidate => allSlugs.has(candidate)))];
         return matches.length === 1 ? matches[0] : null;
       },
-      async resolve(name: string, dirHint?: string | string[]): Promise<string | null> {
+      async resolve(name: string, dirHint?: string | string[], resolveOpts?: ResolveOptions): Promise<string | null> {
         if (!name) return null;
         const trimmed = name.trim();
         // Same exact candidates as makeResolver step 1 (slug-shaped value,
@@ -614,6 +614,7 @@ export async function extractLinksFromFile(
         // guards it, so no false positives.
         const exact = exactSlugCandidates(trimmed).find(candidate => allSlugs.has(candidate));
         if (exact) return canonical(exact);
+        if (resolveOpts?.exactOnly) return null;
         const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
         // Both slug grammars, as in makeResolver step 2 (#4855): the folded
         // basename form and the unfolded page-slug form sync mints.
@@ -632,7 +633,8 @@ export async function extractLinksFromFile(
     // FS path too (globalBasename false here — the synthetic resolver has no
     // basename index).
     const fmLinks = await extractFrontmatterLinks(slug, guessedPageType as never, fm, fsResolver, false, pack,
-      target => opts?.pageTypes?.get(target) ?? parseMarkdown('', `${target}.md`, { activePack }).type);
+      // A slug outside this walk is not admitted, so a frontmatter slug naming no file stays unresolved.
+      target => allSlugs.has(target) ? opts?.pageTypes?.get(target) ?? parseMarkdown('', `${target}.md`, { activePack }).type : undefined);
     for (const c of fmLinks.candidates) {
       links.push({
         from_slug: c.fromSlug ?? slug,
