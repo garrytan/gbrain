@@ -21,7 +21,7 @@ import type { SearchOpts } from '../../src/core/types.ts';
       get(target, key) {
         if (key !== 'unsafe') return Reflect.get(target, key);
         return (sql: string, params: unknown[]) => {
-          if (sql.includes('WITH hnsw_candidates')) statements.push({ sql, params: [...params] });
+          if (sql.includes('WITH hnsw_candidates') || sql.includes('WITH primary_candidates')) statements.push({ sql, params: [...params] });
           if (delayExact && sql.includes(') + 0')) return target.unsafe('SELECT pg_sleep(30)');
           return target.unsafe(sql, params);
         };
