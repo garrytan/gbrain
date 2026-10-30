@@ -2,11 +2,10 @@
  * hermes.ts — Hermes state.db (SQLite) adapter (cathedral-4).
  *
  * ONE store file holds MANY sessions (hermes-agent DEFAULT_DB_PATH =
- * <hermes home>/state.db). Reads are COPY-THEN-READ by default: readonly
- * opens of a WAL-mode SQLite database require write access to the -shm
- * sidecar and can intermittently lock against a live writer, so the adapter
- * copies the DB (+ -wal/-shm sidecars when present) to a temp dir and reads
- * the copy — deterministic, zero lock races, cleaned up in finally.
+ * <hermes home>/state.db). A readonly SQLite connection serializes a pinned
+ * read transaction, including committed WAL pages, into a disposable store.
+ * The source connection closes before any sessions are yielded, so slow
+ * consumers do not pin the live WAL. The store is cleaned up in finally.
  *
  * Schema verified against the INSTALLED hermes-agent v0.20.0 source
  * (hermes_state_common.py SCHEMA_SQL) — sessions(id, source, display_name,
@@ -17,7 +16,7 @@
  * the runtime backstop.
  */
 
-import { copyFileSync, existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { Database } from 'bun:sqlite';
@@ -57,6 +56,26 @@ export const HERMES_SPEC_TARGET: HostSpecTarget = {
 export const HERMES_DB_HARD_CAP = 512 * 1024 * 1024;
 
 const SQLITE_MAGIC = 'SQLite format 3\u0000';
+
+/** Serialize through SQLite's pager, never by independently copying WAL files. */
+function captureStore(path: string, cap: number): Buffer {
+  const source = new Database(path, { readonly: true });
+  try {
+    source.exec('BEGIN');
+    // The first read pins the snapshot. Check its logical size BEFORE
+    // allocating the serialized buffer, even if the WAL grew after stat.
+    const { page_count } = source.query<{ page_count: number }, []>('PRAGMA page_count').get()!;
+    const { page_size } = source.query<{ page_size: number }, []>('PRAGMA page_size').get()!;
+    const bytes = page_count * page_size;
+    if (bytes > cap) throw new Error(`hermes store too large for import: ${bytes} snapshot bytes (cap ${cap})`);
+    const snapshot = source.serialize();
+    if (snapshot.byteLength > cap) throw new Error(`hermes store too large for import: ${snapshot.byteLength} snapshot bytes (cap ${cap})`);
+    return snapshot;
+  } finally {
+    // Closing also rolls back the read transaction on serialization failure.
+    source.close();
+  }
+}
 
 function epochToIso(v: unknown): string {
   if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return '';
@@ -161,7 +180,8 @@ export const hermesAdapter: TranscriptAdapter = {
     // through temp storage while advertising a 512MB bound.
     let totalBytes = size;
     for (const suffix of ['-wal', '-shm']) {
-      if (existsSync(path + suffix)) totalBytes += statSync(path + suffix).size;
+      // A live checkpoint can remove a sidecar between census reads.
+      totalBytes += statSync(path + suffix, { throwIfNoEntry: false })?.size ?? 0;
     }
     if (totalBytes > cap) {
       throw new Error(
@@ -169,19 +189,13 @@ export const hermesAdapter: TranscriptAdapter = {
       );
     }
 
-    // Copy-then-read: DB plus WAL/SHM sidecars so un-checkpointed writes are
-    // visible in the copy. A live writer can checkpoint BETWEEN the copies —
-    // the resulting torn snapshot surfaces as a schema/corruption error from
-    // the sessions query below, lands in the drift lane, and (because drift
-    // freezes the watermark) is safely retried by the next run.
+    // A serialized WAL-mode image is self-contained on disk. Reading the
+    // disposable file also avoids deserialize's WAL-mode header restriction.
     const tmp = mkdtempSync(join(tmpdir(), 'gbrain-hermes-'));
     const copyPath = join(tmp, basename(path));
     let sessions = 0;
     try {
-      copyFileSync(path, copyPath);
-      for (const suffix of ['-wal', '-shm']) {
-        if (existsSync(path + suffix)) copyFileSync(path + suffix, copyPath + suffix);
-      }
+      writeFileSync(copyPath, captureStore(path, cap));
 
       const db = new Database(copyPath, { readonly: true });
       try {
