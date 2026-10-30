@@ -259,3 +259,47 @@ describe('SupabaseStorage list', () => {
     expect(JSON.parse(calls[0].init.body as string)).toEqual({ prefix: 'notes', limit: 1000 });
   });
 });
+
+
+describe('SupabaseStorage key formats', () => {
+  for (const key of ['sb_secret_fixture', 'sb_publishable_fixture', 'eyJhbGciOiJIUzI1NiJ9.fixture.signature']) {
+    const bearer = key.startsWith('sb_') ? null : `Bearer ${key}`;
+    test(`${key.split('_')[1] ?? 'legacy JWT'} headers on every standard storage operation`, async () => {
+      const { impl, calls } = stubFetch([
+        () => resp(200), () => new Response('fixture bytes'), () => resp(200), () => resp(200),
+        () => json([{ name: 'a.txt' }]), () => json({ signedURL: '/object/sign/files/a.txt?token=fixture' }),
+      ]);
+      const storage = new SupabaseStorage({ ...CONFIG, serviceRoleKey: key }, impl);
+      await storage.upload('a.txt', Buffer.from('fixture bytes'), 'text/plain');
+      expect((await storage.download('a.txt')).toString()).toBe('fixture bytes');
+      await storage.delete('a.txt');
+      expect(await storage.exists('a.txt')).toBe(true);
+      expect(await storage.list('pages')).toEqual(['pages/a.txt']);
+      expect(await storage.getSignedUrl('a.txt')).toContain('?token=fixture');
+      expect(calls).toHaveLength(6);
+      for (const call of calls) {
+        const headers = new Headers(call.init.headers);
+        expect(headers.get('apikey')).toBe(key);
+        expect(headers.get('Authorization')).toBe(bearer);
+      }
+    });
+
+    test(`${key.split('_')[1] ?? 'legacy JWT'} headers on TUS create, chunk and retry probe`, async () => {
+      const { impl, calls } = stubFetch([
+        () => resp(201, { Location: `${PROJECT_URL}/storage/v1/upload/resumable/fixture` }),
+        () => resp(503),
+        () => resp(200, { 'Upload-Offset': '0' }),
+        () => resp(204, { 'Upload-Offset': String(TUS_THRESHOLD) }),
+      ]);
+      const storage = new SupabaseStorage({ ...CONFIG, serviceRoleKey: key }, impl);
+      await storage.upload('large.bin', Buffer.alloc(TUS_THRESHOLD));
+      expect(calls.map(call => call.init.method)).toEqual(['POST', 'PATCH', 'HEAD', 'PATCH']);
+      for (const call of calls) {
+        const headers = new Headers(call.init.headers);
+        expect(headers.get('apikey')).toBe(key);
+        expect(headers.get('Authorization')).toBe(bearer);
+        expect(headers.get('Tus-Resumable')).toBe('1.0.0');
+      }
+    });
+  }
+});
