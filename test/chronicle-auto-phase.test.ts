@@ -17,6 +17,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { runPhaseChronicle } from '../src/core/cycle/chronicle.ts';
+import * as chronicleExtractEvents from '../src/core/chronicle/extract-events.ts';
 import type { ChronicleJudge, ChronicleJudgeResult } from '../src/core/chronicle/extract-events.ts';
 import { runChronicleBackfill } from '../src/core/chronicle/backfill.ts';
 import { configureGateway, resetGateway, __setChatTransportForTests, type ChatOpts, type ChatResult } from '../src/core/ai/gateway.ts';
@@ -154,6 +155,52 @@ describe('judge failure classes (E2/D5)', () => {
     expect(r.details).toMatchObject({ judged: 1, failed: 1, no_events: 0, reasons: { judge_chat_error: 1 } });
   }), 120_000);
 
+  test('malformed proposals expose only fixed validation codes and retain failure/retry behavior', () => brain(async ({ engine, ctx }) => {
+    const slug = 'meetings/private-slug-canary';
+    await put(ctx, slug, meeting('Private title canary'));
+    await settle(engine);
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...parts: unknown[]) => { warnings.push(parts.map(String).join(' ')); };
+    try {
+      const judge = countingJudge(() => ({ events: [{
+        when: 'PRIVATE_RAW_WHEN_CANARY', what: 'PRIVATE_BODY_CANARY',
+        who: ['PRIVATE_PERSON_CANARY'], kind: 'PRIVATE_KIND_CANARY',
+      }] as never }));
+      const first = await runPhaseChronicle(engine, { judge });
+      expect(first.details).toMatchObject({ judged: 1, failed: 1, reasons: { malformed_proposal: 1 } });
+      expect((await rows(engine)).find((row) => row.slug === slug)).toMatchObject({
+        state: 'failed', reason: 'malformed_proposal', attempts: 1, unpriced: false,
+      });
+      const firstRetry = (await rows(engine)).find((row) => row.slug === slug)?.next_attempt_at;
+      expect(firstRetry).toBeInstanceOf(Date);
+      expect((await events(engine)).filter((row) => row.slug === slug)).toHaveLength(0);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toBe('[chronicle] malformed proposal rejected; validation_codes=proposal[0].when.invalid_date');
+      for (const canary of ['PRIVATE_RAW_WHEN_CANARY', 'PRIVATE_BODY_CANARY', 'PRIVATE_PERSON_CANARY', 'PRIVATE_KIND_CANARY', slug, 'Private title canary']) {
+        expect(warnings.join('\n')).not.toContain(canary);
+      }
+
+      await engine.executeRaw("UPDATE chronicle_page_state SET next_attempt_at=now()-interval '1 second' WHERE slug=$1", [slug]);
+      const second = await runPhaseChronicle(engine, { judge });
+      expect(second.details).toMatchObject({ judged: 1, failed: 1, reasons: { malformed_proposal: 1 } });
+      expect(judge.calls).toBe(2);
+      const retriedRow = (await rows(engine)).find((row) => row.slug === slug)!;
+      expect(retriedRow).toMatchObject({
+        state: 'failed', reason: 'malformed_proposal', attempts: 2, unpriced: false,
+      });
+      expect(retriedRow.next_attempt_at!.getTime()).toBeGreaterThan(firstRetry!.getTime());
+      expect((await events(engine)).filter((row) => row.slug === slug)).toHaveLength(0);
+      expect(warnings).toHaveLength(2);
+      expect(warnings[1]).toBe('[chronicle] malformed proposal rejected; validation_codes=proposal[0].when.invalid_date');
+      for (const canary of ['PRIVATE_RAW_WHEN_CANARY', 'PRIVATE_BODY_CANARY', 'PRIVATE_PERSON_CANARY', 'PRIVATE_KIND_CANARY', slug, 'Private title canary']) {
+        expect(warnings.join('\n')).not.toContain(canary);
+      }
+    } finally {
+      console.warn = originalWarn;
+    }
+  }), 120_000);
+
   test('no chat provider → no calls, no churn, the row keeps waiting', () => brain(async ({ engine, ctx }) => {
     configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', env: {} });
     await put(ctx, 'meetings/m1', meeting('M1'));
@@ -181,6 +228,71 @@ describe('judge failure classes (E2/D5)', () => {
     // Content already extracted is never paid for again.
     expect(await handler(job)).toMatchObject({ status: 'skipped', reason: 'already_extracted' });
   }), 120_000);
+});
+
+/**
+ * Value: malformed provider input gets a useful, content-free refusal reason
+ * without a second unbounded scan after the parser has already rejected it.
+ * Fails when: diagnostics walk huge event/attendee collections, recurse into
+ * nested values, or include provider-controlled strings in reason codes.
+ * Seams: direct synthetic inputs; no provider or database calls.
+ */
+describe('malformed proposal diagnostic bounds', () => {
+  const valid = { when: '2026-10-21', what: 'A valid summary', who: ['Ada'], kind: 'event' };
+  const validationCodes = (events: readonly unknown[]): string[] => {
+    const candidate = (chronicleExtractEvents as unknown as Record<string, unknown>).chronicleProposalValidationCodes;
+    if (typeof candidate !== 'function') throw new Error('chronicle proposal diagnostics are unavailable');
+    return (candidate as (value: readonly unknown[]) => string[])(events);
+  };
+
+  test.each([
+    ['non-object event', null, 'proposal[0].not_object'],
+    ['invalid when type', { ...valid, when: {} }, 'proposal[0].when.invalid_type_or_length'],
+    ['invalid date', { ...valid, when: 'NOT_A_DATE_CANARY' }, 'proposal[0].when.invalid_date'],
+    ['invalid what type', { ...valid, what: {} }, 'proposal[0].what.invalid_type'],
+    ['empty what', { ...valid, what: '  ' }, 'proposal[0].what.empty'],
+    ['invalid who type', { ...valid, who: 'Ada' }, 'proposal[0].who.invalid_type'],
+    ['invalid who member', { ...valid, who: ['Ada', {}] }, 'proposal[0].who.invalid_member'],
+    ['invalid kind type', { ...valid, kind: null }, 'proposal[0].kind.invalid_type'],
+  ] as const)('%s has a fixed reason code', (_name, event, code) => {
+    expect(validationCodes([event])).toEqual([code]);
+  });
+
+  test('large event collections stop after the fixed inspection bound', () => {
+    let inspected = 0;
+    const input = Array.from({ length: 10_000 }, () => valid);
+    input[9_999] = { ...valid, when: 'PRIVATE_LATE_INVALID_CANARY' };
+    const events = new Proxy(input, {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && /^\d+$/.test(property)) inspected++;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    expect(validationCodes(events)).toEqual(['diagnostic_scan_truncated']);
+    expect(inspected).toBe(32);
+  });
+
+  test('large attendee collections and oversized strings do bounded work', () => {
+    let inspectedPeople = 0;
+    const who = new Proxy(Array.from({ length: 10_000 }, () => 'Ada'), {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && /^\d+$/.test(property)) inspectedPeople++;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    expect(validationCodes([{ ...valid, who, kind: null }])).toEqual(['proposal[0].who.diagnostic_scan_truncated']);
+    expect(inspectedPeople).toBe(32);
+    expect(validationCodes([{ ...valid, when: '2'.repeat(10_000) }])).toEqual(['proposal[0].when.diagnostic_length_limit']);
+    expect(validationCodes([{ ...valid, what: ' '.repeat(10_000) }])).toEqual(['proposal[0].what.diagnostic_length_limit']);
+  });
+
+  test('deeply nested malformed values are not recursively traversed or echoed', () => {
+    let nested: unknown = 'PRIVATE_DEEP_CANARY';
+    for (let i = 0; i < 20_000; i++) nested = [nested];
+    const codes = validationCodes([{ when: nested, what: nested, who: nested, kind: nested }]);
+    expect(codes).toEqual(['proposal[0].when.invalid_type_or_length']);
+    expect(JSON.stringify(codes)).not.toContain('PRIVATE_DEEP_CANARY');
+  });
 });
 
 function chatReply(text: string, model?: string, tokens = { input: 10, output: 10 }): ChatResult {

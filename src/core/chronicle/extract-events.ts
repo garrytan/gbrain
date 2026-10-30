@@ -113,6 +113,43 @@ export function isValidProposal(e: unknown): e is ChronicleEventProposal {
   );
 }
 
+/** Fixed, content-free reason codes for diagnostics; never returns proposal values. */
+export function chronicleProposalValidationCodes(events: readonly unknown[]): string[] {
+  const maxEvents = 32;
+  const maxWhoMembers = 32;
+  const maxDateChars = 256;
+  const maxWhatChars = 4096;
+  const eventCount = Math.min(events.length, maxEvents);
+
+  for (let index = 0; index < eventCount; index++) {
+    const prefix = `proposal[${index}]`;
+    const event = events[index];
+    if (!event || typeof event !== 'object') return [`${prefix}.not_object`];
+
+    const proposal = event as Record<string, unknown>;
+    if (typeof proposal.when !== 'string' || proposal.when.length < 4) return [`${prefix}.when.invalid_type_or_length`];
+    // Do not parse an unbounded provider string a second time just to diagnose
+    // an already-rejected proposal.
+    if (proposal.when.length > maxDateChars) return [`${prefix}.when.diagnostic_length_limit`];
+    if (Number.isNaN(new Date(proposal.when).getTime())) return [`${prefix}.when.invalid_date`];
+    if (typeof proposal.what !== 'string') return [`${prefix}.what.invalid_type`];
+    // String.trim() walks the full string. Large values get a fixed diagnostic
+    // rather than another unbounded pass over provider-controlled input.
+    if (proposal.what.length > maxWhatChars) return [`${prefix}.what.diagnostic_length_limit`];
+    if (proposal.what.trim().length === 0) return [`${prefix}.what.empty`];
+    if (!Array.isArray(proposal.who)) return [`${prefix}.who.invalid_type`];
+    const whoCount = Math.min(proposal.who.length, maxWhoMembers);
+    for (let personIndex = 0; personIndex < whoCount; personIndex++) {
+      if (typeof proposal.who[personIndex] !== 'string') return [`${prefix}.who.invalid_member`];
+    }
+    if (proposal.who.length > maxWhoMembers) return [`${prefix}.who.diagnostic_scan_truncated`];
+    if (typeof proposal.kind !== 'string') return [`${prefix}.kind.invalid_type`];
+  }
+
+  if (events.length > maxEvents) return ['diagnostic_scan_truncated'];
+  return [];
+}
+
 function collectAttendees(fm: Record<string, unknown>): string[] {
   const out = new Set<string>();
   for (const key of ['attendees', 'people', 'who']) {
