@@ -44,6 +44,7 @@ export interface CrossModalProbeArgs {
 
 /** Cross-modal batch summary shape (matches `runEvalCrossModal --batch --json`'s envelope). */
 export interface CrossModalBatchSummary {
+  questions?: Array<{ question_id: string; verdict: string }>;
   pass_count: number;
   fail_count: number;
   inconclusive_count: number;
@@ -240,6 +241,11 @@ export async function runCrossModalBatchForProbe(
     est_cost_usd: Number(obj.est_cost_usd ?? 0),
     verdict: typeof obj.verdict === 'string' ? obj.verdict : 'unknown',
   };
+  if (Array.isArray(obj.per_question)) summary.questions = obj.per_question.map(raw => {
+    const item = isRecord(raw) ? raw : {};
+    return { question_id: typeof item.question_id === 'string' ? item.question_id : 'unknown',
+      verdict: typeof item.verdict === 'string' ? item.verdict : 'unknown' };
+  });
   const failures = parseBatchFailures(obj.per_question);
   if (failures.length > 0) summary.failures = failures;
   if (isCount(obj.total)) summary.total = obj.total;

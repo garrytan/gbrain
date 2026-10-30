@@ -53,6 +53,8 @@ export interface QualityProbeFailure {
 }
 
 export interface QualityProbeAuditEvent {
+  retry_of?: string;
+  questions?: Array<{ question_id: string; verdict: string }>;
   ts: string;
   /** Verdict from the cross-modal batch summary (or short-circuit reason). */
   outcome: QualityProbeOutcome;
@@ -110,6 +112,8 @@ export interface QualityProbeAuditEvent {
 
 /** Fields copied onto the row only when the caller set them (rows written before #5506 lack them). */
 const OPTIONAL_EVENT_FIELDS = [
+  'retry_of',
+  'questions',
   'fixture_sha8',
   'detail',
   'reader_model',

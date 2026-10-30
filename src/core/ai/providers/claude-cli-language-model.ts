@@ -42,6 +42,7 @@ import {
   sweepDeadClaudeCliScratchDirs,
 } from './claude-cli-scratch.ts';
 import { continuationUnprovenMetadata, resolveClaudeCliAnswer } from './claude-cli-continuation.ts';
+import { claudeImageInput } from './claude-cli-images.ts';
 import type {
   LanguageModelV2,
   LanguageModelV2CallOptions,
@@ -164,7 +165,15 @@ function parseResultEnvelope(stdout: string): EnvelopeParse {
   try {
     parsed = JSON.parse(stdout);
   } catch (error) {
-    return { ok: false, reason: 'not-json', error };
+    // Image stdin requires stream-json output. Parse every line strictly;
+    // dropping a malformed event could hide a provider failure or usage.
+    try {
+      const lines = stdout.trim().split('\n').filter(line => line.trim());
+      if (lines.length < 2) return { ok: false, reason: 'not-json', error };
+      parsed = lines.map(line => JSON.parse(line));
+    } catch (streamError) {
+      return { ok: false, reason: 'not-json', error: streamError };
+    }
   }
   const events = Array.isArray(parsed) ? parsed : null;
   if (Array.isArray(parsed)) {
@@ -385,6 +394,7 @@ function runClaude(
   model: string,
   signal?: AbortSignal,
   maxOutputTokens?: number,
+  imageInput?: string,
 ): Promise<ClaudeRun> {
   return new Promise((resolve, reject) => {
     // #6424: forward the call's output cap. The inline --settings env sits
@@ -401,7 +411,7 @@ function runClaude(
       // #6791: --verbose turns the json output into the session's event
       // array, the only record of the segments before an automatic
       // continuation (the envelope's result holds the last one).
-      '--output-format', 'json', '--verbose',
+      '--output-format', imageInput ? 'stream-json' : 'json', '--verbose',
       '--model', model,
       '--disable-slash-commands',
       // Agent isolation: this subprocess must behave like a raw LLM, not a
@@ -422,6 +432,7 @@ function runClaude(
     if (systemPrompt) {
       args.push('--system-prompt', systemPrompt);
     }
+    if (imageInput) args.push('--input-format', 'stream-json');
     // Env scrub: guarantee the CLI authenticates via its own OAuth session
     // (subscription), never via an inherited API key. Without this, an
     // ANTHROPIC_API_KEY in gbrain's env (the exact setup this recipe is meant
@@ -542,7 +553,7 @@ function runClaude(
     // error itself is safe to swallow.
     child.stdin.on('error', () => { /* surfaced via child 'error'/'close' */ });
     try {
-      child.stdin.write(userPrompt);
+      child.stdin.write(imageInput ?? userPrompt);
       child.stdin.end();
     } catch (e) {
       if (signal) signal.removeEventListener('abort', onAbort);
@@ -732,7 +743,8 @@ export class ClaudeCliLanguageModel implements LanguageModelV2 {
     const toolInstructions = buildToolUseInstructions(options.tools);
     const systemPrompt = [systemText, toolInstructions].filter(s => s.length > 0).join('\n');
 
-    const result = await runClaude(systemPrompt, userPrompt, this.modelId, options.abortSignal, options.maxOutputTokens);
+    const imageInput = claudeImageInput(options.prompt, userPrompt);
+    const result = await runClaude(systemPrompt, userPrompt, this.modelId, options.abortSignal, options.maxOutputTokens, imageInput);
     // The CLI reports Anthropic's separate buckets; LanguageModelV2Usage wants
     // the TOTAL input with the cache read as a subset (what every SDK provider
     // reports), so the gateway prices cache tokens once. Cache creation has no

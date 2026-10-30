@@ -25,6 +25,10 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
   // falls through to the legacy IR-metrics flow so existing callers
   // don't break.
   const sub = args[0];
+  if (sub === 'nightly-quality') {
+    const { runEvalNightlyQuality } = await import('./eval-nightly-quality.ts');
+    return runEvalNightlyQuality(engine, args.slice(1));
+  }
   if (sub === 'export') {
     const { runEvalExport } = await import('./eval-export.ts');
     return runEvalExport(engine, args.slice(1));
@@ -420,6 +424,7 @@ USAGE
   gbrain eval <subcommand> [flags]     (run \`gbrain eval <subcommand> --help\` where available)
 
 SUBCOMMANDS (#3686 — each has its own flag surface)
+  nightly-quality            Run the opt-in daily memory quality probe without autopilot
   replay                     Re-run captured production queries against the current config
   retrieval-quality          Retrieval-quality suite over the calibration corpus
   gate                       CI pass/fail gate over a saved baseline

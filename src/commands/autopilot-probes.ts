@@ -6,6 +6,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import type { GBrainConfig } from '../core/config.ts';
 import type { NightlyProbeModelRoutes } from '../core/cycle/nightly-probe-routes.ts';
+import type { NightlyProbeResult } from '../core/cycle/nightly-quality-probe.ts';
 import { logError } from './autopilot.ts';
 
 /**
@@ -23,7 +24,7 @@ export async function resolveNightlyProbeModelRoutesForDaemon(engine: BrainEngin
   return resolveNightlyProbeModelRoutes(engine);
 }
 
-export async function runNightlyQualityProbeStep(engine: BrainEngine, cfg: GBrainConfig | null): Promise<void> {
+export async function runNightlyQualityProbeStep(engine: BrainEngine, cfg: GBrainConfig | null, retryIncomplete = false): Promise<NightlyProbeResult> {
   // 4.5 — Nightly quality probe (v0.41).
   // Per D10: trust the phase's internal 24h rate-limit (via shouldRunNightly
   // reading the audit JSONL). No scheduler-side precheck — one source of
@@ -51,7 +52,8 @@ export async function runNightlyQualityProbeStep(engine: BrainEngine, cfg: GBrai
       const { loadPricingOverrides } = await import('../core/budget/budget-tracker.ts');
       const { isAvailable } = await import('../core/ai/gateway.ts');
       const cap = resolveProbeCap(dbMaxUsd, cfg?.autopilot?.nightly_quality_probe?.max_usd);
-      await runNightlyQualityProbe({
+      return await runNightlyQualityProbe({
+        retryIncomplete,
         isEnabled: () => true, // already gated above; phase re-checks for defense-in-depth
         hasEmbeddingProvider: () => isAvailable('embedding'),
         resolveMaxUsd: () => cap.maxUsd,
@@ -65,10 +67,12 @@ export async function runNightlyQualityProbeStep(engine: BrainEngine, cfg: GBrai
         now: () => new Date(),
       });
     }
+    return { outcome: 'disabled', exit_code: 0 };
   } catch (e) {
     logError('autopilot.nightly_probe', e);
     // Intentional: do NOT bump consecutiveErrors. Probe failure is
     // informational; autopilot loop continues.
+    return { outcome: 'error', exit_code: 1, detail: 'nightly probe failed; see the retained audit' };
   }
 }
 
