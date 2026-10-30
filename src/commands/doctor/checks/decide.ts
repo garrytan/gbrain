@@ -60,6 +60,9 @@ async function runDecideHealth(ctx: DoctorContext): Promise<Check[]> {
     if (stats.some((s) => s.error_reason === 'pinned_model_unavailable')) {
       warns.push('the pinned model is no longer served (pinned_model_unavailable): gbrain config set decide.provider typesafe:<new-id>, then recalibrate or adopt a reference calibration');
     }
+    for (const slot of new Set(stats.filter(s => s.outcome === 'error' && s.error_reason === 'provider_error').map(s => s.slot))) {
+      warns.push(`${slot}: provider_error in the last 24 h; check authentication, billing and availability with gbrain decide probe (separate from the daily budget)`);
+    }
     if (spend.total >= state.cfg.dailyUsd) warns.push(`daily decide budget exhausted ($${spend.total.toFixed(4)} of $${state.cfg.dailyUsd.toFixed(2)}); slots take their fail direction until UTC midnight: gbrain config set decide.budget.daily_usd <usd>`);
     const keyDefaults = active.filter((p) => state.cfg.slots[p.slot].keyDefault).map((p) => p.slot);
     if (keyDefaults.length > 0) notes.push(`opt out of the key-aware default: ${keyDefaults.map(keyDefaultOptOut).join(' && ')}`);
