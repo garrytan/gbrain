@@ -126,15 +126,19 @@ export const claudeCli: Recipe = {
       default_timeout_ms: 30_000,
     },
   },
-  // Friendly aliases mirror the `anthropic` recipe so config strings stay
-  // portable: switching `anthropic:claude-sonnet-4-6` to `claude-cli:claude-sonnet-4-6`
+  // Id aliases mirror the `anthropic` recipe so config strings stay portable:
+  // switching `anthropic:claude-sonnet-4-6` to `claude-cli:claude-sonnet-4-6`
   // is a one-token edit. Reverse aliases rewrite legacy IDs back to canonical.
+  //
+  // Family names (`claude-cli:haiku`, `claude-cli:sonnet`, `claude-cli:opus`)
+  // are deliberately NOT aliased: they pass through to `claude --model`, which
+  // runs the newest model of that family, so the config never goes stale when
+  // a model ships. The budget prices them at the newest row of the family in
+  // the Anthropic pricing table (reservation-cost.ts), and the provider
+  // reports the model the CLI actually ran as the response model.
   aliases: {
     'claude-haiku-4-5': 'claude-haiku-4-5-20251001',
     'claude-sonnet-4-6-20250929': 'claude-sonnet-4-6',
-    'sonnet': 'claude-sonnet-4-6',
-    'haiku': 'claude-haiku-4-5-20251001',
-    'opus': 'claude-opus-4-7',
   },
   setup_hint:
     'Install Claude Code (`claude` CLI) and run `claude` once to log in. ' +

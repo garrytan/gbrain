@@ -65,7 +65,7 @@ describe('BudgetTracker settles reservations by id', () => {
 
   test('an alias reservation is settled by the served id record', () => {
     const t = tracker();
-    const r = t.reserve(est(LARGE * 1.8, 'claude-cli:haiku'));
+    const r = t.reserve(est(LARGE * 1.8, 'claude-cli:claude-haiku-4-5'));
     expect(r).toBeDefined();
     t.record({ modelId: 'claude-cli:claude-haiku-4-5-20251001', kind: 'chat', inputTokens: 0, outputTokens: 0, reservation: r });
     expect(() => t.reserve(est(LARGE * 1.8))).not.toThrow();

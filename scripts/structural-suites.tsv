@@ -74,7 +74,7 @@ test/claude-cli-recipe.test.ts	claude-cli LanguageModel — CLI too old for the 
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — abort + error envelopes	13	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — context isolation	2	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — output cap (#6424)	2	readFileSync
-test/claude-cli-recipe.test.ts	claude-cli LanguageModel — text-only round trip	4	readFileSync
+test/claude-cli-recipe.test.ts	claude-cli LanguageModel — text-only round trip	6	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — tool use	17	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli recipe registration	2	readFileSync
 test/cli-flag-equals.test.ts	#7619 refusals that keep consent, scope and targets right	26	readFileSync,source-surface-helper

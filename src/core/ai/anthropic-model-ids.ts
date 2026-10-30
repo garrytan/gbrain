@@ -51,6 +51,21 @@ export function compareAnthropicVersions(a: ParsedAnthropicModelId, b: ParsedAnt
 }
 
 /**
+ * The newest model of tier family `family` (`haiku`) among `ids`, by version;
+ * null when `family` is not a tier family or `ids` holds none of it. Ids that
+ * do not parse (other providers, `fable`, unknown shapes) are skipped.
+ */
+export function newestInFamily(family: string, ids: Iterable<string>): ParsedAnthropicModelId | null {
+  let newest: ParsedAnthropicModelId | null = null;
+  for (const id of ids) {
+    const p = parseAnthropicModelId(id);
+    if (!p || p.family !== family) continue;
+    if (!newest || compareAnthropicVersions(p, newest) > 0) newest = p;
+  }
+  return newest;
+}
+
+/**
  * The anthropic recipe's newest priced chat model in `model`'s family when it
  * is strictly newer than `model`; null when `model` is current, newer than the
  * recipe, unpriced-family-only, fable, non-Anthropic or unparseable.
@@ -62,11 +77,6 @@ export function newerAnthropicModel(
 ): ParsedAnthropicModelId | null {
   const current = parseAnthropicModelId(model);
   if (!current) return null;
-  let newest: ParsedAnthropicModelId | null = null;
-  for (const id of ids) {
-    const p = parseAnthropicModelId(id);
-    if (!p || p.family !== current.family || !priced(id)) continue;
-    if (!newest || compareAnthropicVersions(p, newest) > 0) newest = p;
-  }
+  const newest = newestInFamily(current.family, ids.filter(priced));
   return newest && compareAnthropicVersions(newest, current) > 0 ? newest : null;
 }

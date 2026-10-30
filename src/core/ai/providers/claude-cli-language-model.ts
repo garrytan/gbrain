@@ -124,6 +124,8 @@ interface ClaudeJsonResult {
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
   };
+  /** Per-model usage keyed by the model id the CLI ran (`claude-haiku-5-5` for `--model haiku`). */
+  modelUsage?: Record<string, unknown>;
 }
 
 /**
@@ -706,6 +708,16 @@ export function claudeCliFinishReason(stopReason: string | null | undefined, has
   return hasToolCalls ? 'tool-calls' : 'stop';
 }
 
+/**
+ * The model the CLI ran, read off its `modelUsage` keys: a family name such as
+ * `haiku` resolves to the newest model only inside the CLI. Undefined unless
+ * exactly one model is reported, so the caller falls back to the requested id.
+ */
+export function claudeCliServedModel(modelUsage: Record<string, unknown> | undefined): string | undefined {
+  const ids = Object.keys(modelUsage ?? {});
+  return ids.length === 1 ? ids[0] : undefined;
+}
+
 export class ClaudeCliLanguageModel implements LanguageModelV2 {
   readonly specificationVersion = 'v2' as const;
   readonly provider = 'claude-cli';
@@ -726,6 +738,7 @@ export class ClaudeCliLanguageModel implements LanguageModelV2 {
       cachedInputTokens: number | undefined;
     };
     providerMetadata?: SharedV2ProviderMetadata;
+    response?: { modelId: string };
     warnings: never[];
   }> {
     const { systemText, userPrompt } = renderPrompt(options.prompt);
@@ -751,6 +764,8 @@ export class ClaudeCliLanguageModel implements LanguageModelV2 {
       totalTokens: inputTokens !== undefined && outputTokens !== undefined ? totalTokens : undefined,
       cachedInputTokens,
     };
+    const servedModel = claudeCliServedModel(result.modelUsage);
+    const response = servedModel ? { response: { modelId: servedModel } } : {};
 
     // #6791: a continued answer is rebuilt from its segments, or refused
     // before any tool block in its tail can be parsed and dispatched.
@@ -762,6 +777,7 @@ export class ClaudeCliLanguageModel implements LanguageModelV2 {
         finishReason: 'length',
         usage,
         providerMetadata: { 'claude-cli': { ...continuationUnprovenMetadata(answer.reason)['claude-cli'], ...thinking } },
+        ...response,
         warnings: [],
       };
     }
@@ -788,6 +804,7 @@ export class ClaudeCliLanguageModel implements LanguageModelV2 {
       finishReason: claudeCliFinishReason(result.stop_reason, toolCalls.length > 0),
       usage,
       ...(thinking ? { providerMetadata: { 'claude-cli': thinking } } : {}),
+      ...response,
       warnings: [],
     };
   }
