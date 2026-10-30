@@ -100,8 +100,10 @@ async function runJsonbIntegrity(ctx: DoctorContext): Promise<Check[]> {
   // 'string'. `page_versions.frontmatter` added in v0.15.2 so doctor's
   // surface matches `repair-jsonb` (the previous 4-target scan missed a
   // repair target, per #254/Codex review).
-  progress.heartbeat('jsonb_integrity');
-  checks.push(await jsonbIntegrityCheck(engine, progress));
+  if (!ctx.only || ctx.only.has('jsonb_integrity')) {
+    progress.heartbeat('jsonb_integrity');
+    checks.push(await jsonbIntegrityCheck(engine, progress));
+  }
 
   // 10b. Takes weight grid integrity (v0.32 — EXP-2).
   //
@@ -114,8 +116,10 @@ async function runJsonbIntegrity(ctx: DoctorContext): Promise<Check[]> {
   //
   // Pure helper so the test surface targets `takesWeightGridCheck(engine)`
   // directly rather than the full `runDoctor` pipeline (codex review #7).
-  progress.heartbeat('takes_weight_grid');
-  checks.push(await takesWeightGridCheck(engine));
+  if (!ctx.only || ctx.only.has('takes_weight_grid')) {
+    progress.heartbeat('takes_weight_grid');
+    checks.push(await takesWeightGridCheck(engine));
+  }
 
   // 10c. Child-table orphan detection (closes #1063).
   // The autopilot `orphans` phase scans for orphan pages (no inbound links)
@@ -123,20 +127,26 @@ async function runJsonbIntegrity(ctx: DoctorContext): Promise<Check[]> {
   // delete, child rows can persist if cascade didn't fire (pre-FK rows,
   // race during bulk cascade, code path that bypassed cascade). This
   // surfaces them with paste-ready cleanup SQL.
-  progress.heartbeat('child_table_orphans');
-  checks.push(await childTableOrphansCheck(engine));
+  if (!ctx.only || ctx.only.has('child_table_orphans')) {
+    progress.heartbeat('child_table_orphans');
+    checks.push(await childTableOrphansCheck(engine));
+  }
 
   // 10d. Raw-source persistence guarantee (#1978, warn-only v1).
   // Every synthesized/derived page must carry a raw trace or an explicit
   // exemption. Warn-only in v1 — surfaces violations, blocks nothing.
-  progress.heartbeat('raw_provenance');
-  checks.push(await rawProvenanceCheck(engine));
+  if (!ctx.only || ctx.only.has('raw_provenance')) {
+    progress.heartbeat('raw_provenance');
+    checks.push(await rawProvenanceCheck(engine));
+  }
 
   // #2829: detect sources whose jsonb `config` was re-wrapped into a string
   // scalar (grows a layer per read→write cycle). Non-object configs break
   // federation + ACL reads; surface them with the repair path.
-  progress.heartbeat('source_config_shape');
-  checks.push(await checkSourceConfigShape(engine));
+  if (!ctx.only || ctx.only.has('source_config_shape')) {
+    progress.heartbeat('source_config_shape');
+    checks.push(await checkSourceConfigShape(engine));
+  }
   return checks;
 }
 
