@@ -7471,7 +7471,12 @@ Any other brain gets names with a suffix: `com.gbrain.autopilot.<suffix>`,
 and a crontab line ending in `# gbrain-autopilot:<suffix>`. The suffix is the
 first 8 hex characters of a random id that `--install` records in
 `<brain>/.gbrain/autopilot-install-id`. Every brain logs to its own
-`<brain>/.gbrain/autopilot.log`.
+`<brain>/.gbrain/autopilot.log`. On macOS, when the brain is on a volume other
+than your home folder (an external `GBRAIN_HOME`), launchd can't start a job
+whose program or log files are on that volume (it exits 78, `EX_CONFIG`). For
+such a brain the job starts the wrapper through `/bin/bash` and logs to
+`~/Library/Logs/gbrain/<label>.log` and `.err`. Re-run `--install` to move
+an existing job onto this layout.
 
 `gbrain autopilot --status [--json]` prints the brain's job name, suffix,
 install-id path, wrapper path and log path (`job` in `--json`). `--status`

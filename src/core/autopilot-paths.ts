@@ -235,6 +235,8 @@ export interface AutopilotJob {
   wrapperPath: string;
   logPath: string;
   errPath: string;
+  /** #8017: launchd starts the wrapper through /bin/bash because the brain home is on another volume (macOS only). */
+  launchdViaBash?: boolean;
   installIdPath: string | null;
   /** configDir() at resolution time. */
   homeDir: string;
@@ -249,6 +251,9 @@ export function resolveAutopilotJob(opts: { mint?: boolean } = {}): AutopilotJob
     suffix = id ? id.slice(0, 8) : null;
     kind = suffix ? 'suffixed' : 'unassigned';
   }
+  const logs = process.platform === 'darwin'
+    ? autopilotLaunchdHostPaths(homeDir, autopilotLaunchdLabel(suffix))
+    : { viaBash: false, logPath: join(homeDir, 'autopilot.log'), errPath: join(homeDir, 'autopilot.err') };
   return {
     kind,
     suffix,
@@ -257,11 +262,32 @@ export function resolveAutopilotJob(opts: { mint?: boolean } = {}): AutopilotJob
     startScriptPath: join(homeDir, suffix ? `start-autopilot-${suffix}.sh` : 'start-autopilot.sh'),
     cronMarker: suffix ? `# gbrain-autopilot:${suffix}` : null,
     wrapperPath: join(homeDir, 'autopilot-run.sh'),
-    logPath: join(homeDir, 'autopilot.log'),
-    errPath: join(homeDir, 'autopilot.err'),
+    logPath: logs.logPath,
+    errPath: logs.errPath,
+    ...(logs.viaBash ? { launchdViaBash: true } : {}),
     installIdPath: kind === 'default' ? null : autopilotInstallIdPath(),
     homeDir,
   };
+}
+
+/**
+ * #8017: launchd's spawn helper opens a job's Program and its log files before the job runs, and ends the job with
+ * EX_CONFIG (78) when they sit on a volume other than the user's home (a brain on an external GBRAIN_HOME). Such a
+ * brain gets launchd paths on the home volume: /bin/bash starts the wrapper, and the logs go to
+ * ~/Library/Logs/gbrain/<label>.log and .err. A brain on the home volume, or one whose volume cannot be read, keeps
+ * its logs in the brain home.
+ */
+export function autopilotLaunchdHostPaths(
+  homeDir: string,
+  label: string,
+  hostHome: string = homedir(),
+  dev: (path: string) => number = path => statSync(path).dev,
+): { viaBash: boolean; logPath: string; errPath: string } {
+  let external = false;
+  try { external = dev(homeDir) !== dev(hostHome); } catch { /* unreadable: keep the brain-home layout */ }
+  if (!external) return { viaBash: false, logPath: join(homeDir, 'autopilot.log'), errPath: join(homeDir, 'autopilot.err') };
+  const logDir = join(hostHome, 'Library', 'Logs', 'gbrain');
+  return { viaBash: true, logPath: join(logDir, `${label}.log`), errPath: join(logDir, `${label}.err`) };
 }
 
 /**
