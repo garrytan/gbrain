@@ -1,7 +1,7 @@
 import { existsSync } from 'fs';
 import { dirname, join, relative, resolve, sep } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
-import { loadStorageConfig, validateStorageConfig, getStorageTier, isDbOnly } from '../core/storage-config.ts';
+import { hasUnresolvedDbOnlyDeclaration, loadStorageConfig, validateStorageConfig, getStorageTier, isDbOnly } from '../core/storage-config.ts';
 import type { StorageConfig, StorageTier } from '../core/storage-config.ts';
 import { walkBrainRepo, type DiskFileEntry } from '../core/disk-walk.ts';
 import { getDefaultSourcePath, isResolverUserError, resolveSourceForRepoPath } from '../core/source-resolver.ts';
@@ -219,6 +219,7 @@ export async function getStorageStatus(
 ): Promise<StorageStatusResult> {
   const config = repoPath ? loadStorageConfig(repoPath) : null;
   const warnings = config ? validateStorageConfig(config) : [];
+  if (repoPath && hasUnresolvedDbOnlyDeclaration(repoPath, config)) warnings.push('gbrain.yml declares storage.db_only but no directory resolved from it (a flow list split over lines, or the key outside storage:); list the directories in block style or as one line, db_only: [a/, b/]. Until then sync keeps every page whose file is gone (#8007).');
 
   const pagesByTier: PageCountsByTier = { db_tracked: 0, db_only: 0, unspecified: 0 };
   const diskUsageByTier: DiskUsageByTier = { db_tracked: 0, db_only: 0, unspecified: 0 };

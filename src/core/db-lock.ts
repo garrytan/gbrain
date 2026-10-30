@@ -539,19 +539,23 @@ interface RawLockRow {
   acquired_at?: Date | string;
   ttl_expires_at?: Date | string;
   last_refreshed_at?: Date | string | null;
+  /** #7614: the database clock at the read, so every derived age compares database stamps with the database clock. */
+  db_now?: Date | string;
 }
 
 /** Canonical column list for every lock SELECT — keep in lockstep with `RawLockRow`. */
-const LOCK_SELECT_COLS = 'id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at, acquisition_token';
+const LOCK_SELECT_COLS = 'id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at, acquisition_token, now() AS db_now';
 
 /**
  * Row → `LockSnapshot` mapper. Coerces postgres.js Date|string columns to Date
- * and computes the derived fields (age_ms, ttl_expired, ms_since_last_refresh).
+ * and computes the derived fields (age_ms, ttl_expired, ms_since_last_refresh) against the database clock the row
+ * carries (#7614: a reader whose clock runs ahead of the database read a renewing holder as expired), else `now`.
  * Returns null for a structurally-incomplete row (missing pid / acquired_at /
  * ttl). v0.41.13.0: last_refreshed_at may be NULL on pre-v98 brains.
  */
-function rowToLockSnapshot(row: RawLockRow, now: number): LockSnapshot | null {
+function rowToLockSnapshot(row: RawLockRow, readerNow: number): LockSnapshot | null {
   if (row.holder_pid === undefined || !row.acquired_at || !row.ttl_expires_at) return null;
+  const now = row.db_now == null ? readerNow : new Date(row.db_now).getTime();
   const acquired = row.acquired_at instanceof Date ? row.acquired_at : new Date(row.acquired_at);
   const ttlExpires = row.ttl_expires_at instanceof Date ? row.ttl_expires_at : new Date(row.ttl_expires_at);
   const lastRefreshed = row.last_refreshed_at == null
@@ -574,6 +578,8 @@ function rowToLockSnapshot(row: RawLockRow, now: number): LockSnapshot | null {
 interface SelectLockRowsOpts {
   /** Return only the row for this exact lock id (the `inspectLock` case). */
   lockId?: string;
+  /** #7614: return only the rows for these lock ids, in one read (the `inspectLocks` case). */
+  lockIds?: readonly string[];
   /** Return only rows whose ttl_expires_at < NOW() (the `listStaleLocks` case). */
   staleOnly?: boolean;
 }
@@ -595,15 +601,19 @@ async function selectLockRows(engine: BrainEngine, opts: SelectLockRowsOpts = {}
   if (engine.kind === 'postgres' && maybePG.sql) {
     const sql = maybePG.sql as any;
     if (opts.lockId !== undefined) {
-      rows = await sql`SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at, acquisition_token FROM gbrain_cycle_locks WHERE id = ${opts.lockId}`;
+      rows = await sql`SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at, acquisition_token, now() AS db_now FROM gbrain_cycle_locks WHERE id = ${opts.lockId}`;
+    } else if (opts.lockIds !== undefined) {
+      rows = await sql`SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at, acquisition_token, now() AS db_now FROM gbrain_cycle_locks WHERE id = ANY(${[...opts.lockIds]}::text[])`;
     } else if (opts.staleOnly) {
-      rows = await sql`SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at, acquisition_token FROM gbrain_cycle_locks WHERE ttl_expires_at < NOW() ORDER BY acquired_at`;
+      rows = await sql`SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at, acquisition_token, now() AS db_now FROM gbrain_cycle_locks WHERE ttl_expires_at < NOW() ORDER BY acquired_at`;
     } else {
-      rows = await sql`SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at, acquisition_token FROM gbrain_cycle_locks ORDER BY acquired_at`;
+      rows = await sql`SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at, acquisition_token, now() AS db_now FROM gbrain_cycle_locks ORDER BY acquired_at`;
     }
   } else if (engine.kind === 'pglite' && maybePGLite.db) {
     if (opts.lockId !== undefined) {
       rows = (await maybePGLite.db.query(`SELECT ${LOCK_SELECT_COLS} FROM gbrain_cycle_locks WHERE id = $1`, [opts.lockId])).rows as RawLockRow[];
+    } else if (opts.lockIds !== undefined) {
+      rows = (await maybePGLite.db.query(`SELECT ${LOCK_SELECT_COLS} FROM gbrain_cycle_locks WHERE id = ANY($1::text[])`, [[...opts.lockIds]])).rows as RawLockRow[];
     } else if (opts.staleOnly) {
       rows = (await maybePGLite.db.query(`SELECT ${LOCK_SELECT_COLS} FROM gbrain_cycle_locks WHERE ttl_expires_at < NOW() ORDER BY acquired_at`)).rows as RawLockRow[];
     } else {
@@ -622,6 +632,12 @@ async function selectLockRows(engine: BrainEngine, opts: SelectLockRowsOpts = {}
 export async function inspectLock(engine: BrainEngine, lockId: string): Promise<LockSnapshot | null> {
   const rows = await selectLockRows(engine, { lockId });
   return rows[0] ?? null;
+}
+
+/** #7614: the rows of several locks in one read, by lock id (a lock with no row is absent from the map). */
+export async function inspectLocks(engine: BrainEngine, lockIds: readonly string[]): Promise<Map<string, LockSnapshot>> {
+  if (!lockIds.length) return new Map();
+  return new Map((await selectLockRows(engine, { lockIds })).map(snap => [snap.id, snap]));
 }
 
 /**

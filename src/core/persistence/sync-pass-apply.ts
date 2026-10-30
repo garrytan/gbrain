@@ -309,7 +309,10 @@ async function writePassHolds(engine: BrainEngine, level: ShadowLevel, input: Pa
       continue;
     }
     if (r.cls === 'delete_drift' && heldRenameOrigins.has(syncOriginPath(passEntryPaths(level, entry.path).sourcePath))) continue;
-    if (r.cls === 'delete_drift' && r.uncommitted) {
+    if (r.cls === 'delete_drift' && r.uncommitted === 'storage_invalid') {
+      pending.push({ entry, code: 'file_drift', slug: entry.slug, kind: 'uncommitted', meta: { side: 'deleted', state: 'file_gone', reason: 'storage_invalid', ...(entry.revision ? { page_revision: entry.revision } : {}) },
+        message: `${path}: the file is gone, but gbrain.yml's storage section is invalid or ambiguous about db_only (it does not load, declares db_only in a form that resolved no directory, or lists a deprecated supabase_only next to canonical keys), so sync cannot tell whether page ${entry.slug} is database-only; it held the path and kept the page instead of deleting it (#8007); the rest of the source synced.` });
+    } else if (r.cls === 'delete_drift' && r.uncommitted) {
       const why = r.uncommitted === 'ignored' ? '.gitignore excludes it, so Git never kept it' : r.uncommitted === 'origin_unknown' ? 'Git could not show whether a commit held it (its history read did not finish)' : 'no commit in its history holds it';
       pending.push({ entry, code: 'file_drift', slug: entry.slug, kind: 'uncommitted', meta: { side: 'deleted', state: 'file_gone', reason: r.uncommitted, ...(entry.revision ? { page_revision: entry.revision } : {}) },
         message: `${path}: the file is gone, but ${why}, so its absence is no evidence that page ${entry.slug} was deleted; sync held it and kept the page instead of deleting it (#7130); the rest of the source synced.` });

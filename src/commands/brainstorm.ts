@@ -24,8 +24,9 @@ import {
 } from '../core/brainstorm/orchestrator.ts';
 import { loadConfig } from '../core/config.ts';
 import { StructuredAgentError } from '../core/errors.ts';
-import { serializeMarkdown } from '../core/markdown.ts';
+import { parseMarkdown, serializeMarkdown } from '../core/markdown.ts';
 import { importFromContent } from '../core/import-file.ts';
+import { privateRequestRefusal } from '../core/persistence/visibility-request.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget, writePageThrough, type WriteThroughResult } from '../core/write-through.ts';
 import { fileDatabaseDriftToken, replaceableFile } from '../core/facts/file-body-guard.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
@@ -427,11 +428,14 @@ export async function persistSavedIdea(
       return { dbSaved: false, held: fileDatabaseDriftToken(args.slug, sourceId, 'before', 'the idea was not saved'), writeThrough: { written: false } };
     }
     expectedFileBytes = file?.expectedFileBytes;
-    await importFromContent(engine, args.slug, args.content, {
+    const imported = await importFromContent(engine, args.slug, args.content, {
       noEmbed: true,
       sourceId,
       sourcePath: `${args.slug}.md`,
+      holdNoncanonicalPrivate: true,
     });
+    if (imported.refusal?.code === 'visibility_noncanonical') throw privateRequestRefusal({ slug: imported.slug, source_id: sourceId }, parseMarkdown(args.content, `${imported.slug}.md`).frontmatter);
+    if (imported.refusal) throw new Error(imported.refusal.message);
     dbSaved = true;
   } catch (err) {
     dbError = err instanceof Error ? err.message : String(err);

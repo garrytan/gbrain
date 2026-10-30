@@ -59,13 +59,15 @@ the OAuth request when issuing my owner login link."*
 ### Local stdio (zero setup)
 
 ```bash
-gbrain serve --surface full   # full operation catalog (what registrations pin; also the bare-serve default)
+gbrain serve --surface starter --advertise verbs   # what new registrations pin; a bare serve defaults to the full catalog
 ```
 
 Works with Claude Code, Cursor, Windsurf, and any MCP client that supports stdio.
 On Claude Code, `gbrain setup claude-code` writes and verifies this registration
 for you ([setup guide](../guides/setup.md)). No server, no tunnel, no token needed. Works on both PGLite and Postgres engines.
-`--surface full` serves every operation. For a client that cannot hold the full
+`--surface full` serves every operation; `--advertise verbs` lists only the seven
+memory verbs and `request_tools` in tools/list, and `request_tools` returns any
+other tool's schema. A bare `gbrain serve` lists everything. For a client that cannot hold the full
 catalog, `--surface verbs` exposes exactly the seven-verb memory protocol
 (`recall`, `remember`, `entity`, `synthesize`, `forget`, `context_pack`,
 `delta` — [MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)) and `--surface

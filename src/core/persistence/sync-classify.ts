@@ -83,6 +83,11 @@ export interface SyncPathState {
   fullObligation?: boolean;
   /** Under a `storage.keep_db` prefix, on a source that is not mirror-read-only. */
   keepDb: boolean;
+  /**
+   * #7324: a page under a declared `storage.db_only` dir: its database row is canonical, so an absent file is no deletion
+   * evidence. #8007: `unknown` while gbrain.yml's storage section is invalid; an absent file is then held, never deleted.
+   */
+  dbOnly?: boolean | 'unknown';
   /** Open work on the page or path (a queued/running/recovering request, a pending Git effect). */
   openWork: boolean;
   /**
@@ -108,7 +113,7 @@ export interface SyncClassified {
   side?: 'both' | 'unknown' | 'deleted';
   state?: 'tombstone_edited' | 'purged_differs' | 'file_gone';
   /** #7130: a `delete_drift` whose file Git never committed (`never_committed`), `.gitignore` excludes, or whose history read did not answer (`origin_unknown`). */
-  uncommitted?: 'never_committed' | 'ignored' | 'origin_unknown';
+  uncommitted?: 'never_committed' | 'ignored' | 'origin_unknown' | 'storage_invalid';
   /** `db_ahead` `db_only` under keep_db: also gets the DB-wins write. */
   keepDbWrite?: true;
   /** `db_ahead` `db_only`/`unproven` under an open full obligation: excluded and counted (`full_skipped_db_ahead`). */
@@ -173,6 +178,8 @@ function afterHold(s: SyncPathState): Matched {
   if (live && s.level === null) {
     if (s.mode === 'committed' && s.present) return { cls: 'kept', settled: true, action: 'none' };
     if (!s.present) {
+      if (s.dbOnly === true) return { cls: 'kept', settled: true, action: 'none' };
+      if (s.dbOnly === 'unknown') return { cls: 'delete_drift', settled: false, action: 'hold', side: 'deleted', state: 'file_gone', uncommitted: 'storage_invalid' };
       if (s.originEvidence && s.originEvidence !== 'committed') return { cls: 'delete_drift', settled: false, action: 'hold', side: 'deleted', state: 'file_gone',
         uncommitted: s.originEvidence === 'unknown' ? 'origin_unknown' : s.originEvidence };
       return proof ? { cls: 'delete', settled: false, action: 'delete' } : { cls: 'delete_drift', settled: false, action: 'hold', side: 'deleted', state: 'file_gone' };
@@ -238,7 +245,7 @@ function gitVerdict(state: SyncPathState): Matched {
     case 'drift': case 'keep_db': case 'deleted_edited': case 'legacy_unverified': return wins({ cls: 'import', settled: false, action: 'import' });
     case 'db_ahead': return rest.sub === 'pending' ? rest : wins({ cls: 'import', settled: false, action: 'import' });
     case 'delete': case 'delete_drift':
-      if (state.originEvidence === undefined) return rest;
+      if (state.originEvidence === undefined || rest.uncommitted === 'storage_invalid') return rest;
       if (state.originEvidence !== 'committed') return wins({ cls: 'kept', settled: true, action: 'none' });
       return rest.cls === 'delete' ? rest : wins({ cls: 'delete', settled: false, action: 'delete' });
     default: return rest;
@@ -272,6 +279,8 @@ export interface SyncPassKindInput {
   rescreenDueHold: boolean;
   /** `--full`. */
   full: boolean;
+  /** #7866: a full round asked for without an episode (SyncOpts.fullRound). */
+  fullRound?: boolean;
 }
 
 /** Full rounds run at least this often (v3.2 §2.2, [estimated]). */
@@ -286,7 +295,7 @@ export function syncPassKind(input: SyncPassKindInput): { kind: 'idle' | 'hold_o
   else {
     if (c.target !== input.head) blockers.push('target_moved');
     if (c.parserFp !== input.parserFp || c.pack !== input.pack || c.selectionFp !== input.selectionFp) blockers.push('fingerprint_changed');
-    if (c.passesSinceFull >= SYNC_FULL_ROUND_MAX_PASSES || input.now - c.lastFullAt >= SYNC_FULL_ROUND_MAX_MS) blockers.push('full_round_due');
+    if (input.fullRound || c.passesSinceFull >= SYNC_FULL_ROUND_MAX_PASSES || input.now - c.lastFullAt >= SYNC_FULL_ROUND_MAX_MS) blockers.push('full_round_due');
   }
   if (input.full || input.openEpisode) blockers.push('open_episode');
   if (input.owedTail) blockers.push('owed_tail');

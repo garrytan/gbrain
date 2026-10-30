@@ -40,9 +40,12 @@
  * remaining categories are reported. `--to mixed` removes the flag and changes nothing else.
  */
 import { lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
-import type { SyncOpts } from '../../commands/sync.ts';
+import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
+import type { Action } from '../agent-output.ts';
+import { LockUnavailableError, syncLockId } from '../db-lock.ts';
+import { syncOutcome } from './sync-drain.ts';
 import { loadConfig } from '../config.ts';
 import { resolveSourceId } from '../source-resolver.ts';
 import { opError, OperationError } from '../ops/contract.ts';
@@ -56,7 +59,9 @@ import { commitThroughDoor } from './git-door.ts';
 import { gitRootAhead, pushGitRoot } from './effect-git.ts';
 import { DURABILITY_NOT_ENABLED_REASON, gitDurabilityPolicy } from './git-durability-policy.ts';
 import { currentVerifiedLocalWriter, localHostId } from './identity.ts';
-import { acquireWorktree, readManagedMode } from './ownership.ts';
+import { acquireWorktree, getWorktreeBinding, readManagedMode } from './ownership.ts';
+import { inspectDurabilityCheckout } from './git-durability-administration.ts';
+import { classifyGitCheckout } from '../git-checkout.ts';
 import { resolveManagedSyncContext, type ManagedSyncContext } from './sync-discovery.ts';
 import { readShadowLevel } from './sync-pass.ts';
 import { isPrivacyClass, type PrivacyClass } from './git-declared.ts';
@@ -79,15 +84,19 @@ const SAMPLE = 20;
 const LOCK_WAIT_MS = 30_000;
 const MOVED_BATCH = 10_000;
 
-/** The steps of an apply, in order (`ConversionProgress.phase`). */
-export const CONVERSION_PHASES = ['adopt', 'withhold', 'recheck', 'holds', 'strict_pass_1', 'strict_pass_2'] as const;
-export type ConversionPhase = typeof CONVERSION_PHASES[number];
+/** The steps of every apply, in order (`ConversionProgress.phase`); `strict_pass_closing` follows only when door commits landed (CLOSING_PASSES). */
+export type ConversionPhase = 'adopt' | 'withhold' | 'recheck' | 'holds' | 'strict_pass_1' | 'strict_pass_2' | 'strict_pass_closing';
+export const CONVERSION_PHASES: readonly ConversionPhase[] = ['adopt', 'withhold', 'recheck', 'holds', 'strict_pass_1', 'strict_pass_2'];
 /**
  * Where an apply stands: its phase, the door commits it made (adoption and withholding groups), and the items the phase
- * went through of its total. In a strict pass, `round` is the pass round, `total` the paths its level read until it
- * admits, then its batch, and `scanned` the batch entries settled.
+ * went through of its total. In a strict pass (#7866), `total` is the paths the strict level holds (the planned page count,
+ * set from the recheck's read and kept for the whole pass), `round` the pass round, `candidates` the paths that round
+ * imports or deletes, `batch` of `batches` the import batch it is draining, and `scanned` the candidates of the round
+ * settled so far, across its batches.
  */
-export interface ConversionProgress { phase: ConversionPhase; groups_committed: number; scanned: number; total: number; round?: number; push?: ConversionPush }
+export interface ConversionProgress { phase: ConversionPhase; groups_committed: number; scanned: number; total: number; round?: number; candidates?: number;
+  batch?: number; batches?: number; push?: ConversionPush }
+const ROUND_RESET = { round: undefined, candidates: undefined, batch: undefined, batches: undefined } as const;
 /**
  * Where the push of the apply's door commits stands: `pushed`; `pending` (the commits are local and the next page write's
  * push-only effect pushes them; `code` and `notice` say why it did not land); `skipped` (`reason`: durability is off,
@@ -187,11 +196,39 @@ export async function assertConversionCaller(engine: BrainEngine, sourceId: stri
       user_message: `Source ${sourceId} can only become git-canonical on a brain with managed writes, and this brain is not managed. Should it move to managed writes first?` } });
 }
 
+/**
+ * #7885: a root with no Git checkout, or one whose branch has no commit yet, has nothing to convert into. The plan refuses
+ * before it reads anything, and the source keeps working as it is (the database is its record). A root it cannot read
+ * (gone, unmounted, not a directory) is left to the context resolution, which owns those refusals.
+ */
+async function assertConversionCheckout(sourceId: string, root: string): Promise<void> {
+  if (classifyGitCheckout(root) === 'unknown') return;
+  let code: 'git_checkout_required' | 'git_branch_unborn';
+  try { await inspectDurabilityCheckout(root); return; }
+  catch (error) {
+    if (!(error instanceof OperationError)) throw error;
+    if (error.code === 'git_detached_head') return;
+    if (error.code !== 'git_checkout_required' && error.code !== 'git_branch_unborn') throw error;
+    code = error.code === 'git_checkout_required' ? 'git_checkout_required' : 'git_branch_unborn';
+  }
+  const state = code === 'git_checkout_required' ? 'is not inside a Git checkout' : 'is a Git checkout with no commit yet';
+  const why = 'A git-canonical source commits every page to Git on top of the checkout\'s branch, so its root needs a Git checkout with a first commit.';
+  throw opError(code, `Source ${sourceId}'s root ${root} ${state}, so it has nothing to convert into; nothing was read or written. The source stays usable as it is, with the database as its record.`,
+    'Keep the source as it is, or make its root a Git repository with a first commit on the brain host (git init, git add -A, git commit), then preview again.',
+    { why, docs: DOCS, fix: { argv: ['gbrain', 'sources', 'canonical', sourceId, '--to', 'git', '--dry-run', '--json'], consent: [], actor: 'user', requires_exclusive: false,
+      why: 'Previews the conversion again once the root has a first commit; read-only.',
+      user_message: `Source ${sourceId} has no Git history to convert into. It keeps working as it is. Should its folder become a Git repository with a first commit so it can be converted?` } });
+}
+
+
+
 /** The context a strict pass reads, for a source whose row does not say so yet. */
 const strictContext = (context: ManagedSyncContext): ManagedSyncContext => ({ ...context, source: { ...context.source, config: { ...context.source.config, canonical: 'git' } } });
 
 /** The read-only plan of `--to git`; its preview is what the CLI prints and the apply binds to. */
 export async function planGitConversion(engine: BrainEngine, sourceId: string): Promise<GitConversionPlan> {
+  const binding = await getWorktreeBinding(engine, sourceId);
+  if (binding?.local_path && binding.owner_host_id === localHostId() && binding.state === 'active') await assertConversionCheckout(sourceId, resolve(binding.local_path, binding.relative_path));
   const context = await resolveManagedSyncContext(engine, { sourceId, noPull: true, dryRun: true });
   const pages: GitGapPage[] = [];
   const equal = new Map<string, PageRevision>();
@@ -458,9 +495,19 @@ export interface GitConversionResult {
   parked: { retried: number; reclassified: number };
   /** #7644: the push of the door commits, as it stood when the apply ended. */
   push: ConversionPush;
-  /** The plan after the flag was set and a strict pass ran: nothing left on a completed conversion. */
+  /** The closing strict passes that imported door commits landed after strict_pass_2 read its level (CLOSING_PASSES). */
+  closing_passes: number;
+  /** The plan after the flag was set and the strict passes ran: nothing left on a completed conversion. */
   after: GitConversionPreview;
 }
+
+/**
+ * A live writer's door commits (`gbrain git commit-push`) that land after strict_pass_2 read its level leave the closing
+ * plan with Git ahead of the database at their paths (git_wins) and nothing else. The source is git-canonical by then and
+ * those commits are Git's, so an incremental strict pass imports them and loses nothing: the apply runs up to this many
+ * such passes, planning again after each. Any other open item, or Git still ahead after the last one, ends incomplete.
+ */
+export const CLOSING_PASSES = 3;
 
 const blockedError = (preview: GitConversionPreview): OperationError => {
   const categories = DISCARD_CATEGORIES.filter(category => preview.discard.by[category] > 0);
@@ -508,18 +555,26 @@ export async function applyGitConversion(engine: BrainEngine, sourceId: string, 
     report({ scanned: progress.scanned + 1 });
   }
   const processing = { noEmbed: opts.noEmbed, noExtract: opts.noExtract };
-  const { performManagedSync } = await import('./sync-run.ts');
-  report({ phase: 'strict_pass_1', scanned: 0, total: 0 });
-  passOrThrow(sourceId, await performManagedSync(engine, { sourceId, noPull: true, full: true, ...processing, canonicalOverride: 'git', onProgress: passProgress(report) }));
+  const planned = recheck?.paths.length ?? 0;
+  const pass = (phase: 'strict_pass_1' | 'strict_pass_2' | 'strict_pass_closing', total = planned) => {
+    report({ phase, scanned: 0, total, ...ROUND_RESET });
+    return strictPass(engine, sourceId, { sourceId, noPull: true, fullRound: phase !== 'strict_pass_closing', ...processing,
+      ...(phase === 'strict_pass_1' ? { canonicalOverride: 'git' as const } : {}), onProgress: passProgress(report) });
+  };
+  passOrThrow(sourceId, 'strict_pass_1', await pass('strict_pass_1'), progress);
   await faultPoint('conversion:before_flip', { sourceId });
   await recordConversion(engine, sourceId, plan.incarnation, 'git', expect, plan.preview.head);
-  report({ phase: 'strict_pass_2', scanned: 0, total: 0, round: undefined });
-  passOrThrow(sourceId, await performManagedSync(engine, { sourceId, noPull: true, full: true, ...processing, onProgress: passProgress(report) }));
+  passOrThrow(sourceId, 'strict_pass_2', await pass('strict_pass_2'), progress);
   const final = await pushConversion(engine, plan.context);
   const push = final.reason === 'nothing_to_push' ? progress.push! : final;
   report({ push });
-  const after = (await planGitConversion(engine, sourceId)).preview;
-  return { status: after.remaining === 0 ? 'converted' : 'incomplete', source_id: sourceId, head: after.head, committed, withheld, holds_cleared: holdsCleared, parked, push, after };
+  let after = (await planGitConversion(engine, sourceId)).preview, closing = 0;
+  for (; after.strict && after.remaining > 0 && after.remaining === after.git_wins.count && closing < CLOSING_PASSES; closing++) {
+    passOrThrow(sourceId, 'strict_pass_closing', await pass('strict_pass_closing', after.git_wins.count), progress);
+    after = (await planGitConversion(engine, sourceId)).preview;
+  }
+  return { status: after.remaining === 0 ? 'converted' : 'incomplete', source_id: sourceId, head: after.head, committed, withheld, holds_cleared: holdsCleared, parked, push,
+    closing_passes: closing, after };
 }
 
 /**
@@ -546,11 +601,38 @@ async function pushConversion(engine: BrainEngine, context: ManagedSyncContext):
   }
 }
 
-/** A strict pass's progress events as the apply's: a round's level read sets the total, its batch the scanned entries. */
+/**
+ * #7866: a strict pass of the apply. It drains (sync-drain.ts) under the source's drain lease, as `gbrain sync` does: the
+ * single pass (`performManagedSync`) stops `writer_pending` whenever one of its own writes outlives its 5 s wait, which on a
+ * large source ended the conversion on work it had queued itself. The drain re-enters on that and stops only on its own
+ * rules (no progress, contention, a blocked head), so an unrelated write that never settles still stops the apply.
+ */
+async function strictPass(engine: BrainEngine, sourceId: string, opts: SyncOpts): Promise<SyncResult> {
+  const { withDrainLease, leaseHeldResult, readDrainHolder } = await import('./sync-lease.ts');
+  const { drainManagedSync } = await import('./sync-drain.ts');
+  const { withSyncTail } = await import('./sync-tail.ts');
+  try {
+    const drained = await withDrainLease(engine, sourceId, { holder: { kind: 'cli', id: null }, remote: false },
+      signal => drainManagedSync(engine, signal ? { ...opts, signal } : opts, false));
+    return await withSyncTail(engine, sourceId, drained, { signal: opts.signal });
+  } catch (error) {
+    if (!(error instanceof LockUnavailableError) || error.lockId !== syncLockId(sourceId)) throw error;
+    return leaseHeldResult(sourceId, await readDrainHolder(engine, sourceId).catch(() => null));
+  }
+}
+
+/**
+ * A strict pass's progress events as the apply's (#7866): `total` stays the planned paths; a round names its candidates
+ * and each import batch, and `scanned` counts the round's settled candidates across its batches.
+ */
 function passProgress(report: ConversionReporter): NonNullable<SyncOpts['onProgress']> {
+  let base = 0;
   return event => {
-    if (event.round) report({ round: event.round.round, scanned: 0, total: event.phase === 'managed_sync.round_admit' ? (event.round.imports ?? 0) + (event.round.deletes ?? 0) : event.round.paths });
-    else if (event.bankedFiles !== undefined && event.phase !== 'managed_sync.level_progress' && event.phase !== 'managed_sync.legacy_swept') report({ scanned: event.bankedFiles, ...(event.total !== undefined ? { total: event.total } : {}) });
+    const round = event.round;
+    if (round && event.phase === 'managed_sync.round_level') { base = 0; report({ ...ROUND_RESET, round: round.round, scanned: 0 }); }
+    else if (round && event.phase === 'managed_sync.round_admit') report({ round: round.round, scanned: 0, candidates: (round.imports ?? 0) + (round.deletes ?? 0) });
+    else if (round && event.phase === 'managed_sync.round_batch') { base = round.base ?? 0; report({ round: round.round, scanned: base, batch: round.batch, batches: round.batches }); }
+    else if (event.bankedFiles !== undefined && event.phase !== 'managed_sync.level_progress' && event.phase !== 'managed_sync.legacy_swept') report({ scanned: base + event.bankedFiles });
   };
 }
 
@@ -569,11 +651,19 @@ async function movedSincePlan(engine: BrainEngine, sourceId: string, compared: M
 }
 
 const PASS_DONE = new Set(['first_sync', 'synced', 'up_to_date']);
-function passOrThrow(sourceId: string, result: { status: string; reason?: string }): void {
-  if (PASS_DONE.has(result.status)) return;
-  throw opError('git_conversion_incomplete', `The strict pass of source ${sourceId} ended ${result.status}${result.reason ? ` (${result.reason})` : ''}, so the conversion stopped there.`,
-    `Rerun gbrain sources canonical ${sourceId} --to git --dry-run once gbrain sync status --source ${sourceId} --json shows the source idle, then apply the new hash.`,
-    { docs: DOCS, detail: result.status });
+/** The operator step every git_conversion_incomplete refusal carries (#7866): preview again, verified by the source's sync status. */
+export function conversionIncompleteFix(sourceId: string): Action {
+  return { argv: ['gbrain', 'sources', 'canonical', sourceId, '--to', 'git', '--dry-run', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+    why: 'Plans the conversion again from where it stopped (the door groups already committed read equal); read-only. Apply its new hash once the source is idle.',
+    verify: { argv: ['gbrain', 'sync', 'status', '--source', sourceId, '--json'] } };
+}
+function passOrThrow(sourceId: string, phase: ConversionPhase, result: SyncResult, at: ConversionProgress): void {
+  if (PASS_DONE.has(result.status) && syncOutcome(result) === 'synced') return;
+  const stop = result.drain?.stop_reason ?? result.reason;
+  const written = result.added + result.modified + result.deleted + result.renamed;
+  throw opError('git_conversion_incomplete', `The ${phase} of source ${sourceId} ended ${result.status}${stop ? ` (${stop})` : ''} after ${written} page write(s), at round ${at.round ?? 0}, ${at.scanned} of ${at.candidates ?? 0} candidate(s) settled of ${at.total} planned path(s); the conversion stopped there${phase === 'strict_pass_1' ? ' and the source is still mixed' : ' and the source stays git-canonical'}.`,
+    `Run gbrain sync status --source ${sourceId} --json until the source is idle, then preview again with gbrain sources canonical ${sourceId} --to git --dry-run and apply the new hash.`,
+    { docs: DOCS, reason: stop ?? result.status, detail: `${result.status}${stop ? `:${stop}` : ''}`, fix: conversionIncompleteFix(sourceId) });
 }
 
 /**
@@ -590,7 +680,7 @@ async function adoptGroups(engine: BrainEngine, plan: GitConversionPlan, preview
     const group = adopt.slice(start, start + CONVERSION_GROUP_MAX);
     const lock = await acquireWorktree(context.binding, LOCK_WAIT_MS, undefined, engine, { yieldLanes: true });
     if (!lock) throw opError('writer_busy', `The writer lock of source ${context.sourceId}'s checkout stayed busy for ${LOCK_WAIT_MS / 1000}s, so group ${start / CONVERSION_GROUP_MAX + 1} was not committed.`,
-      `Run ${previewCommand} again; the groups already committed read equal, so the new plan holds only what is left.`, { retryable: true });
+      `Run ${previewCommand} again; the groups already committed read equal, so the new plan holds only what is left.`, { retryable: true, fix: conversionIncompleteFix(context.sourceId) });
     try {
       const files: Array<{ path: string; bytes: Buffer }> = [];
       for (const item of group) {
@@ -639,7 +729,7 @@ async function withholdGroups(engine: BrainEngine, plan: GitConversionPlan, prev
     const group = committed.slice(start, start + CONVERSION_GROUP_MAX);
     const lock = await acquireWorktree(context.binding, LOCK_WAIT_MS, undefined, engine, { yieldLanes: true });
     if (!lock) throw opError('writer_busy', `The writer lock of source ${context.sourceId}'s checkout stayed busy for ${LOCK_WAIT_MS / 1000}s, so the removal of private pages' files was not committed.`,
-      `Run ${previewCommand} again; the pages already withheld drop out of the plan, so the new plan holds only what is left.`, { retryable: true });
+      `Run ${previewCommand} again; the pages already withheld drop out of the plan, so the new plan holds only what is left.`, { retryable: true, fix: conversionIncompleteFix(context.sourceId) });
     try {
       for (const item of group) {
         const target = join(root, item.path);

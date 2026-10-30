@@ -45,6 +45,7 @@ test/brain-durability-hook.serial.test.ts	brain-commit-push.sh (D13 guarantee)	4
 test/brain-durability-hook.serial.test.ts	durability push remote confirmation (#5138)	9	readFileSync
 test/brain-durability-hook.serial.test.ts	durability schedule (installCron:true) [D2/D12]	0	readFileSync
 test/brain-durability-hook.serial.test.ts	post-commit hook (D9 local, D7 self-contained)	4	readFileSync
+test/brain-first-turn-rule.test.ts	per-turn rule: OpenClaw before_prompt_build plugin	4	readFileSync
 test/brain-repo-durability.serial.test.ts	hardenBrainRepo	20	readFileSync
 test/brain-score-breakdown.test.ts	Bug 11 — BrainHealth type shape	1	bun-file
 test/brain-score-breakdown.test.ts	Bug 11 — doctor renders brain_score breakdown	1	doctor-source-helper
@@ -186,7 +187,7 @@ test/files.test.ts	collectFiles (production import)	9	readFileSync
 test/files.test.ts	files upload-raw git-storage branch (#2297)	6	readFileSync
 test/files.test.ts	files verify git lane (per-source root resolution)	1	readFileSync
 test/files.test.ts	storage precondition — the silent-no-op class (#4022)	3	readFileSync
-test/filing-rules-resolution.serial.test.ts	per-source filing-rules resolution	3	readFileSync
+test/filing-rules-resolution.serial.test.ts	per-source filing-rules resolution	7	readFileSync
 test/fix-wave-structural.test.ts	#2084 — cli.ts owns process-exit teardown via finishCliTeardown	4	readFileSync,source-surface-helper
 test/fix-wave-structural.test.ts	#2955 — sync multi-source repoPath routes through msysToNativePath	1	readFileSync,source-surface-helper
 test/fix-wave-structural.test.ts	WAL-repair wave structural pins (#223/#2575)	4	readFileSync,source-surface-helper
@@ -208,6 +209,7 @@ test/harness-onboarding.test.ts	harness identity and private handoff	6	readFileS
 test/hook-command.serial.test.ts	user-prompt	18	source-surface-helper
 test/hook-push-spawn-env.test.ts	spawnDetachedPush env handoff	2	readFileSync
 test/hook-push-spawn-env.test.ts	tryExecAsync env handoff	1	readFileSync
+test/import-private-hold-callers-7897.test.ts	import entry points hold a non-canonical private request (#7897)	2	readFileSync
 test/init-mode-picker.test.ts	cost matrix: newest models, priced from model-pricing	6	readFileSync
 test/integrations-install.test.ts	installRecipeIntoHostRepo — happy path	6	readFileSync
 test/integrations.test.ts	CLI integration	3	source-surface-helper
@@ -222,7 +224,7 @@ test/link-source-check-repair.test.ts	regex literal drift guard (#4613)	1	readFi
 test/longmemeval-embed-cache.test.ts	EmbeddingCache — canonical hash	4	readFileSync
 test/loops-extract-wiring.test.ts	jobs.ts wiring	2	source-surface-helper
 test/loops-extract-wiring.test.ts	relational edge vocabulary	2	readFileSync,source-surface-helper
-test/mcp-registration.test.ts	every stdio registration path builds from REGISTRATION_SURFACE	4	readFileSync
+test/mcp-registration.test.ts	every stdio registration path builds from REGISTRATION_SURFACE	5	readFileSync
 test/meeting-ingestion-attendance-template.test.ts	(file-level)	3	readFileSync
 test/migrate-stdout-clean.test.ts	migration output stays off stdout	2	source-surface-helper
 test/migrate.test.ts	PR #356 + #363 — session timeouts applied via startup parameters	1	readFileSync,source-surface-helper
@@ -260,7 +262,7 @@ test/openclaw-assemble-node-loadable.test.ts	(file-level)	4	readFileSync
 test/openclaw-plugin-manifest.test.ts	bundled-skill reference closure (nothing bundled points at a non-bundled skill)	1	readFileSync
 test/openclaw-plugin-manifest.test.ts	plugin membership curation (skills = plugin ∪ exclusions, disjoint)	9	readFileSync
 test/openclaw-plugin-manifest.test.ts	root OpenClaw plugin manifest	2	readFileSync
-test/paid-lanes-switch-5903.test.ts	(file-level)	11	readFileSync
+test/paid-lanes-switch-5903.test.ts	#5903 e2e-status accepts a skipped tier2 only under GBRAIN_PAID_LANES=0	9	readFileSync
 test/persistence-git-subdir-origin.test.ts	(file-level)	6	readFileSync
 test/persistence-request-indexes.test.ts	(file-level)	4	readFileSync
 test/persistence-sync-options.serial.test.ts	(file-level)	1	readFileSync
@@ -318,7 +320,8 @@ test/scripts/e2e-matrix.test.ts	frozen E2E matrix	9	readFileSync
 test/scripts/e2e-provider-key-notice.test.ts	scripts/e2e-provider-key-notice.sh	3	readFileSync
 test/scripts/e2e-runner.test.ts	second	5	readFileSync
 test/scripts/e2e-runner.test.ts	sequential E2E runner (GITHUB_ACTIONS=${githubActions})	9	readFileSync
-test/scripts/e2e-wiring.test.ts	(file-level)	12	readFileSync
+test/scripts/e2e-shard-budget.test.ts	E2E shard-time budget	3	readFileSync
+test/scripts/e2e-wiring.test.ts	(file-level)	14	readFileSync
 test/scripts/fix-wave-gate.test.ts	fix-wave gate workflow	3	readFileSync
 test/scripts/full-ci-workflow.test.ts	full CI on pull requests	4	readFileSync
 test/scripts/full-ci-workflow.test.ts	master-push reuse of a passed full-suite run	2	readFileSync
@@ -337,6 +340,7 @@ test/scripts/postgres-lane-coverage.test.ts	check-postgres-lane-coverage.ts	9	re
 test/scripts/postgres-unit-arms.test.ts	postgres-unit-arms list	13	readFileSync
 test/scripts/promote-stable.test.ts	promote-stable.yml	2	readFileSync
 test/scripts/regen-all.test.ts	regen:all	5	readFileSync
+test/scripts/require-executed-tests.test.ts	require-executed-tests	9	readFileSync
 test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution coverage	1	readFileSync
 test/scripts/run-verify-parallel.test.ts	run-verify-parallel.sh — no-timeout-binary fallback rc capture (regression)	7	readFileSync
 test/scripts/serial-files.test.ts	scripts/serial-files.tsv (serial lane manifest)	5	readFileSync
@@ -347,6 +351,7 @@ test/scripts/stress-plan.test.ts	shards	5	readFileSync
 test/scripts/test-env-opt-ins-guard.test.ts	check-test-env-opt-ins	5	readFileSync
 test/scripts/test-shard.slow.test.ts	test-shard.sh — LPT balance contract	5	readFileSync
 test/scripts/test-shard.slow.test.ts	test-shard.sh — exclusion contract	7	readFileSync
+test/scripts/tier2-openclaw-mcp.test.ts	Tier 2 OpenClaw MCP wiring (#8002)	7	readFileSync
 test/scripts/ubicloud-typecheck-state.test.ts	(file-level)	3	readFileSync
 test/search/graph-signals-wire-integration.test.ts	v0.40.4 — source-grep regression guard	1	source-surface-helper
 test/serve-behavior-notice-6543.test.ts	(file-level)	3	readFileSync

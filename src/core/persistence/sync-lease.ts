@@ -141,6 +141,12 @@ export async function readDrainLease(engine: BrainEngine, sourceId: string): Pro
   return { holder, live: drainLeaseLive(snap) };
 }
 
+/** #7614: the drain lease's holder while it still renews the lease, else null: a killed holder's lock row names a process that is gone. */
+export async function readLiveDrainHolder(engine: BrainEngine, sourceId: string): Promise<DrainHolder | null> {
+  const lease = await readDrainLease(engine, sourceId);
+  return lease?.live ? lease.holder : null;
+}
+
 /** #7596: whether the drain lease's holder still renews it: `isLockHolderLive` at the drain TTL, the one rule status and doctor read. */
 export const drainLeaseLive = (snap: LockSnapshot): boolean => isLockHolderLive(snap, DRAIN_LEASE_TTL_MINUTES);
 

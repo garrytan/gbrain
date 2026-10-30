@@ -71,6 +71,7 @@ export function printManagedSyncNotes(result: SyncResult, write: (line: string) 
   for (const refusal of result.fileRefusals ?? []) {
     write(`  Refused ${refusal.code}: ${refusal.message} ${refusal.suggestion} (${refusal.docs})`);
   }
+  if (result.storage_invalid_kept) write(`  ${result.storage_invalid_kept} page(s) whose file is gone were kept, not deleted: gbrain.yml's storage section is invalid or ambiguous about db_only (it does not load, declares db_only in a form that resolved no directory, or lists a deprecated supabase_only next to canonical keys), so sync cannot tell which are database-only. Run \`gbrain storage status\`, fix gbrain.yml, then sync again.`);
   if (result.working_tree_kept) write(`  ${result.working_tree_kept} page(s) whose file is in the working tree but not in Git were kept (imported from the working tree, or import provenance unknown); delete the file, or commit it, to change that.`);
   const skips = result.legacySkips;
   if (skips?.contextualMode) write(`  ${skips.contextualMode} legacy file(s) skipped because they parse to the same page but have no contextual retrieval mode, which a skipped import cannot stamp; to stamp it: gbrain repair contextual-mode`);

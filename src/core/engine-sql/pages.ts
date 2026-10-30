@@ -180,7 +180,7 @@ export async function putPage(
         import_filename       = COALESCE(EXCLUDED.import_filename,       pages.import_filename),
         chunker_version       = ${trustedSql(bodyWriteChunkVersion('EXCLUDED.compiled_truth', 'EXCLUDED.timeline'))},
         source_path           = COALESCE(EXCLUDED.source_path,           pages.source_path),
-        database_only_reason  = CASE WHEN EXCLUDED.source_path IS NOT NULL AND pages.database_only_reason IN ('detached', 'origin_twin') THEN NULL ELSE pages.database_only_reason END,
+        database_only_reason  = CASE WHEN EXCLUDED.source_path IS NOT NULL AND pages.database_only_reason IN ('detached', 'origin_twin', 'mirror_read_only') THEN NULL ELSE pages.database_only_reason END,
         source_kind           = COALESCE(EXCLUDED.source_kind,           pages.source_kind),
         source_uri            = COALESCE(EXCLUDED.source_uri,            pages.source_uri),
         ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),

@@ -88,14 +88,14 @@ for (const backend of testBackends()) {
     // A lease that cannot be read decides nothing: the fresh open pass reads unfinished, and doctor lists nothing for it.
     const passRowNow = () => engine.executeRaw(`SELECT completed_keys, updated_at FROM op_checkpoints WHERE op=$1`, [MANAGED_SYNC_PASS_OP]);
     const before = await passRowNow();
-    const lockRead = spyOn(dbLock, 'inspectLock').mockRejectedValue(new Error('lock read failed'));
+    const lockReads = [spyOn(dbLock, 'inspectLock').mockRejectedValue(new Error('lock read failed')), spyOn(dbLock, 'inspectLocks').mockRejectedValue(new Error('lock read failed'))];
     try {
       status = await readSyncStatus(engine, 'default', { detail: false });
       expect(await passRowNow()).toEqual(before);
       expect(status.reason).toBe('pass_unfinished');
       expect(status.interrupted).toBeNull();
       expect(await blocked()).toEqual([]);
-    } finally { lockRead.mockRestore(); }
+    } finally { for (const spy of lockReads) spy.mockRestore(); }
 
     // Passes in a row keep stopping that way: status and doctor both read pass_abandoned, with the lock row left or released.
     await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,obligations,abandoned_streak}','1') WHERE op=$1`, [MANAGED_SYNC_PASS_OP]);

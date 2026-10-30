@@ -79,7 +79,12 @@ export function noncanonicalPrivateHold(content: string, frontmatter: Record<str
 /** Refuses a write that asked for `visibility: private` when `published` (the frontmatter it would store) does not carry exactly that. */
 export function assertPrivateRequestKept(row: Pick<WriteRequest, 'slug' | 'source_id'>, published: Record<string, unknown> | null | undefined): void {
   if (keptPrivate(published)) return;
-  throw visibilityNotApplied(row, visibilityValues(published).includes('private') ? 'noncanonical_value' : 'not_kept');
+  throw privateRequestRefusal(row, published);
+}
+
+/** #7880: the `visibility_not_applied` refusal of a write whose `published` frontmatter does not keep its private request (an unmanaged capture the screen held `visibility_noncanonical`). */
+export function privateRequestRefusal(row: Pick<WriteRequest, 'slug' | 'source_id'>, published: Record<string, unknown> | null | undefined): OperationError {
+  return visibilityNotApplied(row, visibilityValues(published).includes('private') ? 'noncanonical_value' : 'not_kept');
 }
 
 function visibilityNotApplied(row: Pick<WriteRequest, 'slug' | 'source_id'>, reason: 'noncanonical_value' | 'not_kept'): OperationError {

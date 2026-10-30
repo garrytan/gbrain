@@ -10,7 +10,7 @@ import { OperationError, opError } from '../core/ops/contract.ts';
 import { cliRenderContext, toAgentError } from '../core/agent-output.ts';
 import { registerSignalOwner, triggerCleanupAndExit } from '../core/process-cleanup.ts';
 import { startMemoryTrace } from '../core/memory-trace.ts';
-import { applyGitConversion, applyMixedConversion, assertConversionCaller, CONVERSION_GROUP_MAX, planGitConversion, planMixedConversion,
+import { applyGitConversion, applyMixedConversion, assertConversionCaller, CONVERSION_GROUP_MAX, conversionIncompleteFix, planGitConversion, planMixedConversion,
   type ConversionProgress, type GitConversionPreview, type GitConversionResult, type MixedConversionPreview } from '../core/persistence/git-conversion.ts';
 
 const USAGE = 'Usage: gbrain sources canonical <source-id> --to git|mixed [--dry-run | --apply --expect <hash> [--no-embed] [--no-extract]] [--json]';
@@ -71,8 +71,13 @@ function describeMixed(p: MixedConversionPreview): string {
     : `Source ${p.source_id} is not git-canonical; there is nothing to change.`;
 }
 
-const progressText = (p: ConversionProgress) =>
-  `[sources canonical] ${p.phase}${p.round ? ` round ${p.round}` : ''}: ${p.scanned}/${p.total} scanned, ${p.groups_committed} group(s) committed`;
+const roundText = (p: ConversionProgress) => p.round ? ` round ${p.round}${p.batches ? ` batch ${p.batch}/${p.batches}` : ''}${p.candidates !== undefined ? ` (${p.scanned}/${p.candidates} candidate(s) settled)` : ''}` : '';
+const progressBody = (p: ConversionProgress) => p.phase.startsWith('strict_pass')
+  ? `${p.phase}${roundText(p)}: ${p.total} planned path(s), ${p.groups_committed} group(s) committed`
+  : `${p.phase}: ${p.scanned}/${p.total} scanned, ${p.groups_committed} group(s) committed`;
+const progressText = (p: ConversionProgress) => `[sources canonical] ${progressBody(p)}`;
+/** #7866: where an apply stood when it was refused, so the refusal carries its counts. */
+const stoppedAt = new WeakMap<object, ConversionProgress>();
 
 /** The source's canonical state as its row says now: `git` once the flag is set, else `mixed`; `unknown` when the read fails or takes over 2 s. */
 async function canonicalState(engine: BrainEngine, sourceId: string): Promise<'git' | 'mixed' | 'unknown'> {
@@ -103,10 +108,10 @@ async function withConversionReport<T>(engine: BrainEngine, sourceId: string, js
       const at = progress ?? { phase: 'adopt', groups_committed: 0, scanned: 0, total: 0 };
       const error = opError('git_conversion_incomplete', `The conversion of source ${sourceId} was interrupted by ${signal} during ${at.phase}; the source is ${canonical === 'git' ? 'git-canonical' : canonical === 'mixed' ? 'still mixed' : 'in an unknown state'}.`,
         `Preview again with gbrain sources canonical ${sourceId} --to git --dry-run once gbrain sync status --source ${sourceId} --json shows the source idle, then apply the new hash; the groups already committed read equal.`,
-        { docs: DOCS, detail: 'interrupted' });
+        { docs: DOCS, detail: 'interrupted', fix: conversionIncompleteFix(sourceId) });
       const report = { status: 'interrupted', signal, source_id: sourceId, ...at, canonical };
       process.stdout.write(`${json ? JSON.stringify({ ...report, ...toAgentError(error, { transport: 'cli', command: 'sources canonical', render: cliRenderContext() }) })
-        : `Conversion interrupted (${signal}) during ${at.phase}${at.round ? ` round ${at.round}` : ''}: ${at.scanned}/${at.total} scanned, ${at.groups_committed} group(s) committed; source canonical state: ${canonical}.${at.push?.state === 'pending' ? `\nPush pending (${at.push.code}): ${at.push.notice}` : ''}\nNext: ${error.suggestion}`}\n`);
+        : `Conversion interrupted (${signal}) during ${progressBody(at)}; source canonical state: ${canonical}.${at.push?.state === 'pending' ? `\nPush pending (${at.push.code}): ${at.push.notice}` : ''}\nNext: ${error.suggestion}`}\n`);
       await triggerCleanupAndExit(SIGNAL_EXIT[signal] ?? 1);
     })();
   };
@@ -114,6 +119,7 @@ async function withConversionReport<T>(engine: BrainEngine, sourceId: string, js
   const release = registerSignalOwner('sources canonical --apply', interrupted);
   process.on('SIGINT', onSigint);
   try { return await apply(onProgress); }
+  catch (error) { if (error instanceof OperationError && progress) stoppedAt.set(error, progress); throw error; }
   finally { clearInterval(timer); stopTrace(); release(); process.off('SIGINT', onSigint); }
 }
 
@@ -134,9 +140,10 @@ export async function runSourcesCanonical(engine: BrainEngine, args: string[]): 
     const result = await withConversionReport(engine, parsed.sourceId, json,
       onProgress => applyGitConversion(engine, parsed.sourceId, parsed.expect!, { noEmbed: parsed.noEmbed, noExtract: parsed.noExtract, onProgress }));
     if (result.status === 'incomplete') {
-      const error = opError('git_conversion_incomplete', `Source ${parsed.sourceId} is git-canonical, and ${result.after.remaining} item(s) were still open after its strict pass.`,
+      const closing = result.closing_passes ? ` and ${result.closing_passes} closing pass(es), with Git still ahead at ${result.after.git_wins.count} path(s)` : '';
+      const error = opError('git_conversion_incomplete', `Source ${parsed.sourceId} is git-canonical, and ${result.after.remaining} item(s) were still open after its strict passes${closing}.`,
         `Writes landed during the conversion. Git wins on the source now; preview again with gbrain sources canonical ${parsed.sourceId} --to git --dry-run and apply the new hash.`,
-        { docs: DOCS, detail: 'work_left' });
+        { docs: DOCS, detail: 'work_left', fix: conversionIncompleteFix(parsed.sourceId) });
       print({ status: 'incomplete', result, ...toAgentError(error, { transport: 'cli', command: 'sources canonical', render: cliRenderContext() }) }, describeResult(result));
       setCliExitVerdict(1);
       return;
@@ -145,7 +152,9 @@ export async function runSourcesCanonical(engine: BrainEngine, args: string[]): 
   } catch (error) {
     if (!(error instanceof OperationError)) throw error;
     const env = toAgentError(error, { transport: 'cli', command: 'sources canonical', render: cliRenderContext() });
-    console.log(json ? JSON.stringify({ status: 'refused', ...env }) : `Conversion refused (${error.code}): ${error.message}\nFix: ${error.suggestion ?? USAGE}`);
+    const at = stoppedAt.get(error);
+    console.log(json ? JSON.stringify({ status: 'refused', ...env, ...(at ? { progress: at } : {}) })
+      : `Conversion refused (${error.code}): ${error.message}\nFix: ${error.suggestion ?? USAGE}${env.fix?.command ? `\nNext: ${env.fix.command}` : ''}`);
     setCliExitVerdict(1);
   }
 }

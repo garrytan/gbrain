@@ -36,6 +36,8 @@ async function reset(): Promise<void> {
   await engine.unsetConfig(SYNC_ADMISSION_KEY);
   await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=ANY($1::text[])', [[SYNC_ADMISSION_SET_OP, 'managed-sync-pass']]);
   await engine.executeRaw('DELETE FROM gbrain_cycle_locks WHERE id=$1', [syncLockId(SOURCE)]);
+  // A shared Postgres keeps earlier files' requests for this source, and their effects reference them.
+  await engine.executeRaw('DELETE FROM persistence_effects WHERE request_id IN (SELECT id FROM persistence_requests WHERE source_id=$1)', [SOURCE]);
   await engine.executeRaw('DELETE FROM persistence_requests WHERE source_id=$1', [SOURCE]);
 }
 

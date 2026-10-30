@@ -1013,7 +1013,7 @@ async function importPage(
     activePack,
   };
   const result = content === undefined ? await importFile(deps.engine, filePath, rel, opts)
-    : await importFromContent(deps.engine, slugifyPath(rel), content, { ...opts, sourcePath: rel, preserveGateMarkers: true });
+    : await importFromContent(deps.engine, slugifyPath(rel), content, { ...opts, sourcePath: rel, preserveGateMarkers: true, holdNoncanonicalPrivate: true });
   if (result.status === 'error' || result.error) {
     throw new Error(result.error ?? `Import failed for ${rel}`);
   }

@@ -126,7 +126,7 @@ export async function readSyncFreshness(engine: BrainEngine, opts: { sourceIds?:
       sample AS (SELECT r.source_id, r.slug, r.sequence, r.page_id, r.completed_at, c.committed_at
         FROM persistence_requests r JOIN c ON c.target=r.intent->>'target' WHERE ${SAMPLE_WHERE}),
       later AS MATERIALIZED (SELECT l.source_id, l.slug, max(l.sequence) AS sequence FROM persistence_requests l
-        WHERE l.state='committed' AND l.sequence > (SELECT min(sequence) FROM sample) GROUP BY l.source_id, l.slug),
+        WHERE l.state='committed' AND l.source_id IN (SELECT source_id FROM sample) AND l.sequence > (SELECT min(sequence) FROM sample) GROUP BY l.source_id, l.slug),
       s AS (SELECT r.completed_at, r.committed_at, COALESCE(r.page_id, (SELECT p.id FROM pages p WHERE p.source_id=r.source_id AND p.slug=r.slug LIMIT 1)) AS page_id,
           COALESCE(later.sequence > r.sequence, false) AS superseded
         FROM sample r LEFT JOIN later ON later.source_id=r.source_id AND later.slug=r.slug),

@@ -216,7 +216,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare-e2e.outputs.matrix) }}
-    # 2 vCPUs, up to 8 shards (C1): run-e2e.sh runs one bun process at a time,
+    # 2 vCPUs, up to 14 shards (C1; 14 since GBRA-135 L2): run-e2e.sh runs one bun process at a time,
     # and a 25-file sample took 442s on 2 cores vs 455s on 4.
     if: ${{ needs.prepare-e2e.outputs.reuse != 'true' }}
     runs-on: ubicloud-standard-2-ubuntu-2404
@@ -395,23 +395,6 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
-      - name: Run engine graduation suites (direct Postgres and PgBouncer)
-        # PGLite -> Postgres graduation (docs/guides/move-to-postgres.md): the
-        # agent flow, stale clients and respawned serves, SIGKILL at every
-        # custody boundary, faults, and the legacy copier. Every PR, with the
-        # transaction-mode pooler as a second target route (pooledUrl).
-        # Excluded from the selected matrix (scripts/e2e-matrix.ts) so they
-        # run once. Named files only, no glob.
-        shell: bash
-        run: bash scripts/run-e2e.sh test/e2e/graduation-cli.test.ts test/e2e/graduation-cli-topologies.test.ts test/e2e/graduation-cli-history.test.ts test/e2e/graduation-cli-zero-mutation-1.test.ts test/e2e/graduation-cli-zero-mutation-2.test.ts test/e2e/graduation-cli-zero-mutation-3.test.ts test/e2e/graduation-clients.test.ts test/e2e/graduation-clients-serve.test.ts test/e2e/graduation-crash-run-1.test.ts test/e2e/graduation-crash-run-2.test.ts test/e2e/graduation-crash-run-3.test.ts test/e2e/graduation-crash-rollback-1.test.ts test/e2e/graduation-crash-rollback-2.test.ts test/e2e/graduation-faults.test.ts test/e2e/graduation-legacy-copy.test.ts
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
-          GBRAIN_PGBOUNCER_URL: postgresql://postgres:postgres@localhost:55433/gbrain_test?prepare=false
-          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
-          GBRAIN_TEST_DB: '1'
-          E2E_FILE_TIMEOUT_SECS: '900'
-          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
-          GBRAIN_TEST_RECEIPT_LANE: tier1
       - name: Run multi-agent serve suite
         # cathedral-6 (T7): multi-agent continuity + isolation over a real
         # `gbrain serve --http`. Own invocation line (engine-parity
@@ -468,6 +451,94 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: receipts-tier1
+          path: ${{ runner.temp }}/receipts
+          retention-days: 14
+          if-no-files-found: warn
+          overwrite: true
+
+  # PGLite -> Postgres graduation (docs/guides/move-to-postgres.md), split
+  # from Tier 1 (GBRA-135 L2): the files run one at a time, so the step took
+  # about 891 s on 16 vCPUs and set the E2E critical path. On 8 vCPUs it took
+  # 712-958 s whole (GBRA-135 pilot), so two weighted shards on 8 vCPUs halve
+  # it. Same 15 named files, same direct Postgres and PgBouncer targets, same
+  # receipt lane (tier1).
+  tier1-graduation:
+    name: Tier 1 graduation (direct + PgBouncer) ${{ matrix.shard }}/2
+    needs: [prepare-e2e]
+    if: ${{ needs.prepare-e2e.outputs.reuse != 'true' }}
+    runs-on: ubicloud-standard-8-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: gbrain_test
+        ports:
+          - 5432:5432
+        options: >-
+          --shm-size=1g
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      pgbouncer:
+        image: edoburu/pgbouncer:latest
+        env:
+          DB_HOST: postgres
+          DB_PORT: '5432'
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          POOL_MODE: transaction
+          AUTH_TYPE: plain
+          MAX_CLIENT_CONN: '200'
+          DEFAULT_POOL_SIZE: '10'
+          IGNORE_STARTUP_PARAMETERS: extra_float_digits,statement_timeout,idle_in_transaction_session_timeout,search_path
+        ports:
+          - 55433:5432
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      # No cache restores: run-e2e.sh builds the PGLite snapshot itself in
+      # seconds, and the bounded install covers a cold Bun cache.
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile
+      - name: Run engine graduation suites (direct Postgres and PgBouncer)
+        # The agent flow, stale clients and respawned serves, SIGKILL at every
+        # custody boundary, faults, and the legacy copier. Every PR, with the
+        # transaction-mode pooler as a second target route (pooledUrl).
+        # Excluded from the selected matrix (scripts/e2e-matrix.ts) so they
+        # run once. Named files only, no glob; run-e2e.sh splits them by
+        # weight (SHARD).
+        shell: bash
+        run: bash scripts/run-e2e.sh test/e2e/graduation-cli.test.ts test/e2e/graduation-cli-topologies.test.ts test/e2e/graduation-cli-history.test.ts test/e2e/graduation-cli-zero-mutation-1.test.ts test/e2e/graduation-cli-zero-mutation-2.test.ts test/e2e/graduation-cli-zero-mutation-3.test.ts test/e2e/graduation-clients.test.ts test/e2e/graduation-clients-serve.test.ts test/e2e/graduation-crash-run-1.test.ts test/e2e/graduation-crash-run-2.test.ts test/e2e/graduation-crash-run-3.test.ts test/e2e/graduation-crash-rollback-1.test.ts test/e2e/graduation-crash-rollback-2.test.ts test/e2e/graduation-faults.test.ts test/e2e/graduation-legacy-copy.test.ts
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          GBRAIN_PGBOUNCER_URL: postgresql://postgres:postgres@localhost:55433/gbrain_test?prepare=false
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+          GBRAIN_TEST_DB: '1'
+          E2E_FILE_TIMEOUT_SECS: '900'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+          GBRAIN_TEST_RECEIPT_LANE: tier1
+          SHARD: ${{ matrix.shard }}/2
+      # #8003: the graduation files skip without DATABASE_URL and run-e2e.sh
+      # exits 0 on an all-skip run, so a shard with a broken database env
+      # fails here instead of passing with nothing executed.
+      - name: Require every graduation test to run
+        run: bun scripts/require-executed-tests.ts "$RUNNER_TEMP/receipts" tier1
+      - name: Upload receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: receipts-tier1-graduation-${{ matrix.shard }}
           path: ${{ runner.temp }}/receipts
           retention-days: 14
           if-no-files-found: warn
@@ -651,12 +722,14 @@ jobs:
 
   tier2:
     name: Tier 2 (LLM Skills)
-    # Runs on every push/PR (promoted from schedule-only in v0.19.0), in
-    # PARALLEL with tier1 (own postgres service — the old `needs: tier1`
-    # serialized ~2min for no shared state). The jsonb-parity gate (~40s)
-    # stays in front as the broken-build SPEND gate: this job burns real
-    # OpenAI/Anthropic tokens and must not fire when the build
-    # can't even pass the cheapest DB guard.
+    # Named exception: keyed, on the nightly E2E schedule (or a full_corpus
+    # dispatch) only (docs/TESTING.md#event-parity). Its three tests need the
+    # provider keys, which other events withhold; a keyless run skipped all of
+    # them and still went green (GBRA-237), so other events skip the job and
+    # e2e-status says Tier 2 did not run. Runs in PARALLEL with tier1 (own
+    # postgres service). The jsonb-parity gate (~40s) stays in front as the
+    # broken-build SPEND gate: this job burns real OpenAI/Anthropic tokens
+    # and must not fire when the build can't even pass the cheapest DB guard.
     # #5903: the repository variable GBRAIN_PAID_LANES='0' switches every
     # paid lane off (this job, the hermes door's paid leg and the OpenCode
     # credentialed lane in heavy-tests.yml) for forks and spend freezes.
@@ -667,7 +740,7 @@ jobs:
     # GitHub's `!=` coerces null and '0' both to the number 0, which would skip
     # this job on every repository that never set the variable.
     needs: jsonb-parity
-    if: format('{0}', vars.GBRAIN_PAID_LANES) != '0'
+    if: format('{0}', vars.GBRAIN_PAID_LANES) != '0' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus))
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 30
     services:
@@ -730,22 +803,16 @@ jobs:
         # moments ago) gets up to 4 attempts 20/40/80 s apart. Step cap is a backstop.
         timeout-minutes: 8
         run: scripts/ci-install-openclaw.sh
+      # #8002: OpenClaw reads MCP servers from mcp.servers in
+      # ~/.openclaw/openclaw.json; the script saves gbrain there with
+      # `openclaw mcp set`, fails unless `openclaw mcp show` reads it back,
+      # and puts scripts/ci-mcp-tap.sh in front of the server so the test step
+      # can require a gbrain tool call.
       - name: Configure OpenClaw MCP
-        run: |
-          mkdir -p ~/.openclaw
-          cat > ~/.openclaw/config.json << 'EOF'
-          {
-            "mcpServers": {
-              "gbrain": {
-                "command": "bun",
-                "args": ["run", "src/cli.ts", "serve"],
-                "env": {
-                  "DATABASE_URL": "${{ env.DATABASE_URL }}"
-                }
-              }
-            }
-          }
-          EOF
+        run: bash scripts/ci-openclaw-mcp.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          GBRAIN_TEST_TIER2_MCP_TAP_LOG: ${{ runner.temp }}/gbrain-mcp-tap.jsonl
       - name: Run Tier 2 skill tests
         run: bash scripts/run-with-receipt.sh tier2 skills -- bun test --timeout=60000 test/e2e/skills.test.ts
         env:
@@ -754,7 +821,15 @@ jobs:
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Keyed by decision (GBRA-108: Tier 2 keyed nightly, about $2 a week).
+          GBRAIN_TEST_KEEP_PROVIDER_KEYS: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+          # Each test requires a gbrain tool call in this log (#8002).
+          GBRAIN_TEST_TIER2_MCP_TAP_LOG: ${{ runner.temp }}/gbrain-mcp-tap.jsonl
+      # bun test exits 0 when every test skips (an empty secret, a missing
+      # openclaw agent), so a keyless or all-skip run fails here instead.
+      - name: Require every Tier 2 test to run
+        run: bun scripts/require-executed-tests.ts "$RUNNER_TEMP/receipts" tier2
       - name: Upload receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -764,14 +839,14 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
           overwrite: true
-      # Tier 2 runs keyless by decision (no paid spend): its bare `bun test`
-      # step does not set GBRAIN_TEST_KEEP_PROVIDER_KEYS, so the test preload
-      # strips the keys and this notice names the skip.
+      # The test step passes the keys (GBRAIN_TEST_KEEP_PROVIDER_KEYS=1); this
+      # notice names an empty secret when there is one.
       - name: Provider-key coverage notice
         if: ${{ !cancelled() }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GBRAIN_TEST_KEEP_PROVIDER_KEYS: '1'
         run: bash scripts/e2e-provider-key-notice.sh
 
   # ──────────────────────────────────────────────────────────────────────
@@ -1153,7 +1228,7 @@ jobs:
   # in e2e-status; baseline comparisons run locally with
   #   bun scripts/ci-executed-counts.ts --base-run <id> --head-run <id>
   executed-receipts:
-    needs: [prepare-e2e, jsonb-parity, tier1, tier1-backend-matrix, tier2, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-e2e]
+    needs: [prepare-e2e, jsonb-parity, tier1, tier1-graduation, tier1-backend-matrix, tier2, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-e2e]
     if: ${{ needs.prepare-e2e.outputs.reuse != 'true' && always() }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 10
@@ -1209,9 +1284,11 @@ jobs:
   # The stable aggregate includes full-profile execution lanes when requested.
   # Coverage reporting itself remains advisory; failed tests never do.
   # Named exception (docs/TESTING.md#event-parity): FULL_CORPUS adds the
-  # full-corpus lanes to the aggregate on the nightly schedule only.
+  # full-corpus lanes to the aggregate on the nightly schedule only, and
+  # Tier 2 (keyed) is required there; other events accept its skip with a
+  # "not run: keys withheld" notice.
   e2e-status:
-    needs: [jsonb-parity, tier1, tier1-backend-matrix, postgres15-compat, tier2, prepare-e2e, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
+    needs: [jsonb-parity, tier1, tier1-graduation, tier1-backend-matrix, postgres15-compat, tier2, prepare-e2e, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
     if: ${{ needs.prepare-e2e.outputs.reuse != 'true' && always() }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
@@ -1223,6 +1300,7 @@ jobs:
           FULL_CORPUS: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus) }}
           JSONB: ${{ needs.jsonb-parity.result }}
           TIER1: ${{ needs.tier1.result }}
+          GRADUATION: ${{ needs.tier1-graduation.result }}
           BACKEND_MATRIX: ${{ needs.tier1-backend-matrix.result }}
           POSTGRES15: ${{ needs.postgres15-compat.result }}
           TIER2: ${{ needs.tier2.result }}
@@ -1237,7 +1315,7 @@ jobs:
           GBRAIN_PAID_LANES: ${{ vars.GBRAIN_PAID_LANES }}
         run: |
           echo "event=$EVENT"
-          echo "jsonb-parity=$JSONB  tier1=$TIER1  tier1-backend-matrix=$BACKEND_MATRIX  postgres15-compat=$POSTGRES15  tier2=$TIER2  prepare-e2e=$PREPARE  selected-e2e=$SELECTED"
+          echo "jsonb-parity=$JSONB  tier1=$TIER1  tier1-graduation=$GRADUATION  tier1-backend-matrix=$BACKEND_MATRIX  postgres15-compat=$POSTGRES15  tier2=$TIER2  prepare-e2e=$PREPARE  selected-e2e=$SELECTED"
           if [ "$TIER2" = "skipped" ] && [ "$GBRAIN_PAID_LANES" = "0" ]; then
             echo "tier2 skipped: paid lanes disabled by the repository variable GBRAIN_PAID_LANES='0' (not green coverage of Tier 2)"
             echo "::notice::Tier 2 (LLM Skills) skipped: paid lanes disabled by GBRAIN_PAID_LANES='0'"
@@ -1247,7 +1325,16 @@ jobs:
             } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
             TIER2="success"
           fi
-          for r in "$JSONB" "$TIER1" "$BACKEND_MATRIX" "$POSTGRES15" "$TIER2" "$PREPARE" "$SELECTED"; do
+          if [ "$TIER2" = "skipped" ] && [ "$FULL_CORPUS" != "true" ]; then
+            echo "tier2 not run: provider keys are withheld outside the nightly E2E schedule (not green coverage of Tier 2)"
+            echo "::notice::Tier 2 (LLM Skills) not run: keys withheld; it runs keyed on the nightly E2E schedule"
+            {
+              echo "## Tier 2 (LLM Skills): not run, keys withheld"
+              echo "Tier 2 runs keyed on the nightly E2E schedule and on a \`full_corpus\` dispatch only. This is not green coverage of Tier 2."
+            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            TIER2="success"
+          fi
+          for r in "$JSONB" "$TIER1" "$GRADUATION" "$BACKEND_MATRIX" "$POSTGRES15" "$TIER2" "$PREPARE" "$SELECTED"; do
             if [ "$r" != "success" ]; then
               echo "✗ gated e2e job did not succeed (got $r) — E2E fail"
               exit 1

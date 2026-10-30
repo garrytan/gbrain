@@ -220,6 +220,21 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     if (ownerHost) await requireWriterAdminIntent(engine, 'writer_retry_effects', params);
     return (await import('./effect-retry.ts')).retryRequestEffects(engine, source(params.source_id), params.request_id, params.dry_run === true, config, embeddingRetryPolicy, ownerHost);
   }
+  if (operation === 'writer_settle_effects') {
+    keys(params, ['source_id', 'request_id', 'parked_code', 'unsettle', 'apply', 'expect', 'dry_run']);
+    bool(params, 'unsettle'); bool(params, 'apply');
+    if (params.apply === true && params.dry_run === true) throw invalid('settle-effects takes --dry-run or --apply, not both.',
+      'Preview with --dry-run, then run the apply_command it prints (--apply --expect <plan_hash>) after the user agrees.');
+    if (params.parked_code !== undefined && (typeof params.parked_code !== 'string' || !/^[a-z][a-z0-9_]*$/.test(params.parked_code))) throw invalid('Invalid --parked-code value.',
+      'Pass --parked-code as a snake_case code doctor parked_effects names, e.g. --parked-code git_target_unsafe.');
+    if (params.expect !== undefined && (typeof params.expect !== 'string' || !/^ph_[0-9a-f]{24}$/.test(params.expect))) throw invalid('Invalid --expect value.',
+      'Pass --expect exactly as the plan_hash the settle-effects preview printed (ph_ followed by 24 hex digits).');
+    const sourceId = source(params.source_id);
+    const requestId = params.request_id === undefined ? undefined : uuid(params.request_id, 'A valid original write request UUID is required.',
+      'Pass --request-id with the request id doctor parked_effects or gbrain sources writer status lists for the effect.');
+    return (await import('./effect-settle.ts')).settleEffects(engine, { sourceId, requestId, parkedCode: params.parked_code as string | undefined,
+      unsettle: params.unsettle === true, apply: params.apply === true, expect: params.expect as string | undefined });
+  }
   if (operation === 'source_add' || operation === 'source_lifecycle') {
     const { managedPersistenceEnabled } = await import('./ownership.ts');
     if (!await managedPersistenceEnabled(engine)) throw new OperationError('writer_coordinator_required',

@@ -14,7 +14,7 @@ import { configReadiness, probedReadiness, readinessHttpView, readinessTail, typ
 import { isEngineDegraded } from '../core/degraded-marker.ts';
 import { disabledOpsForPublishGates } from './publish-gates.ts';
 import type { InstructionTools } from './instructions.ts';
-import { advertisedOps, resolveAdvertisedSurface } from './surface.ts';
+import { advertisedOps, clientAdvertisedSurface } from './surface.ts';
 
 /** Readiness entries the instructions tail may name, most limiting first. */
 const TAIL_PRIORITY = ['embeddings', 'chat_llm', 'migrations', 'worker', 'facts_drain', 'local_transcripts'] as const;
@@ -37,7 +37,7 @@ export async function instructionReadiness(
 /** HTTP (OAuth and legacy bearer): the same filters tools/list applies, publish gates read on initialize. */
 export async function httpInstructionTools(
   engine: BrainEngine, config: GBrainConfig | null | undefined,
-  opts: { ops: readonly OperationMeta[]; surface: 'verbs' | 'starter' | 'full'; auth: AuthInfo; allowedOps?: ReadonlySet<string>; cache?: ReadinessCache },
+  opts: { ops: readonly OperationMeta[]; surface: 'verbs' | 'starter' | 'full'; auth: AuthInfo; allowedOps?: ReadonlySet<string>; cache?: ReadinessCache; advertise?: 'verbs' | 'starter' | 'full' | null },
 ): Promise<InstructionTools> {
   const gateDisabled = await disabledOpsForPublishGates(engine, config ?? undefined).catch(() => new Set(opts.ops.map(o => o.name)));
   const publishGates = publishGatesFromDisabled(opts.ops, gateDisabled);
@@ -45,8 +45,9 @@ export async function httpInstructionTools(
     isCallable(op, { transport: 'http', surface: opts.surface, scopes: opts.auth.scopes, publishGates, allowedOps: opts.allowedOps })
     && opAllowedForBoundClient(opts.auth, op)).map(op => op.name));
   const callable = opts.ops.filter(op => names.has(op.name));
-  const listed = opts.auth.surface ? callable : advertisedOps(callable, opts.surface, await resolveAdvertisedSurface(engine, config));
-  return { callable: n => names.has(n), readiness: await instructionReadiness(engine, config, 'http', opts.cache), hiddenCallable: callable.length - listed.length };
+  const listed = advertisedOps(callable, opts.surface, await clientAdvertisedSurface(opts.auth, engine, config, opts.advertise ?? null));
+  const listedNames = new Set(listed.map(op => op.name));
+  return { callable: n => listedNames.has(n), readiness: await instructionReadiness(engine, config, 'http', opts.cache), hiddenCallable: callable.length - listed.length };
 }
 
 /**

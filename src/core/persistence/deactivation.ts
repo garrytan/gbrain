@@ -163,7 +163,7 @@ const EFFECT_ROWS = `SELECT e.id::text AS effect_id, e.kind, e.state, COALESCE(e
  * the same vector) or an effect whose source was archived, replaced or removed.
  */
 export async function failedEffectHistory(engine: BrainEngine): Promise<FailedEffectEntry[]> {
-  const rows = await engine.executeRaw<EffectRow>(`${EFFECT_ROWS} WHERE e.state='failed' AND e.recovery IS NULL ORDER BY e.id LIMIT 50`);
+  const rows = await engine.executeRaw<EffectRow>(`${EFFECT_ROWS} WHERE e.state='failed' AND e.recovery IS NULL AND NOT (e.data ? 'settled') ORDER BY e.id LIMIT 50`);
   return rows.map(e => {
     const retry = `gbrain sources writer retry-effects ${e.source_id} --request-id ${e.request_id} --dry-run`;
     const [exit, why] = !e.source_live ? [null, 'its source was archived, replaced or removed, so nothing can run it']

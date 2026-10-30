@@ -1547,6 +1547,16 @@ Reasons: `symlink_in_repo`, `symlink_outside_root`, `symlink_dangling`, `symlink
 
 More: [docs/guides/write-refusals.md#file_unreadable](../../docs/guides/write-refusals.md#file_unreadable)
 
+### file_wins_rewrite
+
+<a id="file_wins_rewrite"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain repair file-drift --prefer file refused a page because keeping its file would need a full re-render of the file, not only appended protected parts; nothing was written. | File wins keeps the canonical file's bytes and adds only what reconcile's protections keep from the database: protected frontmatter keys the file lacks and database-only timeline rows, appended. A result that also changes a value, a tag, the title or the body would re-render the whole file (keys reordered, lists re-emitted, rules and headings rewritten), which is not the file winning. | Show the user the page's exceptions in the preview. Commit the database-only differences into the file through the door (`gbrain git commit-push`) and preview again, or preview `--prefer database` if the database copy should win. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#file_wins_rewrite](../../docs/guides/write-refusals.md#file_wins_rewrite)
+
 ### fix_not_writable
 
 <a id="fix_not_writable"></a>
@@ -1697,7 +1707,7 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#conversion](../../docs/designs/GIT_C
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A git-canonical conversion stopped because its strict pass did not finish, or finished with work left after the flag was set. | The conversion runs a full strict-equivalent pass before it sets canonical: git, and one genuine strict pass after. A pass that ends partial, blocked or deferred stops the conversion where it is: before the flag the source stays as it was, after it the source stays strict (Git wins) and the plan lists what is left. | Wait until gbrain sync status --source <id> --json shows the source idle, then preview again with gbrain sources canonical <id> --to git --dry-run and apply the new hash. | agent | `repeat the read that failed` | 1 | yes |
+| A git-canonical conversion stopped because its strict pass did not finish, or finished with work left after the flag was set. | The conversion runs a full strict-equivalent pass before it sets canonical: git, and one genuine strict pass after, then up to three closing strict passes while only door commits a live writer landed meanwhile are left (Git ahead of the database). A pass that ends partial, blocked or deferred stops the conversion where it is: before the flag the source stays as it was, after it the source stays strict (Git wins) and the plan lists what is left. | Wait until gbrain sync status --source <id> --json shows the source idle, then preview again with gbrain sources canonical <id> --to git --dry-run and apply the new hash. | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/designs/GIT_CANONICAL_MEMORY.md#conversion](../../docs/designs/GIT_CANONICAL_MEMORY.md#conversion)
 
@@ -4089,6 +4099,16 @@ More: [docs/guides/write-refusals.md#slug_page_mismatch](../../docs/guides/write
 |---|---|---|---|---|---|---|
 | Canonical preparation requires a source-content correction; this profile never writes repository files. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### sources_not_readable
+
+<a id="sources_not_readable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An unscoped search, query, recall or list_pages came back empty and was refused: every source this connection can read (the default source and federated sources) holds no page (for recall and query, no world fact either), while other sources on the brain hold pages it cannot read (not federated, and no source grant). | Answering would return an empty result that reads like a clean miss. The refusal names the host command that federates a source or grants this connection the sources it should read; it never names a hidden source and never widens access. A scope that holds pages but matched nothing, a granted token, an OAuth client, a bound connection and a read that names a source are never refused. | Ask the user which source these connections should read; the brain host runs `gbrain sources federate <source>`, or grants the token its sources with `gbrain auth rescope --token <name> --sources <ids>`. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/multi-source-brains.md#an-unscoped-connection-whose-sources-hold-no-pages](../../docs/guides/multi-source-brains.md#an-unscoped-connection-whose-sources-hold-no-pages)
+
 ### split_bad_ratio
 
 <a id="split_bad_ratio"></a>
@@ -4377,6 +4397,18 @@ Reasons: `corpus_source_other`, `corpus_source_unresolved`, `corpus_legacy_unsta
 |---|---|---|---|---|---|---|
 | The operation runs only from the trusted local CLI on the brain host; no MCP connection can call it. | Only the operator of the brain host can change what blocks this. | Ask the user to run the named gbrain command on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### turn_hook_not_loaded
+
+<a id="turn_hook_not_loaded"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The per-turn hook that puts "check gbrain first" next to every user turn is missing, untrusted, or does not load in the harness. | Agents use the brain when that rule reaches them on every turn; registering the MCP server or writing an instruction file alone leaves them answering without it. | Correct the request using the message above, then retry. Run: gbrain doctor --only harness_wiring --json | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `missing`, `untrusted`, `hook_failed`, `no_rule`, `not_loaded`.
+
+More: [docs/guides/repair.md#turn-hook-not-loaded](../../docs/guides/repair.md#turn-hook-not-loaded)
+
 ### two_consumers_on_host
 
 <a id="two_consumers_on_host"></a>
@@ -4653,7 +4685,7 @@ More: [docs/ENGINES.md#vector-index-prewarm](../../docs/ENGINES.md#vector-index-
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A file asks for visibility: private in a spelling page privacy does not read, so sync or import held it instead of storing it world-readable. | Page privacy reads only the exact lowercase key and value visibility: private. A file that spells it another way (Visibility: private, visibility: Private, a block scalar, a list, a flow mapping or a merge key) would be stored as a world page while its author believes it is private (#7848); put_page, edit_page and capture refuse the same request as visibility_not_applied. | Write visibility: private on its own frontmatter line (lowercase key and value), then commit and sync, or import the file again. | agent | `repeat the read that failed` | 1 | no |
+| A file asks for visibility: private in a spelling page privacy does not read, so sync or import held it instead of storing it world-readable. | Page privacy reads only the exact lowercase key and value visibility: private. A file that spells it another way (Visibility: private, visibility: Private, a block scalar, a list, a flow mapping or a merge key) would be stored as a world page while its author believes it is private (#7848); put_page, edit_page, capture, ingest_capture, brainstorm --save and sources reconcile refuse the same request as visibility_not_applied. | Write visibility: private on its own frontmatter line (lowercase key and value), then commit and sync, or import the file again. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#visibility_noncanonical](../../docs/guides/write-refusals.md#visibility_noncanonical)
 

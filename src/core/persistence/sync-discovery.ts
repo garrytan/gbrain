@@ -36,6 +36,7 @@ import { holdBasisMoved, holdRescreenDue, readGitHoldRetryPaths, readGitSourceHo
 import { readBlobContents, readTreeBlobs, SYNC_READ_BOUND } from './sync-blobs.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { readOriginEvidence } from './sync-origin-evidence.ts';
+import { sourceDbOnlyVerdict } from './source-storage.ts';
 import { movedDriftHolds, prescreenSyncEntries, type SyncDriftSide } from './sync-prescreen.ts';
 import { sliceEntries, type SyncSliceCursor, type SyncSliceState } from './sync-slices.ts';
 
@@ -84,6 +85,8 @@ export interface SyncDiscovery { binding: WorktreeBinding; root: string; gitRoot
   workingTreeKept?: string[];
   /** #7130: live pages whose file is absent but Git never committed it (or `.gitignore` excludes it): kept, never deleted. */
   uncommittedKept?: string[];
+  /** #8007: live pages whose file is absent while gbrain.yml's storage section is invalid, so whether each is database-only is unknown: kept, never deleted. */
+  storageInvalidKept?: string[];
   /** #6349 (P4.4): this discovery is one path slice of its target; the checkpoint records it instead of advancing `last_commit` until `done`. */
   slice?: SyncSliceState;
   /** #6729: inexact Git renames split into a delete plus an add (origin form); recorded after the run commits. */
@@ -372,6 +375,20 @@ async function dropUncommittedDeletes(gitRoot: string, tips: Array<string | null
   return kept;
 }
 
+/**
+ * #7324: a delete under a declared storage.db_only dir is retired (its database row is canonical). #8007: while gbrain.yml's
+ * storage section is invalid, whether a path is database-only is unknown, so its delete is retired too and named.
+ */
+function retireDbOnlyDeletes(root: string, entries: readonly SyncEntry[], retired: Set<SyncEntry>): { storageInvalidKept?: string[] } {
+  const storageInvalidKept: string[] = [];
+  for (const entry of entries) {
+    const dbOnly = entry.action === 'delete' && entry.slug ? sourceDbOnlyVerdict(root, entry.slug) : false;
+    if (dbOnly) retired.add(entry);
+    if (dbOnly === 'unknown') storageInvalidKept.push(entry.path);
+  }
+  return storageInvalidKept.length ? { storageInvalidKept } : {};
+}
+
 export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, context?: ManagedSyncContext,
   stage?: { target: string; head: string; slice?: Pick<SyncSliceCursor, 'phase' | 'after'> }, walk = false): Promise<SyncDiscovery> {
   const { binding, root, gitRoot, sourceId, incarnation, source } = context ?? await resolveManagedSyncContext(engine, opts);
@@ -658,6 +675,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
       else winner.renameHeld = held;
     }
   }
+  if (!company) Object.assign(discovered, retireDbOnlyDeletes(root, selected, retired));
   if (retired.size) discovered.entries = selected.filter(entry => !retired.has(entry));
   if (collisions.length) discovered.slugCollisions = collisions;
   // Identities and origin collisions were resolved over the whole target above; only the frozen manifest is cut.
