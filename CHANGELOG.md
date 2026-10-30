@@ -17,7 +17,7 @@ identifiers and attribution are available in the pre-removal Git revision
 These are four fixes to the Git-canonical door and the schema it guards.
 
 - **Extract receipts.** Receipts used to stay unchunked, so every remote `search` and `query` on an extracted source reported `safe_index_pending` until someone ran a repair. They are now sealed in the transaction that writes them.
-- **Dry run.** `gbrain git commit-push --dry-run` used to pass paths that the real run then refused: a sparse-checkout exclusion, a path outside the source root, or another writer's staged file. It now runs the real run's checks and exits 1 with the same error.
+- **Dry run.** `gbrain git commit-push --dry-run` used to pass paths that the real run then refused: a sparse-checkout exclusion, a path outside the source root, or another writer's staged file. It now runs the real run's checks and exits 1 with the same error. A tracked file deleted or modified under an ignore rule such as `*` now commits through the door too.
 - **Untrack.** Hygiene scripts that need `git rm --cached` now have a door path: `--untrack`.
 - **Older binaries.** An older gbrain binary that runs `gbrain init` or `apply-migrations` against a brain that a newer gbrain migrated now refuses with `client_behind`. Before, it reinstalled its own older function bodies.
 
@@ -37,6 +37,7 @@ gbrain doctor --only schema_function_bodies                         # installed 
 | `commit-push --dry-run` on a path outside a non-cone sparse-checkout definition or the source root, or with another writer's change staged | Exit 0, with the path listed | Exit 1 with the real run's `commit_paths_invalid`, `commit_outside_source_root` or `commit_prestaged_paths` |
 | Untracking a file that should never have been committed | Raw `git rm --cached` outside the writer lock, or `nothing_to_commit` through the door | `--untrack` uses the same lock and the same push path, and takes the commit back if it touches anything beyond the named paths |
 | An older binary runs `gbrain init`, `apply-migrations` (including `--force-schema`) or `upgrade` against a newer schema | Its schema replay reinstalled older function bodies, including the write guards | Refuses with `client_behind` before anything runs. Doctor's `schema_function_bodies` check flags drifted bodies |
+| A tracked file deleted or modified under an ignore rule such as `*`, named to `commit-push` | `commit_paths_invalid` with the change left staged, so it could never be published | The change commits and pushes. A named ignored new file still refuses, and a refusal leaves the index as it was |
 | A path with glob characters in the `brain-commit-push.sh` fallback | Committing `[ab].md` also committed `a.md` | Every path is literal |
 
 Receipts are database-only bookkeeping on every brain, with or without a Git repository. They are never exported to Git, and a canonical conversion classes them `derive_folder`. The `client_behind` refusal, the doctor check and the receipt fix behave the same on a repo-less brain. `--untrack` and the dry-run checks need a checkout, as `commit-push` always has.

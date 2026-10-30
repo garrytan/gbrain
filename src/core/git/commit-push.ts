@@ -25,7 +25,7 @@
  * (#7010; the owner's Git effects publish this way). CLI-only; never exposed
  * over MCP (it pushes with host credentials).
  */
-import { appendFileSync, copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { execFileSync } from '../spawn.ts';
@@ -445,9 +445,8 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
   admitPaths(root, rel, scope.roots);
   const before = indexEntries(root, rel);
   if (scope.untrack) return untrackPaths(root, rel, message, scope, before);
-  const add = withIndexRetry(root, stageArgs(rel, false), 'git add');
-  if (add.code !== 0) throw pathsRefused(add, false);
   try {
+    stagePaths(root, rel);
     const paths = withRenamePartners(root, rel);
     const partners = paths.filter(p => !insideSourceRoots(p, scope.roots));
     if (partners.length) throw outsideRootError(root, scope.roots, partners, 'A staged rename would commit');
@@ -470,6 +469,35 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
 /** The real run's staging of `rel`: `git add -A`, or `git rm --cached -r` when untracking; `dryRun` asks git without changing the index. */
 const stageArgs = (rel: string[], untrack: boolean, dryRun = false) => [...(untrack ? ['rm', '--cached', '-r', '-q'] : ['add', '-A']), ...(dryRun ? ['-n'] : []), '--', ...literalPathspecs(rel)];
 
+/**
+ * #7984: a commit's staging of `rel`. A tracked file, or a tracked path gone from disk, stages with `git add -u`: it
+ * only updates index entries, so an ignore rule (`*`) does not refuse it and it never adds an untracked file. A deletion
+ * already staged needs nothing; a path that is not on disk, staged or in HEAD is refused. Every other path (a new file,
+ * a directory on disk) goes through `git add -A`, which still refuses an ignored new file. `dryRun` asks git without
+ * changing the index.
+ */
+function stagePaths(root: string, rel: string[], env?: NodeJS.ProcessEnv, dryRun = false): void {
+  const update: string[] = [];
+  const add: string[] = [];
+  for (const path of rel) {
+    const staged = git(root, ['ls-files', '-z', '--', ...literalPathspecs([path])], { env }).stdout.split('\0').filter(Boolean);
+    let onDisk = true;
+    try { lstatSync(join(root, path)); } catch { onDisk = false; }
+    if (staged.length && (!onDisk || (staged.length === 1 && staged[0] === path))) update.push(path);
+    else if (onDisk) add.push(path);
+    else if (!git(root, ['ls-tree', '-r', '--name-only', 'HEAD', '--', ...literalPathspecs([path])]).stdout.trim()) {
+      throw opError('commit_paths_invalid', `${path} matches no file: it is not on disk, staged or in the last commit.`,
+        'Name files the working tree or the branch\'s last commit holds.', { detail: path });
+    }
+  }
+  for (const [mode, paths] of [['-u', update], ['-A', add]] as const) {
+    if (!paths.length) continue;
+    const args = ['add', mode, ...(dryRun ? ['-n'] : []), '--', ...literalPathspecs(paths)];
+    const r = dryRun ? git(root, args, { env }) : withIndexRetry(root, args, 'git add', env);
+    if (r.code !== 0) throw pathsRefused(r, false);
+  }
+}
+
 const pathsRefused = (r: GitRun, untrack: boolean) => opError('commit_paths_invalid', `git ${untrack ? 'rm --cached' : 'add'} refused the given paths.`,
   r.stderr.trim().slice(0, 300) || 'Check the paths exist or are tracked.');
 
@@ -491,8 +519,10 @@ export function previewPaths(root: string, rel: string[], opts: { untrack?: bool
     const live = absGitPath(root, 'index');
     if (existsSync(live)) copyFileSync(live, index);
     const env = { GIT_INDEX_FILE: index };
-    const r = git(root, stageArgs(rel, untrack, true), { env });
-    if (r.code !== 0) throw pathsRefused(r, untrack);
+    if (untrack) {
+      const r = git(root, stageArgs(rel, true, true), { env });
+      if (r.code !== 0) throw pathsRefused(r, true);
+    } else stagePaths(root, rel, env, true);
     const partners = untrack ? [] : withRenamePartners(root, rel, env).filter(p => !insideSourceRoots(p, roots));
     if (partners.length) throw outsideRootError(root, roots, partners, 'A staged rename would commit');
   } finally {

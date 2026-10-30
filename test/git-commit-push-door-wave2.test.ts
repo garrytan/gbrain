@@ -9,6 +9,10 @@
  *     under a named directory, a staged rename's other side outside the root; its envelope equals the real run's.
  *   - #7753: `--untrack` removes exactly the named paths from the index and Git, keeps the files on disk, and leaves
  *     through the same commit lock and publish as an ordinary commit; a commit carrying anything else is taken back.
+ *   - #7984: a tracked file deleted or modified under a wildcard ignore (`*`), the deletion on disk only or already
+ *     staged, commits and pushes through the door, dry run included (red before: commit_paths_invalid, the change left
+ *     staged). A named ignored
+ *     new file still refuses in both runs, and a refusal leaves the index entries as they were.
  *   - #7793 item 2: the fix and verify commands printed for a staged file read each path literally.
  * Repo-less: commit-push needs a checkout; a directory that is not one refuses the same way with or without --untrack.
  * Seams: none; real repositories and a bare remote, the real CLI for the flags.
@@ -315,5 +319,80 @@ describe('#7793 item 2: printed fix and verify commands read each path literally
     run(error!.fix!.argv);
     expect(run(error!.fix!.verify.argv)).toBe('');
     expect(status(root)).toEqual([' M :lead.md', ' M notes/[ab].md', 'M  lead.md', 'M  notes/a.md']);
+  });
+});
+
+describe('#7984: a tracked deletion or modification under a wildcard ignore publishes; ignored new files still refuse', () => {
+  /** art/x.txt and art/y.txt committed, then a committed .gitignore that ignores everything but itself. */
+  function ignoredAll(): { root: string; bare: string } {
+    const { root, bare } = checkout({ 'art/x.txt': 'x\n', 'art/y.txt': 'y\n' });
+    put(root, '.gitignore', '*\n!.gitignore\n');
+    git(root, 'add', '.gitignore'); git(root, 'commit', '-qm', 'ignore everything'); git(root, 'push', '-q', 'origin', 'main');
+    return { root, bare: bare! };
+  }
+
+  for (const staged of [false, true]) {
+    test(`a deletion ${staged ? 'already staged' : 'on disk only'}: the dry run and the real run agree, and the commit carries only the deletion`, async () => {
+      const { root, bare } = ignoredAll();
+      if (staged) git(root, 'rm', '-q', 'art/x.txt'); else unlinkSync(join(root, 'art/x.txt'));
+      const before = indexBytes(root);
+      const preview = await cli(root, ['--dry-run', '-m', 'drop x', '--', 'art/x.txt']);
+      expect(preview.exitCode).toBe(0);
+      expect(indexBytes(root)).toBe(before);
+      const run = await cli(root, ['-m', 'drop x', '--', 'art/x.txt']);
+      expect(run.exitCode).toBe(0);
+      expect(changed(bare, 'main')).toEqual(['D', 'art/x.txt']);
+      expect(git(root, 'rev-parse', 'HEAD')).toBe(git(bare, 'rev-parse', 'main'));
+      expect(git(bare, 'show', 'main:art/y.txt')).toBe('y');
+      expect(status(root)).toEqual([]);
+    });
+  }
+
+  test('a tracked modification: the dry run and the real run agree, and the commit carries only the modification', async () => {
+    const { root, bare } = ignoredAll();
+    put(root, 'art/y.txt', 'y edited\n');
+    put(root, 'art/new.txt', 'ignored and untracked\n');
+    const before = indexBytes(root);
+    const preview = await cli(root, ['--dry-run', '-m', 'edit y', '--', 'art/y.txt']);
+    expect(preview.exitCode).toBe(0);
+    expect(JSON.parse(preview.stdout)).toMatchObject({ dry_run: true, paths: ['art/y.txt'] });
+    expect(indexBytes(root)).toBe(before);
+    expect((await cli(root, ['-m', 'edit y', '--', 'art/y.txt'])).exitCode).toBe(0);
+    expect(changed(bare, 'main')).toEqual(['M', 'art/y.txt']);
+    expect(git(bare, 'show', 'main:art/y.txt')).toBe('y edited');
+    expect(git(root, 'ls-files').split('\n')).toEqual(['.gitignore', 'art/x.txt', 'art/y.txt', 'seed.md']);
+    expect(status(root)).toEqual([]);
+  });
+
+  test('an ignored new file named beside the deletion refuses in both runs; the index, HEAD and remote stay as they were', async () => {
+    const { root, bare } = ignoredAll();
+    unlinkSync(join(root, 'art/x.txt'));
+    put(root, 'art/new.txt', 'ignored and untracked\n');
+    const head = git(root, 'rev-parse', 'HEAD');
+    const before = git(root, 'ls-files', '-s');
+    for (const paths of [['art/new.txt'], ['art/x.txt', 'art/new.txt']]) {
+      const preview = await cli(root, ['--dry-run', '-m', 'm', '--', ...paths]);
+      const run = await cli(root, ['-m', 'm', '--', ...paths]);
+      expect(preview.exitCode).toBe(1);
+      expect(JSON.parse(preview.stdout)).toMatchObject({ code: 'commit_paths_invalid' });
+      expect(JSON.parse(run.stdout)).toEqual(JSON.parse(preview.stdout));
+      expect(git(root, 'ls-files', '-s')).toBe(before);
+      expect(status(root)).toEqual([' D art/x.txt']);
+    }
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
+    expect(git(bare, 'rev-parse', 'main')).toBe(head);
+    expect(git(root, 'ls-files').split('\n')).toEqual(['.gitignore', 'art/x.txt', 'art/y.txt', 'seed.md']);
+  });
+
+  test('a path that is not on disk, staged or in the last commit refuses before anything changes', async () => {
+    const { root, bare } = ignoredAll();
+    const head = git(root, 'rev-parse', 'HEAD');
+    for (const mode of [['--dry-run'], []]) {
+      const r = await cli(root, [...mode, '-m', 'm', '--', 'art/never.txt']);
+      expect(r.exitCode).toBe(1);
+      expect(JSON.parse(r.stdout)).toMatchObject({ code: 'commit_paths_invalid' });
+    }
+    expect(git(bare, 'rev-parse', 'main')).toBe(head);
+    expect(status(root)).toEqual([]);
   });
 });
