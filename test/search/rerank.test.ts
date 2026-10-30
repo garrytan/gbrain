@@ -79,6 +79,30 @@ describe('applyReranker — happy path', () => {
     expect(out.map(r => r.slug)).toEqual(['c', 'a', 'b']);
   });
 
+  test('preserves only the incoming rank-1 title winner through reranking', async () => {
+    const canonical = makeResult('canonical', 1.0, 'canonical page');
+    canonical.title_match_boost = 1.25;
+    const lowerTitleMatch = makeResult('lower-title-match', 0.9, 'derivative page');
+    lowerTitleMatch.title_match_boost = 1.25;
+    const semanticWinner = makeResult('semantic-winner', 0.8, 'rich derivative');
+    const results = [canonical, lowerTitleMatch, semanticWinner];
+    const opts: RerankerOpts = {
+      enabled: true,
+      topNIn: 3,
+      topNOut: null,
+      rerankerFn: async () => [
+        { index: 2, relevanceScore: 0.99 },
+        { index: 1, relevanceScore: 0.8 },
+        { index: 0, relevanceScore: 0.1 },
+      ],
+    };
+
+    const out = await applyReranker('named thing', results, opts);
+
+    expect(out.map(r => r.slug)).toEqual(['canonical', 'semantic-winner', 'lower-title-match']);
+    expect(out.map(r => r.reranker_delta)).toEqual([0, 1, -1]);
+  });
+
   test('un-reranked tail preserves original RRF order', async () => {
     const results = [
       makeResult('head1', 1.0, 'h1'),

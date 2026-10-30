@@ -20,6 +20,8 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import {
   applySupersedeDownrank,
+  applySupersedeDownrankPostRerank,
+  stampUnverifiedExtractions,
   SUPERSEDE_PENALTY,
   _resetSupersedeProbeForTests,
 } from '../../src/core/search/hybrid.ts';
@@ -161,5 +163,54 @@ describe('applySupersedeDownrank', () => {
     await applySupersedeDownrank(results, stub);
     expect(results[0].superseded).toBe(true);
     expect(results[0].superseded_by).toBe('notes/canon');
+  });
+
+  test('local status: superseded marker downranks without a supersedes edge', async () => {
+    const stale = await engine.putPage('notes/status-stale', {
+      type: 'note', title: 'Stale', compiled_truth: 'retired', frontmatter: { status: 'superseded' },
+    });
+    const current = await engine.putPage('notes/status-current', {
+      type: 'note', title: 'Current', compiled_truth: 'current',
+    });
+    const results = [res(stale.slug, stale.id), res(current.slug, current.id)];
+    results[0]!.score = 1.1;
+    await stampUnverifiedExtractions(engine, results);
+    await applySupersedeDownrank(results, engine);
+    results.sort((a, b) => b.score - a.score);
+
+    expect(results[0]!.slug).toBe(current.slug);
+    const retired = results.find((r) => r.page_id === stale.id)!;
+    expect(retired.status).toBe('superseded');
+    expect(retired.superseded).toBe(true);
+    expect(retired.score).toBeCloseTo(1.1 * SUPERSEDE_PENALTY, 6);
+  });
+
+  test('local superseded_by frontmatter downranks and names the successor without a link', async () => {
+    const stale = await engine.putPage('notes/frontmatter-stale', {
+      type: 'note', title: 'Stale', compiled_truth: 'retired',
+      frontmatter: { superseded_by: 'notes/frontmatter-current' },
+    });
+    const results = [res(stale.slug, stale.id)];
+    await stampUnverifiedExtractions(engine, results);
+    await applySupersedeDownrank(results, engine);
+
+    expect(results[0]!.superseded).toBe(true);
+    expect(results[0]!.superseded_by).toBe('notes/frontmatter-current');
+    expect(results[0]!.score).toBeCloseTo(SUPERSEDE_PENALTY, 6);
+  });
+
+  test('supersession penalty survives reranker ordering', () => {
+    const retired = res('notes/retired', 1);
+    retired.superseded = true;
+    retired.rerank_score = 2.4;
+    const current = res('notes/current', 2);
+    current.rerank_score = 2.0;
+    const results = [retired, current];
+
+    applySupersedeDownrankPostRerank(results);
+
+    expect(results[0]!.slug).toBe('notes/current');
+    expect(retired.rerank_score).toBeCloseTo(2.4 * SUPERSEDE_PENALTY, 6);
+    expect(retired.supersede_penalty).toBe(SUPERSEDE_PENALTY);
   });
 });

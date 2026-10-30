@@ -1736,16 +1736,16 @@ export interface BrainEngine {
    * `frontmatter.status` value. Each entry reports the raw status string plus
    * whether the page is an unverified auto-extracted entity stub (frontmatter
    * `provenance: 'auto-extracted'` + `status: 'unverified'`). Used by hybrid
-   * search to stamp `SearchResult.status` (always) and
-   * `SearchResult.unverified` (quarantine special case) pre-fusion so the
-   * fusion-level compiled-truth boost skips stubs. Single SQL query, not
+   * search to stamp `SearchResult.status`/`superseded_by` (a page with only
+   * `superseded_by` also gets an entry) and `SearchResult.unverified` pre-fusion
+   * so the compiled-truth boost skips stubs. Single SQL query, not
    * N+1. Empty input → empty map (no query). The quarantine predicate is the
    * shared `unverifiedExtractionFragment` (src/core/extraction-review.ts).
    */
   getUnverifiedExtractionPageIds(
     pageIds: number[],
     opts?: PageReadScope,
-  ): Promise<Map<number, { unverified: boolean; status: string }>>;
+  ): Promise<Map<number, { unverified: boolean; status?: string; superseded_by?: string }>>;
   /**
    * v0.27.0: for a list of slugs, return their updated_at timestamps (or created_at fallback).
    * Used by hybrid search recency boost. Single SQL query, not N+1.

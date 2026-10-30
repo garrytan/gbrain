@@ -57,9 +57,10 @@ describe('identity tiers keep the reranker order', () => {
     expect(out[0].score).toBeGreaterThan(0.9);
   });
 
-  test('score-ordered (un-reranked) input: the 1.10x present boost still climbs past lower scores', async () => {
+  test('score-ordered (un-reranked) input: an exact alias hit is promoted to the top, the rest keep input order', async () => {
     const fused = [mk('a', 0.9), mk('b', 0.5), mk('c', 0.48), mk('d', 0.1)];
     const out = await applyAliasHop(aliasEngine('c', 'c'), fused, 'c', {});
-    expect(out.map(r => r.slug)).toEqual(['a', 'c', 'b', 'd']);
+    expect(out.map(r => r.slug)).toEqual(['c', 'a', 'b', 'd']);
+    expect(out[0].score).toBeGreaterThan(0.9);
   });
 });

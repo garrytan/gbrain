@@ -150,5 +150,7 @@ export function conceptWriter(deps: ConceptWriterDeps) {
     },
     /** Managed: publish whatever is queued. */
     flush,
+    /** Managed: how many queued concepts no flush has published yet. */
+    queued: () => pending.length,
   };
 }

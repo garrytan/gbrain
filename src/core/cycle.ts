@@ -1574,6 +1574,7 @@ async function runPhaseExtractFacts(
         phantoms_ambiguous: result.phantomsAmbiguous,
         phantoms_skipped_drift: result.phantomsSkippedDrift,
         phantoms_held_legacy_rows: result.phantomsHeldLegacyRows,
+        phantoms_skipped_disabled: result.phantomsSkippedDisabled,
         phantoms_lock_busy: result.phantomsLockBusy,
         phantoms_more_pending: result.phantomsMorePending,
         ...(decideConflict ? { decide_conflict: decideConflict } : {}),
@@ -2617,6 +2618,8 @@ async function runCycleUnscoped(
       } else {
         progress.start('cycle.synthesize_concepts');
         const { runPhaseSynthesizeConcepts } = await import('./cycle/synthesize-concepts.ts');
+        // A real signal (as extract_atoms gets) so a timeout or lock steal cancels the narrative call and late publication.
+        const scSignal = cycleSignal ? anyAbortSignal([cycleSignal]) : null;
         const { result, duration_ms } = await racedTimePhase(() => runPhaseSynthesizeConcepts(engine, {
           brainDir: brainDir ?? undefined,
           // #4416: thread the cycle's resolved source into the phase's page/
@@ -2625,11 +2628,12 @@ async function runCycleUnscoped(
           // any brain without a source literally named 'default'.
           sourceId: cycleSourceId,
           dryRun,
+          signal: scSignal?.signal,
           // v0.41.19.0 (T3): closure refreshes cycle lock + fires outer hook.
           yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase, onStolen),
           // v0.41.19.0 (T4): pass same reporter (not a child).
           progress,
-        }), 'synthesize_concepts');
+        }), 'synthesize_concepts').finally(() => scSignal?.dispose());
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();

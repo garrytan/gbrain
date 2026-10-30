@@ -11,7 +11,7 @@ import { normalizeAlias } from './alias-normalize.ts';
 import { isPrivatePage } from './private-visibility.ts';
 
 // T3 — free-text alias hop tuning.
-const ALIAS_HOP_PRESENT_BOOST = 1.10; // bounded boost when canonical already in results
+const ALIAS_HOP_PRESENT_BOOST = 1.10; // score lower bound when a present canonical is promoted
 const MAX_ALIAS_QUERY_TOKENS = 6;     // skip long queries (clearly not a chosen name)
 const MAX_ALIAS_INJECT = 3;           // cap injected pages per query (collision safety)
 
@@ -28,11 +28,12 @@ const MAX_ALIAS_INJECT = 3;           // cap injected pages per query (collision
  *   - FULL normalized-query exact match only (not substring / not n-grams) —
  *     "light" won't fire unless the whole query normalizes to a stored alias.
  *   - skip queries longer than MAX_ALIAS_QUERY_TOKENS (clearly prose, not a name).
- *   - bounded: present-boost is 1.10x; inject score is top-of-organic + ε,
- *     never an absolute 1.0 (D3 — aliases are not a ranking sledgehammer).
- *   - order-preserving: injected rows go to the front and a boosted row only
- *     climbs past lower-scored rows directly above it; every other row keeps
- *     its input (reranked) order.
+ *   - an exact human-authored alias promotes an already-present canonical to
+ *     the same top-of-organic + ε position the absent-injection branch uses;
+ *     1.10x stays a lower bound on its score. Inject score is top-of-organic
+ *     + ε, never an absolute 1.0 (D3 — aliases are not a ranking sledgehammer).
+ *   - order-preserving: alias rows (injected or promoted) go to the front;
+ *     every other row keeps its input (reranked) order.
  *   - collisions (two pages claim one alias): deterministic alpha order, capped.
  *
  * Fail-open: pre-v110 brains (no page_aliases table) and any lookup error
@@ -130,19 +131,18 @@ export async function applyAliasHopLookup(
   let injectScore = topOrganicScore(out);
 
   for (const ref of ordered) {
-    let idx = out.findIndex(r => r.slug === ref.slug && (r.source_id ?? 'default') === ref.source_id);
+    const idx = out.findIndex(r => r.slug === ref.slug && (r.source_id ?? 'default') === ref.source_id);
     if (idx >= 0) {
-      const hit = out[idx];
-      if (Number.isFinite(hit.score)) hit.score *= ALIAS_HOP_PRESENT_BOOST;
-      hit.alias_hit = true;
-      // Bubble the boosted row past lower-scored rows directly above it; never
-      // re-sort the list, which would discard a reranked order (post-rerank
-      // `score` is still the fusion score, not the rerank order).
-      while (idx > 0 && out[idx - 1].score < hit.score) {
-        out[idx] = out[idx - 1];
-        idx--;
+      const [hit] = out.splice(idx, 1);
+      if (Number.isFinite(hit.score)) {
+        injectScore += 1e-6;
+        hit.score = Math.max(hit.score * ALIAS_HOP_PRESENT_BOOST, injectScore);
       }
-      out[idx] = hit;
+      hit.alias_hit = true;
+      // Same front position as an injected row; never re-sort the list, which
+      // would discard a reranked order (post-rerank `score` is still the
+      // fusion score, not the rerank order).
+      out.unshift(hit);
       continue;
     }
     const page = await fetchAliasCanonical(engine, ref, opts);

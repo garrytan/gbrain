@@ -910,7 +910,7 @@ export interface SearchResult {
    * batched query that powers the quarantine lane. Absent when the page has
    * no status frontmatter. NOTE: `unverified` stays the load-bearing
    * quarantine flag (requires provenance='auto-extracted' too); `status`
-   * alone is informational.
+   * drives the lifecycle downrank when it is `superseded`.
    */
   status?: string;
   /**

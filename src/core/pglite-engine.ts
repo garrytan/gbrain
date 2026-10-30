@@ -2036,7 +2036,7 @@ export class PGLiteEngine implements BrainEngine {
     return readContentFlags(this.executeRaw.bind(this), pageIds, opts);
   }
 
-  async getUnverifiedExtractionPageIds(pageIds: number[], opts?: PageReadScope): Promise<Map<number, { unverified: boolean; status: string }>> {
+  async getUnverifiedExtractionPageIds(pageIds: number[], opts?: PageReadScope): Promise<Map<number, { unverified: boolean; status?: string; superseded_by?: string }>> {
     return readExtractionStates(this.executeRaw.bind(this), pageIds, opts);
   }
 

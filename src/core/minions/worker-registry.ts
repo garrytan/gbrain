@@ -197,21 +197,48 @@ export function parseEtimeToMs(etime: string): number | null {
   return (((days * 24 + hours!) * 60 + minutes!) * 60 + seconds!) * 1000;
 }
 
+/** Linux process start time from procfs, avoiding procps `etime` overflow. */
+function linuxProcessStartMs(pid: number): number | null {
+  if (process.platform !== 'linux') return null;
+  try {
+    // Field 22 follows the parenthesized comm field, which may itself contain spaces.
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fieldsAfterComm = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
+    const startTicks = Number(fieldsAfterComm[19]);
+    const bootSeconds = Number(
+      readFileSync('/proc/stat', 'utf8').match(/^btime\s+(\d+)$/m)?.[1],
+    );
+    const ticksPerSecond = Number(
+      execFileSync('getconf', ['CLK_TCK'], {
+        encoding: 'utf8',
+        timeout: 2000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim(),
+    );
+    if (![startTicks, bootSeconds, ticksPerSecond].every(Number.isFinite) || ticksPerSecond <= 0) {
+      return null;
+    }
+    return bootSeconds * 1000 + (startTicks * 1000) / ticksPerSecond;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Best-effort process start time (epoch ms) via `ps`. Used for the PID-reuse
- * guard: a stale `worker-<pid>.json` plus an OS-reused pid would otherwise make
- * us report an unrelated process's niceness (Codex #8). Returns null when
- * undeterminable — callers must NOT treat null as "reused".
+ * Best-effort process start time (epoch ms). Used for the PID-reuse guard: a
+ * stale `worker-<pid>.json` plus an OS-reused pid would otherwise make us report
+ * an unrelated process's niceness (Codex #8). Returns null when undeterminable —
+ * callers must NOT treat null as "reused".
  *
- * Elapsed time (`etime`) is zone-free. The previous `lstart` path printed a
- * zoneless local timestamp in the libc zone while `Date.parse` read it in the
- * runtime zone; the two can differ (bun test pins UTC without exporting TZ,
- * `TZ=:/etc/localtime` resolves to UTC in ICU, and Bun does not propagate a
- * runtime `process.env.TZ` change to the ps child), shifting every start by
- * the offset and dropping live workers on UTC+ hosts (#4885). `etime` is used
- * instead of Linux-only `etimes` so this also works on macOS.
+ * Linux uses procfs because procps 4.0.2 can overflow `etime` to an apparent
+ * multi-billion-second age on long-uptime kernels. Other platforms retain the
+ * zone-free portable `ps etime` path. The previous `lstart` path was rejected
+ * because its zoneless timestamp can be interpreted in a different runtime zone
+ * than the child process used to print it (#4885).
  */
 function processStartMs(pid: number): number | null {
+  const procStartMs = linuxProcessStartMs(pid);
+  if (procStartMs !== null) return procStartMs;
   try {
     const out = execFileSync('ps', ['-o', 'etime=', '-p', String(pid)], {
       encoding: 'utf8',

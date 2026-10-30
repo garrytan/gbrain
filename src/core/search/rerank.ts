@@ -261,6 +261,24 @@ export async function applyReranker(
     if (!seen.has(i)) reorderedHead.push(head[i]!);
   }
 
+  // Preserve exactly one deterministic identity signal: an incoming rank-1
+  // title winner. The reranker remains authoritative for every ordinary row
+  // and every lower-ranked title match, but cannot replace the canonical page
+  // with a richer derivative that merely discusses it.
+  const protectedWinner = head[0]?.title_match_boost ? head[0] : undefined;
+  if (protectedWinner) {
+    const winnerIndex = reorderedHead.indexOf(protectedWinner);
+    if (winnerIndex > 0) {
+      reorderedHead.splice(winnerIndex, 1);
+      reorderedHead.unshift(protectedWinner);
+      // Re-stamp rank movement so attribution reports the returned order.
+      reorderedHead.forEach((item, newIndex) => {
+        const originalIndex = head.indexOf(item);
+        if (seen.has(originalIndex) || item === protectedWinner) item.reranker_delta = originalIndex - newIndex;
+      });
+    }
+  }
+
   if (rerankMeta) {
     try { opts.onMeta?.(rerankMeta); } catch { /* caller hook must never break search */ }
   }

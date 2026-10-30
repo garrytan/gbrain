@@ -723,6 +723,8 @@ export interface ExtractFactsResult {
   phantomsSkippedDrift: number;
   /** #6650: phantoms held because they own legacy (unfenced) fact rows. */
   phantomsHeldLegacyRows: number;
+  /** The DB-plane key `cycle.extract_facts.phantom_redirect` is explicitly 'false'. */
+  phantomsSkippedDisabled: boolean;
   phantomsLockBusy: boolean;
   phantomsMorePending: boolean;
 }
@@ -800,6 +802,7 @@ export async function runExtractFacts(
     phantomsAmbiguous: 0,
     phantomsSkippedDrift: 0,
     phantomsHeldLegacyRows: 0,
+    phantomsSkippedDisabled: false,
     phantomsLockBusy: false,
     phantomsMorePending: false,
   };
@@ -880,7 +883,11 @@ export async function runExtractFacts(
   // an ontology observation is held too: the move would rewrite the
   // observation's subject and expire it.
   let phantomResult: PhantomPassResult = emptyPhantomPassResult();
-  if (opts.brainDir) {
+  // The DB config plane is authoritative; only an explicit 'false'
+  // disables this pre-pass. A read failure must stop extraction, not run a file writer.
+  const phantomEnabled = !opts.brainDir || await engine.getConfig('cycle.extract_facts.phantom_redirect') !== 'false';
+  result.phantomsSkippedDisabled = !!opts.brainDir && !phantomEnabled;
+  if (opts.brainDir && phantomEnabled) {
     const holdSlugs = new Set([...legacySlugs, ...(await engine.executeRaw<{ slug: string }>(
       `SELECT DISTINCT source_markdown_slug AS slug FROM facts
         WHERE source_id = $1 AND dimension IS NOT NULL AND expired_at IS NULL AND source_markdown_slug NOT LIKE '%/%'`,

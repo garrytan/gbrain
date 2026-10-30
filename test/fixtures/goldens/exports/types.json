@@ -134,7 +134,7 @@
           "getTakeEmbeddings: (ids: number[]) => Promise<Map<number, Float32Array>>",
           "getTimeline: (slug: string, opts?: TimelineOpts) => Promise<TimelineEntry[]>",
           "getTimelineForDate: (date: string, opts?: ChronicleTimelineOpts) => Promise<ChronicleTimelineRow[]>",
-          "getUnverifiedExtractionPageIds: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, { unverified: boolean; status: string; }>>",
+          "getUnverifiedExtractionPageIds: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, { unverified: boolean; status?: string; superseded_by?: string; }>>",
           "getVersions: <B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>) => Promise<PageVersionRows<B>>",
           "initSchema: () => Promise<void>",
           "insertFact: (input: NewFact, ctx: { source_id: string; supersedeId?: number; }) => Promise<{ id: number; status: FactInsertStatus; }>",
@@ -1144,7 +1144,7 @@
           "getTakeEmbeddings: (ids: number[]) => Promise<Map<number, Float32Array>>",
           "getTimeline: (slug: string, opts?: TimelineOpts) => Promise<TimelineEntry[]>",
           "getTimelineForDate: (date: string, opts?: ChronicleTimelineOpts) => Promise<ChronicleTimelineRow[]>",
-          "getUnverifiedExtractionPageIds: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, { unverified: boolean; status: string; }>>",
+          "getUnverifiedExtractionPageIds: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, { unverified: boolean; status?: string; superseded_by?: string; }>>",
           "getVersions: <B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>) => Promise<PageVersionRows<B>>",
           "initSchema: (opts?: { embedding?: { dimensions: number; model: string; }; }) => Promise<void>",
           "insertFact: (input: NewFact, ctx: { source_id: string; supersedeId?: number; }) => Promise<{ id: number; status: FactInsertStatus; }>",
@@ -3470,7 +3470,7 @@
           "getTakeEmbeddings: (ids: number[]) => Promise<Map<number, Float32Array>>",
           "getTimeline: (slug: string, opts?: TimelineOpts) => Promise<TimelineEntry[]>",
           "getTimelineForDate: (date: string, opts?: ChronicleTimelineOpts) => Promise<ChronicleTimelineRow[]>",
-          "getUnverifiedExtractionPageIds: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, { unverified: boolean; status: string; }>>",
+          "getUnverifiedExtractionPageIds: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, { unverified: boolean; status?: string; superseded_by?: string; }>>",
           "getVersions: <B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>) => Promise<PageVersionRows<B>>",
           "initSchema: () => Promise<void>",
           "insertFact: (input: NewFact, ctx: { source_id: string; supersedeId?: number; }) => Promise<{ id: number; status: FactInsertStatus; }>",
@@ -6776,7 +6776,7 @@
           "getTakeEmbeddings: (ids: number[]) => Promise<Map<number, Float32Array>>",
           "getTimeline: (slug: string, opts?: TimelineOpts) => Promise<TimelineEntry[]>",
           "getTimelineForDate: (date: string, opts?: ChronicleTimelineOpts) => Promise<ChronicleTimelineRow[]>",
-          "getUnverifiedExtractionPageIds: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, { unverified: boolean; status: string; }>>",
+          "getUnverifiedExtractionPageIds: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, { unverified: boolean; status?: string; superseded_by?: string; }>>",
           "getVersions: <B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>) => Promise<PageVersionRows<B>>",
           "initSchema: () => Promise<void>",
           "insertFact: (input: NewFact, ctx: { source_id: string; supersedeId?: number; }) => Promise<{ id: number; status: FactInsertStatus; }>",
@@ -8160,6 +8160,13 @@
         "name": "applySupersedeDownrank",
         "signature": [
           "(results: SearchResult[], engine: BrainEngine, policy?: PageReadPolicy) => Promise<void>"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "applySupersedeDownrankPostRerank",
+        "signature": [
+          "(results: SearchResult[]) => void"
         ]
       },
       {

@@ -170,8 +170,9 @@ export async function stampContentFlags(engine: BrainEngine, results: SearchResu
  * applies, but the SQL-side source-boost guard still holds.
  *
  * #4220: the same batched query now surfaces the page's raw
- * `frontmatter.status` value, stamped on `SearchResult.status` for EVERY
- * result whose page carries one (draft/superseded/restricted/verified/...).
+ * `frontmatter.status` and `frontmatter.superseded_by` values, stamped on
+ * `SearchResult` for EVERY result whose page carries either lifecycle marker
+ * (draft/superseded/restricted/verified/...; applySupersedeDownrank reads them).
  * `unverified` remains the special case requiring the full quarantine pair.
  */
 export async function stampUnverifiedExtractions(
@@ -190,7 +191,8 @@ export async function stampUnverifiedExtractions(
     for (const r of results) {
       const m = marks.get(r.page_id);
       if (!m) continue;
-      r.status = m.status;
+      if (m.status) r.status = m.status;
+      if (m.superseded_by) r.superseded_by = m.superseded_by;
       if (m.unverified) r.unverified = true;
     }
   } catch {
@@ -758,7 +760,9 @@ async function hasAnySupersedeEdges(
  * the SUPERSEDED annotation.
  *
  * A page X is "superseded" when it is the `to_page_id` of a `supersedes` link
- * (`A supersedes B` → from=A canon, to=B stale). This is the page-level
+ * (`A supersedes B` → from=A canon, to=B stale), or when its own frontmatter
+ * carries `status: superseded` / `superseded_by` (stamped pre-fusion by
+ * stampUnverifiedExtractions; no link needed). This is the page-level
  * analogue of the `superseded_by`/`expired_at` awareness recall.ts already
  * applies to the facts table. Stamps `superseded=true`, `superseded_by` (the
  * superseding page's slug), and multiplies score by SUPERSEDE_PENALTY so
@@ -826,16 +830,51 @@ async function readSupersededBy(
   return supersededBy;
 }
 
+/**
+ * Penalize + stamp superseded rows: the target of a `supersedes` edge, or a page
+ * whose own frontmatter says `status: superseded` / `superseded_by` (stamped
+ * pre-fusion by stampUnverifiedExtractions), so local markers apply even when
+ * the edge read no-ops. A frontmatter `superseded_by` names the successor first.
+ */
 function stampSuperseded(results: SearchResult[], supersededBy: Map<number, string>): void {
   for (const r of results) {
-    const by = supersededBy.get(r.page_id);
-    if (by !== undefined) {
-      r.score *= SUPERSEDE_PENALTY;
-      r.superseded = true;
-      r.superseded_by = by;
-      r.supersede_penalty = SUPERSEDE_PENALTY;
-    }
+    const by = r.superseded_by ?? supersededBy.get(r.page_id);
+    if (!isLocallySuperseded(r) && by === undefined) continue;
+    r.score *= SUPERSEDE_PENALTY;
+    r.superseded = true;
+    if (by !== undefined) r.superseded_by = by;
+    r.supersede_penalty = SUPERSEDE_PENALTY;
   }
+}
+
+/** True when the page's own frontmatter marks it superseded (`status: superseded` or `superseded_by`). */
+function isLocallySuperseded(r: SearchResult): boolean {
+  return r.status?.toLowerCase() === 'superseded' || Boolean(r.superseded_by);
+}
+
+/**
+ * Re-apply the supersession penalty to the reranker's ordering signal. A
+ * cross-encoder orders the head by `rerank_score` and would otherwise erase
+ * the pre-rerank `score` penalty. Runs on the reranked head only (the leading
+ * rows that carry a numeric `rerank_score`); the un-scored tail keeps its order.
+ */
+export function applySupersedeDownrankPostRerank(results: SearchResult[]): void {
+  const headEnd = results.findIndex((r) => typeof r.rerank_score !== 'number');
+  const end = headEnd === -1 ? results.length : headEnd;
+  if (end === 0) return;
+  let touched = false;
+  for (let i = 0; i < end; i++) {
+    const r = results[i]!;
+    if (r.superseded !== true || !Number.isFinite(r.rerank_score)) continue;
+    r.rerank_score = (r.rerank_score as number) * SUPERSEDE_PENALTY;
+    r.supersede_penalty = SUPERSEDE_PENALTY;
+    touched = true;
+  }
+  if (!touched) return;
+  const reordered = results
+    .slice(0, end)
+    .sort((a, b) => (b.rerank_score as number) - (a.rerank_score as number));
+  for (let i = 0; i < end; i++) results[i] = reordered[i]!;
 }
 
 export interface HybridSearchOpts extends SearchOpts {

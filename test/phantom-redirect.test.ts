@@ -374,6 +374,52 @@ I believe shipping fast is a moral imperative.
     });
   });
 
+  test('DB-plane phantom switch false leaves mirror pages and files untouched while facts reconcile', async () => {
+    await withTempDirs(async ({ brainDir, auditDir }) => {
+      const canonical = 'people/alice-example';
+      const canonicalBody = FACT_FENCE(
+        `| 1 | Founded Acme | fact | 1.0 | world | high | 2017-01-01 |  | linkedin |  |`,
+      );
+      await putPage(canonical, canonicalBody, { type: 'person' });
+      await putPage('alice', STUB_BODY);
+      writeMd(brainDir, canonical, canonicalBody);
+      writeMd(brainDir, 'alice', STUB_BODY);
+      await engine.setConfig('cycle.extract_facts.phantom_redirect', 'false');
+      try {
+        const result = await runExtractFacts(engine, { sourceId: 'default', brainDir, slugs: [canonical] });
+        expect(result.phantomsScanned).toBe(0);
+        expect(result.phantomsRedirected).toBe(0);
+        expect(result.factsInserted).toBe(1);
+        expect((await engine.getPage('alice', { sourceId: 'default' }))?.deleted_at).toBeNull();
+        expect(readMd(brainDir, 'alice')).toBe(STUB_BODY);
+        expect(readMd(brainDir, canonical)).toBe(canonicalBody);
+        expect(fs.readdirSync(auditDir)).toEqual([]);
+        expect(fs.readdirSync(brainDir).sort()).toEqual(['alice.md', 'people']);
+        expect(result.phantomsSkippedDisabled).toBe(true);
+      } finally {
+        await engine.executeRaw(`DELETE FROM config WHERE key = 'cycle.extract_facts.phantom_redirect'`);
+      }
+    });
+  });
+
+  test('DB-plane phantom switch true preserves the existing redirect behavior', async () => {
+    await withTempDirs(async ({ brainDir }) => {
+      await putPage('people/alice-example', '# alice-example\n', { type: 'person' });
+      await putPage('alice', STUB_BODY);
+      writeMd(brainDir, 'people/alice-example', '# alice-example\n');
+      writeMd(brainDir, 'alice', STUB_BODY);
+      await engine.setConfig('cycle.extract_facts.phantom_redirect', 'true');
+      try {
+        const result = await runExtractFacts(engine, { sourceId: 'default', brainDir, slugs: [] });
+        expect(result.phantomsSkippedDisabled).toBe(false);
+        expect(result.phantomsRedirected).toBe(1);
+        expect(mdExists(brainDir, 'alice')).toBe(false);
+      } finally {
+        await engine.executeRaw(`DELETE FROM config WHERE key = 'cycle.extract_facts.phantom_redirect'`);
+      }
+    });
+  });
+
   test('round 14 + codex #7: content_hash refreshed; second cycle is no-op', async () => {
     await withTempDirs(async ({ brainDir }) => {
       await putPage('people/alice-example', '# alice-example\n\n', { type: 'person' });

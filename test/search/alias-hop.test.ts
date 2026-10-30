@@ -67,15 +67,16 @@ describe('applyAliasHop', () => {
     expect(out.map(r => r.slug)).toContain('projects/mingtang');
   });
 
-  test('boosts (does not duplicate) a canonical already in results', async () => {
+  test('promotes (does not duplicate) a canonical already in results', async () => {
     await engine.putPage('projects/mingtang', { type: 'note', title: 'The Mingtang', compiled_truth: 'x' });
     await engine.setPageAliases('projects/mingtang', 'default', ['hall of light']);
-    const organic = [res('projects/mingtang', 0.4), res('notes/other', 0.5)];
+    const organic = [res('projects/mingtang', 0.1), res('notes/other', 0.9)];
     const out = await applyAliasHop(engine, organic, 'hall of light', { sourceId: 'default' });
     expect(out.filter(r => r.slug === 'projects/mingtang').length).toBe(1); // no dup
     const m = out.find(r => r.slug === 'projects/mingtang')!;
     expect(m.alias_hit).toBe(true);
-    expect(m.score).toBeCloseTo(0.4 * 1.10, 6); // bounded present-boost
+    expect(out[0].slug).toBe('projects/mingtang');
+    expect(m.score).toBeGreaterThan(0.9); // exact human-authored alias promotes to top
   });
 
   test('P0 source-isolation: alias hop boosts only the aliased source, not the same slug in another source', async () => {

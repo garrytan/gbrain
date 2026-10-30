@@ -12,7 +12,7 @@ import { type HybridRequest, applyIdentityBoosts, emitHybridMeta } from './reque
 import type { KeywordArmConfidenceDecision } from '../arm-confidence.ts';
 import { type MetadataBoostGateDecision, decideMetadataBoosts, lexicalArmsVoted } from '../metadata-boost-gate.ts';
 import { startCosineReScore } from '../cosine-rescore.ts';
-import { type PostFusionOpts, RRF_K, resolveWalkDedupCap, rrfFusionWeighted, runPostFusionStages, stampContentFlags, stampUnverifiedExtractions, textVectorArmNonEmpty } from '../hybrid.ts';
+import { type PostFusionOpts, RRF_K, applySupersedeDownrankPostRerank, resolveWalkDedupCap, rrfFusionWeighted, runPostFusionStages, stampContentFlags, stampUnverifiedExtractions, textVectorArmNonEmpty } from '../hybrid.ts';
 import { type RelationalEvidenceSlotDecision, ensureRelationalEvidenceSlot } from '../relational-recall.ts';
 import { type RelationalRerankPinDecision, pinRelationalRows } from '../relational-rerank-pin.ts';
 import { applyFeedbackStage } from '../feedback-boost.ts';
@@ -351,6 +351,10 @@ export async function rerankAndPin(
     : gate.meta;
   if (s1 && rerankerOpts.enabled) recordRerankReceipts(req.decide, query, reranked.slice(0, rerankerOpts.topNIn).filter((r) => s1Failure !== undefined || r.rerank_score !== undefined), s1Meta, s1Failure);
   if (s1Shadow) await s1Shadow(reranked);
+  // The cross-encoder orders by rerank_score and would otherwise erase the
+  // pre-rerank supersession penalty. Re-apply it to the signal that owns the
+  // head order (after the reranker receipts, which record the raw scores).
+  applySupersedeDownrankPostRerank(reranked);
   const ordered = await applyFeedbackStage(engine, reranked, { reranked: reranked !== deduped });
 
   // Ranker wave (R1 receipt) — relational-arm rows bypass reranker DEMOTION:

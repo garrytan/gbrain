@@ -298,14 +298,25 @@ export async function readContentFlags(query: ReadQuery, ids: number[], scope?: 
   return new Map(rows.filter(row => row.reason).map(row => [Number(row.id), { reason: row.reason!, detail: row.detail ?? '' }]));
 }
 
-export async function readExtractionStates(query: ReadQuery, ids: number[], scope?: PageReadScope): Promise<Map<number, { unverified: boolean; status: string }>> {
+export async function readExtractionStates(query: ReadQuery, ids: number[], scope?: PageReadScope): Promise<Map<number, { unverified: boolean; status?: string; superseded_by?: string }>> {
   if (!ids.length) return new Map();
   const params: unknown[] = [ids];
   const filter = pageReadFilter('p', scope, params, !!scope);
-  const rows = await query<{ id: number; status: string; unverified: boolean }>(`
-    SELECT p.id, p.frontmatter->>'status' AS status, (${unverifiedExtractionFragment('p')}) AS unverified
-    FROM pages p WHERE p.id = ANY($1::int[]) AND p.frontmatter->>'status' IS NOT NULL AND ${filter}`, params);
-  return new Map(rows.map(row => [Number(row.id), { unverified: row.unverified === true, status: row.status }]));
+  const rows = await query<{ id: number; status: string | null; superseded_by: string | null; unverified: boolean }>(`
+    SELECT p.id, p.frontmatter->>'status' AS status,
+      p.frontmatter->>'superseded_by' AS superseded_by,
+      (${unverifiedExtractionFragment('p')}) AS unverified
+    FROM pages p WHERE p.id = ANY($1::int[])
+      AND (p.frontmatter->>'status' IS NOT NULL OR p.frontmatter->>'superseded_by' IS NOT NULL)
+      AND ${filter}`, params);
+  return new Map(rows.map(row => {
+    const state: { unverified: boolean; status?: string; superseded_by?: string } = {
+      unverified: row.unverified === true,
+    };
+    if (row.status) state.status = row.status;
+    if (row.superseded_by) state.superseded_by = row.superseded_by;
+    return [Number(row.id), state];
+  }));
 }
 
 export async function readEffectiveDates(query: ReadQuery, refs: PageRef[], scope?: PageReadScope): Promise<Map<string, Date>> {

@@ -362,6 +362,7 @@ test/pathological/g1-atom-generations.test.ts
 test/pathological/g1-generation-crash.test.ts
 test/pathological/g1-generation-probes.test.ts
 test/pathological/g1-generations.test.ts
+test/pathological/g8-concept-cancel-publication.test.ts
 test/pathological/h1-zero-yield-atom-reextract.test.ts
 test/pathological/h2-git-effect-moved-remote.test.ts
 test/pathological/h3-chronicle-partial-generation.test.ts
