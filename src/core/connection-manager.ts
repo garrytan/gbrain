@@ -38,7 +38,7 @@
 
 import postgres from '#postgres'
 import { traceSqlOptions } from './sql-trace.ts';
-import { gbrainApplicationName, readPoolPipelineOptions, transactionPipelineOptions, resolvePrepare, resolveSessionTimeouts, resolvePoolSize, resolveMaxLifetimeSeconds, resolveUrlConnectTimeout, resolveSharedTypes, resolveArrayTypes, endPoolBounded, poolHealthOptions, type PoolHealthHooks } from './db.ts';
+import { gbrainApplicationName, readPoolPipelineOptions, transactionPipelineOptions, resolvePrepare, resolveSessionTimeouts, resolvePoolSize, resolveMaxLifetimeSeconds, resolveUrlConnectTimeout, resolveSharedTypes, resolveArrayTypes, endPoolBounded, poolHealthOptions, resolveIdleTimeout, type PoolHealthHooks } from './db.ts';
 import { redactPgUrl } from './url-redact.ts';
 import { logConnectionEvent } from './connection-audit.ts';
 import { directPoolProfile, type DirectPoolProfile } from './direct-pool-profile.ts';
@@ -250,7 +250,7 @@ export class ConnectionManager {
     }
     const opts: Record<string, unknown> = {
       max: resolvePoolSize(this.opts.readPoolSize),
-      idle_timeout: 20,
+      idle_timeout: resolveIdleTimeout(),
       connect_timeout: resolveUrlConnectTimeout(this.opts.url),
       // Explicit (matches the postgres.js implicit default; GBRAIN_POOL_MAX_LIFETIME_S overrides).
       max_lifetime: resolveMaxLifetimeSeconds(),
@@ -404,7 +404,7 @@ export class ConnectionManager {
     const size = resolveDirectPoolSize(this.opts.directPoolSize);
     const opts: Record<string, unknown> = {
       max: size,
-      idle_timeout: 20,
+      idle_timeout: resolveIdleTimeout(),
       connect_timeout: resolveUrlConnectTimeout(this._directUrl),
       // Explicit (matches the postgres.js implicit default; GBRAIN_POOL_MAX_LIFETIME_S overrides).
       max_lifetime: resolveMaxLifetimeSeconds(),

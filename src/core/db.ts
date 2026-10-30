@@ -64,14 +64,21 @@ export async function endPoolBounded(
 // override via GBRAIN_POOL_SIZE. One-shot CLI commands use 2.
 const DEFAULT_POOL_SIZE_FALLBACK = 6;
 
-const IDLE_TIMEOUT_S = (() => {
+/**
+ * Resolve the pool's `idle_timeout` (seconds) dynamically from
+ * `GBRAIN_IDLE_TIMEOUT`, matching the `resolvePoolSize` pattern (env read at
+ * call time, not module load). Default 10s (lowered from 20s) for more
+ * aggressive cleanup of idle connections when multiple gbrain processes run
+ * concurrently. Invalid/zero/negative values fall back to the 10s default.
+ */
+export function resolveIdleTimeout(): number {
   const raw = process.env.GBRAIN_IDLE_TIMEOUT;
   if (raw) {
     const parsed = parseInt(raw, 10);
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
   return 10;
-})();
+}
 
 /**
  * Supabase PgBouncer transaction-mode convention: port 6543 routes through
@@ -533,7 +540,7 @@ export async function connect(config: EngineConfig, hooks: PoolHealthHooks = {})
     const timeouts = resolveSessionTimeouts();
     const opts: Record<string, unknown> = {
       max: resolvePoolSize(config.pool_max),
-      idle_timeout: IDLE_TIMEOUT_S,
+      idle_timeout: resolveIdleTimeout(),
       connect_timeout: resolveUrlConnectTimeout(url),
       // Explicit (matches the postgres.js implicit default; GBRAIN_POOL_MAX_LIFETIME_S overrides).
       max_lifetime: resolveMaxLifetimeSeconds(),

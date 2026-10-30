@@ -1255,6 +1255,56 @@ describe('resolvePoolSize — env var + explicit override', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// resolveIdleTimeout — GBRAIN_IDLE_TIMEOUT env override
+// ─────────────────────────────────────────────────────────────────
+//
+// Guards the pool-fix follow-up: idle_timeout must be configurable via
+// GBRAIN_IDLE_TIMEOUT and read dynamically (matching resolvePoolSize), so
+// every pool site (module singleton, connection-manager read/direct,
+// postgres-engine) honours the same override. Default lowered from 20s to
+// 10s for more aggressive cleanup of idle connections.
+
+describe('resolveIdleTimeout — env var', () => {
+  const { resolveIdleTimeout } = require('../src/core/db.ts');
+  const original = process.env.GBRAIN_IDLE_TIMEOUT;
+
+  afterAll(() => {
+    if (original === undefined) delete process.env.GBRAIN_IDLE_TIMEOUT;
+    else process.env.GBRAIN_IDLE_TIMEOUT = original;
+  });
+
+  test('returns 10 default when unset', () => {
+    delete process.env.GBRAIN_IDLE_TIMEOUT;
+    expect(resolveIdleTimeout()).toBe(10);
+  });
+
+  test('reads GBRAIN_IDLE_TIMEOUT as an integer', () => {
+    process.env.GBRAIN_IDLE_TIMEOUT = '5';
+    expect(resolveIdleTimeout()).toBe(5);
+    process.env.GBRAIN_IDLE_TIMEOUT = '30';
+    expect(resolveIdleTimeout()).toBe(30);
+  });
+
+  test('ignores invalid GBRAIN_IDLE_TIMEOUT values', () => {
+    process.env.GBRAIN_IDLE_TIMEOUT = 'not-a-number';
+    expect(resolveIdleTimeout()).toBe(10);
+    process.env.GBRAIN_IDLE_TIMEOUT = '0';
+    expect(resolveIdleTimeout()).toBe(10);
+    process.env.GBRAIN_IDLE_TIMEOUT = '-1';
+    expect(resolveIdleTimeout()).toBe(10);
+  });
+
+  test('reads env dynamically at call time', () => {
+    delete process.env.GBRAIN_IDLE_TIMEOUT;
+    expect(resolveIdleTimeout()).toBe(10);
+    process.env.GBRAIN_IDLE_TIMEOUT = '7';
+    expect(resolveIdleTimeout()).toBe(7);
+    delete process.env.GBRAIN_IDLE_TIMEOUT;
+    expect(resolveIdleTimeout()).toBe(10);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
 // PR #356 regression guards — migration hardening
 // ─────────────────────────────────────────────────────────────────
 //
