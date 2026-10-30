@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "recipe": "travel-booking",
+  "version": "0.1.0",
+  "install_kind": "copy-into-host-repo",
+  "description": "src → target mapping consumed by `gbrain integrations install travel-booking`. Ships one SKILL.md into the host resolver and appends a resolver row. The travel tools come from the Jinko MCP server the agent connects separately (recipes/travel-booking.md, Step 2).",
+  "target_root_relative_to_host_repo": "skills/travel-booking",
+  "skills_target_root_relative_to_host_repo": "skills",
+  "files": [],
+  "skills": [
+    { "src": "skills/travel-booking/SKILL.md", "target": "skills/travel-booking/SKILL.md", "mode": "0644" }
+  ],
+  "resolver_rows_to_append": [
+    "travel-booking | the user wants to find, price, book, change, refund or cancel a flight, hotel or rental car; asks what travel is booked"
+  ]
+}
